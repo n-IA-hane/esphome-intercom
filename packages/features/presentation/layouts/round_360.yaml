@@ -382,6 +382,7 @@ defaults:
   _round_phone_list_geometry:
     phone_list_view:
     - id: !extend contacts_list_view
+      row_height: 52
       visible_rows: 5
   _round_page_initializing_page:
   - id: initializing_page
@@ -724,9 +725,9 @@ defaults:
     - obj:
         id: phone_contacts_container
         align: TOP_MID
-        y: 22%
+        y: 21%
         width: 80%
-        height: 40%
+        height: 208
         pad_all: 0
         border_width: 0
         bg_opa: TRANSP
@@ -965,7 +966,7 @@ defaults:
         width: 100
         height: 24
         text: '00:00'
-        text_font: font_clock
+        text_font: montserrat_14
         text_color: 16777215
         text_align: CENTER
         long_mode: CLIP
@@ -1188,18 +1189,23 @@ defaults:
     label_at(id(call_ended_reason_label), 30);
 
     const bool connected_keypad = id(phone).is_in_call();
-      const int number_y = h * (connected_keypad ? 12 : 16) / 240;
+    const int number_y = h * (connected_keypad ? 12 : 16) / 240;
     const int number_h = connected_keypad ? lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_value_label), LV_PART_MAIN)) : std::max(24, h * 26 / 240);
-    const int row_h = std::max(29, h * (connected_keypad ? 29 : 31) / 240);
-    const int call_y = h * 187 / 240;
-    const int call_h = std::max(40, h * 43 / 240);
+    const int duration_y = h * 36 / 240;
+    const int duration_h = lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN));
+    const int gap = std::max(3, h * 3 / 240);
+    const int call_h = std::max(34, h * 34 / 240);
+    const int call_y = h - std::max(8, h * 8 / 240) - call_h;
+    const int keys_y = std::max(h * 54 / 240, connected_keypad ? duration_y + duration_h + gap : 0);
+    const int row_h = std::max(29, (call_y - keys_y - 4 * gap) / 4);
     fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
-      fit_centered_band(id(call_dial_duration_label), h * 36 / 240, lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN)), 6);
-    fit_centered_band(id(call_dial_row_123)->obj, h * (connected_keypad ? 60 : 46) / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_456)->obj, h * (connected_keypad ? 92 : 81) / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_789)->obj, h * (connected_keypad ? 124 : 116) / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_del0hash)->obj, h * (connected_keypad ? 156 : 151) / 240, row_h, 6);
-    fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
+    fit_centered_band(id(call_dial_duration_label), duration_y, duration_h, 6);
+    fit_centered_band(id(call_dial_row_123)->obj, keys_y, row_h, 6);
+    fit_centered_band(id(call_dial_row_456)->obj, keys_y + row_h + gap, row_h, 6);
+    fit_centered_band(id(call_dial_row_789)->obj, keys_y + 2 * (row_h + gap), row_h, 6);
+    fit_centered_band(id(call_dial_row_del0hash)->obj, keys_y + 3 * (row_h + gap), row_h, 6);
+    lv_obj_set_size(id(call_dial_call_btn), std::min(width_for_band(call_y, call_h, 2), w * 58 / 240), call_h);
+    lv_obj_align(id(call_dial_call_btn), LV_ALIGN_TOP_MID, 0, call_y);
   _round_timer_page:
   - id: timer_finished_page
     bg_color: 0

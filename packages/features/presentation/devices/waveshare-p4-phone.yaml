@@ -6,6 +6,9 @@ packages:
       _keypad_name_label: videophone_keypad_value
       _keypad_duration_label: videophone_keypad_duration
       _keypad_peer: id(videophone_peer).c_str()
+      _keypad_peer_refresh: update_status
+      _keypad_idle_reset: id(videophone_dial_buffer).clear();
+      _keypad_idle_text: 'id(videophone_dial_buffer).empty() ? "Enter extension or number" : id(videophone_dial_buffer).c_str()'
       _voicemail_font_id: videophone_small_font
       _voicemail_y: 6
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj && id(videophone_terminal_notice).empty()
@@ -670,8 +673,8 @@ defaults:
           lv_obj_align(id(videophone_keypad_button), LV_ALIGN_BOTTOM_LEFT, 90, -24);
         }
 
-        std::string peer = id(videophone_peer);
-        if (idle) peer = id(phone).get_current_destination();
+        std::string peer = idle ? id(phone).get_current_destination() : id(phone).get_active_peer_name();
+        if (!idle) id(videophone_peer) = peer;
         if (peer.empty()) peer = "No contact selected";
 
         const char *state = "READY";

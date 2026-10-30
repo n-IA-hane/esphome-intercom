@@ -326,7 +326,11 @@ packages:
   phone_presentation: !include
     file: ${ 'phone.yaml' if _round_has_phone else '../shared/absent.yaml' }
     vars:
+      _adaptive_phone_contacts: true
+      _voicemail_y: 70%
       _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
+      _keypad_idle_reset: id(voip_dial_length) = 0; id(voip_dial_buffer)[0] = 0;
+      _keypad_idle_text: 'id(voip_dial_length) == 0 ? "Number / extension" : id(voip_dial_buffer).data()'
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'

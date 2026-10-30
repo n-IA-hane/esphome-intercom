@@ -31,6 +31,10 @@ class UiPhone {
   bool ringing{false};
   bool calling{false};
   bool in_call{false};
+  std::string peer_name{"Casa"};
+  std::string selected_name{"Other contact"};
+  std::string get_active_peer_name() const { return this->peer_name; }
+  std::string get_current_destination() const { return this->selected_name; }
   bool is_idle() const { return this->idle; }
   bool is_active() const { return !this->idle; }
   bool is_ringing() const { return this->ringing; }

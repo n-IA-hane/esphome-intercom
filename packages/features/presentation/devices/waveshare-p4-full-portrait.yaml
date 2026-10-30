@@ -480,14 +480,15 @@ defaults:
   _p4_phone_hooks:
     voip_stack:
       on_phonebook_update:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: draw_display
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_call_idle_labels).execute();
+          id(draw_display).execute();
       on_destination_changed:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: update_call_idle_labels
-      - script.execute: draw_display
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_call_idle_labels).execute();
+          id(draw_display).execute();
   _p4_render_0:
   - script.execute: runtime_project_ui_phase
   _p4_render_1:
@@ -928,7 +929,7 @@ defaults:
     then:
     - script.execute: runtime_ui_call_begin
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_status_label
         text: CALLING
@@ -937,7 +938,7 @@ defaults:
   - id: !extend 'ui_call_dest_ringing'
     then:
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_peer_label
         text: !lambda |-
@@ -987,7 +988,10 @@ defaults:
   - id: update_call_idle_labels
     then:
     - lambda: !lambda |-
-        id(peer_name) = id(phone).get_current_destination();
+        id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+        if (!id(phone).is_active()) return;
+        for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+          if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
   _p4_phone_lifecycle:
     phone_list_view:
     - id: !extend contacts_list_view

@@ -41,18 +41,7 @@ script:
       id(voip_dial_length) = 0;
       id(voip_dial_buffer)[0] = '\0';
   - script.execute: backlight_timer
-  - lvgl.label.update:
-      id: call_ringing_out_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_ringing_in_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_in_call_peer_label
-      text: !lambda |-
-        return id(peer_name);
+  - script.execute: update_call_idle_labels
   - script.execute: draw_display
 - id: !extend 'ui_call_ended'
   mode: restart
@@ -124,8 +113,7 @@ script:
   - lambda: |-
       if (!id(phone).is_idle()) return;
       auto &length = id(voip_dial_length);
-      if (length == 0) return;
-      --length;
+      if (length != 0) --length;
       id(voip_dial_buffer)[length] = '\0';
       id(voip_dial_refresh).execute();
 - id: voip_dial_clear
@@ -197,15 +185,18 @@ script:
 - id: update_call_idle_labels
   then:
   - lambda: |-
-      id(peer_name) = id(phone).get_current_destination();
+      id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+      if (!id(phone).is_active()) return;
+      for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+        if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
 voip_stack:
   on_phonebook_update:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
+  - lambda: if (id(phone).is_idle()) id(update_call_idle_labels).execute();
   on_destination_changed:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
-  - script.execute: draw_display
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      id(update_call_idle_labels).execute();
+      id(draw_display).execute();
 defaults:
   _round_phone_state: |
     const bool phone_active = id(phone).is_active();

@@ -239,15 +239,16 @@ def test_boundary_swipe_exits_list_and_compact_rows_fit(tmp_path):
     "full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
     "voip-only/single-bus/spotpear-ball-v2-voip.yaml",
 ])
-def test_spotpear_contact_geometry_has_three_complete_rows(name):
+def test_spotpear_contact_geometry_has_four_complete_rows_without_mwi(name):
     from tests.native_profile import by_id, profile
 
     config = profile(name)
     view = by_id(config["phone_list_view"], "contacts_list_view")
     container = by_id(config["lvgl"], "phone_contacts_container")
-    height = int(float(str(container["height"]).rstrip("%")) * 240 / 100)
-    assert view["row_height"] == 40
-    assert height >= 3 * view["row_height"]
+    height = container["height"]
+    height = int(float(height[:-1]) * 240 / 100) if isinstance(height, str) and height.endswith("%") else int(height)
+    assert height == 4 * view["row_height"]
+    assert view["visible_rows"] == 5
     assert config["voip_stack"]["blf"]["presence"] is True
 
 

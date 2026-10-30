@@ -72,6 +72,12 @@ def test_real_lvgl_call_clock_visibility_and_warm_allocations(tmp_path):
       if(!lv_timer_get_paused(clock) || lv_label_get_long_mode(id(peer))!=LV_LABEL_LONG_MODE_CLIP || lv_anim_get(id(peer),nullptr)!=nullptr)::exit(78);
       id(connected)=false;id(presenter).ended();
       if(!lv_obj_has_flag(id(duration),LV_OBJ_FLAG_HIDDEN) || find_timer()!=clock)::exit(79);
+      id(presenter).show_idle("Number / extension");
+      if(strcmp(lv_label_get_text(id(peer)),"Number / extension"))::exit(80);
+      allocation_probe::begin();
+      for(unsigned i=0;i<1000;i++)id(presenter).show_idle("Number / extension");
+      auto idle_warm=allocation_probe::end();
+      if(idle_warm.calls || idle_warm.frees || !lv_timer_get_paused(clock))::exit(81);
       printf("CALL_KEYPAD timer=single-paused hidden_scroll=stopped warm_allocations=%u changed_tick_allocations=%u text_reallocations=%u hours=pass connected_epoch=pass\n",unsigned(warm.calls),unsigned(changed.calls),unsigned(changed.watched_reallocations));
       ::exit(0);
     '''

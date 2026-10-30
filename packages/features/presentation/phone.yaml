@@ -3,6 +3,11 @@ substitutions:
   _phone_badge_font: ${ _voicemail_font_id | default('font_clock') }
   _phone_badge_y: ${ _voicemail_y | default('72%') }
   _phone_badge_visible: ${ _voicemail_visible_code | default('false') }
+  _phone_badge_adaptive_contacts: ${ _adaptive_phone_contacts | default(false) }
+  _phone_badge_layout: |-
+    const int contacts_height = id(contacts_list_view).get_row_height() * (show ? 3 : 4);
+    if (lv_obj_get_height(id(phone_contacts_container)) != contacts_height)
+      lv_obj_set_height(id(phone_contacts_container), contacts_height);
 defaults:
   _phone_contacts_view: !include ../voip/presentation/phone_lists.yaml
   _phone_mwi_badge: !include
@@ -11,6 +16,7 @@ defaults:
       _voicemail_font_id: ${_phone_badge_font}
       _voicemail_y: ${_phone_badge_y}
       _voicemail_visible_code: ${_phone_badge_visible}
+      _voicemail_layout_code: ${ _phone_badge_layout if _phone_badge_adaptive_contacts else '' }
 packages:
   keypad_runtime: !include
     file: call_keypad_runtime.yaml
@@ -18,5 +24,8 @@ packages:
       _phone_keypad_name: ${ _keypad_name_label | default('call_dial_value_label') }
       _phone_keypad_duration: ${ _keypad_duration_label | default('call_dial_duration_label') }
       _phone_keypad_peer: ${ _keypad_peer | default('id(peer_name).c_str()') }
+      _phone_peer_refresh: ${ _keypad_peer_refresh | default('update_call_idle_labels') }
+      _phone_keypad_idle_reset: ${ _keypad_idle_reset | default('') }
+      _phone_keypad_idle_text: ${ _keypad_idle_text | default('""') }
   contacts: ${ _phone_contacts_view }
   mwi: ${ _phone_mwi_badge if 'mwi' in firmware_features else {} }

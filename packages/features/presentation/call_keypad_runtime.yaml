@@ -10,8 +10,16 @@ voip_stack:
   on_in_call:
   - lambda: id(call_keypad_ui).connected();
   on_idle:
-  - lambda: if (!id(phone).is_in_call()) id(call_keypad_ui).ended();
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      ${_phone_keypad_idle_reset}
+      id(call_keypad_ui).show_idle(${_phone_keypad_idle_text});
+  on_peer_changed:
+  - script.execute: ${_phone_peer_refresh}
+  - lambda: |-
+      id(call_keypad_ui).sync(id(phone).is_in_call() && id(display_visibility).is_visible(id(${_phone_keypad_name})), peer.c_str());
 lvgl_visibility:
   on_change:
   - lambda: |-
-      id(call_keypad_ui).sync(id(phone).is_in_call() && id(display_visibility).is_visible(id(${_phone_keypad_name})), ${_phone_keypad_peer});
+      if (id(phone).is_idle()) id(call_keypad_ui).show_idle(${_phone_keypad_idle_text});
+      else id(call_keypad_ui).sync(id(phone).is_in_call() && id(display_visibility).is_visible(id(${_phone_keypad_name})), ${_phone_keypad_peer});

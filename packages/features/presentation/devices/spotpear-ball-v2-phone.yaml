@@ -1,7 +1,7 @@
 # Phone-only screen, including all callbacks and widgets that use it.
 phone_list_view:
 - id: !extend contacts_list_view
-  row_height: 40
+  row_height: 36
   visible_rows: 5
 wifi:
   on_connect:
@@ -23,17 +23,21 @@ touchscreen:
   - script.execute: backlight_timer
 voip_stack:
   on_phonebook_update:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
+  - lambda: if (id(phone).is_idle()) id(update_call_idle_labels).execute();
   on_destination_changed:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
-  - script.execute: draw_display
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      id(update_call_idle_labels).execute();
+      id(draw_display).execute();
 packages:
   phone_presentation: !include
     file: ../phone.yaml
     vars:
+      _adaptive_phone_contacts: true
+      _voicemail_y: 70%
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj
+      _keypad_idle_reset: id(voip_dial_length) = 0; id(voip_dial_buffer)[0] = 0;
+      _keypad_idle_text: 'id(voip_dial_length) == 0 ? "Number / extension" : id(voip_dial_buffer).data()'
   visibility: !include
     file: ../visibility.yaml
     vars:
@@ -54,18 +58,7 @@ script:
       id(peer_name) = peer;
       id(voip_dialer_active) = false;
   - script.execute: backlight_timer
-  - lvgl.label.update:
-      id: call_ringing_out_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_ringing_in_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_in_call_peer_label
-      text: !lambda |-
-        return id(peer_name);
+  - script.execute: update_call_idle_labels
   - script.execute: draw_display
 - id: !extend 'ui_call_ended'
   mode: restart
@@ -169,7 +162,11 @@ script:
       - script.execute: update_idle_labels
 - id: update_call_idle_labels
   then:
-  - lambda: id(peer_name) = id(phone).get_current_destination();
+  - lambda: |-
+      id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+      if (!id(phone).is_active()) return;
+      for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+        if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
 - id: layout_call_dialer
   then:
   - lambda: |-
@@ -203,16 +200,21 @@ script:
       const bool connected_keypad = id(phone).is_in_call();
       const int number_y = h * (connected_keypad ? 12 : 16) / 240;
       const int number_h = connected_keypad ? lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_value_label), LV_PART_MAIN)) : std::max(24, h * 26 / 240);
-      const int row_h = std::max(29, h * (connected_keypad ? 29 : 31) / 240);
-      const int call_y = h * 187 / 240;
-      const int call_h = std::max(40, h * 43 / 240);
+      const int duration_y = h * 36 / 240;
+      const int duration_h = lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN));
+      const int gap = std::max(3, h * 3 / 240);
+      const int call_h = std::max(34, h * 34 / 240);
+      const int call_y = h - std::max(8, h * 8 / 240) - call_h;
+      const int keys_y = std::max(h * 54 / 240, connected_keypad ? duration_y + duration_h + gap : 0);
+      const int row_h = std::max(29, (call_y - keys_y - 4 * gap) / 4);
       fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
-      fit_centered_band(id(call_dial_duration_label), h * 36 / 240, lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN)), 6);
-      fit_centered_band(id(call_dial_row_123)->obj, h * (connected_keypad ? 60 : 46) / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_456)->obj, h * (connected_keypad ? 92 : 81) / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_789)->obj, h * (connected_keypad ? 124 : 116) / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_del0hash)->obj, h * (connected_keypad ? 156 : 151) / 240, row_h, 6);
-      fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
+      fit_centered_band(id(call_dial_duration_label), duration_y, duration_h, 6);
+      fit_centered_band(id(call_dial_row_123)->obj, keys_y, row_h, 6);
+      fit_centered_band(id(call_dial_row_456)->obj, keys_y + row_h + gap, row_h, 6);
+      fit_centered_band(id(call_dial_row_789)->obj, keys_y + 2 * (row_h + gap), row_h, 6);
+      fit_centered_band(id(call_dial_row_del0hash)->obj, keys_y + 3 * (row_h + gap), row_h, 6);
+      lv_obj_set_size(id(call_dial_call_btn), std::min(width_for_band(call_y, call_h, 2), w * 58 / 240), call_h);
+      lv_obj_align(id(call_dial_call_btn), LV_ALIGN_TOP_MID, 0, call_y);
 - id: voip_dial_refresh
   then:
   - lambda: |-
@@ -521,9 +523,9 @@ lvgl:
     - obj:
         id: phone_contacts_container
         align: TOP_MID
-        y: 22%
+        y: 21%
         width: 80%
-        height: 50%
+        height: 144
         pad_all: 0
         border_width: 0
         bg_opa: TRANSP
@@ -769,7 +771,7 @@ lvgl:
         width: 100
         height: 24
         text: '00:00'
-        text_font: font_clock
+        text_font: montserrat_14
         text_color: 16777215
         text_align: CENTER
         long_mode: CLIP

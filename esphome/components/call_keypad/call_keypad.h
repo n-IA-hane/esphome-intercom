@@ -37,6 +37,12 @@ class CallKeypad : public Component {
     if (this->duration_ != nullptr && !lv_obj_has_flag(this->duration_, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(this->duration_, LV_OBJ_FLAG_HIDDEN);
   }
+  void show_idle(const char *text) {
+    this->ended();
+    if (text == nullptr) text = "";
+    if (this->name_ != nullptr && std::strcmp(lv_label_get_text(this->name_), text) != 0)
+      lv_label_set_text(this->name_, text);
+  }
   void sync(bool active, const char *peer) {
     if (this->timer_ == nullptr || this->is_failed()) return;
     if (!active) {

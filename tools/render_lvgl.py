@@ -222,6 +222,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
                 continue
             if name == "settings_open":
                 original["then"] = [{"lambda": Lambda("id(ui_options_events)++;")}, *original["then"]]
+            elif name == "round_navigate":
+                original["then"] = [{"lambda": Lambda("id(ui_navigation_events)++;")}, *original["then"]]
             scripts.append(original)
         projected = page_selector(config) + "\n"
         projected += page_transition(config) + "\n" + overlay_policy(config)
@@ -540,6 +542,28 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           input.swipe(body.x1+20,(body.y1+body.y2)/2,body.x1+20,(body.y1+body.y2)/2-60);input.pump(120);
           if(lv_screen_active()!=id(SETTINGS_PAGE)->obj || lv_obj_get_scroll_y(id(settings_page_wrapper))==scroll_before) ::exit(77);
           printf("UI_POINTER options_body_scroll=pass navigation_suppressed=pass\n");
+          for (int boundary=0; boundary<2; ++boundary) {
+            enter_view(3);
+            auto *wrapper=id(settings_page_wrapper);
+            lv_obj_scroll_to_y(wrapper,boundary?LV_COORD_MAX:0,LV_ANIM_OFF);input.pump(50);
+            lv_obj_update_layout(wrapper);lv_obj_get_coords(wrapper,&body);
+            const int before=lv_obj_get_scroll_y(wrapper),top=lv_obj_get_scroll_top(wrapper),bottom=lv_obj_get_scroll_bottom(wrapper);
+            if ((boundary?bottom:top)!=0) ::exit(94);
+            const auto screen_gestures=input.watch(id(SETTINGS_PAGE)->obj,LV_EVENT_GESTURE);
+            const auto body_gestures=input.watch(wrapper,LV_EVENT_GESTURE);
+            id(ui_navigation_events)=0;
+            const int x=body.x1+20,y=(body.y1+body.y2)/2;
+            input.swipe(x,y,x,y+(boundary?-80:80));input.pump(300);
+            const char *target=lv_screen_active()==id(SETTINGS_PAGE)->obj?"settings":
+              lv_screen_active()==id(call_dialer_page)->obj?"dialer":"other";
+            printf("UI_POINTER options_body_boundary=%s delta=%d scroll_before=%d scroll_after=%d top_before=%d bottom_before=%d page_gestures=%llu body_gestures=%llu navigation_calls=%u target=%s writes=%u\n",
+              boundary?"bottom":"top",boundary?1:-1,before,int(lv_obj_get_scroll_y(wrapper)),top,bottom,
+              static_cast<unsigned long long>(input.count(screen_gestures)),static_cast<unsigned long long>(input.count(body_gestures)),
+              id(ui_navigation_events),target,id(ui_owner_writes));
+            if(id(ui_owner_writes)||esphome::ui_fixture::dial_requests||esphome::ui_fixture::voip_action_writes) ::exit(95);
+            if(!boundary && (lv_screen_active()!=id(call_dialer_page)->obj || id(ui_navigation_events)!=1)) ::exit(96);
+            if(boundary && lv_screen_active()!=id(SETTINGS_PAGE)->obj) ::exit(97);
+          }
           enter_view(1);id(phone).idle=false;id(phone).in_call=true;id(draw_display).execute();input.pump(60);
           if(lv_screen_active()!=id(call_in_call_page)->obj) ::exit(78);
           lv_obj_t *hangup=nullptr;
@@ -629,11 +653,30 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           input.tap((toggle.x1+toggle.x2)/2,(toggle.y1+toggle.y2)/2);
           if(id(speaker_mute).state==before_mute || id(ui_owner_writes)!=1) ::exit(73);
           printf("UI_POINTER passive_row_child_switch=pass writes=1\n");
+          MODE_DROPDOWN
           for(unsigned i=0;i<3;i++)lv_obj_remove_event_dsc(trace_objects[i],trace_descriptors[i]);
         '''.replace("SETTINGS_PAGE", page_id).replace("APPLY_OVERLAY_POLICY", policy or "(void)target;")
         pointer_code = pointer_code.replace("PLAYER_MIDPOINT", "id(speaker_media_player).volume=0.5f;id(speaker_media_player).publish_state();" if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYBACK_SLIDER", "id(ui_playback_vol_slider)," if host.get("media_player") else "")
         pointer_code = pointer_code.replace("EXPECTED_HIT_SIZE", "40" if width <= 240 else "48")
+        pointer_code = pointer_code.replace("MODE_DROPDOWN", r'''
+          auto *dropdown=id(ui_aec_mode_dd)->obj;
+          lv_area_t choice,visible;lv_obj_get_coords(dropdown,&choice);lv_obj_get_coords(id(settings_page_wrapper),&visible);
+          lv_obj_scroll_to_y(id(settings_page_wrapper),lv_obj_get_scroll_y(id(settings_page_wrapper))+
+            (choice.y1+choice.y2-visible.y1-visible.y2)/2,LV_ANIM_OFF);input.pump(50);
+          lv_obj_get_coords(dropdown,&choice);id(ui_owner_writes)=0;
+          const uint32_t selected=(lv_dropdown_get_selected(dropdown)+1)%lv_dropdown_get_option_count(dropdown);
+          input.tap((choice.x1+choice.x2)/2,(choice.y1+choice.y2)/2);
+          if(!lv_dropdown_is_open(dropdown)) ::exit(98);
+          auto *list=lv_dropdown_get_list(dropdown);lv_obj_update_layout(list);lv_obj_get_coords(list,&choice);
+          const int line=lv_font_get_line_height(lv_obj_get_style_text_font(list,LV_PART_MAIN));
+          const int y=choice.y1+lv_obj_get_style_pad_top(list,LV_PART_MAIN)+line/2+
+            selected*(line+lv_obj_get_style_text_line_space(list,LV_PART_MAIN));
+          input.tap((choice.x1+choice.x2)/2,y);
+          if(lv_dropdown_is_open(dropdown)||lv_dropdown_get_selected(dropdown)!=selected||
+             id(aec_mode_select).active_index()!=selected||id(ui_owner_writes)!=1) ::exit(99);
+          printf("UI_POINTER dropdown=mode open=pass select=pass writes=1\n");
+        ''' if "ui_aec_mode_dd" in set(strings(page)) else "")
         capture.append({"lambda": Lambda(pointer_code)})
     capture.append({"lambda": Lambda("::exit(0);")})
     host["esphome"]["on_boot"] = registrations + [{"priority": -300, "then": capture}]

@@ -15,7 +15,9 @@ script:
       const bool hidden = lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
       if (show && hidden) lv_obj_clear_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
       else if (!show && !hidden) lv_obj_add_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
+      ${_voicemail_layout_code}
 defaults:
+  _voicemail_layout_code: ''
   _voicemail_font_id: font_clock
   _voicemail_y: 72%
   _voicemail_visible_code: false

@@ -54,6 +54,7 @@ class PhoneListView : public Component {
  public:
   void set_parent_widget(lv_obj_t *value) { this->parent_ = value; }
   void set_row_height(uint16_t value) { this->row_height_ = value; }
+  uint16_t get_row_height() const { return this->row_height_; }
   void set_visible_rows(uint8_t value) { this->capacity_ = value; }
   void set_buffer_in_psram(bool value) { this->buffer_in_psram_ = value; }
   void set_empty_text(const std::string &value) { this->empty_text_ = value; }

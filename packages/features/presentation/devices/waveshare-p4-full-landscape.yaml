@@ -431,6 +431,9 @@ packages:
       _keypad_name_label: call_keypad_value_label
       _keypad_duration_label: call_keypad_duration_label
       _keypad_peer: id(peer_name).c_str()
+      _keypad_peer_refresh: update_ic_idle_labels
+      _keypad_idle_reset: id(voip_dial_buffer).clear();
+      _keypad_idle_text: 'id(voip_dial_buffer).empty() ? "Enter extension or number" : id(voip_dial_buffer).c_str()'
       _voicemail_y: 6
       _voicemail_font_id: font_body
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(main_page)->obj${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' } && !id(call_ended_active)
@@ -503,14 +506,15 @@ defaults:
   _p4_phone_hooks:
     voip_stack:
       on_phonebook_update:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: draw_display
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_ic_idle_labels).execute();
+          id(draw_display).execute();
       on_destination_changed:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: update_ic_idle_labels
-      - script.execute: draw_display
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_ic_idle_labels).execute();
+          id(draw_display).execute();
   _p4_phone_geometry: |
     lv_obj_set_pos(id(voip_tile), layout[RIGHT_X], y0);
     lv_obj_set_size(id(voip_tile), layout[RIGHT_W], layout[VOIP_H]);
@@ -1355,7 +1359,7 @@ defaults:
     - script.execute: runtime_ui_call_begin
     - script.stop: ai_animation_loop
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_status_label
         text: CALLING
@@ -1364,7 +1368,7 @@ defaults:
   - id: !extend 'ui_call_dest_ringing'
     then:
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_peer_label
         text: !lambda |-
@@ -1415,7 +1419,10 @@ defaults:
   - id: update_ic_idle_labels
     then:
     - lambda: !lambda |-
-        id(peer_name) = id(phone).get_current_destination();
+        id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+        if (!id(phone).is_active()) return;
+        for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+          if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
   _p4_phone_lifecycle:
     phone_list_view:
     - id: !extend contacts_list_view

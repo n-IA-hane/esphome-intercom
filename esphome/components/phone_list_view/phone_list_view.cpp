@@ -88,7 +88,11 @@ void PhoneListView::refresh() {
   else lv_obj_add_flag(this->empty_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_height(this->spacer_, std::max<uint32_t>(1, count * this->row_height_));
   const int32_t scroll = std::max<int32_t>(0, lv_obj_get_scroll_y(this->parent_));
-  const uint32_t first = scroll / this->row_height_ > 0 ? scroll / this->row_height_ - 1 : 0;
+  const uint32_t visible = (scroll % this->row_height_ + std::max<int32_t>(1, lv_obj_get_content_height(this->parent_)) +
+                            this->row_height_ - 1) / this->row_height_;
+  uint32_t first = scroll / this->row_height_;
+  // Keep a row above only when the existing pool can still cover the viewport.
+  if (first > 0 && visible < this->capacity_) --first;
   for (size_t i = 0; i < this->capacity_; ++i) {
     auto &slot = this->slots_[i];
     if (first + i >= count) {

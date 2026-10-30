@@ -112,6 +112,51 @@ int main(){
 '''.replace('STATE', str(defaults['_round_phone_state'])).replace('ROUTE', str(defaults['_round_phone_active_route'])))
 
 
+def test_empty_idle_backspace_refreshes_only_the_editable_buffer(tmp_path):
+    config = yaml_util.load_yaml(ROOT / ROUND)
+    backspace = str(by_id(config['script'], 'voip_dial_backspace')['then'][0]['lambda'])
+    run_cpp(tmp_path, BASE + r'''
+std::array<char,33>voip_dial_buffer{};uint8_t voip_dial_length=0;
+void backspace(){BODY}
+int main(){
+ backspace();assert(voip_dial_refresh.count==1&&"An empty Delete must refresh the idle buffer, not retain a call URI");
+ voip_dial_buffer[0]='4';voip_dial_buffer[1]='2';voip_dial_length=2;
+ backspace();assert(voip_dial_length==1&&voip_dial_buffer[0]=='4'&&voip_dial_refresh.count==2);
+ backspace();assert(voip_dial_length==0&&voip_dial_buffer[0]=='\0'&&voip_dial_refresh.count==3);
+}
+'''.replace('BODY', backspace))
+
+
+@pytest.mark.parametrize('relative,owner,script', [
+    (ROUND, 'script', 'update_call_idle_labels'),
+    (SPOT, 'script', 'update_call_idle_labels'),
+    ('packages/features/voip/presentation/waveshare-s3-box-v1-aec.yaml', 'script', 'update_call_idle_labels'),
+    (P4, '_p4_phone_scripts', 'update_ic_idle_labels'),
+    ('packages/features/presentation/devices/waveshare-p4-full-portrait.yaml', '_p4_phone_scripts', 'update_call_idle_labels'),
+])
+def test_active_peer_labels_ignore_the_selected_contact(tmp_path, relative, owner, script):
+    config = yaml_util.load_yaml(ROOT / relative)
+    scripts = config[owner] if owner == 'script' else config['defaults'][owner]
+    body = str(by_id(scripts, script)['then'][0]['lambda'])
+    run_cpp(tmp_path, r'''
+#include <string>
+#include <cstring>
+#include <cassert>
+#define id(x) x
+struct Phone{bool active=true;std::string peer="Casa",selected="Other contact";
+ bool is_active()const{return active;}std::string get_active_peer_name()const{return peer;}
+ std::string get_current_destination()const{return selected;}}phone;
+std::string peer_name="sip:pickup.Test@192.0.2.1",a=peer_name,b=peer_name,c=peer_name;
+std::string *call_ringing_out_peer_label=&a,*call_ringing_in_peer_label=&b,*call_in_call_peer_label=&c;
+const char *lv_label_get_text(std::string *label){return label->c_str();}
+void lv_label_set_text(std::string *label,const char *text){*label=text;}
+void refresh(){BODY}
+int main(){refresh();assert(peer_name=="Casa"&&a=="Casa"&&b=="Casa"&&c=="Casa");
+ phone.selected="Test@192.0.2.1";refresh();assert(c=="Casa");
+ phone.active=false;refresh();assert(peer_name==phone.selected&&c=="Casa");}
+'''.replace('BODY', body))
+
+
 @pytest.mark.parametrize('relative', [
     'packages/features/presentation/layouts/round_240.yaml',
     'packages/features/presentation/layouts/round_360.yaml', SPOT,
@@ -225,7 +270,9 @@ def test_native_lvgl_keypad_rows_have_room_for_the_actual_font(tmp_path):
 def test_shared_presenter_epoch_follows_connected_and_idle_events_only():
     binding = yaml_util.load_yaml(ROOT / 'packages/features/presentation/call_keypad_runtime.yaml')
     callbacks = binding['voip_stack']
-    assert set(callbacks) == {'on_in_call', 'on_idle'}
+    assert set(callbacks) == {'on_in_call', 'on_idle', 'on_peer_changed'}
     assert str(callbacks['on_in_call'][0]['lambda']) == 'id(call_keypad_ui).connected();'
-    assert '!id(phone).is_in_call()' in str(callbacks['on_idle'][0]['lambda'])
+    assert '!id(phone).is_idle()' in str(callbacks['on_idle'][0]['lambda'])
+    assert 'connected()' not in str(callbacks['on_peer_changed'])
+    assert 'show_idle' in str(callbacks['on_idle'])
     assert 'display_visibility).is_visible' in str(binding['lvgl_visibility']['on_change'])

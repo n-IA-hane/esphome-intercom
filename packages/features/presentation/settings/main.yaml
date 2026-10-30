@@ -1,7 +1,7 @@
 # One settings page, composed at configuration time from the available controls.
 # Round displays: Assist, contacts, dialer, Options, with absent features skipped.
 # Swipe up to advance and down to go back, without wrapping at either endpoint.
-# The title scrolls with the controls; swipe its visible title to navigate back.
+# The title scrolls with the controls; swipe down at the top to navigate back.
 substitutions:
   _settings_round: ${ _settings_round | default(true) }
   _settings_afe: ${ _settings_afe | default(true) }
@@ -24,9 +24,19 @@ substitutions:
   _settings_register_page:
     lambda: |-
       // SCREEN_LOADED follows active-screen selection with and without animation.
-      lv_obj_add_event_cb(id(${_settings_page_id})->obj, [](lv_event_t *) {
-        id(settings_sync_widgets).execute();
-      }, LV_EVENT_SCREEN_LOADED, nullptr);
+      auto changed = [](lv_event_t *event) {
+        if (lv_event_get_code(event) == LV_EVENT_SCREEN_LOADED) id(settings_sync_widgets).execute();
+        if constexpr (${'true' if _settings_round else 'false'}) {
+          auto *wrapper = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+          lv_obj_update_layout(wrapper);
+          lv_obj_set_scroll_dir(wrapper, static_cast<lv_dir_t>(
+              (lv_obj_get_scroll_top(wrapper) > 0 ? LV_DIR_TOP : LV_DIR_NONE) |
+              (lv_obj_get_scroll_bottom(wrapper) > 0 ? LV_DIR_BOTTOM : LV_DIR_NONE)));
+        }
+      };
+      lv_obj_add_event_cb(id(${_settings_page_id})->obj, changed, LV_EVENT_SCREEN_LOADED, id(settings_page_wrapper));
+      if constexpr (${'true' if _settings_round else 'false'})
+        lv_obj_add_event_cb(id(settings_page_wrapper), changed, LV_EVENT_SCROLL_END, id(settings_page_wrapper));
   _settings_close_p4:
   - lvgl.page.show:
       id: main_page
@@ -123,7 +133,8 @@ substitutions:
         pad_left: 0
         pad_right: 0
         scrollable: true
-        gesture_bubble: ${ not _settings_round }
+        scroll_elastic: ${ not _settings_round }
+        gesture_bubble: true
         scroll_dir: VER
         scrollbar_mode: AUTO
         layout:
