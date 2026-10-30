@@ -15,6 +15,7 @@ namespace esphome::wifi {
 struct FixtureNetwork {
   bool connected{true};
   bool is_connected() const { return connected; }
+  int wifi_rssi() const { return -40; }
 };
 inline FixtureNetwork fixture_network;
 inline FixtureNetwork *global_wifi_component = &fixture_network;

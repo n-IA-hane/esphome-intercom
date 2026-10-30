@@ -18,7 +18,7 @@ def execute(tmp_path, body, *, standalone=False):
 #include <cstdint>
 #include <string>
 #define id(x) x
-struct Obj {bool hidden=true;unsigned align=0;int x=0,y=0;};
+struct Obj {bool hidden=true;unsigned align=0;int x=0,y=0;std::string text;};
 Obj objects[22];
 Obj *call_idle_group=&objects[0],*call_keypad_group=&objects[1],*call_ringing_in_group=&objects[2],
  *call_ringing_out_group=&objects[3],*call_in_call_group=&objects[4],*call_ended_group=&objects[5],
@@ -36,15 +36,16 @@ void lv_obj_add_flag(Obj*o,unsigned){o->hidden=true;}
 void lv_obj_set_y(Obj*,int){}
 void lv_anim_del(Obj*,void*){}
 void lv_obj_set_tile_id(Obj*,int,int,unsigned){}
-void lv_label_set_text(Obj*,const char*){}
+void lv_label_set_text(Obj*o,const char*text){o->text=text;}
 uint32_t lv_color_hex(uint32_t x){return x;}
 void lv_obj_set_style_bg_color(Obj*,uint32_t,unsigned){}
 void set_hidden(Obj*o,bool hidden){o->hidden=hidden;}
-void set_label(Obj*,const char*){}
+void set_label(Obj*o,const char*text){lv_label_set_text(o,text);}
 std::array<int,20> main_layout{};
 bool call_ended_active=false,voip_keypad_visible=false;
 std::string peer_name="Peer",videophone_peer="Peer",videophone_terminal_notice;
-struct Phone {std::string state="idle";
+struct Phone {std::string state="idle",selected="Selected peer",peer="Live peer";
+ mutable unsigned active_peer_reads=0;
  std::string get_state_str()const{return state;}
  bool is_active()const{return state!="idle";}
  bool is_idle()const{return state=="idle";}
@@ -52,7 +53,8 @@ struct Phone {std::string state="idle";
  bool is_calling()const{return state=="calling";}
  bool is_in_call()const{return state=="in_call";}
  bool is_video_active()const{return false;}
- std::string get_current_destination()const{return "Selected peer";}
+ std::string get_current_destination()const{return selected;}
+ std::string get_active_peer_name()const{++active_peer_reads;return peer;}
 }phone;
 struct List {unsigned calls=0;void refresh(){++calls;}}contacts_list_view;
 void render(){BODY}
@@ -60,9 +62,19 @@ int main(){
  render();assert(contacts_list_view.calls==1);
  for(unsigned n=0;n<20;++n)render();assert(contacts_list_view.calls==1);
  phone.state="in_call";render();assert(contacts_list_view.calls==1);
- if(standalone_phone)assert(videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_TOP_MID);
+ if(standalone_phone){
+   assert(videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_TOP_MID);
+   assert(phone.active_peer_reads==1&&videophone_peer=="Live peer"&&videophone_peer_label->text=="Live peer");
+   phone.selected="Another contact";render();assert(contacts_list_view.calls==1);
+   assert(videophone_peer=="Live peer"&&videophone_peer_label->text=="Live peer");
+   phone.peer="Updated live peer";render();assert(contacts_list_view.calls==1);
+   assert(videophone_peer==phone.peer&&videophone_peer_label->text==phone.peer);
+ }
  phone.state="idle";render();assert(contacts_list_view.calls==2);
- if(standalone_phone)assert(!videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_BOTTOM_LEFT);
+ if(standalone_phone){
+   assert(!videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_BOTTOM_LEFT);
+   assert(videophone_peer_label->text==phone.selected);
+ }
 }
 '''.replace("BODY", str(body)).replace("STANDALONE", "true" if standalone else "false")
     path = tmp_path / "adapter.cpp"
@@ -102,11 +114,49 @@ def test_selected_peer_helpers_do_not_duplicate_the_data_callback_refresh(tmp_pa
         else:
             assert "phone_list_view.refresh" in action
             code.append("id(contacts_list_view).refresh();")
-    source = '#include <string>\n#include <cassert>\n#define id(x) x\nstd::string peer_name;\n'
-    source += 'struct Phone{std::string get_current_destination(){return "Selected peer";}}phone;\n'
-    source += 'struct List{unsigned calls=0;void refresh(){++calls;}}contacts_list_view;\n'
-    source += 'void update(){' + '\n'.join(code) + '}\n'
-    source += 'int main(){for(unsigned i=0;i<20;++i)update();assert(peer_name=="Selected peer"&&contacts_list_view.calls==0);}\n'
+    source = r'''
+#include <array>
+#include <string>
+#include <cstring>
+#include <cassert>
+#define id(x) x
+std::string peer_name;
+struct Phone{
+ bool active=false;
+ std::string selected="Selected peer",peer="Live peer";
+ bool is_active()const{return active;}
+ std::string get_current_destination()const{return selected;}
+ std::string get_active_peer_name()const{return peer;}
+}phone;
+struct List{unsigned calls=0;void refresh(){++calls;}}contacts_list_view;
+struct Label{std::string text="Previous peer";};
+Label outgoing,incoming,connected;
+Label *call_ringing_out_peer_label=&outgoing,*call_ringing_in_peer_label=&incoming,*call_in_call_peer_label=&connected;
+const std::array<Label*,3> labels{&outgoing,&incoming,&connected};
+unsigned label_writes=0;
+const char *lv_label_get_text(Label*label){return label->text.c_str();}
+void lv_label_set_text(Label*label,const char*text){label->text=text;++label_writes;}
+void assert_labels(const std::string &text){for(auto*label:labels)assert(label->text==text);}
+void update(){BODY}
+int main(){
+ for(unsigned i=0;i<20;++i)update();
+ assert(peer_name=="Selected peer"&&contacts_list_view.calls==0&&label_writes==0);
+ assert_labels("Previous peer");
+ phone.active=true;
+ for(unsigned i=0;i<20;++i)update();
+ assert(peer_name=="Live peer"&&contacts_list_view.calls==0&&label_writes==3);
+ assert_labels("Live peer");
+ phone.selected="Another contact";update();
+ assert(peer_name=="Live peer"&&contacts_list_view.calls==0&&label_writes==3);
+ assert_labels("Live peer");
+ phone.peer="Updated live peer";update();
+ assert(peer_name==phone.peer&&contacts_list_view.calls==0&&label_writes==6);
+ assert_labels("Updated live peer");
+ phone.active=false;update();
+ assert(peer_name==phone.selected&&contacts_list_view.calls==0&&label_writes==6);
+ assert_labels("Updated live peer");
+}
+'''.replace("BODY", '\n'.join(code))
     path = tmp_path / "helper.cpp"
     path.write_text(source)
     binary = tmp_path / "helper"

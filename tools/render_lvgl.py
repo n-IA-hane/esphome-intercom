@@ -750,6 +750,27 @@ def make_status_config(config, page_id, width, height, build_parent):
     host["globals"].append({"id": "status_phone_idle", "type": "bool", "initial_value": "true"})
     original_pages = {str(item["id"]): item for item in lvgl["pages"]}
     supplied = {str(item["id"]) for item in host["globals"]} | {"update_voicemail_status", "top_voicemail_label", page_id}
+    contact_views = [copy.deepcopy(view) for view in config.get("phone_list_view", [])
+                     if str(view["id"]) in references(owner)]
+    for view in contact_views:
+        parent_id = str(view["parent_id"])
+        source_page = next(item for item in lvgl["pages"] if parent_id in widget_ids([item], {}))
+        target_page = next((item for item in host["lvgl"]["pages"] if str(item["id"]) == str(source_page["id"])), None)
+        if target_page is None:
+            target_page = {"id": str(source_page["id"]), "bg_color": source_page.get("bg_color", 0), "widgets": []}
+            host["lvgl"]["pages"].append(target_page)
+        target_page["widgets"].extend(yaml_input(_header_widgets(source_page.get("widgets", []), {parent_id})))
+        # Status snapshots supply an empty directory, while the real component
+        # retains its accessor, row pool and native size-change callbacks.
+        view.pop("on_select", None)
+        view["row_count"] = Lambda("return 0;")
+        view["render_row"] = Lambda("(void)index; (void)row;")
+        supplied.update({str(view["id"]), parent_id, str(source_page["id"])})
+    if contact_views:
+        host["phone_list_view"] = contact_views
+        host.setdefault("external_components", []).append({
+            "source": str(ROOT / "esphome/components"), "components": ["phone_list_view"],
+        })
     for name in references(owner) - supplied:
         if name in original_pages:
             host["lvgl"]["pages"].append({"id": name, "bg_color": original_pages[name].get("bg_color", 0), "widgets": []})
@@ -791,11 +812,19 @@ def make_status_config(config, page_id, width, height, build_parent):
         refresh = "status_snapshot_refresh"
     else:
         refresh = "update_voicemail_status"
+    geometry = []
+    for view in contact_views:
+        name, parent_id = str(view["id"]), str(view["parent_id"])
+        geometry.append(f'''lv_obj_update_layout(id({parent_id}));
+            const int rows_{name} = lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN) ? 4 : 3;
+            if (lv_obj_get_height(id({parent_id})) != id({name}).get_row_height() * rows_{name}) ::exit(84);
+            printf("UI_STATUS_CONTACTS rows=%d height=%d\\n", rows_{name}, int(lv_obj_get_height(id({parent_id}))));''')
     for state in ("off", "on"):
         boot.extend([
             {"globals.set": {"id": "ui_voicemail_waiting", "value": "true" if state == "on" else "false"}},
             {"script.execute": refresh},
             {"lambda": Lambda("lv_obj_update_layout(id(" + page_id + ")->obj); lv_refr_now(nullptr);")},
+            *([{"lambda": Lambda("\n".join(geometry))}] if geometry else []),
             {"snapshot.take": {"id": "render_display", "filename": state}},
         ])
     # State inputs exercise the actual production predicate, without a SIP model.
@@ -828,7 +857,7 @@ def make_status_config(config, page_id, width, height, build_parent):
     boot.append({"lambda": Lambda("\n".join(bounds) + "\n::exit(0);")})
     host["esphome"]["on_boot"] = [{"priority": -300, "then": boot}]
     fonts = {str(font["id"]): font for font in config["font"]}
-    used = set(strings(host["lvgl"])) & set(fonts)
+    used = set(strings([host["lvgl"], contact_views])) & set(fonts)
     host["font"] = [copy.deepcopy(fonts[name]) for name in sorted(used)]
     return host, page_hash
 

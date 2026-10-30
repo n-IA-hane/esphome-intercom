@@ -20,17 +20,35 @@ SCENES = {
     "p4-landscape": "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
     "p4-portrait": "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml",
 }
+PRESENTATIONS = {
+    "box": "round_runtime.yaml",
+    "spotpear": "round_runtime.yaml",
+    "p4-landscape": "devices/waveshare-p4-full-landscape.yaml",
+    "p4-portrait": "devices/waveshare-p4-full-portrait.yaml",
+}
 
 
-@pytest.mark.parametrize("relative,font,position,screen", [
-    (SCENES["box"], "font_clock", "72%", "idle_page"),
-    (SCENES["spotpear"], "font_clock", "72%", "idle_page"),
-    (SCENES["p4-landscape"], "font_body", "6", "main_page"),
-    (SCENES["p4-portrait"], "font_body", "6", "main_page"),
-    ("yamls/voip-only/single-bus/spotpear-ball-v2-voip.yaml", "font_clock", "72%", "call_idle_page"),
-    ("yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml", "videophone_small_font", "6", "videophone_page"),
+def _badge_parameters(presentation):
+    """Read the caller's include variables, before nested package expansion."""
+    caller = yaml_util.load_yaml(PACKAGE / presentation)
+    return caller["packages"]["phone_presentation"].vars
+
+
+def _assert_badge_layout(action, parameters):
+    layout = str(yaml_util.load_yaml(PACKAGE / "phone.yaml")["substitutions"]["_phone_badge_layout"])
+    assert (layout in text(action)) is bool(parameters.get("_adaptive_phone_contacts", False))
+    assert "${" not in text(action)
+
+
+@pytest.mark.parametrize("relative,presentation,font,screen", [
+    (SCENES["box"], PRESENTATIONS["box"], "font_clock", "idle_page"),
+    (SCENES["spotpear"], PRESENTATIONS["spotpear"], "font_clock", "idle_page"),
+    (SCENES["p4-landscape"], PRESENTATIONS["p4-landscape"], "font_body", "main_page"),
+    (SCENES["p4-portrait"], PRESENTATIONS["p4-portrait"], "font_body", "main_page"),
+    ("yamls/voip-only/single-bus/spotpear-ball-v2-voip.yaml", "devices/spotpear-ball-v2-phone.yaml", "font_clock", "call_idle_page"),
+    ("yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml", "devices/waveshare-p4-phone.yaml", "videophone_small_font", "videophone_page"),
 ])
-def test_mwi_only_preserves_the_callers_badge_parameters_across_nested_packages(tmp_path, relative, font, position, screen):
+def test_mwi_only_preserves_the_callers_badge_parameters_across_nested_packages(tmp_path, relative, presentation, font, screen):
     """Exercise native package scoping without regenerating binary image assets."""
     from esphome.core import CORE
     from esphome.components.packages import do_packages_pass, merge_packages
@@ -39,9 +57,12 @@ def test_mwi_only_preserves_the_callers_badge_parameters_across_nested_packages(
     config = device_config(tmp_path, ["voip", "display", "mwi", "diagnostics"], relative)
     CORE.config_path = config
     document = merge_packages(do_substitution_pass(do_packages_pass(yaml_util.load_yaml(config)), {}))
+    parameters = _badge_parameters(presentation)
     label = next(node for node in nodes(document.get("lvgl", {})) if str(node.get("id")) == "top_voicemail_label")
-    assert str(label["text_font"]) == font and str(label["y"]) == position
+    assert str(label["text_font"]) == font
+    assert str(label["y"]) == str(parameters["_voicemail_y"])
     action = next(node for node in document["script"] if str(node.get("id")) == "update_voicemail_status")
+    _assert_badge_layout(action, parameters)
     assert f"id({screen})" in text(action)
     assert "voice_assistant_phase" not in text(action), "MWI does not depend on the voice feature"
     assert "call_mailbox()" in text(label["on_short_click"])
@@ -112,8 +133,10 @@ def test_voicemail_composes_with_standard_registered_phone_services(tmp_path, sc
         assert label["hidden"] is True
         assert label["text"] == GLYPH
         assert label["align"] == "TOP_MID"
-        assert label["y"] == (6 if scene.startswith("p4") else "72%")
+        parameters = _badge_parameters(PRESENTATIONS[scene])
+        assert label["y"] == parameters["_voicemail_y"]
         action = next(item for item in document["script"] if str(item["id"]) == "update_voicemail_status")
+        _assert_badge_layout(action, parameters)
         assert "id(phone).is_idle()" in text(action)
         assert "voice_assistant_phase" in text(action)
         assert "has_waiting_messages" not in text(action)
@@ -125,21 +148,36 @@ def test_voicemail_composes_with_standard_registered_phone_services(tmp_path, sc
 
 
 @pytest.mark.parametrize("feature", ["USE_ESPHOME_VOIP_MWI"])
-def test_native_mwi_projection_coalesces_events_and_video_visibility(tmp_path, feature):
+@pytest.mark.parametrize("adaptive,row_height", [(True, 36), (True, 52), (False, 36)], ids=["round-240", "round-360", "fixed-p4"])
+def test_native_mwi_projection_coalesces_events_and_video_visibility(tmp_path, feature, adaptive, row_height):
     """Execute the actual YAML lambda bodies with minimal LVGL/owner adapters."""
+    from esphome.components.substitutions import do_substitution_pass
+
     projection = yaml_util.load_yaml(PACKAGE / "voicemail.yaml")
     boot = str(projection["esphome"]["on_boot"][0]["then"][0]["lambda"])
     boot = boot.replace("${voicemail_changed_code}", "++refreshes;")
     badge = yaml_util.load_yaml(PACKAGE / "voicemail_badge.yaml")
-    update = str(badge["script"][0]["then"][0]["lambda"])
-    update = update.replace("${_voicemail_visible_code}", "(active == &home || active == &contacts) && assistant_idle")
+    layout = yaml_util.load_yaml(PACKAGE / "phone.yaml")["substitutions"]["_phone_badge_layout"]
+    expanded = do_substitution_pass({
+        "substitutions": {
+            "_voicemail_visible_code": "(active == &home || active == &contacts) && assistant_idle",
+            "_voicemail_layout_code": layout if adaptive else badge["defaults"]["_voicemail_layout_code"],
+        },
+        "script": badge["script"],
+    }, {})
+    update = str(expanded["script"][0]["then"][0]["lambda"])
+    assert "${" not in update
     source = r'''
 #include <cassert>
 #include <functional>
 #define USE_ESPHOME_VOIP_MWI
 #define id(value) value
 constexpr unsigned LV_OBJ_FLAG_HIDDEN=1;
-struct Object { bool hidden=true; unsigned writes=0; } label, home, video, contacts, options;
+constexpr bool ADAPTIVE_CONTACTS=ADAPTIVE_VALUE;
+constexpr int ROW_HEIGHT=ROW_HEIGHT_VALUE;
+struct Object { bool hidden=true; unsigned writes=0; int height=0; unsigned height_writes=0; } label, home, video, contacts, options, container;
+struct ContactView { int row_height=ROW_HEIGHT; int get_row_height() { return row_height; } } contacts_list_view;
+Object *phone_contacts_container=&container;
 struct Page { Object *obj; } page{&home};
 Page *main_page=&page;
 Object *top_voicemail_label=&label, *active=&home;
@@ -150,6 +188,8 @@ Object *lv_disp_get_scr_act(void *) { return active; }
 bool lv_obj_has_flag(Object *object,unsigned) { return object->hidden; }
 void lv_obj_clear_flag(Object *object,unsigned) { object->hidden=false; ++object->writes; }
 void lv_obj_add_flag(Object *object,unsigned) { object->hidden=true; ++object->writes; }
+int lv_obj_get_height(Object *object) { return object->height; }
+void lv_obj_set_height(Object *object,int height) { object->height=height; ++object->height_writes; }
 struct Phone {
  bool waiting=false;
  bool idle=true;
@@ -165,28 +205,41 @@ void install() {
 void sync_badge() {
 ''' + update + r'''
 }
+void assert_rows(unsigned count) {
+ assert(container.height==(ADAPTIVE_CONTACTS ? contacts_list_view.row_height*int(count) : 0));
+}
 int main() {
  install(); assert(refreshes==0 && !ui_voicemail_waiting);
+ sync_badge(); assert(label.hidden && label.writes==0); assert_rows(4);
+ unsigned height_writes=container.height_writes;
+ sync_badge(); assert(container.height_writes==height_writes);
  phone.emit(true); assert(refreshes==1 && ui_voicemail_waiting);
  phone.emit(true); assert(refreshes==1);
- sync_badge(); assert(!label.hidden && label.writes==1);
- sync_badge(); assert(label.writes==1);
- active=&video; sync_badge(); assert(label.hidden && label.writes==2);
- active=&home; sync_badge(); assert(!label.hidden && label.writes==3);
- active=&options; sync_badge(); assert(label.hidden);
- active=&contacts; sync_badge(); assert(!label.hidden);
+ sync_badge(); assert(!label.hidden && label.writes==1); assert_rows(3);
+ height_writes=container.height_writes;
+ sync_badge(); assert(label.writes==1 && container.height_writes==height_writes);
+ active=&video; sync_badge(); assert(label.hidden && label.writes==2); assert_rows(4);
+ active=&home; sync_badge(); assert(!label.hidden && label.writes==3); assert_rows(3);
+ active=&options; sync_badge(); assert(label.hidden); assert_rows(4);
+ active=&contacts; sync_badge(); assert(!label.hidden); assert_rows(3);
  for (int call_state=1;call_state<=4;++call_state) {
-   phone.idle=false; sync_badge(); assert(label.hidden);
-   phone.idle=true; sync_badge(); assert(!label.hidden);
+   phone.idle=false; sync_badge(); assert(label.hidden); assert_rows(4);
+   phone.idle=true; sync_badge(); assert(!label.hidden); assert_rows(3);
  }
- active=&home; assistant_idle=false; sync_badge(); assert(label.hidden);
- assistant_idle=true; sync_badge(); assert(!label.hidden);
+ active=&home; assistant_idle=false; sync_badge(); assert(label.hidden); assert_rows(4);
+ assistant_idle=true; sync_badge(); assert(!label.hidden); assert_rows(3);
+ contacts_list_view.row_height+=4; sync_badge(); assert(!label.hidden); assert_rows(3);
+ height_writes=container.height_writes;
+ sync_badge(); assert(container.height_writes==height_writes);
  phone.emit(false); assert(refreshes==2 && !ui_voicemail_waiting);
- sync_badge(); assert(label.hidden);
- unsigned writes=label.writes; phone.emit(false); sync_badge(); assert(refreshes==2 && label.writes==writes);
+ sync_badge(); assert(label.hidden); assert_rows(4);
+ unsigned writes=label.writes; height_writes=container.height_writes;
+ phone.emit(false); sync_badge(); assert(refreshes==2 && label.writes==writes && container.height_writes==height_writes);
+ if (!ADAPTIVE_CONTACTS) assert(container.height_writes==0);
 }
 '''
     source = source.replace("#define USE_ESPHOME_VOIP_MWI", "#define " + feature)
+    source = source.replace("ADAPTIVE_VALUE", str(adaptive).lower()).replace("ROW_HEIGHT_VALUE", str(row_height))
     cpp = tmp_path / "voicemail.cpp"
     cpp.write_text(source)
     binary = tmp_path / "voicemail"
