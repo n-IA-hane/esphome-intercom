@@ -50,7 +50,8 @@ async def qualify(args):
                  for origin in storage["origins"] if origin["origin"] == args.url
                  for item in origin["localStorage"] if item["name"] == "hassTokens")
     results = {"scenarios": [], "screenshots": [], "browser_errors": [],
-               "capture_proof": [], "lifecycle": [], "cleanup_errors": [], "dtmf_controls": [], "call_requests": []}
+               "capture_proof": [], "lifecycle": [], "cleanup_errors": [], "dtmf_controls": [], "call_requests": [],
+               "audio_sockets": []}
     async with HaWs(args.url, token) as ws:
         # HTTP is available before configured integrations finish setting up.
         # Wait for HA's actual startup state before invoking their commands.
@@ -108,6 +109,10 @@ async def qualify(args):
             """)
             page = await context.new_page()
             def observe_websocket(socket):
+                if urlsplit(socket.url).path == "/api/voip_stack/ws":
+                    record = {"opened": asyncio.get_running_loop().time(), "closed": None}
+                    results["audio_sockets"].append(record)
+                    socket.on("close", lambda: record.update(closed=asyncio.get_running_loop().time()))
                 def observe_control(payload):
                     if not isinstance(payload, str):
                         return
@@ -180,8 +185,193 @@ async def qualify(args):
                 results["capture_proof"].append(proof)
                 assert after - before == expected, proof
 
-            async def bind_page_engine():
-                return await page.evaluate("""async ()=>{
+            async def observe_page_media(browser_page):
+                await browser_page.evaluate("""()=>{
+                    const e=window.__qualificationEngine;
+                    window.__spaMedia={context:e._audioContext,stream:e._mediaStream,ws:e._ws,events:[]};
+                    for(const method of (e.__qualificationMediaTraceWrapped?[]:
+                        ['close','_cleanupAudio','_connect','_setupAudioOrAbort'])){
+                        const original=e[method];
+                        if(typeof original!=='function')continue;
+                        e[method]=function(...args){
+                            const events=window.__spaMedia.events;
+                            if(events.length<100)events.push({at:performance.now(),method,
+                                reason:typeof args[0]==='string'?args[0]:'',
+                                endpoint:this._endpointId,call:this._callId,
+                                stack:new Error().stack.split('\\n').slice(1,5)});
+                            return original.apply(this,args);
+                        };
+                    }
+                    e.__qualificationMediaTraceWrapped=true;
+                    window.__spaSample=()=>({at:performance.now(),active:e.active,state:e._state,
+                        endpoint:e._endpointId,call:e._callId,audio_ready:e._audioReady,
+                        same_context:e._audioContext===window.__spaMedia.context,
+                        context_state:e._audioContext?.state,
+                        same_stream:e._mediaStream===window.__spaMedia.stream,
+                        tracks:e._mediaStream?.getAudioTracks().map(t=>({id:t.id,state:t.readyState})),
+                        same_ws:e._ws===window.__spaMedia.ws,ws_state:e._ws?.readyState,
+                        setup_generation:e._audioSetupGeneration,connect_generation:e._connectGeneration,
+                        capture_count:window.__dashboardCaptureCount||0,stats:e.stats});
+                }""")
+            async def spa_other_phone(call_id, *, answer_after_navigation=False):
+                """Navigate real Lovelace views without replacing the document or media."""
+                await observe_page_media(page)
+                before = await page.evaluate("window.__spaSample()")
+                pending = before
+                samples = []
+                try:
+                    # This is HA's SPA navigation event, not page.goto/reload.
+                    await page.evaluate("""path=>{
+                        history.pushState(null,'',path);
+                        window.dispatchEvent(new CustomEvent('location-changed',{detail:{replace:false}}));
+                    }""", "/lovelace/voip-dashboard-receiver")
+                    visible = page.locator("voip-stack-card")
+                    await expect(visible).to_have_count(1)
+                    await expect(visible).to_be_visible()
+                    await page.wait_for_function("""id=>{
+                        const find=root=>{for(const n of root.querySelectorAll('*')){
+                            if(n.tagName==='VOIP-STACK-CARD'&&n.config?.device_id===id)return true;
+                            if(n.shadowRoot&&find(n.shadowRoot))return true;
+                        }return false;};return find(document);
+                    }""", arg=receiver["device_id"])
+                    if answer_after_navigation:
+                        await peer_card.evaluate("card=>card._answer()")
+                        await connected(call_id)
+                        await page.wait_for_function("window.__qualificationEngine._audioReady===true")
+                        await page.evaluate("""()=>{
+                            const e=window.__qualificationEngine,m=window.__spaMedia;
+                            m.context=e._audioContext;m.stream=e._mediaStream;m.ws=e._ws;
+                        }""")
+                        before = await page.evaluate("window.__spaSample()")
+                    for _ in range(50):
+                        samples.append(await page.evaluate("window.__spaSample()"))
+                        await asyncio.sleep(0.1)
+                    await shot("04-spa-pending-answer" if answer_after_navigation else "04-spa-other-phone-during-owner-call")
+                    for sample in samples:
+                        assert sample["call"] == call_id and sample["endpoint"] == owner["endpoint_id"], sample
+                        assert sample["active"] and sample["audio_ready"] and sample["state"] == "IN_CALL", sample
+                        assert sample["same_context"] and sample["context_state"] == "running", sample
+                        assert sample["same_stream"] and sample["tracks"] == before["tracks"], sample
+                        assert sample["same_ws"] and sample["ws_state"] == 1, sample
+                        for key in ("setup_generation", "connect_generation", "capture_count"):
+                            assert sample[key] == before[key], sample
+                    await connected(call_id)
+                finally:
+                    key = "spa_pending_answer" if answer_after_navigation else "spa_navigation"
+                    results[key] = {"pending":pending,"before": before, "samples": samples,
+                        "events": await page.evaluate("window.__spaMedia.events")}
+                    (args.out / f"{key.replace('_','-')}.json").write_text(json.dumps(results[key], indent=2))
+                    await page.evaluate("""()=>{
+                        history.pushState(null,'','/lovelace/voip-dashboard-qualification');
+                        window.dispatchEvent(new CustomEvent('location-changed',{detail:{replace:false}}));
+                    }""")
+                    await expect(dashboard.locator("h2")).to_have_text(owner["name"], timeout=20000)
+                await connected(call_id)
+                results["scenarios"].append("spa-pending-answer-keeps-original-media-owner" if answer_after_navigation
+                    else "spa-other-phone-keeps-original-media-owner-and-one-capture")
+
+            async def clone_owned_window(call_id, *, without_claims=False):
+                """Exercise the browser's real opener/sessionStorage copy boundary."""
+                await observe_page_media(page)
+                before = await page.evaluate("window.__spaSample()")
+                samples = []
+                copied = None
+                try:
+                    async with page.expect_popup() as opening:
+                        if without_claims:
+                            await page.evaluate("""()=>{
+                                const child=window.open('about:blank','voip-owned-session-copy');
+                                child.sessionStorage.removeItem('voip_stack_owned_softphone_calls');
+                                child.location.href=location.href;
+                            }""")
+                        else:
+                            await page.evaluate("window.open(location.href,'voip-owned-session-copy')")
+                    copied = await opening.value
+                    copied.on("websocket", observe_websocket)
+                    copied.on("pageerror", lambda error: results["browser_errors"].append(f"copied: {error}"))
+                    await expect(copied.locator("voip-stack-dashboard-card h2")).to_have_text(owner["name"], timeout=20000)
+                    await bind_page_engine(copied)
+                    await observe_page_media(copied)
+                    # HA renames both windows to ha-main-window. Read the
+                    # actual Page handles instead of reopening the old name.
+                    async def identity(browser_page):
+                        return await browser_page.evaluate("""async()=>{
+                        const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+                            new TextEncoder().encode(text)))).map(x=>x.toString(16).padStart(2,'0')).join('');
+                        return {client:await hash(window.__qualificationEngine._mediaClientId),
+                            storage:await hash(sessionStorage.getItem('voip_stack_media_client_id')||''),
+                            claims:sessionStorage.getItem('voip_stack_owned_softphone_calls'),
+                            window_name:window.name,has_opener:!!window.opener,
+                            navigation_type:performance.getEntriesByType('navigation')[0]?.type};
+                        }""")
+                    parent_identity = await identity(page)
+                    child_identity = await identity(copied)
+                    identities = {"parent":parent_identity["client"],"child":child_identity["client"],
+                        "parent_document":parent_identity,"child_document":child_identity}
+                    for _ in range(100):
+                        samples.append({"parent":await page.evaluate("window.__spaSample()"),
+                                        "child":await copied.evaluate("window.__spaSample()")})
+                        await asyncio.sleep(0.1)
+                    key = "clone_without_claims" if without_claims else "clone_window"
+                    await page.screenshot(path=str(args.out / f"{key}-parent.png"), full_page=True)
+                    await copied.screenshot(path=str(args.out / f"{key}-child.png"), full_page=True)
+                    results[key] = {"before":before,"identities":identities,"samples":samples,
+                        "parent_events":await page.evaluate("window.__spaMedia.events"),
+                        "child_events":await copied.evaluate("window.__spaMedia.events")}
+                    (args.out / f"{key.replace('_','-')}.json").write_text(json.dumps(results[key], indent=2))
+                    assert identities["parent"] != identities["child"], "Independent documents share a media identity"
+                    for sample in samples:
+                        current = sample["parent"]
+                        assert current["call"] == call_id and current["endpoint"] == owner["endpoint_id"], current
+                        assert current["same_context"] and current["same_stream"] and current["same_ws"], current
+                        assert current["context_state"] == "running" and current["ws_state"] == 1, current
+                        assert current["capture_count"] == before["capture_count"], current
+                        if without_claims:
+                            child = sample["child"]
+                            assert not child["active"] and not child["audio_ready"] and child["capture_count"] == 0, child
+                    results["scenarios"].append("copied-window-without-claims-stays-passive" if without_claims
+                        else "copied-opener-window-keeps-original-media-owner")
+                finally:
+                    if copied is not None:
+                        await copied.close()
+
+            async def reload_owned_window(call_id):
+                """A real document reload releases the old socket and recovers the same call."""
+                identity = await page.evaluate("""async()=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+                    new TextEncoder().encode(window.__qualificationEngine._mediaClientId))))
+                    .map(x=>x.toString(16).padStart(2,'0')).join('')""")
+                await page.reload()
+                await expect(dashboard.locator("h2")).to_have_text(owner["name"], timeout=20000)
+                await bind_page_engine()
+                await page.wait_for_function("""callId=>{
+                    const e=window.__qualificationEngine;
+                    return e.callId===callId&&e._audioReady&&e._ws?.readyState===1&&e._audioContext?.state==='running';
+                }""", arg=call_id, timeout=15000)
+                await connected(call_id)
+                recovered_identity = await page.evaluate("""async()=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+                    new TextEncoder().encode(window.__qualificationEngine._mediaClientId))))
+                    .map(x=>x.toString(16).padStart(2,'0')).join('')""")
+                assert recovered_identity == identity, "A real reload lost its media ownership identity"
+                await observe_page_media(page)
+                before = await page.evaluate("window.__spaSample()")
+                samples = []
+                for _ in range(50):
+                    samples.append(await page.evaluate("window.__spaSample()"))
+                    await asyncio.sleep(0.1)
+                proof = {"identity_before":identity,"identity_after":recovered_identity,"before":before,
+                    "samples":samples,"events":await page.evaluate("window.__spaMedia.events")}
+                results["reload_owned_window"] = proof
+                (args.out / "reload-owned-window.json").write_text(json.dumps(proof, indent=2))
+                for current in samples:
+                    assert current["call"] == call_id and current["endpoint"] == owner["endpoint_id"], current
+                    assert current["same_context"] and current["same_stream"] and current["same_ws"], current
+                    assert current["context_state"] == "running" and current["ws_state"] == 1, current
+                    assert current["capture_count"] == before["capture_count"], current
+                await shot("04-reloaded-owner-keeps-call")
+                results["scenarios"].append("true-document-reload-recovers-the-owned-call")
+
+            async def bind_page_engine(browser_page=page):
+                return await browser_page.evaluate("""async ()=>{
                     const urls=[...new Set(performance.getEntriesByType('resource')
                       .map(entry=>entry.name).filter(name=>new URL(name).pathname.endsWith('/voip-stack-engine.js')))];
                     if(urls.length!==1)throw new Error(`Expected one loaded engine module, got ${urls.length}`);
@@ -266,11 +456,21 @@ async def qualify(args):
                 captures = await capture_count()
                 await target.locator(".tile-main").click()
                 await state("busy")
-                await peer_card.evaluate("card => card._answer()")
+                if args.spa_navigation:
+                    pending_call = (await snapshot(owner))["call_id"]
+                    await spa_other_phone(pending_call, answer_after_navigation=True)
+                else:
+                    await peer_card.evaluate("card => card._answer()")
                 await connected()
                 await one_capture(captures, "outgoing-with-coexisting-phonecard")
                 await expect(dashboard.locator(".owner-call .call-label")).to_be_visible()
                 await shot("04-outgoing-connected")
+                if args.spa_navigation:
+                    await spa_other_phone((await connected())[0]["call_id"])
+                if args.clone_window:
+                    await clone_owned_window((await connected())[0]["call_id"])
+                    await clone_owned_window((await connected())[0]["call_id"], without_claims=True)
+                    await reload_owned_window((await connected())[0]["call_id"])
                 await dashboard.locator(".owner-call .hangup").click()
                 await state("idle")
                 assert any(request["destination"] == peer["name"] and request["device_id"] == owner["device_id"]
@@ -555,6 +755,8 @@ def main():
     parser.add_argument("--owner", default="default")
     parser.add_argument("--video", action="store_true", help="Include a real two-browser video call")
     parser.add_argument("--setup", action="store_true", help="Create dedicated lab views before the test")
+    parser.add_argument("--spa-navigation", action="store_true", help="Verify media ownership across real Lovelace views")
+    parser.add_argument("--clone-window", action="store_true", help="Verify the real opener sessionStorage copy boundary")
     asyncio.run(qualify(parser.parse_args()))
 
 

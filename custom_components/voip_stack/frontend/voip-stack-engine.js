@@ -98,10 +98,15 @@ function mediaClientInstanceId() {
     if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) return existing;
   } catch (_) {}
   try {
-    const existing = String(sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY) || "");
-    if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) {
-      try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = existing; } catch (_) {}
-      return existing;
+    const navigation = globalThis.performance?.getEntriesByType?.("navigation")?.[0];
+    const reloading = navigation ? navigation.type === "reload"
+      : globalThis.performance?.navigation?.type === 1;
+    if (reloading) {
+      const existing = String(sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY) || "");
+      if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) {
+        try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = existing; } catch (_) {}
+        return existing;
+      }
     }
   } catch (_) {}
   let generated = "";
@@ -113,9 +118,9 @@ function mediaClientInstanceId() {
     // Assistant signs the complete path including it before WebSocket use.
     generated = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
-  // Keep the media identity across a reload of this browsing context. The
-  // backend pins every call to this value, so another device cannot race the
-  // originating page and steal its microphone, camera, or RTP sockets.
+  // The backend pins every call to this value. Only a real reload reconnects
+  // the previous document. New tabs can copy sessionStorage but must never
+  // inherit an opener's live media lease.
   try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = generated; } catch (_) {}
   try { sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY, generated); } catch (_) {}
   return generated;

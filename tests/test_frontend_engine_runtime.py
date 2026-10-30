@@ -432,6 +432,8 @@ const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
 session.set("voip_stack_media_client_id", "copied-session-token-1234");
+let navigationType = "reload";
+context.performance = {{ getEntriesByType: () => [{{type:navigationType}}] }};
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
@@ -456,6 +458,27 @@ assert.equal(
   new URL(`https://ha.example${{signedPaths.at(-1)}}`).searchParams.get("endpoint_id"),
   "kitchen",
 );
+
+// Opening/duplicating a tab copies sessionStorage, including call hints.
+// It is a new media client, not an authorized reconnect of the original page.
+navigationType = "navigate";
+session.set("voip_stack_media_client_id", signedA._mediaClientId);
+context.__voipStackMediaClientId = undefined;
+const cloned = new Engine();
+assert.notEqual(cloned._mediaClientId, signedA._mediaClientId);
+assert.equal(new Engine()._mediaClientId, cloned._mediaClientId,
+  "Cards and SPA views in one document keep one media identity");
+navigationType = "reload";
+context.__voipStackMediaClientId = undefined;
+assert.equal(new Engine()._mediaClientId, cloned._mediaClientId,
+  "Reloading the new tab reconnects only its own media identity");
+navigationType = "back_forward";
+context.__voipStackMediaClientId = undefined;
+assert.notEqual(new Engine()._mediaClientId, cloned._mediaClientId,
+  "A new history document cannot inherit an opener's media identity");
+navigationType = "reload";
+session.set("voip_stack_media_client_id", signedA._mediaClientId);
+context.__voipStackMediaClientId = signedA._mediaClientId;
 
 // Snapshot replay and delivery are isolated by explicit endpoint identity.
 const isolated = new Engine();
