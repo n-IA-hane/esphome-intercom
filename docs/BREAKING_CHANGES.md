@@ -12,6 +12,14 @@ For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 > Follow the [device-package migration](#development-firmware-new-device-packages)
 > below.
 
+## 2026.11.1 preview: browser media identity
+
+**End active browser calls before the first dashboard refresh after updating.**
+That refresh replaces the legacy shared media identity with an identity owned
+by the browser window. This one-time change prevents a cloned window from
+taking over another window's call audio. Subsequent page reloads reuse the
+updated identity and can recover that window's active session.
+
 ## 2026.11.1 preview: 4 MB Lite flash layout
 
 **Only the Generic Full Lite 4 MB profile changes its partition table.** Download
@@ -605,8 +613,8 @@ Consequently:
 - do not assume that the aggregate `event.voip_stack_call` identifies one
   particular room phone;
 - do not use browser-card presence as the definition of whether a logical
-  phone exists. An offline browser phone may still ring logically so that
-  timeout and forwarding automations can run.
+  phone exists. An enabled browser phone remains available without an attached
+  card and can ring logically so that timeout and forwarding automations run.
 
 Every phone receives its Device-owned entity IDs from Home Assistant. Select
 entities from the Device instead of constructing an ID from the phone name.

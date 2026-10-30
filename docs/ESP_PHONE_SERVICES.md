@@ -32,6 +32,74 @@ The display shows the current contact and elapsed call time; long names scroll
 within the header. Its call button becomes the red hangup control. Outside a
 call, the keypad composes a number normally.
 
+## The phone on its own display
+
+These captures come from a real 240-pixel ESP display running the maintained
+phone packages. The layout adapts to each supported screen; the services and
+call controls are shared. Contact names shown here are demo entries.
+
+### Scroll through contacts
+
+<img src="images/phone-services/contacts-scroll.gif" width="240" alt="Scrolling contact list on a real ESP display" />
+
+Drag the list vertically to browse the directory, then tap a contact to call.
+The icon on the left identifies an ESP phone, SIP account, browser phone,
+stored contact, automation or group. The name and destination come from the
+shared phonebook. With BLF enabled, the right-hand icon and second line show
+the contact's current call state.
+
+### See who is available and pick up a ringing call
+
+<p>
+  <img src="images/phone-services/contacts-blf.jpg" width="240" alt="Real ESP contact list with Garden ringing and a blinking blue pickup indicator" />
+  <img src="images/phone-services/contacts-held.jpg" width="240" alt="Real ESP contact list with Garage on hold in amber and Garden in a call in red" />
+</p>
+
+_Ringing and pickup on the left; held and active calls on the right._
+
+| Appearance | Meaning | Tap action |
+| --- | --- | --- |
+| Green, idle icon | Available and idle | Call the contact |
+| Blinking blue, ringing icon | An incoming call is ringing | Request directed pickup |
+| Red, call icon | In a call | Call the contact, subject to the PBX's busy policy |
+| Amber, hold icon | A call is on hold | Call the contact, subject to the PBX's busy policy |
+| Gray, unavailable or unknown icon | Closed presence or state unavailable | Attempt a call |
+
+The text and right-hand icon explain the state as well as the color. The left
+icon continues to identify the contact type. A PBX must authorize BLF and
+pickup; a missing presence report remains unknown rather than implying idle.
+
+### Adjust the phone's options
+
+<img src="images/phone-services/options.jpg" width="240" alt="Audio and telephone options on a real ESP display" />
+
+Scroll the options page to reach audio and voice controls, followed by the
+telephone section. Available controls follow the features compiled into the
+firmware. For example, a phone can expose volume, microphone gain, processing
+mode, auto answer and Do Not Disturb. The screen controls the same entities
+available through ESPHome.
+
+### Open voicemail from its waiting indicator
+
+<img src="images/phone-services/voicemail.jpg" width="240" alt="New-message envelope above the real ESP phone's status indicators" />
+
+A new-message notification lights the envelope above the idle view's status
+indicators. Tap it to call the PBX's mailbox. SIP MWI supplies the waiting
+state and mailbox address; the regular SIP/RTP call carries the spoken menu.
+The ESP uses that menu instead of downloading a separate message catalog or
+running a voicemail player.
+
+### Use the same keypad before and during a call
+
+<img src="images/phone-services/dtmf.jpg" width="240" alt="In-call DTMF keypad with the current peer, elapsed time and red hangup control" />
+
+Open the dialpad from the call screen to interact with voicemail or another
+IVR. While connected, each key sends a negotiated RTP telephone event; the
+header shows the peer and elapsed time, and the red control ends the call.
+Opening the keypad keeps the existing audio conversation active. Outside a
+call, the normal dialing page composes a destination and offers the call
+control instead.
+
 ## One phone, one identity
 
 Add the ESP through the usual ESPHome integration. The maintained telephone
@@ -108,6 +176,9 @@ Omitting the feature removes that pool; custom YAML can increase
 `voip_stack.blf.max_subscriptions` to 64 and place its buffers in PSRAM.
 PBX pickup prefixes are configurable (`pickup.` on VoIP Stack, commonly `**`
 on other systems). Access remains subject to the PBX's pickup policy.
+The managed directory automatically watches phone endpoints. Saved contacts,
+groups, automations and services remain callable without automatic SIP watches;
+external LDAP mappings and explicit watches keep their existing behavior.
 
 ## Voicemail through SIP
 
@@ -122,6 +193,8 @@ the spoken menu. A custom PBX can provide a target explicitly through
 The mailbox conversation uses the same SIP audio path, call lifecycle and DTMF
 controls as any other call. A microphone-only or speaker-only profile retains
 its declared direction and must be chosen accordingly for interactive menus.
+Disabling and re-enabling a mailbox in HA retains the SIP account's MWI resource.
+Removing the phone or SIP account retires that resource.
 
 Home Assistant also serves standard IMAP for external phones and mail clients.
 It exposes `INBOX`, persistent UID/UIDVALIDITY, flags, IDLE, partial audio

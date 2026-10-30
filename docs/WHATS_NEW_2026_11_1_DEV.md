@@ -81,6 +81,19 @@ placing or answering a call. Browser video uses the same media engine and
 controls as the existing phone card. A video offer alone keeps the tiles
 visible until a remote frame arrives.
 
+Enabled browser phones remain available in the directory and BLF even when
+their cards are closed. They can ring logically, run call automations and
+accept an answer from a card opened during the ringing window. Attached
+browser clients and the active media owner are tracked separately.
+
+- **Independent browser windows:** opening or cloning another window gives it
+  its own media identity, preserving the current window's call audio. A page
+  reload reuses that document's identity to recover its session.
+- **Clear voicemail identity:** mailbox access displays **Voicemail: Reception**,
+  for example, through answer and connected-party updates.
+- **Mailbox updates:** message changes schedule managed ESP configuration on
+  Home Assistant's event loop, keeping automatic phone updates responsive.
+
 <details>
 <summary>Video call layouts on desktop and mobile</summary>
 
@@ -196,11 +209,14 @@ device name is presented as the caller's name.
   the contact carousel. Tap a ringing contact to perform directed pickup.
   Reachability is shown separately through standard PIDF presence, so an
   offline phone stays unavailable even when its last call is idle.
+  Automatic watches cover phone endpoints; saved contacts and groups remain
+  callable without consuming SIP subscription slots.
 - **Mailbox shortcut and DTMF:** SIP MWI shows an envelope when messages wait.
   Tap it to call the PBX's mailbox menu and use the regular in-call keypad to
   listen, repeat or delete messages. The same SIP audio path serves calls and
   mailbox conversations. A dialpad icon opens the existing keypad during a
   call, showing the contact, elapsed time and red hangup control.
+  Switching voicemail off and on retains the account's MWI resource.
 - **Independent firmware choices:** select `directory`, `blf` and `mwi` in
   `firmware_features`. BLF also works with static contacts and without a display.
   Omitted features remove their client code and reserved pools from the firmware.
@@ -222,6 +238,11 @@ authentication, standalone PBX options, memory controls and migration.
 This prerelease updates the Home Assistant integration and frontend. Existing
 phone-card configurations remain usable; add the dashboard as a separate card
 where you want the operator view.
+
+**Browser-phone migration:** end active browser calls before the first
+dashboard refresh after updating. That refresh replaces legacy shared media
+identities; subsequent reloads preserve the updated window identity for
+session recovery. [Migration details](BREAKING_CHANGES.md#2026111-preview-browser-media-identity).
 
 Keep your existing ESP firmware for the Dashboard update. To try the ESP extensions above, use the current maintained board YAML and
 coordinated `dev` component sources and packages,

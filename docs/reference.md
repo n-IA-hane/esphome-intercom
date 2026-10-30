@@ -175,11 +175,13 @@ automations, entity ownership and config-subentry removal semantics without a
 private HA Core patch.
 
 Common phone options are name, extension, enabled, DND, ring/conference group,
-conference ringing and video capability. A configured browser phone remains a
-routable logical handset even with no card connected: it enters `ringing`,
+conference ringing and video capability. A configured, enabled browser phone
+remains available as a routable logical handset even with no card connected:
+it enters `ringing`,
 automations can act on that state, and a card connected during the ring window
-can answer. Browser presence controls media availability, never dial-plan
-membership. Unregistered SIP accounts may instead reject or forward because
+can answer. `connected_cards` reports attached browser clients separately from
+that logical availability. The browser that answers acquires the call's media
+ownership. Unregistered SIP accounts may instead reject or forward because
 they have no reachable Contact. Each phone owns at most one call; concurrent
 calls receive `486 Busy Here`.
 
