@@ -22,6 +22,11 @@ EVENT_VOICEMAIL_RECEIVED = "voip_stack_voicemail_received"
 EVENT_VOICEMAIL_CHANGED = "voip_stack_voicemail_changed"
 
 
+def mailbox_display_name(endpoint):
+    """Name the mailbox service separately from the phone that owns it."""
+    return f"Voicemail: {endpoint.name}" if endpoint is not None else "Voicemail"
+
+
 def archive_path(hass):
     directories = hass.config.media_dirs
     directory = directories.get("local") or next(iter(directories.values()), None)
@@ -172,7 +177,7 @@ def resolve_mailbox_route(hass, target: str, entries, *, source_endpoint_id=""):
         return RouteDecision(RouteAction.REJECT, target=raw, status=480, reason=RouteReason.TARGET_UNREACHABLE)
     if mode == "access" and endpoint is None:
         return RouteDecision(RouteAction.REJECT, target=raw, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
-    entry = RosterEntry(raw, name=f"Voicemail: {endpoint.name}" if endpoint else "Voicemail",
+    entry = RosterEntry(raw, name=mailbox_display_name(endpoint),
                         metadata={"mailbox_endpoint_id": endpoint.endpoint_id if endpoint else "",
                                   "mailbox_mode": mode})
     return RouteDecision(RouteAction.VOICEMAIL, target=raw, entry=entry, reason=RouteReason.EXPLICIT_ROUTE)

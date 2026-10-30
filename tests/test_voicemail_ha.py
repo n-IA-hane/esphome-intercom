@@ -721,7 +721,14 @@ async def test_enabled_mailbox_reserves_contact_aliases_and_can_be_reconfigured(
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_browser_dials_same_mailbox_destination_as_sip_phone(trunks, tmp_path, monkeypatch):
+@pytest.mark.parametrize("destination,mailbox_id,peer_name", [
+    ("voicemail.kitchen", "kitchen", "Kitchen"),
+    ("*97", "browser", "Voicemail: Browser"),
+    ("mailbox.browser", "browser", "Voicemail: Browser"),
+])
+async def test_browser_dials_same_mailbox_destination_as_sip_phone(
+    trunks, tmp_path, monkeypatch, destination, mailbox_id, peer_name,
+):
     from unittest.mock import AsyncMock
     from homeassistant.core import ServiceCall
     from custom_components.voip_stack import softphone_originate
@@ -751,6 +758,28 @@ async def test_browser_dials_same_mailbox_destination_as_sip_phone(trunks, tmp_p
     source = PhoneEndpoint(endpoint_id="browser", name="Browser", kind=EndpointKind.BROWSER,
                           device_id="browser-device", availability="available")
     lab.runtime.endpoints.register(source)
+    if mailbox_id == source.endpoint_id:
+        from homeassistant.components import tts
+        from custom_components.voip_stack.core.audio_format import AudioFormat
+
+        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+            subentry_type="phone", title=source.name, unique_id="phone:browser",
+            data={"endpoint_id": source.endpoint_id, "name": source.name, "kind": "browser",
+                  "voicemail": {"enabled": True}},
+        ))
+        archive = await get_archive(lab.hass)
+        writer = await archive.begin(source.endpoint_id, caller="Recorded caller")
+        assert writer.offer(bytes(6400), AudioFormat(16000, frame_ms=20))
+        await writer.finish()
+
+        class Speech:
+            def async_set_message(self, _message):
+                pass
+
+            async def async_stream_result(self):
+                yield bytes(640)
+
+        monkeypatch.setattr(tts, "async_create_stream", lambda *_args: Speech())
     lab.hass.states.async_set("sensor.voip_phonebook", "2", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -770,7 +799,7 @@ async def test_browser_dials_same_mailbox_destination_as_sip_phone(trunks, tmp_p
             if application is not None and application.playback is not None:
                 application.playback.attach(recording)
                 application.playback.ready(recording)
-        if event.data.get("event_type") == "voicemail_recording":
+        if event.data.get("event_type") in {"voicemail_recording", "voicemail_menu_ready"}:
             sessions.append(event.data["call_id"])
             recording.set()
 
@@ -778,14 +807,14 @@ async def test_browser_dials_same_mailbox_destination_as_sip_phone(trunks, tmp_p
     try:
         await softphone_originate.async_originate_browser_call(
             ServiceCall(lab.hass, "voip_stack", "call", {
-                "device_id": source.device_id, "destination": "voicemail.kitchen",
+                "device_id": source.device_id, "destination": destination,
                 "media_client_id": "browser-mailbox-caller",
             }), endpoint_id=source.endpoint_id, browser_endpoint=source,
         )
         await asyncio.wait_for(recording.wait(), 3)
         assert not any(phone.invites for phone in lab.phones)
         application = lab.calls.resource_for(sessions[0], "voicemail")
-        assert application is not None and application.mailbox_id == "kitchen"
+        assert application is not None and application.mailbox_id == mailbox_id
         # A real browser attaches audio only while its own participant is
         # connected. The playback adapter above must not hide stale calling
         # state after the mailbox acquires the application owner.
@@ -794,7 +823,11 @@ async def test_browser_dials_same_mailbox_destination_as_sip_phone(trunks, tmp_p
         assert lab.runtime.softphones[source.endpoint_id]["state"] == "in_call"
         assert phone_updates[-1]["state"] == "in_call"
         await asyncio.wait_for(connected_identity.wait(), 3)
-        assert lab.runtime.softphones[source.endpoint_id]["peer_name"] == "Kitchen"
+        assert application.session.callee == peer_name
+        assert application.contact.display_name == peer_name
+        assert lab.runtime.softphones[source.endpoint_id]["peer_name"] == peer_name
+        from custom_components.voip_stack.websocket_api import _ha_softphone_state
+        assert _ha_softphone_state(lab.hass, source.endpoint_id)["peer_name"] == peer_name
         for session in tuple(lab.calls.sessions.values()):
             if session.live:
                 await lab.calls.request_termination(session.call_id, TerminationIntent("test_hangup"))
