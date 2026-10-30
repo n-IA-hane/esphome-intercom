@@ -1,6 +1,7 @@
 """Native ESP configuration, canonical SIP identity and permanent removal."""
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -86,6 +87,38 @@ async def test_one_account_same_password_and_no_secret_event(phone_lab, caplog):
     await lab.controller.async_sync()
     assert len(lab.sent) == 2
     assert managed_records(lab.entry)[lab.device.id].password == first.password
+
+
+async def test_mailbox_event_runs_provisioning_on_ha_loop_and_unsubscribes(phone_lab, monkeypatch):
+    """The real event dispatcher must not send native API work to its executor."""
+    lab = phone_lab
+    loop, thread = asyncio.get_running_loop(), threading.get_ident()
+    completed = asyncio.Event()
+    observed = []
+
+    async def sync():
+        observed.append((asyncio.get_running_loop(), threading.get_ident()))
+        completed.set()
+
+    monkeypatch.setattr(lab.controller, "async_sync", sync)
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    observed.clear()
+    completed.clear()
+
+    lab.hass.bus.async_fire("voip_stack_voicemail_changed", {"endpoint_id": "browser:mailbox"})
+    await asyncio.wait_for(completed.wait(), 1)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert observed == [(loop, thread)]
+    assert lab.controller._task.done()
+    assert not lab.runtime.tasks
+
+    await lab.controller.async_close()
+    observed.clear()
+    lab.hass.bus.async_fire("voip_stack_voicemail_changed", {"endpoint_id": "browser:mailbox"})
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert observed == []
+    assert not lab.runtime.tasks
 
 
 async def test_friendly_rename_changes_presented_name_only(phone_lab):

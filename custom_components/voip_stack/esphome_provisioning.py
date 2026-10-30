@@ -59,7 +59,7 @@ class EspHomeProvisioner:
             self.hass.bus.async_listen(EVENT_SERVICE_REGISTERED, self._service_changed),
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed),
             self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
-            self.hass.bus.async_listen("voip_stack_voicemail_changed", lambda _: self.schedule()),
+            self.hass.bus.async_listen("voip_stack_voicemail_changed", self._mailbox_changed),
             async_dispatcher_connect(self.hass, SIGNAL_CONFIG_ENTRY_CHANGED, self._entry_changed),
         ]
         self.schedule()
@@ -74,6 +74,10 @@ class EspHomeProvisioner:
         while self._dirty and not self._closed:
             self._dirty = False
             await self.async_sync()
+
+    @callback
+    def _mailbox_changed(self, _event):
+        self.schedule()
 
     @callback
     def _service_changed(self, event):
