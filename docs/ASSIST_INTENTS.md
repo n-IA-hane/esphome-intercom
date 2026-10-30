@@ -7,8 +7,9 @@ used as the destination.
 
 Sentence examples are available for [English](../examples/home-assistant/custom_sentences/en/voip_stack.yaml),
 [Italian](../examples/home-assistant/custom_sentences/it/voip_stack.yaml),
-[German](../examples/home-assistant/custom_sentences/de/voip_stack.yaml) and
-[Czech](../examples/home-assistant/custom_sentences/cs/voip_stack.yaml).
+[German](../examples/home-assistant/custom_sentences/de/voip_stack.yaml),
+[Czech](../examples/home-assistant/custom_sentences/cs/voip_stack.yaml) and
+[French](../examples/home-assistant/custom_sentences/fr/voip_stack.yaml).
 The German sentences and the proposal for customizable responses were
 contributed by [Gafielt](https://github.com/Gafielt) in
 [PR #137](https://github.com/n-IA-hane/esphome-intercom/pull/137).
