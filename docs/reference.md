@@ -40,7 +40,7 @@ voip_stack:
 | `static_contacts` | Optional local contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. Current managed phones read the HA directory through LDAP. |
 | `use_ha_as_first_contact` | Select the HA peer after the first roster population. |
 | `ha_phonebook_text_sensor_id` | Optional legacy sensor binding. Managed LDAP phones use the shared directory; older firmware uses the native JSON action. |
-| `ha_integration.auto_register` | Opt in to automatic HA SIP account provisioning. Enabled by maintained HA phone packages, false in the generic component. Optional LDAP and IMAP clients can share that account. |
+| `ha_integration.auto_register` | Opt in to automatic HA SIP account provisioning. Enabled by maintained HA phone packages, false in the generic component. The optional LDAP directory and SIP mailbox calls share that account. |
 | `ha_integration.endpoint` | Legacy capability text sensor, disabled by default. Current managed phones use REGISTER, OPTIONS and call SDP. |
 | `delete_contact_missing_from` | Optional stale-contact pruning policy with `updates_number: 1..10`. |
 | `ringing_timeout` / `calling_timeout` | Optional local guard timers, disabled when omitted. Maintained profiles leave these unset so the PBX can control ringing. SIP transaction timers remain active. |

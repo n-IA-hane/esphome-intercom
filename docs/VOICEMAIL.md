@@ -1,6 +1,8 @@
 # Voicemail
 
-This guide describes the implementation on the `dev` branch. It is not available in the current stable release.
+The Home Assistant mailbox and spoken menu are available in 2026.11.0.
+The coordinated 2026.11.1 development firmware adds standard ESP MWI and an
+in-call DTMF keypad.
 
 A mailbox belongs to a phone, not to a dashboard card. SIP phones and the HA
 softphone call the same voicemail application. The card displays message
@@ -8,11 +10,12 @@ metadata; listening and deleting use the ordinary call and keypad commands.
 
 ## ESP display mailboxes in 2026.11.1-dev
 
-The development firmware uses standard SIP MWI for the idle envelope and IMAP
-for the message list, playback, read state and deletion. Tap the envelope or
-open Voicemail from Contacts. The same HA-generated account authenticates SIP,
-LDAP and IMAP. See [standard phone services](ESP_PHONE_SERVICES.md) for setup,
-paging, standalone PBX settings and supported protocol boundaries.
+The development firmware uses standard SIP MWI for the idle envelope. Tap it
+to call the PBX's mailbox address, then use the in-call keypad for the spoken
+menu. Listening uses the existing SIP/RTP audio path. Home Assistant's IMAP
+service remains available to external phones and mail clients.
+See [standard phone services](ESP_PHONE_SERVICES.md) for setup, standalone PBX
+settings and memory controls.
 
 ## Configure the mailbox and menu voice
 

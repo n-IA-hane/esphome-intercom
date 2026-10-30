@@ -17,6 +17,7 @@ void PhoneListView::setup() {
   this->slots_.reset(pool);
   if (!this->slots_) { this->mark_failed(); return; }
   this->screen_ = lv_obj_get_screen(this->parent_);
+  lv_obj_remove_flag(this->parent_, LV_OBJ_FLAG_SCROLL_ELASTIC);
   this->spacer_ = lv_obj_create(this->parent_);
   lv_obj_remove_style_all(this->spacer_);
   lv_obj_set_width(this->spacer_, 1);
@@ -97,6 +98,13 @@ void PhoneListView::refresh() {
       this->paint_(slot, first + i);
     }
   }
+  // A list can consume a drag even at its boundary. Restrict its directions
+  // to actual content so an outward swipe reaches the screen's existing
+  // navigation gesture, while drags inside the list still scroll normally.
+  lv_obj_update_layout(this->parent_);
+  lv_obj_set_scroll_dir(this->parent_, static_cast<lv_dir_t>(
+      (lv_obj_get_scroll_top(this->parent_) > 0 ? LV_DIR_TOP : LV_DIR_NONE) |
+      (lv_obj_get_scroll_bottom(this->parent_) > 0 ? LV_DIR_BOTTOM : LV_DIR_NONE)));
   this->repainting_ = false;
 }
 

@@ -18,7 +18,7 @@ substitutions:
   gmf_ai_audio_source: ""
   name: generic-s3-audio-video
   friendly_name: Generic S3 Audio Video
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics, video]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics, video]
 
   # Select the actual module memory. Full audio/video needs PSRAM and sufficient OTA space.
   board_type: freenove_esp32_s3_wroom

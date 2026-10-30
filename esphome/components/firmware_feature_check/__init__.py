@@ -10,6 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 FEATURES = (
     "voice", "wake_word", "voip", "music", "sendspin", "timers",
     "display", "status_led", "diagnostics", "sensor_dock", "video",
+    "directory", "blf", "mwi",
 )
 # Diagnostic descriptions of the native package conditions. This checker never
 # enables a component, supplies a missing dependency or changes the selection.
@@ -18,6 +19,9 @@ REQUIRES = {
     "timers": ("voice",),
     "sendspin": ("music",),
     "video": ("voip",),
+    "directory": ("voip",),
+    "blf": ("voip",),
+    "mwi": ("voip",),
 }
 
 

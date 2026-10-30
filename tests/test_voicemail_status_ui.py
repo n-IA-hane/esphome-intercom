@@ -22,6 +22,32 @@ SCENES = {
 }
 
 
+@pytest.mark.parametrize("relative,font,position,screen", [
+    (SCENES["box"], "font_clock", "72%", "idle_page"),
+    (SCENES["spotpear"], "font_clock", "72%", "idle_page"),
+    (SCENES["p4-landscape"], "font_body", "6", "main_page"),
+    (SCENES["p4-portrait"], "font_body", "6", "main_page"),
+    ("yamls/voip-only/single-bus/spotpear-ball-v2-voip.yaml", "font_clock", "72%", "call_idle_page"),
+    ("yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml", "videophone_small_font", "6", "videophone_page"),
+])
+def test_mwi_only_preserves_the_callers_badge_parameters_across_nested_packages(tmp_path, relative, font, position, screen):
+    """Exercise native package scoping without regenerating binary image assets."""
+    from esphome.core import CORE
+    from esphome.components.packages import do_packages_pass, merge_packages
+    from esphome.components.substitutions import do_substitution_pass
+
+    config = device_config(tmp_path, ["voip", "display", "mwi", "diagnostics"], relative)
+    CORE.config_path = config
+    document = merge_packages(do_substitution_pass(do_packages_pass(yaml_util.load_yaml(config)), {}))
+    label = next(node for node in nodes(document.get("lvgl", {})) if str(node.get("id")) == "top_voicemail_label")
+    assert str(label["text_font"]) == font and str(label["y"]) == position
+    action = next(node for node in document["script"] if str(node.get("id")) == "update_voicemail_status")
+    assert f"id({screen})" in text(action)
+    assert "voice_assistant_phase" not in text(action), "MWI does not depend on the voice feature"
+    assert "call_mailbox()" in text(label["on_short_click"])
+    assert "imap_voicemail" not in document and "ui_voicemail_active" not in text(document.get("globals", []))
+
+
 def _expanded(tmp_path, scene, *, voip=True, extra_voip=None, extra_components=None):
     original = yaml_util.load_yaml(ROOT / SCENES[scene])
     features = list(original["substitutions"]["firmware_features"])
@@ -41,6 +67,7 @@ def _expanded(tmp_path, scene, *, voip=True, extra_voip=None, extra_components=N
         capture_output=True, text=True, timeout=180,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    (tmp_path / "validation.log").write_text(result.stderr)
     assert "Could not resolve substitution" not in result.stderr
     expanded = tmp_path / "expanded.yaml"
     expanded.write_text(result.stdout)
@@ -63,11 +90,17 @@ def test_voicemail_composes_with_standard_registered_phone_services(tmp_path, sc
         assert document["voip_stack"]["registration"]["message_waiting"] is True
         boot = text(document["esphome"]["on_boot"])
         assert boot.count("add_on_message_waiting_callback") == 1
-        assert "USE_ESPHOME_VOIP_MWI" in boot
+        assert "mwi" in document["substitutions"]["firmware_features"]
         assert "has_waiting_messages()" in boot
     else:
         assert "voip_stack" not in document
         assert "add_on_message_waiting_callback" not in text(document)
+        assert not {"ldap_directory", "imap_voicemail", "phone_list_view"} & document.keys()
+        assert not {"phone_directory", "phone_voicemail", "contacts_list_view", "phone_voicemail_page", "top_voicemail_label"} & ids
+        for feature in ("directory", "blf", "mwi"):
+            assert f"feature '{feature}' is disabled: requires voip" in (tmp_path / "validation.log").read_text()
+        assert not any({"ldap_directory", "imap_voicemail", "phone_client"} & set(item.get("components", []))
+                       for item in document.get("external_components", []))
     font = next(item for item in document["font"] if str(item["id"]) == ("font_body" if scene.startswith("p4") else "font_clock"))
     glyphs = "".join(char for extra in font.get("extras", []) for char in extra["glyphs"])
     assert (GLYPH in glyphs) is voip
@@ -172,7 +205,6 @@ def test_pbx_only_phone_preserves_disabled_ha_adapter_and_native_mwi(tmp_path, s
         "registration": {"message_waiting": True},
     }, extra_components={
         "ldap_directory": {"managed_by_ha": False},
-        "imap_voicemail": {"managed_by_ha": False},
     })
     assert document["voip_stack"]["ha_integration"] is False
     assert document["voip_stack"]["registration"]["message_waiting"] is True

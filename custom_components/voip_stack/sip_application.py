@@ -25,6 +25,11 @@ from .sip_registrar import SipRegistrar
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sixty-four dialog/presence pairs plus four account MWI usages. The global
+# owner remains bounded while preserving the former aggregate watch capacity.
+MAX_EVENT_USAGES_PER_SUBSCRIBER = 132
+MAX_EVENT_USAGES = 512
+
 
 @dataclass(slots=True)
 class SipApplicationMethods:
@@ -107,6 +112,18 @@ class SipApplicationMethods:
                     return SipRequestResult(404, "Not Found")
                 if request.body:
                     return SipRequestResult(415, "Unsupported Media Type")
+            elif event == "presence":
+                from .runtime_data import runtime_data
+
+                try:
+                    target = sip.parse_sip_uri(request.uri).user
+                    runtime = runtime_data(self.hass)
+                    registry = runtime.endpoints if runtime is not None else None
+                    endpoint = registry.resolve(target) if registry is not None else None
+                except (ValueError, sip.SipError):
+                    return SipRequestResult(400, "Bad Request")
+                if endpoint is not None:
+                    dialog_endpoint_id = endpoint.endpoint_id
             if event == "message-summary":
                 from .mailbox import get_archive, mailbox_settings, EVENT_VOICEMAIL_CHANGED
                 from .runtime_data import endpoint_directory
@@ -132,8 +149,9 @@ class SipApplicationMethods:
                 mailbox_id=mailbox_id,
                 dialog_endpoint_id=dialog_endpoint_id,
             )
-            if (event == "dialog" and result.status == 200 and self.dialog_unsubscribe is None
-                    and any(item.event == "dialog" for item in self.subscriptions.values())):
+            if (event in {"dialog", "presence"} and result.status == 200 and self.dialog_unsubscribe is None
+                    and any(item.event in {"dialog", "presence"} and item.dialog_endpoint_id
+                            for item in self.subscriptions.values())):
                 from .phone_state import phone_state_observer
 
                 self.dialog_unsubscribe = phone_state_observer(self.hass).subscribe(
@@ -188,7 +206,8 @@ class SipApplicationMethods:
             subscriber = account.username if account is not None else f"trunk:{trusted_trunk}"
             owned = {id(item): item for item in self.subscriptions.values()}
             owned.update(self.notifiers)
-            if len(owned) >= 256 or sum(item.subscriber == subscriber for item in owned.values()) >= 64:
+            if (len(owned) >= MAX_EVENT_USAGES or
+                    sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
                 self.rejected_subscriptions += 1
                 return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
             tag = secrets.token_hex(8)
@@ -349,7 +368,9 @@ class SipApplicationMethods:
             return SipRequestResult(403, "Forbidden")
         target_account = self.registrar.accounts.get(target.lower())
         if event != "dialog" and (target_account is None or not target_account.enabled):
-            return SipRequestResult(404, "Not Found")
+            if (event != "presence" or not dialog_endpoint_id
+                    or (target_account is not None and not target_account.enabled)):
+                return SipRequestResult(404, "Not Found")
 
         _package, parameters = sip._split_semicolon_params(request.header("Event"))
         event_id = dict(parameters).get("id") or ""
@@ -362,8 +383,8 @@ class SipApplicationMethods:
             return SipRequestResult(481, "Call/Transaction Does Not Exist")
         owned = {id(item): item for item in subscriptions.values()}
         owned.update(self.notifiers)
-        if current is None and (len(owned) >= 256 or
-                sum(item.subscriber == subscriber for item in owned.values()) >= 64):
+        if current is None and (len(owned) >= MAX_EVENT_USAGES or
+                sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
             self.rejected_subscriptions += 1
             return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
         to_tag = current.to_tag if current is not None else secrets.token_hex(8)
@@ -447,6 +468,16 @@ class SipApplicationMethods:
         else:
             publication = self._publication(subscription.target)
             body = publication.body if publication is not None else _closed_pidf(subscription.target)
+            if subscription.dialog_endpoint_id:
+                from .phone_endpoint import EndpointAvailability
+                from .runtime_data import runtime_data
+
+                runtime = runtime_data(self.hass)
+                endpoint = runtime.endpoints.get(subscription.dialog_endpoint_id) if runtime is not None else None
+                available = endpoint is not None and endpoint.availability is EndpointAvailability.AVAILABLE
+                subscription.dialog_snapshot = (available,)
+                body = _endpoint_pidf(_uri_from_header(subscription.request.header("To")), available,
+                                      publication.body if publication is not None else None)
             content_type = "application/pidf+xml"
         state = f"terminated;reason={termination_reason}" if terminated else f"active;expires={expires}"
         cseq = subscription.dialog.local_cseq
@@ -562,13 +593,20 @@ class SipApplicationMethods:
         runtime = require_runtime_data(self.hass)
         dialogs = snapshot_all(runtime) if dialogs is None else dialogs
         for subscription in tuple((self.subscriptions or {}).values()):
-            if subscription.event != "dialog" or (endpoint_id and endpoint_id != subscription.dialog_endpoint_id):
+            if (subscription.event not in {"dialog", "presence"} or not subscription.dialog_endpoint_id
+                    or (endpoint_id and endpoint_id != subscription.dialog_endpoint_id)):
                 continue
             removed = runtime.endpoints.get(subscription.dialog_endpoint_id) is None
-            if subscription.dialog_endpoint_id.startswith("parking:"):
+            if subscription.event == "dialog" and subscription.dialog_endpoint_id.startswith("parking:"):
                 from .parking import parking_address
                 removed = parking_address(self.hass, subscription.dialog_endpoint_id.removeprefix("parking:")) is None
-            states = filter_dialogs(dialogs.get(subscription.dialog_endpoint_id, ()), subscription.dialog_filter)
+            if subscription.event == "presence":
+                from .phone_endpoint import EndpointAvailability
+
+                endpoint = runtime.endpoints.get(subscription.dialog_endpoint_id)
+                states = (endpoint is not None and endpoint.availability is EndpointAvailability.AVAILABLE,)
+            else:
+                states = filter_dialogs(dialogs.get(subscription.dialog_endpoint_id, ()), subscription.dialog_filter)
             if not removed and states == subscription.dialog_snapshot:
                 continue
             if removed:
@@ -582,7 +620,8 @@ class SipApplicationMethods:
         self._release_dialog_observers_if_unused()
 
     def _release_dialog_observers_if_unused(self):
-        if any(item.event == "dialog" for item in (self.subscriptions or {}).values()):
+        if any(item.event in {"dialog", "presence"} and item.dialog_endpoint_id
+               for item in (self.subscriptions or {}).values()):
             return
         for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
@@ -1007,3 +1046,31 @@ def _closed_pidf(target: str) -> bytes:
         f'entity="sip:{target}@localhost"><tuple id="phone">'
         "<status><basic>closed</basic></status></tuple></presence>"
     ).encode()
+
+
+def _endpoint_pidf(uri: str, available: bool, publication: bytes | None = None) -> bytes:
+    """Compose SIP reachability without modifying an explicit publication lease."""
+    if publication is not None and available:
+        return publication
+    namespace = "{urn:ietf:params:xml:ns:pidf}"
+    if publication is None:
+        document = ElementTree.Element(namespace + "presence", {"entity": uri})
+        part = ElementTree.SubElement(document, namespace + "tuple", {"id": "phone"})
+        status = ElementTree.SubElement(part, namespace + "status")
+        ElementTree.SubElement(status, namespace + "basic").text = "open" if available else "closed"
+        ElementTree.SubElement(part, namespace + "contact").text = uri
+    else:
+        document = ElementTree.fromstring(publication)
+        statuses = document.findall(f"{namespace}tuple/{namespace}status")
+        if not statuses:
+            used = {part.get("id") for part in document.findall(namespace + "tuple")}
+            identity = "reachability"
+            while identity in used:
+                identity += "-1"
+            part = ElementTree.SubElement(document, namespace + "tuple", {"id": identity})
+            statuses = [ElementTree.SubElement(part, namespace + "status")]
+        for status in statuses:
+            basics = status.findall(namespace + "basic") or [ElementTree.SubElement(status, namespace + "basic")]
+            for basic in basics:
+                basic.text = "closed"
+    return ElementTree.tostring(document, encoding="utf-8")

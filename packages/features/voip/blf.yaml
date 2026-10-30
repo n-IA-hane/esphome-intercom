@@ -1,0 +1,7 @@
+# Watch the existing phonebook, including contacts declared manually in YAML.
+voip_stack:
+  blf:
+    max_subscriptions: 16
+    presence: true
+    buffers_in_psram: true
+    pickup_prefix: pickup.

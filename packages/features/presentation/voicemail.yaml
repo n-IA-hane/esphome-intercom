@@ -13,7 +13,6 @@ esphome:
   - priority: -250
     then:
     - lambda: |-
-        #if defined(USE_ESPHOME_VOIP_MWI)
         auto refresh = []() {
           const bool waiting = id(phone).has_waiting_messages();
           if (id(ui_voicemail_waiting) == waiting) return;
@@ -22,4 +21,3 @@ esphome:
         };
         id(phone).add_on_message_waiting_callback(refresh);
         refresh();
-        #endif

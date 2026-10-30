@@ -4,8 +4,7 @@
 The page, theme, fonts and settings synchronization scripts are imported, never
 redrawn. Only hardware data owners are replaced with host data entities. Pass
 the output of ``esphome config`` as --input, including generated owner defaults.
-Build storage may be
-placed on a RAM-backed parent with --build-parent.
+Use a persistent disk directory with --build-parent.
 """
 from __future__ import annotations
 
@@ -234,6 +233,14 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     top_layer = copy.deepcopy(lvgl.get("top_layer", {}))
     source = [page, phone_pages, scripts, registrations, top_layer]
     declared = widget_ids([page, *phone_pages], top_layer) | {str(script["id"]) for script in scripts}
+    keypad = config.get("call_keypad")
+    keypad = copy.deepcopy(keypad) if keypad and {str(keypad["name_label_id"]), str(keypad["duration_label_id"])} <= declared else None
+    keypad_visibility = []
+    if keypad:
+        keypad_visibility = [copy.deepcopy(action) for action in config.get("lvgl_visibility", {}).get("on_change", [])
+                             if "call_keypad_ui" in "\n".join(strings(action))]
+        source.append(keypad_visibility)
+        declared |= {str(keypad["id"]), "display_visibility"}
     if pointer:
         declared |= {"idle_anim", "idle_page"}
     required = references(source) - declared
@@ -266,7 +273,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     context_policy = policy + (page_selector(config) if pointer else "")
     context_pages = sorted(references(Lambda(context_policy)) - declared - {page_id})
     context_pages = [name for name in context_pages if any(str(p.get("id")) == name for p in lvgl["pages"])]
-    context_pages = sorted(set(context_pages) | {"main_page"})
+    declared_pages = {str(item["id"]) for item in lvgl["pages"]}
+    context_pages = sorted(set(context_pages) | (required & declared_pages) | {"main_page"})
     if pointer:
         context_pages = sorted(set(context_pages) | {"idle_page"})
     contextual = []
@@ -275,6 +283,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         contextual.append({"id": name, "bg_color": original.get("bg_color", 0x202020),
                            **{key: copy.deepcopy(value) for key, value in original.items()
                               if key in ("scrollable", "on_swipe_up", "on_swipe_down")}})
+        # A retained context gesture can reference another real page.
+        context_pages.extend(sorted((references(contextual[-1]) & declared_pages) - set(context_pages)))
     required |= references(contextual) - declared
     target.update({"id": "render_lvgl", "displays": ["render_display"],
                    "pages": contextual
@@ -358,6 +368,11 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             host["ui_fixture"]["video_id"] = owner
         else:
             raise ValueError(f"No host data owner for {owner!r}; refusing to remove production callbacks")
+    if keypad:
+        host.setdefault("external_components", []).append({"source": str(ROOT / "esphome/components"),
+                                                           "components": ["call_keypad", "lvgl_visibility"]})
+        host["call_keypad"] = keypad
+        host["lvgl_visibility"] = {"id": "display_visibility", "on_change": keypad_visibility}
     if not pointer:
         host["script"].append({"id": "settings_close", "then": [
             {"lambda": Lambda("id(ui_navigation_events)++; id(settings_active) = false;")},
@@ -685,6 +700,10 @@ def make_status_config(config, page_id, width, height, build_parent):
         raise ValueError("Production phone-idle boundary changed")
     owner["then"][0]["lambda"] = Lambda(body.replace("id(phone).is_idle()", "id(status_phone_idle)"))
     host["script"].append(owner)
+    # The unchanged badge callback still crosses its native phone boundary.
+    if "phone" in references(top):
+        host["external_components"] = [{"source": str(ROOT / "tests/fixtures/lvgl_host"), "components": ["ui_fixture"]}]
+        host["ui_fixture"] = {"phone_id": "phone"}
     host["globals"].append({"id": "status_phone_idle", "type": "bool", "initial_value": "true"})
     original_pages = {str(item["id"]): item for item in lvgl["pages"]}
     supplied = {str(item["id"]) for item in host["globals"]} | {"update_voicemail_status", "top_voicemail_label", page_id}

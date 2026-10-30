@@ -166,7 +166,8 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert any(node.get('text') == '\U000F006E' for node in nodes(dialer))
     assert 'voip_dial_backspace' in values_text(dialer)
     assert "if (x == 2) return '#';" in values_text(dialer)
-    assert not any(node.get('text') == '*' for node in nodes(dialer))
+    assert any(node.get('text') == '*' for node in nodes(dialer))
+    assert 'id(phone).send_dtmf' in values_text(config['script'])
     code = values_text(config['script'])
     assert 'circle_half_chord' not in code
     contacts = by_id(config['phone_list_view'], 'contacts_list_view')
@@ -203,10 +204,7 @@ def test_standalone_ringtone_uses_the_file_source_and_player_owner(relative) -> 
     assert player['platform'] == 'speaker_source'
     assert float(player['volume_initial']) == 1.0
     pipeline = player['announcement_pipeline']
-    expected_sources = ['ringtone_file_source']
-    if config.get('imap_voicemail'):
-        expected_sources.append('phone_voicemail')
-    assert pipeline['sources'] == expected_sources
+    assert pipeline['sources'] == ['ringtone_file_source']
     assert sum(row.get('id') == 'speaker_media_player' for row in config['media_player']) == 1
     assert int(pipeline['sample_rate']) == 48000
     assert int(pipeline['num_channels']) == 1

@@ -1,19 +1,18 @@
-# One HA-managed SIP identity also authenticates standard LDAP and IMAP.
+# Shared account identity. Each optional phone service is selected independently.
 api:
   custom_services: true
 external_components:
 - source: ${voip_stack_components_source}
-  components: [voip_stack, ldap_directory, phone_client]
+  components: [voip_stack]
 voip_stack:
   id: phone
   ha_integration:
     auto_register: true
-  registration:
-    message_waiting: true
-ldap_directory:
-  id: phone_directory
-  voip_stack_id: phone
-  account_id: ha
-  managed_by_ha: true
-  task_stack_in_psram: true
-  buffer_in_psram: true
+defaults:
+  _phone_directory_feature: !include directory.yaml
+  _phone_blf_feature: !include blf.yaml
+  _phone_mwi_feature: !include mwi.yaml
+packages:
+  directory: ${ _phone_directory_feature if 'voip' in firmware_features and 'directory' in firmware_features else {} }
+  blf: ${ _phone_blf_feature if 'voip' in firmware_features and 'blf' in firmware_features else {} }
+  mwi: ${ _phone_mwi_feature if 'voip' in firmware_features and 'mwi' in firmware_features else {} }

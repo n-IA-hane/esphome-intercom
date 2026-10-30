@@ -1,4 +1,4 @@
-# First-generation round call pages and their lifecycle. No keypad is added.
+# First-generation round call pages and their lifecycle. The display adapter supplies its in-call keypad.
 packages:
   lifecycle: !include 'lifecycle.yaml'
   navigation: !include '../../../lvgl/spotpear_voip/nav_full.yaml'
@@ -80,7 +80,6 @@ script:
 - id: update_call_idle_labels
   then:
   - lambda: id(peer_name) = id(phone).get_current_destination();
-  - phone_list_view.refresh: contacts_list_view
 globals:
 - id: previous_mode
   type: int

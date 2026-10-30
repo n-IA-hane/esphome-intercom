@@ -148,13 +148,15 @@ There is one product mode: SIP-only phone mode. Phonebook, contacts,
 destination and caller entities are always exposed. `transport: udp` selects
 SIP/UDP signaling and `transport: tcp` selects SIP/TCP signaling; audio remains
 RTP/UDP in the current profile. Static contacts are optional local entries for
-offline/custom installs; normal shared routing comes from `sensor.voip_phonebook`.
+offline/custom installs. The `directory` feature reads the shared phonebook
+through standard LDAP; manual contacts remain available without it.
 
 ## Select firmware features
 
 Each supplied profile includes one complete device package. Edit its existing
 `firmware_features` substitution to select voice, wake word, telephone, music,
-Sendspin, timers and the hardware options offered by that profile. The matching
+Sendspin, timers, the independent `directory`, `blf`, `mwi` services,
+and the hardware options offered by that profile. The matching
 callbacks, controls and presentation follow that selection.
 
 See the [package guide](../packages/README.md) for the feature table, dependencies,

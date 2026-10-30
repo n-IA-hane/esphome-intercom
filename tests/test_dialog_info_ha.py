@@ -104,6 +104,102 @@ async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscript
     assert methods.dialog_unsubscribe is None and methods.endpoint_unsubscribe is None
 
 
+async def test_presence_tracks_reachability_when_the_dialog_document_stays_empty(lab, blf):
+    """An empty RFC4235 dialog list cannot announce whether a phone is online."""
+    from custom_components.voip_stack.phone_endpoint import EndpointAvailability
+
+    methods, notifications, send = blf
+    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
+    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.OFFLINE)
+    presence = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="presence-101"),
+                                    ("127.0.0.3", 5060), "UDP", send)
+    assert presence.status == 200
+    presence.follow_up_scheduler()
+    first = await asyncio.wait_for(notifications.get(), 1)
+    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
+    assert ElementTree.fromstring(first.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
+    dialog = await methods.handle(subscribe(call_id="dialog-101"), ("127.0.0.3", 5060), "UDP", send)
+    dialog.follow_up_scheduler()
+    assert not ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body).findall("d:dialog", NS)
+    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.AVAILABLE)
+    online = await asyncio.wait_for(notifications.get(), 1)
+    assert dict(online.headers)["Event"] == "presence"
+    assert ElementTree.fromstring(online.body).find("p:tuple/p:status/p:basic", ns).text == "open"
+    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.OFFLINE)
+    offline = await asyncio.wait_for(notifications.get(), 1)
+    assert ElementTree.fromstring(offline.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
+    await lab.hass.async_block_till_done()
+    assert notifications.empty() and not lab.calls.sessions
+
+
+async def test_presence_without_dialog_subscriber_owns_and_releases_the_shared_observer(lab, blf):
+    methods, notifications, send = blf
+    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
+    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="presence-only"),
+                                  ("127.0.0.3", 5060), "UDP", send)
+    assert result.status == 200 and methods.dialog_unsubscribe is not None
+    result.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    lab.runtime.endpoints.remove("sip:bedroom0")
+    final = await asyncio.wait_for(notifications.get(), 1)
+    assert dict(final.headers)["Subscription-State"] == "terminated;reason=noresource"
+    assert not methods.subscriptions and methods.dialog_unsubscribe is None
+
+
+@pytest.mark.parametrize("kind", ["browser", "esphome", "sip_account"])
+async def test_known_endpoint_presence_needs_no_shadow_sip_account(lab, blf, kind):
+    methods, notifications, send = blf
+    assert "101" not in methods.registrar.accounts
+    lab.runtime.endpoints.update("sip:bedroom0", kind=kind, availability="available")
+    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="canonical-kind"),
+                                  ("127.0.0.3", 5060), "UDP", send)
+    assert result.status == 200
+    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
+    root = ElementTree.fromstring(result.follow_up.body)
+    assert root.attrib["entity"] == "sip:101@127.0.0.1"
+    assert root.find("p:tuple/p:status/p:basic", ns).text == "open"
+    result.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
+    closed = await asyncio.wait_for(notifications.get(), 1)
+    assert ElementTree.fromstring(closed.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
+    lab.runtime.endpoints.update("sip:bedroom0", dnd=True)
+    await lab.hass.async_block_till_done()
+    assert notifications.empty()
+
+
+@pytest.mark.parametrize("published_basic", ["open", "closed"])
+async def test_presence_composition_keeps_the_explicit_publication_lease_and_metadata(lab, blf, published_basic):
+    methods, notifications, send = blf
+    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
+    methods.registrar.registrations["101"] = SipRegistration(username="101", contact_uri="sip:101@127.0.0.4:5060",
+        source_host="127.0.0.4", source_port=5060, transport="UDP", expires_at=time.time() + 300)
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    body = ('<presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:101@127.0.0.1"><tuple id="publisher"><status><basic>'
+            + published_basic + '</basic></status><note>On shift</note></tuple></presence>').encode()
+    published = await methods.handle(sip.parse_message(sip.build_request("PUBLISH", "sip:101@127.0.0.1", [
+        ("From", "<sip:101@127.0.0.1>;tag=publisher"), ("To", "<sip:101@127.0.0.1>"),
+        ("Call-ID", "publication"), ("CSeq", "1 PUBLISH"), ("Event", "presence"),
+        ("Content-Type", "application/pidf+xml"), ("Expires", "300")], body)), ("127.0.0.4", 5060), "UDP", send)
+    assert published.status == 200
+    tag = dict(published.headers)["SIP-ETag"]
+    stored = methods.publications[tag]
+    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="publisher-watch"),
+                                  ("127.0.0.3", 5060), "UDP", send)
+    result.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
+    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
+    closed = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
+    assert closed.find("p:tuple/p:status/p:basic", ns).text == "closed"
+    assert closed.find("p:tuple/p:note", ns).text == "On shift"
+    assert methods.publications[tag] is stored and ("<basic>" + published_basic + "</basic>").encode() in stored.body
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    opened = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
+    assert opened.find("p:tuple/p:status/p:basic", ns).text == published_basic
+    assert opened.find("p:tuple/p:note", ns).text == "On shift"
+
+
 @pytest.mark.parametrize("changes,status", [
     ({"tag": "unknown"}, 481), ({"accept": "application/pidf+xml"}, 406),
     ({"event": "dialog;from-tag=alone"}, 400), ({"expires": -1}, 400),

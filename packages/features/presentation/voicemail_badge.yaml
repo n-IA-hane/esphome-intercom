@@ -1,9 +1,5 @@
 # One shared, event-driven envelope badge; each presentation supplies its idle-page predicate.
 packages:
-  phone_lists: !include
-    file: ../voip/presentation/phone_lists.yaml
-    vars:
-      _phone_lists_redraw: ${ _phone_lists_redraw | default([{'script.execute':'draw_display'}]) }
   state: !include
     file: voicemail.yaml
     vars:
@@ -34,7 +30,7 @@ defaults:
       hidden: true
       clickable: true
       on_short_click:
-      - script.execute: open_voicemail
+      - lambda: id(phone).call_mailbox();
   _voicemail_font_extra:
   - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
     glyphs:

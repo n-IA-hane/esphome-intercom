@@ -90,7 +90,7 @@ def test_status_snapshot_copies_production_widgets_fonts_and_header_context(tmp_
     names = {"top_clock_label", "top_battery_label", "top_voicemail_label"}
     expected = [widget for widget in native["top_layer"]["widgets"]
                 if any(str(node.get("id", "")) in names for node in nodes(widget))]
-    assert host["lvgl"]["top_layer"]["widgets"] == yaml_input(expected)
+    assert yaml_util.dump(host["lvgl"]["top_layer"]["widgets"]) == yaml_util.dump(yaml_input(expected))
     fonts = {str(font["id"]): font for font in document["font"]}
     for font in host["font"]:
         assert font == fonts[str(font["id"])]

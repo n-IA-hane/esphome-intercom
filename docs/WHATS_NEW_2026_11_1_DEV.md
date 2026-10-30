@@ -186,7 +186,7 @@ and [message waiting](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/d
 
 Maintained ESP packages now obtain their account from Home Assistant through
 the existing ESPHome API. HA generates the password once; SIP registration,
-LDAP directory access and IMAP voicemail share that identity. The friendly
+LDAP directory access and mailbox calls share that identity. The friendly
 device name is presented as the caller's name.
 
 - **LDAP phonebook:** HA assembles the common routing directory directly. ESP
@@ -194,15 +194,23 @@ device name is presented as the caller's name.
   to traditional desk phones.
 - **Scrolling BLF contacts:** type icons and live call-state indicators replace
   the contact carousel. Tap a ringing contact to perform directed pickup.
-  Display packages reserve a bounded watch pool; headless phones omit it.
-- **Visual voicemail:** tap the idle envelope or open Voicemail from Contacts.
-  A dedicated page shows caller, date, duration and read state. Play, Stop,
-  Delete and paged navigation reuse the existing audio player and archive.
+  Reachability is shown separately through standard PIDF presence, so an
+  offline phone stays unavailable even when its last call is idle.
+- **Mailbox shortcut and DTMF:** SIP MWI shows an envelope when messages wait.
+  Tap it to call the PBX's mailbox menu and use the regular in-call keypad to
+  listen, repeat or delete messages. The same SIP audio path serves calls and
+  mailbox conversations. A dialpad icon opens the existing keypad during a
+  call, showing the contact, elapsed time and red hangup control.
+- **Independent firmware choices:** select `directory`, `blf` and `mwi` in
+  `firmware_features`. BLF also works with static contacts and without a display.
+  Omitted features remove their client code and reserved pools from the firmware.
 - **Automatic cleanup:** permanent ESPHome removal revokes credentials and deletes
   the managed directory/mailbox data. Offline and reload cycles retain them.
 - **Lower directory memory peaks:** LDAP maps one entry at a time into a
   reusable staging table. Contact storage can use PSRAM independently of the
   audio buffers, and workers retain their allocated stacks between operations.
+  Contact lookups avoid temporary allocations, and repeated state notifications
+  share one display refresh per loop iteration.
 - **Compact discovery:** managed phones negotiate through SIP OPTIONS/SDP,
   replacing the lengthy Endpoint sensor with their native device/account owner.
 

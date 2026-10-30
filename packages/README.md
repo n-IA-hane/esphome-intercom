@@ -20,11 +20,11 @@ For example, the headless Waveshare S3 Audio FULL AFE profile contains:
 
 ```yaml
 substitutions:
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics]
   # Keep the board's other substitutions, pins and component sources.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@dev
 ```
 
 Edit that existing list. These are examples of replacement values:
@@ -34,6 +34,10 @@ Edit that existing list. These are examples of replacement values:
 | Voice Assistant and wake word | `[voice, wake_word]` |
 | Voice Assistant and telephone | `[voice, wake_word, voip]` |
 | Telephone | `[voip]` |
+| Telephone and shared LDAP contacts | `[voip, directory]` |
+| Telephone and BLF for manual or shared contacts | `[voip, blf]` |
+| SIP message waiting and PBX mailbox access | `[voip, mwi]` |
+| Complete telephone services | `[voip, directory, blf, mwi]` |
 | HTTP music | `[music]` |
 | HTTP music and Sendspin | `[music, sendspin]` |
 | Full device without Sendspin | Keep the supplied list and remove `sendspin` |
@@ -49,6 +53,19 @@ A single feature list belongs in the user-facing device YAML. ESPHome merges
 lists contributed by different packages by appending them. Do not declare a
 second list in another package and expect it to subtract from the first one.
 These are compile-time choices, so changing them requires a firmware rebuild.
+The three phone-service selectors are independent and each requires `voip`.
+Removing `directory` leaves manual `voip_stack.static_contacts` available;
+BLF can watch those contacts without LDAP. `mwi` uses the SIP event package and
+its Message-Account mailbox address. Display packages include the matching
+contact list and message-waiting badge. Tap that badge to call the PBX mailbox;
+the ordinary in-call keypad sends DTMF to its menu. Headless profiles use the
+same protocol components without adding Runtime Controller.
+
+Maintained FULL and VoIP-only examples list all three services explicitly.
+The SIP HA-account choice remains `voip_stack.ha_integration.auto_register`;
+the service selectors do not create additional phone identities. A managed phone
+with LDAP omitted does not receive the legacy JSON roster automatically.
+
 The profile's chosen AFE, AEC or native audio backend remains selected;
 `firmware_features` chooses its application consumers. Choose a different
 maintained backend profile when changing the audio-processing architecture,

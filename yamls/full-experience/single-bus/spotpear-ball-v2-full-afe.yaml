@@ -70,7 +70,7 @@
 
 substitutions:
   gmf_ai_audio_source: ""
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, display, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, display, diagnostics]
   runtime_controller_debug: "false"
   http_media_persistent_ring_buffer: "true"
   http_media_ring_buffer_size: "32768"

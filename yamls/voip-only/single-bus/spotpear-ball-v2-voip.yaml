@@ -57,7 +57,7 @@
 substitutions:
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
-  firmware_features: [voip, display, status_led, diagnostics]
+  firmware_features: [voip, directory, blf, mwi, display, status_led, diagnostics]
   # Hardware identity is shared by the SIP transport setting. The selected
   # SIP transport setting is exposed by the SIP transport sensor and the unified
   # phonebook row.

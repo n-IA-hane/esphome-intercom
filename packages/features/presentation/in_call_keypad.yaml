@@ -1,0 +1,132 @@
+# One SIP in-call keypad for layouts without an idle dialing page.
+# The existing call owner keeps this page only while the same call is active.
+lvgl:
+  pages:
+  - id: sip_in_call_keypad_page
+    bg_color: 1053468
+    scrollable: false
+    on_swipe_right:
+    - lambda: |-
+        auto *input = lv_indev_active();
+        if (input != nullptr) lv_indev_wait_release(input);
+    - script.execute: close_sip_in_call_keypad
+    widgets:
+    - label:
+        scrollable: false
+        gesture_bubble: true
+        id: sip_keypad_peer_label
+        align: TOP_MID
+        y: 8%
+        width: ${_sip_keypad_name_width}
+        text_align: CENTER
+        long_mode: SCROLL
+        text: ''
+        text_color: 16777215
+        text_font: ${_sip_keypad_font}
+    - label:
+        scrollable: false
+        gesture_bubble: true
+        id: sip_keypad_duration_label
+        align: TOP_MID
+        y: 16%
+        width: 78%
+        text_align: CENTER
+        text: '00:00'
+        text_font: ${_sip_keypad_duration_font}
+        text_color: 16777215
+        long_mode: CLIP
+        hidden: true
+    - buttonmatrix:
+        scrollable: false
+        gesture_bubble: true
+        id: sip_in_call_keypad_matrix
+        align: CENTER
+        width: 78%
+        height: 50%
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        pad_row: 4
+        pad_column: 4
+        items:
+          bg_color: 2568514
+          text_color: 16777215
+          text_font: ${_sip_keypad_font}
+          radius: 8
+        rows:
+        - buttons:
+          - text: '1'
+          - text: '2'
+          - text: '3'
+        - buttons:
+          - text: '4'
+          - text: '5'
+          - text: '6'
+        - buttons:
+          - text: '7'
+          - text: '8'
+          - text: '9'
+        - buttons:
+          - text: '*'
+          - text: '0'
+          - text: '#'
+        on_click:
+        - lambda: |-
+            static constexpr char KEYS[] = "123456789*0#";
+            if (x < 12) id(phone).send_dtmf(KEYS[x]);
+    - button:
+        scrollable: false
+        gesture_bubble: true
+        align: BOTTOM_MID
+        x: -17%
+        y: -12%
+        width: 30%
+        height: 12%
+        bg_color: 3359061
+        on_click:
+        - script.execute: close_sip_in_call_keypad
+        widgets:
+        - label:
+            scrollable: false
+            gesture_bubble: true
+            align: CENTER
+            text: BACK
+            text_color: 16777215
+            text_font: ${_sip_keypad_font}
+    - button:
+        scrollable: false
+        gesture_bubble: true
+        align: BOTTOM_MID
+        x: 17%
+        y: -12%
+        width: 30%
+        height: 12%
+        bg_color: 15680580
+        on_click:
+        - if:
+            condition:
+              lambda: return id(phone).is_in_call();
+            then:
+            - voip_stack.call_toggle: null
+        widgets:
+        - label:
+            scrollable: false
+            gesture_bubble: true
+            align: CENTER
+            text: END
+            text_color: 16777215
+            text_font: ${_sip_keypad_font}
+script:
+- id: open_sip_in_call_keypad
+  then:
+  - if:
+      condition:
+        lambda: return id(phone).can_send_dtmf();
+      then:
+      - lvgl.page.show: sip_in_call_keypad_page
+- id: close_sip_in_call_keypad
+  then:
+  # Change screens before the owner redraws, so its current-page predicate
+  # cannot retain the keypad after Back.
+  - lvgl.page.show: ${_sip_keypad_return_page}
+  - script.execute: draw_display

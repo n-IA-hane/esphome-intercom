@@ -72,10 +72,11 @@ when installing the Home Assistant integration alone.
 ## Preview: standard phone services
 
 The coordinated **2026.11.1-dev** preview adds automatic ESP SIP accounts,
-a shared LDAP directory, live BLF contact lists and standard MWI/IMAP voicemail.
+a shared LDAP directory, live BLF contact lists and SIP message waiting.
 Home Assistant supplies one credential through the existing ESPHome API.
-Display phones gain a scrolling contact list and a dedicated mailbox page;
-VoIP-only profiles keep their independent callback model.
+Display phones gain a scrolling contact list and a mailbox shortcut that calls
+the PBX's spoken menu. The in-call keypad sends DTMF. Directory, BLF and MWI
+can each be selected in YAML, including on VoIP-only profiles.
 
 See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
 traditional phone access, migration and memory limits. These additions are
@@ -626,8 +627,9 @@ remains the generic component default. The coordinated development packages
 also configure the HA account automatically through ESPHome.
 
 Choose the outgoing account explicitly when needed; incoming calls follow the
-selected account and direct-call acceptance policy. LDAP phonebooks, BLF, MWI
-and IMAP voicemail use standard services offered by the selected system.
+selected account and direct-call acceptance policy. LDAP phonebooks, BLF and
+MWI use standard services offered by the selected system. Mailbox listening
+uses an ordinary SIP call and its DTMF keypad.
 
 [Set up an ESP with a classic PBX](docs/CLASSIC_PBX.md) covers direct peers and
 existing media paths. The [ESP VoIP Stack examples](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/examples)

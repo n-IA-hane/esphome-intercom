@@ -30,7 +30,7 @@ substitutions:
   gmf_ai_audio_source: ""
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, display, diagnostics]
   audio_processor: aec
   mic_mix: average
   voip_transport: udp

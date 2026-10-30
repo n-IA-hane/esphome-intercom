@@ -30,7 +30,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
-  extras: ${ _voicemail_font_extra if _fw_voip else [] }
+  extras: ${ _voicemail_font_extra if _fw_voip and 'mwi' in firmware_features else [] }
 - file:
     type: gfonts
     family: Noto Sans
@@ -85,6 +85,7 @@ font:
   id: font_weather_icon_sm
   size: 48
   glyphs:
+  - "\U000F061C"
   - 󰖐
   - 󰖑
   - 󰖒
@@ -397,19 +398,28 @@ touchscreen:
       level: 100%
   - script.execute: backlight_timer
 packages:
-  voicemail: !include
-    file: ${ '../voicemail_badge.yaml' if _fw_voip else '../../shared/absent.yaml' }
+  in_call_keypad: !include
+    file: ${ '../in_call_keypad.yaml' if _fw_voip else '../../shared/absent.yaml' }
     vars:
+      _sip_keypad_font: font_state
+      _sip_keypad_duration_font: font_body
+      _sip_keypad_name_width: 78%
+      _sip_keypad_return_page: main_page
+  phone_presentation: !include
+    file: ${ '../phone.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _keypad_name_label: sip_keypad_peer_label
+      _keypad_duration_label: sip_keypad_duration_label
       _voicemail_y: 6
       _voicemail_font_id: font_body
-      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(main_page)->obj && id(voice_assistant_phase) == ${voice_assist_idle_phase_id} && !id(call_ended_active)
+      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(main_page)->obj${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' } && !id(call_ended_active)
   visibility: !include
     file: ../visibility.yaml
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: false
       _visibility_idle_widget_id: idle_animation
-      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip else '' }
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip and 'mwi' in firmware_features else '' }
   phase: !include '../phase.yaml'
   cleanup: !include '../../../lvgl/p4_va_cleanup.yaml'
   ppa: !include '../../../lvgl/p4_ppa.yaml'
@@ -473,8 +483,6 @@ defaults:
       - lambda: !lambda |-
           id(peer_name) = destination;
       - script.execute: draw_display
-      - delay: 2s
-      - script.execute: update_call_idle_labels
       on_destination_changed:
       - lambda: !lambda |-
           id(peer_name) = destination;
@@ -516,6 +524,7 @@ defaults:
   _p4_call_drawing: |-
     const std::string call_state = id(phone).get_state_str();
 
+    const bool contacts_were_hidden = lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN);
     set_hidden(id(call_idle_group), true);
     set_hidden(id(call_ringing_in_group), true);
     set_hidden(id(call_ringing_out_group), true);
@@ -543,7 +552,8 @@ defaults:
     } else {
       set_hidden(id(call_idle_group), false);
     }
-    id(contacts_list_view).refresh();
+    if (contacts_were_hidden && !lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN))
+      id(contacts_list_view).refresh();
   _p4_draw_actions:
   - lambda: !lambda |-
       lv_obj_t* active_scr = lv_disp_get_scr_act(nullptr);
@@ -602,7 +612,8 @@ defaults:
       // alarm sound is played through media_player and may update the phase.
       ${ _p4_timer_drawing if _fw_timers else '' }
 
-      ${ _p4_voicemail_guard if _fw_voip else '' }
+
+      ${ 'if (id(phone).is_in_call() && active_scr == id(sip_in_call_keypad_page)->obj) return;' if _fw_voip else '' }
 
       // Normal: show main split-screen page
       if (active_scr != id(main_page)->obj) {
@@ -734,7 +745,7 @@ defaults:
     - script.execute: draw_display
   - id: draw_display
     mode: restart
-    then: ${ _p4_draw_actions + (_p4_draw_timer if _fw_timers else []) + (_voicemail_draw if _fw_voip else []) }
+    then: ${ _p4_draw_actions + (_p4_draw_timer if _fw_timers else []) + (_voicemail_draw if _fw_voip and 'mwi' in firmware_features else []) }
   - id: ai_animation_loop
     mode: single
     then:
@@ -977,28 +988,12 @@ defaults:
     then:
     - lambda: !lambda |-
         id(peer_name) = id(phone).get_current_destination();
-    - phone_list_view.refresh: contacts_list_view
-  _p4_voicemail_guard: |
-    if (id(ui_voicemail_active) && id(phone).is_idle()) {
-      if (active_scr != id(phone_voicemail_page)->obj)
-        lv_disp_load_scr(id(phone_voicemail_page)->obj);
-      id(runtime_rendered_page) = "voicemail";
-      return;
-    }
   _p4_phone_lifecycle:
     phone_list_view:
     - id: !extend contacts_list_view
       text_font: font_body
       row_height: 72
       visible_rows: 9
-    - id: !extend voicemail_list_view
-      text_font: font_body
-      row_height: 72
-      visible_rows: 11
-    lvgl:
-      pages:
-      - id: !extend phone_voicemail_page
-        text_font: font_body
     packages:
       lifecycle: !include '../../voip/presentation/lifecycle.yaml'
   _p4_widgets_2:
@@ -1520,13 +1515,13 @@ defaults:
         widgets:
         - label:
             align: TOP_MID
-            y: 40
+            y: 90
             text: IN CALL
             text_color: 3066993
             text_font: font_title
         - label:
             align: TOP_MID
-            y: 100
+            y: 145
             text: 'Connected to:'
             text_color: 13421772
             text_font: font_body
@@ -1555,6 +1550,22 @@ defaults:
                 text: HANG UP
                 text_color: 16777215
                 text_font: font_button
+        - button:
+            align: TOP_MID
+            y: 12
+            width: 100
+            height: 64
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            on_click:
+            - script.execute: open_sip_in_call_keypad
+            widgets:
+            - label:
+                align: CENTER
+                text: "\U000F061C"
+                text_color: 16777215
+                text_font: font_weather_icon_sm
     - obj:
         id: call_ended_group
         width: 780

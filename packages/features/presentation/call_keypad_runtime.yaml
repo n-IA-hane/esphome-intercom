@@ -1,0 +1,17 @@
+# A single display-only clock, paced by a paused/resumed native LVGL timer.
+external_components:
+- source: ${ext_components_source}
+  components: [call_keypad]
+call_keypad:
+  id: call_keypad_ui
+  name_label_id: ${_phone_keypad_name}
+  duration_label_id: ${_phone_keypad_duration}
+voip_stack:
+  on_in_call:
+  - lambda: id(call_keypad_ui).connected();
+  on_idle:
+  - lambda: if (!id(phone).is_in_call()) id(call_keypad_ui).ended();
+lvgl_visibility:
+  on_change:
+  - lambda: |-
+      id(call_keypad_ui).sync(id(phone).is_in_call() && id(display_visibility).is_visible(id(${_phone_keypad_name})), ${_phone_keypad_peer});

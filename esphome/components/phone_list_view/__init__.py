@@ -1,4 +1,4 @@
-"""Bounded, event-driven LVGL rows shared by phonebook and voicemail pages."""
+"""Bounded, event-driven LVGL rows for reusable contact views."""
 
 from esphome import automation
 import esphome.codegen as cg

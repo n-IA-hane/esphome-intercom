@@ -207,10 +207,16 @@ script:
         lv_indev_wait_release(input);
       }
       if (id(g_ota_in_progress) || id(init_in_progress) ||
-          ${ 'id(phone).is_active()' if _round_has_phone else 'false' } ||
           ${ 'id(runtime).is_activity_active("timer_ringing")' if _round_has_timers else 'false' }) return;
+      ${ ('if (id(phone).is_in_call() && id(voip_dialer_active) && delta < 0) {\n'
+          '  id(voip_dialer_active) = false;\n'
+          '  id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;\n'
+          '  id(nav_anim_ms) = 300;\n'
+          '  id(draw_display).execute();\n'
+          '  return;\n'
+          '}') if _round_has_phone else '' }
+      if (${ 'id(phone).is_active()' if _round_has_phone else 'false' }) return;
       if (delta == 0) return;
-      ${ 'if (id(ui_voicemail_active)) { id(close_voicemail).execute(); return; }' if _round_has_phone else '' }
 
       // These are positions in the visible sequence, derived from the
       // existing owners. No additional navigation state is retained.
@@ -286,7 +292,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _round_draw_base + (_round_draw_phone_tail if _round_has_phone else []) + (_round_draw_timer_tail if
-    _round_has_timers else []) + (_voicemail_draw if _round_has_phone else []) }
+    _round_has_timers else []) + (_voicemail_draw if _round_has_phone and 'mwi' in firmware_features else []) }
 - id: switch_to_va
   then:
   - lambda: !lambda |-
@@ -316,11 +322,11 @@ packages:
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: true
-      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _round_has_phone else '' }
-  voicemail: !include
-    file: ${ 'voicemail_badge.yaml' if _round_has_phone else '../shared/absent.yaml' }
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _round_has_phone and 'mwi' in firmware_features else '' }
+  phone_presentation: !include
+    file: ${ 'phone.yaml' if _round_has_phone else '../shared/absent.yaml' }
     vars:
-      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj) && id(voice_assistant_phase) == ${voice_assist_idle_phase_id}
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'
@@ -454,7 +460,7 @@ defaults:
           target != id(thinking_page)->obj &&
           target != id(settings_continuous_page)->obj &&
           ${ _round_video_status_allowed | default('true') } &&
-          ${ '(target != id(call_dialer_page)->obj && target != id(phone_voicemail_page)->obj)' if _round_has_phone else 'true' };
+          ${ '(target != id(call_dialer_page)->obj)' if _round_has_phone else 'true' };
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);

@@ -46,8 +46,11 @@ for standard SIP accounts. The lengthy Endpoint sensor is disabled by default;
 legacy integrations can explicitly select `ha_integration.endpoint: true`.
 
 Updated display packages replace the contact carousel with a scrolling BLF
-list, a dedicated IMAP voicemail page and reusable row pools. Start from the
-current board YAML when migrating a custom UI. Deleting an originating ESPHome
+list and reusable row pools. The idle mailbox envelope calls the PBX menu;
+the in-call keypad sends DTMF. Select `directory`, `blf` and `mwi` independently
+in `firmware_features`. Automatic HA registration alone does not enable MWI.
+Start from the current board YAML when migrating a custom UI.
+Deleting an originating ESPHome
 device/integration now permanently removes its managed credentials and mailbox;
 ordinary offline/reload cycles retain them. Read the
 [phone-service migration](ESP_PHONE_SERVICES.md#updating-an-existing-installation).

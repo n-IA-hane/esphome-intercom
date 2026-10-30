@@ -2,13 +2,14 @@
 
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
-#include "esphome/core/time.h"
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <cstdio>
+#include <cstdint>
+#include <string>
 #include <functional>
+#include <string_view>
 #include <memory>
 #include <cstdlib>
 #include <new>
@@ -18,32 +19,6 @@
 #endif
 
 namespace esphome::phone_list_view {
-
-// IMAP INTERNALDATE carries its own UTC offset. Reuse ESPHome's configured
-// timezone rather than presenting the server's UTC clock as local time.
-inline std::string message_time(const std::string &value) {
-  unsigned day, year, hour, minute, second, zone;
-  char month[4]{}, sign;
-  int consumed = 0;
-  if (std::sscanf(value.c_str(), "%u-%3[A-Za-z]-%u %u:%u:%u %c%4u%n",
-      &day, month, &year, &hour, &minute, &second, &sign, &zone, &consumed) != 8 ||
-      consumed != static_cast<int>(value.size()) || year < 1970 || year > 2099 ||
-      hour > 23 || minute > 59 || second > 59 || zone / 100 > 23 || zone % 100 > 59 ||
-      (sign != '+' && sign != '-')) return value;
-  unsigned number = 0;
-  const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-  for (unsigned i = 0; i < 12; ++i) if (std::strcmp(month, months[i]) == 0) number = i + 1;
-  if (number == 0 || day < 1 || day > days_in_month(number, year)) return value;
-  ESPTime time{};
-  time.year = year; time.month = number; time.day_of_month = day;
-  time.hour = hour; time.minute = minute; time.second = second;
-  time.recalc_timestamp_utc(false);
-  const int offset = static_cast<int>(zone / 100 * 3600 + zone % 100 * 60);
-  auto local = ESPTime::from_epoch_local(time.timestamp + (sign == '+' ? -offset : offset));
-  char output[24];
-  local.strftime(output, sizeof(output), "%d %b %H:%M");
-  return output;
-}
 
 struct RowData {
   std::array<char, 161> id{};
@@ -57,22 +32,22 @@ struct RowData {
   bool blink{false};
   bool highlighted{false};
 
-  template<size_t N> static void text(std::array<char, N> &out, const std::string &value) {
+  template<size_t N> static void text(std::array<char, N> &out, std::string_view value) {
     size_t size = std::min(value.size(), N - 1);
     // Visible text may be clipped, but must remain valid UTF-8.
     if (size < value.size())
       while (size > 0 && (static_cast<uint8_t>(value[size]) & 0xC0) == 0x80) --size;
-    std::memcpy(out.data(), value.data(), size);
+    if (size != 0) std::memcpy(out.data(), value.data(), size);
     out[size] = '\0';
   }
-  void set_id(const std::string &value) {
+  void set_id(std::string_view value) {
     if (value.size() >= this->id.size()) { this->enabled = false; return; }
     text(this->id, value);
   }
-  void set_name(const std::string &value) { text(this->name, value); }
-  void set_detail(const std::string &value) { text(this->detail, value); }
-  void set_leading(const std::string &value) { text(this->leading, value); }
-  void set_trailing(const std::string &value) { text(this->trailing, value); }
+  void set_name(std::string_view value) { text(this->name, value); }
+  void set_detail(std::string_view value) { text(this->detail, value); }
+  void set_leading(std::string_view value) { text(this->leading, value); }
+  void set_trailing(std::string_view value) { text(this->trailing, value); }
 };
 
 class PhoneListView : public Component {
@@ -93,6 +68,11 @@ class PhoneListView : public Component {
   Trigger<std::string, uint8_t> *get_select_trigger() { return &this->selected_; }
   void setup() override;
   void refresh();
+  void request_refresh() { if (!this->is_failed()) this->enable_loop_soon_any_context(); }
+  void loop() override {
+    this->disable_loop();
+    this->refresh();
+  }
   float get_setup_priority() const override { return setup_priority::LATE - 1; }
 
  protected:

@@ -466,7 +466,7 @@ async def test_subscription_limits_count_retiring_notifiers_until_they_finish(ha
     async def send(_request, _address, _result):
         nonlocal senders
         senders += 1
-        if senders == 256:
+        if senders == 512:
             all_started.set()
         await release.wait()
         return sip.SipMessage(status_code=200, reason="OK")
@@ -479,24 +479,26 @@ async def test_subscription_limits_count_retiring_notifiers_until_they_finish(ha
             ("Contact", "<sip:watcher@127.0.0.2:5060>"), ("Event", "presence"), ("Expires", str(expires))))
 
     try:
-        for index in range(256):
-            owner = f"watcher{index // 64}"
+        for index in range(512):
+            owner = f"watcher{index // 132}"
             result = methods._subscribe(request(index, owner), ("127.0.0.2", 5060), owner, send)
             assert result.status == 200
             result.follow_up_scheduler()
-            if index == 63:
+            if index == 131:
                 denied = methods._subscribe(request("account-overflow", owner), ("127.0.0.2", 5060), owner, send)
                 assert denied.status == 503
+                assert dict(denied.headers)["Retry-After"] == "1"
         await asyncio.wait_for(all_started.wait(), 2)
-        assert len(methods.subscriptions) == len(methods.notifiers) == 256
+        assert len(methods.subscriptions) == len(methods.notifiers) == 512
         denied = methods._subscribe(request("global-overflow", "watcher4"), ("127.0.0.2", 5060), "watcher4", send)
         assert denied.status == 503
+        assert dict(denied.headers)["Retry-After"] == "1"
         first = next(iter(methods.subscriptions.values()))
         removed = methods._subscribe(request(0, "watcher0", tag=first.to_tag, expires=0, sequence=2),
                                      ("127.0.0.2", 5060), "watcher0", send)
         assert removed.status == 200
         removed.follow_up_scheduler()
-        assert len(methods.subscriptions) == 255 and len(methods.notifiers) == 256
+        assert len(methods.subscriptions) == 511 and len(methods.notifiers) == 512
         denied = methods._subscribe(request("retiring-overflow", "watcher4"), ("127.0.0.2", 5060), "watcher4", send)
         assert denied.status == 503
         workers = [item.notify_task for item in methods.notifiers.values()]
@@ -504,8 +506,8 @@ async def test_subscription_limits_count_retiring_notifiers_until_they_finish(ha
         await asyncio.wait_for(asyncio.gather(*workers), 2)
         assert not methods.notifiers
         accepted = methods._subscribe(request("new", "watcher4"), ("127.0.0.2", 5060), "watcher4", send)
-        assert accepted.status == 200 and len(methods.subscriptions) == 256
-        assert methods.snapshot()["peak_notifiers"] == 256
+        assert accepted.status == 200 and len(methods.subscriptions) == 512
+        assert methods.snapshot()["peak_notifiers"] == 512
     finally:
         release.set()
         await methods.stop()

@@ -403,7 +403,7 @@ def test_standalone_phone_has_no_implicit_led_or_coordinator(tmp_path, profile_p
     expanded.write_text(result.stdout)
     document = yaml_util.load_yaml(expanded)
     assert ('voip_stack' in document) is ('voip' in features)
-    assert ('blf' in document.get('voip_stack', {})) is bool(document.get('phone_list_view'))
+    assert ('blf' in document.get('voip_stack', {})) is ('voip' in features and 'blf' in features)
     _assert_standalone_callbacks_without_runtime(document)
     if not profile_path.startswith('yamls/voip-only/'):
         return
@@ -547,10 +547,10 @@ def test_p4_standalone_phone_keeps_codec_and_display_optional(tmp_path, codec, f
     defines = next(tmp_path.rglob('defines.h')).read_text()
     assert ('voip_stack::VoipStack' in generated) is ('voip' in features)
     has_display = 'voip' in features and 'display' in features
-    assert ('#define USE_ESPHOME_VOIP_BLF' in defines) is has_display
+    assert '#define USE_ESPHOME_VOIP_BLF' not in defines
     assert ('lvgl::LvglComponent' in generated) is has_display
-    assert ('top_voicemail_label' in generated) is has_display
-    assert ('add_on_message_waiting_callback' in generated) is has_display
+    assert 'top_voicemail_label' not in generated
+    assert 'add_on_message_waiting_callback' not in generated
     assert ('esp_video_camera::ESPVideoCamera' in generated) is ('video' in features)
     assert ('esp_h264_video_source::' in generated) is ('video' in features and codec == 'h264')
     assert ('esp_jpeg_video_source::' in generated) is ('video' in features and codec == 'jpeg')

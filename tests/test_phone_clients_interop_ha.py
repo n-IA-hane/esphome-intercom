@@ -1,28 +1,23 @@
-"""Production ESP protocol clients against the real HA LDAP and IMAP adapters."""
+"""Production ESP LDAP client against the real HA directory adapter."""
 
 import asyncio
 import os
 from pathlib import Path
 import shutil
 import subprocess
-from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.voip_stack.imap_server import ImapMailboxServer
 from custom_components.voip_stack.ldap_server import LdapDirectoryServer
 from custom_components.voip_stack.core.sip import SipUri
 from custom_components.voip_stack.roster import RosterEntry
-from tests import test_imap_mailbox_ha as mailbox_fixtures
 from tests.test_ldap_directory_ha import BASE, directory
 
 pytestmark = pytest.mark.ha
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack"))
 PASSWORD = "fixture-only-password"
-OWNER = mailbox_fixtures.OWNER
-archive = mailbox_fixtures.archive
-deposit = mailbox_fixtures.deposit
+OWNER = "esphome:kitchen"
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +37,6 @@ def native_phone_clients(tmp_path_factory):
                str(SOURCE / "tests/phone_clients_ha_interop.cpp"),
                str(SOURCE / "esphome/components/ldap_directory/ldap_protocol.cpp"),
                str(SOURCE / "esphome/components/ldap_directory/directory_contact.cpp"),
-               str(SOURCE / "esphome/components/imap_voicemail/imap_protocol.cpp"),
                str(SOURCE / "esphome/components/phone_client/net_stream.cpp"), "-o", str(binary)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=90)
     assert result.returncode == 0, result.stderr
@@ -50,12 +44,9 @@ def native_phone_clients(tmp_path_factory):
 
 
 @pytest.fixture
-async def phone_servers(archive, socket_enabled):
+async def phone_server(socket_enabled):
     async def ldap_auth(username, password):
         return OWNER if username == "kitchen" and password == PASSWORD.encode() else None
-
-    async def imap_auth(username, verifier):
-        return OWNER if username == "kitchen" and verifier(PASSWORD) else None
 
     book = directory()
     # Use the canonical SIP serializer, as directory_runtime.directory_uri
@@ -64,31 +55,27 @@ async def phone_servers(archive, socket_enabled):
         book.upsert(RosterEntry(target, name=target, sip_uri=str(SipUri(user=target, host="pbx.example.org")),
                                metadata={"endpoint_kind": "group"}))
     ldap = LdapDirectoryServer(book, ldap_auth)
-    imap = ImapMailboxServer(AsyncMock(return_value=archive), imap_auth)
     await ldap.async_start("127.0.0.1", 0)
-    await imap.async_start("127.0.0.1", 0)
     try:
-        yield ldap, imap
+        yield ldap
     finally:
         await ldap.async_close()
-        await imap.async_close()
 
 
-async def start_client(binary, mode, port, output, *, password=PASSWORD, maximum=64):
+async def start_client(binary, port, *, password=PASSWORD, maximum=64):
     process = await asyncio.create_subprocess_exec(
-        str(binary), mode, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        str(binary), "directory", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env={**os.environ, "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1"})
-    fields = ("127.0.0.1", str(port), "kitchen", password, BASE,
-              f"uid=kitchen,ou=accounts,{BASE}", "INBOX", str(output), str(maximum))
+    fields = ("127.0.0.1", str(port), f"uid=kitchen,ou=accounts,{BASE}", password, BASE, str(maximum))
     process.stdin.write(("\n".join(fields) + "\n").encode())
     await process.stdin.drain()
     process.stdin.close()
     return process
 
 
-async def run_client(binary, mode, port, output, **kwargs):
-    process = await start_client(binary, mode, port, output, **kwargs)
+async def run_client(binary, port, **kwargs):
+    process = await start_client(binary, port, **kwargs)
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
     finally:
@@ -100,9 +87,8 @@ async def run_client(binary, mode, port, output, **kwargs):
     return stdout.decode()
 
 
-async def test_native_ldap_canonical_ids_uris_categories_and_atomic_failure(native_phone_clients, phone_servers, tmp_path):
-    ldap, _ = phone_servers
-    output = await run_client(native_phone_clients, "directory", ldap.port, tmp_path / "unused")
+async def test_native_ldap_canonical_ids_uris_and_categories(native_phone_clients, phone_server):
+    output = await run_client(native_phone_clients, phone_server.port)
     rows = {fields[0]: fields[1:] for fields in (line.split("|") for line in output.splitlines()[1:])}
     assert output.startswith("DIRECTORY 6\n")
     assert rows["esphome:kitchen"] == ["Kitchen", "sip:kitchen@pbx.example.org", "esphome"]
@@ -112,56 +98,11 @@ async def test_native_ldap_canonical_ids_uris_categories_and_atomic_failure(nati
     assert rows["Living room"] == ["Living room", "sip:Living%20room@pbx.example.org", "group"]
     assert rows["Night group"] == ["Night group", "sip:Night%20group@pbx.example.org", "group"]
     assert "must-never-be-published" not in output
-    truncated = await run_client(native_phone_clients, "directory", ldap.port, tmp_path / "unused", maximum=1)
+
+
+async def test_native_ldap_atomic_limit_failure_and_authentication(native_phone_clients, phone_server):
+    truncated = await run_client(native_phone_clients, phone_server.port, maximum=1)
     assert truncated == "SEARCH_FAILED 4\n"
-    denied = await run_client(native_phone_clients, "directory", ldap.port, tmp_path / "unused", password="incorrect")
+    assert "must-never-be-published" not in truncated
+    denied = await run_client(native_phone_clients, phone_server.port, password="incorrect")
     assert denied == "AUTH_FAILED 49\n"
-
-
-async def test_native_imap_catalogue_duration_peek_exact_wav_and_owner_isolation(native_phone_clients, phone_servers, archive, tmp_path):
-    _, imap = phone_servers
-    record = await deposit(archive)
-    await deposit(archive, owner="esphome:other", caller="Private other owner")
-    output = await run_client(native_phone_clients, "catalogue", imap.port, tmp_path / "unused")
-    lines = output.splitlines()
-    assert lines[0].split()[2:] == ["1", "1"]
-    values = lines[1].split("|")
-    assert values[1] == "0" and "Delivery caller" in values[2]
-    assert values[4:8] == ["1", "2", "2", "audio/wav"]
-    assert "Private other owner" not in output
-    wav = tmp_path / "voicemail.wav"
-    assert (await run_client(native_phone_clients, "fetch", imap.port, wav)).startswith("FETCHED ")
-    assert wav.read_bytes() == archive.segment_path(record["id"], OWNER).read_bytes()
-    assert archive.counts(OWNER) == (1, 0)
-    assert archive.counts("esphome:other") == (1, 0)
-
-
-async def test_native_imap_seen_unseen_uid_delete_and_empty_snapshot(native_phone_clients, phone_servers, archive, tmp_path):
-    _, imap = phone_servers
-    await deposit(archive)
-    await deposit(archive, owner="esphome:other")
-    for mode, counts in (("seen", (0, 1)), ("unseen", (1, 0)), ("delete", (0, 0))):
-        assert (await run_client(native_phone_clients, mode, imap.port, tmp_path / "unused")).startswith("CHANGED ")
-        assert archive.counts(OWNER) == counts
-        assert archive.counts("esphome:other") == (1, 0)
-    output = await run_client(native_phone_clients, "catalogue", imap.port, tmp_path / "unused")
-    assert len(output.splitlines()) == 1
-    assert output.split()[2:] == ["0", "0"]
-    denied = await run_client(native_phone_clients, "catalogue", imap.port, tmp_path / "unused", password="incorrect")
-    assert denied == "AUTH_FAILED\n"
-
-
-async def test_native_imap_idle_observes_canonical_new_message(native_phone_clients, phone_servers, archive, tmp_path):
-    _, imap = phone_servers
-    process = await start_client(native_phone_clients, "idle", imap.port, tmp_path / "unused")
-    try:
-        assert await asyncio.wait_for(process.stdout.readline(), 5) == b"IDLE_READY\n"
-        await deposit(archive)
-        imap.notify_changed(OWNER)
-        stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-    assert process.returncode == 0, (stdout, stderr)
-    assert stdout == b"UPDATED 1\n" and not stderr

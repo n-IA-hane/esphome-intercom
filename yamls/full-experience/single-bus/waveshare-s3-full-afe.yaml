@@ -86,7 +86,7 @@
 
 substitutions:
   gmf_ai_audio_source: ""
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics]
   runtime_controller_debug: "false"
   # Hardware-shared identity: all Waveshare S3 firmware variants share the same
   # name so HA reuses the device entity and ESPHome reuses the build cache.

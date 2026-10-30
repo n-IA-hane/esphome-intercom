@@ -92,7 +92,7 @@ substitutions:
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
   intercom_idf_ref: "dev"
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, display, diagnostics]
   runtime_controller_debug: "false"
   name: waveshare-p4-touch
   friendly_name: Waveshare P4 Touch

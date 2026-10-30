@@ -46,7 +46,6 @@ voip_stack:
   delete_contact_missing_from:
     updates_number: 1
 defaults:
-  _p4_phone_voicemail_playback: !include '../../../audio/standalone_voicemail_player.yaml'
   _p4_phone_direct_input:
     packages:
       input: !include
@@ -62,7 +61,7 @@ external_components:
   components:
   - voip_stack
 packages:
-  playback_input: ${ _p4_phone_voicemail_playback if 'display' in firmware_features else _p4_phone_direct_input }
+  playback_input: ${_p4_phone_direct_input}
   entities: !include '../../../voip/entities_full_duplex.yaml'
   settings: !include '../../../voip/call_settings.yaml'
   transport: !include '../../../voip/transport.yaml'

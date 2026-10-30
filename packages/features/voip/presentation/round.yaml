@@ -37,7 +37,7 @@ script:
       id(peer_name) = peer;
       id(settings_active) = false;
       id(voip_dialer_active) = false;
-      id(ui_voicemail_active) = false;
+
       id(voip_dial_length) = 0;
       id(voip_dial_buffer)[0] = '\0';
   - script.execute: backlight_timer
@@ -58,6 +58,7 @@ script:
   mode: restart
   then:
   - script.execute: runtime_ui_call_end
+  - lambda: id(voip_dialer_active) = false;
   - globals.set:
       id: call_ended_active
       value: 'true'
@@ -93,7 +94,12 @@ script:
   mode: restart
   then:
   - lambda: |-
-      if (id(voip_dial_length) == 0) {
+      const bool in_call = id(phone).is_in_call();
+      lv_label_set_text(id(call_dial_action_label), in_call ? "\U000F03F5" : "\U000F03F2");
+      lv_obj_set_style_bg_color(id(call_dial_call_btn), lv_color_hex(in_call ? 0xEF4444 : 0x22C55E), LV_PART_MAIN);
+      if (in_call) {
+        id(call_keypad_ui).sync(id(display_visibility).is_visible(id(call_dial_value_label)), id(peer_name).c_str());
+      } else if (id(voip_dial_length) == 0) {
         lv_label_set_text(id(call_dial_value_label), "Number / extension");
       } else {
         lv_label_set_text(id(call_dial_value_label), id(voip_dial_buffer).data());
@@ -103,7 +109,11 @@ script:
     dial_char: int
   then:
   - lambda: |-
-      if (dial_char == 0 || id(voip_dial_length) >= 32) return;
+      if (id(phone).is_in_call()) {
+        id(phone).send_dtmf(static_cast<char>(dial_char));
+        return;
+      }
+      if (!id(phone).is_idle() || dial_char == 0 || id(voip_dial_length) >= 32) return;
       auto &buffer = id(voip_dial_buffer);
       auto &length = id(voip_dial_length);
       buffer[length++] = static_cast<char>(dial_char);
@@ -112,6 +122,7 @@ script:
 - id: voip_dial_backspace
   then:
   - lambda: |-
+      if (!id(phone).is_idle()) return;
       auto &length = id(voip_dial_length);
       if (length == 0) return;
       --length;
@@ -120,6 +131,7 @@ script:
 - id: voip_dial_clear
   then:
   - lambda: |-
+      if (!id(phone).is_idle()) return;
       id(voip_dial_length) = 0;
       id(voip_dial_buffer)[0] = '\0';
       id(voip_dial_refresh).execute();
@@ -127,24 +139,31 @@ script:
   then:
   - if:
       condition:
-        lambda: return id(phone).is_idle() && id(voip_dial_length) > 0;
+        lambda: return id(phone).is_in_call();
       then:
-      - voip_stack.call:
-          target: !lambda |-
-            return std::string(
-                id(voip_dial_buffer).data(),
-                id(voip_dial_length)
-            );
+      - voip_stack.call_toggle: null
+      else:
+      - if:
+          condition:
+            lambda: return id(phone).is_idle() && id(voip_dial_length) > 0;
+          then:
+          - voip_stack.call:
+              target: !lambda |-
+                return std::string(
+                    id(voip_dial_buffer).data(),
+                    id(voip_dial_length)
+                );
 - id: call_to_dialer
   then:
   - if:
       condition:
-        voip_stack.is_idle: null
+        lambda: return id(phone).is_idle() || id(phone).can_send_dtmf();
       then:
       - lambda: |-
           id(voip_dialer_active) = true;
           id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_TOP;
           id(nav_anim_ms) = 300;
+      - script.execute: reposition_widgets
       - script.execute: voip_dial_refresh
       - script.execute: draw_display
 - id: dialer_to_contacts
@@ -179,7 +198,6 @@ script:
   then:
   - lambda: |-
       id(peer_name) = id(phone).get_current_destination();
-      id(contacts_list_view).refresh();
 voip_stack:
   on_phonebook_update:
   - lambda: id(peer_name) = destination;
@@ -196,23 +214,22 @@ defaults:
     const bool phone_in_call = id(phone).is_in_call();
     if (phone_active) {
       id(settings_active) = false;
-      id(voip_dialer_active) = false;
-      id(ui_voicemail_active) = false;
+      if (!phone_in_call) id(voip_dialer_active) = false;
     }
   _round_phone_ended_route: |-
     else if (id(call_ended_active) && !id(phone).is_active()) {
       target = id(call_ended_page)->obj;
     }
   _round_phone_active_route: |-
-    else if (id(ui_voicemail_active) && !phone_active) {
-      target = id(phone_voicemail_page)->obj;
-    }
+
     else if (id(current_mode) == 1) {
       // VoIP mode
       if (phone_ringing) {
         target = id(call_ringing_in_page)->obj;
       } else if (phone_calling) {
         target = id(call_ringing_out_page)->obj;
+      } else if (phone_in_call && id(voip_dialer_active)) {
+        target = id(call_dialer_page)->obj;
       } else if (phone_in_call ||
                  (phone_active && !phone_ringing && !phone_calling)) {
         target = id(call_in_call_page)->obj;
@@ -223,7 +240,7 @@ defaults:
       }
     }
   _round_name_call_idle_page: |-
-    else if (target == id(phone_voicemail_page)->obj) page_name = "voicemail";
+
     else if (target == id(call_idle_page)->obj) page_name = "call_idle";
   _round_name_call_dialer_page: else if (target == id(call_dialer_page)->obj) page_name = "call_dialer";
   _round_name_call_ringing_in_page: else if (target == id(call_ringing_in_page)->obj) page_name = "call_ringing_in";

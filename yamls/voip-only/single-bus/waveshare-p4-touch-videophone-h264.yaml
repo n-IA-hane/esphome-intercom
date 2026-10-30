@@ -45,7 +45,7 @@ substitutions:
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
   intercom_idf_ref: "dev"
-  firmware_features: [voip, display, video]
+  firmware_features: [voip, directory, blf, mwi, display, video]
   # Scale the full native 800x800 sensor field to the 400x400 encoder input.
   # PPA performs the conversion without changing the square camera aspect.
   p4_video_width: "400"

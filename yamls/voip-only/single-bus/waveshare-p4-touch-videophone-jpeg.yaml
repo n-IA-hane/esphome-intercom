@@ -45,7 +45,7 @@ substitutions:
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
   intercom_idf_ref: "dev"
-  firmware_features: [voip, display, video]
+  firmware_features: [voip, directory, blf, mwi, display, video]
   p4_video_width: "800"
   p4_video_height: "800"
   p4_video_fps: "15"

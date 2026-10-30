@@ -82,6 +82,7 @@ font:
   - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
     glyphs:
     - 󰛋
+    - "\U000F061C"
 - file:
     type: gfonts
     family: ${font_family}
@@ -481,7 +482,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _v1_draw_tail_0 + _v1_draw_tail_1 + (_v1_draw_tail_2 if _fw_voip else []) + (_v1_draw_tail_3 if _fw_timers
-    else []) + (_voicemail_draw if _fw_voip else []) }
+    else []) + (_voicemail_draw if _fw_voip and 'mwi' in firmware_features else []) }
 - id: switch_to_va
   then:
   - globals.set:
@@ -1230,15 +1231,24 @@ defaults:
   - id: call_in_call_page
     bg_color: 34816
     widgets:
-    - label:
+    - button:
+        id: call_keypad_btn
         align: TOP_MID
-        y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
+        y: 2%
+        width: 20%
+        height: 16%
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        shadow_opa: TRANSP
+        on_short_click:
+        - script.execute: open_sip_in_call_keypad
+        widgets:
+        - label:
+            align: CENTER
+            text: "\U000F061C"
+            text_color: 16777215
+            text_font: font_title
     - label:
         align: TOP_MID
         y: 17%
@@ -1701,9 +1711,7 @@ defaults:
       target = id(call_ended_page)->obj;
     }
   _v1_phone_route: |-
-    else if (id(ui_voicemail_active) && !id(phone).is_active()) {
-      target = id(phone_voicemail_page)->obj;
-    }
+
     else if (id(current_mode) == 1) {
       // VoIP mode
       const std::string s = id(phone).get_state_str();
@@ -1711,6 +1719,8 @@ defaults:
         target = id(call_ringing_in_page)->obj;
       } else if (s == "calling" || s == "remote_ringing") {
         target = id(call_ringing_out_page)->obj;
+      } else if (s == "in_call" && lv_disp_get_scr_act(nullptr) == id(sip_in_call_keypad_page)->obj) {
+        target = id(sip_in_call_keypad_page)->obj;
       } else if (s == "in_call" || s == "connecting") {
         target = id(call_in_call_page)->obj;
       } else {
@@ -1718,11 +1728,13 @@ defaults:
       }
     }
   _v1_route_name_63: |-
-    else if (target == id(phone_voicemail_page)->obj) page_name = "voicemail";
+
     else if (target == id(call_idle_page)->obj) page_name = "call_idle";
   _v1_route_name_64: else if (target == id(call_ringing_in_page)->obj) page_name = "call_ringing_in";
   _v1_route_name_65: else if (target == id(call_ringing_out_page)->obj) page_name = "call_ringing_out";
-  _v1_route_name_66: else if (target == id(call_in_call_page)->obj) page_name = "call_in_call";
+  _v1_route_name_66: |-
+    else if (target == id(sip_in_call_keypad_page)->obj) page_name = "call_keypad";
+    else if (target == id(call_in_call_page)->obj) page_name = "call_in_call";
   _v1_route_name_67: else if (target == id(call_ended_page)->obj) page_name = "call_ended";
   _v1_route_name_68: else if (target == id(timer_finished_page)->obj) page_name = "timer_finished";
   _v1_draw_tail_0:
@@ -1811,7 +1823,7 @@ defaults:
       id(nav_anim_ms) = 0;
 
       // Hide top layer status bar on replying/thinking pages (text overlap)
-      bool show_status = (target != id(replying_page)->obj && target != id(thinking_page)->obj ${ '&& target != id(phone_voicemail_page)->obj' if _fw_voip else '' });
+      bool show_status = (target != id(replying_page)->obj && target != id(thinking_page)->obj );
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
@@ -1870,17 +1882,26 @@ defaults:
   _v1_render_4:
   - script.execute: draw_display
 packages:
-  voicemail: !include
-    file: ${ '../voicemail_badge.yaml' if _fw_voip else '../../shared/absent.yaml' }
+  in_call_keypad: !include
+    file: ${ '../in_call_keypad.yaml' if _fw_voip else '../../shared/absent.yaml' }
     vars:
-      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj) && id(voice_assistant_phase) == ${voice_assist_idle_phase_id}
+      _sip_keypad_font: font_info
+      _sip_keypad_duration_font: font_clock
+      _sip_keypad_name_width: 50%
+      _sip_keypad_return_page: call_in_call_page
+  phone_presentation: !include
+    file: ${ '../phone.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _keypad_name_label: sip_keypad_peer_label
+      _keypad_duration_label: sip_keypad_duration_label
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
   visibility: !include
     file: ../visibility.yaml
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: true
       _visibility_idle_widget_id: idle_anim
-      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip else '' }
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip and 'mwi' in firmware_features else '' }
   phase: !include '../phase.yaml'
   settings_navigation: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   settings_volume: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'

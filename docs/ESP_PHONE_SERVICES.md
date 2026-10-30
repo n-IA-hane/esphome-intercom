@@ -1,10 +1,36 @@
 # Standard services for ESP phones
 
 The 2026.11.1 development preview brings automatic SIP accounts, an LDAP
-phonebook, SIP BLF and MWI, and IMAP voicemail to the coordinated ESP firmware.
+phonebook, SIP BLF and MWI to the coordinated ESP firmware.
 Use matching `dev` components and the current device YAML when testing this
 preview. The Home Assistant integration also serves ordinary SIP phones and
 standard LDAP/IMAP clients.
+
+## Select the services to compile
+
+Edit the board YAML's existing `firmware_features` list:
+
+```yaml
+substitutions:
+  firmware_features: [voip, directory, blf, mwi, display, diagnostics]
+```
+
+Each of the three service names requires `voip`, with no dependency on another
+service. `[voip]` retains ordinary calls and manual static contacts. `directory`
+adds LDAP; `blf` watches either those contacts or manual entries; `mwi` adds SIP
+message notifications and mailbox calling.
+The HA auto-registration option is separate. The components also support fixed
+PBX and directory settings in custom YAML, as shown in the standalone
+[ESP phone-service examples](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/PHONE_SERVICES.md).
+
+With `mwi`, the envelope calls the PBX address provided in the SIP
+Message-Account field. The regular in-call keypad sends DTMF to the mailbox
+menu. An explicit mailbox target can be configured for another PBX.
+
+During a call, the dialpad icon above the contact opens that same keypad.
+The display shows the current contact and elapsed call time; long names scroll
+within the header. Its call button becomes the red hangup control. Outside a
+call, the keypad composes a number normally.
 
 ## One phone, one identity
 
@@ -21,11 +47,10 @@ ESPHome device online
 HA creates the phone account once
          │ existing ESPHome API actions
          ▼
-ESP receives SIP, LDAP and IMAP settings
+ESP receives SIP and LDAP settings
          │
          ├──► SIP REGISTER, calls, BLF and MWI
-         ├──► LDAP contact searches
-         └──► IMAP mailbox and audio retrieval
+         └──► LDAP contact searches
 ```
 
 The technical device name is the SIP login. The friendly device name shown in
@@ -71,45 +96,40 @@ A ringing indicator animates while that list is visible.
 
 For a custom display, `phone_list_view.visible_rows` reserves the widget pool
 at boot. Cover the viewport with its configured row height and two scroll
-buffer rows. The portrait P4 package reserves 9 contact rows and 11 voicemail
-rows for its larger viewport. This pool is separate from the BLF subscription
-limit and the IMAP message-page size.
+buffer rows. The portrait P4 package reserves 9 contact rows for its larger
+viewport. This pool is separate from the BLF subscription limit.
 
 BLF uses standard SIP `SUBSCRIBE`/`NOTIFY` with the `dialog` event package.
-"Idle" means the watched resource has no active dialog, rather than proof of
-network reachability. Unavailable or unsynchronized BLF is shown as unknown.
-Display packages enable BLF with a pool of 16 contacts. Headless packages leave
-that optional watch pool out; custom YAML can increase
+The optional standard `presence` subscription supplies reachability separately:
+"Unavailable" means PIDF closed, "Idle" requires open presence, and an unknown
+presence remains unknown. An active call retains its call-state indication.
+Selecting `blf` reserves a pool of 16 contacts, with or without a display.
+Omitting the feature removes that pool; custom YAML can increase
 `voip_stack.blf.max_subscriptions` to 64 and place its buffers in PSRAM.
 PBX pickup prefixes are configurable (`pickup.` on VoIP Stack, commonly `**`
 on other systems). Access remains subject to the PBX's pickup policy.
 
-## Voicemail on the display
+## Voicemail through SIP
 
 Enable the phone's mailbox through the existing VoIP Stack voicemail settings.
 Standard SIP MWI controls the envelope above the status indicators. It appears
 for new messages on the idle Assist/telephone views and stays hidden during
-calls, ringing, settings and video. Tap the envelope to open the dedicated
-mailbox page. The **Voicemail** entry in Contacts also opens read messages.
+calls, ringing, settings and video. Tap the envelope to make an ordinary call
+to the mailbox address supplied by the PBX. Use the in-call keypad to navigate
+the spoken menu. A custom PBX can provide a target explicitly through
+`voip_stack.call_mailbox`.
 
-The page lists the caller, date, duration when supplied, and read state. Tap a
-message to play it through the existing native announcement player. Stop flushes
-that pipeline; Delete removes the selected message through IMAP. The arrow
-controls move between bounded pages of messages. Swipe right to return.
-A telephone/video call takes priority over voicemail playback and presentation.
-The page works in both FULL and standalone telephone profiles; standalone
-profiles retain their direct VoIP callbacks without Runtime Controller.
+The mailbox conversation uses the same SIP audio path, call lifecycle and DTMF
+controls as any other call. A microphone-only or speaker-only profile retains
+its declared direction and must be chosen accordingly for interactive menus.
 
-IMAP exposes `INBOX`, persistent UID/UIDVALIDITY, flags, IDLE, partial audio
+Home Assistant also serves standard IMAP for external phones and mail clients.
+It exposes `INBOX`, persistent UID/UIDVALIDITY, flags, IDLE, partial audio
 fetches and UIDPLUS. `Seen` and deletion update the original media archive.
 WAV content is generated from the existing message, cached within a fixed
 budget and streamed in pieces. Listing metadata does not read the recording.
 The server provides the standard `Content-Duration` field when known.
-
-The SIP/DTMF voicemail menu remains available to other phones and PBXs. The
-visual mailbox uses standard IMAP and SIP MWI, rather than HA-specific display
-commands. An external PBX must supply its own compatible LDAP, BLF, MWI and
-IMAP services; those capabilities vary by PBX and configuration.
+The ESP's SIP menu and external IMAP clients share that canonical archive.
 
 ## Custom firmware and other PBX systems
 
@@ -128,13 +148,12 @@ voip_stack:
 ```
 
 The maintained device packages already include the complete service binding.
-For a custom phone, configure `ldap_directory` and `imap_voicemail` only when
-needed, and attach the latter to a native `speaker_source` pipeline. The
+For a custom phone, configure `ldap_directory` only when needed. The
 [ESP VoIP Stack documentation](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev)
 contains complete direct, registered and mixed-account examples, independent
-LDAP/IMAP settings and memory/task controls.
+LDAP settings and memory/task controls.
 
-Optional TLS requires `tls_support: true` in each ESP client at compile time.
+Optional TLS requires `tls_support: true` in the ESP directory client at compile time.
 Enable that firmware support before switching the HA listeners to TLS.
 TLS uses the normal certificate trust configuration. A private CA can
 be declared through the ESP client's `ca_certificate`; certificate validation
@@ -153,30 +172,27 @@ voip_stack:
 ldap_directory:
   task_stack_in_psram: true
   buffer_in_psram: true
-
-imap_voicemail:
-  task_stack_in_psram: true
-  buffer_in_psram: true
 ```
 
 The maintained display packages already select external storage for the LDAP
-and IMAP workers. SIP signaling and contact storage are cold data; their
+worker. SIP signaling and contact storage are cold data; their
 placement is separate from `voip_stack.buffers_in_psram`, which controls audio
 staging. Preserve your board's validated audio and DSP settings.
 
 LDAP receives and maps one directory entry at a time. A boot-allocated staging
 table holds up to `max_entries` contacts until the complete search succeeds;
 an interrupted or invalid search retains the preceding phonebook. On the
-ESP32-S3 ABI, its records use 140 bytes each: 2,240 bytes for 16 entries or
-8,960 bytes for 64, excluding string data. The signaling PSRAM option also
+ESP32-S3 ABI with directory support and signaling PSRAM enabled, its records
+use 160 bytes each: 2,560 bytes for 16 entries or 10,240 bytes for 64, excluding
+string data. The signaling PSRAM option also
 preallocates the canonical 64-contact table in external memory. The internal
 storage path grows only to the required contact count and reuses its capacity.
 
-LDAP refresh, IMAP catalog changes and playback wake their existing workers.
+LDAP refresh wakes its existing worker.
 Worker stacks and network buffers remain allocated between operations, and
 idle workers sleep on notifications or their protocol's blocking wait. BLF
-uses the existing SIP worker. Its watch limit, the IMAP page size and the
-display row pool are independent bounds that you can tune to the installation.
+uses the existing SIP worker. Its watch limit and the display row pool are
+independent bounds that you can tune to the installation.
 
 ## Updating an existing installation
 

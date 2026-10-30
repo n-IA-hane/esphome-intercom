@@ -1,23 +1,21 @@
 # P4 telephone screen and optional video surface; frame-arrival gates remain unchanged.
 packages:
-  voicemail: !include
-    file: ../voicemail_badge.yaml
+  phone_presentation: !include
+    file: ../phone.yaml
     vars:
-      _phone_lists_redraw:
-      - script.execute: show_phone_page
+      _keypad_name_label: videophone_keypad_value
+      _keypad_duration_label: videophone_keypad_duration
+      _keypad_peer: id(videophone_peer).c_str()
       _voicemail_font_id: videophone_small_font
       _voicemail_y: 6
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj && id(videophone_terminal_notice).empty()
   visibility: !include
     file: ../visibility.yaml
     vars:
-      _visibility_extra_code: id(update_voicemail_status).execute();
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
   call_media_route: ${ _p4_phone_route if _p4_phone_has_video else {} }
 phone_list_view:
 - id: !extend contacts_list_view
-  text_font: videophone_small_font
-  row_height: 72
-- id: !extend voicemail_list_view
   text_font: videophone_small_font
   row_height: 72
 font:
@@ -29,6 +27,9 @@ font:
   size: 48
   glyphsets:
   - GF_Latin_Core
+  extras:
+  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf
+    glyphs: ["\U000F061C"]
 - file:
     type: gfonts
     family: Noto Sans
@@ -45,7 +46,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
-  extras: ${ _voicemail_font_extra }
+  extras: ${ _voicemail_font_extra if 'mwi' in firmware_features else [] }
 globals:
 - id: videophone_peer
   type: std::string
@@ -198,6 +199,7 @@ defaults:
     bg_color: 461588
     widgets:
     - label:
+        id: videophone_title_label
         align: TOP_MID
         y: 42
         text: P4 VIDEOPHONE
@@ -264,6 +266,7 @@ defaults:
             text_color: 16777215
             text_font: videophone_body_font
     - button:
+        id: videophone_keypad_button
         align: BOTTOM_LEFT
         x: 90
         y: -24
@@ -272,16 +275,28 @@ defaults:
         bg_color: 3359061
         radius: 12
         on_click:
-        - lvgl.page.show:
-            id: videophone_keypad_page
-            animation: MOVE_RIGHT
-            time: 180ms
+        - if:
+            condition:
+              lambda: return id(phone).is_idle() || id(phone).can_send_dtmf();
+            then:
+            - lambda: |-
+                const bool in_call = id(phone).is_in_call();
+                lv_label_set_text(id(videophone_keypad_action_label), in_call ? "HANG UP" : "CALL");
+                lv_obj_set_style_bg_color(id(videophone_keypad_action_button), lv_color_hex(in_call ? 0xEF4444 : 0x22C55E), LV_PART_MAIN);
+                const int name_width = lv_display_get_horizontal_resolution(lv_display_get_default()) - 120;
+                lv_obj_set_width(id(videophone_keypad_value), in_call ? name_width - 220 : 900);
+                lv_obj_align(id(videophone_keypad_value), in_call ? LV_ALIGN_TOP_LEFT : LV_ALIGN_TOP_MID, in_call ? 60 : 0, 88);
+                if (!in_call) lv_label_set_text(id(videophone_keypad_value), id(videophone_dial_buffer).empty() ? "Enter extension or number" : id(videophone_dial_buffer).c_str());
+            - lvgl.page.show:
+                id: videophone_keypad_page
+                animation: MOVE_RIGHT
+                time: 180ms
         widgets:
         - label:
             align: CENTER
-            text: KEYPAD
+            text: "\U000F061C"
             text_color: 16777215
-            text_font: videophone_small_font
+            text_font: videophone_title_font
     - button:
         align: BOTTOM_RIGHT
         x: -90
@@ -320,7 +335,21 @@ defaults:
         text_align: CENTER
         text_color: 16777215
         text_font: videophone_body_font
-        long_mode: DOT
+        long_mode: SCROLL
+    - label:
+        id: videophone_keypad_duration
+        scrollable: false
+        gesture_bubble: true
+        align: TOP_RIGHT
+        x: -60
+        y: 88
+        width: 200
+        text: '00:00'
+        text_color: 16777215
+        text_font: videophone_small_font
+        text_align: RIGHT
+        long_mode: CLIP
+        hidden: true
     - buttonmatrix:
         align: CENTER
         y: 15
@@ -355,8 +384,12 @@ defaults:
         on_click:
         - lambda: !lambda |-
             static constexpr char KEYS[] = "123456789*0#";
-            if (x >= 12 ||
-                id(videophone_dial_buffer).size() >= 32) return;
+            if (x >= 12) return;
+            if (id(phone).is_in_call()) {
+              id(phone).send_dtmf(KEYS[x]);
+              return;
+            }
+            if (!id(phone).is_idle() || id(videophone_dial_buffer).size() >= 32) return;
             id(videophone_dial_buffer).push_back(KEYS[x]);
             lv_label_set_text(id(videophone_keypad_value),
                               id(videophone_dial_buffer).c_str());
@@ -380,10 +413,11 @@ defaults:
         widgets:
         - label:
             align: CENTER
-            text: CONTACTS
+            text: BACK
             text_color: 16777215
             text_font: videophone_small_font
     - button:
+        id: videophone_keypad_action_button
         align: BOTTOM_MID
         y: -28
         width: 260
@@ -393,22 +427,30 @@ defaults:
         on_click:
         - if:
             condition:
-              lambda: !lambda |-
-                return !id(videophone_dial_buffer).empty();
+              lambda: return id(phone).is_in_call();
             then:
-            - voip_stack.call:
-                target: !lambda |-
-                  return id(videophone_dial_buffer);
-            - lambda: !lambda |-
-                id(videophone_peer) =
-                    id(videophone_dial_buffer);
-                id(videophone_dial_buffer).clear();
-                lv_label_set_text(id(videophone_keypad_value),
-                                  "Enter extension or number");
+            - voip_stack.call_toggle: null
             - script.execute: show_phone_page
+            else:
+            - if:
+                condition:
+                  lambda: !lambda |-
+                    return id(phone).is_idle() && !id(videophone_dial_buffer).empty();
+                then:
+                - voip_stack.call:
+                    target: !lambda |-
+                      return id(videophone_dial_buffer);
+                - lambda: !lambda |-
+                    id(videophone_peer) =
+                        id(videophone_dial_buffer);
+                    id(videophone_dial_buffer).clear();
+                    lv_label_set_text(id(videophone_keypad_value),
+                                      "Enter extension or number");
+                - script.execute: show_phone_page
         widgets:
         - label:
             align: CENTER
+            id: videophone_keypad_action_label
             text: CALL
             text_color: 16777215
             text_font: videophone_small_font
@@ -422,6 +464,7 @@ defaults:
         radius: 12
         on_click:
         - lambda: !lambda |-
+            if (!id(phone).is_idle()) return;
             if (!id(videophone_dial_buffer).empty())
               id(videophone_dial_buffer).pop_back();
             lv_label_set_text(
@@ -619,6 +662,13 @@ defaults:
         const bool calling = id(phone).is_calling();
         const bool in_call = id(phone).is_in_call();
         const bool idle = id(phone).is_idle();
+        if (in_call) {
+          lv_obj_add_flag(id(videophone_title_label), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_align(id(videophone_keypad_button), LV_ALIGN_TOP_MID, 0, 20);
+        } else {
+          lv_obj_clear_flag(id(videophone_title_label), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_align(id(videophone_keypad_button), LV_ALIGN_BOTTOM_LEFT, 90, -24);
+        }
 
         std::string peer = id(videophone_peer);
         if (idle) peer = id(phone).get_current_destination();
@@ -643,7 +693,9 @@ defaults:
         }
 
         if (idle) {
+          const bool contacts_were_hidden = lv_obj_has_flag(id(phone_contacts_container), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(phone_contacts_container), LV_OBJ_FLAG_HIDDEN);
+          if (contacts_were_hidden) id(contacts_list_view).refresh();
           lv_obj_add_flag(id(videophone_peer_label), LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(id(videophone_call_button), LV_OBJ_FLAG_HIDDEN);
         } else {
@@ -651,7 +703,6 @@ defaults:
           lv_obj_remove_flag(id(videophone_peer_label), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(videophone_call_button), LV_OBJ_FLAG_HIDDEN);
         }
-        id(contacts_list_view).refresh();
         lv_label_set_text(id(videophone_state_label), state);
         lv_label_set_text(id(videophone_peer_label), peer.c_str());
         lv_label_set_text(id(videophone_call_label), action);
@@ -659,7 +710,7 @@ defaults:
             id(videophone_call_button), lv_color_hex(action_color),
             LV_PART_MAIN);
         ${ 'lv_label_set_text(id(videophone_video_peer_label), peer.c_str());' if _p4_phone_has_video else '' }
-    - script.execute: update_voicemail_status
+        ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
   - id: update_videophone_settings
     mode: restart
     then:
@@ -690,8 +741,7 @@ defaults:
     mode: restart
     then:
     - lambda: |-
-        auto *target = id(ui_voicemail_active) && id(phone).is_idle()
-            ? id(phone_voicemail_page)->obj : id(videophone_page)->obj;
+        auto *target = id(videophone_page)->obj;
         if (lv_screen_active() != target) lv_screen_load(target);
     - script.execute: update_status
   - id: clear_videophone_terminal_notice
