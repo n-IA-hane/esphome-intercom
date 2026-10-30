@@ -1108,15 +1108,30 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
         audio.close()
 
 
-@pytest.mark.parametrize("remove_mailbox", [False, True])
-async def test_mwi_uses_existing_subscription_lifecycle_and_mailbox_counts(mailbox_lab, remove_mailbox):
+@pytest.mark.parametrize("remove_mailbox", [False, "endpoint", "disabled-account", "removed-account"])
+@pytest.mark.parametrize("initially_enabled", [False, True])
+async def test_mwi_uses_existing_subscription_lifecycle_and_mailbox_counts(mailbox_lab, remove_mailbox, initially_enabled, monkeypatch):
     import time
     from custom_components.voip_stack.sip_application import SipApplicationMethods
     from custom_components.voip_stack.sip_registrar import SipRegistrar, SipAccount, SipRegistration
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_CHANGED
+    from custom_components.voip_stack.phone_config import update_phone_subentry
+    from custom_components.voip_stack import dialog_info, phone_state
 
     lab = mailbox_lab
+    scans = []
+    original = dialog_info.snapshot_all
+    def scan(runtime):
+        scans.append(True)
+        return original(runtime)
+    monkeypatch.setattr(dialog_info, "snapshot_all", scan)
+    monkeypatch.setattr(phone_state, "snapshot_all", scan)
+    changes = {"kind": "sip_account", "username": "kitchen"}
+    if not initially_enabled:
+        changes["voicemail"] = {}
+        assert lab.calls.component("media_archive") is None
+    assert update_phone_subentry(lab.hass, config_entry(lab.hass), "kitchen", changes)
     lab.runtime.endpoints.update("kitchen", kind=EndpointKind.SIP_ACCOUNT, username="kitchen")
     registrar = SipRegistrar(enabled=True, accounts=[SipAccount("kitchen", "Kitchen", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
@@ -1143,12 +1158,22 @@ async def test_mwi_uses_existing_subscription_lifecycle_and_mailbox_counts(mailb
         assert denied.status == 403
         first = await methods.handle(request(), ("127.0.0.2", 5060), "UDP", send)
         assert first.status == 200 and first.follow_up.content_type == "application/simple-message-summary"
+        assert methods.dialog_unsubscribe is None and methods.parking_unsubscribe is None
+        assert methods.endpoint_unsubscribe is not None
         assert b"Messages-Waiting: no\r\n" in first.follow_up.body
         assert b"Voice-Message: 0/0 (0/0)\r\n" in first.follow_up.body
         assert b"Message-Account: sip:mailbox.kitchen@127.0.0.1:5060\r\n" in first.follow_up.body
         first.follow_up_scheduler()
         initial_notify = await asyncio.wait_for(notifications.get(), 2)
         assert initial_notify.cseq == first.follow_up.cseq
+        if not initially_enabled:
+            assert lab.calls.component("media_archive") is None
+            await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
+                "device_id": "mailbox-device", "enabled": True,
+            }, blocking=True)
+            enabled = await asyncio.wait_for(notifications.get(), 2)
+            assert b"Voice-Message: 0/0" in enabled.body
+            assert dict(enabled.headers)["Subscription-State"].startswith("active")
         archive = await get_archive(lab.hass)
         writer = await archive.begin("kitchen", caller="Door")
         assert writer.offer(b"\x01\x00" * 320, AudioFormat(16000, frame_ms=20))
@@ -1169,13 +1194,40 @@ async def test_mwi_uses_existing_subscription_lifecycle_and_mailbox_counts(mailb
             from custom_components.voip_stack.mailbox import async_remove_mailbox
 
             await async_remove_mailbox(lab.hass, "kitchen")
+            disabled = await asyncio.wait_for(notifications.get(), 2)
+            assert dict(disabled.headers)["Subscription-State"].startswith("active")
+            assert b"Messages-Waiting: no" in disabled.body and b"Voice-Message: 0/0" in disabled.body
+            await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
+                "device_id": "mailbox-device", "enabled": True,
+            }, blocking=True)
+            await asyncio.wait_for(notifications.get(), 2)
+            writer = await archive.begin("kitchen", caller="After re-enable")
+            assert writer.offer(bytes(640), AudioFormat(16000, frame_ms=20))
+            await writer.finish()
+            lab.hass.bus.async_fire(EVENT_VOICEMAIL_CHANGED, {"endpoint_id": "kitchen"})
+            restored = await asyncio.wait_for(notifications.get(), 2)
+            assert b"Messages-Waiting: yes" in restored.body
+            assert len(methods.subscriptions) == 1
+            assert next(iter(methods.subscriptions.values())).request.header("Call-ID") == "mailbox-mwi"
+            if remove_mailbox == "endpoint":
+                lab.runtime.endpoints.remove("kitchen")
+            else:
+                from dataclasses import replace
+                account = registrar.accounts["kitchen"]
+                registrar.update_accounts([replace(account, enabled=False)]
+                                          if remove_mailbox == "disabled-account" else [])
+                lab.runtime.endpoints.update("kitchen", availability="offline")
             ended = await asyncio.wait_for(notifications.get(), 2)
             assert dict(ended.headers)["Subscription-State"] == "terminated;reason=noresource"
             assert ended.cseq > removed.cseq
+            if remove_mailbox != "endpoint":
+                denied = await methods.handle(request(), ("127.0.0.2", 5060), "UDP", send)
+                assert denied.status == 403
         else:
             ended = await methods.handle(request(tag=first.to_tag, expires=0, cseq=2), ("127.0.0.2", 5060), "UDP", send)
             assert ended.status == 200 and dict(ended.follow_up.headers)["Subscription-State"].startswith("terminated")
         assert not methods.subscriptions and not methods.subscription_timers
+        assert scans == []
     finally:
         await methods.stop()
     assert not methods.tasks and methods.mailbox_unsubscribe is None

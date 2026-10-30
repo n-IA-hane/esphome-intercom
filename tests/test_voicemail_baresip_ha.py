@@ -22,7 +22,8 @@ pytestmark = [pytest.mark.ha, pytest.mark.skipif(shutil.which("baresip") is None
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_baresip_registers_gets_mwi_plays_and_deletes_message(trunks, tmp_path, monkeypatch):
+@pytest.mark.parametrize("initially_enabled", [True, False])
+async def test_baresip_registers_gets_mwi_plays_and_deletes_message(trunks, tmp_path, monkeypatch, initially_enabled):
     from homeassistant.components import tts
     from tools.ha_softphone_matrix import BareSip
 
@@ -41,7 +42,7 @@ async def test_baresip_registers_gets_mwi_plays_and_deletes_message(trunks, tmp_
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Baresip", unique_id="phone:baresip",
         data={"endpoint_id": "baresip", "name": "Baresip", "kind": "sip_account",
-              "username": "baresip", "extension": "101", "voicemail": {"enabled": True}},
+              "username": "baresip", "extension": "101", "voicemail": {"enabled": initially_enabled}},
     ))
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="baresip", name="Baresip", username="baresip",
                                                extension="101", kind=EndpointKind.SIP_ACCOUNT))
@@ -58,11 +59,13 @@ async def test_baresip_registers_gets_mwi_plays_and_deletes_message(trunks, tmp_
     from custom_components.voip_stack import voicemail_config
     from types import SimpleNamespace
     monkeypatch.setattr(voicemail_config, "voice_engine", lambda *_: SimpleNamespace(available=True))
-    archive = await get_archive(lab.hass)
-    writer = await archive.begin("baresip", caller="Lab delivery")
-    for _ in range(25):
-        assert writer.offer(struct.pack("<3200h", *([2200] * 3200)), AudioFormat(16000, frame_ms=20))
-    message = await writer.finish()
+    async def deposit():
+        archive = await get_archive(lab.hass)
+        writer = await archive.begin("baresip", caller="Lab delivery")
+        for _ in range(25):
+            assert writer.offer(struct.pack("<3200h", *([2200] * 3200)), AudioFormat(16000, frame_ms=20))
+        return archive, await writer.finish()
+    archive, message = await deposit() if initially_enabled else (None, None)
     config = tmp_path / "baresip"
     config.mkdir()
     wav = tmp_path / "received.wav"
@@ -96,7 +99,7 @@ module_app mwi.so
     deleted = asyncio.Event()
     @callback
     def operation(event):
-        if event.data.get("message_id") == message["id"]:
+        if message is not None and event.data.get("message_id") == message["id"]:
             deleted.set()
     unsubscribe = lab.hass.bus.async_listen("voip_stack_voicemail_operation", operation)
     try:
@@ -107,6 +110,15 @@ module_app mwi.so
         peer = await asyncio.to_thread(BareSip, config, wait_for_registration=False)
         await asyncio.to_thread(peer.command, "/uanew " + account)
         await asyncio.to_thread(peer.wait_for, "registered successfully", 5)
+        if not initially_enabled:
+            await asyncio.to_thread(peer.wait_for, "Voice-Message: 0/0", 5)
+            assert lab.calls.component("media_archive") is None
+            await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
+                "device_id": "baresip", "enabled": True,
+            }, blocking=True)
+            archive, message = await deposit()
+            from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_CHANGED
+            lab.hass.bus.async_fire(EVENT_VOICEMAIL_CHANGED, {"endpoint_id": "baresip"})
         await asyncio.to_thread(peer.wait_for, "Voice-Message: 1/0", 5)
         assert peer.output.count("mwi: subscribing to messages") == 1
         await asyncio.to_thread(peer.dial, "*97")

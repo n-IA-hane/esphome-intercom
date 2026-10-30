@@ -170,18 +170,73 @@ async def test_presence_tracks_reachability_when_the_dialog_document_stays_empty
     assert notifications.empty() and not lab.calls.sessions
 
 
-async def test_presence_without_dialog_subscriber_owns_and_releases_the_shared_observer(lab, blf):
+async def test_presence_without_dialog_subscriber_owns_only_the_endpoint_observer(lab, blf):
     methods, notifications, send = blf
     methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
     result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="presence-only"),
                                   ("127.0.0.3", 5060), "UDP", send)
-    assert result.status == 200 and methods.dialog_unsubscribe is not None
+    assert result.status == 200 and methods.dialog_unsubscribe is None
+    assert methods.endpoint_unsubscribe is not None
     result.follow_up_scheduler()
     await asyncio.wait_for(notifications.get(), 1)
     lab.runtime.endpoints.remove("sip:bedroom0")
     final = await asyncio.wait_for(notifications.get(), 1)
     assert dict(final.headers)["Subscription-State"] == "terminated;reason=noresource"
-    assert not methods.subscriptions and methods.dialog_unsubscribe is None
+    assert not methods.subscriptions and methods.endpoint_unsubscribe is None
+
+
+async def test_mwi_presence_and_dialog_release_their_own_observers(lab, blf, monkeypatch):
+    from custom_components.voip_stack import dialog_info
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+
+    methods, notifications, send = blf
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.register(PhoneEndpoint(
+        endpoint_id="watcher", name="Watcher", kind="sip_account", username="watcher"))
+    scans = []
+    original = dialog_info.snapshot_all
+    def scan(runtime):
+        scans.append(True)
+        return original(runtime)
+    monkeypatch.setattr(dialog_info, "snapshot_all", scan)
+    mwi = await methods.handle(subscribe(target="watcher", event="message-summary", call_id="mixed-mwi",
+                                         accept="application/simple-message-summary"),
+                               ("127.0.0.3", 5060), "UDP", send)
+    assert mwi.status == 200
+    mwi.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    resource_owner = methods.endpoint_unsubscribe
+    assert resource_owner is not None and methods.dialog_unsubscribe is None
+    presence = await methods.handle(subscribe(event="presence", call_id="mixed-presence", accept="application/pidf+xml"),
+                                    ("127.0.0.3", 5060), "UDP", send)
+    presence.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    assert methods.endpoint_unsubscribe is resource_owner and methods.dialog_unsubscribe is None
+    assert scans == []
+    dialog = await methods.handle(subscribe(call_id="mixed-dialog"), ("127.0.0.3", 5060), "UDP", send)
+    dialog.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    assert methods.endpoint_unsubscribe is resource_owner and methods.dialog_unsubscribe is not None
+    stop = await methods.handle(subscribe(call_id="mixed-dialog", tag=dialog.to_tag, cseq=2, expires=0),
+                                ("127.0.0.3", 5060), "UDP", send)
+    stop.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    await lab.hass.async_block_till_done()
+    assert methods.dialog_unsubscribe is None and methods.endpoint_unsubscribe is resource_owner
+    count = len(scans)
+    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
+    await asyncio.wait_for(notifications.get(), 1)
+    assert len(scans) == count
+    stop = await methods.handle(subscribe(event="presence", call_id="mixed-presence", accept="application/pidf+xml",
+                                         tag=presence.to_tag, cseq=2, expires=0), ("127.0.0.3", 5060), "UDP", send)
+    stop.follow_up_scheduler()
+    await asyncio.wait_for(notifications.get(), 1)
+    await lab.hass.async_block_till_done()
+    assert methods.endpoint_unsubscribe is resource_owner
+    lab.runtime.endpoints.remove("watcher")
+    ended = await asyncio.wait_for(notifications.get(), 1)
+    assert dict(ended.headers)["Subscription-State"] == "terminated;reason=noresource"
+    assert methods.endpoint_unsubscribe is None and not methods.subscriptions
 
 
 @pytest.mark.parametrize("kind", ["browser", "esphome", "sip_account"])

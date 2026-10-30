@@ -42,7 +42,6 @@ class SipApplicationMethods:
     tasks: set[asyncio.Task[object]] | None = None
     publication_timers: dict[str, asyncio.Task[object]] | None = None
     subscription_timers: dict[str, asyncio.Task[object]] | None = None
-    mailbox_archive: object | None = None
     mailbox_unsubscribe: Callable[[], None] | None = None
     dialog_unsubscribe: Callable[[], None] | None = None
     endpoint_unsubscribe: Callable[[], None] | None = None
@@ -126,18 +125,17 @@ class SipApplicationMethods:
                     dialog_endpoint_id = endpoint.endpoint_id
             if event == "message-summary":
                 from .mailbox import get_archive, mailbox_settings, EVENT_VOICEMAIL_CHANGED
-                from .runtime_data import endpoint_directory
-
                 try:
                     target = sip.parse_sip_uri(request.uri).user
                 except (ValueError, sip.SipError):
                     return SipRequestResult(400, "Bad Request")
                 if target.casefold() != account.username.casefold():
                     return SipRequestResult(403, "Forbidden")
-                endpoint = endpoint_directory(self.hass).by_username(account.username)
-                if (endpoint is None or not mailbox_settings(self.hass, endpoint.endpoint_id).get("enabled")):
+                endpoint = self._mailbox_endpoint(account.username)
+                if endpoint is None:
                     return SipRequestResult(404, "Not Found")
-                self.mailbox_archive = await get_archive(self.hass)
+                if mailbox_settings(self.hass, endpoint.endpoint_id).get("enabled"):
+                    await get_archive(self.hass)
                 mailbox_id = endpoint.endpoint_id
                 if self.mailbox_unsubscribe is None:
                     self.mailbox_unsubscribe = self.hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, self._mailbox_changed)
@@ -149,15 +147,32 @@ class SipApplicationMethods:
                 mailbox_id=mailbox_id,
                 dialog_endpoint_id=dialog_endpoint_id,
             )
-            if (event in {"dialog", "presence"} and result.status == 200 and self.dialog_unsubscribe is None
-                    and any(item.event in {"dialog", "presence"} and item.dialog_endpoint_id
-                            for item in self.subscriptions.values())):
+            if (event in {"presence", "message-summary"} and result.status == 200 and self.endpoint_unsubscribe is None
+                    and any(item.dialog_endpoint_id or item.mailbox_id for item in self.subscriptions.values())):
+                from .runtime_data import endpoint_directory
+
+                self.endpoint_unsubscribe = endpoint_directory(self.hass).subscribe(self._dialog_endpoint_changed)
+            if (event == "dialog" and result.status == 200 and self.dialog_unsubscribe is None
+                    and any(item.event == "dialog" for item in self.subscriptions.values())):
                 from .phone_state import phone_state_observer
 
                 self.dialog_unsubscribe = phone_state_observer(self.hass).subscribe(
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
             return result
         return SipRequestResult(405, "Method Not Allowed")
+
+    def _mailbox_endpoint(self, username, expected_id=""):
+        """MWI observes the account's phone, independently of message storage."""
+        from .phone_endpoint import EndpointAvailability
+        from .runtime_data import endpoint_directory
+
+        account = self.registrar.accounts.get(username.casefold())
+        endpoint = endpoint_directory(self.hass).by_username(username)
+        if (account is None or not account.enabled or endpoint is None
+                or endpoint.availability is EndpointAvailability.UNAVAILABLE
+                or (expected_id and endpoint.endpoint_id != expected_id)):
+            return None
+        return endpoint
 
     def _refer(self, request, addr, transport, account, sender, flow_trunk_id):
         """Authorize Target-Dialog against the existing leg's stable principal."""
@@ -458,8 +473,10 @@ class SipApplicationMethods:
             content_type = "application/dialog-info+xml"
         elif subscription.event == "message-summary":
             from dataclasses import replace
+            from .phone_state import mailbox_state
 
-            new, old = self.mailbox_archive.counts(subscription.mailbox_id)
+            mailbox = mailbox_state(self.hass, subscription.mailbox_id)
+            new, old = mailbox["new"], mailbox["old"]
             account_uri = replace(sip.parse_sip_uri(subscription.request.uri), user=f"mailbox.{subscription.target}")
             body = (f"Messages-Waiting: {'yes' if new else 'no'}\r\n"
                     f"Message-Account: {account_uri}\r\n"
@@ -585,14 +602,19 @@ class SipApplicationMethods:
         self._notify_dialog_changes(event.endpoint.endpoint_id)
 
     def _notify_dialog_changes(self, endpoint_id="", *, dialogs=None):
-        if self.dialog_unsubscribe is None or not self.subscriptions:
+        if not self.subscriptions:
             return
         from .dialog_info import snapshot_all, filter_dialogs
         from .runtime_data import require_runtime_data
 
         runtime = require_runtime_data(self.hass)
-        dialogs = snapshot_all(runtime) if dialogs is None else dialogs
         for subscription in tuple((self.subscriptions or {}).values()):
+            if subscription.event == "message-summary":
+                if endpoint_id and endpoint_id != subscription.mailbox_id:
+                    continue
+                if self._mailbox_endpoint(subscription.target, subscription.mailbox_id) is None:
+                    self._end_subscription(subscription, reason="noresource")
+                continue
             if (subscription.event not in {"dialog", "presence"} or not subscription.dialog_endpoint_id
                     or (endpoint_id and endpoint_id != subscription.dialog_endpoint_id)):
                 continue
@@ -606,6 +628,8 @@ class SipApplicationMethods:
                 endpoint = runtime.endpoints.get(subscription.dialog_endpoint_id)
                 states = (endpoint is not None and endpoint.availability is EndpointAvailability.AVAILABLE,)
             else:
+                if dialogs is None:
+                    dialogs = snapshot_all(runtime)
                 states = filter_dialogs(dialogs.get(subscription.dialog_endpoint_id, ()), subscription.dialog_filter)
             if not removed and states == subscription.dialog_snapshot:
                 continue
@@ -620,27 +644,23 @@ class SipApplicationMethods:
         self._release_dialog_observers_if_unused()
 
     def _release_dialog_observers_if_unused(self):
-        if any(item.event in {"dialog", "presence"} and item.dialog_endpoint_id
-               for item in (self.subscriptions or {}).values()):
-            return
-        for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
-            if (unsubscribe := getattr(self, name)) is not None:
-                unsubscribe()
-                setattr(self, name, None)
+        resources = (self.subscriptions or {}).values()
+        if not any(item.event == "dialog" for item in resources):
+            for name in ("dialog_unsubscribe", "parking_unsubscribe"):
+                if (unsubscribe := getattr(self, name)) is not None:
+                    unsubscribe()
+                    setattr(self, name, None)
+        if not any(item.dialog_endpoint_id or item.mailbox_id for item in resources):
+            if self.endpoint_unsubscribe is not None:
+                self.endpoint_unsubscribe()
+                self.endpoint_unsubscribe = None
 
     @callback
     def _mailbox_changed(self, event) -> None:
-        if self.mailbox_archive is None:
-            return
         for subscription in tuple((self.subscriptions or {}).values()):
             if subscription.event == "message-summary" and subscription.mailbox_id == event.data.get("endpoint_id"):
-                if event.data.get("removed"):
-                    self.subscriptions.pop(subscription.key, None)
-                    self._cancel_timer(self.subscription_timers, subscription.key)
-                    result = self._notification_result(
-                        subscription, expires=0, terminated=True, termination_reason="noresource",
-                    )
-                    self._schedule_notification(subscription, result)
+                if self._mailbox_endpoint(subscription.target, subscription.mailbox_id) is None:
+                    self._end_subscription(subscription, reason="noresource")
                     continue
                 self._notify_subscribers(subscription.target, event="message-summary")
                 break
@@ -937,7 +957,6 @@ class SipApplicationMethods:
         if self.mailbox_unsubscribe is not None:
             self.mailbox_unsubscribe()
             self.mailbox_unsubscribe = None
-        self.mailbox_archive = None
         for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
