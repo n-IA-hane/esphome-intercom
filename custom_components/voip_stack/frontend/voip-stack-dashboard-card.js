@@ -314,7 +314,6 @@ class VoipStackDashboardCard extends HTMLElement {
 
   _renderHeader(owner) {
     const e = this._els; const value = owner ? phonePresentation(owner) : null; const call = value?.primary;
-    e.ownerIcon.setAttribute("icon", owner ? dashboardIconFor(owner) : "mdi:phone");
     e.ownerCall.hidden = !call;
     if (!call) return;
     const incoming = call.direction === "incoming" && call.state === "early";

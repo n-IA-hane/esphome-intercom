@@ -242,7 +242,7 @@ def test_dashboard_endpoint_icons_availability_and_automation_routing(dashboard_
     expected = {"reception": "mdi:deskphone", "office": "mdi:phone-classic", "bedroom": "mdi:home-assistant", "kitchen": "mdi:deskphone", "garage": "mdi:deskphone"}
     for endpoint, icon in expected.items():
         assert page.locator(f".tile[data-key='endpoint:{endpoint}'] .tile-icon > ha-icon").first.get_attribute("icon") == icon
-    assert page.locator(".identity-icon ha-icon").get_attribute("icon") == "mdi:home-assistant"
+    assert page.locator(".identity-icon ha-icon").get_attribute("icon") == "mdi:phone"
     # HA renders the icon in live qualification; this fixture has no ha-icon definition.
     assert page.locator(".tile[data-key='endpoint:kitchen'] .ringing-bell").evaluate("node=>!node.hidden")
     assert page.locator(".tile[data-key='endpoint:reception'] .availability-icon").get_attribute("icon") == "mdi:check-circle"
