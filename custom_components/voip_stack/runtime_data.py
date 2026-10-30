@@ -15,7 +15,6 @@ from .phone_endpoint import EndpointKind, PhoneEndpoint
 
 if TYPE_CHECKING:
     from .device_resolver import VoipDeviceResolver
-    from .esphome_mailbox import EspHomeMailboxBridge
     from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
 
@@ -95,7 +94,12 @@ class VoipStackRuntime:
     softphone_presence: dict[str, int] = field(default_factory=dict)
     sip_bridge_state: dict[str, Any] = field(default_factory=dict)
     phonebook_sensor: Any | None = None
-    esphome_mailbox: EspHomeMailboxBridge | None = None
+    phone_provisioning: Any | None = None
+    directory: Any | None = None
+    ldap_server: Any | None = None
+    imap_server: Any | None = None
+    peer_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    capability_probes: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
     phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None

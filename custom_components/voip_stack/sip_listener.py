@@ -1246,6 +1246,18 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 )
             return response
 
+    async def async_options(self, uri: str, addr: tuple[str, int], *, timeout: float = 3.0):
+        """Probe a registered peer on this existing flow, without a call owner."""
+        ids = sip.SipDialogIds(call_id=sip.make_call_id("options"), local_tag=sip.make_tag(),
+            remote_tag="", cseq=1, branch=sip.make_branch())
+        local_uri = str(sip.SipUri("voip-stack", self.local_ip, self.local_sip_port))
+        headers = sip.dialog_headers(request_uri=uri, local_uri=local_uri, remote_uri=uri,
+            dialog=ids, method="OPTIONS", contact_uri=local_uri, transport=self.signaling_transport)
+        headers.append(("Accept", "application/sdp"))
+        return await self._run_client_transaction(raw=sip.build_request("OPTIONS", uri, headers),
+            addr=addr, ids=ids, method="OPTIONS", transport=self.signaling_transport,
+            timeout=timeout, creating_dialog=True)
+
     async def _run_client_transaction(
         self,
         *,

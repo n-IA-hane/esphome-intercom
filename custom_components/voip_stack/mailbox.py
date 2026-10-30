@@ -231,6 +231,7 @@ async def _remove_mailbox(hass, endpoint_id):
         archive = await get_archive(hass)
     if archive is not None:
         await archive.remove_mailbox(endpoint_id)
+        await archive.imap_forget(endpoint_id)
     entry = config_entry(hass)
     if entry is not None and endpoint_id in entry.data.get(CONF_ESPHOME_MAILBOXES, {}):
         settings = dict(entry.data[CONF_ESPHOME_MAILBOXES])
@@ -252,7 +253,12 @@ async def async_setup_mailboxes(hass, entry):
     def changed(event):
         from .websocket_api import _publish_ha_softphone_state, _ha_softphone_store
 
-        endpoint = runtime.endpoints.get(str(event.data.get("endpoint_id") or ""))
+        endpoint_id = str(event.data.get("endpoint_id") or "")
+        if runtime.imap_server is not None:
+            runtime.imap_server.notify_changed(endpoint_id)
+        if runtime.phone_provisioning is not None:
+            runtime.phone_provisioning.schedule()
+        endpoint = runtime.endpoints.get(endpoint_id)
         if endpoint is not None and endpoint.kind.is_softphone:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
@@ -261,17 +267,16 @@ async def async_setup_mailboxes(hass, entry):
     def device_removed(event):
         if event.data.get("action") != "remove":
             return
+        if runtime.phone_provisioning is not None:
+            # The phone owner coordinates revocation, protocol sessions and
+            # files. This fallback serves standalone mailbox consumers only.
+            return
         endpoint = runtime.endpoints.by_device_id(event.data["device_id"])
         if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
             create_runtime_task(hass, async_remove_mailbox(hass, endpoint.endpoint_id))
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, changed))
     entry.async_on_unload(hass.bus.async_listen(EVENT_DEVICE_REGISTRY_UPDATED, device_removed))
-    from .esphome_mailbox import EspHomeMailboxBridge
-
-    runtime.esphome_mailbox = EspHomeMailboxBridge(hass)
-    runtime.esphome_mailbox.start()
-    entry.async_on_unload(runtime.esphome_mailbox.unsubscribe)
     await async_refresh_mailbox_state(hass)
 
 
@@ -319,5 +324,5 @@ async def async_refresh_mailbox_state(hass):
         if endpoint.kind.is_softphone:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
-    if runtime.esphome_mailbox is not None:
-        await runtime.esphome_mailbox.async_push()
+    if runtime.phone_provisioning is not None:
+        runtime.phone_provisioning.schedule()

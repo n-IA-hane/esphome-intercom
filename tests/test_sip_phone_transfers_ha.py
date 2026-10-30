@@ -11,7 +11,7 @@ import wave
 
 import pytest
 
-from custom_components.voip_stack.endpoint_routing import roster_from_peers
+from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, roster_from_peers
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.trunk_runtime import async_stop_sip_trunk
@@ -88,7 +88,7 @@ module_app account.so
                 accounts.write_text(accounts.read_text().replace(">;auth_user=", ";video_codecs=H264>;auth_user="))
             accounts.chmod(0o600)
             peers.append(await asyncio.to_thread(BareSip, config))
-        lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+        lab.roster[:] = assemble_directory_entries(lab.hass, [], registrar.registered_roster_entries())
         yield peers
     finally:
         for peer in peers:
@@ -740,7 +740,7 @@ async def test_outside_refer_target_dialog_with_baresip_and_duplex_audio(registe
     registrar.registrations["bedroom0"] = SipRegistration(username="bedroom0",
         contact_uri=f"sip:bedroom0@127.0.0.1:{source_port}", source_host="127.0.0.1", source_port=source_port,
         transport="UDP", expires_at=time.time() + 120)
-    lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+    lab.roster[:] = assemble_directory_entries(lab.hass, [], registrar.registered_roster_entries())
     receive = source.datagram_received
     def incoming(raw, addr):
         message = sip.parse_message(raw)

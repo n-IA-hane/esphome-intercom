@@ -69,6 +69,18 @@ See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware
 when updating copied YAMLs. This does not force an immediate firmware update
 when installing the Home Assistant integration alone.
 
+## Preview: standard phone services
+
+The coordinated **2026.11.1-dev** preview adds automatic ESP SIP accounts,
+a shared LDAP directory, live BLF contact lists and standard MWI/IMAP voicemail.
+Home Assistant supplies one credential through the existing ESPHome API.
+Display phones gain a scrolling contact list and a dedicated mailbox page;
+VoIP-only profiles keep their independent callback model.
+
+See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
+traditional phone access, migration and memory limits. These additions are
+available on the coordinated `dev` branches.
+
 ## PBX additions in 2026.11.0
 
 The [2026.11.0 release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0)
@@ -315,12 +327,11 @@ separate user mode.
 | `mic_only` | microphone TX | Monitor or capture endpoint |
 | `speaker_only` | speaker RX | Paging or announcement target |
 
-An endpoint must have at least one real media direction. ESP VoIP intentionally
-uses uncompressed PCM for audio. Standard profiles are audio-only; qualified
-ESP32-P4 videophone profiles compile exactly one video codec, JPEG or H.264.
-HA performs format conversion when a standard SIP peer negotiates another
-supported audio codec; ESP firmware is not downgraded to a telephone codec for
-that purpose.
+An endpoint needs at least one media direction. Firmware selects its audio
+codecs and rates; SIP/SDP negotiates each call. JPEG camera transmission and
+software JPEG rendering are available on supported ESP32-S3 configurations.
+ESP32-P4 videophone profiles select JPEG or H.264 with their hardware renderer.
+HA can convert formats when a routed call requires it.
 
 Audio component details live in the companion projects:
 
@@ -609,42 +620,19 @@ call completion, fallback, time limits, concurrent callers and troubleshooting.
 
 ## Use ESP firmware with an existing PBX
 
-An ESP running VoIP Stack can also be a SIP phone for a classic PBX. Configure
-it as a static peer: the PBX knows the ESP's address, so no SIP REGISTER or
-account credentials are needed on the firmware. A normal registered desk phone
-or softphone can then dial the ESP's extension.
+An ESP can use direct SIP, register one or more accounts with an existing
+PBX, or combine an HA-managed account with other PBX lines. Direct calling
+remains the generic component default. The coordinated development packages
+also configure the HA account automatically through ESPHome.
 
-For example, reserve extension **1001** on the PBX and associate it with the
-ESP's fixed address, such as `192.168.1.60:5060`. On Asterisk, a dialplan entry
-then calls the configured static endpoint:
+Choose the outgoing account explicitly when needed; incoming calls follow the
+selected account and direct-call acceptance policy. LDAP phonebooks, BLF, MWI
+and IMAP voicemail use standard services offered by the selected system.
 
-```ini
-exten => 1001,1,Dial(PJSIP/esp-bedroom,30)
- same => n,Hangup()
-```
-
-The endpoint/AOR configuration is included in the guide below. Baresip is one
-way to test the calls; it is not required.
-
-For calls in the other direction, add a PBX destination to the firmware's
-existing phonebook:
-
-```yaml
-voip_stack:
-  static_contacts:
-    - name: "700"
-      ip: 192.168.1.20
-      port: 5060
-      transport: udp
-```
-
-This calls extension `700` on the PBX at `192.168.1.20`. The PBX must also have
-a static endpoint for the ESP and compatible audio settings. The device can
-retain its Assist and media features through ESPHome, or use a VoIP-only profile.
-
-[Set up an ESP with a classic PBX](docs/CLASSIC_PBX.md) includes the firmware
-settings, Asterisk and FreeSWITCH static-extension examples, ordinary SIP-phone
-calls, and the measured Asterisk 16 kHz microphone / 48 kHz playback setup.
+[Set up an ESP with a classic PBX](docs/CLASSIC_PBX.md) covers direct peers and
+existing media paths. The [ESP VoIP Stack examples](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/examples)
+cover registered and mixed-account firmware. See
+[standard phone services](docs/ESP_PHONE_SERVICES.md) for automatic HA setup.
 
 ## Optional SIP trunk
 
@@ -795,11 +783,14 @@ applied before the processor starts, so the selector matches the running DSP.
 
 The Generic Full Lite AEC profile keeps Voice Assistant, wake word, software
 AEC, VoIP, HTTP playback, TTS, timers and the runtime controller. It uses size
-optimization and leaves Sendspin disabled. PSRAM is still required. Its measured
-OTA image was about 1.78 MB in an earlier build, leaving roughly 59 KB in the
-standard 4 MB flash layout. That is historical headroom; check the build size
-again after adding components or updating
-dependencies. The full 8 MB profile retains Sendspin and more flash headroom.
+optimization and leaves Sendspin disabled. PSRAM is still required. Keep its
+companion [partition CSV](yamls/full-experience/single-bus/partitions_4mb_lite_dual_ota.csv)
+beside the main YAML: the dedicated 4 MB table provides two `0x1e0000`-byte OTA
+slots and 192 KiB NVS. Existing stock-layout devices need the
+[serial flash-layout migration](docs/BREAKING_CHANGES.md#2026111-preview-4-mb-lite-flash-layout),
+which resets stored preferences. Check the build size after adding components
+or updating dependencies. The full 8 MB profile retains Sendspin and more flash
+headroom.
 
 ## Documentation
 

@@ -2,6 +2,14 @@
 
 Changes since stable **2026.11.0**.
 
+> **Generic Full Lite 4 MB migration:** download the companion
+> [partition CSV](../yamls/full-experience/single-bus/partitions_4mb_lite_dual_ota.csv)
+> beside your main YAML. This profile has larger OTA slots and 192 KiB NVS.
+> Existing stock-layout devices require flash erase and serial factory upload,
+> which resets stored preferences. Preserve your YAML, wiring and calibration
+> values first. [Migration steps](BREAKING_CHANGES.md#2026111-preview-4-mb-lite-flash-layout).
+> Other board profiles keep their current partition layouts.
+
 ## Your phone system, on one dashboard
 
 The new **VoIP Dashboard** brings your extensions and saved contacts into a
@@ -166,15 +174,37 @@ select the outgoing line and keep runtime changes temporary or save them
 explicitly. UDP/TCP, Digest authentication and automatic binding renewal share
 the existing signaling worker.
 
-An optional MWI subscription reports mailbox waiting status and message counts
-to YAML triggers and conditions. The maintained display packages show a centered
-unread-message envelope on their Assist idle and VoIP idle views. HA mailboxes
-update it through the native ESPHome API; registered PBX accounts use SIP MWI.
-Custom YAML can use the same events for its own LED or display.
-Leaving registration disabled preserves the existing direct configuration.
+SIP MWI reports mailbox waiting status and counts to YAML triggers and
+conditions, for both VoIP Stack HA and other registered PBX accounts.
+The maintained display packages show an unread-message envelope on their idle
+Assist and telephone views.
 
 [PBX accounts and actions](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_REGISTRATION.md)
 and [message waiting](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_MWI.md).
+
+### One account, a live directory and your messages
+
+Maintained ESP packages now obtain their account from Home Assistant through
+the existing ESPHome API. HA generates the password once; SIP registration,
+LDAP directory access and IMAP voicemail share that identity. The friendly
+device name is presented as the caller's name.
+
+- **LDAP phonebook:** HA assembles the common routing directory directly. ESP
+  phones fetch names and addresses with the same standard service available
+  to traditional desk phones.
+- **Scrolling BLF contacts:** type icons and live call-state indicators replace
+  the contact carousel. Tap a ringing contact to perform directed pickup.
+  Display packages reserve a bounded watch pool; headless phones omit it.
+- **Visual voicemail:** tap the idle envelope or open Voicemail from Contacts.
+  A dedicated page shows caller, date, duration and read state. Play, Stop,
+  Delete and paged navigation reuse the existing audio player and archive.
+- **Clean ownership:** permanent ESPHome removal revokes credentials and deletes
+  the managed directory/mailbox data. Offline and reload cycles retain them.
+- **Compact discovery:** managed phones negotiate through SIP OPTIONS/SDP,
+  replacing the lengthy Endpoint sensor with their native device/account owner.
+
+Read the [standard phone services guide](ESP_PHONE_SERVICES.md) for ports,
+authentication, standalone PBX options, memory controls and migration.
 
 ## Updating from 2026.11.0
 
@@ -182,9 +212,8 @@ This prerelease updates the Home Assistant integration and frontend. Existing
 phone-card configurations remain usable; add the dashboard as a separate card
 where you want the operator view.
 
-Keep your existing ESP firmware for the Dashboard update. The maintained device
-YAMLs continue to use the stable components from `main`. To try the optional ESP
-extensions above, select their documented `dev` component sources and packages,
+Keep your existing ESP firmware for the Dashboard update. To try the ESP extensions above, use the current maintained board YAML and
+coordinated `dev` component sources and packages,
 then rebuild with ESPHome **2026.10.0 or newer**. Audio Stack and Runtime
 Controller keep their existing stable behavior.
 

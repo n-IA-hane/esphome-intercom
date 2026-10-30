@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "Allgemeine Einstellungen",
           "parking": "Anruf parken",
-          "voicemail": "Mailbox-Stimme"
+          "voicemail": "Mailbox-Stimme",
+          "phone_services": "Telefonbuch und Postfächer"
+        }
+      },
+      "phone_services": {
+        "title": "Standard-Telefondienste",
+        "description": "LDAP stellt das gemeinsame Telefonbuch bereit. IMAP macht das vorhandene Mailbox-Archiv zugänglich. Verwaltete ESPHome-Telefone erhalten ihre Konfiguration über die native API. SIP, LDAP und IMAP verwenden dasselbe Telefonkonto. Für optionales TLS werden deine Zertifikatsdatei und die Datei deines privaten Schlüssels verwendet.",
+        "data": {
+          "listen_host": "Listener-Adresse",
+          "ldap_port": "LDAP-Port",
+          "base_dn": "Basis-DN des Telefonbuchs",
+          "allow_anonymous": "Anonyme Telefonbuchsuche zulassen",
+          "imap_port": "IMAP-Port",
+          "tls": "TLS für LDAP und IMAP verwenden",
+          "certificate": "Zertifikatsdatei",
+          "private_key": "Datei des privaten Schlüssels"
         }
       }
     },
@@ -165,7 +180,9 @@
       "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
       "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
       "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
-      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst."
+      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst.",
+      "phone_service_ports_conflict": "LDAP und IMAP benötigen unterschiedliche Ports.",
+      "phone_service_certificate_required": "TLS benötigt sowohl eine Zertifikatsdatei als auch eine Datei mit dem privaten Schlüssel."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -500,6 +517,10 @@
     "mailbox_route_conflict": {
       "title": "Konflikt mit Mailbox-Codes",
       "description": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Mailbox-Adresse. Benenne das betreffende Ziel um; bestehende Routen bleiben unverändert."
+    },
+    "phone_service_unavailable": {
+      "title": "Telefondienst {service} nicht verfügbar",
+      "description": "VoIP Stack konnte {service} auf Port {port} nicht starten. Prüfe die konfigurierte Listener-Adresse, die Verfügbarkeit des Ports und gegebenenfalls die Zertifikatsdateien. Anrufe verwenden weiterhin den bestehenden SIP-Dienst. Konfiguriere Telefonbuch und Postfächer neu und lade anschließend VoIP Stack neu."
     }
   },
   "exceptions": {

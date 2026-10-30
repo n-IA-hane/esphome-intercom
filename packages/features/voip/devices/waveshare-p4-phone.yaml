@@ -45,18 +45,24 @@ voip_stack:
   ringing_timeout: 30s
   delete_contact_missing_from:
     updates_number: 1
-speaker:
-- platform: resampler
-  id: voip_speaker_input
-  output_speaker: hw_speaker
-  bits_per_sample: 16
-  task_stack_in_psram: false
-  buffer_duration: 128ms
+defaults:
+  _p4_phone_voicemail_playback: !include '../../../audio/standalone_voicemail_player.yaml'
+  _p4_phone_direct_input:
+    packages:
+      input: !include
+        file: ../../shared/direct_input.yaml
+        vars:
+          input_id: voip_speaker_input
+          input_buffer_duration: 128ms
+    speaker:
+    - id: !extend voip_speaker_input
+      task_stack_in_psram: false
 external_components:
 - source: ${voip_stack_components_source}
   components:
   - voip_stack
 packages:
+  playback_input: ${ _p4_phone_voicemail_playback if 'display' in firmware_features else _p4_phone_direct_input }
   entities: !include '../../../voip/entities_full_duplex.yaml'
   settings: !include '../../../voip/call_settings.yaml'
   transport: !include '../../../voip/transport.yaml'

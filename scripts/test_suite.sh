@@ -110,8 +110,13 @@ ha_tests=(
   tests/test_parking_lot_ha.py
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
-  tests/test_esphome_mailbox_ha.py
-  tests/test_esphome_mailbox_optional_ha.py
+  tests/test_esphome_provisioning_ha.py
+  tests/test_esphome_provisioning_optional_ha.py
+  tests/test_sip_options_capabilities_ha.py
+  tests/test_ldap_directory_ha.py
+  tests/test_imap_mailbox_ha.py
+  tests/test_phone_clients_interop_ha.py
+  tests/test_phone_services_ha.py
   tests/test_sip_phone_policy_ha.py
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py

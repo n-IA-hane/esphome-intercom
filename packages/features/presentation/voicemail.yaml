@@ -1,7 +1,7 @@
 # One event-driven projection of the VoIP owner's aggregate message state.
 # The board supplies the existing status refresh code through include vars.
 voip_stack:
-  ha_integration:
+  registration:
     message_waiting: true
 globals:
 - id: ui_voicemail_waiting
@@ -13,7 +13,7 @@ esphome:
   - priority: -250
     then:
     - lambda: |-
-        #if defined(USE_ESPHOME_VOIP_MWI) || defined(USE_ESPHOME_VOIP_HA_MWI)
+        #if defined(USE_ESPHOME_VOIP_MWI)
         auto refresh = []() {
           const bool waiting = id(phone).has_waiting_messages();
           if (id(ui_voicemail_waiting) == waiting) return;

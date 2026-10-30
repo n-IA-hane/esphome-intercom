@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "Configurações gerais",
           "parking": "Estacionamento de chamadas",
-          "voicemail": "Voz do correio de voz"
+          "voicemail": "Voz do correio de voz",
+          "phone_services": "Agenda e caixas de correio"
+        }
+      },
+      "phone_services": {
+        "title": "Serviços de telefonia padrão",
+        "description": "LDAP fornece a agenda compartilhada. IMAP disponibiliza o arquivo existente do correio de voz. Os telefones ESPHome gerenciados recebem a configuração pela API nativa. SIP, LDAP e IMAP usam a mesma conta do telefone. O TLS opcional usa seus arquivos de certificado e chave privada.",
+        "data": {
+          "listen_host": "Endereço de escuta",
+          "ldap_port": "Porta LDAP",
+          "base_dn": "DN base da agenda",
+          "allow_anonymous": "Permitir consultas anônimas à agenda",
+          "imap_port": "Porta IMAP",
+          "tls": "Usar TLS para LDAP e IMAP",
+          "certificate": "Arquivo do certificado",
+          "private_key": "Arquivo da chave privada"
         }
       }
     },
@@ -165,7 +180,9 @@
       "trunk_codecs_invalid": "Selecione codecs suportados e mantenha pelo menos um codec de áudio.",
       "trunk_target_required": "Selecione um telefone de destino ou informe um destino do plano de discagem.",
       "trunk_media_address_invalid": "Informe um endereço IPv4 unicast acessível ou deixe vazio.",
-      "parking_slots_in_use": "Recupere ou encerre as chamadas nas posições removidas antes de alterar a lista."
+      "parking_slots_in_use": "Recupere ou encerre as chamadas nas posições removidas antes de alterar a lista.",
+      "phone_service_ports_conflict": "LDAP e IMAP exigem portas diferentes.",
+      "phone_service_certificate_required": "TLS exige tanto o arquivo do certificado quanto o da chave privada."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -500,6 +517,10 @@
     "mailbox_route_conflict": {
       "title": "Conflito nos códigos do correio de voz",
       "description": "Um telefone, contato ou grupo usa um endereço do correio de voz. Renomeie o destino em conflito; as rotas existentes serão preservadas."
+    },
+    "phone_service_unavailable": {
+      "title": "Serviço de telefonia {service} indisponível",
+      "description": "O VoIP Stack não conseguiu iniciar {service} na porta {port}. Verifique o endereço de escuta configurado, a disponibilidade da porta e os arquivos de certificado opcionais. As chamadas continuam usando o serviço SIP existente. Reconfigure Agenda e caixas de correio e recarregue o VoIP Stack."
     }
   },
   "exceptions": {

@@ -68,6 +68,10 @@ async def push_roster_json_to_esps(
         devices = await _get_voip_devices(hass)
         services = available_esphome_services(hass)
         for device in devices:
+            # Managed phones fetch the canonical directory through LDAP.
+            # Retained JSON delivery is only for earlier firmware.
+            if device.get("managed"):
+                continue
             # Use the owning ESPHome entry resolved by the device registry.
             # Its API connection may use a different address from SIP discovery.
             slug = str(device.get("route_id") or "").strip()

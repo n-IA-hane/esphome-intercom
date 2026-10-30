@@ -410,6 +410,14 @@ class SipEndpointManager:
 
         self._attached_dialog_endpoints.add(endpoint)
 
+    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
+        """Use the listener/registered TCP flow and existing transaction owner."""
+        server = self.tcp_server if transport.upper() == "TCP" else self.udp_server
+        endpoint = getattr(server, "endpoint", None)
+        if endpoint is None:
+            return None
+        return await endpoint.async_options(uri, addr, timeout=timeout)
+
     def detach_dialog_endpoint(self, endpoint: Any) -> None:
         """Remove a transport endpoint after its flow is closed."""
 

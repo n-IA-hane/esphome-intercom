@@ -541,14 +541,9 @@ defaults:
       set_hidden(id(call_in_call_group), false);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else {
-      set_label(id(call_idle_peer_label), id(peer_name).c_str());
-      auto csv = id(phone).get_contacts_csv();
-      int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Contacts: %d", count);
-      set_label(id(call_idle_contacts_label), buf);
       set_hidden(id(call_idle_group), false);
     }
+    id(contacts_list_view).refresh();
   _p4_draw_actions:
   - lambda: !lambda |-
       lv_obj_t* active_scr = lv_disp_get_scr_act(nullptr);
@@ -557,7 +552,7 @@ defaults:
       // draw_display callers (VoIP state, idle phase, animations,
       // weather refresh, ...) snap the screen back to main_page while
       // the user is interacting with the settings carousel.
-      if (active_scr == id(settings_p4_page)->obj) return;
+      if (active_scr == id(settings_p4_page)->obj && !${ 'id(phone).is_active()' if _fw_voip else 'false' }) return;
 
       auto set_hidden = [](lv_obj_t *obj, bool hidden) {
         const bool is_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -606,6 +601,8 @@ defaults:
       // Use the runtime_controller timer activity instead of voice_assistant_phase because the
       // alarm sound is played through media_player and may update the phase.
       ${ _p4_timer_drawing if _fw_timers else '' }
+
+      ${ _p4_voicemail_guard if _fw_voip else '' }
 
       // Normal: show main split-screen page
       if (active_scr != id(main_page)->obj) {
@@ -980,19 +977,28 @@ defaults:
     then:
     - lambda: !lambda |-
         id(peer_name) = id(phone).get_current_destination();
-    - lvgl.label.update:
-        id: call_idle_peer_label
-        text: !lambda |-
-          return id(peer_name);
-    - lvgl.label.update:
-        id: call_idle_contacts_label
-        text: !lambda |-
-          auto csv = id(phone).get_contacts_csv();
-          int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
-          char buf[32];
-          snprintf(buf, sizeof(buf), "Contacts: %d", count);
-          return std::string(buf);
+    - phone_list_view.refresh: contacts_list_view
+  _p4_voicemail_guard: |
+    if (id(ui_voicemail_active) && id(phone).is_idle()) {
+      if (active_scr != id(phone_voicemail_page)->obj)
+        lv_disp_load_scr(id(phone_voicemail_page)->obj);
+      id(runtime_rendered_page) = "voicemail";
+      return;
+    }
   _p4_phone_lifecycle:
+    phone_list_view:
+    - id: !extend contacts_list_view
+      text_font: font_body
+      row_height: 72
+      visible_rows: 9
+    - id: !extend voicemail_list_view
+      text_font: font_body
+      row_height: 72
+      visible_rows: 11
+    lvgl:
+      pages:
+      - id: !extend phone_voicemail_page
+        text_font: font_body
     packages:
       lifecycle: !include '../../voip/presentation/lifecycle.yaml'
   _p4_widgets_2:
@@ -1376,93 +1382,17 @@ defaults:
             text: VOIP
             text_color: 4415982
             text_font: font_title
-        - label:
+        - obj:
+            id: phone_contacts_container
             align: TOP_MID
             y: 100
-            text: 'Destination:'
-            text_color: 8947848
-            text_font: font_small
-        - label:
-            id: call_idle_peer_label
-            align: TOP_MID
-            y: 130
-            width: 700
-            text: '-'
-            text_color: 16777215
-            text_font: font_state
-            text_align: CENTER
-            long_mode: DOT
-        - label:
-            id: call_idle_contacts_label
-            align: TOP_MID
-            y: 200
-            text: 'Contacts: 0'
-            text_color: 8947848
-            text_font: font_small
-        - obj:
-            id: call_idle_swipe_area
-            align: TOP_MID
-            y: 90
             width: 720
-            height: 230
+            height: 500
             bg_opa: TRANSP
             border_width: 0
-            scrollable: false
-            clickable: true
-            gesture_bubble: false
-            on_swipe_left:
-            - voip_stack.next_contact: null
-            - script.execute: update_call_idle_labels
-            on_swipe_right:
-            - voip_stack.prev_contact: null
-            - script.execute: update_call_idle_labels
-        - button:
-            align: BOTTOM_LEFT
-            x: 80
-            y: -60
-            width: 160
-            height: 70
-            bg_color: 2960708
-            radius: 10
-            on_click:
-            - voip_stack.prev_contact: null
-            widgets:
-            - label:
-                align: CENTER
-                text: < Prev
-                text_color: 15658734
-                text_font: font_button
-        - button:
-            align: BOTTOM_MID
-            y: -50
-            width: 280
-            height: 90
-            bg_color: 3066993
-            radius: 15
-            on_click:
-            - voip_stack.call_toggle: null
-            widgets:
-            - label:
-                align: CENTER
-                text: CALL
-                text_color: 16777215
-                text_font: font_state
-        - button:
-            align: BOTTOM_RIGHT
-            x: -80
-            y: -60
-            width: 160
-            height: 70
-            bg_color: 2960708
-            radius: 10
-            on_click:
-            - voip_stack.next_contact: null
-            widgets:
-            - label:
-                align: CENTER
-                text: Next >
-                text_color: 15658734
-                text_font: font_button
+            pad_all: 0
+            scroll_dir: VER
+            scrollbar_mode: AUTO
     - obj:
         id: call_ringing_in_group
         width: 780

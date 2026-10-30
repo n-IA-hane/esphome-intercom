@@ -1783,7 +1783,7 @@ def _common_codec_offer_formats(
     return out
 
 
-def parse_sdp(sdp: str | bytes) -> dict:
+def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     if isinstance(sdp, bytes):
         sdp = sdp.decode("utf-8", errors="strict")
     session_conn = ""
@@ -1823,9 +1823,9 @@ def parse_sdp(sdp: str | bytes) -> dict:
             # Port zero rejects this media stream. Continue looking for the
             # first active RTP/AVP audio section that this single-stream bridge
             # can actually answer.
-            if candidate_port == 0:
+            if candidate_port == 0 and not capabilities:
                 continue
-            if not 1 <= candidate_port <= 65535:
+            if not (0 if capabilities else 1) <= candidate_port <= 65535:
                 raise SdpError(f"bad audio media port: {candidate_port}")
             if not candidate_payloads or any(
                 not 0 <= pt <= 127 for pt in candidate_payloads
@@ -1879,7 +1879,7 @@ def parse_sdp(sdp: str | bytes) -> dict:
         except ValueError as err:
             raise SdpError(f"bad SDP audio attribute: {line}") from err
     connection_ip = media_conn or session_conn
-    if not connection_ip or not media_port or not payload_order:
+    if not connection_ip or (not media_port and not capabilities) or not payload_order:
         raise SdpError("SDP missing c=, m=audio port, or payload list")
     return {
         "connection_ip": connection_ip,
@@ -1895,7 +1895,9 @@ def parse_sdp(sdp: str | bytes) -> dict:
     }
 
 
-def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
+def _parse_media_sections(
+    sdp_body: str | bytes, *, capabilities: bool = False
+) -> tuple[str, str, list[dict]]:
     """Parse enough SDP structure to negotiate independent media sections."""
 
     if isinstance(sdp_body, bytes):
@@ -1979,6 +1981,10 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 if len(parts) not in {1, 4}:
                     raise SdpError(f"bad SDP RTCP attribute: {line}")
                 rtcp_port = int(parts[0])
+                if capabilities and current["port"] == 0 and rtcp_port == 0:
+                    # An OPTIONS description has no live RTCP destination.
+                    # Keep active-session transport validation unchanged.
+                    continue
                 if not 1 <= rtcp_port <= 65535:
                     raise SdpError(f"bad SDP RTCP port: {rtcp_port}")
                 current["rtcp_port"] = rtcp_port
@@ -2240,10 +2246,12 @@ def validate_sdp_answer(
             )
 
 
-def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
+def parse_video_sdp(sdp_body: str | bytes, *, capabilities: bool = False) -> dict | None:
     """Return the first video media section when it matches this profile."""
 
-    _session_connection, _session_direction, sections = _parse_media_sections(sdp_body)
+    _session_connection, _session_direction, sections = _parse_media_sections(
+        sdp_body, capabilities=capabilities
+    )
     for section in sections:
         if section["media"] != "video":
             continue
@@ -2251,7 +2259,7 @@ def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
         # an unsupported first m=video and accidentally answer a later format
         # in the first section's position.
         if (
-            section["port"] == 0
+            (section["port"] == 0 and not capabilities)
             or section["transport"] not in {"RTP/AVP", "RTP/AVPF"}
             or not section["connection_supported"]
             or not section["rtcp_address_supported"]
@@ -2315,10 +2323,10 @@ _VIDEO_ENCODING_ALIASES = {
 }
 
 
-def offered_video_formats(sdp_body: str | bytes) -> list[RtpVideoFormat]:
+def offered_video_formats(sdp_body: str | bytes, *, capabilities: bool = False) -> list[RtpVideoFormat]:
     """List normalized formats from the first active AVP/AVPF video section."""
 
-    parsed = parse_video_sdp(sdp_body)
+    parsed = parse_video_sdp(sdp_body, capabilities=capabilities)
     if parsed is None:
         return []
     out: list[RtpVideoFormat] = []
@@ -3041,8 +3049,9 @@ def offered_pcm_formats(
     sdp: str | bytes,
     *,
     allow_dahua_pcm: bool = False,
+    capabilities: bool = False,
 ) -> list[RtpPcmFormat]:
-    parsed = parse_sdp(sdp)
+    parsed = parse_sdp(sdp, capabilities=capabilities)
     out: list[RtpPcmFormat] = []
     for pt in parsed["payload_order"]:
         spec = _offered_audio_mapping(parsed, pt)
@@ -3394,6 +3403,40 @@ def _has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
     can_send = bool(flows & {"send", "sendrecv"})
     can_recv = bool(flows & {"recv", "sendrecv"})
     return can_send and can_recv
+
+
+def options_capabilities(body: str | bytes) -> dict:
+    """Decode RFC 3264 section 9 descriptions without enabling media ports."""
+    parsed = parse_sdp(body, capabilities=True)
+    formats = offered_pcm_formats(body, capabilities=True)
+    flows = _audio_flow_attributes(body)
+    direction = parsed["direction"]
+    def directional_formats(sending):
+        result = []
+        for fmt in formats:
+            flow = flows.get(fmt.payload_type)
+            permitted = flow in ({"send", "sendrecv"} if sending else {"recv", "sendrecv"}) if flow else (
+                direction in ({"sendonly", "sendrecv"} if sending else {"recvonly", "sendrecv"}))
+            if permitted:
+                result.append(fmt)
+        return result
+    sending, receiving = directional_formats(True), directional_formats(False)
+
+    def tokens(formats):
+        # RFC 3264 capability descriptions need not announce a packet time.
+        # Codec/direction hints cannot supply the missing concrete quantum.
+        if not parsed["ptime"]:
+            return []
+        return [f"{fmt.encoding}/{fmt.sample_rate}/{fmt.channels}/{parsed['ptime']}" for fmt in formats]
+
+    tx, rx = tokens(sending), tokens(receiving)
+    video = offered_video_formats(body, capabilities=True)
+    return {
+        "sip_audio_tx_formats": tx, "sip_audio_rx_formats": rx,
+        "sdp_features": ["directional_audio_v1"] if _has_directional_audio_flow_attributes(body) else [],
+        "audio_mode": "full_duplex" if sending and receiving else "mic_only" if sending else "speaker_only" if receiving else "",
+        "sip_video_codec": video[0].encoding.lower() if video else "",
+    }
 
 
 def has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:

@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "Obecná nastavení",
           "parking": "Parkování hovorů",
-          "voicemail": "Hlas hlasové schránky"
+          "voicemail": "Hlas hlasové schránky",
+          "phone_services": "Telefonní seznam a hlasové schránky"
+        }
+      },
+      "phone_services": {
+        "title": "Standardní telefonní služby",
+        "description": "LDAP poskytuje sdílený telefonní seznam. IMAP zpřístupňuje stávající archiv hlasové schránky. Spravované telefony ESPHome dostávají konfiguraci prostřednictvím nativního API. SIP, LDAP a IMAP používají stejný účet telefonu. Volitelné TLS používá vaše soubory certifikátu a soukromého klíče.",
+        "data": {
+          "listen_host": "Naslouchací adresa",
+          "ldap_port": "Port LDAP",
+          "base_dn": "Základní DN adresáře",
+          "allow_anonymous": "Povolit anonymní hledání v adresáři",
+          "imap_port": "Port IMAP",
+          "tls": "Použít TLS pro LDAP a IMAP",
+          "certificate": "Soubor certifikátu",
+          "private_key": "Soubor soukromého klíče"
         }
       }
     },
@@ -165,7 +180,9 @@
       "trunk_codecs_invalid": "Vyberte podporované kodeky a ponechte alespoň jeden zvukový kodek.",
       "trunk_target_required": "Vyberte přijímající telefon nebo zadejte cíl vytáčecího plánu.",
       "trunk_media_address_invalid": "Zadejte dostupnou unicast IPv4 adresu, nebo ponechte pole prázdné.",
-      "parking_slots_in_use": "Před změnou seznamu převezměte nebo ukončete hovory v odstraňovaných pozicích."
+      "parking_slots_in_use": "Před změnou seznamu převezměte nebo ukončete hovory v odstraňovaných pozicích.",
+      "phone_service_ports_conflict": "LDAP a IMAP vyžadují různé porty.",
+      "phone_service_certificate_required": "TLS vyžaduje soubor certifikátu i soubor soukromého klíče."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -500,6 +517,10 @@
     "mailbox_route_conflict": {
       "title": "Konflikt kódů hlasové schránky",
       "description": "Telefon, kontakt nebo skupina používá adresu hlasové schránky. Přejmenujte konfliktní cíl; stávající směrování zůstane zachováno."
+    },
+    "phone_service_unavailable": {
+      "title": "Telefonní služba {service} není dostupná",
+      "description": "VoIP Stack nemohl spustit službu {service} na portu {port}. Zkontrolujte nastavenou naslouchací adresu, dostupnost portu a případné soubory certifikátů. Hovory nadále používají stávající službu SIP. Znovu nastavte Telefonní seznam a hlasové schránky a poté znovu načtěte VoIP Stack."
     }
   },
   "exceptions": {

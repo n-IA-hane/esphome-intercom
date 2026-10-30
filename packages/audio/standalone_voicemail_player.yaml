@@ -1,0 +1,20 @@
+# Optional native playback owner for a standalone phone with a voicemail UI.
+# VoIP and announcements meet at the existing hardware mixer.
+packages:
+  mixer: !include mono_mixer_48k.yaml
+  call_input: !include mixer_voip_input.yaml
+  voicemail_input: !include mixer_announcement_input.yaml
+media_player:
+- platform: speaker_source
+  id: speaker_media_player
+  name: None
+  internal: true
+  volume_initial: 100%
+  volume_min: 100%
+  volume_max: 100%
+  announcement_pipeline:
+    speaker: tts_speaker_input
+    sample_rate: 48000
+    num_channels: 1
+    format: WAV
+    sources: []

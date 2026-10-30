@@ -810,102 +810,27 @@ defaults:
   _round_phone_pages:
   - id: call_idle_page
     scrollable: false
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
+    bg_color: 0x10151F
     on_swipe_up: ${_round_navigation_up}
     on_swipe_down: ${_round_navigation_down}
     widgets:
     - label:
         align: TOP_MID
         y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
+        text: Contacts
+        text_color: 0xFFFFFF
+        text_font: font_info
+    - obj:
+        id: phone_contacts_container
         align: TOP_MID
-        y: 17%
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: TOP_MID
-        y: ${call_contacts_y}
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        width: ${call_peer_width}
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
-        x: -60
-        y: -34
-        width: 60
-        height: 60
+        y: 22%
+        width: 80%
+        height: 40%
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        x: 60
-        y: -34
-        width: 60
-        height: 60
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        floating: true
-        align: CENTER
-        y: ${call_btn_below_center}
-        width: ${call_btn_size}
-        height: ${call_btn_size}
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   - id: call_ringing_in_page
     on_swipe_down: ${_round_navigation_down}
     on_swipe_up: ${_round_navigation_up}

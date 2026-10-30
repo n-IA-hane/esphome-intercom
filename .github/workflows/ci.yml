@@ -68,6 +68,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Check out coordinated ESP component sources
+        env:
+          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !endsWith(github.ref_name, '-dev'))) && 'main' || 'dev' }}
+          COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
+        run: >-
+          python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
+          --output test-results/home-assistant-coordinated-sources.json
+      - name: Preserve coordinated source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: home-assistant-coordinated-sources
+          path: test-results/home-assistant-coordinated-sources.json
+          if-no-files-found: error
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
@@ -75,8 +89,8 @@ jobs:
       - name: Install dependencies for independent SIP and video peers
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev uuid-dev \
-            sip-tester libavcodec-dev libavfilter-dev libavformat-dev \
+          sudo apt-get install -y ffmpeg cmake g++ libssl-dev libsndfile1-dev zlib1g-dev uuid-dev \
+            sip-tester ldap-utils libavcodec-dev libavfilter-dev libavformat-dev \
             libswscale-dev libavdevice-dev libavutil-dev
       - name: Build pinned independent SIP test peer
         run: |
@@ -91,6 +105,8 @@ jobs:
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/home-assistant.xml -ra
           VOIP_REQUIRE_PJSIP_BLF: "1"
+          VOIP_REQUIRE_PHONE_CLIENTS: "1"
+          VOIP_STACK_REPO: ${{ github.workspace }}/../esphome-voip-stack
         run: PYTHON=python HA_PYTHON=python scripts/test_suite.sh ha --keep-going
       - name: Require executed Home Assistant tests
         run: python scripts/check_test_results.py test-results/home-assistant.xml

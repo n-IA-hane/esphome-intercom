@@ -517,23 +517,13 @@ defaults:
     for (auto *group : voip_groups) {
       lv_obj_set_size(group, layout[RIGHT_W], layout[VOIP_H]);
     }
-    lv_obj_set_width(id(call_idle_peer_label), layout[RIGHT_TEXT_W]);
     lv_obj_align(id(call_idle_header_label), LV_ALIGN_TOP_MID, 0, layout[CALL_HEADER_Y]);
     lv_obj_align(id(call_idle_header_rule), LV_ALIGN_TOP_MID, 0, layout[CALL_RULE_Y]);
+    lv_obj_align(id(phone_contacts_container), LV_ALIGN_TOP_MID, 0, layout[CALL_STATUS_Y]);
+    lv_obj_set_size(id(phone_contacts_container), layout[RIGHT_INNER_W],
+                    std::max(72, layout[VOIP_H] - layout[CALL_STATUS_Y] - 18));
     lv_obj_align(id(call_keypad_header_label), LV_ALIGN_TOP_MID, 0, layout[CALL_HEADER_Y]);
     lv_obj_align(id(call_keypad_header_rule), LV_ALIGN_TOP_MID, 0, layout[CALL_RULE_Y]);
-    lv_obj_align(id(call_idle_destination_label), LV_ALIGN_TOP_MID, 0, layout[CALL_STATUS_Y]);
-    lv_obj_align(id(call_idle_peer_label), LV_ALIGN_TOP_MID, 0, layout[CALL_PEER_Y]);
-    lv_obj_align(id(call_idle_contacts_label), LV_ALIGN_TOP_MID, 0, layout[CALL_CONTACTS_Y]);
-    lv_obj_align(id(call_idle_hint_label), LV_ALIGN_TOP_MID, 0, layout[CALL_HINT_Y]);
-    lv_obj_align(id(call_idle_swipe_area), LV_ALIGN_TOP_MID, 0, layout[CALL_SWIPE_Y]);
-    lv_obj_set_size(id(call_idle_swipe_area), layout[RIGHT_INNER_W], layout[CALL_SWIPE_H]);
-    lv_obj_align(id(call_prev_btn), LV_ALIGN_BOTTOM_LEFT, layout[CALL_HEADER_X], -30);
-    lv_obj_set_size(id(call_prev_btn), layout[CALL_BUTTON_SIDE_W], layout[CALL_BUTTON_SIDE_H]);
-    lv_obj_align(id(call_button_widget), LV_ALIGN_BOTTOM_MID, 0, -24);
-    lv_obj_set_size(id(call_button_widget), layout[CALL_BUTTON_CALL_W], layout[CALL_BUTTON_CALL_H]);
-    lv_obj_align(id(call_next_btn), LV_ALIGN_BOTTOM_RIGHT, -layout[CALL_HEADER_X], -30);
-    lv_obj_set_size(id(call_next_btn), layout[CALL_BUTTON_SIDE_W], layout[CALL_BUTTON_SIDE_H]);
     lv_obj_set_width(id(call_keypad_value_label), layout[RIGHT_TEXT_W]);
     lv_obj_set_width(id(call_keypad_matrix)->obj, layout[RIGHT_INNER_W]);
     // Fill the space down to the command row while retaining a small
@@ -617,11 +607,6 @@ defaults:
       set_label(id(call_in_call_peer_label), id(peer_name).c_str());
       set_hidden(id(call_in_call_group), false);
     } else {
-      set_label(id(call_idle_peer_label), id(peer_name).c_str());
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Contacts: %u",
-               static_cast<unsigned>(id(phone).get_contact_count()));
-      set_label(id(call_idle_contacts_label), buf);
       if (id(voip_keypad_visible)) {
         lv_obj_set_y(id(call_keypad_group), 0);
         set_hidden(id(call_keypad_group), false);
@@ -631,6 +616,7 @@ defaults:
         set_hidden(id(call_idle_group), false);
       }
     }
+    id(contacts_list_view).refresh();
 
   _p4_call_page: |
     const char *call_page = id(call_ended_active) ? "call_ended" :
@@ -720,6 +706,8 @@ defaults:
           ${ 'id(phone).is_in_call()' if _fw_voip else 'false' }) {
         return;
       }
+
+      ${ _p4_voicemail_guard if _fw_voip else '' }
 
       // Normal: show main split-screen page
       if (active_scr != id(main_page)->obj) {
@@ -1411,19 +1399,26 @@ defaults:
     then:
     - lambda: !lambda |-
         id(peer_name) = id(phone).get_current_destination();
-    - lvgl.label.update:
-        id: call_idle_peer_label
-        text: !lambda |-
-          return id(peer_name);
-    - lvgl.label.update:
-        id: call_idle_contacts_label
-        text: !lambda |-
-          char buf[32];
-          snprintf(
-              buf, sizeof(buf), "Contacts: %u",
-              static_cast<unsigned>(id(phone).get_contact_count()));
-          return std::string(buf);
+    - phone_list_view.refresh: contacts_list_view
+  _p4_voicemail_guard: |
+    if (id(ui_voicemail_active) && id(phone).is_idle()) {
+      if (active_scr != id(phone_voicemail_page)->obj)
+        lv_disp_load_scr(id(phone_voicemail_page)->obj);
+      id(runtime_rendered_page) = "voicemail";
+      return;
+    }
   _p4_phone_lifecycle:
+    phone_list_view:
+    - id: !extend contacts_list_view
+      text_font: font_body
+      row_height: 72
+    - id: !extend voicemail_list_view
+      text_font: font_body
+      row_height: 72
+    lvgl:
+      pages:
+      - id: !extend phone_voicemail_page
+        text_font: font_body
     packages:
       lifecycle: !include '../../voip/presentation/lifecycle.yaml'
   _p4_widgets_2:
@@ -1882,109 +1877,17 @@ defaults:
               bg_color: 8160255
               border_width: 0
               radius: 2
-          - label:
-              id: call_idle_destination_label
+          - obj:
+              id: phone_contacts_container
               align: TOP_MID
               y: 82
-              width: 300
-              text: Destination
-              text_color: 9082022
-              text_font: font_small
-              text_align: CENTER
-          - label:
-              id: call_idle_peer_label
-              align: TOP_MID
-              y: 118
-              width: 300
-              text: '-'
-              text_color: 16777215
-              text_font: font_title
-              text_align: CENTER
-              long_mode: DOT
-          - label:
-              id: call_idle_contacts_label
-              align: TOP_MID
-              y: 172
-              text: 'Contacts: 0'
-              text_color: 9082022
-              text_font: font_small
-          - label:
-              id: call_idle_hint_label
-              align: TOP_MID
-              y: 212
-              width: 290
-              text: Swipe to browse or use controls
-              text_color: 6713477
-              text_font: font_small
-              text_align: CENTER
-              long_mode: DOT
-          - obj:
-              id: call_idle_swipe_area
-              align: TOP_MID
-              y: 80
               width: 310
-              height: 170
+              height: 300
               bg_opa: TRANSP
               border_width: 0
-              scrollable: false
-              clickable: true
-              gesture_bubble: false
-              on_swipe_left:
-              - voip_stack.next_contact: null
-              - script.execute: update_ic_idle_labels
-              on_swipe_right:
-              - voip_stack.prev_contact: null
-              - script.execute: update_ic_idle_labels
-          - button:
-              id: call_prev_btn
-              align: BOTTOM_LEFT
-              x: 22
-              y: -30
-              width: 78
-              height: 64
-              bg_color: 2435640
-              radius: 8
-              on_click:
-              - voip_stack.prev_contact: null
-              widgets:
-              - label:
-                  align: CENTER
-                  text: 󰅁
-                  text_color: 15067115
-                  text_font: font_action_icon
-          - button:
-              id: call_button_widget
-              align: BOTTOM_MID
-              y: -24
-              width: 92
-              height: 78
-              bg_color: 2278750
-              radius: 8
-              on_click:
-              - voip_stack.call_toggle: null
-              widgets:
-              - label:
-                  align: CENTER
-                  text: 󰏲
-                  text_color: 16777215
-                  text_font: font_action_icon
-          - button:
-              id: call_next_btn
-              align: BOTTOM_RIGHT
-              x: -22
-              y: -30
-              width: 78
-              height: 64
-              bg_color: 2435640
-              radius: 8
-              on_click:
-              - voip_stack.next_contact: null
-              widgets:
-              - label:
-                  align: CENTER
-                  text: 󰅂
-                  text_color: 15067115
-                  text_font: font_action_icon
+              pad_all: 0
+              scroll_dir: VER
+              scrollbar_mode: AUTO
       - obj:
           id: call_keypad_group
           width: 1

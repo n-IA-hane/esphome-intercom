@@ -410,13 +410,13 @@ class VoipPhonebookSensor(SensorEntity):
             push_roster_json_to_esps,
             registered_roster_entries,
         )
-        from .endpoint_routing import roster_from_peers
         from .roster import dump_roster_json
+        from .directory_runtime import async_refresh_directory
 
         peers = self._stable_phonebook_peers(await async_build_peer_snapshot(self.hass))
         entries = [format_entry_unified(p) for p in peers]
-        roster_entries = roster_from_peers(
-            self.hass, peers, registered_roster_entries(self.hass)
+        roster_entries = await async_refresh_directory(
+            self.hass, peers=peers, registered=registered_roster_entries(self.hass),
         )
         from .repairs import async_sync_extension_issues
         async_sync_extension_issues(self.hass, roster_entries)

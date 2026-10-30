@@ -21,11 +21,33 @@ from .test_automation_originate_ha import lab as lab, dial, tts_fixture
 pytestmark = pytest.mark.ha
 
 
+class FixturePeerSource:
+    """Synthetic discovery publishes through the same canonical owner."""
+
+    def __init__(self, hass):
+        self.hass = hass
+        self._value = []
+
+    async def __call__(self, _hass):
+        return self._value
+
+    @property
+    def return_value(self):
+        return self._value
+
+    @return_value.setter
+    def return_value(self, value):
+        from custom_components.voip_stack.directory_runtime import async_refresh_directory
+        from custom_components.voip_stack.endpoint_lifecycle import create_runtime_task
+
+        self._value = value
+        create_runtime_task(self.hass, async_refresh_directory(self.hass, peers=value))
+
+
 @pytest.fixture
 async def trunks(lab, monkeypatch, request):
     full_runtime = bool(getattr(request, "param", False))
     if full_runtime:
-        from unittest.mock import AsyncMock
         from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
         from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
@@ -44,7 +66,7 @@ async def trunks(lab, monkeypatch, request):
             break
         else:
             raise RuntimeError("No free UDP/TCP port in the SIP laboratory range")
-        monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+        monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", FixturePeerSource(lab.hass))
         monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
         monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
         assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)

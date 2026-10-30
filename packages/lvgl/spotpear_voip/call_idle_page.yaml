@@ -1,111 +1,25 @@
 id: call_idle_page
-bg_color: 0x0000FF
-# Horizontal swipe = prev/next contact. Vertical navigation is supplied by
-# the including firmware variant: full-experience goes VA <-> VoIP <->
-# settings, voip-only keeps the voip/settings stack.
-on_swipe_left:
-  - voip_stack.next_contact:
-  - script.execute: update_call_idle_labels
-on_swipe_right:
-  - voip_stack.prev_contact:
-  - script.execute: update_call_idle_labels
+scrollable: false
+bg_color: 0x10151F
 on_swipe_up:
-  - script.execute: call_to_settings
+- script.execute: call_to_settings
 on_swipe_down:
-  - script.execute: call_to_va
+- script.execute: call_to_va
 widgets:
-  - label:
-      align: TOP_MID
-      y: 8%
-      text: "${friendly_name}"
-      text_color: 0xFFFFFF
-      text_font: font_title
-      text_align: CENTER
-      width: ${call_title_width}
-      long_mode: SCROLL
-  # State (static) + contacts row (dynamic) on two lines, centered.
-  - label:
-      id: call_idle_status_label
-      align: TOP_MID
-      y: 17%
-      text: "IDLE"
-      text_color: 0x00FF00
-      text_font: font_state
-      text_align: CENTER
-  - label:
-      id: call_idle_contacts_label
-      align: TOP_MID
-      y: ${call_contacts_y}
-      text: "\U000F06CB 0"
-      text_color: 0xFFFFFF
-      text_font: font_title
-      text_align: CENTER
-  # Peer name: single line; long names ping-pong scroll horizontally.
-  - label:
-      id: call_idle_peer_label
-      align: CENTER
-      text: "-"
-      text_color: 0xFFFFFF
-      text_font: font_title
-      width: ${call_peer_width}
-      text_align: CENTER
-      long_mode: SCROLL
-  # Prev/next contact buttons: explicit chevron taps next to the peer
-  # name. Page on_swipe_left/right keeps the gesture path alive too.
-  - button:
-      id: call_idle_prev_contact_btn
-      align: CENTER
-      x: -60
-      y: -34
-      width: 60
-      height: 60
-      bg_opa: TRANSP
-      shadow_opa: TRANSP
-      widgets:
-        - label:
-            text: "\U000F0731"
-            align: CENTER
-            text_color: 0xFFFFFF
-            text_font: call_icons
-      on_short_click:
-        - voip_stack.prev_contact:
-        - script.execute: update_call_idle_labels
-  - button:
-      id: call_idle_next_contact_btn
-      align: CENTER
-      x: 60
-      y: -34
-      width: 60
-      height: 60
-      bg_opa: TRANSP
-      shadow_opa: TRANSP
-      widgets:
-        - label:
-            text: "\U000F0734"
-            align: CENTER
-            text_color: 0xFFFFFF
-            text_font: call_icons
-      on_short_click:
-        - voip_stack.next_contact:
-        - script.execute: update_call_idle_labels
-  # Green call button below the peer name (idle screen only calls).
-  - button:
-      floating: true
-      align: CENTER
-      y: ${call_btn_below_center}
-      width: ${call_btn_size}
-      height: ${call_btn_size}
-      bg_opa: TRANSP
-      shadow_opa: TRANSP
-      widgets:
-        - label:
-            text: "\U000F03F2"
-            align: CENTER
-            text_color: 0x00FF00
-            text_font: call_icons
-      on_short_click:
-        - voip_stack.call_toggle:
-
-# ========================================================================
-# VOIP: RINGING IN PAGE
-# ========================================================================
+- label:
+    align: TOP_MID
+    y: 8%
+    text: Contacts
+    text_color: 0xFFFFFF
+    text_font: font_info
+- obj:
+    id: phone_contacts_container
+    align: TOP_MID
+    y: 22%
+    width: 80%
+    height: 58%
+    pad_all: 0
+    border_width: 0
+    bg_opa: TRANSP
+    scroll_dir: VER
+    scrollbar_mode: AUTO

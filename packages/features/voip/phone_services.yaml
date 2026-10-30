@@ -1,0 +1,19 @@
+# One HA-managed SIP identity also authenticates standard LDAP and IMAP.
+api:
+  custom_services: true
+external_components:
+- source: ${voip_stack_components_source}
+  components: [voip_stack, ldap_directory, phone_client]
+voip_stack:
+  id: phone
+  ha_integration:
+    auto_register: true
+  registration:
+    message_waiting: true
+ldap_directory:
+  id: phone_directory
+  voip_stack_id: phone
+  account_id: ha
+  managed_by_ha: true
+  task_stack_in_psram: true
+  buffer_in_psram: true

@@ -704,88 +704,27 @@ defaults:
   _round_phone_pages:
   - id: call_idle_page
     scrollable: false
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
+    bg_color: 0x10151F
     on_swipe_up: ${_round_navigation_up}
     on_swipe_down: ${_round_navigation_down}
     widgets:
     - label:
-        id: call_idle_title_label
-        align: CENTER
-        text: ${friendly_name}
-        text_color: 16777215
+        align: TOP_MID
+        y: 8%
+        text: Contacts
+        text_color: 0xFFFFFF
         text_font: font_info
-        text_align: CENTER
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
-        align: CENTER
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: CENTER
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_info
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
+    - obj:
+        id: phone_contacts_container
+        align: TOP_MID
+        y: 22%
+        width: 80%
+        height: 40%
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_call_btn
-        align: CENTER
-        floating: true
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   - id: call_ringing_in_page
     on_swipe_down: ${_round_navigation_down}
     on_swipe_up: ${_round_navigation_up}
@@ -1188,33 +1127,22 @@ defaults:
       place(obj, x, y);
     };
     lv_obj_t *titles[] = {
-      id(call_idle_title_label), id(call_ringing_in_title_label),
+      id(call_ringing_in_title_label),
       id(call_ringing_out_title_label), id(call_in_call_title_label), id(call_ended_title_label)
     };
     for (auto *obj : titles) label_at(obj, 5);
     lv_obj_t *statuses[] = {
-      id(call_idle_status_label), id(call_ringing_in_status_label),
+      id(call_ringing_in_status_label),
       id(call_ringing_out_status_label), id(call_in_call_status_label), id(call_ended_status_label)
     };
     for (auto *obj : statuses) label_at(obj, 10);
-    label_at(id(call_idle_contacts_label), 15);
-
-    const int nav_size = std::min(gx[8], gy[8]);
-    const int nav_band = width_for_band(gy[20] - nav_size / 2, nav_size, 0);
-    const int inset = (w - nav_band) / 2;
-    const int left_x = gx.front() + inset + nav_size / 2;
-    const int right_x = gx.back() - inset - nav_size / 2;
-    button_at(id(call_idle_prev_contact_btn), left_x, gy[20], nav_size);
-    button_at(id(call_idle_next_contact_btn), right_x, gy[20], nav_size);
-    label_at(id(call_idle_peer_label), 20, right_x - left_x - nav_size - 2 * edge);
-
     lv_obj_t *peers[] = {
       id(call_ringing_in_peer_label), id(call_ringing_out_peer_label),
       id(call_in_call_peer_label), id(call_ended_peer_label)
     };
     for (auto *obj : peers) label_at(obj, 20);
     const int call_size = std::min(gx[10], gy[10]);
-    lv_obj_t *single_actions[] = {id(call_idle_call_btn), id(call_cancel_btn), id(call_hangup_btn)};
+    lv_obj_t *single_actions[] = {id(call_cancel_btn), id(call_hangup_btn)};
     for (auto *obj : single_actions) button_at(obj, gx[20], gy[28], call_size);
     button_at(id(call_answer_btn), gx[12], gy[28], call_size);
     button_at(id(call_decline_btn), gx[28], gy[28], call_size);

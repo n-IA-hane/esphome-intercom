@@ -116,14 +116,12 @@ async def route_invite(
     caller_peer = _peer_for_target(caller_identity, peers)
     if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
         caller_peer = None
-    if caller_peer is not None:
-        caller_profile = _sip_target_rtp_audio_profile(caller_peer, None)
-        send_candidates = (
-            list(caller_profile.send_formats) if caller_profile is not None else []
-        )
-        recv_candidates = (
-            list(caller_profile.recv_formats) if caller_profile is not None else []
-        )
+    caller_profile = _sip_target_rtp_audio_profile(caller_peer, None) if caller_peer is not None else None
+    if caller_profile is not None:
+        # Capability discovery is optional; the listener already negotiated
+        # the actual offer when no additional peer constraints are known.
+        send_candidates = list(caller_profile.send_formats)
+        recv_candidates = list(caller_profile.recv_formats)
         selected = sip_sdp.negotiate_directional(
             invite.remote_sdp,
             send_candidates,

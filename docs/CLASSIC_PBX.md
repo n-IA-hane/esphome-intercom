@@ -17,6 +17,17 @@ You can use this alongside the device's ESPHome and Assist features. The PBX
 handles telephone routing; Home Assistant can continue providing the device's
 other functions. A VoIP-only firmware can also operate without Home Assistant.
 
+## Registered and mixed accounts
+
+The 2026.11.1 development ESP component also supports ordinary registered PBX
+accounts, multiple named accounts and direct plus registered operation. The
+static-peer instructions below remain useful when registration is unnecessary.
+For registered firmware, use the current
+[ESP VoIP Stack account examples](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/examples).
+The maintained HA packages provision their own account through the native
+ESPHome API. [Standard phone services](ESP_PHONE_SERVICES.md) explains shared
+LDAP, BLF, MWI and IMAP configuration.
+
 ## Example layout
 
 This audio-only example uses:

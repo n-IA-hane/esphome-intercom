@@ -57,6 +57,7 @@ class SipAccount:
     conference_group: str = ""
     conference_ring: bool = False
     ring_group: str = ""
+    endpoint_id: str = ""
 
     @property
     def roster_name(self) -> str:
@@ -994,6 +995,8 @@ class SipRegistrar:
                     sip_uri=registration.contact_uri,
                     extension=account.extension,
                     metadata={
+                        **({"endpoint_id": account.endpoint_id, "endpoint_kind": "esphome"}
+                           if account.endpoint_id else {}),
                         "sip_transport": registration.transport.lower(),
                         "registered": True,
                         "user_agent": registration.user_agent,

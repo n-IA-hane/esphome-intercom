@@ -192,7 +192,13 @@ phone is allowed after another preferred phone has been selected.
 2. Change only the documented substitutions, network secrets and hardware pins.
 3. Compile and flash the device.
 4. Add it through the normal ESPHome integration.
-5. Wait for VoIP Stack to discover its endpoint and publish it in the phonebook.
+5. Let VoIP Stack provision its account through the existing ESPHome API. The
+   phone registers and downloads the shared LDAP directory automatically.
+
+The 2026.11.1 preview adds the scrollable contact list with BLF and visual
+voicemail to maintained display packages. See
+[standard phone services](ESP_PHONE_SERVICES.md) for setup and migration.
+Older firmware keeps its existing endpoint discovery and JSON phonebook sync.
 
 Custom profiles use ESPHome 2026.10.0 or newer and enable native API actions:
 

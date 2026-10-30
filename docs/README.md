@@ -37,7 +37,8 @@ explains how to carry settings from an older YAML into the new device packages.
 | Start simple and add ESP voice, calls, music or presentation | [Package walkthrough](../packages/README.md#work-through-a-full-profile) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
 | Update an existing installation | [Breaking changes](BREAKING_CHANGES.md) |
-| Connect ESP firmware to a classic PBX | [Static SIP peers without REGISTER](CLASSIC_PBX.md) |
+| Connect ESP firmware to a classic PBX | [Direct and registered SIP accounts](CLASSIC_PBX.md) |
+| Set up managed ESP phone services | [Accounts, LDAP, BLF and IMAP voicemail](ESP_PHONE_SERVICES.md) |
 | Configure ESP and HA options | [Configuration reference](reference.md) |
 | Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |

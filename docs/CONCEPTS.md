@@ -54,7 +54,7 @@ mirror does not turn your phone's microphone into that ESP's microphone.
 
 If an ESP calls another IP directly, HA's routing rules do not control that
 call. Use an HA-managed route when voicemail, forwarding or another PBX feature
-must apply. ESP firmware can also work as a static endpoint of a
+must apply. ESP firmware can also work as a direct or registered endpoint of a
 [classic PBX](CLASSIC_PBX.md).
 
 ## When you need the protocol terms
@@ -70,8 +70,10 @@ must apply. ESP firmware can also work as a static endpoint of a
 | BLF | A phone's busy-lamp display, based on SIP dialog-state subscriptions. |
 | REFER | A SIP transfer request. It does not itself prove the other telephone can complete the transfer. |
 
-HA's encrypted ESPHome API connection carries device controls and phonebook
-updates. SIP/RTP is a separate call path: a working API connection alone does
+The existing ESPHome API connection carries device controls and managed account
+settings, using its configured encryption policy. Current managed firmware
+reads the shared phonebook through LDAP; older firmware receives JSON updates.
+SIP/RTP is a separate call path: a working API connection alone does
 not prove that call signaling and media can reach the peer across networks.
 See [network setup](DEPLOYMENT_GUIDE.md#network) when a phone rings but its audio
 cannot travel in one or both directions.

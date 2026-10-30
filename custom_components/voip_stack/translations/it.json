@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "Impostazioni generali",
           "parking": "Parcheggio chiamate",
-          "voicemail": "Voce della segreteria"
+          "voicemail": "Voce della segreteria",
+          "phone_services": "Rubrica e caselle vocali"
+        }
+      },
+      "phone_services": {
+        "title": "Servizi telefonici standard",
+        "description": "LDAP fornisce la rubrica condivisa. IMAP rende accessibile l'archivio esistente della segreteria. I telefoni ESPHome gestiti ricevono la configurazione tramite l'API nativa. SIP, LDAP e IMAP usano lo stesso account del telefono. Il TLS facoltativo usa i file del tuo certificato e della tua chiave privata.",
+        "data": {
+          "listen_host": "Indirizzo di ascolto",
+          "ldap_port": "Porta LDAP",
+          "base_dn": "DN base della rubrica",
+          "allow_anonymous": "Consenti ricerche anonime nella rubrica",
+          "imap_port": "Porta IMAP",
+          "tls": "Usa TLS per LDAP e IMAP",
+          "certificate": "File del certificato",
+          "private_key": "File della chiave privata"
         }
       }
     },
@@ -165,7 +180,9 @@
       "trunk_codecs_invalid": "Seleziona codec supportati e mantieni almeno un codec audio.",
       "trunk_target_required": "Seleziona un telefono destinatario o inserisci una destinazione del piano di chiamata.",
       "trunk_media_address_invalid": "Inserisci un indirizzo IPv4 unicast raggiungibile, oppure lascia vuoto.",
-      "parking_slots_in_use": "Recupera o termina le chiamate negli slot da rimuovere prima di modificare la lista."
+      "parking_slots_in_use": "Recupera o termina le chiamate negli slot da rimuovere prima di modificare la lista.",
+      "phone_service_ports_conflict": "LDAP e IMAP richiedono porte diverse.",
+      "phone_service_certificate_required": "TLS richiede sia il file del certificato sia quello della chiave privata."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -500,6 +517,10 @@
     "mailbox_route_conflict": {
       "title": "Conflitto con i codici della segreteria",
       "description": "Un telefono, contatto o gruppo usa un indirizzo della segreteria. Rinomina la destinazione in conflitto; le rotte esistenti restano invariate."
+    },
+    "phone_service_unavailable": {
+      "title": "Servizio telefonico {service} non disponibile",
+      "description": "VoIP Stack non ha potuto avviare {service} sulla porta {port}. Controlla l'indirizzo di ascolto configurato, la disponibilità della porta e gli eventuali file del certificato. Le chiamate continuano a usare il servizio SIP esistente. Riconfigura Rubrica e caselle vocali, poi ricarica VoIP Stack."
     }
   },
   "exceptions": {

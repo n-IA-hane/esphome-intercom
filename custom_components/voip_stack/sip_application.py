@@ -496,6 +496,32 @@ class SipApplicationMethods:
                 subscription, expires=0, terminated=True, termination_reason=reason))
         self._release_dialog_observers_if_unused()
 
+    async def async_revoke_account(self, username):
+        """Release this subscriber's usages when its owning phone is deleted."""
+        wanted = username.casefold()
+        usages = {id(item): item for item in (self.subscriptions or {}).values()}
+        usages.update(self.notifiers)
+        pending = []
+        for usage in usages.values():
+            if usage.subscriber.casefold() != wanted:
+                continue
+            self._end_subscription(usage, notify=False)
+            usage.pending_notification = None
+            usage.notify_terminated = True
+            if usage.notify_task is not None and usage.notify_task is not asyncio.current_task():
+                usage.notify_task.cancel()
+                pending.append(usage.notify_task)
+            if usage.refer_notifier is not None:
+                await usage.refer_notifier.close()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        for key, publication in tuple((self.publications or {}).items()):
+            if publication.target.casefold() == wanted:
+                self.publications.pop(key)
+                self._cancel_timer(self.publication_timers, key)
+        self._notify_subscribers(username)
+        self._release_dialog_observers_if_unused()
+
     def _publication(self, target: str) -> "SipPresencePublication | None":
         publications = self.publications
         assert publications is not None

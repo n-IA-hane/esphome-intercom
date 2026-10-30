@@ -169,7 +169,8 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert not any(node.get('text') == '*' for node in nodes(dialer))
     code = values_text(config['script'])
     assert 'circle_half_chord' not in code
-    assert 'id(phone).get_contact_count()' in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
     assert 'get_contacts_csv()' not in code
 
 
@@ -202,7 +203,11 @@ def test_standalone_ringtone_uses_the_file_source_and_player_owner(relative) -> 
     assert player['platform'] == 'speaker_source'
     assert float(player['volume_initial']) == 1.0
     pipeline = player['announcement_pipeline']
-    assert pipeline['sources'] == ['ringtone_file_source']
+    expected_sources = ['ringtone_file_source']
+    if config.get('imap_voicemail'):
+        expected_sources.append('phone_voicemail')
+    assert pipeline['sources'] == expected_sources
+    assert sum(row.get('id') == 'speaker_media_player' for row in config['media_player']) == 1
     assert int(pipeline['sample_rate']) == 48000
     assert int(pipeline['num_channels']) == 1
     assert by_id(config['media_source'], 'ringtone_file_source')['platform'] == 'audio_file'
@@ -324,7 +329,9 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert config['voip_stack']['audio_task_stacks_in_psram'] is True
     assert by_id(config['lvgl']['pages'], 'call_video_surface')
     code = values_text(config['script'])
-    assert 'id(phone).get_contact_count()' in code and 'get_contacts_csv()' not in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
+    assert 'get_contacts_csv()' not in code
     boot = config['esphome'].get('on_boot', [])
     assert not _master_volume_boot_writes(boot, config['script']), 'Boot must not overwrite master volume'
     assert 'id(master_volume).add_on_state_callback' in values_text(boot)
@@ -457,7 +464,7 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
         assert not (YAMLS / 'full-experience/single-bus' / obsolete).exists()
 
 
-def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
+def test_p4_videophone_contact_list_uses_typed_owner_snapshots() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
     navigation = []
     for node in nodes(config['lvgl']):
@@ -465,10 +472,13 @@ def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
             if event in node and any('voip_stack.next_contact' in action or 'voip_stack.prev_contact' in action
                                      for action in nodes(node[event])):
                 navigation.append(node[event])
-    assert navigation
-    for actions in navigation:
-        assert 'get_current_destination()' not in values_text(actions)
-        assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(actions))
+    assert not navigation
+    lists = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'get_contact(index)' in values_text(lists['render_row'])
+    assert 'contact->stable_id()' in values_text(lists['render_row'])
+    assert 'call_contact(row_id)' in values_text(lists['on_select'])
+    assert 'pickup_contact(row_id)' in values_text(lists['on_select'])
+    assert by_id(config['lvgl'], 'phone_contacts_container')
     callback = config['voip_stack']['on_destination_changed']
     assert 'id(videophone_peer) = destination;' in values_text(callback)
     assert any(action_id(node, 'script.execute') == 'update_status' for node in nodes(callback))

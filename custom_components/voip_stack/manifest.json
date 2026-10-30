@@ -28,7 +28,10 @@
     "custom_components.voip_stack"
   ],
   "requirements": [
-    "dnspython==2.8.0"
+    "dnspython==2.8.0",
+    "ldap3==2.9.1",
+    "pyasn1==0.6.5",
+    "pymap==0.36.7"
   ],
   "single_config_entry": true,
   "version": "2026.11.1-dev"

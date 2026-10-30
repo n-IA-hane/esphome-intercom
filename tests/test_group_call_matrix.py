@@ -167,6 +167,7 @@ class _FakeHass:
         self.config_entries = types.SimpleNamespace(async_entries=lambda _domain: [])
         self.data: dict = {const.DOMAIN: {}}
         self.runtime = types.SimpleNamespace(
+            directory=None,
             trunk_configs={}, default_trunk_id="",
             tasks=set(),
             calls=None,

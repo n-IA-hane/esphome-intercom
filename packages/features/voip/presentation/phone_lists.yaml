@@ -1,0 +1,299 @@
+# A bounded row pool presents the existing phonebook and native IMAP MediaSource.
+external_components:
+- source: ${ext_components_source}
+  components: [phone_list_view]
+- source: ${voip_stack_components_source}
+  components: [imap_voicemail, phone_client]
+font:
+- file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+  id: phone_list_icons
+  size: 20
+  glyphs: ["\U000F01C3", "\U000F03FE", "\U000F05CB", "\U000F059F", "\U000F0004", "\U000F06A9", "\U000F0849", "\U000F0625", "\U000F11AB", "\U000F03F6", "\U000F03FC", "\U000F11A6", "\U000F01EE", "\U000F01EF", "\U000F040C", "\U000F0666", "\U000F01B4", "\U000F0141", "\U000F0142", "\U000F05E1"]
+globals:
+- id: ui_voicemail_active
+  type: bool
+  restore_value: false
+  initial_value: 'false'
+- id: ui_voicemail_play_requested
+  type: bool
+  restore_value: false
+  initial_value: 'false'
+- id: ui_voicemail_play_started
+  type: bool
+  restore_value: false
+  initial_value: 'false'
+- id: voicemail_selected_uid
+  type: uint32_t
+  initial_value: '0'
+- id: voicemail_selected_validity
+  type: uint32_t
+  initial_value: '0'
+media_player:
+- id: !extend speaker_media_player
+  announcement_pipeline:
+    sources: [phone_voicemail]
+imap_voicemail:
+  id: phone_voicemail
+  voip_stack_id: phone
+  account_id: ha
+  managed_by_ha: true
+  task_stack_in_psram: true
+  buffer_in_psram: true
+  max_messages: 16
+  on_update:
+  - phone_list_view.refresh: contacts_list_view
+  - phone_list_view.refresh: voicemail_list_view
+  - script.execute: update_voicemail_controls
+defaults:
+  _phone_lists_redraw:
+  - script.execute: draw_display
+script:
+- id: refresh_phone_presentation
+  then: ${_phone_lists_redraw}
+- id: update_voicemail_controls
+  then:
+  - lambda: |-
+      auto enable = [](lv_obj_t *button, bool allowed) {
+        if (lv_obj_has_state(button, LV_STATE_DISABLED) == !allowed) return;
+        if (allowed) lv_obj_remove_state(button, LV_STATE_DISABLED);
+        else lv_obj_add_state(button, LV_STATE_DISABLED);
+      };
+      bool selected = false;
+      for (size_t i=0; i<id(phone_voicemail).message_count(); ++i) {
+        const auto *message = id(phone_voicemail).get_message(i);
+        selected |= message != nullptr && !message->deleted && message->uid == id(voicemail_selected_uid)
+                    && message->uid_validity == id(voicemail_selected_validity);
+      }
+      enable(id(voicemail_newer_btn), id(phone_voicemail).has_newer());
+      enable(id(voicemail_older_btn), id(phone_voicemail).has_older());
+      enable(id(voicemail_stop_btn), id(ui_voicemail_play_requested));
+      enable(id(voicemail_delete_btn), selected);
+- id: stop_voicemail_playback
+  then:
+  - if:
+      condition:
+        lambda: return id(ui_voicemail_play_requested);
+      then:
+      - media_player.stop:
+          id: speaker_media_player
+          announcement: true
+      - lambda: id(ui_voicemail_play_requested) = false; id(ui_voicemail_play_started) = false;
+  - lambda: id(phone_voicemail).stop();
+  - script.execute: update_voicemail_controls
+- id: open_voicemail
+  then:
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      id(ui_voicemail_active) = true;
+      id(phone_voicemail).refresh_if_stale();
+  - script.execute: refresh_phone_presentation
+  - phone_list_view.refresh: voicemail_list_view
+  - script.execute: update_voicemail_controls
+- id: close_voicemail
+  then:
+  - script.execute: stop_voicemail_playback
+  - lambda: |-
+      id(ui_voicemail_active) = false;
+  - script.execute: refresh_phone_presentation
+phone_list_view:
+- id: contacts_list_view
+  parent_id: phone_contacts_container
+  icon_font: phone_list_icons
+  visible_rows: 8
+  row_height: 48
+  row_count: !lambda |-
+    return id(phone).get_contact_count() + (id(phone_voicemail).enabled() ? 1 : 0);
+  render_row: !lambda |-
+    using namespace esphome::voip_stack;
+    if (index == id(phone).get_contact_count()) {
+      row.set_id("voicemail"); row.set_name("Voicemail"); row.set_leading("\U000F01EE");
+      row.set_trailing("\U000F0142"); row.color = 0xFBBF24; row.action = 2;
+      return;
+    }
+    const auto *contact = id(phone).get_contact(index);
+    if (contact == nullptr) return;
+    row.set_id(contact->stable_id()); row.set_name(contact->name);
+    const char *icon = "\U000F0625";
+    switch (contact->kind) {
+      case ContactKind::ESP: icon = "\U000F01C3"; break;
+      case ContactKind::SIP_ACCOUNT: icon = "\U000F05CB"; break;
+      case ContactKind::BROWSER: icon = "\U000F059F"; break;
+      case ContactKind::CONTACT: icon = "\U000F0004"; break;
+      case ContactKind::AUTOMATION: icon = "\U000F06A9"; break;
+      case ContactKind::GROUP: icon = "\U000F0849"; break;
+      default: break;
+    }
+    row.set_leading(icon);
+    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    if (!state.available) { row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0x94A3B8; return; }
+    switch (state.state) {
+      case BlfState::IDLE: row.set_detail("Idle"); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
+      case BlfState::RINGING: row.set_detail("Ringing, tap to pick up"); row.set_trailing("\U000F11AB"); row.color=0x38BDF8; row.blink=true; row.action=1; break;
+      case BlfState::ACTIVE: row.set_detail("In call"); row.set_trailing("\U000F03F6"); row.color=0xF87171; break;
+      case BlfState::HELD: row.set_detail("On hold"); row.set_trailing("\U000F03FC"); row.color=0xFBBF24; break;
+      default: row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color=0x94A3B8; break;
+    }
+  on_select:
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      if (action == 2) { id(open_voicemail).execute(); return; }
+      if (action == 1) id(phone).pickup_contact(row_id);
+      else id(phone).call_contact(row_id);
+- id: voicemail_list_view
+  parent_id: phone_voicemail_container
+  icon_font: phone_list_icons
+  visible_rows: 8
+  row_height: 54
+  empty_text: No messages
+  row_count: !lambda return id(phone_voicemail).message_count();
+  render_row: !lambda |-
+    const auto *message = id(phone_voicemail).get_message(index);
+    if (message == nullptr) return;
+    row.set_id(std::to_string(message->uid_validity)+":"+std::to_string(message->uid));
+    row.set_name(message->from.empty() ? "Unknown caller" : message->from);
+    std::string detail = message->has_duration ? std::to_string(message->duration_seconds) + "s  " : "";
+    detail += esphome::phone_list_view::message_time(message->date);
+    row.set_detail(detail);
+    row.set_leading(message->seen ? "\U000F01EF" : "\U000F01EE");
+    row.set_trailing("\U000F040C"); row.color = message->seen ? 0xCBD5E1 : 0xFBBF24;
+    row.highlighted = message->uid == id(voicemail_selected_uid) && message->uid_validity == id(voicemail_selected_validity);
+    row.enabled = !message->deleted;
+  on_select:
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      const auto colon = row_id.find(':'); if (colon == std::string::npos) return;
+      const std::string validity = row_id.substr(0, colon), uid = row_id.substr(colon+1);
+      // The client validates both decimal values and UIDVALIDITY against its current page.
+      uint32_t u, v;
+      if (!esphome::imap_voicemail::parse_uid(uid, &u) || !esphome::imap_voicemail::parse_uid(validity, &v)) return;
+      if (id(phone_voicemail).request_play_uid(u, v)) {
+        id(ui_voicemail_play_requested) = true; id(ui_voicemail_play_started) = false;
+        id(voicemail_selected_uid)=u; id(voicemail_selected_validity)=v;
+      }
+      id(voicemail_list_view).refresh();
+      id(update_voicemail_controls).execute();
+voip_stack:
+  blf:
+    max_subscriptions: 16
+    buffers_in_psram: true
+    pickup_prefix: pickup.
+  on_phonebook_update:
+  - phone_list_view.refresh: contacts_list_view
+  on_blf_state:
+  - phone_list_view.refresh: contacts_list_view
+esphome:
+  on_boot:
+  - priority: -250
+    then:
+    - lambda: |-
+        id(phone_voicemail).add_on_update_callback([]() {
+          using esphome::media_source::MediaSourceState;
+          const auto state = id(phone_voicemail).get_state();
+          if (state == MediaSourceState::PLAYING) {
+            id(ui_voicemail_play_requested) = true; id(ui_voicemail_play_started) = true;
+          }
+          if (state == MediaSourceState::ERROR || (state == MediaSourceState::IDLE && id(ui_voicemail_play_started))) {
+            id(ui_voicemail_play_requested) = false; id(ui_voicemail_play_started) = false;
+          }
+          id(voicemail_list_view).refresh();
+          id(update_voicemail_controls).execute();
+        });
+        id(phone).add_on_state_callback([](auto state) {
+          if (!id(phone).is_idle()) {
+            using esphome::media_source::MediaSourceState;
+            const auto source = id(phone_voicemail).get_state();
+            if (id(ui_voicemail_active) || id(ui_voicemail_play_requested) ||
+                source == MediaSourceState::PLAYING || source == MediaSourceState::PAUSED)
+              id(stop_voicemail_playback).execute();
+            id(ui_voicemail_active)=false;
+          }
+        });
+lvgl:
+  pages:
+  - id: phone_voicemail_page
+    bg_color: 0x10151F
+    scrollable: false
+    on_swipe_right:
+    - script.execute: close_voicemail
+    widgets:
+    - label:
+        text: Voicemail
+        align: TOP_MID
+        y: 8%
+        text_color: 0xFFFFFF
+    - obj:
+        id: phone_voicemail_container
+        align: TOP_MID
+        y: 22%
+        width: 82%
+        height: 48%
+        pad_all: 0
+        border_width: 0
+        bg_opa: TRANSP
+        scroll_dir: VER
+        scrollbar_mode: AUTO
+    - button:
+        id: voicemail_newer_btn
+        align: TOP_MID
+        x: -27%
+        y: 74%
+        width: 14%
+        min_width: 36
+        max_width: 72
+        height: 9%
+        min_height: 32
+        max_height: 64
+        on_short_click:
+        - lambda: id(phone_voicemail).newer();
+        widgets:
+        - label: {text: "\U000F0141", text_font: phone_list_icons, align: CENTER}
+    - button:
+        id: voicemail_stop_btn
+        align: TOP_MID
+        x: -9%
+        y: 74%
+        width: 14%
+        min_width: 36
+        max_width: 72
+        height: 9%
+        min_height: 32
+        max_height: 64
+        on_short_click:
+        - script.execute: stop_voicemail_playback
+        widgets:
+        - label: {text: "\U000F0666", text_font: phone_list_icons, align: CENTER}
+    - button:
+        id: voicemail_delete_btn
+        align: TOP_MID
+        x: 9%
+        y: 74%
+        width: 14%
+        min_width: 36
+        max_width: 72
+        height: 9%
+        min_height: 32
+        max_height: 64
+        on_short_click:
+        - script.execute: stop_voicemail_playback
+        - lambda: |-
+            if (id(phone_voicemail).delete_message(id(voicemail_selected_uid), id(voicemail_selected_validity))) {
+              id(voicemail_selected_uid) = 0;
+              id(update_voicemail_controls).execute();
+            }
+        widgets:
+        - label: {text: "\U000F01B4", text_font: phone_list_icons, align: CENTER}
+    - button:
+        id: voicemail_older_btn
+        align: TOP_MID
+        x: 27%
+        y: 74%
+        width: 14%
+        min_width: 36
+        max_width: 72
+        height: 9%
+        min_height: 32
+        max_height: 64
+        on_short_click:
+        - lambda: id(phone_voicemail).older();
+        widgets:
+        - label: {text: "\U000F0142", text_font: phone_list_icons, align: CENTER}

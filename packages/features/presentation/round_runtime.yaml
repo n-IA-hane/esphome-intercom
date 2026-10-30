@@ -210,6 +210,7 @@ script:
           ${ 'id(phone).is_active()' if _round_has_phone else 'false' } ||
           ${ 'id(runtime).is_activity_active("timer_ringing")' if _round_has_timers else 'false' }) return;
       if (delta == 0) return;
+      ${ 'if (id(ui_voicemail_active)) { id(close_voicemail).execute(); return; }' if _round_has_phone else '' }
 
       // These are positions in the visible sequence, derived from the
       // existing owners. No additional navigation state is retained.
@@ -453,7 +454,7 @@ defaults:
           target != id(thinking_page)->obj &&
           target != id(settings_continuous_page)->obj &&
           ${ _round_video_status_allowed | default('true') } &&
-          ${ 'target != id(call_dialer_page)->obj' if _round_has_phone else 'true' };
+          ${ '(target != id(call_dialer_page)->obj && target != id(phone_voicemail_page)->obj)' if _round_has_phone else 'true' };
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);

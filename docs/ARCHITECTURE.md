@@ -11,8 +11,9 @@ SDP and RTP are the functional primitives.
 Every ESP running `voip_stack` is a SIP user agent:
 
 - it can originate and receive SIP calls;
-- it does not register to a PBX;
-- it does not require SIP authentication;
+- it supports direct SIP and optional registered PBX accounts;
+- registered accounts use Digest authentication; direct operation remains the
+  generic default;
 - it accepts compatible PCM SDP and rejects incompatible media with SIP status;
 - it can run full-duplex, mic-only or speaker-only; signaling-only endpoints
   are rejected because every VoIP endpoint must expose real audio media.
@@ -42,7 +43,8 @@ to a local endpoint, bridge, group-call, use the trunk or reject.
 
 ```text
 ESP voip_stack
-  SIP UA + SDP offer/answer + RTP PCM + local phonebook + SipPhoneState
+  SIP UA + optional REGISTER/MWI/BLF + SDP + RTP + bounded local phonebook
+  optional LDAP directory and IMAP MediaSource clients
 
 Home Assistant voip_stack
   HA softphone + SIP UDP/TCP endpoint + router/B2BUA + RTP relay/resampler
@@ -188,21 +190,25 @@ All call control is SIP:
 - busy/DND: `486 Busy Here`
 - declined: `603 Decline`
 - incompatible media: `488 Not Acceptable Here`
-- auth challenges unsupported by ESP: `auth_required_unsupported`
-- optional HA trunk registration: `REGISTER` with digest auth toward the
-  provider/PBX only
+- registered ESP account challenges: Digest with the selected account;
+- direct calls without account credentials: unsupported authentication is
+  reported as `auth_required_unsupported`;
+- optional HA trunk registration: a separate `REGISTER` toward its configured
+  provider/PBX.
 
-ESP devices do not implement provider/PBX registration. HA trunk registration
-and HA local SIP registration are separate features that live only in
-`voip_stack`.
+ESP accounts register directly with a compatible PBX, independently of HA's
+own provider trunk. Maintained HA phone packages provision one managed account
+through the existing ESPHome API. Generic firmware can retain direct SIP,
+configure external accounts or combine both. See
+[standard phone services](ESP_PHONE_SERVICES.md).
 
 For outbound INVITE failures, HA sends the required ACK for non-2xx final
 responses before surfacing the terminal reason. This keeps failed calls SIP
 compliant rather than relying on retry side effects.
 
-ESP endpoints do not renegotiate established media. They reject a hold or
-media-changing in-dialog re-INVITE with `488 Not Acceptable Here` without
-replacing or tearing down the original dialog.
+ESP endpoints accept compatible hold/resume direction changes while retaining
+their prepared audio path. Unsupported changes receive `488 Not Acceptable
+Here` without replacing or tearing down the original dialog.
 
 HA-owned dialogs accept a compatible peer-initiated re-INVITE or UPDATE. The
 new offer may change direction, RTP destination, payload type, packet duration
@@ -394,8 +400,9 @@ applies the Request-URI dial plan, media checks, DND and busy policy. The local
 registrar authenticates account registration and supplies a current Contact;
 it is not a global INVITE allowlist.
 
-The optional SIP trunk is used only when configured and registered. It never
-registers ESP devices to the provider. ESP devices remain local SIP user agents;
+The optional HA SIP trunk is used only when configured and available, either
+through registration or its static peer settings. It never registers ESP
+devices to the provider on their behalf. ESP devices remain SIP user agents;
 HA maps provider-side numbers or DTMF extension digits to local SIP targets.
 
 Inbound trunk calls use deterministic policy:
@@ -429,10 +436,16 @@ User-facing contacts are data-driven. Name-only contacts route through HA,
 targets, endpoint contacts expose `address` or `sip_uri`, and local SIP
 accounts are published by the registrar.
 
-ESP phonebook storage is bounded. The runtime accepts up to 64 normalized
-contacts per ESP phonebook and replaces existing names in place. Larger rosters
-must be filtered by HA before push rather than relying on dynamic ESP heap
-growth during call handling.
+`PhoneDirectory` owns the canonical HA routing records. LDAP, the HA sensor and
+legacy JSON delivery read that same directory. Managed ESP phones use LDAP;
+older firmware retains native JSON synchronization. Offline identities remain
+until their owner is removed.
+
+ESP phonebook storage accepts up to 64 normalized contacts. Each provider
+replaces only its own snapshot, preserving manual overrides and stable IDs.
+Larger directories must be filtered before import. BLF watches and IMAP pages
+have independent configurable bounds and boot-owned buffers. Display rows use
+a reusable widget pool rather than allocating a widget for every contact.
 
 ## SIP/TCP backpressure
 

@@ -120,7 +120,7 @@ def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> N
 
 
 def test_optional_esphome_mailbox_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
-    path = "tests/test_esphome_mailbox_optional_ha.py"
+    path = "tests/test_esphome_provisioning_optional_ha.py"
     ha_path = tmp_path / "ha"
     software_path = tmp_path / "software"
     ha_path.mkdir()

@@ -18,6 +18,26 @@ from custom_components.voip_stack.core import rtp, sip
 pytestmark = pytest.mark.ha
 
 
+class FixtureRoster(list):
+    """Commit synthetic contact edits at their source, as the HA owner does."""
+
+    def __init__(self, entries, runtime):
+        super().__init__(entries)
+        self.runtime = runtime
+
+    def _publish(self):
+        if self.runtime.directory is not None:
+            self.runtime.directory.replace(self)
+
+    def append(self, entry):
+        super().append(entry)
+        self._publish()
+
+    def __setitem__(self, index, value):
+        super().__setitem__(index, value)
+        self._publish()
+
+
 class Phone(asyncio.DatagramProtocol):
     def __init__(self, rtp_socket):
         self.rtp_socket = rtp_socket
@@ -166,6 +186,7 @@ async def lab(hass, monkeypatch, socket_enabled):
         phones=PhoneAdapterRegistry(hass, endpoints), sip=calls,
     )
     entry.runtime_data = runtime
+    roster = FixtureRoster(roster, runtime)
     monkeypatch.setattr(module, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(module, "async_build_peer_snapshot", AsyncMock(return_value=[]))
     monkeypatch.setattr(module, "roster_from_peers", lambda *_args: roster)

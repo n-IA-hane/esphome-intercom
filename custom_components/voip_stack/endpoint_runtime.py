@@ -207,7 +207,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
-        from .phone_endpoint import EndpointAvailability
+        from .phone_endpoint import EndpointAvailability, EndpointKind
 
         endpoint_registry = endpoint_directory(hass)
         endpoint = endpoint_registry.by_username(username)
@@ -223,10 +223,17 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                     else EndpointAvailability.OFFLINE
                 ),
             )
+            if registered and endpoint.kind is EndpointKind.ESPHOME:
+                from .sip_capabilities import schedule_capability_probe
+                schedule_capability_probe(hass, endpoint.endpoint_id, username)
         create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
+    from .managed_phones import active_managed_accounts
+    from .store import config_entry as phone_config_entry
+    phone_entry = phone_config_entry(hass)
+    managed = active_managed_accounts(hass, phone_entry) if phone_entry is not None else []
     registrar = SipRegistrar(
-        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)),
+        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False) or managed),
         accounts=_sip_accounts(hass),
         local_ip=local_ip,
         local_sip_port=int(cfg["sip_port"]),

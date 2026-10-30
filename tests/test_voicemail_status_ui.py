@@ -22,7 +22,7 @@ SCENES = {
 }
 
 
-def _expanded(tmp_path, scene, *, voip=True, extra_voip=None):
+def _expanded(tmp_path, scene, *, voip=True, extra_voip=None, extra_components=None):
     original = yaml_util.load_yaml(ROOT / SCENES[scene])
     features = list(original["substitutions"]["firmware_features"])
     if not voip:
@@ -33,6 +33,9 @@ def _expanded(tmp_path, scene, *, voip=True, extra_voip=None):
     if extra_voip is not None:
         with config.open("a") as stream:
             stream.write("\n" + yaml_util.dump({"voip_stack": extra_voip}))
+    if extra_components is not None:
+        with config.open("a") as stream:
+            stream.write("\n" + yaml_util.dump(extra_components))
     result = subprocess.run(
         [sys.executable, "-m", "esphome", "config", "--no-defaults", str(config)],
         capture_output=True, text=True, timeout=180,
@@ -48,16 +51,16 @@ def _expanded(tmp_path, scene, *, voip=True, extra_voip=None):
 
 
 @pytest.mark.parametrize("scene", SCENES)
-@pytest.mark.parametrize("voip", [False, True], ids=["no-voip", "direct-no-registration"])
+@pytest.mark.parametrize("voip", [False, True], ids=["no-voip", "automatic-registration"])
 @pytest.mark.architecture
 @pytest.mark.timeout(200)
-def test_voicemail_composes_only_with_a_real_phone_and_requires_no_registration(tmp_path, scene, voip):
+def test_voicemail_composes_with_standard_registered_phone_services(tmp_path, scene, voip):
     document = _expanded(tmp_path, scene, voip=voip)
     ids = {str(node["id"]) for node in nodes(document) if "id" in node}
     assert ("ui_voicemail_waiting" in ids) is voip
     if voip:
-        assert "registration" not in document["voip_stack"]
-        assert document["voip_stack"]["ha_integration"]["message_waiting"] is True
+        assert document["voip_stack"]["ha_integration"]["auto_register"] is True
+        assert document["voip_stack"]["registration"]["message_waiting"] is True
         boot = text(document["esphome"]["on_boot"])
         assert boot.count("add_on_message_waiting_callback") == 1
         assert "USE_ESPHOME_VOIP_MWI" in boot
@@ -88,7 +91,7 @@ def test_voicemail_composes_only_with_a_real_phone_and_requires_no_registration(
         assert "ui_voicemail_waiting" not in text(action)
 
 
-@pytest.mark.parametrize("feature", ["USE_ESPHOME_VOIP_MWI", "USE_ESPHOME_VOIP_HA_MWI"])
+@pytest.mark.parametrize("feature", ["USE_ESPHOME_VOIP_MWI"])
 def test_native_mwi_projection_coalesces_events_and_video_visibility(tmp_path, feature):
     """Execute the actual YAML lambda bodies with minimal LVGL/owner adapters."""
     projection = yaml_util.load_yaml(PACKAGE / "voicemail.yaml")
@@ -167,6 +170,9 @@ def test_pbx_only_phone_preserves_disabled_ha_adapter_and_native_mwi(tmp_path, s
     document = _expanded(tmp_path, scene, extra_voip={
         "ha_integration": False,
         "registration": {"message_waiting": True},
+    }, extra_components={
+        "ldap_directory": {"managed_by_ha": False},
+        "imap_voicemail": {"managed_by_ha": False},
     })
     assert document["voip_stack"]["ha_integration"] is False
     assert document["voip_stack"]["registration"]["message_waiting"] is True
@@ -191,7 +197,7 @@ def test_standalone_phone_keeps_mwi_without_runtime_controller(tmp_path, relativ
     expanded.write_text(checked.stdout)
     document = yaml_util.load_yaml(expanded)
     assert "runtime_controller" not in document
-    assert "registration" not in document["voip_stack"]
-    assert document["voip_stack"]["ha_integration"]["message_waiting"] is True
+    assert document["voip_stack"]["ha_integration"]["auto_register"] is True
+    assert document["voip_stack"]["registration"]["message_waiting"] is True
     assert text(document["esphome"]["on_boot"]).count("add_on_message_waiting_callback") == 1
     assert "ui_voicemail_waiting" in text(document["globals"])

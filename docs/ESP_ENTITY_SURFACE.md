@@ -37,20 +37,28 @@ selection or the IDs needed to connect other components.
 ## What appears automatically
 
 When the native API is present, `voip_stack` creates the existing **VoIP
-Endpoint**, **VoIP State**, **VoIP Caller**, **VoIP Destination**, **VoIP Last
+State**, **VoIP Caller**, **VoIP Destination**, **VoIP Last
 Reason**, **VoIP Media Route** and **VoIP Contacts** entities. It also exposes
 extension, ring/conference groups and the conference-ring switch.
 
-The endpoint entity advertises the phone's SIP address and media capabilities.
-The HA integration discovers it through the ESPHome device and pushes the
-central phonebook using the native `set_roster_json` action. Call, answer,
-decline, hangup and manual contact actions use the same native API connection.
-Entity names and action names remain compatible with the earlier packages.
+In the 2026.11.1 preview, maintained HA phone packages enable automatic account
+provisioning. HA configures the phone through the existing ESPHome connection;
+REGISTER supplies its reachable Contact, OPTIONS discovers capabilities and
+each call's SDP negotiates the actual media. The phone downloads the shared
+directory through LDAP. Its friendly HA device name supplies the caller label.
+See [standard phone services](ESP_PHONE_SERVICES.md) for setup and ownership.
+
+The long **VoIP Endpoint** capability sensor is a legacy opt-in:
+`ha_integration.endpoint: true`. Older firmware still uses that discovery
+surface and receives the central phonebook through `set_roster_json`.
+Call, answer, decline, hangup and manual contact actions keep using the native
+API connection in either configuration.
 
 Each responsibility has one owner:
 
 - The ESP VoIP component owns calls and its local phonebook.
-- Home Assistant owns the central phonebook and delivers its updates.
+- Home Assistant owns the central directory; managed phones read it through
+  LDAP and older firmware receives its JSON projection.
 - The native API adapter exposes the component's existing methods and states.
 - Optional packages compose the display, ringtone and Full-profile activities.
 
@@ -114,8 +122,9 @@ used `phonebook_subscribe.yaml` or `ha_phone.yaml` and want to preserve their
 routing preference, keep `use_ha_as_first_contact: true` in `voip_stack`.
 Maintained profiles already include these migration changes.
 
-After upload, check the available **VoIP Endpoint**, delivery of contacts,
-calling and hangup. Updating the HACS integration alone does not recompile the
+After upload, check registration, delivery of contacts, calling and hangup.
+Keep the legacy endpoint sensor enabled only when an older backend needs it.
+Updating the HACS integration alone does not recompile the
 firmware or migrate a custom device YAML.
 
 ## Dashboard controls

@@ -44,6 +44,13 @@ def sip_accounts(hass: HomeAssistant):
             accounts.append(account_from_mapping(raw))
         except ValueError as err:
             _LOGGER.warning("Ignoring invalid SIP account in config entry: %s", err)
+    entry = config_entry(hass)
+    if entry is not None:
+        from .managed_phones import active_managed_accounts
+
+        existing = {account.username.casefold() for account in accounts}
+        accounts.extend(account for account in active_managed_accounts(hass, entry)
+                        if account.username.casefold() not in existing)
     return accounts
 
 

@@ -41,6 +41,7 @@ nav:
       - Dahua door stations: DAHUA.md
       - ESP with a classic PBX: CLASSIC_PBX.md
   - ESP firmware:
+      - Standard phone services: ESP_PHONE_SERVICES.md
       - Phone entities and migration: ESP_ENTITY_SURFACE.md
       - Sound and announcement actions: ESPHOME_SOUND_ACTIONS.md
       - Display screenshots: ESP_SCREENSHOT.md

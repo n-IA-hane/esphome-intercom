@@ -37,9 +37,11 @@ voip_stack:
 | `ring_groups` | Optional comma-separated PBX ring group memberships. |
 | `conference_groups` | Optional comma-separated conference group memberships. |
 | `conference_ring` | Ring this ESP when another participant starts one of its conference groups. Requires `conference_groups`. |
-| `static_contacts` | Optional local contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. HA-managed `sensor.voip_phonebook` is recommended for normal installs. |
+| `static_contacts` | Optional local contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. Current managed phones read the HA directory through LDAP. |
 | `use_ha_as_first_contact` | Select the HA peer after the first roster population. |
-| `ha_phonebook_text_sensor_id` | Optional legacy sensor binding; normal HA sync uses the native JSON action. |
+| `ha_phonebook_text_sensor_id` | Optional legacy sensor binding. Managed LDAP phones use the shared directory; older firmware uses the native JSON action. |
+| `ha_integration.auto_register` | Opt in to automatic HA SIP account provisioning. Enabled by maintained HA phone packages, false in the generic component. Optional LDAP and IMAP clients can share that account. |
+| `ha_integration.endpoint` | Legacy capability text sensor, disabled by default. Current managed phones use REGISTER, OPTIONS and call SDP. |
 | `delete_contact_missing_from` | Optional stale-contact pruning policy with `updates_number: 1..10`. |
 | `ringing_timeout` / `calling_timeout` | Optional local guard timers, disabled when omitted. Maintained profiles leave these unset so the PBX can control ringing. SIP transaction timers remain active. |
 | `dc_offset_removal` | Remove DC bias from TX microphone samples. |
@@ -268,7 +270,8 @@ originate a new call.
 `address`, `sip_uri`, `extension`, `number`, `ha_bridge`, `transport`, `port`,
 `rtp_port`, `tx_rate`, `rx_rate`, `tx_formats`, `rx_formats`, and
 `max_payload_bytes`, `ring_group`, `conference_group` and `conference_ring`.
-HA updates `sensor.voip_phonebook` and pushes the roster to online ESP devices.
+HA updates its canonical directory and `sensor.voip_phonebook` projection.
+Managed ESP phones read LDAP; older firmware receives native JSON updates.
 
 `remove_contact` exposes one `name` input whose value may match a manual
 contact's name, stable ID, extension or number.

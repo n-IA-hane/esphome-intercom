@@ -1,3 +1,6 @@
+packages:
+  standard_phone_services: !include ../features/voip/phone_services.yaml
+
 # =============================================================================
 # VoIP phone SIP/RTP transport
 # =============================================================================

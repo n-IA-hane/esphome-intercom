@@ -1,4 +1,4 @@
-"""HA mailbox setup stays usable when the optional ESPHome SDK is absent."""
+"""Standard phone setup stays usable when the optional ESPHome SDK is absent."""
 
 from pathlib import Path
 import subprocess
@@ -9,7 +9,7 @@ import pytest
 pytestmark = pytest.mark.ha
 
 
-def test_mailbox_bridge_without_esphome_in_fresh_ha_process(tmp_path):
+def test_provisioning_without_esphome_in_fresh_ha_process(tmp_path):
     program = r'''
 import asyncio
 import importlib.abc
@@ -26,7 +26,7 @@ sys.meta_path.insert(0, MissingOptionalSdk())
 from homeassistant.config_entries import ConfigEntries
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry, entity_registry
-from custom_components.voip_stack.esphome_mailbox import EspHomeMailboxBridge
+from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
 from custom_components.voip_stack.runtime_data import VoipStackRuntime
@@ -43,9 +43,9 @@ async def main():
     endpoints = EndpointRegistry()
     entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={},
         trunk_config={}, endpoints=endpoints, phones=PhoneAdapterRegistry(hass, endpoints))
-    bridge = EspHomeMailboxBridge(hass)
+    bridge = EspHomeProvisioner(hass, entry)
     bridge.start()
-    await bridge.async_push()
+    await bridge.async_sync()
     await bridge.async_close()
     await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_stop(force=True)

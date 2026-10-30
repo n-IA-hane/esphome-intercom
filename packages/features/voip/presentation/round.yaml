@@ -37,6 +37,7 @@ script:
       id(peer_name) = peer;
       id(settings_active) = false;
       id(voip_dialer_active) = false;
+      id(ui_voicemail_active) = false;
       id(voip_dial_length) = 0;
       id(voip_dial_buffer)[0] = '\0';
   - script.execute: backlight_timer
@@ -178,15 +179,7 @@ script:
   then:
   - lambda: |-
       id(peer_name) = id(phone).get_current_destination();
-      lv_label_set_text(id(call_idle_peer_label), id(peer_name).c_str());
-      char buf[16];
-      snprintf(
-          buf,
-          sizeof(buf),
-          "\U000F06CB %u",
-          static_cast<unsigned>(id(phone).get_contact_count())
-      );
-      lv_label_set_text(id(call_idle_contacts_label), buf);
+      id(contacts_list_view).refresh();
 voip_stack:
   on_phonebook_update:
   - lambda: id(peer_name) = destination;
@@ -204,12 +197,16 @@ defaults:
     if (phone_active) {
       id(settings_active) = false;
       id(voip_dialer_active) = false;
+      id(ui_voicemail_active) = false;
     }
   _round_phone_ended_route: |-
     else if (id(call_ended_active) && !id(phone).is_active()) {
       target = id(call_ended_page)->obj;
     }
   _round_phone_active_route: |-
+    else if (id(ui_voicemail_active) && !phone_active) {
+      target = id(phone_voicemail_page)->obj;
+    }
     else if (id(current_mode) == 1) {
       // VoIP mode
       if (phone_ringing) {
@@ -225,7 +222,9 @@ defaults:
         target = id(call_idle_page)->obj;
       }
     }
-  _round_name_call_idle_page: else if (target == id(call_idle_page)->obj) page_name = "call_idle";
+  _round_name_call_idle_page: |-
+    else if (target == id(phone_voicemail_page)->obj) page_name = "voicemail";
+    else if (target == id(call_idle_page)->obj) page_name = "call_idle";
   _round_name_call_dialer_page: else if (target == id(call_dialer_page)->obj) page_name = "call_dialer";
   _round_name_call_ringing_in_page: else if (target == id(call_ringing_in_page)->obj) page_name = "call_ringing_in";
   _round_name_call_ringing_out_page: else if (target == id(call_ringing_out_page)->obj) page_name = "call_ringing_out";

@@ -476,7 +476,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None):
         """Reconfigure the existing VoIP Stack entry from HA's native menu."""
-        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail"])
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services"])
 
     async def async_step_user(self, user_input=None):
         """Handle install/reconfigure of the single VoIP Stack entry.
@@ -769,6 +769,32 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 SelectSelector(SelectSelectorConfig(options=choices, mode="dropdown")),
         }))
 
+
+    async def async_step_phone_services(self, user_input=None):
+        from .phone_services import CONF_PHONE_SERVICES, settings
+
+        entry, _existing = self._current_entry_data()
+        current = settings(entry)
+        errors = {}
+        if user_input is not None:
+            if user_input["ldap_port"] == user_input["imap_port"]:
+                errors["base"] = "phone_service_ports_conflict"
+            elif user_input["tls"] and not (user_input.get("certificate") and user_input.get("private_key")):
+                errors["base"] = "phone_service_certificate_required"
+            else:
+                self._base_input = self._base_input or {}
+                self._base_input[CONF_PHONE_SERVICES] = dict(user_input)
+                return self._store_entry(dict(self._base_input))
+        return self.async_show_form(step_id="phone_services", errors=errors, data_schema=vol.Schema({
+            vol.Required("listen_host", default=current["listen_host"]): str,
+            vol.Required("ldap_port", default=current["ldap_port"]): _port_selector(),
+            vol.Required("base_dn", default=current["base_dn"]): str,
+            vol.Required("allow_anonymous", default=current["allow_anonymous"]): BooleanSelector(),
+            vol.Required("imap_port", default=current["imap_port"]): _port_selector(),
+            vol.Required("tls", default=current["tls"]): BooleanSelector(),
+            vol.Optional("certificate", default=current["certificate"]): str,
+            vol.Optional("private_key", default=current["private_key"]): str,
+        }))
 
     async def async_step_parking(self, user_input=None):
         from .parking_config import DEFAULT_SLOTS, normalize_parking_config, parking_namespace_conflicts

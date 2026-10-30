@@ -50,6 +50,10 @@ async def async_current_roster_json(hass: HomeAssistant) -> str:
 
 
 async def async_refresh_and_push_phonebook(hass: HomeAssistant) -> None:
+    runtime = runtime_data(hass)
+    if runtime is not None and runtime.phonebook_sensor is None:
+        from .directory_runtime import async_refresh_directory
+        await async_refresh_directory(hass)
     await async_refresh_phonebook_sensor(hass)
     roster_json = await async_current_roster_json(hass)
     await push_roster_json_to_esps(hass, roster_json)
@@ -75,6 +79,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             EXTERNAL_CALL_BLOCKED_ENDPOINTS, CONF_ESPHOME_PHONE_POLICIES,
             "default_trunk_id",
             "esphome_mailboxes", "voicemail", "parking",
+            "managed_esphome_phones",
         }
     }
 

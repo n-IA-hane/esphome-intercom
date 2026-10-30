@@ -80,18 +80,7 @@ script:
 - id: update_call_idle_labels
   then:
   - lambda: id(peer_name) = id(phone).get_current_destination();
-  - lvgl.label.update:
-      id: call_idle_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_idle_contacts_label
-      text: !lambda |-
-        auto csv = id(phone).get_contacts_csv();
-        int count = csv.empty() ? 0 : std::count(csv.begin(), csv.end(), ',') + 1;
-        char buf[16];
-        snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
-        return std::string(buf);
+  - phone_list_view.refresh: contacts_list_view
 globals:
 - id: previous_mode
   type: int

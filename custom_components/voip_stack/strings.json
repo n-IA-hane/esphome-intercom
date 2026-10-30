@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "General settings",
           "parking": "Call parking",
-          "voicemail": "Voicemail voice"
+          "voicemail": "Voicemail voice",
+          "phone_services": "Phone directory and mailboxes"
+        }
+      },
+      "phone_services": {
+        "title": "Standard phone services",
+        "description": "LDAP is the shared phone directory. IMAP exposes the existing voicemail archive. Managed ESPHome phones receive their configuration through the native API. SIP, LDAP and IMAP use the same phone account. Optional TLS uses your certificate and private key files.",
+        "data": {
+          "listen_host": "Listen address",
+          "ldap_port": "LDAP port",
+          "base_dn": "Directory base DN",
+          "allow_anonymous": "Allow anonymous directory searches",
+          "imap_port": "IMAP port",
+          "tls": "Use TLS for LDAP and IMAP",
+          "certificate": "Certificate file",
+          "private_key": "Private key file"
         }
       }
     },
@@ -165,7 +180,9 @@
       "trunk_codecs_invalid": "Select supported codecs and keep at least one audio codec.",
       "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
       "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty.",
-      "parking_slots_in_use": "Retrieve or end calls in the removed slots before changing the parking slot list."
+      "parking_slots_in_use": "Retrieve or end calls in the removed slots before changing the parking slot list.",
+      "phone_service_ports_conflict": "LDAP and IMAP require different ports.",
+      "phone_service_certificate_required": "TLS requires both a certificate and a private key file."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -500,6 +517,10 @@
     "mailbox_route_conflict": {
       "title": "Voicemail feature codes conflict",
       "description": "A phone, contact or group uses a voicemail feature address. Rename the conflicting destination; existing routes remain unchanged."
+    },
+    "phone_service_unavailable": {
+      "title": "{service} phone service unavailable",
+      "description": "VoIP Stack could not start {service} on port {port}. Check the configured listen address, port availability and optional certificate files. Calls continue using the existing SIP service. Reconfigure Phone directory and mailboxes, then reload VoIP Stack."
     }
   },
   "exceptions": {

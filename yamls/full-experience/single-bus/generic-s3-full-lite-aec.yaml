@@ -1,7 +1,9 @@
-# Experimental 4 MB profile with limited OTA headroom.
+# Experimental 4 MB profile with a dedicated dual-OTA partition table.
 # Keeps Voice Assistant, wake word, HTTP media, TTS, VoIP and runtime controller.
-# Sendspin is optional and disabled to fit the standard 4 MB OTA layout.
-# Measured flash margin is small; adding features can exceed the OTA partition.
+# Keep partitions_4mb_lite_dual_ota.csv beside this main YAML before compiling.
+# Existing stock-layout devices need flash erase and serial factory upload.
+# Save your YAML, wiring and calibration values first; stored preferences reset.
+# Sendspin remains optional and disabled; check size when adding features.
 # =============================================================================
 # GENERIC ESP32-S3 FULL LITE AEC - Single I2S bus, no hardware codec
 # Profile: FULL LITE / shared I2S / software AEC / 4 MB flash

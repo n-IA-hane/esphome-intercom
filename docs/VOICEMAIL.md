@@ -6,6 +6,14 @@ A mailbox belongs to a phone, not to a dashboard card. SIP phones and the HA
 softphone call the same voicemail application. The card displays message
 metadata; listening and deleting use the ordinary call and keypad commands.
 
+## ESP display mailboxes in 2026.11.1-dev
+
+The development firmware uses standard SIP MWI for the idle envelope and IMAP
+for the message list, playback, read state and deletion. Tap the envelope or
+open Voicemail from Contacts. The same HA-generated account authenticates SIP,
+LDAP and IMAP. See [standard phone services](ESP_PHONE_SERVICES.md) for setup,
+paging, standalone PBX settings and supported protocol boundaries.
+
 ## Configure the mailbox and menu voice
 
 Voicemail is available without a global enable switch. Create only the phone

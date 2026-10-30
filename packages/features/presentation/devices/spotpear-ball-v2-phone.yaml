@@ -114,6 +114,8 @@ script:
       // page so the user actually reads the reason.
       if (id(call_ended_active)) {
         target = id(call_ended_page)->obj;
+      } else if (id(ui_voicemail_active) && !in_call) {
+        target = id(phone_voicemail_page)->obj;
       } else if (id(settings_active) && !id(g_settings_pages).empty()) {
         int idx = id(g_settings_index);
         int n = (int) id(g_settings_pages).size();
@@ -140,7 +142,7 @@ script:
       if (target == nullptr) return;
       // Match the full profile: the dialer owns the complete visible disk.
       // Restore both status labels on every other page, including ringing.
-      if (target == id(call_dialer_page)->obj) {
+      if (target == id(call_dialer_page)->obj || target == id(phone_voicemail_page)->obj) {
         lv_obj_add_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
       } else {
@@ -161,18 +163,7 @@ script:
 - id: update_call_idle_labels
   then:
   - lambda: id(peer_name) = id(phone).get_current_destination();
-  - lvgl.label.update:
-      id: call_idle_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_idle_contacts_label
-      text: !lambda |-
-        auto csv = id(phone).get_contacts_csv();
-        int count = csv.empty() ? 0 : std::count(csv.begin(), csv.end(), ',') + 1;
-        char buf[16];
-        snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
-        return std::string(buf);
+  - phone_list_view.refresh: contacts_list_view
 - id: layout_call_dialer
   then:
   - lambda: |-
@@ -487,13 +478,8 @@ lvgl:
         text_font: font_state
         text_align: CENTER
   - id: call_idle_page
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
+    scrollable: false
+    bg_color: 0x10151F
     on_swipe_up:
     - script.execute: call_to_dialer
     on_swipe_down:
@@ -502,89 +488,20 @@ lvgl:
     - label:
         align: TOP_MID
         y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
+        text: Contacts
+        text_color: 0xFFFFFF
+        text_font: font_info
+    - obj:
+        id: phone_contacts_container
         align: TOP_MID
-        y: 17%
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: TOP_MID
-        y: ${call_contacts_y}
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        width: ${call_peer_width}
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
-        x: -60
-        y: -34
-        width: 60
-        height: 60
+        y: 22%
+        width: 80%
+        height: 40%
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        x: 60
-        y: -34
-        width: 60
-        height: 60
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        floating: true
-        align: CENTER
-        y: ${call_btn_below_center}
-        width: ${call_btn_size}
-        height: ${call_btn_size}
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   - id: call_ringing_in_page
     bg_color: 16711680
     widgets:

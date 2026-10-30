@@ -3,6 +3,8 @@ packages:
   voicemail: !include
     file: ../voicemail_badge.yaml
     vars:
+      _phone_lists_redraw:
+      - script.execute: show_phone_page
       _voicemail_font_id: videophone_small_font
       _voicemail_y: 6
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj && id(videophone_terminal_notice).empty()
@@ -11,6 +13,13 @@ packages:
     vars:
       _visibility_extra_code: id(update_voicemail_status).execute();
   call_media_route: ${ _p4_phone_route if _p4_phone_has_video else {} }
+phone_list_view:
+- id: !extend contacts_list_view
+  text_font: videophone_small_font
+  row_height: 72
+- id: !extend voicemail_list_view
+  text_font: videophone_small_font
+  row_height: 72
 font:
 - file:
     type: gfonts
@@ -223,47 +232,17 @@ defaults:
         text_color: 16777215
         text_font: videophone_title_font
         long_mode: DOT
-    - label:
-        align: CENTER
-        y: 30
-        text: Swipe the contact or use the arrows
-        text_color: 6583435
-        text_font: videophone_small_font
     - obj:
-        align: CENTER
-        y: -20
-        width: 1000
-        height: 260
+        id: phone_contacts_container
+        align: TOP_MID
+        y: 240
+        width: 1080
+        height: 420
         bg_opa: TRANSP
         border_width: 0
-        clickable: true
-        gesture_bubble: false
-        on_swipe_left:
-        - lambda: !lambda |-
-            id(videophone_terminal_notice).clear();
-        - voip_stack.next_contact: null
-        on_swipe_right:
-        - lambda: !lambda |-
-            id(videophone_terminal_notice).clear();
-        - voip_stack.prev_contact: null
-    - button:
-        align: BOTTOM_LEFT
-        x: 90
-        y: -125
-        width: 180
-        height: 100
-        bg_color: 1976635
-        radius: 16
-        on_click:
-        - lambda: !lambda |-
-            id(videophone_terminal_notice).clear();
-        - voip_stack.prev_contact: null
-        widgets:
-        - label:
-            align: CENTER
-            text: <
-            text_color: 16777215
-            text_font: videophone_title_font
+        pad_all: 0
+        scroll_dir: VER
+        scrollbar_mode: AUTO
     - button:
         id: videophone_call_button
         align: BOTTOM_MID
@@ -284,24 +263,6 @@ defaults:
             text: CALL
             text_color: 16777215
             text_font: videophone_body_font
-    - button:
-        align: BOTTOM_RIGHT
-        x: -90
-        y: -125
-        width: 180
-        height: 100
-        bg_color: 1976635
-        radius: 16
-        on_click:
-        - lambda: !lambda |-
-            id(videophone_terminal_notice).clear();
-        - voip_stack.next_contact: null
-        widgets:
-        - label:
-            align: CENTER
-            text: '>'
-            text_color: 16777215
-            text_font: videophone_title_font
     - button:
         align: BOTTOM_LEFT
         x: 90
@@ -681,6 +642,16 @@ defaults:
           state = id(videophone_terminal_notice).c_str();
         }
 
+        if (idle) {
+          lv_obj_remove_flag(id(phone_contacts_container), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(videophone_peer_label), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(videophone_call_button), LV_OBJ_FLAG_HIDDEN);
+        } else {
+          lv_obj_add_flag(id(phone_contacts_container), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(videophone_peer_label), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(videophone_call_button), LV_OBJ_FLAG_HIDDEN);
+        }
+        id(contacts_list_view).refresh();
         lv_label_set_text(id(videophone_state_label), state);
         lv_label_set_text(id(videophone_peer_label), peer.c_str());
         lv_label_set_text(id(videophone_call_label), action);
@@ -718,7 +689,10 @@ defaults:
   - id: show_phone_page
     mode: restart
     then:
-    - lvgl.page.show: videophone_page
+    - lambda: |-
+        auto *target = id(ui_voicemail_active) && id(phone).is_idle()
+            ? id(phone_voicemail_page)->obj : id(videophone_page)->obj;
+        if (lv_screen_active() != target) lv_screen_load(target);
     - script.execute: update_status
   - id: clear_videophone_terminal_notice
     mode: restart

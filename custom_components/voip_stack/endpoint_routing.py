@@ -501,6 +501,14 @@ def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
+    """Read the canonical directory; retain assembly for pre-setup callers."""
+    runtime = runtime_data(hass)
+    if runtime is not None and runtime.directory is not None:
+        return list(runtime.directory.snapshot())
+    return assemble_directory_entries(hass, peers, registered_entries)
+
+
+def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
     from .const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION
     from .groups import collect_groups
     from .roster import RosterEntry, merge_roster_overrides
@@ -550,8 +558,8 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
     endpoint_registry = endpoint_directory(hass)
     registered_endpoint_ids: set[str] = set()
     for registered in registered_entries:
-        endpoint = endpoint_registry.by_username(registered.id)
         metadata = dict(registered.metadata or {})
+        endpoint = endpoint_registry.get(metadata.get("endpoint_id", "")) or endpoint_registry.by_username(registered.id)
         if endpoint is not None:
             registered_endpoint_ids.add(endpoint.endpoint_id)
             metadata.update(

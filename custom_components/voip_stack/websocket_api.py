@@ -1434,7 +1434,8 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
                 for value in (device.get("entities") or {}).values()
                 if isinstance(value, str) and "." in value
             ),
-            availability=EndpointAvailability.AVAILABLE,
+            availability=(EndpointAvailability.AVAILABLE if not device.get("managed") or device.get("registered")
+                          else EndpointAvailability.OFFLINE),
             capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),
             conference_group=str(device.get("conference_group") or ""),

@@ -42,6 +42,8 @@ def device_entity_state(hass: HomeAssistant, device: dict, key: str) -> str:
 
 def device_is_phonebook_available(hass: HomeAssistant, device: dict) -> bool:
     """Return whether an ESP should be advertised to other VoIP peers."""
+    if device.get("managed"):
+        return bool(device.get("registered"))
     entities = device.get("entities") or {}
     endpoint_entity = entities.get("voip_endpoint")
     if not endpoint_entity:

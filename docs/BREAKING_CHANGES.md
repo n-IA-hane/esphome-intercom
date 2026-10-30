@@ -12,6 +12,46 @@ For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 > Follow the [device-package migration](#development-firmware-new-device-packages)
 > below.
 
+## 2026.11.1 preview: 4 MB Lite flash layout
+
+**Only the Generic Full Lite 4 MB profile changes its partition table.** Download
+[`partitions_4mb_lite_dual_ota.csv`](../yamls/full-experience/single-bus/partitions_4mb_lite_dual_ota.csv)
+and keep that filename beside your main YAML. The profile uses ESPHome's standard
+`esp32.partitions` setting.
+
+Each OTA application slot is now `0x1e0000` bytes. NVS retains `0x30000` bytes
+(192 KiB); OTA metadata and PHY partitions remain present. This redistributes
+the former NVS reserve while retaining the profile's voice, wake word, AEC,
+VoIP, music, timers and diagnostics.
+
+Migrating a device with the previous stock table requires a **full flash erase
+and serial factory upload**. An ordinary OTA update keeps the old table and
+cannot perform this migration. Save your YAML, wiring and calibrated control
+values first, then restore the desired settings after flashing: the new NVS
+offset resets stored preferences. Other device profiles retain their existing
+partition layouts.
+
+## 2026.11.1 preview: standard ESP phone services
+
+Maintained telephone packages now enable automatic HA registration. Home
+Assistant creates the account/password and delivers them through the existing
+ESPHome API. Preserve `api.custom_services: true` and use coordinated `dev`
+components when trying this preview. Generic standalone VoIP Stack keeps its
+direct SIP default and explicit account configuration.
+
+The LDAP directory replaces JSON pushes for managed phones. Standard SIP MWI
+replaces the earlier native `set_message_waiting` API. Remove custom
+`ha_integration.message_waiting` declarations; use `registration.message_waiting`
+for standard SIP accounts. The lengthy Endpoint sensor is disabled by default;
+legacy integrations can explicitly select `ha_integration.endpoint: true`.
+
+Updated display packages replace the contact carousel with a scrolling BLF
+list, a dedicated IMAP voicemail page and reusable row pools. Start from the
+current board YAML when migrating a custom UI. Deleting an originating ESPHome
+device/integration now permanently removes its managed credentials and mailbox;
+ordinary offline/reload cycles retain them. Read the
+[phone-service migration](ESP_PHONE_SERVICES.md#updating-an-existing-installation).
+
 ## Development firmware: native audio providers
 
 **Start from the updated YAML for your exact board when rebuilding this

@@ -17,6 +17,11 @@ is the wire-format reference for custom firmware and integrations, not a request
 to replace your whole roster JSON by hand. See [basic concepts](CONCEPTS.md)
 for the difference between a phone, contact, extension and external number.
 
+The 2026.11.1 managed phone packages read the canonical directory through LDAP.
+The JSON fields below remain the shared routing representation and the delivery
+contract for older firmware. See [standard phone services](ESP_PHONE_SERVICES.md)
+for LDAP mapping, BLF subscriptions and account provisioning.
+
 ## ESP static contacts
 
 Declare static local entries directly in `voip_stack` only when an ESP must
@@ -56,14 +61,16 @@ Rules:
 - Name-only entries are logical targets and can be resolved or bridged by HA.
 - A numeric target from an ESP is routed to HA. HA resolves `extension` as an
   internal target and `number` as an external trunk target.
-- HA-managed sync through `sensor.voip_phonebook` is the recommended path.
+- The HA-managed directory is the recommended path: LDAP for current managed
+  phones, native JSON delivery for older firmware.
   Static contacts are local additions for offline/custom installs, not a second
   central roster.
 
 The ESP-local schema is intentionally smaller than the HA central-contact
 schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
 membership, and media capabilities are authored on HA or discovered from
-endpoint entities, then normalized before HA pushes the roster to ESPs.
+endpoint identities, then normalized in the shared directory before LDAP or
+legacy JSON delivery exposes them to ESPs.
 
 The contact `name` is the only user-facing identity field required by an ESP
 static contact. Users do not need to provide a second underscore-safe version
@@ -81,12 +88,15 @@ in their standard SIP roles without asking the YAML author to duplicate them.
 
 ## HA roster
 
-HA owns the central `sensor.voip_phonebook` roster. It contains ESP peers,
+HA owns one canonical `PhoneDirectory`, also projected by
+`sensor.voip_phonebook`. It contains ESP peers,
 HA itself, local SIP endpoints registered to HA, manual phone endpoints,
 trunk-routed external targets when configured, and groups.
 
-ESP discovery starts from `text_sensor platform: voip_stack type: endpoint`.
-That endpoint state is deliberately short and does not contain group lists. If
+Current managed phones are discovered through their native provisioning actions
+and standard SIP registration. OPTIONS advertises capabilities, while call SDP
+remains authoritative. The endpoint text sensor is a legacy opt-in for older
+integrations. It does not contain group lists. If
 an ESP participates in PBX groups, HA reads `text platform: voip_stack
 type: ring_groups`, `text platform: voip_stack type: conference_groups` and
 `switch platform: voip_stack conference_ring` from the same ESPHome device.
@@ -114,7 +124,7 @@ Routing is data-driven:
 - `address` or `sip_uri` describes a direct SIP endpoint;
 - `extension` is a local/internal alias used by HA routing and inbound DTMF;
 - `number` is an external/public number used through the optional trunk;
-- registered SIP accounts become callable contacts while registered;
+- registered SIP accounts retain their directory identity while offline;
 - HA and discovered ESP entries are generated automatically.
 - group entries are generated automatically from endpoint or manual-contact
   membership declarations.
@@ -183,11 +193,12 @@ ESPHome also exposes native API actions such as
 `esphome.<slug>_set_contacts`, `esphome.<slug>_flush_contacts` and
 `esphome.<slug>_update_contacts`. These are local ESP actions: they change only
 that device's mirror/manual entries. In HA-managed installs, prefer the central
-`voip_stack.*` services above and let HA push `sensor.voip_phonebook` to the
-devices.
+`voip_stack.*` services above. Managed LDAP phones read the canonical directory;
+older firmware receives its `sensor.voip_phonebook` projection.
 
-HA pushes the canonical roster whenever the phonebook sensor changes. It also
-refreshes after ESPHome registers an `esphome.<slug>_set_roster_json` service,
+For older firmware, HA pushes the canonical roster whenever the phonebook
+sensor changes. It also refreshes after ESPHome registers an
+`esphome.<slug>_set_roster_json` service,
 which covers the common reboot timing where a device's endpoint sensor appears
 before its action service is callable. `voip_stack.push_phonebook` remains a
 diagnostic/manual recovery tool, not the normal synchronization path.

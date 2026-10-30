@@ -35,9 +35,9 @@ class ArchiveError(RuntimeError):
     """A recording cannot be created, finalized or accessed."""
 
 
-def _atomic_json(path: Path, data: dict) -> None:
+def _atomic_json(path: Path, data: dict, *, max_bytes: int = _METADATA_RESERVE - 8192) -> None:
     raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
-    if len(raw) > _METADATA_RESERVE - 8192:
+    if len(raw) > max_bytes:
         raise ArchiveError("Recording metadata exceeds its bound")
     temporary = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -378,6 +378,7 @@ class MediaArchive:
         self._used = self._reserved = self.recovery_errors = 0
         self._usage_dirty = False
         self._lock = asyncio.Lock()
+        self._imap_index = None
 
     async def load(self):
         async with self._lock:
@@ -481,13 +482,51 @@ class MediaArchive:
         return sum(not entry["read"] for entry in entries), sum(bool(entry["read"]) for entry in entries)
 
     async def mark_read(self, identity: str, mailbox_id: str):
+        await self.set_imap_flags(identity, mailbox_id, seen=True)
+
+    async def set_imap_flags(self, identity: str, mailbox_id: str, *, seen=None, flags=None):
+        """Update Seen in its canonical field and only extra IMAP flags separately."""
         async with self._lock:
-            entry = deepcopy(self._require(identity, mailbox_id))
-            entry["read"] = True
+            previous = self._require(identity, mailbox_id)
+            entry = deepcopy(previous)
+            if seen is not None:
+                entry["read"] = bool(seen)
+            if flags is not None:
+                permitted = {"\\Answered", "\\Deleted", "\\Draft", "\\Flagged"}
+                wanted = set(flags)
+                if not wanted <= permitted:
+                    raise ArchiveError("Unsupported permanent IMAP flag")
+                entry["imap_flags"] = sorted(wanted)
+            if entry == previous:
+                return deepcopy(entry)
             async def commit():
                 await self.run_io(_atomic_json, self.root / f"{identity}.json", entry)
                 self._entries[identity] = entry
-            await async_wait_for_cleanup(asyncio.create_task(commit(), name="voip-archive-mark-read"))
+            await async_wait_for_cleanup(asyncio.create_task(commit(), name="voip-archive-message-flags"))
+            return deepcopy(entry)
+
+    async def imap_snapshot(self, mailbox_id: str, *, claim_recent=False, subscribed=None):
+        """Return protocol UIDs and existing messages under one archive barrier."""
+        from .imap_index import ImapIndex
+
+        async with self._lock:
+            if self._imap_index is None:
+                self._imap_index = ImapIndex(self.root, self.run_io)
+            # Archive records are replaced on mutation. Protocol readers hold
+            # these same immutable snapshots instead of copying the whole
+            # mailbox again for every partial FETCH command.
+            messages = [entry for entry in self._entries.values()
+                        if entry["mailbox_id"] == mailbox_id and entry["kind"] == "voicemail"]
+            return await self._imap_index.snapshot(mailbox_id, messages, claim_recent=claim_recent, subscribed=subscribed)
+
+    async def imap_forget(self, mailbox_id: str):
+        """Purge this owner's UID mappings while retaining the global allocator."""
+        from .imap_index import ImapIndex
+
+        async with self._lock:
+            if self._imap_index is None:
+                self._imap_index = ImapIndex(self.root, self.run_io)
+            await self._imap_index.forget(mailbox_id)
 
     def _require(self, identity, mailbox_id):
         entry = self._entries.get(identity)

@@ -9,6 +9,7 @@ esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
   flash_size: 4MB
+  partitions: partitions_4mb_lite_dual_ota.csv
   framework:
     type: esp-idf
     advanced:
