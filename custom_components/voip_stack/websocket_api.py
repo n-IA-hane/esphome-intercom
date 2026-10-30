@@ -373,7 +373,7 @@ def _update_browser_presence(
     endpoint_id: str,
     delta: int,
 ) -> None:
-    """Track connected cards and expose browser reachability to routing."""
+    """Track browser media clients independently of logical phone availability."""
     endpoint_id = _endpoint_store_id(endpoint_id)
     counts = require_runtime_data(hass).softphone_presence
     previous = int(counts.get(endpoint_id, 0) or 0)
@@ -382,15 +382,6 @@ def _update_browser_presence(
         counts[endpoint_id] = current
     else:
         counts.pop(endpoint_id, None)
-
-    endpoint = _browser_endpoint(hass, endpoint_id)
-    if endpoint is not None:
-        availability = (
-            EndpointAvailability.AVAILABLE if current else EndpointAvailability.OFFLINE
-        )
-        registry = _endpoint_registry(hass)
-        if endpoint.availability is not EndpointAvailability.UNAVAILABLE:
-            registry.update(endpoint_id, availability=availability)
 
     if previous != current:
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
@@ -1010,7 +1001,6 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "available": bool(
             endpoint is not None
             and endpoint.availability is EndpointAvailability.AVAILABLE
-            and connected_cards
         ),
         "enabled": bool(
             endpoint is not None

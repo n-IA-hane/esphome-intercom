@@ -85,6 +85,44 @@ async def test_blf_tracks_ringing_answer_multiple_calls_and_final_idle(lab, blf)
     assert [int(item.attrib["version"]) for item in (root, ringing, answered, concurrent, remaining, idle)] == list(range(6))
 
 
+async def test_logical_browser_presence_stays_open_after_last_media_card_disconnects(lab, blf):
+    from types import SimpleNamespace
+    from custom_components.voip_stack.phone_config import endpoint_from_data
+    from custom_components.voip_stack.phone_state import phone_states
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state, _update_browser_presence
+
+    endpoint = endpoint_from_data(SimpleNamespace(data={}), {
+        "endpoint_id": "browser:kitchen", "name": "Kitchen", "extension": "221", "kind": "browser",
+    })
+    lab.runtime.endpoints.register(endpoint)
+    methods, notifications, send = blf
+    response = await methods.handle(subscribe(target="221", event="presence", accept="application/pidf+xml"),
+                                    ("127.0.0.3", 5060), "UDP", send)
+    assert response.status == 200
+    response.follow_up_scheduler()
+    initial = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
+    namespace = {"p": "urn:ietf:params:xml:ns:pidf"}
+    assert initial.find("p:tuple/p:status/p:basic", namespace).text == "open"
+    _update_browser_presence(lab.hass, endpoint.endpoint_id, 1)
+    _update_browser_presence(lab.hass, endpoint.endpoint_id, -1)
+    await lab.hass.async_block_till_done()
+    phone = phone_states(lab.hass)[endpoint.endpoint_id]
+    assert phone["availability"] == "available" and phone["state"] == "idle"
+    state = _ha_softphone_state(lab.hass, endpoint.endpoint_id)
+    assert state["available"] and state["connected_cards"] == 0
+    assert not lab.runtime.softphone_presence and not notifications.qsize()
+    # DND remains an independent user policy; disabling the phone closes PIDF.
+    lab.runtime.endpoints.update(endpoint.endpoint_id, dnd=True)
+    assert phone_states(lab.hass)[endpoint.endpoint_id]["dnd"] is True
+    lab.runtime.endpoints.update(endpoint.endpoint_id, availability="unavailable")
+    closed = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
+    assert closed.find("p:tuple/p:status/p:basic", namespace).text == "closed"
+    assert not _ha_softphone_state(lab.hass, endpoint.endpoint_id)["available"]
+    _update_browser_presence(lab.hass, endpoint.endpoint_id, 1)
+    assert not _ha_softphone_state(lab.hass, endpoint.endpoint_id)["available"]
+    _update_browser_presence(lab.hass, endpoint.endpoint_id, -1)
+
+
 async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscription(lab, blf):
     methods, notifications, send = blf
     first = await methods.handle(subscribe(expires=7200), ("127.0.0.3", 5060), "UDP", send)

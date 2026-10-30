@@ -150,6 +150,37 @@ def test_browser_phone_persists_auto_answer_and_send_video() -> None:
     assert endpoint.send_video is True
 
 
+@pytest.mark.parametrize("kind,enabled,expected", [
+    ("browser", True, "available"), ("browser", False, "unavailable"),
+    ("sip_account", True, "offline"),
+])
+def test_configured_logical_browser_is_available_without_a_card(kind, enabled, expected):
+    endpoint = phone_config.endpoint_from_data(types.SimpleNamespace(data={}), {
+        "endpoint_id": "logical", "kind": kind, "name": "Logical",
+        "username": "logical", "enabled": enabled,
+    })
+    assert endpoint.availability.value == expected
+
+
+def test_registry_reconcile_restores_logical_browser_after_last_card_disconnected():
+    subentry = types.SimpleNamespace(
+        subentry_type=phone_config.PHONE_SUBENTRY_TYPE, subentry_id="logical-phone",
+        unique_id="phone:logical", title="Logical", data={
+            "endpoint_id": "logical", "kind": "browser", "name": "Logical", "enabled": True,
+        },
+    )
+    entry = types.SimpleNamespace(data={}, options={}, subentries={subentry.subentry_id: subentry})
+    hass = types.SimpleNamespace(data={"voip_stack": {}})
+    registry = phone_config.async_setup_endpoint_registry(hass, entry)
+    _bind_runtime(entry, registry)
+    assert registry.require("logical").is_available
+    registry.update("logical", availability="offline", device_id="stable-device")
+    phone_config.sync_registry_from_entry(hass, entry)
+    assert registry.require("logical").is_available
+    assert registry.require("logical").device_id == "stable-device"
+    assert entry.runtime_data.softphone_presence == {}
+
+
 def test_legacy_store_fills_only_settings_missing_from_entry_options() -> None:
     raw = {
         "dnd": True,

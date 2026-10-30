@@ -392,6 +392,10 @@ def endpoint_from_data(
     enabled = bool(data.get(CONF_PHONE_ENABLED, True))
     if not enabled:
         availability = EndpointAvailability.UNAVAILABLE
+    elif kind.is_softphone:
+        # The PBX owns this logical extension even without a browser renderer.
+        # WebSocket/card counts describe media clients, not phone availability.
+        availability = EndpointAvailability.AVAILABLE
     policy = persisted_phone_policy(data)
     offline_target = (
         policy.unavailable.target
@@ -441,18 +445,6 @@ def async_setup_endpoint_registry(
     stores = previous_runtime.softphones if previous_runtime is not None else {}
     for subentry in phone_subentries(entry):
         endpoint = endpoint_from_subentry(entry, subentry)
-        if (
-            endpoint.kind.is_softphone
-            and endpoint.availability is not EndpointAvailability.UNAVAILABLE
-            and int(presence.get(endpoint.endpoint_id, 0) or 0) > 0
-        ):
-            # Config-entry reloads do not close existing websocket
-            # subscriptions. Reapply their live presence to the new registry
-            # instead of making a connected kiosk appear offline until it
-            # happens to reconnect.
-            endpoint = replace(
-                endpoint, availability=EndpointAvailability.AVAILABLE
-            )
         registry.register(endpoint)
         subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
     registry.subentry_ids = subentry_ids
@@ -526,6 +518,8 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if previous is not None:
             if candidate.availability is EndpointAvailability.UNAVAILABLE:
                 availability = EndpointAvailability.UNAVAILABLE
+            elif candidate.kind.is_softphone:
+                availability = candidate.availability
             elif (
                 candidate.kind is EndpointKind.SIP_ACCOUNT
                 and previous.kind is EndpointKind.SIP_ACCOUNT
@@ -539,12 +533,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 # A disabled endpoint is represented as unavailable.  Once it
                 # is enabled again it must re-enter normal transport discovery
                 # instead of inheriting the disabled runtime state forever.
-                availability = (
-                    EndpointAvailability.AVAILABLE
-                    if candidate.kind.is_softphone
-                    and int(presence.get(candidate.endpoint_id, 0) or 0) > 0
-                    else EndpointAvailability.OFFLINE
-                )
+                availability = EndpointAvailability.OFFLINE
             else:
                 availability = previous.availability
             candidate = replace(
@@ -553,14 +542,6 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 entity_ids=previous.entity_ids,
                 availability=availability,
                 active_call_id=previous.active_call_id,
-            )
-        elif (
-            candidate.kind.is_softphone
-            and candidate.availability is not EndpointAvailability.UNAVAILABLE
-            and int(presence.get(candidate.endpoint_id, 0) or 0) > 0
-        ):
-            candidate = replace(
-                candidate, availability=EndpointAvailability.AVAILABLE
             )
         registry.upsert(candidate)
     for endpoint in tuple(registry.endpoints):

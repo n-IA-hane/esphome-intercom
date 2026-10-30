@@ -15,12 +15,25 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
+@pytest.mark.parametrize("destination_kind", ["sip_account", "browser"])
 async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
-    trunks, registered_phones
+    trunks, registered_phones, destination_kind
 ):
     runtime = trunks
+    destination_id = "transfer_b"
+    if destination_kind == "browser":
+        from custom_components.voip_stack.phone_config import endpoint_from_data
+        from custom_components.voip_stack.roster import RosterEntry
+        destination_id = "casa"
+        logical = endpoint_from_data(config_entry(runtime.hass), {
+            "endpoint_id": destination_id, "name": destination_id, "kind": "browser",
+        })
+        runtime.runtime.endpoints.register(logical)
+        runtime.roster.append(RosterEntry(destination_id,
+            metadata={"local_ha": True, "endpoint_id": destination_id}))
+        assert logical.is_available and not runtime.runtime.softphone_presence
     runtime.runtime.endpoints.update(
-        "transfer_b",
+        destination_id,
         policy=PhonePolicy.from_data(
             {
                 "ringing_timeout": 1,
@@ -30,7 +43,7 @@ async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
     )
     setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
     caller, original, replacement = registered_phones
-    await asyncio.to_thread(caller.command, "/dial transfer_b")
+    await asyncio.to_thread(caller.command, f"/dial {destination_id}")
     async with asyncio.timeout(3):
         while not runtime.calls.sessions:
             await asyncio.sleep(0.01)
@@ -48,7 +61,7 @@ async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
         and source.generation == generation
     )
     assert source.state == "in_call"
-    assert not runtime.runtime.endpoints.get("transfer_b").active_call_id
+    assert not runtime.runtime.endpoints.get(destination_id).active_call_id
     assert runtime.runtime.endpoints.get("transfer_c").active_call_id == identity
     assert caller.read().count("Call established") == 1
     assert "Call established" not in original.read()
@@ -135,15 +148,16 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
     runtime = trunks
     destination_id = "transfer_b"
     if destination_kind.startswith("browser"):
-        from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+        from dataclasses import replace
+        from custom_components.voip_stack.phone_config import endpoint_from_data
         from custom_components.voip_stack.roster import RosterEntry
 
         destination_id = "casa"
-        runtime.runtime.endpoints.register(PhoneEndpoint(
-            endpoint_id=destination_id, name=destination_id,
-            device_id="browser-casa", kind=EndpointKind.BROWSER,
-            availability="available",
-        ))
+        logical = endpoint_from_data(config_entry(runtime.hass), {
+            "endpoint_id": destination_id, "name": destination_id, "kind": "browser",
+        })
+        runtime.runtime.endpoints.register(replace(logical, device_id="browser-casa"))
+        assert logical.is_available and not runtime.runtime.softphone_presence
         runtime.roster.append(RosterEntry(
             destination_id, metadata={"local_ha": True, "endpoint_id": destination_id},
         ))
