@@ -79,7 +79,7 @@ the PBX's spoken menu. The in-call keypad sends DTMF. Directory, BLF and MWI
 can each be selected in YAML, including on VoIP-only profiles.
 
 <p>
-  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with scrolling, contact types, live BLF states and message waiting" />
+  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with contact types, live BLF states and message waiting" />
   <img src="docs/images/phone-services/options.jpg" width="240" alt="Real ESP display with audio and telephone options" />
   <img src="docs/images/phone-services/dtmf.jpg" width="240" alt="Real ESP display with the in-call DTMF keypad" />
 </p>
