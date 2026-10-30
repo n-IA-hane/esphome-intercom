@@ -103,7 +103,7 @@ function mediaClientInstanceId() {
       : globalThis.performance?.navigation?.type === 1;
     if (reloading) {
       const existing = String(sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY) || "");
-      if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) {
+      if (existing.startsWith("media2-") && /^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) {
         try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = existing; } catch (_) {}
         return existing;
       }
@@ -118,6 +118,7 @@ function mediaClientInstanceId() {
     // Assistant signs the complete path including it before WebSocket use.
     generated = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
+  generated = `media2-${generated}`;
   // The backend pins every call to this value. Only a real reload reconnects
   // the previous document. New tabs can copy sessionStorage but must never
   // inherit an opener's live media lease.

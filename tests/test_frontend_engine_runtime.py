@@ -431,9 +431,18 @@ const signedPaths = [];
 const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
-session.set("voip_stack_media_client_id", "copied-session-token-1234");
 let navigationType = "reload";
 context.performance = {{ getEntriesByType: () => [{{type:navigationType}}] }};
+const migratedIds = [];
+for (let page = 0; page < 2; page++) {{
+  session.set("voip_stack_media_client_id", "copied-legacy-token-1234");
+  context.__voipStackMediaClientId = undefined;
+  migratedIds.push(new Engine()._mediaClientId);
+}}
+assert.notEqual(migratedIds[0], migratedIds[1],
+  "Reloading two already-cloned legacy windows must separate their identities");
+assert.ok(migratedIds.every(id => id.startsWith("media2-")));
+session.set("voip_stack_media_client_id", "media2-copied-session-token-1234");
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
@@ -444,7 +453,7 @@ signedB.configure(signingHass);
 await signedB._wsUrl("device", "signed-call", "phone");
 assert.ok(signedA._mediaClientId.length >= 16);
 assert.equal(signedA._mediaClientId, signedB._mediaClientId);
-assert.equal(signedA._mediaClientId, "copied-session-token-1234");
+assert.equal(signedA._mediaClientId, "media2-copied-session-token-1234");
 assert.equal(
   new URL(`https://ha.example${{signedPaths[0]}}`).searchParams.get("client_id"),
   signedA._mediaClientId,

@@ -379,6 +379,40 @@ async def qualify(args):
                     return {module_url:urls[0],engine_instances:urls.length};
                 }""")
 
+            async def legacy_reload_identities():
+                """Two real reloads must not retain a copied pre-migration identity."""
+                records = []
+                legacy = "tab-legacy-copied-document-qualification"
+                url = f"{args.url}/voip-stack/qualification-migration"
+                for _ in range(2):
+                    migrated = await context.new_page()
+                    try:
+                        # Intercept only this empty browser fixture. Production
+                        # engine modules still come from the existing HA server.
+                        await migrated.route(url, lambda route: route.fulfill(
+                            content_type="text/html", body="<html><body></body></html>"))
+                        await migrated.goto(url)
+                        await migrated.evaluate("legacy=>sessionStorage.setItem('voip_stack_media_client_id',legacy)", legacy)
+                        await migrated.reload()
+                        record = await migrated.evaluate("""async ({module,legacy})=>{
+                            const {voipStackEngine:e}=await import(module);
+                            const id=e.mediaClientId;
+                            const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+                                new TextEncoder().encode(id)))).map(x=>x.toString(16).padStart(2,'0')).join('');
+                            return {identity:hash,retained_legacy:id===legacy,
+                                navigation_type:performance.getEntriesByType('navigation')[0]?.type,
+                                capture_count:window.__dashboardCaptureCount||0};
+                        }""", {"module":results["engine"]["module_url"],"legacy":legacy})
+                        records.append(record)
+                    finally:
+                        await migrated.close()
+                results["legacy_reload_migration"] = records
+                (args.out / "legacy-reload-migration.json").write_text(json.dumps(records, indent=2))
+                assert all(record["navigation_type"] == "reload" and not record["retained_legacy"]
+                           and record["capture_count"] == 0 for record in records), records
+                assert records[0]["identity"] != records[1]["identity"], records
+                results["scenarios"].append("legacy-copied-identities-rotate-on-first-real-reload")
+
             async def retain_and_remove_views():
                 for locator, key in ((dashboard, "dashboard"), (owner_card, "phonecard")):
                     await locator.evaluate("""(node,key)=>{
@@ -422,6 +456,8 @@ async def qualify(args):
                 await expect(owner_card).to_be_visible(timeout=20000)
                 assert await owner_card.evaluate("card=>card.config.device_id") == owner["device_id"]
                 results["engine"] = await bind_page_engine()
+                if args.clone_window:
+                    await legacy_reload_identities()
                 await expect(peer_card).to_be_visible(timeout=20000)
                 await expect(receiving_card).to_be_visible(timeout=20000)
                 await peer_card.evaluate("async card => { if(card._autoAnswer) await card._toggleAutoAnswer(); }")
