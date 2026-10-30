@@ -79,19 +79,14 @@ the PBX's spoken menu. The in-call keypad sends DTMF. Directory, BLF and MWI
 can each be selected in YAML, including on VoIP-only profiles.
 
 <p>
-  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP display with the scrolling contact directory" />
-  <img src="docs/images/phone-services/contacts-blf.jpg" width="240" alt="Real ESP display with live BLF contact states" />
+  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with scrolling, contact types, live BLF states and message waiting" />
   <img src="docs/images/phone-services/options.jpg" width="240" alt="Real ESP display with audio and telephone options" />
-</p>
-<p>
-  <img src="docs/images/phone-services/voicemail.jpg" width="240" alt="Real ESP display with a new-message envelope" />
   <img src="docs/images/phone-services/dtmf.jpg" width="240" alt="Real ESP display with the in-call DTMF keypad" />
 </p>
 
-_Captured on a real ESP display with demo contacts: scrolling contacts, live BLF, options,
-message waiting and the in-call keypad. Contact type appears on the left;
-call state appears on the right. Tap a ringing contact to pick up, or the
-envelope to call voicemail and use the keypad for its spoken menu._
+_Demo directory entries, captured on a real ESP display.
+The animated contact menu shows scrolling, live BLF and message waiting;
+options and the in-call keypad are shown separately._
 
 See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
 traditional phone access, migration and memory limits. These additions are

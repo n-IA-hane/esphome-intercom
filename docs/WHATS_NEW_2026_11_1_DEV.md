@@ -226,7 +226,8 @@ device name is presented as the caller's name.
   reusable staging table. Contact storage can use PSRAM independently of the
   audio buffers, and workers retain their allocated stacks between operations.
   Contact lookups avoid temporary allocations, and repeated state notifications
-  share one display refresh per loop iteration.
+  share one display refresh per loop iteration. Contact rows also retain
+  unchanged geometry and styles, avoiding redundant LVGL layout work.
 - **Compact discovery:** managed phones negotiate through SIP OPTIONS/SDP,
   replacing the lengthy Endpoint sensor with their native device/account owner.
 

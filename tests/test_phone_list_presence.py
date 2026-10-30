@@ -49,7 +49,7 @@ int main(){
  row=output(BlfState::IDLE,PresenceState::UNKNOWN);assert(row.detail=="Unknown"&&row.color==0xA3A3A3);
  row=output(BlfState::UNKNOWN,PresenceState::CLOSED,false);assert(row.detail=="Unavailable");
  row=output(BlfState::ACTIVE,PresenceState::CLOSED);assert(row.detail=="In call"&&row.color==0xF87171);
- row=output(BlfState::RINGING,PresenceState::UNKNOWN);assert(row.action==1&&row.blink&&row.color==0x38BDF8);
+ row=output(BlfState::RINGING,PresenceState::UNKNOWN);assert(row.detail=="Ringing: pickup"&&row.action==1&&row.blink&&row.color==0x38BDF8);
  row=output(BlfState::CALLING,PresenceState::OPEN);assert(row.detail=="Calling"&&row.action==0&&!row.blink&&row.color==0x38BDF8);
  phone.current.state=BlfState::RINGING;phone.current.ringing_dialogs=0;
  row=Row{};render(0,row);assert(row.detail=="Ringing"&&row.action==0);

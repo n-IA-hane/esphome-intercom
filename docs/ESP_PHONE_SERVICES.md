@@ -36,31 +36,35 @@ call, the keypad composes a number normally.
 
 These captures come from a real 240-pixel ESP display running the maintained
 phone packages. The layout adapts to each supported screen; the services and
-call controls are shared. Contact names shown here are demo entries.
+call controls are shared. The animation uses demo directory entries and type
+assignments; the screen captures come from the real ESP display.
 
-### Scroll through contacts
+### Contacts, live BLF and voicemail
 
-<img src="images/phone-services/contacts-scroll.gif" width="240" alt="Scrolling contact list on a real ESP display" />
+<img src="images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu showing scrolling, contact types, call states and the voicemail envelope" />
 
 Drag the list vertically to browse the directory, then tap a contact to call.
-The icon on the left identifies an ESP phone, SIP account, browser phone,
-stored contact, automation or group. The name and destination come from the
+The left icon identifies an ESP (chip), SIP phone (desk phone), browser phone
+(Home Assistant logo), stored contact (cellphone), automation or Assist (robot),
+or group. The name and destination come from the
 shared phonebook. With BLF enabled, the right-hand icon and second line show
 the contact's current call state.
+The directory category comes from LDAP's standard `ou` field:
 
-### See who is available and pick up a ringing call
-
-<p>
-  <img src="images/phone-services/contacts-blf.jpg" width="240" alt="Real ESP contact list with Garden ringing and a blinking blue pickup indicator" />
-  <img src="images/phone-services/contacts-held.jpg" width="240" alt="Real ESP contact list with Garage on hold in amber and Garden in a call in red" />
-</p>
-
-_Ringing and pickup on the left; held and active calls on the right._
+| `ou` value | Left icon |
+| --- | --- |
+| `esphome` | Electronic chip |
+| `sip_account` | Desk phone |
+| `browser` | Home Assistant logo |
+| `contact` | Cellphone |
+| `automation` | Robot, including the managed Assist destination |
+| `group` | Group of people |
 
 | Appearance | Meaning | Tap action |
 | --- | --- | --- |
 | Green, idle icon | Available and idle | Call the contact |
-| Blinking blue, ringing icon | An incoming call is ringing | Request directed pickup |
+| Blue, outgoing-call icon | An outgoing call is being placed | Call the contact, subject to the PBX's busy policy |
+| Blinking blue, ringing icon | An incoming call is ringing | Request directed pickup when offered |
 | Red, call icon | In a call | Call the contact, subject to the PBX's busy policy |
 | Amber, hold icon | A call is on hold | Call the contact, subject to the PBX's busy policy |
 | Gray, unavailable or unknown icon | Closed presence or state unavailable | Attempt a call |
@@ -68,6 +72,14 @@ _Ringing and pickup on the left; held and active calls on the right._
 The text and right-hand icon explain the state as well as the color. The left
 icon continues to identify the contact type. A PBX must authorize BLF and
 pickup; a missing presence report remains unknown rather than implying idle.
+Pickup requires a confirmed incoming ringing leg. A legacy BLF report without
+direction can still show Ringing, with the normal call action instead of pickup.
+
+A new-message notification lights the envelope above the idle view's status
+indicators. Tap it to call the PBX's mailbox. SIP MWI supplies the waiting
+state and mailbox address; the regular SIP/RTP call carries the spoken menu.
+The ESP uses that menu instead of downloading a separate message catalog or
+running a voicemail player.
 
 ### Adjust the phone's options
 
@@ -78,16 +90,6 @@ telephone section. Available controls follow the features compiled into the
 firmware. For example, a phone can expose volume, microphone gain, processing
 mode, auto answer and Do Not Disturb. The screen controls the same entities
 available through ESPHome.
-
-### Open voicemail from its waiting indicator
-
-<img src="images/phone-services/voicemail.jpg" width="240" alt="New-message envelope above the real ESP phone's status indicators" />
-
-A new-message notification lights the envelope above the idle view's status
-indicators. Tap it to call the PBX's mailbox. SIP MWI supplies the waiting
-state and mailbox address; the regular SIP/RTP call carries the spoken menu.
-The ESP uses that menu instead of downloading a separate message catalog or
-running a voicemail player.
 
 ### Use the same keypad before and during a call
 
@@ -158,8 +160,8 @@ The service supports LDAPv3 searches, filters and paged results. It is read-only
 edit contacts through the existing VoIP Stack configuration.
 
 The ESP's vertical contact list uses one small pool of reusable rows. Each row
-shows a type icon, name and BLF call state. Tap a normal row to call. Tap a
-ringing row to perform directed pickup through the selected SIP account.
+shows a type icon, name and BLF call state. Tap a normal row to call. A row
+labelled **Ringing: pickup** performs directed pickup through its SIP account.
 A ringing indicator animates while that list is visible.
 
 For a custom display, `phone_list_view.visible_rows` reserves the widget pool
