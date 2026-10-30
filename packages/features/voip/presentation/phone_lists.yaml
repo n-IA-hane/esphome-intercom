@@ -14,33 +14,37 @@ defaults:
     const auto state = id(phone).get_contact_blf(contact->stable_id());
     if (state.presence == PresenceState::CLOSED &&
         (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) {
-      row.set_detail("Unavailable"); row.set_trailing("\U000F0DEF"); row.color = 0x94A3B8; return;
+      row.set_detail("Unavailable"); row.set_trailing("\U000F0DEF"); row.color = 0xA3A3A3; return;
     }
     if (!state.available || (state.state == BlfState::IDLE && state.presence != PresenceState::OPEN)) {
-      row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0x94A3B8; return;
+      row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0xA3A3A3; return;
     }
     switch (state.state) {
       case BlfState::IDLE: row.set_detail("Idle"); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
-      case BlfState::RINGING: row.set_detail("Ringing, tap to pick up"); row.set_trailing("\U000F11AB"); row.color=0x38BDF8; row.blink=true; row.action=1; break;
+      case BlfState::CALLING: row.set_detail("Calling"); row.set_trailing("\U000F03FB"); row.color=0x38BDF8; break;
+      case BlfState::RINGING:
+        row.set_detail(state.ringing_dialogs > 0 ? "Ringing, tap to pick up" : "Ringing");
+        row.set_trailing("\U000F11AB"); row.color=0x38BDF8; row.blink=true;
+        row.action=state.ringing_dialogs > 0 ? 1 : 0; break;
       case BlfState::ACTIVE: row.set_detail("In call"); row.set_trailing("\U000F03F6"); row.color=0xF87171; break;
       case BlfState::HELD: row.set_detail("On hold"); row.set_trailing("\U000F03FC"); row.color=0xFBBF24; break;
-      default: row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color=0x94A3B8; break;
+      default: row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color=0xA3A3A3; break;
     }
   _contacts_blf_updates:
     voip_stack:
       on_blf_state:
         - lambda: id(contacts_list_view).request_refresh();
   _contacts_base_glyphs:
+    - "\U000F061A"
     - "\U000F01C3"
-    - "\U000F03FE"
-    - "\U000F05CB"
-    - "\U000F059F"
-    - "\U000F0004"
+    - "\U000F07D0"
+    - "\U000F011C"
     - "\U000F06A9"
     - "\U000F0849"
     - "\U000F0625"
   _contacts_blf_glyphs:
     - "\U000F11AB"
+    - "\U000F03FB"
     - "\U000F03F6"
     - "\U000F03FC"
     - "\U000F11A6"
@@ -63,10 +67,10 @@ phone_list_view:
       row.set_id(contact->stable_id()); row.set_name(contact->name);
       const char *icon = "\U000F0625";
       switch (contact->kind) {
-        case ContactKind::ESP: icon = "\U000F01C3"; break;
-        case ContactKind::SIP_ACCOUNT: icon = "\U000F05CB"; break;
-        case ContactKind::BROWSER: icon = "\U000F059F"; break;
-        case ContactKind::CONTACT: icon = "\U000F0004"; break;
+        case ContactKind::ESP: icon = "\U000F061A"; break;
+        case ContactKind::SIP_ACCOUNT: icon = "\U000F01C3"; break;
+        case ContactKind::BROWSER: icon = "\U000F07D0"; break;
+        case ContactKind::CONTACT: icon = "\U000F011C"; break;
         case ContactKind::AUTOMATION: icon = "\U000F06A9"; break;
         case ContactKind::GROUP: icon = "\U000F0849"; break;
         default: break;

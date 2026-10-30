@@ -128,6 +128,28 @@ async def connected(server):
     return reader, writer
 
 
+async def test_ldap_assist_uses_robot_category_and_other_services_keep_their_kind(server):
+    for identity, virtual in (("assistant", "assist_pipeline"), ("other_service", "other_service")):
+        server.directory.upsert(RosterEntry(identity, name=identity, metadata={"virtual_endpoint": virtual}))
+    reader, writer = await connected(server)
+    try:
+        for identity, expected in (("assistant", b"automation"), ("other_service", b"service")):
+            writer.write(search(filter=equality("uid", identity.encode()), attributes=("uid", "ou")))
+            await writer.drain()
+            frames = await collect(reader, 2)
+            entry, = [frame for frame in frames if response(frame)[1] == 0x64]
+            fields = parts(parts(parts(entry)[0][1])[1][1])
+            attributes = {
+                parts(attribute[1])[0][1]: tuple(value[1] for value in parts(parts(attribute[1])[1][1]))
+                for attribute in parts(fields[1][1])
+            }
+            assert attributes[b"uid"] == (identity.encode(),)
+            assert attributes[b"ou"] == (expected,)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
 def test_directory_single_record_identity_atomic_update_and_offline():
     value = directory()
     events = []

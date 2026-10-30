@@ -28,7 +28,7 @@ void PhoneListView::setup() {
     slot.button = lv_button_create(this->parent_);
     lv_obj_set_width(slot.button, LV_PCT(100));
     lv_obj_set_height(slot.button, this->row_height_ - 3);
-    lv_obj_set_style_bg_color(slot.button, lv_color_hex(0x172235), 0);
+    lv_obj_set_style_bg_color(slot.button, lv_color_hex(0x202020), 0);
     lv_obj_set_style_border_width(slot.button, 0, 0);
     lv_obj_set_style_shadow_width(slot.button, 0, 0);
     lv_obj_set_style_radius(slot.button, 8, 0);
@@ -56,13 +56,13 @@ void PhoneListView::setup() {
     lv_label_set_long_mode(slot.name, LV_LABEL_LONG_CLIP);
     lv_label_set_long_mode(slot.detail, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_color(slot.name, lv_color_hex(0xF1F5F9), 0);
-    lv_obj_set_style_text_color(slot.detail, lv_color_hex(0x94A3B8), 0);
+    lv_obj_set_style_text_color(slot.detail, lv_color_hex(0xA3A3A3), 0);
   }
   // Creating a focusable LVGL child can synchronously update its parent's
   // layout. Publish the callbacks only after every pooled row exists.
   this->empty_ = lv_label_create(this->parent_);
   lv_obj_set_style_text_font(this->empty_, this->text_font_, 0);
-  lv_obj_set_style_text_color(this->empty_, lv_color_hex(0x94A3B8), 0);
+  lv_obj_set_style_text_color(this->empty_, lv_color_hex(0xA3A3A3), 0);
   lv_label_set_text_static(this->empty_, this->empty_text_.c_str());
   lv_obj_align(this->empty_, LV_ALIGN_TOP_MID, 0, 12);
   lv_obj_add_event_cb(this->parent_, parent_event_, LV_EVENT_SCROLL, this);
@@ -112,12 +112,18 @@ void PhoneListView::paint_(Slot &slot, uint32_t index) {
   RowData next;
   this->render_(index, next);
   if (next.id[0] == '\0') next.enabled = false;
+  const bool first_paint = slot.generation == 0;
   if (slot.row.id != next.id || slot.row.action != next.action) ++slot.generation;
-  const bool changed = slot.generation == 0 || slot.row.id != next.id || slot.row.name != next.name || slot.row.detail != next.detail ||
+  const bool changed = first_paint || slot.row.id != next.id || slot.row.name != next.name || slot.row.detail != next.detail ||
                        slot.row.leading != next.leading || slot.row.trailing != next.trailing;
+  const bool color_changed = first_paint || slot.row.color != next.color;
+  const bool highlight_changed = first_paint || slot.row.highlighted != next.highlighted;
+  const bool enabled_changed = first_paint || slot.row.enabled != next.enabled;
   const bool blink_changed = slot.row.blink != next.blink || slot.row.color != next.color;
   slot.row = next;
-  lv_obj_set_pos(slot.button, 0, index * this->row_height_);
+  const int32_t row_y = index * this->row_height_;
+  if (lv_obj_get_style_x(slot.button, LV_PART_MAIN) != 0 || lv_obj_get_style_y(slot.button, LV_PART_MAIN) != row_y)
+    lv_obj_set_pos(slot.button, 0, row_y);
   lv_obj_clear_flag(slot.button, LV_OBJ_FLAG_HIDDEN);
   if (changed) {
     lv_label_set_text_static(slot.leading, slot.row.leading.data());
@@ -127,23 +133,32 @@ void PhoneListView::paint_(Slot &slot, uint32_t index) {
   }
   const int32_t width = lv_obj_get_content_width(this->parent_);
   const int32_t text_width = std::max<int32_t>(24, width - 76);
-  lv_obj_set_width(slot.name, text_width);
-  lv_obj_set_width(slot.detail, text_width);
-  lv_obj_align(slot.leading, LV_ALIGN_LEFT_MID, 0, 0);
-  lv_obj_align(slot.trailing, LV_ALIGN_RIGHT_MID, 0, 0);
-  if (slot.row.detail[0] && 2 * lv_font_get_line_height(this->text_font_) <= this->row_height_ - 3) {
-    lv_obj_align(slot.name, LV_ALIGN_TOP_LEFT, 30, 0);
-    lv_obj_align(slot.detail, LV_ALIGN_BOTTOM_LEFT, 30, 0);
-    lv_obj_clear_flag(slot.detail, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_align(slot.name, LV_ALIGN_LEFT_MID, 30, 0);
-    lv_obj_add_flag(slot.detail, LV_OBJ_FLAG_HIDDEN);
+  // LVGL refreshes style and label layout even when a setter repeats its value.
+  // Reuse the row's existing snapshot and geometry instead of invalidating it.
+  if (changed || lv_obj_get_style_width(slot.name, LV_PART_MAIN) != text_width) {
+    lv_obj_set_width(slot.name, text_width);
+    lv_obj_set_width(slot.detail, text_width);
+    lv_obj_align(slot.leading, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_align(slot.trailing, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (slot.row.detail[0] && 2 * lv_font_get_line_height(this->text_font_) <= this->row_height_ - 3) {
+      lv_obj_align(slot.name, LV_ALIGN_TOP_LEFT, 30, 0);
+      lv_obj_align(slot.detail, LV_ALIGN_BOTTOM_LEFT, 30, 0);
+      lv_obj_clear_flag(slot.detail, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_align(slot.name, LV_ALIGN_LEFT_MID, 30, 0);
+      lv_obj_add_flag(slot.detail, LV_OBJ_FLAG_HIDDEN);
+    }
   }
-  lv_obj_set_style_text_color(slot.leading, lv_color_hex(slot.row.color), 0);
-  lv_obj_set_style_text_color(slot.name, lv_color_hex(slot.row.color), 0);
-  lv_obj_set_style_bg_color(slot.button, lv_color_hex(slot.row.highlighted ? 0x173B5E : 0x172235), 0);
-  lv_obj_set_style_text_color(slot.trailing, lv_color_hex(slot.row.color), 0);
-  lv_obj_set_style_opa(slot.button, slot.row.enabled ? LV_OPA_COVER : LV_OPA_50, 0);
+  if (color_changed) {
+    lv_obj_set_style_text_color(slot.leading, lv_color_hex(slot.row.color), 0);
+    lv_obj_set_style_text_color(slot.name, lv_color_hex(slot.row.color), 0);
+    lv_obj_set_style_text_color(slot.detail, lv_color_hex(slot.row.color), 0);
+    lv_obj_set_style_text_color(slot.trailing, lv_color_hex(slot.row.color), 0);
+  }
+  if (highlight_changed)
+    lv_obj_set_style_bg_color(slot.button, lv_color_hex(slot.row.highlighted ? 0x303030 : 0x202020), 0);
+  if (enabled_changed)
+    lv_obj_set_style_opa(slot.button, slot.row.enabled ? LV_OPA_COVER : LV_OPA_50, 0);
   if (blink_changed || !slot.row.blink) {
     lv_anim_delete(slot.trailing, blink_);
     lv_obj_set_style_opa(slot.trailing, LV_OPA_COVER, 0);

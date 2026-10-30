@@ -37,18 +37,22 @@ struct Phone {
 void render(unsigned index,Row&row){BODY}
 Row output(BlfState activity,PresenceState presence,bool valid=true){
  phone.current.state=activity;phone.current.presence=presence;phone.current.available=valid;
+ phone.current.ringing_dialogs=activity==BlfState::RINGING?1:0;
  Row row;render(0,row);return row;
 }
 int main(){
  phone.contact.name="Test phone";phone.contact.route="stable";phone.contact.kind=ContactKind::BROWSER;
  auto row=output(BlfState::IDLE,PresenceState::CLOSED);
- assert(row.detail=="Unavailable"&&row.color==0x94A3B8);
- assert(row.leading=="\U000F059F"&&row.trailing=="\U000F0DEF");
+ assert(row.detail=="Unavailable"&&row.color==0xA3A3A3);
+ assert(row.leading=="\U000F07D0"&&row.trailing=="\U000F0DEF");
  row=output(BlfState::IDLE,PresenceState::OPEN);assert(row.detail=="Idle"&&row.color==0x4ADE80);
- row=output(BlfState::IDLE,PresenceState::UNKNOWN);assert(row.detail=="Unknown"&&row.color==0x94A3B8);
+ row=output(BlfState::IDLE,PresenceState::UNKNOWN);assert(row.detail=="Unknown"&&row.color==0xA3A3A3);
  row=output(BlfState::UNKNOWN,PresenceState::CLOSED,false);assert(row.detail=="Unavailable");
  row=output(BlfState::ACTIVE,PresenceState::CLOSED);assert(row.detail=="In call"&&row.color==0xF87171);
  row=output(BlfState::RINGING,PresenceState::UNKNOWN);assert(row.action==1&&row.blink&&row.color==0x38BDF8);
+ row=output(BlfState::CALLING,PresenceState::OPEN);assert(row.detail=="Calling"&&row.action==0&&!row.blink&&row.color==0x38BDF8);
+ phone.current.state=BlfState::RINGING;phone.current.ringing_dialogs=0;
+ row=Row{};render(0,row);assert(row.detail=="Ringing"&&row.action==0);
  row=output(BlfState::UNKNOWN,PresenceState::OPEN,false);assert(row.detail=="Unknown");
 }
 '''.replace("BODY", str(body)))
