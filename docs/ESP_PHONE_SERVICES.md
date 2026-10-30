@@ -28,9 +28,10 @@ Message-Account field. The regular in-call keypad sends DTMF to the mailbox
 menu. An explicit mailbox target can be configured for another PBX.
 
 During a call, the dialpad icon above the contact opens that same keypad.
-The display shows the current contact and elapsed call time; long names scroll
+The display shows the connected party and elapsed call time; long names scroll
 within the header. Its call button becomes the red hangup control. Outside a
-call, the keypad composes a number normally.
+call, the keypad composes a number normally. Returning to idle clears the
+editable number, ready for a new call.
 
 ## The phone on its own display
 
@@ -49,6 +50,9 @@ The left icon identifies an ESP (chip), SIP phone (desk phone), browser phone
 or group. The name and destination come from the
 shared phonebook. With BLF enabled, the right-hand icon and second line show
 the contact's current call state.
+The maintained 240- and 360-pixel round layouts show four complete contact rows,
+or three when the voicemail envelope needs space. Both lines remain visible
+within the circular screen.
 The directory category comes from LDAP's standard `ou` field:
 
 | `ou` value | Left icon |
@@ -91,6 +95,11 @@ firmware. For example, a phone can expose volume, microphone gain, processing
 mode, auto answer and Do Not Disturb. The screen controls the same entities
 available through ESPHome.
 
+On round displays, swipe down from the top of Options to return to the previous
+screen, including when the gesture starts over the controls' background.
+Gestures within the list scroll its contents. An upward gesture at the end of
+the last page stays there. Sliders and dropdowns retain their own touch controls.
+
 ### Use the same keypad before and during a call
 
 <img src="images/phone-services/dtmf.jpg" width="240" alt="In-call DTMF keypad with the current peer, elapsed time and red hangup control" />
@@ -100,7 +109,26 @@ IVR. While connected, each key sends a negotiated RTP telephone event; the
 header shows the peer and elapsed time, and the red control ends the call.
 Opening the keypad keeps the existing audio conversation active. Outside a
 call, the normal dialing page composes a destination and offers the call
-control instead.
+control instead. On round displays, the smaller call and hangup control leaves
+more space for the number keys. After hangup, the editable number is empty;
+Delete keeps it empty, and the next digit starts a new destination. The
+call-ended notice retains the last peer separately.
+
+### Connected names after pickup
+
+If Casa calls Test and this phone picks up Test's ringing call, setup can show
+Test's friendly name. When the PBX supplies Casa's connected identity, both the
+call screen and in-call keypad update to Casa. Selecting another contact does
+not change the name of the current conversation.
+
+Custom displays can read `id(phone).get_active_peer_name()`. It returns an
+owned string from the current call and becomes empty when that dialog is
+released. Use the optional `on_peer_changed` callback to refresh labels when
+the PBX refines the connected identity during setup or after answer.
+Connection setup remains in `on_in_call`; an identity update does not replay
+that callback. The hook is compiled only when configured. See the
+[connected-peer callback example](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/PHONE_SERVICES.md#connected-peer-names)
+for custom YAML.
 
 ## One phone, one identity
 

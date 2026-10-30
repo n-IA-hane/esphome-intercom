@@ -58,6 +58,14 @@ list and reusable row pools. The idle mailbox envelope calls the PBX menu;
 the in-call keypad sends DTMF. Select `directory`, `blf` and `mwi` independently
 in `firmware_features`. Automatic HA registration alone does not enable MWI.
 Start from the current board YAML when migrating a custom UI.
+
+Custom call displays should read `get_active_peer_name()` for the current
+dialog and use the optional `on_peer_changed` callback to refresh connected
+names after pickup or other PBX identity updates. Keep connection setup in
+`on_in_call`. Clear the editable dialer on idle and retain any call-ended
+notice separately. Maintained packages already include these bindings.
+See [connected names after pickup](ESP_PHONE_SERVICES.md#connected-names-after-pickup).
+
 Deleting an originating ESPHome
 device/integration now permanently removes its managed credentials and mailbox;
 ordinary offline/reload cycles retain them. Read the

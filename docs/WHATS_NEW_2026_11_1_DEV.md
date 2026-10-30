@@ -217,6 +217,17 @@ device name is presented as the caller's name.
   mailbox conversations. A dialpad icon opens the existing keypad during a
   call, showing the contact, elapsed time and red hangup control.
   Switching voicemail off and on retains the account's MWI resource.
+- **Connected names after pickup:** the call screen and keypad follow the
+  PBX's connected-party identity, including updates received after answer.
+  Custom displays can use `get_active_peer_name()` and the optional
+  `on_peer_changed` callback. Connection setup stays in `on_in_call`.
+- **More room on round displays:** contacts show four complete rows, or three
+  when voicemail needs space. A smaller call and hangup control leaves room
+  for larger number keys. Returning to idle clears the editable number for
+  the next call, including after pickup.
+- **Options gestures:** scrolling reaches the complete controls list, and
+  swiping down from its top returns to the previous screen. The controls'
+  background no longer traps that navigation gesture.
 - **Independent firmware choices:** select `directory`, `blf` and `mwi` in
   `firmware_features`. BLF also works with static contacts and without a display.
   Omitted features remove their client code and reserved pools from the firmware.
