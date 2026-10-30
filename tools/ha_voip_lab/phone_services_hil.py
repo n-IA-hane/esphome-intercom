@@ -81,9 +81,10 @@ class MwiTrace:
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         self.capture = os.fdopen(fd, "wb")
         self.stderr = (self.private / "mwi-tshark.log").open("wb")
-        capture_filter = f"udp and host {address}" if self.media else f"udp port {port} and host {address}"
+        capture_filter = (f"(udp or tcp port {port}) and host {address}" if self.media
+                          else f"(udp or tcp) and port {port} and host {address}")
         self.remote = await asyncio.create_subprocess_exec("ssh", "-o", "BatchMode=yes", self.args.ha_ssh,
-            "sudo -n sh -c 'echo $$ >&2; exec timeout -s INT 300 tcpdump -n -i any -U -s 0 -w - \"" + capture_filter + "\"'",
+            "sudo -n sh -c 'echo $$ >&2; exec timeout -s INT 300 tcpdump --immediate-mode -n -i any -U -s 0 -w - \"" + capture_filter + "\"'",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         self.pid = int((await asyncio.wait_for(self.remote.stderr.readline(), 8)).strip())
         self.decoder = await asyncio.create_subprocess_exec("tshark", "-l", "-n", "-r", "-", "-T", "fields",
@@ -108,6 +109,8 @@ class MwiTrace:
         self.decoder.stdin.close()
 
     async def _decode(self):
+        # Live MWI waits decode UDP only. TCP SIP is retained in the PCAP for
+        # complete SDP/dialog evidence, independently of this projection.
         while line := await self.decoder.stdout.readline():
             fields = line.decode().rstrip("\n").split("\t")
             if len(fields) == 3 and fields[2]:

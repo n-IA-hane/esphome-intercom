@@ -39,6 +39,7 @@ def keep_application_source(directory, main):
 @pytest.mark.parametrize("profile", PROFILES, ids=("full", "phone-only"))
 @pytest.mark.parametrize("selection", list(itertools.product((False, True), repeat=3)),
                          ids=lambda flags: "".join(str(int(flag)) for flag in flags))
+@pytest.mark.timeout(320)  # Code generation (180s), official clean (120s), then source/artifact I/O.
 def test_three_phone_services_generate_independent_components(tmp_path, profile, selection, profile_workspaces):
     shipped = yaml_util.load_yaml(ROOT / profile)
     requested = [name for name in shipped["substitutions"]["firmware_features"] if name not in FEATURES]

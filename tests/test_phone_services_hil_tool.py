@@ -251,7 +251,7 @@ def test_counter_resets_and_other_call_generations_cannot_turn_loss_into_zero(fa
         check_audio_continuity(before, after)
 
 
-@pytest.mark.parametrize("fault", [None, "wrong-digit", "missing-end"])
+@pytest.mark.parametrize("fault", [None, "wrong-digit", "missing-end", "missing-final"])
 async def test_menu_wire_oracle_decodes_negotiated_events_with_real_tshark(tmp_path, fault):
     import shutil
     import socket
@@ -276,6 +276,8 @@ async def test_menu_wire_oracle_decodes_negotiated_events_with_real_tshark(tmp_p
     udp("192.0.2.3", "192.0.2.1", 5060, 5060, sip("INVITE sip:mailbox@192.0.2.1 SIP/2.0", "192.0.2.3", 40000))
     udp("192.0.2.1", "192.0.2.3", 5060, 5060, sip("SIP/2.0 200 OK", "192.0.2.1", 40002))
     for index, event in enumerate([1, 3, 2, 0, 1, 11, 2, 11]):
+        if fault == "missing-final" and index == 7:
+            continue
         if fault == "wrong-digit" and index == 1:
             event = 4
         for report in range(1 if index == 7 else 4):

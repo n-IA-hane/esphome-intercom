@@ -85,6 +85,96 @@ async def test_normal_capture_drains_and_reaps_every_owner(monkeypatch):
     assert spawn.await_count == 1
 
 
+@pytest.mark.parametrize("media,expected", [
+    (True, "(udp or tcp port 5070) and host 192.0.2.3"),
+    (False, "(udp or tcp) and port 5070 and host 192.0.2.3"),
+])
+async def test_capture_requests_immediate_delivery_and_narrow_signaling(monkeypatch, tmp_path, media, expected):
+    import ctypes as c
+    import ctypes.util
+    import shlex
+    import socket
+    import struct
+
+    def reader(data=b""):
+        stream = asyncio.StreamReader()
+        stream.feed_data(data)
+        stream.feed_eof()
+        return stream
+    remote = SimpleNamespace(stdout=reader(), stderr=reader(b"12345\nlistening on fixture\n"))
+    decoder = SimpleNamespace(stdout=reader(), stdin=io.BytesIO())
+    spawn = AsyncMock(side_effect=[remote, decoder])
+    monkeypatch.setattr("tools.ha_voip_lab.phone_services_hil.asyncio.create_subprocess_exec", spawn)
+    trace = MwiTrace(SimpleNamespace(address="192.0.2.3", ha_sip_port=5070, ha_ssh="fixture"), tmp_path, media=media)
+    try:
+        await trace._start()
+        await asyncio.gather(trace.copy_task, trace.decode_task)
+        command = shlex.split(spawn.await_args_list[0].args[-1])[-1]
+        arguments = shlex.split(command)
+        assert arguments[arguments.index("tcpdump") + 1] == "--immediate-mode"
+        assert arguments[-1] == expected
+        assert "6053" not in command and "http" not in command
+        # Execute the actual compiled filter against independent packets.
+        # libpcap's offline evaluator requires no capture privileges.
+        class Program(c.Structure):
+            _fields_ = [("length", c.c_uint), ("instructions", c.c_void_p)]
+        class Timeval(c.Structure):
+            _fields_ = [("seconds", c.c_long), ("microseconds", c.c_long)]
+        class Header(c.Structure):
+            _fields_ = [("time", Timeval), ("captured", c.c_uint32), ("length", c.c_uint32)]
+        library = ctypes.util.find_library("pcap")
+        assert library, "The packet-tools dependency must provide libpcap"
+        pcap = c.CDLL(library)
+        pcap.pcap_open_dead.argtypes, pcap.pcap_open_dead.restype = [c.c_int, c.c_int], c.c_void_p
+        pcap.pcap_compile.argtypes = [c.c_void_p, c.POINTER(Program), c.c_char_p, c.c_int, c.c_uint32]
+        pcap.pcap_offline_filter.argtypes = [c.POINTER(Program), c.POINTER(Header), c.POINTER(c.c_ubyte)]
+        pcap.pcap_offline_filter.restype = c.c_uint
+        pcap.pcap_freecode.argtypes = [c.POINTER(Program)]
+        pcap.pcap_close.argtypes = [c.c_void_p]
+        handle, program = pcap.pcap_open_dead(1, 65535), Program()
+        assert handle
+        try:
+            assert pcap.pcap_compile(handle, c.byref(program), arguments[-1].encode(), 1, 0xffffffff) == 0
+            cases = [
+                (17, "192.0.2.3", "192.0.2.1", 40000, 40002, media),
+                (17, "192.0.2.3", "192.0.2.1", 5060, 5070, True),
+                (17, "192.0.2.1", "192.0.2.3", 5070, 5060, True),
+                (6, "192.0.2.3", "192.0.2.1", 37000, 5070, True),
+                (6, "192.0.2.1", "192.0.2.3", 5070, 37000, True),
+                (6, "192.0.2.3", "192.0.2.1", 80, 37000, False),
+                (6, "192.0.2.1", "192.0.2.3", 37000, 6053, False),
+                (6, "192.0.2.3", "192.0.2.1", 37000, 5060, False),
+                (17, "192.0.2.4", "192.0.2.1", 5070, 5070, False),
+            ]
+            for protocol, source, target, source_port, target_port, accepted in cases:
+                transport = (struct.pack("!HHHH", source_port, target_port, 8, 0) if protocol == 17
+                             else struct.pack("!HHIIHHHH", source_port, target_port, 0, 0, 5 << 12, 0, 0, 0))
+                ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(transport), 0, 0, 64, protocol, 0,
+                                 socket.inet_aton(source), socket.inet_aton(target))
+                packet = bytes.fromhex("0200000000010200000000020800") + ip + transport
+                data = c.create_string_buffer(packet)
+                header = Header(Timeval(0, 0), len(packet), len(packet))
+                actual = pcap.pcap_offline_filter(c.byref(program), c.byref(header), c.cast(data, c.POINTER(c.c_ubyte)))
+                assert bool(actual) is accepted, (protocol, source, target, source_port, target_port)
+        finally:
+            pcap.pcap_freecode(c.byref(program))
+            pcap.pcap_close(handle)
+    finally:
+        trace.capture.close()
+        trace.stderr.close()
+
+
+@pytest.mark.parametrize("address,port", [("192.0.2.3; true", 5060), ("192.0.2.3", 0),
+                                         ("192.0.2.3", 65536), ("192.0.2.3", "5060; true")])
+async def test_capture_rejects_invalid_host_and_port_before_launch(monkeypatch, tmp_path, address, port):
+    spawn = AsyncMock()
+    monkeypatch.setattr("tools.ha_voip_lab.phone_services_hil.asyncio.create_subprocess_exec", spawn)
+    trace = MwiTrace(SimpleNamespace(address=address, ha_sip_port=port), tmp_path)
+    with pytest.raises(ValueError):
+        await trace._start()
+    spawn.assert_not_awaited()
+
+
 @pytest.mark.parametrize("mode,error", [("remote-timeout", TimeoutError),
                                        ("decoder-timeout", TimeoutError), ("copy-error", OSError)])
 async def test_capture_faults_cleanup_before_propagating_the_original_error(monkeypatch, mode, error):
