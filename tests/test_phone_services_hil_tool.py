@@ -453,10 +453,19 @@ async def test_screenshot_waits_for_initial_api_state_before_requesting_capture(
         asyncio.get_running_loop().call_soon(deliver, "new-capture")
     witness.client.execute_service = capture
     fetched = []
+    stream = io.BytesIO()
+    from PIL import Image
+    Image.new("RGB", (24, 16), (30, 60, 90)).save(stream, format="JPEG")
+    payload = stream.getvalue()
+    class Response(io.BytesIO):
+        status = 200
+        headers = {"Content-Type": "image/jpeg", "ETag": '"new-capture"'}
+        def geturl(self):
+            return "http://192.0.2.3/esp_screenshot/screen/image.jpg?capture=new-capture"
     def fetch(url, timeout):
         fetched.append(url)
         assert url.endswith("?capture=new-capture") and timeout == 10
-        return io.BytesIO(b"new screenshot")
+        return Response(payload)
     monkeypatch.setattr(module, "urlopen", fetch)
     subscription = asyncio.create_task(initial_subscription())
     output = tmp_path / "screen.jpg"
@@ -464,4 +473,4 @@ async def test_screenshot_waits_for_initial_api_state_before_requesting_capture(
     await subscription
     assert result["capture_id"] == "new-capture"
     assert calls == [("capture-action", {})] and len(fetched) == 1
-    assert output.read_bytes() == b"new screenshot"
+    assert output.read_bytes() == payload
