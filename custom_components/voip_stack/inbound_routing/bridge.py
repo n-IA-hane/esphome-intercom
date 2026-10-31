@@ -213,8 +213,9 @@ async def route_sip_bridge(
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
+    directional_audio = supports_directional_audio_payloads(peer_target, decision.entry)
     use_generic_audio_profile = bridge_to_trunk or (
-        bridge_to_softphone and rtp_audio_profile is None
+        bridge_to_softphone and rtp_audio_profile is None and not directional_audio
     )
     if use_generic_audio_profile:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
@@ -324,9 +325,7 @@ async def route_sip_bridge(
             use_generic_audio_profile
             or sip_target_has_unspecified_audio(peer_target, decision.entry)
         ),
-        allow_directional_audio_payloads=supports_directional_audio_payloads(
-            peer_target, decision.entry
-        ),
+        allow_directional_audio_payloads=directional_audio,
         peer_user_agent=(
             str((decision.entry.metadata or {}).get("user_agent") or "")
             if bridge_to_softphone and decision.entry is not None

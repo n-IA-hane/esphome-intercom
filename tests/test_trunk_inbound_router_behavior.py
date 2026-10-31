@@ -61,7 +61,7 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
 
 
 @pytest.mark.parametrize("registered", [False, True])
-@pytest.mark.parametrize("profile", ["directional-esp", "directional-sip", "symmetric-sip", "pcmu", "unspecified"])
+@pytest.mark.parametrize("profile", ["directional-esp", "directional-sip", "symmetric-sip", "hint-only", "pcmu", "unspecified"])
 async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registration(
     monkeypatch, registered, profile,
 ) -> None:
@@ -101,6 +101,16 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
     elif profile == "symmetric-sip":
         metadata.update(sip_audio_tx_formats=["L16/16000/1/10"],
                         sip_audio_rx_formats=["L16/48000/1/10", "L16/16000/1/10"])
+    elif profile == "hint-only":
+        # Captured capability response from a real multi-quantum endpoint.
+        # Port zero OPTIONS correctly omits a single packet time; the INVITE
+        # exchange remains authoritative for the eventual media contract.
+        body = (Path(__file__).parent / "fixtures/sdp/native-options-mixed-quanta.sdp").read_bytes()
+        capabilities = sdp.options_capabilities(body)
+        assert capabilities["sip_audio_tx_formats"] == []
+        assert capabilities["sip_audio_rx_formats"] == []
+        assert capabilities["sdp_features"] == ["directional_audio_v1"]
+        metadata.update(endpoint_kind="esphome", **capabilities)
     elif profile == "pcmu":
         metadata.update(sip_audio_tx_formats=["PCMU/8000/1/20"],
                         sip_audio_rx_formats=["PCMU/8000/1/20"])
@@ -128,6 +138,27 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
         assert offered["sip_audio_tx_formats"] == ["L16/16000/1/10"]
         assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
         assert not offered["sdp_features"]
+    elif profile == "hint-only":
+        import re
+
+        offer = captured["offer"]
+        formats = sdp.offered_pcm_formats(offer)
+        assert formats and all(fmt.encoding == "L16" and fmt.channels == 1
+                               and fmt.audio_format.fits_udp_payload(sdp.UDP_SAFE_PAYLOAD_BYTES)
+                               for fmt in formats)
+        # A peer answers using its own 48 kHz receive / 16 kHz send geometry,
+        # independently choosing the corresponding advertised payload numbers.
+        receive = re.search(r"a=rtpmap:(\d+) L16/48000/1", offer)[1]
+        send = re.search(r"a=rtpmap:(\d+) L16/16000/1", offer)[1]
+        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
+                  f"m=audio 40000 RTP/AVP {receive} {send}\r\n"
+                  f"a=rtpmap:{receive} L16/48000/1\r\na=rtpmap:{send} L16/16000/1\r\n"
+                  f"a=ptime:10\r\na=x-voip-stack-flow:{receive} recv\r\na=x-voip-stack-flow:{send} send\r\n")
+        negotiated = sdp.negotiate_answer_directional(answer,
+            captured["supported_send_formats"], captured["supported_recv_formats"],
+            local_offer_sdp=offer)
+        assert negotiated is not None
+        assert (negotiated.send.sample_rate, negotiated.recv.sample_rate) == (48000, 16000)
     elif profile == "pcmu":
         assert offered["sip_audio_tx_formats"] == ["PCMU/8000/1/20"]
         assert offered["sip_audio_rx_formats"] == ["PCMU/8000/1/20"]
