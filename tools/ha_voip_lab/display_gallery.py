@@ -81,6 +81,26 @@ def compiled_transition_seconds(receipt):
     return max(values) / 1000
 
 
+def compiled_call_ended_seconds(receipt):
+    """Use the actual compiled terminal-page hold, not a capture timeout."""
+    source = Path(receipt["private_debug_source"]) / "src/main.cpp"
+    if hashlib.sha256(source.read_bytes()).hexdigest() != receipt["main_sha256"]:
+        raise RuntimeError("Preserved UI source differs from the compiled receipt")
+    text = source.read_text()
+    start = re.search(r"new\((\w+)\)\s+Automation<[^;]+>\(ui_call_ended\);", text)
+    if start is None:
+        raise RuntimeError("The compiled image has no identified call-ended script")
+    end = re.search(re.escape(start[1]) + r"->add_actions\(", text[start.end():])
+    if end is None:
+        raise RuntimeError("The compiled call-ended script has no complete action list")
+    body = text[start.end():start.end() + end.start()]
+    delays = [int(value) for value in re.findall(
+        r"\w+->set_delay\([^{}]+\{\s*return\s+(\d+);\s*\}\);", body)]
+    if not delays:
+        raise RuntimeError("The compiled call-ended script has no identified duration")
+    return sum(delays) / 1000
+
+
 def load_esp_tool(source):
     spec = spec_from_file_location("display_gallery_esp", source / "tools/qualify_sip_registration_esp.py")
     module = module_from_spec(spec)
@@ -159,6 +179,9 @@ def gallery_witness(esp):
             # Reuse the existing mailbox scenario while keeping its two idle
             # captures on the phone's contact page, away from private avatars.
             if "-idle-unread" in output.name or "-idle-read" in output.name:
+                if "-idle-read" in output.name:
+                    # The terminal page intentionally owns the UI after idle.
+                    await asyncio.sleep(self.args.ui_call_ended_seconds)
                 await self.service("screenshot_demo_contacts", {"server": self.server})
                 await self.service("screenshot_show_contacts")
                 self.expected_page = "call_idle"
@@ -166,6 +189,11 @@ def gallery_witness(esp):
                 self.expected_page = "call_dialer"
             if self.expected_page not in {"call_idle", "call_dialer", "settings"}:
                 raise RuntimeError("A safe expected page is required for a gallery capture")
+            # lv_screen_load_anim() queues scr_to_load before its start
+            # callback updates the active screen. prev_scr can still be NULL
+            # in that interval. Honor the compiled navigation contract before
+            # asking the first checkpoint to identify the requested page.
+            await asyncio.sleep(self.args.ui_transition_seconds)
             before = await self.ui_checkpoint()
             if "transition" in before:
                 deadline = time.monotonic() + 5
@@ -176,9 +204,8 @@ def gallery_witness(esp):
                 before["native_screen_load_observed"] = True
             else:
                 # Older private images expose the selected logical page only.
-                # Honor their exact compiled animation duration, then require
-                # a fresh checkpoint. Pixel semantic review remains mandatory.
-                await asyncio.sleep(self.args.ui_transition_seconds)
+                # Require a second fresh checkpoint after the compiled wait.
+                # Pixel semantic review remains mandatory.
                 before = await self.ui_checkpoint()
                 before["native_screen_load_observed"] = False
                 before["compiled_transition_ms"] = round(self.args.ui_transition_seconds * 1000)
@@ -295,6 +322,7 @@ async def capture_mailbox(witness, args, fixture, server, local_ip):
             await hil.mailbox_menu_scenario(witness, args, fixture, ws, result, server, local_ip)
     finally:
         hil.MwiTrace.waiting = original
+        hil.write_private(args.output.with_name(args.output.stem + "-evidence.json"), result)
     return result
 
 
@@ -303,6 +331,7 @@ async def run(args):
 
     receipt = checked_profile_receipt(args.config, args.receipt)
     args.ui_transition_seconds = compiled_transition_seconds(receipt)
+    args.ui_call_ended_seconds = compiled_call_ended_seconds(receipt)
     if args.output.exists():
         raise RuntimeError("Select a fresh private output directory; existing evidence is preserved")
     args.output.mkdir(parents=True, mode=0o700)

@@ -57,6 +57,23 @@ def test_navigation_wait_uses_the_matching_compiled_source_contract(tmp_path):
         gallery.compiled_transition_seconds(receipt)
 
 
+def test_terminal_page_wait_is_bound_to_the_compiled_call_ended_script(tmp_path):
+    source = tmp_path / "src/main.cpp"
+    source.parent.mkdir()
+    source.write_text('''new(other) Automation<>(boot);
+other_delay->set_delay([]() -> uint32_t { return 30000; });
+other->add_actions({other_delay});
+new(ended) Automation<std::string, std::string>(ui_call_ended);
+delay->set_delay([](std::string peer, std::string reason) -> uint32_t { return 4000; });
+ended->add_actions({delay});''')
+    receipt = {"private_debug_source": str(tmp_path),
+               "main_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    assert gallery.compiled_call_ended_seconds(receipt) == 4
+    source.write_text("modified source")
+    with pytest.raises(RuntimeError, match="compiled receipt"):
+        gallery.compiled_call_ended_seconds(receipt)
+
+
 @pytest.mark.parametrize("username", ["GalleryHome", "galleryhome"])
 async def test_existing_gallery_account_prevents_every_account_mutation(username):
     fixture = SimpleNamespace(owned={}, run_id="fresh", action=AsyncMock(return_value={
@@ -140,14 +157,16 @@ async def test_shared_mac_selects_only_the_existing_esphome_entity_owner(tmp_pat
         assert result.mailbox_device == "fresh-device"
 
 
-async def test_mailbox_target_adapter_restores_original_waiter_when_scenario_fails(monkeypatch):
+async def test_mailbox_target_adapter_restores_original_waiter_when_scenario_fails(monkeypatch, tmp_path):
     original = gallery.hil.MwiTrace.waiting
     monkeypatch.setattr(gallery, "HaWs", OfflineWs)
     monkeypatch.setattr(gallery.hil, "mailbox_menu_scenario", AsyncMock(side_effect=RuntimeError("owned failure")))
     fixture = SimpleNamespace(rest=SimpleNamespace(base_url="offline", token="fixture-only"))
     with pytest.raises(RuntimeError, match="owned failure"):
-        await gallery.capture_mailbox(SimpleNamespace(), SimpleNamespace(), fixture, "example.invalid", "192.0.2.1")
+        await gallery.capture_mailbox(SimpleNamespace(), SimpleNamespace(output=tmp_path / "mailbox.json"), fixture,
+                                      "example.invalid", "192.0.2.1")
     assert gallery.hil.MwiTrace.waiting is original
+    assert json.loads((tmp_path / "mailbox-evidence.json").read_text()) == {}
 
 
 def deferred_diagnostic_witness():
@@ -210,3 +229,79 @@ async def test_native_page_checkpoint_never_promotes_unknown_or_private_avatar(p
     else:
         with pytest.raises(RuntimeError, match="safe phone page"):
             await witness.ui_checkpoint()
+
+
+async def test_capture_honors_compiled_navigation_before_its_first_checkpoint(tmp_path, monkeypatch):
+    # LVGL sets scr_to_load before its animation start callback changes act_scr.
+    # A fresh checkpoint can therefore still report the previous, unmapped page.
+    settled = False
+    observed = []
+
+    async def settle(duration):
+        nonlocal settled
+        assert duration == .3
+        observed.append("compiled_navigation")
+        settled = True
+
+    class NativeBoundary:
+        def __init__(self, _client):
+            pass
+
+        async def screenshot(self, address, output, *, expected_size):
+            assert address == "device" and expected_size == (360, 360)
+            observed.append("native_capture")
+            return {"capture_id": "native-id"}
+
+    witness = gallery.gallery_witness(SimpleNamespace(EspWitness=NativeBoundary))(
+        None, SimpleNamespace(output=tmp_path, width=360, height=360, ui_transition_seconds=.3), "example.invalid")
+    witness.expected_page = "settings"
+
+    async def checkpoint():
+        if not settled:
+            raise RuntimeError("LVGL animation has not selected the requested page")
+        observed.append("fresh_checkpoint")
+        return {"page": "settings", "transition": "0", "avatar_visible": "NO"}
+
+    monkeypatch.setattr(gallery.asyncio, "sleep", settle)
+    witness.ui_checkpoint = checkpoint
+    result = await witness.screenshot("device", tmp_path / "options.jpg")
+    assert observed == ["compiled_navigation", "fresh_checkpoint", "native_capture", "fresh_checkpoint"]
+    assert result["native_before"]["native_screen_load_observed"] is True
+    assert result["semantic_review"] == "pending"
+
+
+async def test_post_call_capture_waits_for_terminal_page_before_requesting_contacts(tmp_path, monkeypatch):
+    terminal_released = False
+    observed = []
+
+    async def settle(duration):
+        nonlocal terminal_released
+        observed.append(("wait", duration))
+        if duration == 4:
+            terminal_released = True
+
+    class NativeBoundary:
+        def __init__(self, _client):
+            pass
+
+        async def service(self, name, _data=None):
+            assert terminal_released, "The compiled call-ended page still owns the UI"
+            observed.append(("service", name))
+
+        async def screenshot(self, _address, _output, *, expected_size):
+            assert terminal_released and expected_size == (360, 360)
+            return {"capture_id": "native-id"}
+
+    witness = gallery.gallery_witness(SimpleNamespace(EspWitness=NativeBoundary))(
+        None, SimpleNamespace(output=tmp_path, width=360, height=360,
+                              ui_transition_seconds=.3, ui_call_ended_seconds=4), "example.invalid")
+
+    async def checkpoint():
+        assert terminal_released
+        return {"page": "call_idle", "transition": "0", "avatar_visible": "NO"}
+
+    monkeypatch.setattr(gallery.asyncio, "sleep", settle)
+    witness.ui_checkpoint = checkpoint
+    result = await witness.screenshot("device", tmp_path / "mailbox-idle-read.jpg")
+    assert observed[0] == ("wait", 4)
+    assert observed[1][0] == "service" and result["page"] == "call_idle"
