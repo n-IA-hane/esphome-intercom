@@ -862,6 +862,27 @@ def make_status_config(config, page_id, width, height, build_parent):
     return host, page_hash
 
 
+def apply_buffer_rotation(config, width, height, percent, rotation):
+    """Keep logical geometry while exercising ESPHome's real tiled/rotated flush."""
+    if percent not in (25, 100) or rotation not in (0, 90, 180, 270):
+        raise ValueError("The buffer comparison supports 25/100 percent and right-angle rotations")
+    native_width, native_height = (height, width) if rotation in (90, 270) else (width, height)
+    config["display"][0]["dimensions"] = {"width": native_width, "height": native_height}
+    config["lvgl"]["buffer_size"] = str(percent) + "%"
+    if rotation:
+        config["lvgl"]["rotation"] = rotation
+    else:
+        config["lvgl"].pop("rotation", None)
+    probe = r'''
+      auto *draw = lv_display_get_buf_active(lv_display_get_default());
+      if (draw == nullptr) ::exit(110);
+      printf("UI_BUFFER bytes=%u logical_width=%d logical_height=%d\n", unsigned(draw->data_size),
+             int(lv_display_get_horizontal_resolution(lv_display_get_default())),
+             int(lv_display_get_vertical_resolution(lv_display_get_default())));
+    '''
+    config["esphome"]["on_boot"][-1]["then"].insert(0, {"lambda": Lambda(probe)})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path)
@@ -874,18 +895,24 @@ def main():
     parser.add_argument("--round", action="store_true", help="Also show the physical circular viewport, retaining raw captures")
     parser.add_argument("--pointer", action="store_true", help="Exercise the real production dialer with a host LVGL pointer")
     parser.add_argument("--status-only", action="store_true", help="Render exact production status overlays off/on, without the full page or input qualification")
+    parser.add_argument("--buffer-percent", type=int, choices=(25, 100), help="Compare actual LVGL draw buffers using unchanged production widgets")
+    parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270), default=0, help="Exercise software rotation while preserving logical page dimensions")
     args = parser.parse_args()
     args.input = args.input.resolve()
     args.output = args.output.resolve()
     args.build_parent = args.build_parent.resolve()
     if args.status_only and args.pointer:
         parser.error("--status-only and --pointer qualify different scopes")
+    if args.rotation and args.buffer_percent is None:
+        parser.error("--rotation requires an explicit --buffer-percent comparison")
     capture_names = ("off", "on") if args.status_only else ("top", "mid", "end")
     args.output.mkdir(parents=True, exist_ok=True)
     args.build_parent.mkdir(parents=True, exist_ok=True)
     production = yaml_util.load_yaml(args.input)
     config, page_hash = (make_status_config(production, args.page, args.width, args.height, args.build_parent)
                          if args.status_only else make_host_config(production, args.page, args.width, args.height, args.build_parent, args.pointer))
+    if args.buffer_percent is not None:
+        apply_buffer_rotation(config, args.width, args.height, args.buffer_percent, args.rotation)
     path = args.build_parent / "host.yaml"
     path.write_text(yaml_util.dump(config))
     shutil.copyfile(path, args.output / "host.yaml")
