@@ -26,17 +26,15 @@ substitutions:
       // SCREEN_LOADED follows active-screen selection with and without animation.
       auto changed = [](lv_event_t *event) {
         if (lv_event_get_code(event) == LV_EVENT_SCREEN_LOADED) id(settings_sync_widgets).execute();
-        if constexpr (${'true' if _settings_round else 'false'}) {
-          auto *wrapper = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
-          lv_obj_update_layout(wrapper);
-          lv_obj_set_scroll_dir(wrapper, static_cast<lv_dir_t>(
-              (lv_obj_get_scroll_top(wrapper) > 0 ? LV_DIR_TOP : LV_DIR_NONE) |
-              (lv_obj_get_scroll_bottom(wrapper) > 0 ? LV_DIR_BOTTOM : LV_DIR_NONE)));
-        }
+        auto *wrapper = static_cast<lv_obj_t *>(lv_event_get_user_data(event));
+        lv_obj_update_layout(wrapper);
+        // Leave boundary strokes to the page's existing navigation gesture.
+        lv_obj_set_scroll_dir(wrapper, static_cast<lv_dir_t>(
+            (lv_obj_get_scroll_top(wrapper) > 0 ? LV_DIR_TOP : LV_DIR_NONE) |
+            (lv_obj_get_scroll_bottom(wrapper) > 0 ? LV_DIR_BOTTOM : LV_DIR_NONE)));
       };
       lv_obj_add_event_cb(id(${_settings_page_id})->obj, changed, LV_EVENT_SCREEN_LOADED, id(settings_page_wrapper));
-      if constexpr (${'true' if _settings_round else 'false'})
-        lv_obj_add_event_cb(id(settings_page_wrapper), changed, LV_EVENT_SCROLL_END, id(settings_page_wrapper));
+      lv_obj_add_event_cb(id(settings_page_wrapper), changed, LV_EVENT_SCROLL_END, id(settings_page_wrapper));
   _settings_close_p4:
   - lvgl.page.show:
       id: main_page
@@ -133,7 +131,7 @@ substitutions:
         pad_left: 0
         pad_right: 0
         scrollable: true
-        scroll_elastic: ${ not _settings_round }
+        scroll_elastic: false
         gesture_bubble: true
         scroll_dir: VER
         scrollbar_mode: AUTO

@@ -286,7 +286,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
                            **{key: copy.deepcopy(value) for key, value in original.items()
                               if key in ("scrollable", "on_swipe_up", "on_swipe_down")}})
         # A retained context gesture can reference another real page.
-        context_pages.extend(sorted((references(contextual[-1]) & declared_pages) - set(context_pages)))
+        context_pages.extend(sorted((references(contextual[-1]) & declared_pages) - set(context_pages) - declared))
     required |= references(contextual) - declared
     target.update({"id": "render_lvgl", "displays": ["render_display"],
                    "pages": contextual

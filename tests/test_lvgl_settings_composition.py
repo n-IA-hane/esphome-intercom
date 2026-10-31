@@ -150,8 +150,7 @@ def test_settings_match_compiled_capabilities(scene, variant):
     assert header["widgets"][0]["label"]["text"] == "Options"
     assert "on_scroll" not in page
     assert wrapper["gesture_bubble"] is True
-    if not scene.startswith("p4"):
-        assert wrapper["scroll_elastic"] is False
+    assert wrapper["scroll_elastic"] is False
     assert "settings_close" not in text(wrapper)
 
     settings_scripts = [script for script in config.get("script", [])

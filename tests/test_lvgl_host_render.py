@@ -121,3 +121,83 @@ def test_p4_options_snapshot_keeps_phone_owner_without_dialer_input(tmp_path, sc
     callback = next(script for script in host["script"] if script["id"] == "settings_sync_conference_ring")
     assert "id(phone).get_conference_ring()" in "\n".join(strings(callback))
     assert "voip_stack" not in host and "api" not in host
+    pages = [str(page["id"]) for page in host["lvgl"]["pages"]]
+    assert pages.count("settings_p4_page") == 1
+
+
+@pytest.mark.parametrize("scene,width,height", [
+    ("p4-landscape", 1280, 800), ("p4-portrait", 800, 1280),
+])
+def test_p4_options_pointer_scrolls_content_and_exits_at_top(tmp_path, scene, width, height):
+    document = expanded_scene(scene, "full")
+    build_parent = (Path(os.environ.get("LVGL_HOST_BUILD_ROOT", "/var/tmp/voip-builds/p4-options"))
+                    / scene)
+    build_parent.mkdir(parents=True, exist_ok=True)
+    host, page_hash = make_host_config(document, "settings_p4_page", width, height, build_parent)
+    assert page_hash
+    # Keep the production page, controls, callbacks and page transitions. Only
+    # the owners are host fixtures; input uses LVGL's real pointer read_cb.
+    pointer = r'''
+      esphome::ui_fixture::PointerProbe input(lv_display_get_default());
+      auto *wrapper = id(settings_page_wrapper);
+      auto *page = id(settings_p4_page)->obj;
+      auto open = [&]() {
+        id(render_lvgl).show_page(id(settings_p4_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+        input.pump(50);
+        lv_obj_scroll_to_y(wrapper, 0, LV_ANIM_OFF); input.pump(50);
+      };
+      id(ui_owner_writes) = 0;
+      open();
+      const int x = 8;
+      const int y = lv_display_get_vertical_resolution(lv_display_get_default()) / 2;
+      const int maximum = lv_obj_get_scroll_bottom(wrapper);
+      printf("P4_POINTER range=%d dir=%u\n", maximum, unsigned(lv_obj_get_scroll_dir(wrapper)));
+      if (maximum > 0) {
+        input.swipe(x, y, x, y - 100); input.pump(300);
+        if (lv_screen_active() != page || lv_obj_get_scroll_y(wrapper) <= 0) ::exit(101);
+        input.swipe(x, y, x, y + 80); input.pump(300);
+        if (lv_screen_active() != page) ::exit(102);
+        printf("P4_POINTER body_scroll=pass navigation_suppressed=pass\n");
+      } else {
+        printf("P4_POINTER body_scroll=not_needed content_fits=1\n");
+      }
+      open();
+      const auto page_gestures = input.watch(page, LV_EVENT_GESTURE);
+      input.swipe(x, y, x, y + 100); input.pump(300);
+      printf("P4_POINTER top_body gestures=%llu main=%u scroll=%d\n",
+             static_cast<unsigned long long>(input.count(page_gestures)),
+             unsigned(lv_screen_active() == id(main_page)->obj), int(lv_obj_get_scroll_y(wrapper)));
+      if (lv_screen_active() != id(main_page)->obj) ::exit(103);
+      open();
+      lv_area_t title; lv_obj_get_coords(id(settings_page_header), &title);
+      const int title_x = (title.x1 + title.x2) / 2;
+      const int title_y = (title.y1 + title.y2) / 2;
+      input.swipe(title_x, title_y, title_x, title_y + 100); input.pump(300);
+      if (lv_screen_active() != id(main_page)->obj) ::exit(104);
+      printf("P4_POINTER top_header_exit=pass\n");
+      open();
+      lv_obj_scroll_to_y(wrapper, LV_COORD_MAX, LV_ANIM_OFF); input.pump(50);
+      input.swipe(x, y, x, y - 100); input.pump(300);
+      if (lv_screen_active() != page || id(ui_owner_writes) != 0) ::exit(105);
+      printf("P4_POINTER bottom_stays=pass owner_writes=0 reads=%llu\n",
+             static_cast<unsigned long long>(input.read_count()));
+    '''
+    host["esphome"]["on_boot"][-1]["then"].insert(-1, {"lambda": Lambda(pointer)})
+    path = build_parent / "host.yaml"
+    path.write_text(yaml_util.dump(host))
+    compile_log = tmp_path / "compile.log"
+    with compile_log.open("w") as output:
+        compiled = subprocess.run([sys.executable, "-m", "esphome", "compile", str(path)],
+                                  stdout=output, stderr=subprocess.STDOUT, timeout=480, cwd=ROOT)
+    assert compiled.returncode == 0, compile_log.read_text(errors="replace")[-6000:]
+    executable = build_parent / "build/.pioenvs" / host["esphome"]["name"] / "program"
+    run_log = tmp_path / "run.log"
+    with run_log.open("w") as output:
+        ran = subprocess.run([str(executable)], stdout=output, stderr=subprocess.STDOUT,
+                             timeout=30, cwd=build_parent)
+    log = run_log.read_text(errors="replace")
+    assert ran.returncode == 0, log[-6000:]
+    assert ("P4_POINTER body_scroll=pass navigation_suppressed=pass" in log
+            or "P4_POINTER body_scroll=not_needed content_fits=1" in log)
+    assert "P4_POINTER top_header_exit=pass" in log
+    assert "P4_POINTER bottom_stays=pass owner_writes=0" in log
