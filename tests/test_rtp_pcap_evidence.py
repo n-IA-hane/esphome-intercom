@@ -260,7 +260,8 @@ def test_unknown_receiver_payload_cannot_become_a_passing_video_stream(monkeypat
     assert any("absent from receiver SDP" in reason for reason in failures(streams))
 
 
-@pytest.mark.parametrize("scenario", ["continuous", "lost-event", "lost-audio", "wrap-reorder"])
+@pytest.mark.parametrize("scenario", ["continuous", "lost-event", "lost-audio", "wrap-reorder", "icmp-quote",
+    "empty-keepalive", "nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"])
 def test_real_pcap_decodes_both_pcm_directions_with_interleaved_events(tmp_path, scenario):
     import socket
     import struct
@@ -305,6 +306,24 @@ def test_real_pcap_decodes_both_pcm_directions_with_interleaved_events(tmp_path,
     for index in range(3):
         udp(.01 + index * .01, b, a, 40002, 40000,
             rtp(96, 200 + index, index * 160, 2, struct.pack(">h", 40) * 160))
+    unknown_failure = scenario in {"nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"}
+    if scenario in {"empty-keepalive", "nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"}:
+        payload = b"bad" if scenario in {"nonempty-unknown", "truncated-unknown"} else b""
+        udp(.04, a, b, 40000, 40010 if scenario == "unrelated-empty" else 40002,
+            rtp(127, seq + 6, timestamp + 320, 1, payload))
+        if scenario == "truncated-unknown":
+            time, raw = packets[-1]
+            packets[-1] = time, raw[:-3]
+        if scenario == "mixed-unknown":
+            udp(.041, a, b, 40000, 40002, rtp(127, seq + 7, timestamp + 320, 1, b"bad"))
+    if scenario == "icmp-quote":
+        # An ICMP error quotes the original datagram. Its nested RTP must
+        # never become another media packet or an unknown-codec stream.
+        quoted = packets[-1][1][14:]
+        icmp = struct.pack("!BBHI", 3, 3, 0, 0) + quoted
+        ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, len(icmp) + 20, 0, 0, 64, 1, 0,
+                         socket.inet_aton(a), socket.inet_aton(b))
+        packets.append((.04, bytes.fromhex("0200000000010200000000020800") + ip + icmp))
     path = tmp_path / "bidirectional.pcap"
     with path.open("wb") as output:
         output.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
@@ -316,7 +335,11 @@ def test_real_pcap_decodes_both_pcm_directions_with_interleaved_events(tmp_path,
     assert len(audio) == 2
     assert audio[0]["audio_missing_samples"] == (160 if scenario == "lost-audio" else 0)
     assert audio[1]["audio_missing_samples"] == 0
-    assert bool(failures(streams, require=2)) is (scenario == "lost-audio")
+    assert bool(failures(streams, require=2)) is (scenario == "lost-audio" or unknown_failure)
+    if scenario == "empty-keepalive":
+        keepalives = [stream for stream in streams if stream["media_type"] == "rtp-keepalive"]
+        assert len(keepalives) == 1 and keepalives[0]["rtp_keepalive_packets"] == 1
+        assert failures(streams, require=3) == ["expected at least 3 RTP streams"]
     with wave.open(audio[0]["pcm_wav"]) as source:
         middle = bytes(320) if scenario == "lost-audio" else struct.pack("<h", 20) * 160
         assert source.readframes(480) == struct.pack("<h", 10) * 160 + middle + struct.pack("<h", 30) * 160

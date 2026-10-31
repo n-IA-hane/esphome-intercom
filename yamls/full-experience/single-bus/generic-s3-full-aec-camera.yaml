@@ -69,7 +69,7 @@ substitutions:
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
-  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/
+  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/dev/
 
 packages:
   device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-single-aec-camera.yaml@dev

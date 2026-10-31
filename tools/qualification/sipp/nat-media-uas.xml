@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="Independent registered NAT media answer">
+<recv request="OPTIONS" optional="true" next="10" />
+<recv request="INVITE" timeout="15000">
+ <action>
+  <ereg regexp="m=audio ([0-9]+)" search_in="body" check_it="true" assign_to="ignore_audio,audio_port" />
+  <ereg regexp="m=video ([0-9]+)" search_in="body" check_it="true" assign_to="ignore_video,video_port" />
+  <ereg regexp="a=rtpmap:([0-9]+) L16/48000" search_in="body" check_it="true" assign_to="ignore_rx,rx_pt" />
+  <ereg regexp="a=rtpmap:([0-9]+) L16/16000" search_in="body" check_it="true" assign_to="ignore_tx,tx_pt" />
+  <ereg regexp="a=ptime:10" search_in="body" check_it="true" assign_to="ignore_ptime" />
+  <ereg regexp="a=rtpmap:26 JPEG/90000" search_in="body" check_it="true" assign_to="ignore_jpeg" />
+  <log message="SIP_NAT_MEDIA ra=[$audio_port] rv=[$video_port] tx=[$tx_pt] rx=[$rx_pt]" />
+ </action>
+</recv>
+<send><![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:];tag=media-[pid]
+[last_Call-ID:]
+[last_CSeq:]
+Contact: <sip:__USERNAME__@[local_ip]:[local_port];transport=[transport]>
+Content-Type: application/sdp
+Content-Length: [len]
+
+v=0
+o=- 2 2 IN IP4 [local_ip]
+s=Independent media answer
+c=IN IP4 [local_ip]
+t=0 0
+m=audio [media_port] RTP/AVP [$rx_pt] [$tx_pt]
+a=rtpmap:[$rx_pt] L16/48000/1
+a=rtpmap:[$tx_pt] L16/16000/1
+a=x-voip-stack-flow:[$rx_pt] recv
+a=x-voip-stack-flow:[$tx_pt] send
+a=ptime:10
+a=sendrecv
+m=video [media_port+2] RTP/AVP 26
+a=rtpmap:26 JPEG/90000
+a=sendrecv
+]]></send>
+<recv request="ACK" timeout="10000" />
+<recv request="BYE" timeout="15000" />
+<send next="20"><![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:]
+[last_Call-ID:]
+[last_CSeq:]
+Content-Length: 0
+
+]]></send>
+<label id="10" />
+<send><![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:];tag=options-[pid]
+[last_Call-ID:]
+[last_CSeq:]
+Allow: INVITE, ACK, BYE, CANCEL, OPTIONS
+Content-Type: application/sdp
+Content-Length: [len]
+
+[file name="__CAPABILITY_FILE__"]
+]]></send>
+<label id="20" />
+<Reference variables="ignore_audio,ignore_video,ignore_rx,ignore_tx,ignore_ptime,ignore_jpeg" />
+</scenario>

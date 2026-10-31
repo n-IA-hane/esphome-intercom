@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import EVENT_SIP_MESSAGE, EVENT_SIP_PRESENCE
 from .core import sip, sip_transfer
-from .core.sip_dialog import SubscriptionDialog
+from .core.sip_dialog import SubscriptionDialog, uas_request_matches_dialog
 from .core.sip_auth import SipDigestCredentials
 from .sip_listener import SipFollowUpRequest, SipRequestResult
 from .sip_registrar import SipRegistrar
@@ -73,7 +73,15 @@ class SipApplicationMethods:
         follow_up_sender: "SipFollowUpSender | None" = None,
         *, flow_trunk_id: str = "",
     ) -> SipRequestResult:
-        account = self.registrar.account_for_source(addr, transport)
+        try:
+            subscriber = sip.parse_sip_uri(_uri_from_header(request.header("From"))).user
+        except (ValueError, sip.SipError):
+            subscriber = ""
+        account = self.registrar.account_for_source(addr, transport, username=subscriber)
+        if account is None and request.method == "MESSAGE":
+            # Preserve the message sender's authenticated, unambiguous flow
+            # identity instead of publishing an asserted From as the sender.
+            account = self.registrar.account_for_source(addr, transport)
         if request.method == "REFER":
             return self._refer(request, addr, transport, account, follow_up_sender, flow_trunk_id)
         if request.method == "SUBSCRIBE" and request.header("Event").partition(";")[0].strip().casefold() == "refer":
@@ -84,6 +92,13 @@ class SipApplicationMethods:
                     return SipRequestResult(status, reason, headers=headers, to_tag=subscription.to_tag)
             return SipRequestResult(481, "Subscription Does Not Exist")
         if account is None:
+            closing = self._closing_subscription(request, addr, transport) if request.method == "SUBSCRIBE" else None
+            if closing is not None:
+                # Registration and subscription are independent usages. Retire
+                # only this authenticated dialog, even after its binding ended.
+                return self._subscribe(request, addr, closing.subscriber, follow_up_sender,
+                    mailbox_id=closing.mailbox_id, dialog_endpoint_id=closing.dialog_endpoint_id,
+                    transport=transport)
             return SipRequestResult(403, "Forbidden")
         if request.method == "MESSAGE":
             return self._message(request, account.username)
@@ -146,6 +161,7 @@ class SipApplicationMethods:
                 follow_up_sender,
                 mailbox_id=mailbox_id,
                 dialog_endpoint_id=dialog_endpoint_id,
+                transport=transport,
             )
             if (event in {"presence", "message-summary"} and result.status == 200 and self.endpoint_unsubscribe is None
                     and any(item.dialog_endpoint_id or item.mailbox_id for item in self.subscriptions.values())):
@@ -160,6 +176,28 @@ class SipApplicationMethods:
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
             return result
         return SipRequestResult(405, "Method Not Allowed")
+
+    def _closing_subscription(self, request, addr, transport):
+        """Permit only an existing usage's same-flow, increasing-CSeq close."""
+        try:
+            if _publication_expires(request.header("Expires")) != 0:
+                return None
+            event = request.header("Event").partition(";")[0].strip().lower()
+            current = self.subscriptions.get(_subscription_key(request, event))
+            if (current is None or current.addr != addr or
+                    current.transport != str(transport).upper() or not current.transport):
+                return None
+            account = self.registrar.accounts.get(current.subscriber.casefold())
+            if account is None or not account.enabled:
+                return None
+            if not uas_request_matches_dialog(request, current.request, local_tag=current.to_tag):
+                return None
+            cseq = sip.parse_cseq(request.header("CSeq"))
+            if cseq.method != "SUBSCRIBE" or cseq.number <= current.dialog.remote_cseq:
+                return None
+            return current
+        except (TypeError, ValueError, sip.SipError):
+            return None
 
     def _mailbox_endpoint(self, username, expected_id=""):
         """MWI observes the account's phone, independently of message storage."""
@@ -353,7 +391,7 @@ class SipApplicationMethods:
         addr: tuple[str, int],
         subscriber: str,
         follow_up_sender: "SipFollowUpSender | None",
-        *, mailbox_id: str = "", dialog_endpoint_id: str = "",
+        *, mailbox_id: str = "", dialog_endpoint_id: str = "", transport: str = "",
     ) -> SipRequestResult:
         """Create, refresh or terminate one RFC 6665 presence subscription."""
 
@@ -387,9 +425,7 @@ class SipApplicationMethods:
                     or (target_account is not None and not target_account.enabled)):
                 return SipRequestResult(404, "Not Found")
 
-        _package, parameters = sip._split_semicolon_params(request.header("Event"))
-        event_id = dict(parameters).get("id") or ""
-        key = f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{event}:{event_id}"
+        key = _subscription_key(request, event)
         subscriptions = self.subscriptions
         assert subscriptions is not None
         current = subscriptions.get(key)
@@ -431,12 +467,14 @@ class SipApplicationMethods:
             expires_at=time.time() + expires,
             sender=follow_up_sender,
             notify_lock=current.notify_lock if current is not None else asyncio.Lock(),
+            transport=str(transport).upper(),
         )
         if current is not None:
             current.request = request
             current.addr = addr
             current.expires_at = subscription.expires_at
             current.sender = follow_up_sender
+            current.transport = str(transport).upper() or current.transport
             subscription = current
         if expires:
             subscriptions[key] = subscription
@@ -1016,6 +1054,7 @@ class SipEventSubscription:
     expires_at: float
     sender: SipFollowUpSender
     notify_lock: asyncio.Lock
+    transport: str = ""
     event: str = "presence"
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""
@@ -1026,6 +1065,12 @@ class SipEventSubscription:
     pending_notification: SipRequestResult | None = None
     notify_terminated: bool = False
     refer_notifier: sip_transfer.ReferNotifier | None = None
+
+
+def _subscription_key(request, event):
+    _package, parameters = sip._split_semicolon_params(request.header("Event"))
+    event_id = dict(parameters).get("id") or ""
+    return f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{event}:{event_id}"
 
 
 def _publication_expires(value: str) -> int:

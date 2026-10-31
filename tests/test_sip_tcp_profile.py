@@ -397,7 +397,7 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 return_value=types.SimpleNamespace(tcp_server=server),
             ):
                 self.assertTrue(
-                    sip_runtime.enable_reused_tcp_connection(
+                    sip_runtime.enable_reused_signaling_flow(
                         hass,
                         client,
                         sip.parse_sip_uri(binding.contact_uri),

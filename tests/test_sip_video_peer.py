@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 import importlib.util
 import json
 from pathlib import Path
@@ -26,6 +27,43 @@ def _load_tool():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_stun_binding_indication_does_not_end_video_or_count_as_media():
+    peer = _load_tool()
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        receiver.bind(("127.0.0.1", 0))
+        sender.bind(("127.0.0.1", 0))
+        receiver.setblocking(False)
+        sender.setblocking(False)
+        stopped = asyncio.Event()
+        counters = defaultdict(int)
+        task = asyncio.create_task(peer._relay_video(receiver, sender.getsockname(), stopped, counters, send_enabled=False))
+        try:
+            indication = bytes.fromhex("001100002112a442") + bytes(12)
+            await loop.sock_sendto(sender, indication, receiver.getsockname())
+            packet = peer.rtp.build_packet(peer.rtp.RtpPacket(26, 1, 9000, 1234, bytes(8), marker=True))
+            await loop.sock_sendto(sender, packet, receiver.getsockname())
+            async with asyncio.timeout(1):
+                while counters["video_rx_packets"] != 1:
+                    if task.done():
+                        task.result()
+                    await asyncio.sleep(.01)
+            assert not task.done()
+            assert counters["video_stun_keepalives"] == 1
+            assert counters["video_rx_packets"] == counters["video_rx_marker_packets"] == 1
+            assert counters["video_tx_packets"] == 0
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            receiver.close()
+            sender.close()
+
+    asyncio.run(scenario())
 
 
 def test_bye_retry_preserves_transaction_and_stops_after_response():

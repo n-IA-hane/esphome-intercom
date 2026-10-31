@@ -425,7 +425,7 @@ class VoipDeviceResolver:
                 api_available = bool(getattr(getattr(native, "client", None), "is_connected", False))
                 previous = current.get(phone.device_id, {})
                 runtime = runtime_data(self.hass)
-                caps = runtime.peer_capabilities.get(phone.endpoint_id, {}) if runtime is not None else {}
+                caps = (binding.capabilities or {}) if binding is not None else {}
                 logical = runtime.endpoints.get(phone.endpoint_id) if runtime is not None else None
                 current[phone.device_id] = {
                     **previous,

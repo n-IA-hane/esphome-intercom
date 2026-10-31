@@ -125,6 +125,38 @@ ownership stay with their existing owners. Closing a view releases its
 display listeners, and connection cleanup follows Home Assistant's
 subscription lifecycle.
 
+## Calls with ordinary SIP accounts
+
+An ESP phone can register as an ordinary SIP account and use the same call
+negotiation as other phones. SIP/SDP supplies its media capabilities; the
+ESPHome device entry is an optional management link for these calls.
+SIP OPTIONS can describe the peer's capabilities;
+the call's offer and answer select the actual media. An unknown peer can start
+with the local supported offer, so capability discovery remains optional.
+
+Directional peers can agree separate playback and microphone formats, including
+48 kHz receive and 16 kHz send at 10 ms. Registered ESP lines now discover a
+compatible peer through SIP and apply that directional profile to outgoing calls
+as well. Traditional peers retain their shared audio profile. G.711 and G.722
+support 10 and 20 ms packets, with the advertised packet-time limits retained
+independently for each direction. Calls, announcements and voicemail recordings
+share that media contract. Relayed calls adapt longer packets to the receiving
+leg's limit through the existing media pipeline, preserving the audio samples.
+
+UDP signaling reuses the registered flow for compatible outgoing dialogs,
+preserving reachability through NAT. TCP connections and busy-lamp subscriptions
+retire cleanly when their transport closes. An existing message-waiting
+subscription can finish its final unsubscribe after account deregistration.
+
+The browser keeps the selected phone after a failed start, ready for another
+Call. Adding or removing camera transmission preserves the audio owner, and
+Hangup releases the current media ports for immediate redial.
+
+The automated SIP, native-component and HA runtime gates cover these changes.
+Physical retests of the final directional outgoing firmware and mailbox updates
+remain part of the device qualification recorded in the
+[qualification matrix](voip_test_matrix.md).
+
 ## Interoperability and regression coverage
 
 The accompanying qualification tools exercise SIP BLF subscriptions through
@@ -162,6 +194,13 @@ the last successful image. P4 screenshots can be rotated independently of the
 display layout. Compression uses a persistent worker with bounded buffers, and
 HTTP readers keep a consistent image during downloads.
 
+The standalone component adds `preallocate_buffers: false` for on-demand image
+storage. The default remains preallocation. Each capture checks its complete
+temporary memory requirement; an admission error keeps the last JPEG and capture
+ID available. Resolution, quality and the configured memory pool stay explicit.
+The [memory guide](TESTING_AND_DEBUG.md#screenshot-admission-on-a-full-p4)
+shows the calculation for a measured FULL P4 workload.
+
 [Screenshot setup and Home Assistant example](ESP_SCREENSHOT.md)
 
 ### Receive JPEG video on an S3 display
@@ -197,6 +236,11 @@ Assistant route. Configure accounts in YAML or through native ESPHome actions,
 select the outgoing line and keep runtime changes temporary or save them
 explicitly. UDP/TCP, Digest authentication and automatic binding renewal share
 the existing signaling worker.
+
+Registered accounts use ordinary SIP OPTIONS keepalive on their existing flow.
+`registration.keepalive_interval` defaults to `15s`; set it to `0` to disable
+the periodic requests. Binding renewal follows the PBX's accepted expiry, and
+peer discovery can learn directional media support through the same SIP path.
 
 SIP MWI reports mailbox waiting status and counts to YAML triggers and
 conditions, for both VoIP Stack HA and other registered PBX accounts.

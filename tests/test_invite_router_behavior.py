@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -15,6 +16,38 @@ from custom_components.voip_stack.sip_listener import SipInvite
 
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("signaling_transport", ["UDP", "TCP"])
+@pytest.mark.parametrize("matching_port", [False, True])
+async def test_local_application_caller_requires_owned_signaling_tuple(
+    monkeypatch, signaling_transport, matching_port,
+):
+    from custom_components.voip_stack import voicemail
+    from custom_components.voip_stack.sip_listener import SipInviteResult
+
+    _patch_route_prefix(monkeypatch)
+    runtime = _runtime()
+    runtime.inbound_route_decision.return_value = RouteDecision(RouteAction.VOICEMAIL, target="*97")
+    invite = replace(_invite(), source_host="127.0.0.1", source_port=32123,
+                     signaling_transport=signaling_transport)
+    owner = SimpleNamespace(get_extra_info=lambda name: (
+        "127.0.0.1", 32123 if matching_port else 32124
+    ) if name == "sockname" else None)
+    client = SimpleNamespace(transport=owner if signaling_transport == "UDP" else None,
+                             writer=owner if signaling_transport == "TCP" else None)
+    session = SimpleNamespace(metadata={"source_endpoint_id": "browser:desk"})
+    registry = SimpleNamespace(component=lambda _: None, artifact_items=lambda _: iter(()),
+                               sip_client_for=lambda _: client, get_session=lambda _: session)
+    monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
+    route = AsyncMock(return_value=SipInviteResult(200, "OK"))
+    monkeypatch.setattr(voicemail, "route_voicemail_call", route)
+
+    result = await invite_router.route_invite(runtime, invite)
+
+    assert result.status == 200
+    routed = route.call_args.args[1]
+    assert routed.identified_source_endpoint_id == ("browser:desk" if matching_port else "")
 
 
 def _invite() -> SipInvite:
@@ -54,7 +87,7 @@ def _runtime() -> invite_router.InviteRuntime:
         build_peer_snapshot=AsyncMock(return_value=[]),
         browser_leg_for_member=Mock(),
         defer_invite_to_softphone=Mock(),
-        enable_reused_sip_tcp_connection=Mock(),
+        enable_reused_signaling_flow=Mock(),
         on_conference_inbound_timeout=Mock(),
         ring_conference_members=Mock(),
         run_ring_group_call=Mock(),

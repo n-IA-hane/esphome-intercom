@@ -119,9 +119,10 @@ def analyze_pcap(path: Path, *, pcm_dir: Path | None = None) -> list[dict[str, A
     tshark = shutil.which("tshark")
     if not tshark:
         raise RuntimeError("tshark is required for RTP PCAP evidence")
-    command = [tshark, "-r", str(path), "-Y", "rtp", "-T", "fields"]
+    command = [tshark, "-r", str(path), "-Y", "rtp and not icmp and not icmpv6", "-T", "fields"]
     for field in FIELDS:
         command.extend(("-e", field))
+    command.extend(("-e", "udp.length", "-e", "udp.payload"))
     result = subprocess.run(
         command,
         check=True,
@@ -129,7 +130,20 @@ def analyze_pcap(path: Path, *, pcm_dir: Path | None = None) -> list[dict[str, A
         stderr=subprocess.PIPE,
         text=True,
     )
-    streams = analyze_rows(result.stdout.splitlines(), with_records=True)
+    rows, empty_packets = [], Counter()
+    for raw in result.stdout.splitlines():
+        columns = raw.split("\t")
+        if len(columns) == len(FIELDS) + 2:
+            # A complete, minimal RTP header and UDP length prove zero wire
+            # payload. An absent dissected payload alone could be truncation.
+            packet = columns[-1].replace(":", "").lower()
+            if columns[-2] == "20" and len(packet) == 24 and packet.startswith("80") and not columns[9]:
+                key = list(columns[1:7])
+                key[4] = key[4].lower()
+                empty_packets[tuple(key)] += 1
+            columns = columns[:len(FIELDS)]
+        rows.append("\t".join(columns))
+    streams = analyze_rows(rows, with_records=True)
     formats = _sdp_media_formats(tshark, path)
     audio_flows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for stream in streams:
@@ -159,6 +173,18 @@ def analyze_pcap(path: Path, *, pcm_dir: Path | None = None) -> list[dict[str, A
         audio_flows.setdefault((stream["source"], stream["destination"], stream["ssrc"]), []).append(stream)
     for group in audio_flows.values():
         _audio_continuity(group, pcm_dir)
+    known_tuples = {(stream["source"], stream["destination"]) for stream in streams
+        if stream.get("media_type") in {"audio", "video"} and any(record[3] for record in stream["_records"])}
+    for stream in streams:
+        if stream.get("media_type") != "unknown" or (stream["source"], stream["destination"]) not in known_tuples:
+            continue
+        key = tuple(stream["source"].rsplit(":", 1) + stream["destination"].rsplit(":", 1)
+            + [stream["ssrc"], str(stream["payload_type"])])
+        count = empty_packets[key]
+        if count:
+            stream["rtp_keepalive_packets"] = count
+            if count == stream["packets"]:
+                stream["media_type"] = "rtp-keepalive"
     for stream in streams:
         stream.pop("_records", None)
         stream.pop("_format", None)
@@ -290,7 +316,7 @@ def evaluate_streams(
 
     failures = []
     media_flows = {(s["source"], s["destination"], s.get("ssrc")) for s in streams
-                   if s.get("media_type") not in {"telephone-event", "unknown"}}
+                   if s.get("media_type") not in {"telephone-event", "unknown", "rtp-keepalive"}}
     if len(media_flows) < require_streams:
         failures.append(f"expected at least {require_streams} RTP streams")
     for stream in streams:
@@ -298,7 +324,7 @@ def evaluate_streams(
         if media_type == "unknown":
             failures.append(f"{stream['source']}->{stream['destination']} RTP payload absent from receiver SDP")
             continue
-        if media_type == "telephone-event" or stream.get("audio_timeline_follower"):
+        if media_type in {"telephone-event", "rtp-keepalive"} or stream.get("audio_timeline_follower"):
             continue
         if media_type == "audio" and "audio_missing_packets" in stream:
             if stream["audio_missing_packets"] is None:
@@ -440,6 +466,7 @@ def main() -> int:
         "status": "failed" if failures else "passed",
         "pcap_sha256": _sha256(args.pcap),
         "streams": streams,
+        "rtp_keepalive_packets": sum(stream.get("rtp_keepalive_packets", 0) for stream in streams),
         "failures": failures,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

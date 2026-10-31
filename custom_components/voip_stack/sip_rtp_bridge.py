@@ -71,13 +71,21 @@ def _audio_payload_relay_compatible(
     incoming: RtpPcmFormat,
     outgoing: RtpPcmFormat,
 ) -> bool:
-    """Return whether compressed payload bytes may cross unchanged."""
+    """Return whether the incoming payload envelope may cross unchanged."""
 
     return bool(
         incoming.encoding.upper() == outgoing.encoding.upper()
         and incoming.sample_rate == outgoing.sample_rate
         and incoming.channels == outgoing.channels
         and incoming.frame_ms == outgoing.frame_ms
+        and incoming.min_frame_ms >= outgoing.min_frame_ms
+        and max(incoming.frame_ms, incoming.max_frame_ms) <= max(outgoing.frame_ms, outgoing.max_frame_ms)
+        # Fixed-rate payloads have a known envelope. Longer legal input must
+        # use the existing decoder/reframer when it exceeds the RTP builder.
+        # Opus bytes vary independently of duration; compatible Opus retains
+        # its encoded relay path and its existing fmtp constraints.
+        and (incoming.encoding.upper() == "OPUS"
+             or rtp.audio_payload_size_limit(incoming) <= rtp.MAX_RTP_PAYLOAD_BYTES)
         and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
     )
 

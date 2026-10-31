@@ -41,6 +41,14 @@ partition layouts.
 
 ## 2026.11.1 preview: standard ESP phone services
 
+Development package installs now keep their owned component sources and media
+assets on `dev`, including when a device package is included directly without
+top-level source overrides. Explicit component pins remain available for custom
+configurations. The maintained source resolver applies a selected remote ref to
+both entrypoints and tracked package defaults; automatic operations preserve
+private overlays. The separately maintained camera source keeps its upstream
+`main` reference. Existing stable `main` packages retain their stable references.
+
 Maintained telephone packages now enable automatic HA registration. Home
 Assistant creates the account/password and delivers them through the existing
 ESPHome API. Preserve `api.custom_services: true` and use coordinated `dev`

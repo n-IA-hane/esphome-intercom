@@ -33,7 +33,6 @@ from .endpoint_routing import (
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
     sip_target_has_unspecified_audio,
-    supports_directional_audio_payloads,
 )
 from .fsm import (
     CallState,
@@ -63,7 +62,7 @@ from .core.sip import parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 from .sip_runtime import (
-    enable_reused_tcp_connection,
+    enable_reused_signaling_flow,
     send_final_response,
     uri_transport,
 )
@@ -522,9 +521,7 @@ async def async_route_trunk_invite(
             else None
         ),
         include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
-        allow_directional_audio_payloads=supports_directional_audio_payloads(
-            peer_target, decision.entry
-        ),
+        allow_directional_audio_payloads=True,
         signaling_transport=uri_transport(bridge_uri),
         peer_user_agent=str(
             (
@@ -559,7 +556,7 @@ async def async_route_trunk_invite(
     )
     from .sip_runtime import configure_local_contact
     configure_local_contact(hass, client)
-    enable_reused_tcp_connection(
+    enable_reused_signaling_flow(
         hass,
         client,
         bridge_uri,

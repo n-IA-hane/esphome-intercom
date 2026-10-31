@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from ipaddress import ip_address
+import socket
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -182,7 +184,7 @@ def uri_transport(uri) -> str:
     return "TLS" if str(getattr(uri, "scheme", "sip")).lower() == "sips" else "UDP"
 
 
-def enable_reused_tcp_connection(
+def enable_reused_signaling_flow(
     hass: HomeAssistant,
     client,
     uri,
@@ -190,7 +192,7 @@ def enable_reused_tcp_connection(
     target: str,
     default_sip_port: int,
 ) -> bool:
-    """Use the REGISTER TCP connection when a client Contact points at it.
+    """Borrow the local UDP listener or the client's registered TCP flow.
 
     A registered endpoint behind NAT commonly advertises an unreachable
     Contact.  The registrar therefore normalizes TCP contacts to the observed
@@ -198,41 +200,58 @@ def enable_reused_tcp_connection(
     connection is valid for an ordinary URI, but is the main interoperability
     clue when a registered door station never sees HA's outbound INVITE.
     """
-    if uri_transport(uri).upper() != "TCP":
+    transport = uri_transport(uri).upper()
+    if transport not in {"UDP", "TCP"}:
         return False
     endpoint = sip_endpoint_manager(hass)
-    tcp_server = getattr(endpoint, "tcp_server", None)
-    if tcp_server is None:
+    server = (getattr(getattr(endpoint, "udp_server", None), "endpoint", None)
+              if transport == "UDP" else getattr(endpoint, "tcp_server", None))
+    if server is None:
         _LOGGER.debug(
-            "SIP TCP flow reuse unavailable for %s: listener is not running",
+            "SIP %s flow reuse unavailable for %s: listener is not running",
+            transport,
             target,
         )
         return False
+    if transport == "UDP":
+        try:
+            address = ip_address(uri.host)
+        except ValueError:
+            # A borrowed connection has an already selected remote tuple.
+            # Leave unresolved URIs with the client's RFC3263 resolver.
+            return False
+        sock = server.transport.get_extra_info("socket") if server.transport is not None else None
+        if sock is None or (address.version == 6 and sock.family != socket.AF_INET6):
+            return False
     remote_addr = (uri.host, int(uri.port or default_sip_port))
-    reuse = tcp_server.open_reused_dialog(remote_addr, client.dialog_ids.call_id)
+    reuse = server.open_reused_dialog(remote_addr, client.dialog_ids.call_id)
     if reuse is None:
         _LOGGER.debug(
-            "SIP TCP flow reuse unavailable for %s: no live registered flow "
+            "SIP %s flow reuse unavailable for %s: no live flow "
             "at %s:%s; the client may open a new connection",
+            transport,
             target,
             remote_addr[0],
             remote_addr[1],
         )
         return False
     send, responses = reuse
-    client.use_reused_tcp_connection(
+    client.use_reused_signaling_flow(
         send=send,
         responses=responses,
         close=lambda addr=remote_addr, call_id=client.dialog_ids.call_id: (
-            tcp_server.close_reused_dialog(addr, call_id)
+            server.close_reused_dialog(addr, call_id)
         ),
     )
-    bind_usage = getattr(tcp_server, "bind_reused_usage", None)
+    if transport == "UDP":
+        client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])
+    bind_usage = getattr(server, "bind_reused_usage", None)
     if bind_usage is not None:
         call_id = client.dialog_ids.call_id
         client.bind_signaling_usage = lambda usage_id: bind_usage(remote_addr, call_id, usage_id)
     _LOGGER.info(
-        "SIP TCP connection reuse enabled for %s via %s:%s",
+        "SIP %s flow reuse enabled for %s via %s:%s",
+        transport,
         target,
         remote_addr[0],
         remote_addr[1],

@@ -26,7 +26,7 @@ from .pbx_routing import roster_entry_for_target
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .phonebook_runtime import registered_roster_entries
 from .runtime_data import require_runtime_data
-from .sip_runtime import enable_reused_tcp_connection, uri_transport
+from .sip_runtime import enable_reused_signaling_flow, uri_transport
 from .trunk_policy import is_trunk_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
 
@@ -127,7 +127,7 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
     dialer = EndpointDialer(
         hass=hass, local_ip=local_ip, config=runtime.transport_config,
         route_resolver=resolver, sip_uri_transport=uri_transport,
-        enable_reused_tcp_connection=enable_reused_tcp_connection,
+        enable_reused_signaling_flow=enable_reused_signaling_flow,
     )
     def prepare(target):
         if dialer.browser_leg_for_member(target, peers, entries) is not None:

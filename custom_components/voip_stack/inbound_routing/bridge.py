@@ -37,7 +37,6 @@ from ..endpoint_routing import (
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
     sip_target_has_unspecified_audio,
-    supports_directional_audio_payloads,
 )
 from ..fsm import (
     CallState,
@@ -83,7 +82,7 @@ class BridgeRuntime(Protocol):
     config: dict[str, Any]
     local_ip: str
     ha_peer_name: Callable[..., str]
-    enable_reused_sip_tcp_connection: Callable[..., Any]
+    enable_reused_signaling_flow: Callable[..., Any]
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
     terminate_sip_bridge: Callable[..., Any]
@@ -213,10 +212,8 @@ async def route_sip_bridge(
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
-    directional_audio = supports_directional_audio_payloads(peer_target, decision.entry)
-    use_generic_audio_profile = bridge_to_trunk or (
-        bridge_to_softphone and rtp_audio_profile is None and not directional_audio
-    )
+    directional_audio = not bridge_to_trunk
+    use_generic_audio_profile = bridge_to_trunk
     if use_generic_audio_profile:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
@@ -354,7 +351,7 @@ async def route_sip_bridge(
     else:
         from ..sip_runtime import configure_local_contact
         configure_local_contact(hass, client)
-        runtime.enable_reused_sip_tcp_connection(
+        runtime.enable_reused_signaling_flow(
             hass,
             client,
             decision_uri,
@@ -423,6 +420,15 @@ async def route_sip_bridge(
                 decline_reason=TerminalReason.BUSY.value,
             )
 
+    call_generation = registry.current_generation(invite.call_id)
+    if call_generation is None:
+        await async_close_client_and_release(client, bridge_ports)
+        if video_relay is not None:
+            await video_relay.stop()
+        return SipInviteResult(487, "Request Terminated", to_tag="")
+    registry.attach_sip_client(invite.call_id, client.dialog_ids.call_id, client,
+        state=CallState.CALLING.value,
+        trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
     try:
         result = await client.invite(
             target=decision_uri.user,
@@ -649,6 +655,7 @@ async def route_sip_bridge(
         origin="trunk" if trunk_invite else "extension",
         source_state=CallState.CONNECTING.value,
         dest_state=result,
+        expected_generation=call_generation,
     )
     if session is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")

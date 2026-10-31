@@ -449,3 +449,135 @@ def test_activity_lists_leave_call_buttons_unchanged(width, ringing, tmp_path):
             assert page.evaluate("controls()") == before
         finally:
             browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_probe_outbound_uses_visible_controls_and_trusted_input():
+    from tools.sip_video_browser_probe import start_outbound
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content("<voip-stack-card></voip-stack-card>")
+            page.evaluate("""() => {
+                const card=document.querySelector('voip-stack-card');
+                card.style.display='block';card.config={mode:'ha_softphone'};
+                const root=card.attachShadow({mode:'open'});
+                root.innerHTML=`<button aria-controls="voip-settings-panel" aria-expanded="false">Options</button>
+                    <button aria-controls="voip-keypad-panel">Keypad</button>
+                    <input class="keypad-input" hidden>
+                    <button class="voip-button call">Call</button>`;
+                window.probeEvents=[];
+                const input=root.querySelector('input');
+                root.querySelector('[aria-controls="voip-keypad-panel"]').onclick=event=>{
+                    probeEvents.push({type:'keypad',trusted:event.isTrusted});input.hidden=false;
+                };
+                input.oninput=event=>probeEvents.push({type:'input',trusted:event.isTrusted,value:input.value});
+                root.querySelector('.call').onclick=event=>probeEvents.push({type:'call',trusted:event.isTrusted,value:input.value});
+                for(const key of ['_softphoneKeypadOpen','_softphoneManualTarget'])
+                    Object.defineProperty(card,key,{set(){throw new Error('private state bypass');}});
+                card._startCall=()=>{throw new Error('private call bypass');};
+            }""")
+            assert start_outbound(page, "Registered receiver")
+            assert page.evaluate("probeEvents") == [
+                {"type": "keypad", "trusted": True},
+                {"type": "input", "trusted": True, "value": "Registered receiver"},
+                {"type": "call", "trusted": True, "value": "Registered receiver"},
+            ]
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_probe_reads_native_audio_clock_without_resuming_or_replacing_context():
+    from tools.sip_video_browser_probe import AUDIO_CLOCK_SAMPLE
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
+            args=["--autoplay-policy=no-user-gesture-required", "--mute-audio"])
+        try:
+            page = browser.new_page()
+            cdp = page.context.new_cdp_session(page)
+            contexts = []
+            cdp.on("WebAudio.contextCreated", lambda event: contexts.append(event["context"]))
+            cdp.send("WebAudio.enable")
+            page.evaluate("""async()=>{
+                window.clockContext=new AudioContext({sampleRate:48000});
+                window.__voipStackEngine={_audioContext:clockContext};
+                await clockContext.resume();
+            }""")
+            page.wait_for_function("clockContext.currentTime>0")
+            running = page.evaluate(AUDIO_CLOCK_SAMPLE)
+            assert running["active"]["state"] == "running"
+            assert running["active"]["sample_rate"] == 48000
+            assert running["wall_epoch_ms"] > 0 and running["wall_monotonic_ms"] >= 0
+            assert contexts and contexts[0]["sampleRate"] == 48000
+            native = cdp.send("WebAudio.getRealtimeData", {"contextId": contexts[0]["contextId"]})
+            assert native["realtimeData"]["currentTime"] >= 0
+            page.evaluate("clockContext.suspend()")
+            before = page.evaluate("clockContext.currentTime")
+            suspended = page.evaluate(AUDIO_CLOCK_SAMPLE)
+            assert suspended["active"]["state"] == "suspended"
+            assert suspended["active"]["current_time"] == before
+            assert page.evaluate("clockContext===__voipStackEngine._audioContext")
+            assert page.evaluate("clockContext.state") == "suspended"
+            page.evaluate("clockContext.close()")
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.parametrize("direction", ["sendonly", "sendrecv"])
+def test_camera_cycle_sends_trusted_ui_intents_only_after_connection(direction):
+    from tools.sip_video_browser_probe import camera_toggle_cycle, set_camera_send
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content("<voip-stack-card></voip-stack-card>")
+            page.evaluate("""()=>{
+                const card=document.querySelector('voip-stack-card');
+                card.style.display='block';card.config={mode:'ha_softphone'};
+                const root=card.attachShadow({mode:'open'});
+                root.innerHTML=`<button aria-controls="voip-settings-panel" aria-expanded="false">Options</button>
+                    <div hidden><input id="ha-softphone-video-camera-cb" type="checkbox"></div>`;
+                const button=root.querySelector('button'),panel=root.querySelector('div');
+                button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));};
+                window.intentWire=[];window.dialog='calling';
+                root.querySelector('input').onchange=event=>intentWire.push({
+                    type:'set_send_video',enabled:event.target.checked,state:dialog,trusted:event.isTrusted,
+                });
+                card._toggleVideoCamera=()=>{throw new Error('private camera bypass');};
+            }""")
+            def wait_phase(label, enabled, previous):
+                if enabled is None:
+                    assert page.evaluate("intentWire") == []
+                    page.evaluate("dialog='in_call';intentWire.push({type:'connected'})")
+                else:
+                    assert previous["backend_state"]["state"] == "in_call"
+                    assert page.evaluate("intentWire.at(-1)") == {
+                        "type": "set_send_video", "enabled": enabled,
+                        "state": "in_call", "trusted": True,
+                    }
+                return {"backend_state": {"state": "in_call", "call_id": "dialog-one",
+                    "video_direction": ("recvonly" if direction == "sendrecv" else "inactive")
+                        if not enabled else direction}}
+            phases = camera_toggle_cycle(lambda enabled: set_camera_send(page, enabled), wait_phase,
+                expected_call_id="dialog-one", direction=direction)
+            assert len(phases) == 4
+            assert page.evaluate("intentWire.map(item=>item.type)") == [
+                "connected", "set_send_video", "set_send_video", "set_send_video",
+            ]
+            assert page.evaluate("intentWire.slice(1).map(item=>item.enabled)") == [True, False, True]
+            attempts = []
+            with pytest.raises(RuntimeError, match="established SIP dialog"):
+                camera_toggle_cycle(lambda enabled: attempts.append(enabled),
+                    lambda *_args: {"backend_state": {"state": "calling", "call_id": "not-connected"}})
+            assert not attempts
+        finally:
+            browser.close()

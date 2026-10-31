@@ -27,6 +27,7 @@ def _frame_to_s16le(frame) -> bytes:
 class G722Decoder:
     """Decode one negotiated G.722 RTP stream to 16 kHz mono PCM."""
 
+    frame_ms: int = G722_FRAME_MS
     _av: object = field(init=False, repr=False)
     _ctx: object = field(init=False, repr=False)
 
@@ -44,7 +45,7 @@ class G722Decoder:
             G722_PCM_SAMPLE_RATE,
             PcmFormat.S16LE,
             G722_CHANNELS,
-            G722_FRAME_MS,
+            self.frame_ms,
         )
 
     def decode(self, payload: bytes) -> bytes:
@@ -57,6 +58,7 @@ class G722Encoder:
     """Encode 16 kHz mono PCM as one stateful G.722 RTP payload."""
 
     bit_rate: int = 64000
+    frame_ms: int = G722_FRAME_MS
     _av: object = field(init=False, repr=False)
     _ctx: object = field(init=False, repr=False)
 
@@ -71,6 +73,9 @@ class G722Encoder:
         self._ctx.layout = "mono"
         self._ctx.format = "s16"
         self._ctx.bit_rate = int(self.bit_rate)
+        # FFmpeg's 320-sample default is 20ms, not a G.722 restriction.
+        # Its frame_size option accepts the negotiated PCM sample quantum.
+        self._ctx.options = {"frame_size": str(self.audio_format.nominal_frame_samples)}
         self._ctx.open()
 
     @property
@@ -79,7 +84,7 @@ class G722Encoder:
             G722_PCM_SAMPLE_RATE,
             PcmFormat.S16LE,
             G722_CHANNELS,
-            G722_FRAME_MS,
+            self.frame_ms,
         )
 
     def encode(self, pcm: bytes) -> bytes:

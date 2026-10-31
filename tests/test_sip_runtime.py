@@ -61,7 +61,7 @@ runtime_data.sip_trunks = lambda hass: {"": runtime_data.sip_trunk(hass)} if run
 sys.modules[runtime_data.__name__] = runtime_data
 sys.modules.pop(f"{PKG_NAME}.sip_runtime", None)
 sip_runtime = _load_module("sip_runtime")
-enable_reused_tcp_connection = sip_runtime.enable_reused_tcp_connection
+enable_reused_signaling_flow = sip_runtime.enable_reused_signaling_flow
 send_bye = sip_runtime.send_bye
 send_final_response = sip_runtime.send_final_response
 sip_servers = sip_runtime.sip_servers
@@ -351,7 +351,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         client = SimpleNamespace(
             dialog_ids=SimpleNamespace(call_id="call-2"),
-            use_reused_tcp_connection=lambda **kwargs: setattr(
+            use_reused_signaling_flow=lambda **kwargs: setattr(
                 client,
                 "reused",
                 kwargs,
@@ -364,7 +364,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(
-            enable_reused_tcp_connection(
+            enable_reused_signaling_flow(
                 hass,
                 client,
                 uri,
@@ -384,7 +384,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         uri = SimpleNamespace(host="192.0.2.11", port=None, params=())
 
         self.assertFalse(
-            enable_reused_tcp_connection(
+            enable_reused_signaling_flow(
                 hass,
                 client,
                 uri,
@@ -392,6 +392,18 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 default_sip_port=5060,
             )
         )
+
+    def test_unresolved_udp_uri_keeps_the_client_dns_resolver(self) -> None:
+        class UdpEndpoint:
+            def open_reused_dialog(self, *_args):
+                raise AssertionError("An unresolved URI is not a selected signaling flow")
+
+        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": SimpleNamespace(
+            udp_server=SimpleNamespace(endpoint=UdpEndpoint()))}})
+        client = SimpleNamespace(dialog_ids=SimpleNamespace(call_id="dns-call"))
+        uri = SimpleNamespace(host="peer.example.invalid", port=None, params=())
+        self.assertFalse(enable_reused_signaling_flow(hass, client, uri,
+            target="Peer", default_sip_port=5060))
 
 
 if __name__ == "__main__":

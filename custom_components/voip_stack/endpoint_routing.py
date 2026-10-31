@@ -131,7 +131,7 @@ def _assign_capability_payloads(
 def sip_target_has_unspecified_audio(
     peer: Peer | None, entry, device: dict | None = None
 ) -> bool:
-    """Unregistered SIP targets need negotiation, not an implicit PCM-only policy."""
+    """Unknown SIP targets need negotiation, not an implicit PCM-only policy."""
     metadata = dict(getattr(entry, "metadata", None) or {})
     info = dict(device or (peer.device if peer is not None else None) or {})
     kind = str(
@@ -140,7 +140,7 @@ def sip_target_has_unspecified_audio(
         or info.get("endpoint_kind")
         or ""
     )
-    if kind in {"esphome", "browser", "assist"}:
+    if kind in {"browser", "assist"}:
         return False
     return not any(
         _rtp_capability_tokens(peer, entry, direction, device)
@@ -369,6 +369,8 @@ def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
 
     metadata = (getattr(entry, "metadata", None) or {}) if entry is not None else {}
     device = (peer.device or {}) if peer is not None else {}
+    if metadata.get("sip_capabilities_known") is False:
+        return None
     value = str(
         device.get("sip_video_codec")
         or metadata.get("sip_video_codec")
@@ -376,12 +378,8 @@ def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
     ).strip().casefold()
     if value in {"h264", "jpeg"}:
         return value
-
-    endpoint_kind = str(
-        (getattr(peer, "endpoint_kind", "") if peer is not None else "")
-        or metadata.get("endpoint_kind")
-        or ""
-    ).strip().casefold()
+    if metadata.get("sip_capabilities_known") is True:
+        return ""
     capabilities = {
         str(item).strip().casefold()
         for item in (
@@ -391,7 +389,7 @@ def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
         )
         if str(item).strip()
     }
-    if endpoint_kind == "esphome" or capabilities:
+    if capabilities:
         return "" if "video" not in capabilities else None
     return None
 
@@ -449,6 +447,10 @@ def sip_target_audio_profile(
     """Constrain HA SIP offers to formats that can actually work with target."""
     remote_tx = list(remote_tx_formats or [])
     remote_rx = list(remote_rx_formats or [])
+    # No remote description is an invitation to negotiate our local formats,
+    # not evidence that the peer only supports one packet time or codec.
+    if not remote_tx and not remote_rx:
+        return list(HA_SIP_PCM_TX_FORMATS), list(HA_SIP_PCM_RX_FORMATS)
     send_candidates = (
         [fmt for fmt in HA_SIP_PCM_TX_FORMATS if fmt in set(remote_rx)]
         if remote_rx else list(HA_SIP_PCM_TX_FORMATS)

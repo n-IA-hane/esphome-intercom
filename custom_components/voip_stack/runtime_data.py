@@ -98,7 +98,6 @@ class VoipStackRuntime:
     directory: Any | None = None
     ldap_server: Any | None = None
     imap_server: Any | None = None
-    peer_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
     capability_probes: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
     phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)

@@ -82,7 +82,7 @@ class InviteRuntime:
     build_peer_snapshot: Callable[..., Any]
     browser_leg_for_member: Callable[..., Any]
     defer_invite_to_softphone: Callable[..., None]
-    enable_reused_sip_tcp_connection: Callable[..., Any]
+    enable_reused_signaling_flow: Callable[..., Any]
     on_conference_inbound_timeout: Callable[..., Any]
     ring_conference_members: Callable[..., Any]
     run_ring_group_call: Callable[..., Any]
@@ -245,7 +245,7 @@ async def route_invite(
     local_client = registry.sip_client_for(invite.call_id)
     local_session = registry.get_session(invite.call_id)
     if local_client is not None and local_session is not None and invite.source_host in {local_ip, "127.0.0.1", "::1"}:
-        transport = getattr(local_client, "transport", None)
+        transport = getattr(local_client, "writer" if invite.signaling_transport == "TCP" else "transport", None)
         address = transport.get_extra_info("sockname") if transport is not None else None
         if address and int(address[1]) == invite.source_port:
             identified_source = str(local_session.metadata.get("source_endpoint_id") or "")

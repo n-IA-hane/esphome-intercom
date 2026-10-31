@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 import time
 
 from homeassistant.core import HomeAssistant
@@ -9,6 +11,7 @@ import pytest
 
 from custom_components.voip_stack.const import EVENT_SIP_MESSAGE, EVENT_SIP_PRESENCE
 from custom_components.voip_stack.core import sip
+from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.sip_application import SipApplicationMethods
 from custom_components.voip_stack.sip_registrar import (
     SipAccount,
@@ -18,6 +21,156 @@ from custom_components.voip_stack.sip_registrar import (
 
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registration_order", [("alice", "bob"), ("bob", "alice")])
+async def test_two_authenticated_accounts_share_udp_flow_and_keep_subscription_identity(
+    trunks, socket_enabled, registration_order,
+):
+    """Two account identities use one ordinary UDP client socket."""
+    from .test_refer_correlation import Peer
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+
+    lab = trunks
+    registrar = lab.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([SipAccount(name, name.title(), "shared-flow-test-only")
+                               for name in ("alice", "bob")])
+    for name in ("alice", "bob"):
+        lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="shared-" + name,
+            name=name.title(), username=name, kind=EndpointKind.SIP_ACCOUNT, availability="available"))
+    manager = lab.calls.component("udp_listener")
+    transport, peer = await asyncio.get_running_loop().create_datagram_endpoint(
+        Peer, local_addr=("127.0.0.1", 0))
+    address = transport.get_extra_info("sockname")
+    target = ("127.0.0.1", manager.port)
+    notices = []
+    extra_transports = []
+
+    async def exchange(request, channel=transport, receiver=peer):
+        channel.sendto(sip.build_request(request.method, request.uri, request.headers, request.body), target)
+        async with asyncio.timeout(3):
+            while True:
+                message, sender = await receiver.receive()
+                if not message.is_response:
+                    if message.method == "NOTIFY":
+                        notices.append(message)
+                    receiver.answer(message, sender, 200)
+                elif (message.header("Call-ID") == request.header("Call-ID")
+                      and message.header("CSeq") == request.header("CSeq")):
+                    return message
+
+    async def register(name, *, expires=300, sequence=1):
+        uri = f"sip:127.0.0.1:{manager.port}"
+        headers = [("Via", f"SIP/2.0/UDP {address[0]}:{address[1]};branch=z9hG4bK-shared-{name}-{sequence}"),
+            ("From", f"<sip:{name}@localhost>;tag=register-{name}"),
+            ("To", f"<sip:{name}@localhost>"), ("Call-ID", "shared-register-" + name),
+            ("CSeq", f"{sequence} REGISTER"), ("Contact", f"<sip:{name}@{address[0]}:{address[1]}>"),
+            ("Expires", str(expires))]
+        request = sip.parse_message(sip.build_request("REGISTER", uri, headers))
+        challenge = await exchange(request)
+        assert challenge.status_code == 401
+        auth = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+            username=name, password="shared-flow-test-only", method="REGISTER", uri=uri)
+        authenticated = replace(request, headers=(*request.headers, ("Authorization", auth)))
+        response = await exchange(authenticated)
+        assert response.status_code == 200
+
+    try:
+        for name in registration_order:
+            await register(name)
+        bindings = list(registrar.registrations.values())
+        assert {item.username for item in bindings} == {"alice", "bob"}
+        assert {(item.source_host, item.source_port, item.transport) for item in bindings} == {
+            (address[0], address[1], "UDP")}
+        assert registrar.account_for_source(address, "UDP") is None
+        assert registrar.account_for_source(address, "TCP", username="alice") is None
+        statuses = {}
+        usages = {}
+        for event in ("message-summary", "dialog"):
+            for name in ("alice", "bob"):
+                headers = [("Via", f"SIP/2.0/UDP {address[0]}:{address[1]};branch=z9hG4bK-sub-{event}-{name}"),
+                    ("From", f"<sip:{name}@localhost>;tag=subscribe-{name}"),
+                    ("To", f"<sip:{name}@localhost>"),
+                    ("Contact", f"<sip:{name}@{address[0]}:{address[1]}>"),
+                    ("Call-ID", f"shared-{event}-{name}"), ("CSeq", "1 SUBSCRIBE"),
+                    ("Event", event), ("Expires", "300")]
+                request = sip.parse_message(sip.build_request("SUBSCRIBE",
+                    f"sip:{name}@127.0.0.1:{manager.port}", headers))
+                response = await exchange(request)
+                statuses[event, name] = response.status_code
+                usages[event, name] = request, response
+        assert statuses == {(event, name): 200 for event in ("message-summary", "dialog")
+                            for name in ("alice", "bob")}
+        application = lab.calls.component("sip_application")
+        assert {item.subscriber for item in application.subscriptions.values()} == {"alice", "bob"}
+        assert {(item.subscriber, item.mailbox_id) for item in application.subscriptions.values()
+                if item.event == "message-summary"} == {("alice", "shared-alice"), ("bob", "shared-bob")}
+
+        async def drain_until(predicate):
+            async with asyncio.timeout(3):
+                while not predicate():
+                    message, sender = await peer.receive()
+                    if not message.is_response:
+                        if message.method == "NOTIFY":
+                            notices.append(message)
+                        peer.answer(message, sender, 200)
+
+        def notice_key(message):
+            import re
+            return (message.header("Event"), re.search(r"<sip:([^@;>]+)", message.header("To"))[1])
+
+        await drain_until(lambda: {notice_key(item) for item in notices} >= set(usages))
+        assert {notice_key(item) for item in notices} == set(usages)
+        wrong_transport, wrong_peer = await asyncio.get_running_loop().create_datagram_endpoint(
+            Peer, local_addr=("127.0.0.1", 0))
+        extra_transports.append(wrong_transport)
+        original, _response = usages["message-summary", "alice"]
+        wrong_flow = replace(original, headers=tuple((key, value + "-wrong-flow"
+            if key in {"Via", "Call-ID"} else value) for key, value in original.headers))
+        assert (await exchange(wrong_flow, wrong_transport, wrong_peer)).status_code == 403
+        spoofed = replace(original, headers=tuple((key, value.replace("alice", "mallory"))
+                                                  for key, value in original.headers))
+        assert (await exchange(spoofed)).status_code == 403
+
+        await register("bob", expires=0, sequence=2)
+        assert registrar.registration_matches_source("alice", *address, "UDP")
+        assert not registrar.registration_matches_source("bob", *address, "UDP")
+        assert registrar.account_for_source(address, "UDP").username == "alice"
+        assert {(item.event, item.subscriber) for item in application.subscriptions.values()} == set(usages)
+        for event in ("message-summary", "dialog"):
+            initial, response = usages[event, "bob"]
+            closing = replace(initial, headers=tuple((key,
+                value + ";tag=" + response.header("To").split(";tag=", 1)[1] if key == "To" else
+                "2 SUBSCRIBE" if key == "CSeq" else "0" if key == "Expires" else
+                value + "-close" if key == "Via" else value)
+                for key, value in initial.headers))
+            wrong_close = replace(closing, headers=tuple((key, value + "-wrong-flow" if key == "Via"
+                                                         else "3 SUBSCRIBE" if key == "CSeq" else value)
+                                                         for key, value in closing.headers))
+            assert (await exchange(wrong_close, wrong_transport, wrong_peer)).status_code == 403
+            assert (await exchange(closing)).status_code == 200, (
+                event, closing.header("To"), [(item.event, item.subscriber, item.to_tag)
+                for item in application.subscriptions.values()])
+        await drain_until(lambda: {notice_key(item) for item in notices
+            if item.header("Subscription-State").startswith("terminated")} >= {
+                ("message-summary", "bob"), ("dialog", "bob")})
+        async with asyncio.timeout(3):
+            while application.notifiers:
+                await asyncio.sleep(0)
+        assert {item.subscriber for item in application.subscriptions.values()} == {"alice"}
+        registrar.update_accounts([replace(registrar.accounts["alice"], enabled=False), registrar.accounts["bob"]])
+        assert registrar.account_for_source(address, "UDP", username="alice") is None
+        initial = usages["message-summary", "alice"][0]
+        disabled = replace(initial, headers=tuple((key, value + "-disabled"
+            if key in {"Via", "Call-ID"} else value) for key, value in initial.headers))
+        assert (await exchange(disabled)).status_code == 403
+    finally:
+        await lab.calls.component("sip_application").stop()
+        for item in extra_transports:
+            item.close()
+        transport.close()
 
 
 def _request(*, content_type: str = "text/plain", body: bytes = b"hello"):
@@ -85,6 +238,160 @@ def _subscribe(*, target: str = "alice", expires: int = 300):
             ],
         )
     )
+
+
+@pytest.fixture
+async def deregistered_subscription(lab, request, socket_enabled):
+    from types import SimpleNamespace
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+
+    address = ("127.0.0.2", 5060)
+    wire_transport = None
+    peer = None
+    if getattr(request, "param", None) == "wire":
+        from .test_refer_correlation import Peer
+        wire_transport, peer = await asyncio.get_running_loop().create_datagram_endpoint(
+            Peer, local_addr=("127.0.0.1", 0))
+        address = wire_transport.get_extra_info("sockname")
+        request.addfinalizer(wire_transport.close)
+    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("alice", "Alice", "test-only")],
+                             local_ip="127.0.0.1", local_sip_port=5060)
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="unregister-alice", name="Alice",
+        username="alice", kind=EndpointKind.SIP_ACCOUNT, availability="available"))
+
+    async def registration(expires, sequence):
+        headers = [("Via", f"SIP/2.0/UDP {address[0]}:{address[1]};branch=z9hG4bKreg{sequence}"),
+            ("From", "<sip:alice@localhost>;tag=registration"), ("To", "<sip:alice@localhost>"),
+            ("Call-ID", "registration-usage"), ("CSeq", f"{sequence} REGISTER"),
+            ("Contact", f"<sip:alice@{address[0]}:{address[1]}>"), ("Expires", str(expires))]
+        request = sip.parse_message(sip.build_request("REGISTER", "sip:127.0.0.1", headers))
+        challenge = await registrar.handle_register(request, address, "UDP")
+        assert challenge.status == 401
+        authorization = build_digest_authorization(challenge_header=dict(challenge.headers)["WWW-Authenticate"],
+            username="alice", password="test-only", method="REGISTER", uri=request.uri)
+        authenticated = replace(request, headers=(*request.headers, ("Authorization", authorization)))
+        result = await registrar.handle_register(authenticated, address, "UDP")
+        assert result.status == 200
+
+    await registration(300, 1)
+    methods = SipApplicationMethods(lab.hass, registrar)
+    notifications = asyncio.Queue()
+
+    async def send(_request, _address, result):
+        notifications.put_nowait(result.follow_up)
+        return sip.SipMessage(status_code=200, reason="OK")
+
+    initial = _subscribe()
+    initial = replace(initial, headers=tuple((key, "message-summary" if key == "Event" else
+                                            f"<sip:alice@{address[0]}:{address[1]}>" if key == "Contact" else value)
+                                           for key, value in initial.headers))
+    try:
+        first = await methods.handle(initial, address, "UDP", send)
+        assert first.status == 200
+        first.follow_up_scheduler()
+        usage = next(iter(methods.subscriptions.values()))
+        worker = usage.notify_task
+        await asyncio.wait_for(notifications.get(), 1)
+        await asyncio.wait_for(worker, 1)
+        await registration(0, 2)
+        assert registrar.account_for_source(address, "UDP") is None
+        closing = replace(initial, headers=tuple(
+            (key, f"<sip:alice@localhost>;tag={first.to_tag}" if key == "To" else
+             "2 SUBSCRIBE" if key == "CSeq" else "0" if key == "Expires" else value)
+            for key, value in initial.headers))
+        yield SimpleNamespace(methods=methods, registrar=registrar, request=closing, address=address,
+                              send=send, notifications=notifications, usage=usage, peer=peer,
+                              wire_transport=wire_transport)
+    finally:
+        await methods.stop()
+
+
+async def test_existing_mwi_unsubscribe_survives_authenticated_unregister(deregistered_subscription):
+    fixture = deregistered_subscription
+    result = await fixture.methods.handle(fixture.request, fixture.address, "UDP", fixture.send)
+    assert result.status == 200
+    assert result.follow_up_dialog is fixture.usage.dialog
+    assert not fixture.methods.subscriptions and not fixture.methods.subscription_timers
+    result.follow_up_scheduler()
+    worker = fixture.usage.notify_task
+    terminal = await asyncio.wait_for(fixture.notifications.get(), 1)
+    assert dict(terminal.headers)["Subscription-State"].startswith("terminated")
+    await asyncio.wait_for(worker, 1)
+    assert not fixture.methods.notifiers
+
+
+@pytest.mark.parametrize("tamper", [
+    "from_tag", "to_tag", "call_id", "from_user", "target", "stale_cseq", "cseq_method",
+    "host", "port", "transport", "event", "event_id", "refresh", "new_usage", "disabled", "removed",
+])
+async def test_unregistered_subscription_close_requires_its_existing_authorized_usage(deregistered_subscription, tamper):
+    fixture = deregistered_subscription
+    changes = {
+        "from_tag": ("From", "<sip:alice@localhost>;tag=other"),
+        "to_tag": ("To", "<sip:alice@localhost>;tag=other"),
+        "call_id": ("Call-ID", "unknown-subscription"),
+        "from_user": ("From", "<sip:other@localhost>;tag=subscriber"),
+        "stale_cseq": ("CSeq", "1 SUBSCRIBE"), "cseq_method": ("CSeq", "2 NOTIFY"),
+        "event": ("Event", "presence"), "event_id": ("Event", "message-summary;id=other"),
+        "refresh": ("Expires", "300"), "new_usage": ("To", "<sip:alice@localhost>"),
+    }
+    request, address, transport = fixture.request, fixture.address, "UDP"
+    if tamper in changes:
+        name, value = changes[tamper]
+        request = replace(request, headers=tuple((key, value if key == name else item) for key, item in request.headers))
+    elif tamper == "target":
+        request = replace(request, uri="sip:other@localhost")
+    elif tamper == "host":
+        address = ("127.0.0.3", 5060)
+    elif tamper == "port":
+        address = ("127.0.0.2", 5062)
+    elif tamper == "transport":
+        transport = "TCP"
+    elif tamper == "disabled":
+        fixture.registrar.accounts["alice"] = replace(fixture.registrar.accounts["alice"], enabled=False)
+    elif tamper == "removed":
+        fixture.registrar.accounts.pop("alice")
+    result = await fixture.methods.handle(request, address, transport, fixture.send)
+    assert 400 <= result.status < 500
+    assert fixture.methods.subscriptions[fixture.usage.key] is fixture.usage
+    assert fixture.usage.dialog.remote_cseq == 1
+    assert fixture.notifications.empty() and not fixture.methods.notifiers
+
+
+@pytest.mark.parametrize("deregistered_subscription", ["wire"], indirect=True)
+async def test_duplicate_unregistered_udp_close_uses_existing_transaction_cache(deregistered_subscription):
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.sip_listener import SipUdpEndpoint
+
+    fixture = deregistered_subscription
+    endpoint = SipUdpEndpoint(local_ip="127.0.0.1", local_sip_port=0, local_rtp_port=41000,
+        supported_formats=[AudioFormat(16000, "s16le", 1, 20)], on_invite=lambda _: None,
+        on_request=fixture.methods.handle)
+    server, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        lambda: endpoint, local_addr=("127.0.0.1", 0))
+    headers = (*fixture.request.headers,
+        ("Via", f"SIP/2.0/UDP {fixture.address[0]}:{fixture.address[1]};branch=z9hG4bKclose;rport"))
+    raw = sip.build_request("SUBSCRIBE", fixture.request.uri, headers)
+    try:
+        fixture.wire_transport.sendto(raw, server.get_extra_info("sockname"))
+        received = [await fixture.peer.receive() for _ in range(2)]
+        first = next(message for message, _ in received if message.status_code == 200)
+        terminal, address = next((message, address) for message, address in received if message.method == "NOTIFY")
+        assert terminal.header("Subscription-State").startswith("terminated")
+        worker = fixture.usage.notify_task
+        fixture.wire_transport.sendto(sip.build_response(200, "OK", [
+            (name, terminal.header(name)) for name in ("Via", "From", "To", "Call-ID", "CSeq")]), address)
+        await asyncio.wait_for(worker, 1)
+        assert not fixture.methods.subscriptions
+        fixture.wire_transport.sendto(raw, server.get_extra_info("sockname"))
+        duplicate, _ = await fixture.peer.receive()
+        assert duplicate.status_code == 200
+        assert duplicate.header("To") == first.header("To")
+        assert duplicate.header("CSeq") == first.header("CSeq")
+        assert not fixture.methods.subscriptions
+    finally:
+        server.close()
+        await endpoint.wait_closed()
 
 
 @pytest.mark.asyncio

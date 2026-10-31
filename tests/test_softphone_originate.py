@@ -143,6 +143,7 @@ def softphone_originate(monkeypatch):
         },
         "endpoint_routing": {
             "ha_router_decision": Mock(),
+            "peer_video_codec": lambda peer, entry: (entry.metadata.get("sip_video_codec") or "") if entry is not None and entry.metadata.get("sip_capabilities_known") else None,
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
             "sip_target_audio_profile": Mock(return_value=([], [])),
@@ -209,7 +210,7 @@ def softphone_originate(monkeypatch):
             "service_browser_endpoint": Mock(return_value=("default", None)),
         },
         "sip_runtime": {
-            "enable_reused_tcp_connection": Mock(),
+            "enable_reused_signaling_flow": Mock(),
             "uri_transport": Mock(),
         },
         "softphone_commands": {"bind_service_call_controller": Mock()},
@@ -346,8 +347,8 @@ def test_registered_peer_offer_preserves_directional_profile(
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, "Panel", None))
     module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": False})
-    module._supports_directional_audio_payloads = Mock(return_value=directional)
-    defaults = [fmt for fmt in audio.HA_SIP_PCM_TX_FORMATS if fmt.frame_ms == 10]
+    module.sip_target_has_unspecified_audio = Mock(return_value=profile != "directional_explicit")
+    defaults = list(audio.HA_SIP_PCM_TX_FORMATS)
     module._sip_target_audio_profile = Mock(return_value=(defaults, defaults))
     if profile == "directional_explicit":
         send = media.RtpPcmFormat(96, "L16", 48000, 1, 10)
@@ -401,7 +402,7 @@ def test_registered_peer_offer_preserves_directional_profile(
             _call(hass, destination="Panel"), endpoint_id="caller", browser_endpoint=endpoint,
         ))
     parsed = media.offered_pcm_formats(captured["offer"])
-    assert {fmt.frame_ms for fmt in parsed} == ({10} if directional else {20})
+    assert {fmt.frame_ms for fmt in parsed} == {10}
     if profile == "directional_explicit":
         assert captured["supported_send_rtp_formats"] == (send,)
         assert captured["supported_recv_rtp_formats"] == (recv,)
@@ -410,7 +411,7 @@ def test_registered_peer_offer_preserves_directional_profile(
     elif directional:
         assert any(fmt.encoding == "L16" and fmt.sample_rate == 48000 for fmt in parsed)
     else:
-        assert captured["supported_send_formats"] == list(audio.HA_TRUNK_AUDIO_FORMATS)
+        assert captured["supported_send_formats"] == list(audio.HA_SIP_PCM_TX_FORMATS)
         assert any(fmt.encoding == "PCMA" for fmt in parsed)
         assert any(fmt.encoding == "PCMU" for fmt in parsed)
 
@@ -565,6 +566,9 @@ def test_outgoing_peer_video_offer_respects_camera_and_capabilities(
         supports=lambda capability: source_video if capability == 'video' else True,
     )
     metadata = {'sip_profile': profile, 'sip_video_codec': video_codec, 'registered': True}
+    metadata['sip_capabilities_known'] = True
+    if not peer_video:
+        metadata['sip_video_codec'] = ''
     if kind:
         metadata['endpoint_kind'] = kind
         metadata['endpoint_id'] = 'destination'

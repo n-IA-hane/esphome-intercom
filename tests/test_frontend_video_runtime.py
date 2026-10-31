@@ -78,9 +78,8 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert 'layout = flowing.get("layout") or {}' in source
     assert "Math.abs(Number(c.width || 0) - sw) <= 2" in source
     assert "!l.vertical_overflow" in source
-    start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
-    assert "Promise.resolve(card._startCall())" in start
-    assert "await card._startCall()" not in start
+    # Ordinary outbound controls are exercised with trusted browser events in
+    # test_frontend_card_browser_layout; this gate owns passive polling cost.
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")

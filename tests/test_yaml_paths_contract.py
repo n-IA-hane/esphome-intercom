@@ -1,4 +1,5 @@
 import os
+import json
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
@@ -106,6 +107,7 @@ def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> N
 def test_remote_check_follows_package_includes(tmp_path: Path) -> None:
     tool = _load_yaml_paths()
     tool.ROOT = tmp_path
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     (tmp_path / 'yamls').mkdir()
     (tmp_path / 'packages').mkdir()
     (tmp_path / 'yamls/device.yaml').write_text(
@@ -115,6 +117,7 @@ def test_remote_check_follows_package_includes(tmp_path: Path) -> None:
     (tmp_path / 'packages/voice.yaml').write_text(
         'packages:\n  controller: !include ../../undeclared-repository/controller.yaml\n'
     )
+    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/voice.yaml'], check=True)
     assert tool.check('remote', None) == 1
 
 
@@ -151,3 +154,68 @@ def test_camera_source_variable_is_owned_by_the_top_level_profile(tmp_path):
     config.write_text(text)
     tool.rewrite_camera(config, 'local')
     assert config.read_text() == text
+
+
+def test_tracked_public_package_defaults_are_online_and_coordinated():
+    tool = _load_yaml_paths()
+    version = json.loads((ROOT / 'custom_components/voip_stack/manifest.json').read_text())['version']
+    expected = 'dev' if version.endswith('-dev') else 'main'
+    wrong = {str(path.relative_to(ROOT)): refs for path in tool.tracked_package_files()
+             if (refs := tool.owned_remote_refs(path)) and set(refs) != {expected}}
+    assert not wrong, wrong
+
+
+def test_remote_default_rewrite_preserves_upstream_and_local_mode_inputs(tmp_path):
+    tool = _load_yaml_paths()
+    path = tmp_path / 'device.yaml'
+    path.write_text('substitutions:\n'
+        '  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main\n'
+        '  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/\n'
+        '  camera_components_source: github://Psix-anp/esphome-esp-video-camera@main\n'
+        '  playback_diagnostics_source: \'${ source | default("github://n-IA-hane/esphome-intercom@main") }\'\n')
+    tool.rewrite_remote_defaults(path, 'dev')
+    text = path.read_text()
+    assert set(tool.owned_remote_refs(path)) == {'dev'}
+    assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
+    tool.rewrite_remote_defaults(path, 'main')
+    assert set(tool.owned_remote_refs(path)) == {'main'}
+
+
+def test_package_selection_ignores_untracked_private_overlays(tmp_path):
+    tool = _load_yaml_paths()
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'packages').mkdir()
+    public = tmp_path / 'packages/public.yaml'
+    private = tmp_path / 'packages/private-local.yaml'
+    public.write_text('substitutions: {}\n')
+    private.write_text('substitutions: {}\n')
+    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/public.yaml'], check=True)
+    tool.ROOT = tmp_path
+    assert tool.tracked_package_files() == [public]
+    private.write_text('external_components:\n  - source: private-camera\n    components: [esp_video_camera]\n')
+    (tmp_path / 'yamls').mkdir()
+    assert tool.camera_files() == []
+    assert tool.selected(tool.tracked_package_files(), str(private)) == [private]
+
+
+def test_local_mode_keeps_public_remote_defaults(tmp_path, monkeypatch):
+    tool = _load_yaml_paths()
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    (tmp_path / 'yamls').mkdir()
+    (tmp_path / 'packages').mkdir()
+    path = tmp_path / 'packages/device.yaml'
+    text = 'substitutions:\n  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev\n'
+    path.write_text(text)
+    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/device.yaml'], check=True)
+    tool.ROOT = tmp_path
+    monkeypatch.setattr('sys.argv', [str(ROOT / 'scripts/yaml_paths.sh'), 'local'])
+    assert tool.main() == 0
+    assert path.read_text() == text
+
+
+def test_unquoted_assets_follow_the_selected_remote_ref(tmp_path):
+    tool = _load_yaml_paths()
+    path = tmp_path / 'device.yaml'
+    path.write_text('substitutions:\n  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/\n')
+    tool.rewrite_yaml(path, 'dev')
+    assert 'https://github.com/n-IA-hane/esphome-intercom/raw/dev/' in path.read_text()

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 LAB_ROOT=${HA_VOIP_LAB_ROOT:-/home/codex/ha-voip-lab}
 LAB_HOST=${HA_VOIP_LAB_HOST:-192.168.1.48}
-CAPTURE_DIR=${SIP_REGRESSION_CAPTURE_DIR:-$ROOT/test_captures/lab-regression-gate}
+CAPTURE_DIR=${SIP_REGRESSION_CAPTURE_DIR:-/tmp/voip-tests/lab-regression-gate}
 STORAGE_STATE=${PLAYWRIGHT_STORAGE_STATE:-$LAB_ROOT/playwright-storage.json}
 CREDENTIALS=${HA_PLAYWRIGHT_REFRESH_CREDENTIALS:-$LAB_ROOT/.credentials}
 SINK_PID=

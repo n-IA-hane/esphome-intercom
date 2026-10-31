@@ -166,6 +166,78 @@ def test_probe_sender_only_gate_rejects_wrong_codec_and_early_hangup() -> None:
         probe._validate_sendonly_video(sample, "JPEG")
 
 
+def test_audio_timeline_preserves_drops_across_missing_card_and_context_reset():
+    def observed(label, wall, frames, drops, clock):
+        return {"label": label, "at_s": wall, "card_state": "in_call", "call_id": "same-dialog",
+            "engine_stats": {"frames_in": frames, "frames_drop": drops},
+            "audio_clock": {"active": {"state": "running", "current_time": clock}}}
+
+    samples = [observed("hold_001", 1, 100, 0, 1),
+        observed("hold_002", 2, 282, 152, 2),
+        {"label": "hold_003", "backend_state": {"state": "in_call", "call_id": "same-dialog"}},
+        observed("hold_004", 4, 50, 0, .1), observed("active_after_hold", 5, 150, 0, 1.1)]
+    report = probe.audio_timeline(samples)
+    assert report["loss_totals"]["frames_drop"] == 152
+    assert report["calls"]["same-dialog"]["media_generations"] == 2
+    assert report["calls"]["same-dialog"]["loss_samples"][0]["label"] == "hold_002"
+    assert report["calls"]["same-dialog"]["observation_gaps"] == ["hold_003"]
+    with pytest.raises(RuntimeError, match="timeline failed"):
+        probe.validate_audio_timeline(report)
+
+
+def test_audio_timeline_keeps_running_clock_stall_after_later_recovery():
+    samples = [{"label": label, "at_s": wall, "card_state": "in_call", "call_id": "clock-dialog",
+        "engine_stats": {"frames_drop": 0},
+        "audio_clock": {"active": {"state": "running", "current_time": clock}}}
+        for label, wall, clock in [("in_call", 0, .023), ("video_flowing", .76, .023),
+                                  ("active_after_hold", 2, 1.263)]]
+    report = probe.audio_timeline(samples)
+    assert report["clock_stalls"] == 1
+    assert report["calls"]["clock-dialog"]["clock_stalls"][0]["render_seconds"] == 0
+    with pytest.raises(RuntimeError, match="timeline failed"):
+        probe.validate_audio_timeline(report)
+
+
+def test_audio_timeline_counts_loss_deltas_once_per_media_generation():
+    samples = [{"card_state": "in_call", "call_id": call, "engine_stats": {"frames_drop": drops}}
+        for call, drops in [("first", 3), ("first", 3), ("first", 5), ("first", 0),
+                            ("first", 2), ("redial", 0)]]
+    report = probe.audio_timeline(samples)
+    assert report["loss_totals"]["frames_drop"] == 7
+    assert report["calls"]["first"]["media_generations"] == 2
+    probe.validate_audio_timeline(probe.audio_timeline([]))
+
+
+def test_audio_timeline_pairs_render_clock_with_its_browser_observation_time():
+    samples = [{"label": str(index), "at_s": observed, "card_state": "in_call", "call_id": "paired",
+        "engine_stats": {"frames_drop": 0}, "audio_clock": {"wall_monotonic_ms": paired * 1000,
+            "active": {"state": "running", "current_time": rendered}}}
+        for index, (observed, paired, rendered) in enumerate([(1, 1, .2), (6, 2, 1.2)])]
+    # A slow later CDP request must not be mistaken for a stalled audio clock.
+    report = probe.audio_timeline(samples)
+    assert report["clock_stalls"] == 0
+    probe.validate_audio_timeline(report)
+
+
+def test_probe_sendrecv_cycle_accepts_dark_frames_only_with_real_receive_and_render():
+    sample = _sendonly_sample()
+    sample["video_direction"] = "sendrecv"
+    sample["engine_stats"]["video"].update(received=20, rendered=19)
+    sample["canvas"] = {"width": 320, "height": 240, "hidden": False, "non_black": False}
+    probe._validate_sending_video(sample, "JPEG", direction="sendrecv", allow_dark_video=True)
+    with pytest.raises(RuntimeError, match="non-black"):
+        probe._validate_sending_video(sample, "JPEG", direction="sendrecv")
+    for counter in ("received", "rendered"):
+        previous = sample["engine_stats"]["video"][counter]
+        sample["engine_stats"]["video"][counter] = 0
+        with pytest.raises(RuntimeError, match="receive and render"):
+            probe._validate_sending_video(sample, "JPEG", direction="sendrecv", allow_dark_video=True)
+        sample["engine_stats"]["video"][counter] = previous
+    sample["canvas"]["hidden"] = True
+    with pytest.raises(RuntimeError, match="visible decoded canvas"):
+        probe._validate_sending_video(sample, "JPEG", direction="sendrecv", allow_dark_video=True)
+
+
 def test_revoked_refresh_falls_back_to_login_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -260,7 +260,8 @@ def mailbox_lab(lab, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("termination", ["remote", "limit", "removed", "remote_then_removed", "lookup_then_removed"])
-async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_lab, monkeypatch, termination):
+@pytest.mark.parametrize("packet_ms", [10, 20])
+async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_lab, monkeypatch, termination, packet_ms):
     lab = mailbox_lab
     stream = tts_fixture(monkeypatch, lab)
     recording, saved = asyncio.Event(), asyncio.Event()
@@ -293,16 +294,24 @@ async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_la
         assert lab.calls.resource_for(call_id, "automation") is None
         received = asyncio.Event()
         chunks = []
+        wire_format = voicemail.media.invite.recv_format
+        assert (wire_format.encoding, wire_format.sample_rate, wire_format.channels) == ("L16", 16000, 1)
+        assert wire_format.frame_ms == int(re.search(rb"a=ptime:(\d+)", lab.phones[0].invites[0].body)[1])
+        max_packet_ms = int(re.search(rb"a=maxptime:(\d+)", lab.phones[0].invites[0].body)[1])
+        assert packet_ms <= max_packet_ms == wire_format.max_frame_ms
+        frame_samples = wire_format.sample_rate * packet_ms // 1000
+        assert 1920 % frame_samples == 0
+        frame_count = 1920 // frame_samples
         def observe(pcm, _format):
             chunks.append(pcm)
-            if len(chunks) == 6:
+            if len(chunks) == frame_count:
                 received.set()
         detach = voicemail.media.decoder.add_pcm_observer(observe)
         try:
             port = int(re.search(rb"m=audio (\d+)", lab.phones[0].invites[0].body)[1])
-            for index in range(6):
-                packet = rtp.build_packet(rtp.RtpPacket(lab.phones[0].payload_type, index, index * 320,
-                                                       9876, struct.pack("!320h", *([2300] * 320))))
+            for index in range(frame_count):
+                packet = rtp.build_packet(rtp.RtpPacket(lab.phones[0].payload_type, index, index * frame_samples,
+                                                       9876, struct.pack(f"!{frame_samples}h", *([2300] * frame_samples))))
                 await lab.hass.loop.sock_sendto(lab.phones[0].rtp_socket, packet, ("127.0.0.1", port))
             await asyncio.wait_for(received.wait(), 2)
         finally:
@@ -385,7 +394,8 @@ async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_la
         await script.async_stop()
 
 
-async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mailbox_lab, monkeypatch):
+@pytest.mark.parametrize("packet_ms", [10, 20])
+async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mailbox_lab, monkeypatch, packet_ms):
     lab = mailbox_lab
     ready, saved = asyncio.Event(), asyncio.Event()
 
@@ -408,13 +418,30 @@ async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mai
         await asyncio.wait_for(ready.wait(), 2)
         voicemail = lab.calls.resource_for(result["call_id"], "voicemail")
         first, second = asyncio.Event(), asyncio.Event()
+        first_samples = 0
         def observe(_pcm, fmt):
-            (first if fmt.sample_rate == 16000 else second).set()
+            nonlocal first_samples
+            if fmt.sample_rate == 16000:
+                first_samples += len(_pcm) // 2
+                if first_samples >= 320:
+                    first.set()
+            else:
+                second.set()
         detach = voicemail.media.decoder.add_pcm_observer(observe)
         phone = lab.phones[0]
         port = int(re.search(rb"m=audio (\d+)", phone.invites[0].body)[1])
-        await lab.hass.loop.sock_sendto(phone.rtp_socket, rtp.build_packet(rtp.RtpPacket(
-            phone.payload_type, 0, 0, 9876, struct.pack("!320h", *([2100] * 320)))), ("127.0.0.1", port))
+        wire_format = voicemail.media.invite.recv_format
+        assert (wire_format.encoding, wire_format.sample_rate, wire_format.channels) == ("L16", 16000, 1)
+        assert wire_format.frame_ms == int(re.search(rb"a=ptime:(\d+)", phone.invites[0].body)[1])
+        max_packet_ms = int(re.search(rb"a=maxptime:(\d+)", phone.invites[0].body)[1])
+        assert packet_ms <= max_packet_ms == wire_format.max_frame_ms
+        frame_samples = wire_format.sample_rate * packet_ms // 1000
+        assert 320 % frame_samples == 0
+        first_packets = 320 // frame_samples
+        for index in range(first_packets):
+            await lab.hass.loop.sock_sendto(phone.rtp_socket, rtp.build_packet(rtp.RtpPacket(
+                phone.payload_type, index, index * frame_samples, 9876,
+                struct.pack(f"!{frame_samples}h", *([2100] * frame_samples)))), ("127.0.0.1", port))
         await asyncio.wait_for(first.wait(), 2)
         response = asyncio.Queue()
         receive = phone.datagram_received
@@ -454,7 +481,7 @@ async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mai
                        for key, value in headers if key != "Content-Type"]
         phone.transport.sendto(sip.build_request("ACK", target, ack_headers), phone.remote)
         await lab.hass.loop.sock_sendto(phone.rtp_socket, rtp.build_packet(rtp.RtpPacket(
-            new_payload, 1, 160, 9876, struct.pack("!160h", *([3100] * 160)))), ("127.0.0.1", port))
+            new_payload, first_packets, 160, 9876, struct.pack("!160h", *([3100] * 160)))), ("127.0.0.1", port))
         await asyncio.wait_for(second.wait(), 2)
         detach()
         phone.remote_hangup(cseq=3)

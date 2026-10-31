@@ -67,7 +67,6 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
 ) -> None:
     """An AOR binding cannot replace a phone's known media envelope."""
     from custom_components.voip_stack.core import sdp
-    from custom_components.voip_stack.core.audio_format import HA_TRUNK_AUDIO_FORMATS
     from custom_components.voip_stack.inbound_routing import bridge
     from custom_components.voip_stack.sip_runtime import uri_transport
 
@@ -135,17 +134,31 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
         assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
         assert offered["sdp_features"] == ["directional_audio_v1"]
     elif profile == "symmetric-sip":
-        assert offered["sip_audio_tx_formats"] == ["L16/16000/1/10"]
+        # The optional extension describes HA's local abilities. A legacy
+        # peer ignores it and answers with its actual common 16k payload.
+        assert offered["sip_audio_tx_formats"] == ["L16/48000/1/10", "L16/16000/1/10"]
         assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
-        assert not offered["sdp_features"]
+        common = next(fmt for fmt in sdp.offered_pcm_formats(captured["offer"])
+            if fmt.encoding == "L16" and fmt.sample_rate == 16000)
+        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Legacy phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
+            f"m=audio 40000 RTP/AVP {common.payload_type}\r\na=rtpmap:{common.payload_type} L16/16000/1\r\n"
+            "a=ptime:10\r\na=sendrecv\r\n")
+        negotiated = sdp.negotiate_answer_directional(answer,
+            captured["supported_send_formats"], captured["supported_recv_formats"], local_offer_sdp=captured["offer"])
+        assert negotiated is not None
+        assert (negotiated.send.sample_rate, negotiated.recv.sample_rate) == (16000, 16000)
+        assert negotiated.send.frame_ms == negotiated.recv.frame_ms == 10
     elif profile == "hint-only":
         import re
 
         offer = captured["offer"]
         formats = sdp.offered_pcm_formats(offer)
-        assert formats and all(fmt.encoding == "L16" and fmt.channels == 1
+        pcm = [fmt for fmt in formats if fmt.encoding in {"L16", "L24"}]
+        assert pcm and all(fmt.channels == 1
                                and fmt.audio_format.fits_udp_payload(sdp.UDP_SAFE_PAYLOAD_BYTES)
-                               for fmt in formats)
+                               for fmt in pcm)
+        # RFC 7587 signals Opus as /2 even for mono audio; this is not stereo PCM.
+        assert all(fmt.channels == 2 for fmt in formats if fmt.encoding == "OPUS")
         # A peer answers using its own 48 kHz receive / 16 kHz send geometry,
         # independently choosing the corresponding advertised payload numbers.
         receive = re.search(r"a=rtpmap:(\d+) L16/48000/1", offer)[1]
@@ -159,18 +172,24 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
             local_offer_sdp=offer)
         assert negotiated is not None
         assert (negotiated.send.sample_rate, negotiated.recv.sample_rate) == (48000, 16000)
+        assert negotiated.send.frame_ms == negotiated.recv.frame_ms == 10
     elif profile == "pcmu":
         assert offered["sip_audio_tx_formats"] == ["PCMU/8000/1/20"]
         assert offered["sip_audio_rx_formats"] == ["PCMU/8000/1/20"]
     else:
-        if registered:
-            assert "PCMU/8000/1/20" in offered["sip_audio_tx_formats"]
-            assert "PCMU/8000/1/20" in offered["sip_audio_rx_formats"]
-            assert captured["supported_send_formats"] == list(HA_TRUNK_AUDIO_FORMATS)
-            assert captured["supported_recv_formats"] == list(HA_TRUNK_AUDIO_FORMATS)
-        else:
-            assert offered["sip_audio_tx_formats"] == offered["sip_audio_rx_formats"]
-            assert "L16/16000/1/10" in offered["sip_audio_tx_formats"]
+        assert offered["sip_audio_tx_formats"] == offered["sip_audio_rx_formats"]
+        assert "L16/16000/1/10" in offered["sip_audio_tx_formats"]
+        assert any(fmt.encoding == "PCMU" for fmt in sdp.offered_pcm_formats(captured["offer"]))
+        # A local 10ms preference with maxptime20 retains ordinary G.711/20ms.
+        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Legacy phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
+            "m=audio 40000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
+        negotiated = sdp.negotiate_answer_directional(answer,
+            captured["supported_send_formats"], captured["supported_recv_formats"], local_offer_sdp=captured["offer"])
+        assert negotiated is not None
+        assert negotiated.send.encoding == negotiated.recv.encoding == "PCMU"
+        assert negotiated.send.frame_ms == 20  # The answer's receive preference.
+        assert negotiated.recv.frame_ms == 10  # HA's independently offered preference.
+        assert negotiated.recv_formats[0].max_frame_ms == 20
 
 
 @dataclass(frozen=True)

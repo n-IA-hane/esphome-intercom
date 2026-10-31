@@ -1,4 +1,4 @@
-# ESP Screenshot
+# ESP screenshot
 
 `esp_screenshot` is maintained in the standalone
 [ESP Screenshot repository](https://github.com/n-IA-hane/esphome-screenshot/tree/dev).

@@ -169,7 +169,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         async_build_peer_snapshot as _async_build_peer_snapshot,
     )
     from .sip_runtime import (
-        enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
+        enable_reused_signaling_flow as _enable_reused_signaling_flow,
         send_final_response as _sip_send_final_response,
         uri_transport as _sip_uri_transport,
     )
@@ -182,7 +182,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         SipInviteResult,
         UasDelayedOfferPlan,
     )
-    from .sip_registrar import SipRegistrar
+    from .sip_registrar import SipRegistrar, _extract_register_username
     from .conference_ringing import (
         ConferenceRingRuntime,
         async_ring_conference_members,
@@ -207,7 +207,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
-        from .phone_endpoint import EndpointAvailability, EndpointKind
+        from .phone_endpoint import EndpointAvailability
 
         endpoint_registry = endpoint_directory(hass)
         endpoint = endpoint_registry.by_username(username)
@@ -223,9 +223,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                     else EndpointAvailability.OFFLINE
                 ),
             )
-            if registered and endpoint.kind is EndpointKind.ESPHOME:
-                from .sip_capabilities import schedule_capability_probe
-                schedule_capability_probe(hass, endpoint.endpoint_id, username)
         create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
     from .managed_phones import active_managed_accounts
@@ -264,6 +261,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         result = await registrar.handle_register(request, addr, transport)
         if 200 <= int(result.status) < 300:
             registrar_expiry.reschedule()
+            from .sip_capabilities import schedule_capability_probe
+            schedule_capability_probe(hass, _extract_register_username(request))
             await _refresh_and_push_phonebook(hass)
         return result
 
@@ -317,7 +316,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         config=cfg,
         route_resolver=route_resolver,
         sip_uri_transport=_sip_uri_transport,
-        enable_reused_tcp_connection=_enable_reused_sip_tcp_connection,
+        enable_reused_signaling_flow=_enable_reused_signaling_flow,
     )
     pbx_runtime.adopt_component("endpoint_dialer", endpoint_dialer)
     _browser_leg_for_member = endpoint_dialer.browser_leg_for_member
@@ -750,7 +749,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 build_peer_snapshot=_async_build_peer_snapshot,
                 browser_leg_for_member=_browser_leg_for_member,
                 defer_invite_to_softphone=_defer_invite_to_ha_softphone,
-                enable_reused_sip_tcp_connection=_enable_reused_sip_tcp_connection,
+                enable_reused_signaling_flow=_enable_reused_signaling_flow,
                 on_conference_inbound_timeout=_on_conference_inbound_timeout,
                 ring_conference_members=_ring_conference_members,
                 run_ring_group_call=_run_ring_group_call,

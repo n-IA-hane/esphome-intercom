@@ -19,6 +19,189 @@ CAPS = b"\r\n".join([
 ])
 
 
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("packet_time", [True, False])
+@pytest.mark.parametrize("directional", [True, False])
+async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_call(
+    trunks, monkeypatch, packet_time, directional,
+):
+    """No ESP registry, descriptor or injected media metadata participates."""
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    from custom_components.voip_stack.phonebook_runtime import registered_roster_entries
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
+
+    runtime = trunks
+    username = "ordinary-wire-phone"
+    endpoint = PhoneEndpoint(endpoint_id="sip:ordinary-wire-phone", name="Ordinary wire phone",
+        username=username, kind=EndpointKind.SIP_ACCOUNT)
+    browser = PhoneEndpoint(endpoint_id="browser:wire-caller", name="Caller",
+        device_id="wire-caller-device", kind=EndpointKind.BROWSER,
+        capabilities=frozenset({"audio", "dtmf", "video"}))
+    runtime.runtime.endpoints.register(endpoint)
+    runtime.runtime.endpoints.register(browser)
+    assert not any(item.kind is EndpointKind.ESPHOME for item in runtime.runtime.endpoints.endpoints)
+    runtime.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
+    registrar = runtime.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), SipAccount(username, endpoint.name, "fixture-only")])
+    options = asyncio.Event()
+    options_ports = []
+    invites = asyncio.Queue()
+    replies = asyncio.Queue()
+    caps = CAPS if packet_time else CAPS.replace(b"a=ptime:10\r\n", b"")
+    if not directional:
+        caps = caps.replace(b"a=x-voip-stack-flow:96 send\r\n", b"")
+        caps = caps.replace(b"a=x-voip-stack-flow:97 recv\r\n", b"")
+
+    class OrdinaryPeer(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, raw, address):
+            message = sip.parse_message(raw)
+            if message.status_code is not None:
+                replies.put_nowait(message)
+                return
+            headers = [(key, message.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+            headers.append(("To", message.header("To") + ";tag=ordinary-peer"))
+            body = b""
+            if message.method == "OPTIONS":
+                assert message.header("Accept") == "application/sdp"
+                options_ports.append(self.transport.get_extra_info("sockname")[1])
+                body = caps
+                options.set()
+            elif message.method == "INVITE":
+                invites.put_nowait(message)
+                mappings = sdp.offered_pcm_formats(message.body)
+                recv = next(fmt for fmt in mappings if fmt.encoding == "L16" and fmt.sample_rate == 16000)
+                send = next(fmt for fmt in mappings if fmt.encoding == "L16" and fmt.sample_rate == 48000) if directional else recv
+                assert send.frame_ms == recv.frame_ms == 10
+                assert sdp.offered_video_formats(message.body)[0].encoding == "JPEG"
+                payloads = f"{send.payload_type} {recv.payload_type}" if directional else str(recv.payload_type)
+                audio = f"a=rtpmap:{recv.payload_type} L16/16000/1\r\n"
+                if directional:
+                    audio += (f"a=rtpmap:{send.payload_type} L16/48000/1\r\n"
+                        f"a=x-voip-stack-flow:{send.payload_type} recv\r\n"
+                        f"a=x-voip-stack-flow:{recv.payload_type} send\r\n")
+                body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Ordinary phone\r\n"
+                    "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                    f"m=audio 34000 RTP/AVP {payloads}\r\n{audio}"
+                    f"a=ptime:{10 if directional or packet_time else 20}\r\na=sendrecv\r\n"
+                    "m=video 34002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=sendrecv\r\n").encode()
+                headers.append(("Contact", f"<sip:{username}@127.0.0.1:{self.transport.get_extra_info('sockname')[1]}>"))
+            elif message.method == "ACK":
+                return
+            if body:
+                headers.append(("Content-Type", "application/sdp"))
+            self.transport.sendto(sip.build_response(200, "OK", headers, body), address)
+
+    transport, _ = await runtime.hass.loop.create_datagram_endpoint(OrdinaryPeer, local_addr=("127.0.0.1", 0))
+    transports = [transport]
+    local_port = transport.get_extra_info("sockname")[1]
+    remote_port = runtime.runtime.transport_config["sip_port"]
+    uri = f"sip:127.0.0.1:{remote_port}"
+
+    def register(sequence, authorization=None, expires=60):
+        headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{local_port};branch=z9hG4bK-ordinary-{sequence};rport"),
+            ("From", f"<sip:{username}@127.0.0.1>;tag=ordinary"),
+            ("To", f"<sip:{username}@127.0.0.1>"), ("Call-ID", "ordinary-registration"),
+            ("CSeq", f"{sequence} REGISTER"), ("Contact", f"<sip:{username}@127.0.0.1:5060>"),
+            ("Expires", str(expires)), ("User-Agent", "Ordinary SIP phone")]
+        if authorization:
+            headers.append(("Authorization", authorization))
+        transport.sendto(sip.build_request("REGISTER", uri, headers), ("127.0.0.1", remote_port))
+
+    async def register_response():
+        async with asyncio.timeout(2):
+            while True:
+                reply = await replies.get()
+                if reply.header("CSeq").endswith(" REGISTER"):
+                    return reply
+
+    def authorize(sequence):
+        return build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+            username=username, password="fixture-only", method="REGISTER", uri=uri, nonce_count=sequence - 1)
+
+    try:
+        register(1)
+        challenge = await register_response()
+        assert challenge.status_code == 401
+        authorization = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+            username=username, password="fixture-only", method="REGISTER", uri=uri)
+        register(2, authorization)
+        assert (await register_response()).status_code == 200
+        await asyncio.wait_for(options.wait(), 2)
+        async with asyncio.timeout(2):
+            while True:
+                entry = next(item for item in registered_roster_entries(runtime.hass) if item.id == username)
+                if "sdp_features" in entry.metadata:
+                    break
+                await asyncio.sleep(.01)
+        assert "endpoint_kind" not in entry.metadata
+        assert entry.metadata["sdp_features"] == (["directional_audio_v1"] if directional else [])
+        expected_rx = ["L16/48000/1/10"] if directional else ["L16/16000/1/10", "L16/48000/1/10"]
+        expected_tx = ["L16/16000/1/10"] if directional else expected_rx
+        assert entry.metadata["sip_audio_rx_formats"] == (expected_rx if packet_time else [])
+        assert entry.metadata["sip_audio_tx_formats"] == (expected_tx if packet_time else [])
+        initial = registrar.registered_contacts(username)[0]
+        learned = initial.capabilities
+        register(3, authorize(3))
+        assert (await register_response()).status_code == 200
+        assert registrar.registered_contacts(username)[0].capabilities is learned
+        assert options_ports == [local_port]
+        # Renewing the same advertised Contact from a new real source flow
+        # keeps the account registered but requires a fresh OPTIONS result.
+        options.clear()
+        transport, _ = await runtime.hass.loop.create_datagram_endpoint(OrdinaryPeer, local_addr=("127.0.0.1", 0))
+        transports.append(transport)
+        local_port = transport.get_extra_info("sockname")[1]
+        register(4, authorize(4))
+        assert (await register_response()).status_code == 200
+        await asyncio.wait_for(options.wait(), 2)
+        async with asyncio.timeout(2):
+            while registrar.registered_contacts(username)[0].capabilities is None:
+                await asyncio.sleep(.01)
+        current, = registrar.registered_contacts(username)
+        assert current.source_port == local_port and current.capabilities is not learned
+        assert options_ports == [initial.source_port, local_port]
+        assert not runtime.calls.sessions
+        # This socket fixture does not load entity platforms. Export the real
+        # directory result through the normal registered phonebook state.
+        from custom_components.voip_stack.directory_runtime import async_refresh_directory
+        from custom_components.voip_stack.roster import dump_roster_json
+        directory = await async_refresh_directory(runtime.hass)
+        runtime.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(directory)})
+        await runtime.hass.services.async_call("voip_stack", "call", {
+            "device_id": browser.device_id, "destination": endpoint.name, "send_video": True,
+        }, blocking=True)
+        request = await asyncio.wait_for(invites.get(), 2)
+        client = runtime.calls.sip_client_for(request.header("Call-ID"))
+        assert client.dialog.send_format.sample_rate == (48000 if directional else 16000)
+        assert client.dialog.recv_format.sample_rate == 16000
+        assert client.dialog.send_format.frame_ms == (10 if directional or packet_time else 20)
+        # An answer's ptime controls HA transmission. Local receive framing
+        # remains independent, bounded by the actual offer's maxptime.
+        assert client.dialog.recv_format.frame_ms == 10
+        assert client.dialog.video_format.encoding == "JPEG"
+        assert client.dialog.local_video_direction == "sendrecv"
+        await runtime.calls.request_termination(request.header("Call-ID"), TerminationIntent("test_done"))
+        register(5, authorize(5), expires=1)
+        assert (await register_response()).status_code == 200
+        async with asyncio.timeout(3):
+            while runtime.runtime.endpoints.get(endpoint.endpoint_id).availability.value != "offline":
+                await asyncio.sleep(.05)
+        assert registrar.registered_contacts(username) == ()
+        assert not runtime.calls.sessions
+    finally:
+        for session in tuple(runtime.calls.sessions.values()):
+            await runtime.calls.request_termination(session.call_id, TerminationIntent("test_done"))
+        for transport in transports:
+            transport.close()
+
+
 def test_capability_port_zero_is_never_an_active_call():
     with pytest.raises(sdp.SdpError):
         sdp.parse_sdp(CAPS)
@@ -28,6 +211,36 @@ def test_capability_port_zero_is_never_an_active_call():
     assert result["sip_audio_rx_formats"] == ["L16/48000/1/10"]
     assert result["sdp_features"] == ["directional_audio_v1"]
     assert result["sip_video_codec"] == "jpeg"
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_optional_probe_does_not_publish_caps_from_a_replaced_flow(trunks, monkeypatch):
+    from types import SimpleNamespace
+    from custom_components.voip_stack import sip_capabilities as module
+    from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistration
+
+    registrar = trunks.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([SipAccount("ordinary", "Ordinary", "fixture-only")])
+    original = SipRegistration("ordinary", "sip:ordinary@127.0.0.1:41000", "127.0.0.1", 41000, "UDP", 9999999999)
+    registrar.registrations["ordinary"] = original
+    started = asyncio.Event()
+    response = asyncio.get_running_loop().create_future()
+
+    async def options(*_args):
+        started.set()
+        return await response
+
+    monkeypatch.setattr(module, "sip_endpoint_manager", lambda _hass: SimpleNamespace(async_options=options))
+    task = asyncio.create_task(module.async_probe(trunks.hass, "ordinary"))
+    await asyncio.wait_for(started.wait(), 2)
+    replacement = SipRegistration("ordinary", "sip:ordinary@127.0.0.1:42000", "127.0.0.1", 42000, "UDP", 9999999999)
+    registrar.registrations["ordinary"] = replacement
+    response.set_result(sip.SipMessage(status_code=200, reason="OK", body=CAPS))
+    await asyncio.wait_for(task, 2)
+    assert original.capabilities is None
+    assert replacement.capabilities is None
+    assert "sdp_features" not in registrar.registered_roster_entries()[0].metadata
 
 
 @pytest.mark.parametrize("transport", ["UDP", "TCP"])
@@ -238,7 +451,7 @@ async def test_native_directional_offer_without_optional_options_metadata(trunks
             request("REGISTER", register_uri, 2, register=True, authorization=authorization)
             assert (await final("REGISTER")).status_code == 200
             await asyncio.wait_for(options.wait(), 2)
-            assert identity not in runtime.runtime.peer_capabilities
+            assert registrar.registered_contacts(username)[0].capabilities is None
         # Independent wire fixture matches the actual ESP 16 kHz TX / 48 kHz RX.
         offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Native\r\nc=IN IP4 127.0.0.2\r\nt=0 0\r\n"
             "m=audio 34000 RTP/AVP 96 97\r\na=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n"
@@ -257,3 +470,61 @@ async def test_native_directional_offer_without_optional_options_metadata(trunks
         for session in tuple(runtime.calls.sessions.values()):
             await runtime.calls.request_termination(session.call_id, TerminationIntent("test_done"))
         transport.close()
+
+
+@pytest.mark.parametrize("accept, body_expected", [("application/sdp", True), ("", False), ("application/json", False),
+    ("application/sdp;q=0", False), ("application/sdp;q=0.5", True)])
+async def test_server_options_explicit_capabilities_allocates_no_media(accept, body_expected, monkeypatch, socket_enabled):
+    """A real OPTIONS response declares local capabilities, not a call offer."""
+    from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_FORMATS
+    from unittest.mock import Mock
+    from custom_components.voip_stack import media_ports
+
+    replies = asyncio.Queue()
+
+    class Peer(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, raw, address):
+            replies.put_nowait(sip.parse_message(raw))
+
+    loop = asyncio.get_running_loop()
+    endpoint = SipUdpEndpoint(local_ip="127.0.0.1", local_rtp_port=44000,
+        supported_formats=list(HA_SIP_PCM_FORMATS), enable_video=True,
+        on_invite=lambda invite: None)
+    server, _ = await loop.create_datagram_endpoint(lambda: endpoint, local_addr=("127.0.0.1", 0))
+    transport, peer = await loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
+    allocate = Mock(side_effect=AssertionError("OPTIONS must allocate no media"))
+    monkeypatch.setattr(media_ports, "allocate_sip_rtp_port_pair", allocate)
+    try:
+        headers = [("Via", "SIP/2.0/UDP 127.0.0.1;branch=z9hG4bKcapabilities"),
+            ("From", "<sip:ordinary@127.0.0.1>;tag=ordinary"), ("To", "<sip:service@127.0.0.1>"),
+            ("Call-ID", "ordinary-options"), ("CSeq", "1 OPTIONS")]
+        if accept:
+            headers.append(("Accept", accept))
+        transport.sendto(sip.build_request("OPTIONS", "sip:127.0.0.1", headers), server.get_extra_info("sockname"))
+        response = await asyncio.wait_for(replies.get(), 2)
+        assert response.status_code == 200
+        assert bool(response.body) is body_expected
+        if body_expected:
+            assert response.header("Content-Type") == "application/sdp"
+            origin = next(line for line in response.body.splitlines() if line.startswith(b"o=")).split()
+            assert int(origin[1]) > 0
+            assert b"m=audio 0 " in response.body
+            assert b"m=video 0 " in response.body
+            assert b"a=x-voip-stack-flow:" in response.body
+            assert b"L16/48000/1" in response.body and b"L16/16000/1" in response.body
+            second_headers = [(key, "2 OPTIONS" if key == "CSeq" else
+                value.replace("z9hG4bKcapabilities", "z9hG4bKcapabilities2")) for key, value in headers]
+            transport.sendto(sip.build_request("OPTIONS", "sip:127.0.0.1", second_headers), server.get_extra_info("sockname"))
+            second = await asyncio.wait_for(replies.get(), 2)
+            second_origin = next(line for line in second.body.splitlines() if line.startswith(b"o=")).split()
+            assert second_origin[1] != origin[1]
+        allocate.assert_not_called()
+        assert not endpoint.active_dialogs and not endpoint.pending_invites
+    finally:
+        transport.close()
+        endpoint.cancel_request_tasks()
+        server.close()
+        await endpoint.wait_closed()

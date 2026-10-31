@@ -1000,8 +1000,9 @@ async def test_browser_video_parking_reports_media_limit_before_audio_readiness(
 
 @pytest.mark.parametrize('trunks', [True], indirect=True)
 @pytest.mark.parametrize('offer_video', [False, True])
+@pytest.mark.parametrize('capabilities_known', [False, True])
 async def test_originated_browser_call_parks_without_inbound_media_descriptor(
-    registered_phones, trunks, monkeypatch, offer_video, tmp_path,
+    registered_phones, trunks, monkeypatch, offer_video, capabilities_known, tmp_path,
 ):
     import struct
     import wave
@@ -1015,6 +1016,16 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
     from custom_components.voip_stack.sip_client import SipCallClient
 
     runtime = trunks
+    if not capabilities_known:
+        from custom_components.voip_stack.endpoint_routing import assemble_directory_entries
+
+        # Exercise the ordinary interval before an OPTIONS description arrives.
+        # The independent audio-only phone still answers the real offer.
+        registrar = runtime.calls.component('registrar')
+        for registration in registrar.registrations.values():
+            if registration.username == 'transfer_a':
+                registration.capabilities = None
+        runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = offer_video
@@ -1093,8 +1104,12 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
                        and runtime.calls.get_session(call_id).state == 'in_call')
         assert client.dialog is not None and client.dialog.video_format is None
         assert runtime.calls.resource_for(call_id, 'softphone_media') is None
-        if offer_video:
+        offered_video = offer_video and not capabilities_known
+        assert bool(client.video_formats) is offered_video
+        if offered_video:
             assert client.media_reservation is not None
+        else:
+            assert client.media_reservation is None
         browser, media = await connect()
         source = media.rtp_source
         response = await runtime.hass.services.async_call('voip_stack', 'park', {

@@ -95,6 +95,7 @@ async def test_managed_native_groups_reach_canonical_directory_without_endpoint_
     from custom_components.voip_stack.directory_runtime import async_refresh_directory, directory_uri
     from custom_components.voip_stack.ldap_server import LdapDirectoryServer
     from custom_components.voip_stack.sensor import VoipPhonebookSensor
+    from custom_components.voip_stack.sip_registrar import SipRegistration
 
     lab = phone_lab
     fields = {}
@@ -113,7 +114,7 @@ async def test_managed_native_groups_reach_canonical_directory_without_endpoint_
     await lab.controller.async_sync()
     phone = managed_records(lab.entry)[lab.device.id]
     monkeypatch.setattr(lab.registrar, "registered_contacts", lambda username: (
-        SimpleNamespace(contact_uri="sip:phone_node@192.0.2.10:5060", transport="udp"),
+        SipRegistration(username, "sip:phone_node@192.0.2.10:5060", "192.0.2.10", 5060, "UDP", 9999999999),
     ) if username == phone.username else ())
 
     devices = await get_resolver(lab.hass).list_devices()

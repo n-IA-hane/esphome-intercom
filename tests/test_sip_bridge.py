@@ -782,3 +782,52 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             caller_transport.close()
             for task in tasks:
                 task.cancel()
+
+
+class RtpPacketEnvelopeTest(unittest.TestCase):
+    def test_raw_bridge_reframes_legal_incoming_packet_for_smaller_receiver(self):
+        import struct
+
+        for rate, destination_max, expected_sizes in (
+            (48000, 10, [960, 960]),
+            (16000, 10, [320, 320]),
+            (48000, 20, [960, 960]),
+            (16000, 20, [640]),
+        ):
+            with self.subTest(rate=rate, destination_max=destination_max):
+                incoming = sdp.RtpPcmFormat(96, "L16", rate, 1, 10, max_frame_ms=20)
+                outgoing = sdp.RtpPcmFormat(97, "L16", rate, 1, 10, max_frame_ms=destination_max)
+                left = sip_rtp_bridge.RtpPeer("192.0.2.10", 40000, 96, incoming.audio_format, rtp_format=incoming, send_rtp_format=incoming)
+                right = sip_rtp_bridge.RtpPeer("192.0.2.20", 41000, 97, outgoing.audio_format, rtp_format=outgoing, send_rtp_format=outgoing)
+                relay = sip_rtp_bridge.SipRtpRelay(left=left, right=right, left_port=42000, right_port=42002)
+                captured = []
+                relay.right_transport = types.SimpleNamespace(sendto=lambda raw, address: captured.append(raw))
+                payload = b"\x01\x02" * (rate // 50)  # Independently framed, legal 20ms input.
+                raw = struct.pack("!BBHII", 0x80, 96, 1, 1000, 123) + payload
+                relay.handle_packet("left", raw, (left.host, left.port))
+                packets = [rtp.parse_packet(raw) for raw in captured]
+                self.assertEqual([len(item.payload) for item in packets], expected_sizes)
+                self.assertEqual(b"".join(item.payload for item in packets), payload)
+                for item in packets:
+                    rtp.validate_audio_payload_size(item.payload, outgoing)
+                if len(packets) == 2:
+                    self.assertEqual((packets[1].timestamp - packets[0].timestamp) & 0xFFFFFFFF, rate // 100)
+                self.assertEqual(relay.dropped, 0)
+
+    def test_compatible_opus_envelopes_retain_encoded_payload_passthrough(self):
+        import struct
+
+        incoming = sdp.RtpPcmFormat(96, "OPUS", 48000, 2, 10, max_frame_ms=20)
+        outgoing = dataclasses.replace(incoming, payload_type=97)
+        left = sip_rtp_bridge.RtpPeer("192.0.2.10", 40000, 96, incoming.audio_format, rtp_format=incoming, send_rtp_format=incoming)
+        right = sip_rtp_bridge.RtpPeer("192.0.2.20", 41000, 97, outgoing.audio_format, rtp_format=outgoing, send_rtp_format=outgoing)
+        relay = sip_rtp_bridge.SipRtpRelay(left=left, right=right, left_port=42000, right_port=42002)
+        captured = []
+        relay.right_transport = types.SimpleNamespace(sendto=lambda raw, address: captured.append(raw))
+        encoder = sip_client.RtpPayloadEncoder(incoming)
+        payload = encoder.encode(bytes(incoming.audio_format.nominal_frame_bytes))
+        relay.handle_packet("left", struct.pack("!BBHII", 0x80, 96, 1, 1000, 123) + payload, (left.host, left.port))
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(rtp.parse_packet(captured[0]).payload, payload)
+        self.assertTrue(relay.left_to_right_passthrough)
+        self.assertEqual(relay.dropped, 0)

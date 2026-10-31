@@ -22,11 +22,46 @@ REPOS = {
 CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"
 P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
+OWNED_REMOTE = re.compile(
+    r'github://n-IA-hane/(?:esphome-intercom|esphome-voip-stack|esphome-audio-stack|'
+    r'esphome-runtime-controller|esphome-screenshot|esphome-video-renderer)'
+    r'(?:/[^\s\'"@(){}\[\]]+)?@([^\s\'"(){}\[\]]+)'
+)
+OWNED_ASSETS = re.compile(
+    r'https://(?:github\.com/n-IA-hane/esphome-intercom/raw|'
+    r'raw\.githubusercontent\.com/n-IA-hane/esphome-intercom)/([^/\s]+)/'
+)
+
+
+def tracked_yaml_files(directory):
+    names = subprocess.check_output(
+        ["git", "ls-files", "-z", "--", directory], cwd=ROOT,
+    ).decode().split("\0")
+    return sorted(ROOT / name for name in names if name.endswith((".yaml", ".yml")))
+
+
+def tracked_package_files():
+    return tracked_yaml_files("packages")
+
+
+def owned_remote_refs(path):
+    text = path.read_text()
+    return [match.group(1) for pattern in (OWNED_REMOTE, OWNED_ASSETS)
+            for match in pattern.finditer(text)]
+
+
+def rewrite_remote_defaults(path, ref):
+    """Keep package-only installs on the explicitly selected owned source ref."""
+    text = path.read_text()
+    for pattern in (OWNED_REMOTE, OWNED_ASSETS):
+        text = pattern.sub(lambda match: match.group(0)[:match.start(1) - match.start()]
+                           + ref + match.group(0)[match.end(1) - match.start():], text)
+    path.write_text(text)
 
 
 def yaml_files():
     files = []
-    for path in (ROOT / "yamls").rglob("*.yaml"):
+    for path in tracked_yaml_files("yamls"):
         if ".esphome" in path.parts or path.name == "secrets.yaml":
             continue
         if path.is_relative_to(ROOT / "yamls/debug") or path.name.endswith("_NOT_READY.yaml"):
@@ -37,8 +72,7 @@ def yaml_files():
 
 def camera_files():
     return sorted(
-        path for base in (ROOT / "yamls", ROOT / "packages")
-        for path in base.rglob("*.yaml")
+        path for path in tracked_yaml_files("yamls") + tracked_package_files()
         if ".esphome" not in path.parts
         and re.search(r"(?m)^\s*components:\s*\[esp_video_camera\]\s*$", path.read_text())
     )
@@ -51,7 +85,10 @@ def selected(files, only):
         return [path for path in files if not path.name.endswith("-local.yaml")]
     target = Path(only)
     target = (ROOT / target if not target.is_absolute() else target).resolve()
-    return [path for path in files if path.resolve() == target]
+    chosen = [path for path in files if path.resolve() == target]
+    if not chosen and target.is_file() and target.is_relative_to(ROOT.resolve()):
+        return [target]
+    return chosen
 
 
 def relative(source, target):
@@ -121,7 +158,7 @@ def rewrite_yaml(path, ref):
             indent, key = match.groups()
             seen.add(key)
             output.append(f'{indent}{key}: "{overrides[key]}"')
-        elif re.match(r'^\s*assets_base:\s*"[^"]*"\s*$', line):
+        elif re.match(r'^\s*assets_base:\s*[^#\n]+$', line):
             value = relative(path.parent, ROOT) + "/" if ref == "local" else f"https://github.com/n-IA-hane/esphome-intercom/raw/{ref}/"
             output.append(f'  assets_base: "{value}"')
         else:
@@ -193,7 +230,7 @@ def check(expect, only):
             failed = True
     # Includes inside a public package must travel with that repository. Checking
     # only the top-level URL misses undeclared sibling-checkout dependencies.
-    for path in sorted((ROOT / "packages").rglob("*.yaml")):
+    for path in tracked_package_files():
         for include in package_include_files(path):
             target = (path.parent / include).resolve()
             outside = not target.is_relative_to(ROOT.resolve())
@@ -266,9 +303,12 @@ def main():
     if args.command == "check":
         return check(args.expect, args.file)
     files = selected(yaml_files(), args.file)
+    if args.command != "local":
+        for path in selected(tracked_package_files(), args.file):
+            rewrite_remote_defaults(path, args.command)
     for path in files:
         rewrite_yaml(path, args.command)
-    cameras = selected(camera_files(), args.file) if args.file else camera_files()
+    cameras = selected(camera_files(), args.file)
     for path in cameras:
         rewrite_camera(path, args.command)
     for path in files:

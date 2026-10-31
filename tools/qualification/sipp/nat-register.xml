@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="Ordinary registered NAT client">
+<send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch];rport
+From: <sip:__USERNAME__@[remote_ip]>;tag=reg-[pid]
+To: <sip:__USERNAME__@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 1 REGISTER
+Contact: <sip:__USERNAME__@[local_ip]:[local_port];transport=[transport]>
+Expires: 60
+User-Agent: Independent SIPp NAT client
+Content-Length: 0
+
+]]></send>
+<recv response="401" auth="true" />
+<send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch];rport
+From: <sip:__USERNAME__@[remote_ip]>;tag=reg-[pid]
+To: <sip:__USERNAME__@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 2 REGISTER
+Contact: <sip:__USERNAME__@[local_ip]:[local_port];transport=[transport]>
+Expires: 60
+User-Agent: Independent SIPp NAT client
+[authentication username=__USERNAME__ password=__PASSWORD__]
+Content-Length: 0
+
+]]></send>
+<recv response="200" />
+<pause milliseconds="7000" />
+<send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch];rport
+From: <sip:__USERNAME__@[remote_ip]>;tag=reg-[pid]
+To: <sip:__USERNAME__@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 3 REGISTER
+Contact: <sip:__USERNAME__@[local_ip]:[local_port];transport=[transport]>
+Expires: 60
+User-Agent: Independent SIPp NAT client
+[authentication username=__USERNAME__ password=__PASSWORD__]
+Content-Length: 0
+
+]]></send>
+<recv response="200" />
+<pause milliseconds="13000" />
+<send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch];rport
+From: <sip:__USERNAME__@[remote_ip]>;tag=reg-[pid]
+To: <sip:__USERNAME__@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 4 REGISTER
+Contact: <sip:__USERNAME__@[local_ip]:[local_port];transport=[transport]>
+Expires: 0
+[authentication username=__USERNAME__ password=__PASSWORD__]
+Content-Length: 0
+
+]]></send>
+<recv response="200" />
+<pause milliseconds="250" />
+</scenario>

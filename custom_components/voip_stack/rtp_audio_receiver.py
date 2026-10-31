@@ -121,7 +121,7 @@ class RtpAudioReceiver:
                 else None
             )
             self._active_format = fmt
-        if self._converter is None:
+        if self._converter is None and not self._pending and len(pcm) <= source.nominal_frame_bytes:
             return [pcm]
 
         # A valid RTP packet can be shorter than nominal ptime. The converter's
@@ -133,5 +133,8 @@ class RtpAudioReceiver:
         while len(self._pending) >= frame_bytes:
             frame = bytes(self._pending[:frame_bytes])
             del self._pending[:frame_bytes]
-            output.extend(self._converter.convert(frame))
+            if self._converter is None:
+                output.append(frame)
+            else:
+                output.extend(self._converter.convert(frame))
         return output

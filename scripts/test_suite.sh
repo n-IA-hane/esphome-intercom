@@ -148,6 +148,10 @@ ha_tests=(
   tests/test_ring_group_orchestrator_behavior.py
   tests/test_trunk_inbound_router_behavior.py
   tests/test_softphone_video_intent.py
+  tests/test_camera_intent_wire_ha.py
+  tests/test_local_sip_flow_ha.py
+  tests/test_optional_sip_capabilities_ha.py
+  tests/test_bridge_capabilities_wire_ha.py
   tests/test_video_keepalive_runtime.py
   tests/test_imageattr_ws.py
   tests/test_video_transcoder.py

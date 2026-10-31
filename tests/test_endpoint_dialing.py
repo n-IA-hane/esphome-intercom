@@ -166,7 +166,7 @@ def _dialer(
             logical_endpoint=lambda *_args: None,
         ),
         sip_uri_transport=lambda _uri: "TCP",
-        enable_reused_tcp_connection=reused,
+        enable_reused_signaling_flow=reused,
     )
     return dialer, created, reused
 
@@ -246,7 +246,7 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
     ("endpoint_kind", "expected"),
     [("esphome", True), ("sip_account", False)],
 )
-def test_directional_audio_extension_is_limited_to_esphome_peers(
+def test_local_directional_offer_does_not_require_remote_feature_cache(
     monkeypatch: pytest.MonkeyPatch,
     endpoint_kind: str,
     expected: bool,
@@ -273,7 +273,7 @@ def test_directional_audio_extension_is_limited_to_esphome_peers(
     )
 
     assert leg is not None
-    assert created["allow_directional_audio_payloads"] is expected
+    assert created["allow_directional_audio_payloads"] is True
 
 
 def test_failed_external_leg_keeps_caller_owned_reservation(
@@ -317,6 +317,7 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
         "192.0.2.1", "192.0.2.1", 12000,
         created["supported_send_formats"], created["supported_recv_formats"],
         include_common_codecs=created["include_common_codecs"],
+        allow_directional_payloads=created["allow_directional_audio_payloads"],
     )
     formats = sdp.offered_pcm_formats(offer)
     assert any(f.encoding == "OPUS" and f.frame_ms == 10 for f in formats)
@@ -325,7 +326,7 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
 
 
 @pytest.mark.parametrize("kind,tx,expected", [
-    ("esphome", None, False),
+    ("esphome", None, True),
     ("sip_account", None, True),
     ("sip_account", ["16000:s16le:1:10"], False),
 ])

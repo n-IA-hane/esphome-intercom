@@ -20,7 +20,6 @@ from .endpoint_routing import (
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
     sip_target_has_unspecified_audio,
-    supports_directional_audio_payloads,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -72,7 +71,7 @@ class EndpointDialer:
     config: dict[str, Any]
     route_resolver: EndpointRouteResolver
     sip_uri_transport: Callable[..., str]
-    enable_reused_tcp_connection: Callable[..., bool]
+    enable_reused_signaling_flow: Callable[..., bool]
 
     def sip_uri_for_member(
         self,
@@ -203,7 +202,8 @@ class EndpointDialer:
                 member_entry.metadata if member_entry is not None else None,
                 user_agent_override=peer_user_agent_override or None,
             )
-            if bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
+            generic_audio_profile = policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
+            if generic_audio_profile:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 rtp_audio_profile = None
@@ -297,9 +297,7 @@ class EndpointDialer:
                     bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
                     or sip_target_has_unspecified_audio(peer_target, member_entry)
                 ),
-                allow_directional_audio_payloads=supports_directional_audio_payloads(
-                    peer_target, member_entry
-                ),
+                allow_directional_audio_payloads=not generic_audio_profile,
                 peer_user_agent=(
                     str(peer_user_agent_override or "").strip()
                     or str(
@@ -345,7 +343,7 @@ class EndpointDialer:
             if policy.use_trunk_flow:
                 reuse_registered_trunk_flow(sip_trunk(self.hass, policy.trunk_id) if policy.trunk_id else sip_trunk(self.hass), client)
             elif policy.reuse_registered_flow:
-                self.enable_reused_tcp_connection(
+                self.enable_reused_signaling_flow(
                     self.hass,
                     client,
                     uri,

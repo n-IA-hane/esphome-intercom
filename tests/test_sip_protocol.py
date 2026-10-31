@@ -637,7 +637,6 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     def _confirmed_audio_client():
         sent: list[tuple[bytes, tuple[str, int]]] = []
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
-        negotiated = sdp.audio_format_to_rtp(pcm, 96)
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",
             local_name="HA",
@@ -652,6 +651,11 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         initial_sdp = sdp.build_offer_directional(
             "127.0.0.1", "127.0.0.1", 41000, [pcm], [pcm]
         )
+        # A confirmed fixture must retain the limits actually advertised by
+        # its initial SDP, just as a real offer/answer exchange does.
+        initial_formats = sdp.offered_pcm_formats(initial_sdp)
+        assert len(initial_formats) == 1 and initial_formats[0].audio_format == pcm
+        negotiated = initial_formats[0]
         current = sip_client.SipDialog(
             target="P4",
             remote_host="127.0.0.2",
@@ -670,6 +674,23 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         client.dialog = current
         return client, current, sent, negotiated
+
+    async def test_confirmed_audio_fixture_retains_its_advertised_packet_bounds(self):
+        import re
+
+        client, current, _sent, _audio = self._confirmed_audio_client()
+        try:
+            description = current.local_sdp_body
+            frame_ms = int(re.search(r"a=ptime:(\d+)", description)[1])
+            maximum = int(re.search(r"a=maxptime:(\d+)", description)[1])
+            self.assertEqual(current.send_format.frame_ms, frame_ms)
+            self.assertEqual(current.send_format.max_frame_ms, maximum)
+            self.assertEqual(current.recv_format.frame_ms, frame_ms)
+            self.assertEqual(current.recv_format.max_frame_ms, maximum)
+        finally:
+            client.dialog = None
+            client.transport = None
+            await client.close()
 
     @staticmethod
     async def _wait_for_sent_request(
@@ -5712,24 +5733,35 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_trunk_invite_separates_identity_contact_and_proxy_route(self) -> None:
+        resolutions = []
+        transports = []
+        provider_wire = []
+
         class Resolver:
             async def resolve(self, uri, *, transport=""):
                 self_outer.assertEqual(uri.host, "fs1.voip.example")
-                self_outer.assertEqual(transport, "UDP")
+                self_outer.assertIn(transport, {"UDP", "TCP"})
+                resolutions.append(transport)
                 return (
                     sip_resolution.SipServerTarget(
                         "fs1.voip.example",
                         5060,
-                        "UDP",
+                        transport,
                         ("192.0.2.10",),
                     ),
                 )
 
         class FakeTransport:
             def __init__(self) -> None:
-                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+                self.sent = provider_wire
+                self.closed = False
+                transports.append(self)
+
+            def close(self) -> None:
+                self.closed = True
 
             def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self_outer.assertFalse(self.closed)
                 self.sent.append((data, addr))
 
         self_outer = self
@@ -5749,6 +5781,18 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         client.include_route_metadata = False  # External trunk uses standard identities.
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
+        # This provider fixture supports UDP. Model a real TCP refusal when
+        # request growth crosses RFC 3261's threshold, then acquire a fresh
+        # datagram transport. Large successful TCP calls have wire coverage in
+        # test_sip_large_trunk_requests, including authentication and cleanup.
+        async def select(host, port):
+            if client.signaling_transport == "TCP":
+                import errno
+                raise ConnectionRefusedError(errno.ECONNREFUSED, "UDP-only provider fixture")
+            if client.transport is None:
+                client.transport = FakeTransport()
+            client._resolved_signaling_target = (host, port)
+        client._select_initial_signaling_target = select
         responses = 0
 
         async def read_response(_timeout: float):
@@ -5804,6 +5848,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             'uri="sip:0800000000@voip.example:5060;transport=udp"',
             authorization,
         )
+        self.assertEqual(resolutions, ["UDP", "TCP"])
+        self.assertEqual(len(transports), 2)
+        self.assertTrue(transports[0].closed)
+        self.assertFalse(transports[1].closed)
+        await client.close()
+        self.assertTrue(all(item.closed for item in transports))
 
     async def test_pending_cancel_waits_for_provisional_then_terminates_invite(self) -> None:
         class FakeTransport:

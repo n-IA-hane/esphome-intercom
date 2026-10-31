@@ -574,6 +574,8 @@ async def _receive_audio(
     sock: socket.socket,
     stopped: asyncio.Event,
     counters: dict[str, int],
+    *,
+    packet_observer=None,
 ) -> None:
     loop = asyncio.get_running_loop()
     while not stopped.is_set():
@@ -588,6 +590,8 @@ async def _receive_audio(
         counters["audio_rx_packets"] += 1
         counters["audio_rx_bytes"] += len(packet.payload)
         counters["audio_rx_last_payload_type"] = packet.payload_type
+        if packet_observer is not None:
+            packet_observer(packet)
 
 
 async def _start_audio_sender(
@@ -759,6 +763,12 @@ async def _relay_video(
         try:
             raw, _addr = await asyncio.wait_for(loop.sock_recvfrom(sock, 65535), 0.5)
         except TimeoutError:
+            continue
+        if (len(raw) >= 20 and raw[:2] == b"\x00\x11" and raw[4:8] == b"\x21\x12\xa4\x42"
+                and int.from_bytes(raw[2:4], "big") == len(raw) - 20 and len(raw) % 4 == 0):
+            # RFC6263 section4.4: a valid STUN indication maintains the media
+            # tuple but is not an RTP packet, access unit or rendered frame.
+            counters["video_stun_keepalives"] = counters.get("video_stun_keepalives", 0) + 1
             continue
         packet = rtp.parse_packet(raw)
         # The address advertised in SDP can differ from the packet source

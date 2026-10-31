@@ -10,6 +10,7 @@ card, WebCodecs and canvas evidence rather than relying on visual inspection.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -112,29 +113,114 @@ def _fake_media_args(video_file: Path | None = None, audio_file: Path | None = N
     return args
 
 
-def _validate_sendonly_video(sample: dict, expected_codec: str = "") -> None:
-    """Qualify a receiver-only peer without inventing remote camera frames.
+def _validate_sending_video(sample: dict, expected_codec: str = "", *,
+                            direction: str = "sendonly", allow_dark_video: bool = False) -> None:
+    """Require the actual media promised by the local sending direction.
 
     Directions are local to the browser, as in RFC 3264. A sending browser
     must still exchange real audio in both directions; its remote video
     canvas correctly stays hidden when the peer has no sending camera.
     """
     if sample.get("card_state") != "in_call":
-        raise RuntimeError(f"sendonly video call ended before the hold completed: {sample}")
-    if sample.get("video_direction") != "sendonly":
-        raise RuntimeError(f"expected browser sendonly video: {sample}")
+        raise RuntimeError(f"{direction} video call ended before the hold completed: {sample}")
+    if sample.get("video_direction") != direction:
+        raise RuntimeError(f"expected browser {direction} video: {sample}")
     if not sample.get("video_active") or not sample.get("engine_video_active"):
-        raise RuntimeError(f"sendonly video was not attached: {sample}")
+        raise RuntimeError(f"{direction} video was not attached: {sample}")
     stats = sample.get("engine_stats") or {}
     if (stats.get("video") or {}).get("sent", 0) <= 0:
-        raise RuntimeError(f"sendonly video did not send a camera frame: {sample}")
+        raise RuntimeError(f"{direction} video did not send a camera frame: {sample}")
     if stats.get("sent", 0) <= 0 or stats.get("received", 0) <= 0:
-        raise RuntimeError(f"sendonly video lost bidirectional audio: {sample}")
+        raise RuntimeError(f"{direction} video lost bidirectional audio: {sample}")
+    if direction == "sendrecv":
+        video = stats.get("video") or {}
+        canvas = sample.get("canvas") or {}
+        if video.get("received", 0) <= 0 or video.get("rendered", 0) <= 0:
+            raise RuntimeError(f"sendrecv video did not receive and render remote frames: {sample}")
+        if canvas.get("hidden") or canvas.get("width", 0) <= 0 or canvas.get("height", 0) <= 0:
+            raise RuntimeError(f"sendrecv video has no visible decoded canvas: {sample}")
+        if not allow_dark_video and not canvas.get("non_black"):
+            raise RuntimeError(f"sendrecv decoded canvas has no non-black sample: {sample}")
     description = str(sample.get("video_format") or "")
     token = re.match(r"(?:pt=[0-9]+:)?([^/;]+)/", description, re.IGNORECASE)
     codec = token.group(1).upper() if token else ""
     if expected_codec and codec != expected_codec.upper():
         raise RuntimeError(f"expected {expected_codec} video, negotiated {codec!r}")
+
+
+def _validate_sendonly_video(sample: dict, expected_codec: str = "") -> None:
+    _validate_sending_video(sample, expected_codec)
+
+
+def audio_timeline(samples: list[dict]) -> dict:
+    """Keep every observed loss across media resets within each SIP dialog."""
+    counters = ("frames_drop", "underruns", "tx_dropped")
+    calls: dict[str, dict] = {}
+    previous: dict[str, dict] = {}
+    for sample in samples:
+        backend = sample.get("backend_state") or {}
+        if (backend.get("state") or sample.get("card_state")) != "in_call":
+            continue
+        call_id = str(backend.get("call_id") or sample.get("call_id") or "")
+        if not call_id:
+            continue
+        report = calls.setdefault(call_id, {
+            "loss_totals": dict.fromkeys(counters, 0), "media_generations": 1,
+            "loss_samples": [], "clock_stalls": [], "observation_gaps": [],
+        })
+        stats = sample.get("engine_stats") or {}
+        if not stats:
+            report["observation_gaps"].append(sample.get("label"))
+            continue
+        before = previous.get(call_id, {})
+        old_stats = before.get("stats", {})
+        clock_observation = sample.get("audio_clock") or {}
+        clock = clock_observation.get("active") or {}
+        clock_wall = clock_observation.get("wall_monotonic_ms")
+        if clock_wall is not None:
+            clock_wall = float(clock_wall) / 1000
+        old_clock = before.get("clock", {})
+        wall = sample.get("at_s")
+        if wall is None:
+            wall = float(sample.get("wall_epoch_ms") or 0) / 1000
+        reset = any(key in stats and key in old_stats and stats[key] < old_stats[key]
+                    for key in (*counters, "frames_in", "frames_out", "sent", "received"))
+        if "current_time" in clock and "current_time" in old_clock:
+            reset = reset or clock["current_time"] < old_clock["current_time"]
+        if clock_wall is not None and before.get("clock_wall") is not None:
+            reset = reset or clock_wall < before["clock_wall"]
+        if reset:
+            report["media_generations"] += 1
+        losses = {}
+        for key in counters:
+            if key not in stats:
+                continue
+            increment = max(0, int(stats[key]) - (0 if reset else int(old_stats.get(key, 0))))
+            report["loss_totals"][key] += increment
+            if increment:
+                losses[key] = increment
+        if losses:
+            report["loss_samples"].append({"label": sample.get("label"), "at_s": wall,
+                "generation": report["media_generations"], "increments": losses})
+        if not reset and clock.get("state") == old_clock.get("state") == "running":
+            elapsed = (clock_wall - before["clock_wall"]
+                if clock_wall is not None and before.get("clock_wall") is not None
+                else float(wall) - float(before.get("wall", wall)))
+            advanced = float(clock.get("current_time", 0)) - float(old_clock.get("current_time", 0))
+            # Report a measured render-clock deficit, never reinterpret it as
+            # RTP loss or hide it when a later AudioContext recovers.
+            if elapsed >= 0.5 and elapsed - advanced >= 0.5:
+                report["clock_stalls"].append({"from": before.get("label"), "to": sample.get("label"),
+                    "wall_seconds": elapsed, "render_seconds": advanced})
+        previous[call_id] = {"stats": stats, "clock": clock, "clock_wall": clock_wall,
+            "wall": wall, "label": sample.get("label")}
+    return {"calls": calls, "loss_totals": {key: sum(item["loss_totals"][key] for item in calls.values())
+        for key in counters}, "clock_stalls": sum(len(item["clock_stalls"]) for item in calls.values())}
+
+
+def validate_audio_timeline(report: dict) -> None:
+    if any(report["loss_totals"].values()) or report["clock_stalls"]:
+        raise RuntimeError(f"Browser audio timeline failed: {report}")
 
 
 DEEP_CARD = r"""
@@ -247,7 +333,7 @@ LIGHT_CARD_STATE = r"""
   return {
     card_state: String(snapshot.state || ""),
     terminal_reason: String(snapshot.terminal_reason || ""),
-    card_error: String(card._errorMsg || globalThis.__voipStackProbeStartError || ""),
+    card_error: String(card._errorMsg || ""),
     call_id: String(snapshot.call_id || ""),
     video_active: Boolean(snapshot.video_active),
     video_offered: Boolean(snapshot.video_offered),
@@ -278,6 +364,28 @@ LIGHT_CARD_STATE = r"""
           - Number(headerRect?.bottom || 0),
       ),
     } : null,
+  };
+}
+"""
+
+AUDIO_CLOCK_SAMPLE = r"""
+() => {
+  const engine = globalThis.__voipStackEngine;
+  const describe = context => {
+    if (!context) return null;
+    let outputTimestamp = null;
+    try { outputTimestamp = context.getOutputTimestamp?.() || null; } catch (_) {}
+    return {
+      state: context.state, current_time: context.currentTime,
+      sample_rate: context.sampleRate, base_latency: context.baseLatency ?? null,
+      output_latency: context.outputLatency ?? null, output_timestamp: outputTimestamp,
+    };
+  };
+  return {
+    wall_epoch_ms: Date.now(), wall_monotonic_ms: performance.now(),
+    visibility: document.visibilityState,
+    active: describe(engine?._audioContext),
+    prepared: describe(engine?._preparedAudio?.audioContext),
   };
 }
 """
@@ -352,18 +460,19 @@ CARD_SAMPLE = r"""
     video_format: String(snapshot.video_format || ""),
     video_direction: String(snapshot.video_direction || ""),
     debug_mode: Boolean(snapshot.debug_mode),
-    engine_state: String(globalThis.__voipStackEngine?.state || ""),
+    engine_state: String(globalThis.__voipStackEngine?.state || globalThis.__voipStackEngine?._state || ""),
     engine_device_id: String(globalThis.__voipStackEngine?.deviceId || ""),
     engine_call_id: String(globalThis.__voipStackEngine?.callId || ""),
     engine_video_active: Boolean(globalThis.__voipStackEngine?.videoActive),
     engine_video_visible: Boolean(globalThis.__voipStackEngine?.videoVisible),
-    owns_current_call: Boolean(globalThis.__voipStackEngine?.ownsSoftphoneSession?.(snapshot.call_id)),
+    owns_current_call: Boolean(globalThis.__voipStackEngine?.ownsSoftphoneSession?.(snapshot.call_id, snapshot.endpoint_id || card._getSoftphoneEndpointId?.())),
     starting: Boolean(card._starting),
     stopping: Boolean(card._stopping),
     has_audio_attach_task: Boolean(card._audioAttachTask),
     has_cleanup_task: Boolean(card._cleanupTask),
     engine_stats: globalThis.__voipStackEngine?.stats || null,
     video_debug: globalThis.__voipStackEngine?._video ? {
+      generation: globalThis.__voipStackEngine._video._generation,
       frame_queue: (globalThis.__voipStackEngine._video._frameQueue || []).map((frame) => Number(frame.timestamp || 0)),
       render_handle: Number(globalThis.__voipStackEngine._video._renderHandle || 0),
       playout_base_wall: Number(globalThis.__voipStackEngine._video._playoutBaseWall || 0),
@@ -586,62 +695,82 @@ CLICK_HANGUP = r"""
 }
 """
 
-CLICK_CAMERA_SEND = r"""
-async (enabled = true) => {
-  const deep = (selector, root = document) => {
-    const found = [...root.querySelectorAll(selector)];
-    for (const node of root.querySelectorAll("*")) {
-      if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
-    }
-    return found;
-  };
-  const card = globalThis.__voipStackProbeFindCard?.() || null;
-  if (!card) return false;
-  let root = card.shadowRoot || card;
-  const settings = deep("button", root).find((item) => item.textContent.trim() === "Options");
-  if (settings && !card._settingsOpen) {
-    settings.click();
-    for (let attempt = 0; attempt < 20 && !card._settingsOpen; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    root = card.shadowRoot || card;
-  }
-  const checkbox = deep("#ha-softphone-video-camera-cb", root)[0];
-  if (!checkbox || checkbox.closest("[hidden]")) return false;
-  if (checkbox.checked !== enabled) {
-    checkbox.click();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  if (settings && card._settingsOpen) {
-    settings.click();
-    for (let attempt = 0; attempt < 20 && card._settingsOpen; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  // Additional logical phones do not own the page-global engine while idle;
-  // their camera preference is nevertheless authoritative on the card and is
-  // handed to the engine when that endpoint starts or answers a call.
-  return Boolean(checkbox.checked) === enabled;
-}
-"""
 
-START_OUTBOUND = r"""
-async (destination) => {
-  const card = globalThis.__voipStackProbeFindCard?.() || null;
-  if (!card) return false;
-  card._softphoneKeypadOpen = true;
-  card._softphoneManualTarget = String(destination || "");
-  // A real click does not await the whole asynchronous call operation. Keep
-  // the probe equivalent so a delayed HA service response cannot pin this
-  // page.evaluate() call and hide the still-usable Hang up control.
-  globalThis.__voipStackProbeStartError = "";
-  globalThis.__voipStackProbeStartPromise = Promise.resolve(card._startCall())
-    .catch((error) => {
-      globalThis.__voipStackProbeStartError = error?.message || String(error);
-    });
-  return true;
-}
-"""
+
+def phone_controls(page):
+    """Locate the visible browser phone without changing application state."""
+    for card in page.locator("voip-stack-card, intercom-card").all():
+        if card.is_visible() and card.evaluate(
+            "card => (card.config?.mode || card.config?.card_mode) === 'ha_softphone'"
+        ):
+            return card
+    return None
+
+
+def start_outbound(page, destination: str) -> bool:
+    """Enter a destination and click Call through the visible phone controls."""
+    card = phone_controls(page)
+    if card is None:
+        return False
+    options = card.locator('button[aria-controls="voip-settings-panel"]')
+    if options.count() and options.get_attribute("aria-expanded") == "true":
+        options.click()
+    field = card.locator("input.keypad-input")
+    if not field.is_visible():
+        card.locator('button[aria-controls="voip-keypad-panel"]').click()
+    field.fill(str(destination))
+    card.locator("button.voip-button.call").click()
+    return True
+
+
+def set_camera_send(page, enabled: bool) -> bool:
+    """Use the normal Options checkbox and preserve its panel visibility."""
+    card = phone_controls(page)
+    if card is None:
+        return False
+    options = card.locator('button[aria-controls="voip-settings-panel"]')
+    checkbox = card.locator('#ha-softphone-video-camera-cb')
+    opened = not checkbox.is_visible()
+    if opened:
+        options.click()
+    checkbox.set_checked(bool(enabled))
+    if opened:
+        options.click()
+    return True
+
+
+def wait_camera_preference(page, enabled: bool) -> None:
+    page.wait_for_function(
+        f"async () => Boolean((await ({BACKEND_SAMPLE})()).send_video) === {str(enabled).lower()}",
+        timeout=10_000, polling=100,
+    )
+
+
+def camera_toggle_cycle(set_camera, wait_phase, *, expected_call_id="", direction="sendonly"):
+    """Observe a connected audio leg before sending any camera intent."""
+    before = wait_phase("camera_cycle_audio_ready", None, None)
+    backend = before.get("backend_state") or {}
+    call_id = str(backend.get("call_id") or "")
+    if backend.get("state") != "in_call" or not call_id:
+        raise RuntimeError("Camera cycle requires an established SIP dialog")
+    if expected_call_id and call_id != expected_call_id:
+        raise RuntimeError("The original SIP dialog ended before the camera cycle")
+    initial_directions = {"inactive", "recvonly"} if direction == "sendrecv" else {"inactive"}
+    if backend.get("video_direction") not in initial_directions:
+        raise RuntimeError("Camera cycle requires an initially non-sending dialog")
+    phases = [before]
+    for enabled, label in ((True, "camera_on"), (False, "camera_off"), (True, "camera_on_again")):
+        if not set_camera(enabled):
+            raise RuntimeError("Send Camera control is unavailable")
+        current = wait_phase(label, enabled, before)
+        current_backend = current.get("backend_state") or {}
+        if current_backend.get("state") != "in_call" or current_backend.get("call_id") != call_id:
+            raise RuntimeError("Camera intent changed the established call identity")
+        if enabled and current_backend.get("video_direction") != direction:
+            raise RuntimeError(f"Camera cycle expected browser {direction} video")
+        phases.append(current)
+        before = current
+    return phases
 
 
 def main() -> int:
@@ -702,7 +831,7 @@ def main() -> int:
     parser.add_argument(
         "--send-camera",
         action="store_true",
-        help="enable the card's Send Camera checkbox after the dialog connects",
+        help="set the initial Send Camera preference before placing or waiting for the call",
     )
     parser.add_argument(
         "--fake-video-file",
@@ -801,9 +930,24 @@ def main() -> int:
     parser.add_argument("--fake-audio-file", type=Path)
     parser.add_argument("--audio-capture-dir", type=Path)
     parser.add_argument("--camera-send", choices=("on", "off"))
+    parser.add_argument("--camera-toggle-cycle", action="store_true",
+        help="qualify camera off then on/off/on after connection, Hangup and redial")
+    parser.add_argument("--camera-cycle-direction", choices=("sendonly", "sendrecv"), default="sendonly",
+        help="expected enabled-camera direction in --camera-toggle-cycle (default: sendonly)")
     parser.add_argument("--verify-keypad", action="store_true")
     parser.add_argument("--dtmf-digit", choices=tuple("0123456789*#ABCD"))
     args = parser.parse_args()
+    if args.camera_toggle_cycle:
+        if not args.outbound or args.cancel_during_ring or args.no_hangup or args.expect_remote_hangup:
+            parser.error("--camera-toggle-cycle requires an outbound call and local Hangup")
+        if args.expect_audio_only or args.deny_camera or args.send_camera or args.camera_send == "on":
+            parser.error("--camera-toggle-cycle starts with camera off and then verifies video sending")
+        if args.camera_cycle_direction == "sendrecv" and args.expect_sendonly_video:
+            parser.error("--camera-cycle-direction sendrecv conflicts with --expect-sendonly-video")
+        args.expect_sendonly_video = args.camera_cycle_direction == "sendonly"
+        args.expect_video_reinvite = True
+    elif args.camera_cycle_direction != "sendonly":
+        parser.error("--camera-cycle-direction requires --camera-toggle-cycle")
     if args.dtmf_digit:
         args.verify_keypad = True
     if args.fake_audio_file is not None and not args.fake_audio_file.is_file():
@@ -812,8 +956,8 @@ def main() -> int:
         parser.error("--expect-audio-only cannot be combined with camera options")
     if args.expect_sendonly_video and (args.expect_audio_only or args.deny_camera):
         parser.error("--expect-sendonly-video requires an enabled video sender")
-    if args.expect_video_codec and not args.expect_sendonly_video:
-        parser.error("--expect-video-codec requires --expect-sendonly-video")
+    if args.expect_video_codec and not (args.expect_sendonly_video or args.camera_toggle_cycle):
+        parser.error("--expect-video-codec requires --expect-sendonly-video or --camera-toggle-cycle")
     if args.expect_native_camera and not args.expect_audio_only:
         parser.error("--expect-native-camera requires --expect-audio-only")
     if args.expect_remote_hangup and args.no_hangup:
@@ -831,6 +975,9 @@ def main() -> int:
         if args.fake_video_file.suffix.lower() != ".y4m":
             parser.error("--fake-video-file requires a Y4M input")
         args.send_camera = True
+    if args.camera_toggle_cycle:
+        args.send_camera = False
+        args.camera_send = "off"
     storage_state = (
         Path(args.storage_state).expanduser() if args.storage_state else None
     )
@@ -889,10 +1036,27 @@ def main() -> int:
         "audio_websockets": [],
         "document_events": [],
         "websocket_events": [],
+        "audio_context_events": [],
+        "audio_wire_frames": [],
+        "audio_wire_frames_omitted": 0,
+        "case": "auth_check_only" if args.auth_check_only else
+            "camera_toggle_cycle" if args.camera_toggle_cycle else
+            "outbound" if args.outbound else "incoming",
+        "observer_configuration": {
+            "control_mode": "trusted_visible_controls",
+            "synthetic_capture": True, "mute_audio": args.mute_audio,
+            "sample_interval_s": args.sample_interval,
+            "startup_settle_s": args.startup_settle_seconds,
+            "wire_wav_capture": bool(args.audio_capture_dir),
+            "camera_cycle_direction": args.camera_cycle_direction if args.camera_toggle_cycle else None,
+            "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        },
+        "host_context": {"cpu_count": os.cpu_count(), "load_average_start": os.getloadavg(),
+            "python": sys.version.split()[0]},
     }
     failure: BaseException | None = None
     from ha_voip_lab.browser_audio_capture import BrowserAudioCapture
-    audio_capture = BrowserAudioCapture() if args.audio_capture_dir else None
+    audio_capture = BrowserAudioCapture(capture_pcm=bool(args.audio_capture_dir))
     with sync_playwright() as playwright:
         launch_options = {
             "headless": True,
@@ -908,6 +1072,7 @@ def main() -> int:
         browser = playwright.chromium.launch(
             **launch_options,
         )
+        result["observer_configuration"]["browser_version"] = browser.version
         context = browser.new_context(
             **context_options,
             viewport={"width": args.viewport_width, "height": args.viewport_height},
@@ -977,6 +1142,25 @@ def main() -> int:
         page.on("load", lambda: record_document_event("load", page.url))
         cdp = context.new_cdp_session(page)
         cdp.send("Network.enable")
+        audio_contexts: dict[str, dict] = {}
+
+        def record_audio_context(kind: str, event: dict) -> None:
+            data = event.get("context") or event
+            context_id = str(data.get("contextId") or "")
+            if kind == "destroyed":
+                audio_contexts.pop(context_id, None)
+            elif context_id:
+                audio_contexts[context_id] = dict(data)
+            result["audio_context_events"].append({
+                "at_s": round(time.monotonic() - browser_started, 6),
+                "wall_epoch_ms": round(time.time() * 1000, 3),
+                "kind": kind, "context": data,
+            })
+
+        cdp.on("WebAudio.contextCreated", lambda event: record_audio_context("created", event))
+        cdp.on("WebAudio.contextChanged", lambda event: record_audio_context("changed", event))
+        cdp.on("WebAudio.contextWillBeDestroyed", lambda event: record_audio_context("destroyed", event))
+        cdp.send("WebAudio.enable")
         websocket_urls: dict[str, str] = {}
 
         def record_websocket_created(event: dict) -> None:
@@ -1047,13 +1231,27 @@ def main() -> int:
         cdp.on("Network.webSocketCreated", record_websocket_created)
         cdp.on("Network.webSocketClosed", record_websocket_closed)
         cdp.on("Network.webSocketFrameError", record_websocket_error)
-        if audio_capture is not None:
-            def capture_frame(event, direction):
-                request_id = str(event.get("requestId") or "")
-                if urlsplit(websocket_urls.get(request_id, "")).path == "/api/voip_stack/ws":
-                    audio_capture.record(request_id, direction, event.get("response") or {}, event.get("timestamp"))
-            cdp.on("Network.webSocketFrameReceived", lambda event: capture_frame(event, "rx"))
-            cdp.on("Network.webSocketFrameSent", lambda event: capture_frame(event, "tx"))
+        def capture_frame(event, direction):
+            request_id = str(event.get("requestId") or "")
+            if urlsplit(websocket_urls.get(request_id, "")).path != "/api/voip_stack/ws":
+                return
+            observed = audio_capture.record(
+                request_id, direction, event.get("response") or {}, event.get("timestamp"),
+            )
+            if observed is None:
+                return
+            if len(result["audio_wire_frames"]) >= 20000:
+                result["audio_wire_frames_omitted"] += 1
+                return
+            result["audio_wire_frames"].append({
+                "at_s": round(time.monotonic() - browser_started, 6),
+                "wall_epoch_ms": round(time.time() * 1000, 3),
+                "cdp_monotonic_s": event.get("timestamp"),
+                "request_id": request_id, "direction": direction, **observed,
+            })
+
+        cdp.on("Network.webSocketFrameReceived", lambda event: capture_frame(event, "rx"))
+        cdp.on("Network.webSocketFrameSent", lambda event: capture_frame(event, "tx"))
         page.goto(args.url, wait_until="domcontentloaded", timeout=30_000)
         if _is_ha_auth_url(page.url):
             raise RuntimeError(
@@ -1116,6 +1314,16 @@ def main() -> int:
                 try:
                     item = page.evaluate(CARD_SAMPLE) or {}
                     item["backend_state"] = page.evaluate(BACKEND_SAMPLE) or {}
+                    item["audio_clock"] = page.evaluate(AUDIO_CLOCK_SAMPLE)
+                    item["native_audio_clocks"] = []
+                    for context_id, audio_context in list(audio_contexts.items()):
+                        if audio_context.get("contextState") != "running":
+                            continue
+                        try:
+                            data = cdp.send("WebAudio.getRealtimeData", {"contextId": context_id})
+                        except PlaywrightError as error:
+                            data = {"observer_error": _sanitise_browser_message(error)}
+                        item["native_audio_clocks"].append({"context_id": context_id, **data})
                     break
                 except PlaywrightError as err:
                     if (
@@ -1131,6 +1339,8 @@ def main() -> int:
                     )
                     page.evaluate(INSTALL_RESPONSIVENESS_MONITOR)
             item["label"] = label
+            item["at_s"] = round(time.monotonic() - browser_started, 6)
+            item["wall_epoch_ms"] = round(time.time() * 1000, 3)
             result["samples"].append(item)
             print(json.dumps(item, separators=(",", ":")), flush=True)
             return item
@@ -1230,8 +1440,17 @@ def main() -> int:
                 hangup_click=clicked,
             )
 
+        camera_preference = None
         try:
             reload_rendered = 0
+            if args.outbound:
+                preflight = sample("preflight_before_call")
+                state = preflight.get("backend_state") or {}
+                resources = state.get("runtime_resources") or (state.get("media_debug") or {}).get("runtime_resources") or {}
+                if state.get("state") != "idle" or resources.get("call_scoped_quiescent") is not True:
+                    raise RuntimeError("Outbound qualification requires an idle phone and quiescent call resources")
+                if args.camera_toggle_cycle:
+                    camera_preference = bool(state.get("send_video"))
             if args.send_camera or args.camera_send is not None:
                 page.wait_for_function(
                     f"() => Boolean(({DEEP_CARD})()?._softphoneSnapshot?.video_camera_send_enabled)",
@@ -1239,17 +1458,13 @@ def main() -> int:
                     polling=100,
                 )
                 desired_camera = args.camera_send != "off"
-                if not page.evaluate(CLICK_CAMERA_SEND, desired_camera):
+                if not set_camera_send(page, desired_camera):
                     raise RuntimeError("Send Camera option was not available before the video call")
-                page.wait_for_function(
-                    f"() => (({DEEP_CARD})()?._softphoneSnapshot?.send_video) === {str(desired_camera).lower()}",
-                    timeout=10_000,
-                    polling=100,
-                )
+                wait_camera_preference(page, desired_camera)
             sample("ready")
             if args.outbound:
                 print(f"PLACING_VIDEO_CALL {args.outbound}", flush=True)
-                if not page.evaluate(START_OUTBOUND, args.outbound):
+                if not start_outbound(page, args.outbound):
                     raise RuntimeError("HA softphone card could not start the outbound call")
                 outbound_states = (
                     "['remote_ringing']"
@@ -1331,6 +1546,60 @@ def main() -> int:
                     f"state={connected.get('card_state')!r} "
                     f"reason={connected.get('terminal_reason')!r} "
                     f"error={connected.get('card_error')!r}"
+                )
+            def wait_camera_phase(label, enabled, previous):
+                video_baseline = None
+                deadline = time.monotonic() + args.video_timeout
+                while time.monotonic() < deadline:
+                    current = sample(label)
+                    backend = current.get("backend_state") or {}
+                    stats = current.get("engine_stats") or {}
+                    if backend.get("state") != "in_call":
+                        raise RuntimeError("SIP dialog ended during the camera cycle")
+                    if any(stats.get(key, 0) for key in ("frames_drop", "underruns", "tx_dropped")):
+                        raise RuntimeError("Audio health failed during the camera cycle")
+                    flowing = (stats.get("frames_in", 0) > 0 and stats.get("sent", 0) > 0
+                        and stats.get("received", 0) > 0
+                        and backend.get("rtp_tx_packets", 0) > 0 and backend.get("rtp_rx_packets", 0) > 0)
+                    if previous is not None:
+                        prior_backend = previous["backend_state"]
+                        flowing = flowing and all(backend.get(key, 0) > prior_backend.get(key, 0)
+                            for key in ("rtp_tx_packets", "rtp_rx_packets"))
+                    direction = backend.get("video_direction")
+                    committed = enabled is None or (backend.get("send_video") is enabled and
+                        direction in ({args.camera_cycle_direction} if enabled else {"inactive", "recvonly"}))
+                    if enabled and committed:
+                        generation = (current.get("video_debug") or {}).get("generation")
+                        sent = (stats.get("video") or {}).get("sent", 0)
+                        transmitted = backend.get("video_rtp_tx_packets", 0)
+                        received = (stats.get("video") or {}).get("received", 0)
+                        rendered = (stats.get("video") or {}).get("rendered", 0)
+                        incoming = backend.get("video_rtp_rx_packets", 0)
+                        if video_baseline is None or video_baseline[0] != generation:
+                            video_baseline = (generation, sent, transmitted, received, rendered, incoming)
+                            committed = False
+                        else:
+                            committed = sent > video_baseline[1] and transmitted > video_baseline[2]
+                            if args.camera_cycle_direction == "sendrecv":
+                                committed = (committed and received > video_baseline[3]
+                                    and rendered > video_baseline[4] and incoming > video_baseline[5])
+                    if committed and direction in {"recvonly", "sendrecv"}:
+                        video = stats.get("video") or {}
+                        canvas = current.get("canvas") or {}
+                        committed = (video.get("received", 0) > 0 and video.get("rendered", 0) > 0
+                            and canvas.get("width", 0) > 0 and canvas.get("height", 0) > 0
+                            and not canvas.get("hidden")
+                            and (args.allow_dark_video or canvas.get("non_black")))
+                    if flowing and committed:
+                        return current
+                    page.wait_for_timeout(100)
+                raise RuntimeError(f"Camera cycle phase did not complete: {label}")
+
+            if args.camera_toggle_cycle:
+                result["camera_cycle"] = camera_toggle_cycle(
+                    lambda enabled: set_camera_send(page, enabled), wait_camera_phase,
+                    expected_call_id=connected["backend_state"]["call_id"],
+                    direction=args.camera_cycle_direction,
                 )
             if args.verify_keypad:
                 result["keypad"] = page.evaluate("""async (digit) => {
@@ -1456,6 +1725,9 @@ def main() -> int:
             video_stats = engine_stats.get("video") or {}
             if args.expect_sendonly_video:
                 _validate_sendonly_video(after_hold, args.expect_video_codec or "")
+            elif args.camera_toggle_cycle:
+                _validate_sending_video(after_hold, args.expect_video_codec or "",
+                    direction=args.camera_cycle_direction, allow_dark_video=args.allow_dark_video)
             if engine_stats.get("tx_dropped", 0) != 0:
                 raise RuntimeError(f"browser audio TX dropped frames: {active}")
             if engine_stats.get("frames_drop", 0) != 0:
@@ -1544,6 +1816,18 @@ def main() -> int:
                     "idle_after_hangup",
                     "visible Hangup button not found",
                 )
+            if args.camera_toggle_cycle:
+                if not start_outbound(page, args.outbound):
+                    raise RuntimeError("Redial Call control is unavailable")
+                page.wait_for_function(
+                    f"() => (({LIGHT_CARD_STATE})()?.card_state || '') === 'in_call'",
+                    timeout=int(args.ring_timeout * 1000), polling=100,
+                )
+                redial = wait_camera_phase("camera_cycle_redial", True, None)
+                if redial["backend_state"]["call_id"] == connected["backend_state"]["call_id"]:
+                    raise RuntimeError("Redial reused the previous SIP dialog")
+                result["camera_cycle_redial"] = redial
+                click_hangup_and_wait("idle_after_camera_cycle_redial", "Redial Hangup control is unavailable")
             result["ok"] = True
         except _ProbeComplete:
             pass
@@ -1568,18 +1852,48 @@ def main() -> int:
                     result["failure_cleanup_error"] = (
                         f"{type(cleanup_error).__name__}: {cleanup_error}"
                     )
+            if camera_preference is not None:
+                try:
+                    state = page.evaluate(BACKEND_SAMPLE) or {}
+                    resources = (state.get("media_debug") or {}).get("runtime_resources") or {}
+                    if state.get("state") != "idle" or not resources.get("call_scoped_quiescent"):
+                        raise RuntimeError("Camera preference restoration requires completed call cleanup")
+                    if not set_camera_send(page, camera_preference):
+                        raise RuntimeError("Camera preference control is unavailable")
+                    wait_camera_preference(page, camera_preference)
+                    restored = page.evaluate(BACKEND_SAMPLE) or {}
+                    if bool(restored.get("send_video")) != camera_preference:
+                        raise RuntimeError("Camera preference was not restored by Home Assistant")
+                    result["camera_preference_restored"] = camera_preference
+                except BaseException as restore_error:
+                    result["camera_preference_restore_error"] = f"{type(restore_error).__name__}: {restore_error}"
+                    failure = failure or restore_error
+                    result["ok"] = False
             try:
                 finish_responsiveness_monitor("final")
             except BaseException as monitor_error:
                 result["responsiveness_error"] = (
                     f"{type(monitor_error).__name__}: {monitor_error}"
                 )
-            if audio_capture is not None:
+            if args.audio_capture_dir:
                 audio_report = audio_capture.save(args.audio_capture_dir)
                 result["audio_capture"] = {"errors": audio_report["errors"], "streams": len(audio_report["streams"])}
                 if audio_report['errors']:
                     failure = failure or RuntimeError('Browser audio capture failed')
                     result['ok'] = False
+            result["host_context"]["load_average_end"] = os.getloadavg()
+            result["audio_observer_errors"] = list(audio_capture.errors)
+            if audio_capture.errors:
+                failure = failure or RuntimeError("Browser PCM observation failed")
+                result["ok"] = False
+            result["audio_timeline"] = audio_timeline(result["samples"])
+            try:
+                validate_audio_timeline(result["audio_timeline"])
+            except RuntimeError as timeline_error:
+                failure = failure or timeline_error
+                result["ok"] = False
+                result["audio_timeline_error"] = str(timeline_error)
+                result.setdefault("error", f"RuntimeError: {timeline_error}")
             Path(args.out).write_text(json.dumps(result, indent=2, ensure_ascii=False))
             for line in console:
                 print(f"BROWSER {line}", flush=True)

@@ -83,6 +83,12 @@ class SipRegistration:
     gruu_epoch: str = ""
     public_gruu: str = ""
     temporary_gruu: str = ""
+    capabilities: dict[str, Any] | None = None
+
+    @property
+    def flow_key(self) -> tuple[str, str, str, int, str]:
+        """Scope optional wire capabilities to this authenticated Contact flow."""
+        return (self.call_id, self.contact_uri, self.source_host, self.source_port, self.transport.upper())
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -652,26 +658,16 @@ class SipRegistrar:
         self,
         addr: tuple[str, int],
         transport: str,
+        *, username: str | None = None,
     ) -> SipAccount | None:
-        """Resolve an authenticated live registration by signaling flow."""
+        """Select an identity only from authenticated bindings on this flow."""
 
         self.expire()
-        wanted_transport = str(transport or "").upper()
-        registration = next(
-            (
-                item
-                for item in self.registrations.values()
-                if item.source_host == str(addr[0])
-                and item.source_port == int(addr[1])
-                and item.transport.upper() == wanted_transport
-            ),
-            None,
-        )
-        return (
-            self.accounts.get(registration.username.lower())
-            if registration is not None
-            else None
-        )
+        candidates = [account for account in self.accounts.values()
+                      if account.enabled
+                      and (username is None or account.username.casefold() == username.casefold())
+                      and self.registration_matches_source(account.username, addr[0], addr[1], transport)]
+        return candidates[0] if len(candidates) == 1 else None
 
     async def handle_register(self, request: sip.SipMessage, addr: tuple[str, int], transport: str) -> SipRegisterResult:
         self.last_sip_event = "REGISTER"
@@ -859,7 +855,8 @@ class SipRegistrar:
                         if binding.username.casefold() == account.username.casefold() and binding.instance_id == contact.instance_id:
                             next_registrations[binding_key] = replace(binding, gruu_epoch=epoch,
                                 public_gruu=public_gruu, temporary_gruu=temporary_gruu)
-                next_registrations[key] = SipRegistration(
+                previous_binding = next_registrations.get(key)
+                updated_binding = SipRegistration(
                     username=account.username,
                     contact_uri=contact.contact_uri,
                     source_host=addr[0],
@@ -876,6 +873,9 @@ class SipRegistrar:
                     outbound=contact.outbound,
                     gruu_epoch=epoch, public_gruu=public_gruu, temporary_gruu=temporary_gruu,
                 )
+                if previous_binding is not None and previous_binding.flow_key == updated_binding.flow_key:
+                    updated_binding.capabilities = previous_binding.capabilities
+                next_registrations[key] = updated_binding
 
         self.registrations = next_registrations
         is_registered = bool(self._registrations(account.username))
@@ -995,6 +995,8 @@ class SipRegistrar:
                     sip_uri=registration.contact_uri,
                     extension=account.extension,
                     metadata={
+                        **(registration.capabilities or {}),
+                        "sip_capabilities_known": registration.capabilities is not None,
                         **({"endpoint_id": account.endpoint_id, "endpoint_kind": "esphome"}
                            if account.endpoint_id else {}),
                         "sip_transport": registration.transport.lower(),

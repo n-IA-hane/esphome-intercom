@@ -569,6 +569,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         request_router: ApplicationRequestRouter | None = None,
         send_override: SendHandler | None = None,
         request_route: Callable[[sip.SipUri, tuple[str, int]], Awaitable[tuple[str, int]]] | None = None,
+        transaction_flow: Callable[[tuple[str, int]], object] | None = None,
         notify_tcp_endpoint: Callable[[], SipUdpEndpoint | None] | None = None,
         signaling_transport: str = "UDP",
         flow_trunk_id: str = "",
@@ -598,6 +599,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.request_router = request_router
         self.send_override = send_override
         self.request_route = request_route
+        self.transaction_flow = transaction_flow
         self.notify_tcp_endpoint = notify_tcp_endpoint
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.flow_trunk_id = flow_trunk_id
@@ -629,6 +631,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._invite_tasks: set[asyncio.Task[None]] = set()
         self._maintenance_tasks: set[asyncio.Task[Any]] = set()
         self._client_transaction_responses: dict[str, SipResponseMailbox] = {}
+        self._dialog_queues: dict[tuple[tuple[str, int], str], asyncio.Queue[bytes | None]] = {}
         self.dropped_datagrams = 0
         self.last_sip_event = ""
         self.last_sip_status_code = 0
@@ -645,6 +648,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         else:
             _LOGGER.info("SIP UDP listener closed")
         self.transport = None
+        for queue in set(self._dialog_queues.values()):
+            put_drop_oldest(queue, None)
+        self._dialog_queues.clear()
         self.cancel_request_tasks()
         if self._closed_waiter is not None and not self._closed_waiter.done():
             self._closed_waiter.set_result(None)
@@ -670,6 +676,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         except (ValueError, sip.SipError):
             self.dropped_datagrams += 1
             return False
+        queue = self._dialog_queues.get(((str(addr[0]), int(addr[1])), message.header("Call-ID")))
+        if queue is not None:
+            put_drop_oldest(queue, data)
+            return True
         if message.is_response:
             try:
                 branch = sip.parse_via(message.header("Via")).branch
@@ -701,6 +711,21 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._invite_tasks.add(task)
         task.add_done_callback(self._request_task_done)
         return True
+
+    def open_reused_dialog(self, addr: tuple[str, int], call_id: str):
+        """Borrow this listener's UDP flow with one existing client reader."""
+        key = (addr, call_id)
+        if self.transport is None or not call_id or key in self._dialog_queues:
+            return None
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
+        self._dialog_queues[key] = queue
+        return lambda raw: self._send(raw, addr), queue
+
+    def bind_reused_usage(self, addr: tuple[str, int], call_id: str, usage_id: str):
+        return bind_flow_usage(self._dialog_queues, (addr, call_id), (addr, usage_id))
+
+    def close_reused_dialog(self, addr: tuple[str, int], call_id: str) -> None:
+        self._dialog_queues.pop((addr, call_id), None)
 
     def _next_hop_target(self, value: str) -> sip.SipUri:
         target = sip.parse_sip_uri(value)
@@ -1276,11 +1301,21 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     ) -> sip.SipMessage | None:
         """Run the shared non-INVITE transaction for this listener transport."""
 
-        responses = SipResponseMailbox(lambda message: sip.response_matches_dialog_transaction(message, ids, method, creating_dialog=creating_dialog))
+        responses = SipResponseMailbox(
+            lambda message: sip.response_matches_dialog_transaction(message, ids, method, creating_dialog=creating_dialog),
+            flow=self.transaction_flow(addr) if self.transaction_flow is not None else None,
+        )
         self._client_transaction_responses[ids.branch] = responses
+
+        def send():
+            sent = self._send(raw, addr)
+            if sent is False and self.signaling_transport == "TCP":
+                raise ConnectionError("SIP TCP flow is unavailable before send")
+            return sent
+
         try:
             return await async_run_dialog_request_transaction(
-                send=lambda: self._send(raw, addr),
+                send=send,
                 read=responses.receive,
                 matches=lambda response: sip.response_matches_dialog_transaction(
                     response, ids, method, creating_dialog=creating_dialog
@@ -1362,6 +1397,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         sender = self
         wire_transport = self.signaling_transport
         tcp_rejected = False
+        tcp_reconnected = False
+        reconnect_target = None
         next_hop = None
         deadline = asyncio.get_running_loop().time() + _INVITE_2XX_TIMEOUT
         authentication = DigestChallengeTracker()
@@ -1382,15 +1419,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     return None
                 next_hop = None
             if next_hop is None:
-                target = sender._next_hop_target(routing.next_hop_uri)
+                target = reconnect_target or sender._next_hop_target(routing.next_hop_uri)
                 next_hop = (target.host, sip.sip_default_port(target))
                 if sender.request_route is not None:
                     try:
-                        next_hop = await sender.request_route(target, addr)
+                        async with asyncio.timeout(remaining):
+                            next_hop = await sender.request_route(target, addr)
                     except OSError as err:
                         # RFC 3261 18.1.1 retains UDP interoperability after a
                         # TCP refusal/reset or ICMP protocol-unreachable only.
-                        if sender is self or err.errno not in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}:
+                        if (sender is self or tcp_reconnected or
+                                err.errno not in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}):
                             raise
                         sender, next_hop, tcp_rejected = self, None, True
                         continue
@@ -1406,11 +1445,23 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
-            response = await sender._run_client_transaction(
-                raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
-                transport=sender.signaling_transport, creating_dialog=not ids.remote_tag,
-                timeout=remaining,
-            )
+            try:
+                response = await sender._run_client_transaction(
+                    raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
+                    transport=sender.signaling_transport, creating_dialog=not ids.remote_tag,
+                    timeout=remaining,
+                )
+            except ConnectionError:
+                if follow_up.method != "NOTIFY" or sender.signaling_transport != "TCP" or tcp_reconnected:
+                    raise
+                # A confirmed flow failure is not Timer F. Reopen through the
+                # same owner once, retaining this request/branch and deadline.
+                # In particular, never fragment a large NOTIFY over UDP here.
+                # Pin the resolved peer: RFC 3263 failover to another server
+                # would instead require a new branch/transaction.
+                reconnect_target = replace(target, host=next_hop[0], port=next_hop[1])
+                tcp_reconnected, next_hop = True, None
+                continue
             if response is None:
                 return None
             status = int(response.status_code or 0)
@@ -2204,7 +2255,26 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 self._send_response(request, addr, 400, "Bad Request")
                 return
         if request.method == "OPTIONS":
-            self._send_response(request, addr, 200, "OK")
+            # Ordinary reachability probes retain their empty response. An
+            # explicit capability query reuses the local SDP format contract,
+            # with zero media ports (RFC 3264 section 9), allocating no call.
+            wants_sdp = False
+            for item in request.header("Accept").split(","):
+                media_type, parameters = sip._split_semicolon_params(item)
+                try:
+                    quality = float(dict(parameters).get("q", "1"))
+                except (TypeError, ValueError):
+                    continue
+                wants_sdp |= media_type.strip().lower() == "application/sdp" and 0 < quality <= 1
+            body = sdp.build_offer_directional(
+                self.local_ip, self.local_ip, 0,
+                self.supported_send_formats, self.supported_recv_formats,
+                include_common_codecs=True, allow_directional_payloads=True,
+                video_formats=sdp.DEFAULT_VIDEO_FORMATS if self.enable_video else (),
+            ) if wants_sdp else ""
+            body = sdp.rewrite_sdp_origin(body, secrets.randbits(63) or 1, 0).encode() if body else b""
+            self._send_response(request, addr, 200, "OK", body=body,
+                extra_headers=(("Content-Type", "application/sdp"),) if body else ())
             return
         if request.method == "REGISTER":
             if self.on_register is not None:
@@ -4028,6 +4098,7 @@ class SipTcpServer:
             request_router=self.request_router,
             send_override=_send,
             request_route=self._request_route,
+            transaction_flow=lambda addr: self._writers.get(addr),
             signaling_transport="TCP",
             enable_video=self.enable_video,
             enable_video_transcoding=self.enable_video_transcoding,
@@ -4121,12 +4192,15 @@ class SipTcpServer:
         self._connections_by_host[addr[0]] = active_for_host + 1
         self._writers[addr] = writer
         tx = SipTcpWriter(writer, label=f"listener {addr[0]}:{addr[1]}")
+        # A write failure must also release the connection's sole reader.
+        tx.task.add_done_callback(lambda _task: writer.close())
         self._tcp_writers[addr] = tx
         if ready is not None and not ready.done():
             ready.set_result(addr)
 
         first_message = True
         keepalive_half = False
+        flow_error = ConnectionError("SIP TCP flow closed while a transaction was pending")
         try:
             while not reader.at_eof():
                 raw = await _read_sip_stream_message(
@@ -4158,6 +4232,7 @@ class SipTcpServer:
                         continue
                 endpoint.submit_datagram(raw, addr)
         except ConnectionError as err:
+            flow_error = err
             _LOGGER.debug("SIP TCP peer disconnected %s:%s: %s", addr[0], addr[1], err)
         finally:
             # Closing one TCP connection must not destroy dialogs owned by
@@ -4180,8 +4255,13 @@ class SipTcpServer:
                             addr[0],
                             addr[1],
                         )
-            await tx.close()
+            # Bind by writer identity, so a late close cannot fail a request
+            # already sent on the replacement connection to the same peer.
+            for responses in tuple(endpoint._client_transaction_responses.values()):
+                if responses.flow is writer:
+                    responses.fail(flow_error)
             writer.close()
+            await tx.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
             if client_task is not None:

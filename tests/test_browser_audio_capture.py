@@ -35,3 +35,22 @@ def test_invalid_framing_and_capacity_fail_capture_without_mutating_media(tmp_pa
     report = observer.save(tmp_path)
     assert len(report['errors']) == 2
     assert not report['streams']
+
+
+def test_metadata_observer_reports_actual_wire_geometry_without_recording_pcm():
+    observer = BrowserAudioCapture(capture_pcm=False)
+    config = observer.record('c', 'rx', {'opcode': 1, 'payloadData': json.dumps({
+        'rx_format': '16000:s16le:1:10', 'tx_format': '48000:s16le:1:10',
+    })}, 1)
+    assert config == {'kind': 'configuration', 'rx_format': '16000:s16le:1:10',
+                      'tx_format': '48000:s16le:1:10'}
+    for direction, samples in [('rx', 160), ('tx', 480)]:
+        wire = b'\x01' + bytes(samples * 2)
+        row = observer.record('c', direction, {'opcode': 2,
+            'payloadData': base64.b64encode(wire).decode()}, 2)
+        assert row['wire_bytes'] == samples * 2 + 1
+        assert row['header_bytes'] == 1
+        assert row['payload_bytes'] == samples * 2
+        assert row['samples_per_channel'] == samples
+        assert row['duration_ms'] == row['declared_frame_ms'] == 10
+    assert not observer.errors and not observer.streams and observer.total_bytes == 0

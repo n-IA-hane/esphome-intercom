@@ -40,12 +40,12 @@ from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     ha_router_decision,
+    peer_video_codec,
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
     sip_target_has_unspecified_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
-    supports_directional_audio_payloads as _supports_directional_audio_payloads,
 )
 from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
@@ -82,7 +82,7 @@ from .service_endpoints import (
 )
 from .service_errors import service_error as _service_error
 from .sip_runtime import (
-    enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
+    enable_reused_signaling_flow as _enable_reused_signaling_flow,
     uri_transport as _sip_uri_transport,
 )
 from .softphone_commands import (
@@ -503,13 +503,6 @@ async def async_originate_browser_call(
         route.entry,
         dest_device,
     )
-    use_registered_contact_codecs = bool(
-        route.entry is not None
-        and route.entry.sip_uri
-        and route.entry.metadata.get("registered")
-        and rtp_audio_profile is None
-        and not _supports_directional_audio_payloads(None, route.entry)
-    )
     native_audio_endpoint = bool(
         entry_metadata.get("local_ha")
         or entry_metadata.get("virtual_endpoint")
@@ -521,7 +514,8 @@ async def async_originate_browser_call(
         str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
-    if use_trunk or use_registered_contact_codecs or (peer_profile.is_dahua and not native_audio_endpoint):
+    generic_audio_profile = use_trunk or (peer_profile.is_dahua and not native_audio_endpoint)
+    if generic_audio_profile:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
@@ -533,25 +527,13 @@ async def async_originate_browser_call(
         or entry_metadata.get("device_id")
         or ""
     ).strip()
-    # SIP video is HA/browser-owned. Local HA/group endpoints stay outside
-    # this path. ESPHome targets advertise explicit capabilities, so avoid a
-    # useless video m-line on audio-only firmware. Besides describing the leg
-    # accurately, this keeps UDP INVITEs below the path MTU.
+    # Unknown remote capabilities keep local video in the offer. A successful
+    # capability description can optimize a known audio-only destination.
     source_video_enabled = browser_endpoint is None or browser_endpoint.supports(
         "video"
     )
-    target_video_enabled = bool(
-        (
-            target_endpoint is not None
-            and target_endpoint.supports("video")
-        )
-        or "video" in {
-            str(value).strip().lower()
-            for value in entry_metadata.get("capabilities", [])
-        }
-    ) if esphome_sip_endpoint else (
-        target_endpoint is None or target_endpoint.supports("video")
-    )
+    target_video_contract = peer_video_codec(None, route.entry)
+    target_video_enabled = target_video_contract != ""
     video_capable = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
         and (not use_trunk or bool(trunk_cfg.get("trunk_video_codecs", ["H264"])))
@@ -680,17 +662,9 @@ async def async_originate_browser_call(
         match_received_codec=peer_profile.match_received_codec,
         include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
         or use_trunk
-        or use_registered_contact_codecs
         or video_enabled
         or sip_target_has_unspecified_audio(None, route.entry, dest_device),
-        allow_directional_audio_payloads=_supports_directional_audio_payloads(
-            None,
-            route.entry,
-        )
-        or bool(
-            rtp_audio_profile is not None
-            and "directional_audio_v1" in rtp_audio_profile.sdp_features
-        ),
+        allow_directional_audio_payloads=not generic_audio_profile,
         peer_user_agent=str(entry_metadata.get("user_agent") or ""),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
@@ -710,7 +684,7 @@ async def async_originate_browser_call(
     else:
         from .sip_runtime import configure_local_contact
         configure_local_contact(hass, client)
-        _enable_reused_sip_tcp_connection(
+        _enable_reused_signaling_flow(
             hass,
             client,
             uri,
