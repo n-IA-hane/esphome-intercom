@@ -177,8 +177,6 @@ The current generated-code snapshots confirm:
 
 ![AFE runtime controls exposed through Home Assistant](images/afe-controls.png)
 
-![Wake-word barge-in and media ducking](images/ducking-barge-in.gif)
-
 ## Source audit findings
 
 The current integration has been checked against the Espressif component sources

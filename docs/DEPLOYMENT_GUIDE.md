@@ -160,8 +160,12 @@ for those adapters' required IDs and helpers. Do not add the old full preset to
 a new device package that already owns the runtime bindings.
 
 For display-equipped firmware, [on-demand screenshots](ESP_SCREENSHOT.md) add
-a native **Take screenshot** action and a stored JPEG for Home Assistant Generic
-Camera. Choose the backend that covers the display's complete rendering path.
+a native **Take screenshot** button and optional capture-status sensor. Home
+Assistant's official **Template Image** helper displays the stored JPEG in a
+standard picture card and updates after a successful capture. It works through
+the existing ESPHome integration and leaves the device's camera available for
+video calls. Generic Camera is the alternative for an authenticated HTTP
+endpoint. Choose the backend that covers the display's complete rendering path.
 
 ## Home Assistant
 

@@ -96,6 +96,11 @@ button and is not duplicated in these lists.
 The keypad closes when you start or answer a call. Open it again if an IVR or
 door station needs DTMF. On short video cards it scrolls above the call bar.
 
+![The current VoIP Dashboard during a real browser video call](images/voip-dashboard-video-lab.png)
+
+This is a real browser-to-browser lab call, received in the current VoIP
+Dashboard. Its camera source is a synthetic Starfleet test feed.
+
 The [earlier real MOBOTIX video call](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png)
 shows a door station received through a FreeSWITCH-based PBX with the local
 webcam off. Its screenshot uses the earlier frontend theme.

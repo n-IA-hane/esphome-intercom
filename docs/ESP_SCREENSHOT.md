@@ -167,6 +167,14 @@ capture keeps the last successful image visible and shows its error in the
 status sensor. After a device restart, take a new screenshot to populate the
 device's empty image store.
 
+![A real LVGL screenshot shown in Home Assistant's native Picture Glance card](images/esp-screenshot-home-assistant.png)
+
+_The actual Home Assistant card after pressing the native ESPHome screenshot
+button. This JPEG came from a physical S3 device through the LVGL capture
+backend, using the public `f_off` assistant artwork. Template Image and Picture
+Glance are built-in Home Assistant features; `Ready` is the device's capture
+status._
+
 For YAML-managed helpers, the equivalent configuration is:
 
 ```yaml

@@ -74,6 +74,12 @@ See the [video guide](docs/SIP_VIDEO.md) for S3 and P4 profiles and the
 [earlier real MOBOTIX call](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png)
 for the published door-station video example.
 
+![The current VoIP Dashboard receiving video during a real lab call](docs/images/voip-dashboard-video-lab.png)
+
+_A real browser-to-browser video call in the current VoIP Dashboard. The camera
+source is a synthetic Starfleet test feed; the MOBOTIX link above shows the
+earlier door-station call._
+
 Maintained ESP firmware profiles require **ESPHome 2026.10.0 or newer**.
 See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
 when updating copied YAMLs. This does not force an immediate firmware update
@@ -94,7 +100,8 @@ can each be selected in YAML, including on VoIP-only profiles.
   <img src="docs/images/phone-services/dtmf.jpg" width="240" alt="Real ESP display with the in-call DTMF keypad" />
 </p>
 
-_Demo directory entries, captured on a real ESP display.
+_Real on-device LVGL screenshots captured with
+[`esp_screenshot`](docs/ESP_SCREENSHOT.md), using demo directory entries.
 The animated contact menu shows live BLF and message waiting;
 options and the in-call keypad are shown separately._
 
@@ -396,7 +403,6 @@ AFE/BSS inputs or the new optional mono downmix before AEC/AFE.
 <table>
   <tr>
     <td align="center"><img src="docs/images/p4-touch-overview.jpg" width="640" style="max-width: 100%; height: auto;"/><br/><b>P4 weather, Voice Assistant and VoIP controls</b></td>
-    <td align="center"><img src="docs/images/ducking-barge-in.gif" width="260"/><br/><b>Ducking and barge-in</b></td>
   </tr>
 </table>
 

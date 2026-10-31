@@ -93,6 +93,9 @@ browser clients and the active media owner are tracked separately.
   for example, through answer and connected-party updates.
 - **Mailbox updates:** message changes schedule managed ESP configuration on
   Home Assistant's event loop, keeping automatic phone updates responsive.
+- **Controls after navigation:** returning to the Dashboard or reconnecting to
+  Home Assistant restores its phone list and call actions, including when a
+  command was pending as the card left the page.
 
 <details>
 <summary>Video call layouts on desktop and mobile</summary>
@@ -130,6 +133,10 @@ delivery, endpoint removal, permission changes, held calls, multiple calls and
 WebSocket cleanup. Browser scenarios check the dashboard controls against real
 call states and verify that call resources are released after hangup.
 
+Parking cleanup also handles a caller hanging up while the previous phone leg
+or media relay is being retired. The existing call owner finishes cleanup and
+releases the parking slot and audio resources for the next call.
+
 The [testing tools guide](../tools/README.md) describes the reproducible lab
 workflow and its evidence. Software and browser checks cover their respective
 layers; physical audio quality remains a separate device test.
@@ -143,13 +150,17 @@ integration and Dashboard update independently of these device-side options.
 ### Capture the display on demand
 
 `esp_screenshot` captures supported LVGL displays and the P4 MIPI DSI
-framebuffer. Its optional diagnostics package exposes **Take screenshot** as a
-native ESPHome action in Home Assistant.
+framebuffer. Its optional diagnostics package exposes a **Take screenshot**
+button and native ESPHome action in Home Assistant, with optional screenshot ID
+and status sensors.
 
-Show the latest image through Generic Camera, with a capture button below it.
+The guide pairs these with Home Assistant's built-in Template Image helper and
+a Picture Glance card: press the capture button to update the displayed image.
 The capture ID changes when a new JPEG is ready; reading the image URL serves
-that saved screenshot. Compression runs in a persistent worker with bounded
-buffers, and HTTP readers keep a consistent image during downloads.
+that saved screenshot. Status reports progress or a failure while preserving
+the last successful image. P4 screenshots can be rotated independently of the
+display layout. Compression uses a persistent worker with bounded buffers, and
+HTTP readers keep a consistent image during downloads.
 
 [Screenshot setup and Home Assistant example](ESP_SCREENSHOT.md)
 
@@ -202,6 +213,9 @@ the existing ESPHome API. HA generates the password once; SIP registration,
 LDAP directory access and mailbox calls share that identity. The friendly
 device name is presented as the caller's name.
 
+- **Live extension changes:** changing an ESP's extension while it is online
+  refreshes its Home Assistant routing and directory entry. Conflicting aliases
+  are rejected before the managed account is updated.
 - **LDAP phonebook:** HA assembles the common routing directory directly. ESP
   phones fetch names and addresses with the same standard service available
   to traditional desk phones.
@@ -258,7 +272,7 @@ session recovery. [Migration details](BREAKING_CHANGES.md#2026111-preview-browse
 
 Keep your existing ESP firmware for the Dashboard update. To try the ESP extensions above, use the current maintained board YAML and
 coordinated `dev` component sources and packages,
-then rebuild with ESPHome **2026.10.0 or newer**. Audio Stack and Runtime
-Controller keep their existing stable behavior.
+then rebuild with ESPHome **2026.10.0 or newer**. Use the matching Audio Stack,
+ESP VoIP Stack and Runtime Controller sources selected by that package.
 
 Home Assistant **2026.7.0 or newer** remains the integration requirement.
