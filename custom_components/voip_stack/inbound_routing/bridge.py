@@ -213,7 +213,10 @@ async def route_sip_bridge(
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
-    if bridge_to_trunk or bridge_to_softphone:
+    use_generic_audio_profile = bridge_to_trunk or (
+        bridge_to_softphone and rtp_audio_profile is None
+    )
+    if use_generic_audio_profile:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
@@ -318,7 +321,7 @@ async def route_sip_bridge(
         if bridge_to_trunk
         else "",
         include_common_codecs=(
-            bridge_to_trunk or bridge_to_softphone
+            use_generic_audio_profile
             or sip_target_has_unspecified_audio(peer_target, decision.entry)
         ),
         allow_directional_audio_payloads=supports_directional_audio_payloads(

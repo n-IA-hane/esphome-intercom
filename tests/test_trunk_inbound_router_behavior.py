@@ -60,6 +60,88 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
     assert captured["local_rtp_port"] == 44002
 
 
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("profile", ["directional-esp", "directional-sip", "symmetric-sip", "pcmu", "unspecified"])
+async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registration(
+    monkeypatch, registered, profile,
+) -> None:
+    """An AOR binding cannot replace a phone's known media envelope."""
+    from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.core.audio_format import HA_TRUNK_AUDIO_FORMATS
+    from custom_components.voip_stack.inbound_routing import bridge
+    from custom_components.voip_stack.sip_runtime import uri_transport
+
+    class ClientObserved(Exception):
+        pass
+
+    captured = {}
+
+    def client(**kwargs):
+        captured.update(kwargs)
+        # Exercise the real SDP builder with the exact downstream client
+        # inputs. The failing route used to pass stereo PCM to its mono map.
+        captured["offer"] = sdp.build_offer_directional(
+            "192.0.2.10", "192.0.2.10", kwargs["local_rtp_port"],
+            kwargs["supported_send_formats"], kwargs["supported_recv_formats"],
+            send_rtp_formats=kwargs["supported_send_rtp_formats"],
+            recv_rtp_formats=kwargs["supported_recv_rtp_formats"],
+            allow_directional_payloads=kwargs["allow_directional_audio_payloads"],
+            include_common_codecs=kwargs["include_common_codecs"],
+        )
+        raise ClientObserved
+
+    metadata = {"registered": registered, "endpoint_kind": "sip_account"}
+    if profile.startswith("directional-"):
+        metadata.update(
+            endpoint_kind="esphome" if profile == "directional-esp" else "sip_account",
+            sdp_features=["directional_audio_v1"],
+            sip_audio_tx_formats=["L16/16000/1/10"],
+            sip_audio_rx_formats=["L16/48000/1/10"],
+        )
+    elif profile == "symmetric-sip":
+        metadata.update(sip_audio_tx_formats=["L16/16000/1/10"],
+                        sip_audio_rx_formats=["L16/48000/1/10", "L16/16000/1/10"])
+    elif profile == "pcmu":
+        metadata.update(sip_audio_tx_formats=["PCMU/8000/1/20"],
+                        sip_audio_rx_formats=["PCMU/8000/1/20"])
+    entry = SimpleNamespace(sip_uri="sip:phone@192.0.2.30:5060", metadata=metadata)
+    monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: SimpleNamespace(ports=(44000, 44002)))
+    monkeypatch.setattr(bridge, "SipCallClient", client)
+    runtime = SimpleNamespace(hass=object(), config={"sip_port": 15060},
+        local_ip="192.0.2.10", sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA")
+    invite = SimpleNamespace(trunk_id="", call_id="registered-capability-contract",
+        caller="Caller", routing_caller="Caller", target="phone", routing_target="phone",
+        source_host="192.0.2.20", source_port=5060, video_format=None)
+    decision = SimpleNamespace(target="phone", entry=entry, sip_uri=entry.sip_uri)
+    with pytest.raises(ClientObserved):
+        await bridge.route_sip_bridge(runtime=runtime, invite=invite, decision=decision,
+            peers=[], trunk_config={}, bridge_to_trunk=False, source_endpoint=None,
+            target_endpoint=None, resolved_callee="Phone", trunk_invite=False,
+            registry=SimpleNamespace(own_resource=lambda *_: True))
+
+    offered = sdp.options_capabilities(captured["offer"])
+    if profile.startswith("directional-"):
+        assert offered["sip_audio_tx_formats"] == ["L16/48000/1/10"]
+        assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
+        assert offered["sdp_features"] == ["directional_audio_v1"]
+    elif profile == "symmetric-sip":
+        assert offered["sip_audio_tx_formats"] == ["L16/16000/1/10"]
+        assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
+        assert not offered["sdp_features"]
+    elif profile == "pcmu":
+        assert offered["sip_audio_tx_formats"] == ["PCMU/8000/1/20"]
+        assert offered["sip_audio_rx_formats"] == ["PCMU/8000/1/20"]
+    else:
+        if registered:
+            assert "PCMU/8000/1/20" in offered["sip_audio_tx_formats"]
+            assert "PCMU/8000/1/20" in offered["sip_audio_rx_formats"]
+            assert captured["supported_send_formats"] == list(HA_TRUNK_AUDIO_FORMATS)
+            assert captured["supported_recv_formats"] == list(HA_TRUNK_AUDIO_FORMATS)
+        else:
+            assert offered["sip_audio_tx_formats"] == offered["sip_audio_rx_formats"]
+            assert "L16/16000/1/10" in offered["sip_audio_tx_formats"]
+
+
 @dataclass(frozen=True)
 class _TestInvite:
     received_via_trunk: bool
