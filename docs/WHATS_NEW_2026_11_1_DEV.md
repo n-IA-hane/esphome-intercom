@@ -228,6 +228,12 @@ device name is presented as the caller's name.
 - **Readable contact details:** saved contacts show their telephone number;
   idle phones show their extension when available. Assist and call groups omit
   the inapplicable Unknown status.
+- **Managed ESP groups:** ring and conference memberships remain available from
+  the existing native entities when the legacy endpoint sensor is omitted.
+  Their destinations retain the group type in the shared LDAP directory.
+- **Reliable busy lamps:** large status notifications use SIP's TCP transport
+  instead of fragmented UDP, allowing confirmed and idle updates to arrive in
+  order while the phone keeps its configured UDP account.
 - **Registered audio negotiation:** SIP registration preserves known audio
   capabilities. Directional phones whose OPTIONS omit packet times negotiate
   from Home Assistant's supported PCM offer and their actual SDP answer.
