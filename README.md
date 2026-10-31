@@ -98,12 +98,13 @@ can each be selected in YAML, including on VoIP-only profiles.
   <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with numbers, contact types and live BLF states" />
   <img src="docs/images/phone-services/options.jpg" width="240" alt="Real ESP display with audio and telephone options" />
   <img src="docs/images/phone-services/dtmf.jpg" width="240" alt="Real ESP display with the in-call DTMF keypad" />
+  <img src="docs/images/phone-services/mwi-unread.jpg" width="240" alt="Native Waveshare S3 LCD display with a waiting voicemail envelope" />
 </p>
 
-_Real on-device LVGL screenshots captured with
+_Native 360-pixel Waveshare S3 Touch LCD 1.85C V2 captures, taken with
 [`esp_screenshot`](https://github.com/n-IA-hane/esphome-screenshot/blob/dev/README.md), using demo directory entries.
-The animated contact menu shows numbers, contact types and live BLF states;
-options and the in-call keypad are shown separately._
+The animation combines real frames showing demo numbers, contact types and
+live SIP BLF states; options, the in-call keypad and message waiting are shown separately._
 
 See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
 traditional phone access, migration and memory limits. These additions are

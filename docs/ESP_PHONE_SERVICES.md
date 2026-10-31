@@ -35,10 +35,11 @@ editable number, ready for a new call.
 
 ## The phone on its own display
 
-These captures come from a real 240-pixel ESP display running the maintained
-phone packages. The layout adapts to each supported screen; the services and
-call controls are shared. The animation uses demo directory entries and type
-assignments; the screen captures come from the real ESP display.
+These native 360-pixel captures come from a Waveshare S3 Touch LCD 1.85C V2
+running the maintained FULL phone packages. The layout adapts to each supported
+screen; the services and call controls are shared. Names, numbers and contact
+types are demo data. The animation combines native frames with BLF states from
+real SIP calls between temporary demo accounts.
 
 ### Contacts, live BLF and voicemail
 
@@ -94,6 +95,8 @@ state and mailbox address; the regular SIP/RTP call carries the spoken menu.
 The ESP uses that menu instead of downloading a separate message catalog or
 running a voicemail player.
 
+<img src="images/phone-services/mwi-unread.jpg" width="240" alt="Native Waveshare S3 LCD display with unread voicemail and the waiting envelope" />
+
 ### Adjust the phone's options
 
 <img src="images/phone-services/options.jpg" width="240" alt="Audio and telephone options on a real ESP display" />
@@ -103,6 +106,12 @@ telephone section. Available controls follow the features compiled into the
 firmware. For example, a phone can expose volume, microphone gain, processing
 mode, auto answer and Do Not Disturb. The screen controls the same entities
 available through ESPHome.
+
+The same Options view was captured while an actual Assist pipeline was active.
+One simulated native MWW detection started STT, intent and TTS and returned
+naturally to idle. Native getters confirmed MWW continued running during VA;
+the screenshot remained available. Acoustic wake-word detection requires a
+separate test.
 
 On round displays, swipe down from the top of Options to return to the previous
 screen, including when the gesture starts over the controls' background.
