@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import os
 
+from aioesphomeapi import TextSensorState
 from PIL import Image
 import pytest
 
@@ -71,18 +72,78 @@ def ready_witness(module):
     witness = module.EspWitness(SimpleNamespace())
     entity = type("TextSensorInfo", (), {"object_id": "screenshot_id", "key": 7})()
     witness.entities = [entity]
-    witness.values[("TextSensorState", 7)] = "aabbccdd-00000001"
+    witness.on_state(TextSensorState(key=7, state="aabbccdd-00000001"))
     witness.services = {"take_screenshot": "capture-action"}
 
     async def capture(service, data):
         assert service == "capture-action" and data == {}
-        asyncio.get_running_loop().call_soon(
-            witness.values.__setitem__, ("TextSensorState", 7), CAPTURE,
-        )
-        asyncio.get_running_loop().call_soon(witness.changed.set)
+        asyncio.get_running_loop().call_soon(witness.on_state, TextSensorState(key=7, state=CAPTURE))
 
     witness.client.execute_service = capture
     return witness
+
+
+def with_status(witness, initial):
+    witness.entities.append(type("TextSensorInfo", (), {
+        "object_id": "screenshot_status", "name": "Screenshot status", "key": 8,
+    })())
+    witness.on_state(TextSensorState(key=8, state=initial))
+    return witness
+
+
+@pytest.mark.parametrize(("initial", "updates"), [
+    ("Ready", ("Error: Unable to reserve screenshot image buffers",)),
+    ("Error: Unable to reserve screenshot image buffers", ("Capturing", "Error: Unable to reserve screenshot image buffers")),
+    ("Error: Unable to reserve screenshot image buffers", ("Error: Unable to reserve screenshot image buffers",)),
+])
+async def test_new_native_capture_error_reports_its_cause_without_id_timeout(tmp_path, initial, updates):
+    witness = with_status(ready_witness(witness_module()), initial)
+    async def capture(_service, _data):
+        for update in updates:
+            witness.on_state(TextSensorState(key=8, state=update))
+    witness.client.execute_service = capture
+    output = tmp_path / "screen.jpg"
+    output.write_bytes(b"previous successful capture")
+    with pytest.raises(RuntimeError, match="Unable to reserve screenshot image buffers"):
+        await asyncio.wait_for(witness.screenshot("unused.invalid", output), .25)
+    assert output.read_bytes() == b"previous successful capture"
+
+
+@pytest.mark.parametrize("status", ["Busy", "Capturing"])
+async def test_existing_native_busy_state_prevents_the_capture_rpc(tmp_path, status):
+    witness = with_status(ready_witness(witness_module()), status)
+    calls = []
+    async def capture(*args):
+        calls.append(args)
+    witness.client.execute_service = capture
+    output = tmp_path / "screen.jpg"
+    output.write_bytes(b"previous successful capture")
+    with pytest.raises(RuntimeError, match="busy"):
+        await asyncio.wait_for(witness.screenshot("unused.invalid", output), .25)
+    assert calls == [] and output.read_bytes() == b"previous successful capture"
+
+
+@pytest.mark.parametrize("old_status", ["Ready", "Error: Previous capture failed"])
+async def test_unchanged_optional_status_does_not_block_a_fresh_native_jpeg(tmp_path, old_status):
+    witness = with_status(ready_witness(witness_module()), old_status)
+    output = tmp_path / "screen.jpg"
+    payload = jpeg_bytes()
+    with image_origin(payload) as (address, requests):
+        result = await witness.screenshot(address, output)
+    assert requests == [f"/esp_screenshot/screen/image.jpg?capture={CAPTURE}"]
+    assert result["capture_id"] == CAPTURE and output.read_bytes() == payload
+
+
+async def test_advertised_status_without_initial_state_keeps_id_based_fallback(tmp_path):
+    witness = ready_witness(witness_module())
+    witness.entities.append(type("TextSensorInfo", (), {
+        "object_id": "screenshot_status", "name": "Screenshot status", "key": 8,
+    })())
+    output = tmp_path / "screen.jpg"
+    payload = jpeg_bytes()
+    with image_origin(payload) as (address, _requests):
+        result = await asyncio.wait_for(witness.screenshot(address, output), 1)
+    assert result["capture_id"] == CAPTURE and output.read_bytes() == payload
 
 
 async def test_screenshot_downloads_http_jpeg_with_capture_identity(tmp_path):
