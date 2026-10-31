@@ -45,20 +45,20 @@ is **701**, put Kitchen down and dial **701** from Office. You do not transfer t
 
 ## Follow the slot shown by the card
 
-![The card reports that the call is parked in slot 701](images/pbx-phone-parked-green.png)
+![The card reports that the call is parked in slot 701](images/phone-cards/softphone-parked.png)
 
-In this example, pressing **P** released Test and left Spotpear connected to
-VoIP Stack in slot **701**. The phonebook selection visible after parking is
-for the next call; it is not the parked participant.
+This illustrative scene shows the caller retained by VoIP Stack in slot
+**701**, after the phone has been released. The selected phonebook destination
+is for the next call; it is separate from the parked participant.
 
-![Dial the reported slot to retrieve the parked call](images/pbx-phone-pickup-green.png)
+![Dial the reported slot to retrieve the parked call](images/phone-cards/softphone-retrieve.png)
 
 Open the keypad on the phone where you want to continue, enter **701** and
 press **Call**. The same card can also retrieve it. After pickup, the occupied
 slot disappears and the card shows the resumed call. The current peer is not
 repeated in the busy-phone list.
 
-![The call resumed after retrieving slot 701](images/pbx-phone-retrieved-green.png)
+![The call resumed after retrieving slot 701](images/phone-cards/softphone-retrieved.png)
 
 ## From a SIP phone
 

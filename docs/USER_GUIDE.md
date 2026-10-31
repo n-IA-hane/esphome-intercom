@@ -56,9 +56,12 @@ that answers becomes the media owner.
 
 ## Read the phone card
 
-The same icons are used in audio and video mode.
+The same icons are used in audio and video mode. The current screenshots use
+the Frosted Glass Dark theme with demo contacts and illustrative call states.
 
-![Idle phone with keypad and options icons](images/pbx-phone-idle-green.png)
+![Idle phone with keypad and options icons](images/phone-cards/softphone-idle.png)
+
+![An incoming call with Answer and Decline](images/phone-cards/softphone-ringing.png)
 
 | Control | What it does |
 | --- | --- |
@@ -69,7 +72,7 @@ The same icons are used in audio and video mode.
 | Options (sliders) | Open this phone's answer, DND, mailbox, audio/video and routing settings. |
 | Call / Hang up | Start the selected call or end the current conversation. In video mode, use the handset icon in the translucent bottom bar. |
 
-![Phone options on the same green-themed dashboard](images/pbx-phone-options-green.png)
+![Phone options in the current Home Assistant theme](images/phone-cards/softphone-options.png)
 
 Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
@@ -88,19 +91,19 @@ Empty lists occupy no space. They are hidden while
 the keypad, options or video view needs that space. Voicemail stays in its own
 button and is not duplicated in these lists.
 
-![An established audio call, with Parking available](images/pbx-phone-audio-call-green.png)
+![An established audio call, with Parking available](images/phone-cards/softphone-call.png)
 
 The keypad closes when you start or answer a call. Open it again if an IVR or
 door station needs DTMF. On short video cards it scrolls above the call bar.
 
-![Live video received from a Mobotix door station](images/pbx-mobotix-video-green.png)
-
-This is a real call through a FreeSWITCH-based PBX with the local webcam off.
-The image arrives from the door station. **P is disabled during video calls**:
+The [earlier real MOBOTIX video call](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png)
+shows a door station received through a FreeSWITCH-based PBX with the local
+webcam off. Its screenshot uses the earlier frontend theme.
+**P is disabled during video calls**:
 parking currently supports audio calls. Switching off Send Camera alone does
 not make a call audio-only when the peer is sending video.
 
-![DTMF keypad open during the same video call](images/pbx-mobotix-keypad-green.png)
+![The current in-call keypad for DTMF](images/phone-cards/softphone-dtmf.png)
 
 For parking and retrieval, follow the [parking walkthrough](CALL_PARKING.md).
 For forwarding, ringing timeouts, mailbox setup and line selection, see
@@ -368,7 +371,7 @@ Open the phone's card and choose **Options > Call routing**. These are the
 phone's settings in the backend: they still apply when its card is closed.
 The ESP mirror card exposes the same phone-routing policy.
 
-![Phone routing options, including an optional ringing timeout](images/pbx-phone-routing-green.png)
+![Phone routing options, including an optional ringing timeout](images/phone-cards/softphone-routing.png)
 
 For a phone that should ring for 20 seconds and then take a message:
 
@@ -408,7 +411,7 @@ examples](PHONE_ROUTING.md).
 4. On success, your phone becomes free. If the transfer fails, read the error
    and keep using the existing call; do not assume the destination answered.
 
-![Choose a destination in the card's transfer view](images/phone-transfer-dark.png)
+![Choose a destination in the card's transfer view](images/phone-cards/softphone-transfer.png)
 
 The card reuses the same contact and keypad view as normal dialing. Opening the
 transfer view does not send the call anywhere until you confirm.
@@ -480,6 +483,8 @@ The card shows **Voicemail** while the phone is idle and has messages. Open it
 to see the callers and recording dates. Select a message to listen; use its
 Delete control to delete that message. The softphone calls the same voicemail
 menu used by a SIP handset and sends the keypad commands. Its list remains open.
+
+![The current voicemail list with demo messages](images/phone-cards/softphone-voicemail.png)
 
 | From a phone connected to this PBX | What happens |
 | --- | --- |
@@ -596,13 +601,13 @@ Parking is available by default. During an audio call,
 press **P** on the card. The phone is released and the left-hand list shows the
 assigned slot, for example **701**.
 
-![The occupied slot shown after parking a call](images/pbx-phone-parked-green.png)
+![The occupied slot shown after parking a call](images/phone-cards/softphone-parked.png)
 
 On the phone where you want to continue, open the keypad, enter **701** and
 press **Call**. The original card can retrieve it too. The slot disappears when
 the conversation resumes.
 
-![Dial the assigned slot from the receiving phone](images/pbx-phone-pickup-green.png)
+![Dial the assigned slot from the receiving phone](images/phone-cards/softphone-retrieve.png)
 
 A SIP handset can park by transferring to **700** instead of pressing P.
 **These are two ways to park, not two steps.** Once parked, call the reported

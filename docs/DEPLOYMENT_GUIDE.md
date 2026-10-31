@@ -228,15 +228,15 @@ configuration exposed by its HA entities.
     <td><img src="images/card-configuration.png" alt="Bind the card to a phone Device"/></td>
   </tr>
   <tr>
-    <td><img src="images/ha-softphone-card.png" alt="Home Assistant softphone card"/></td>
-    <td><img src="images/ha-softphone-options.jpg" alt="Home Assistant softphone options"/></td>
+    <td><img src="images/phone-cards/softphone-idle.png" alt="Home Assistant softphone card"/></td>
+    <td><img src="images/phone-cards/softphone-options.png" alt="Home Assistant softphone options"/></td>
   </tr>
 </table>
 
 An ESP mirror card binds to the existing physical ESPHome Device and controls
 that endpoint's normal ESPHome entities.
 
-![ESP mirror card](images/esp-mirror-card.png)
+![ESP mirror card](images/phone-cards/esp-mirror.png)
 
 After updating the integration, restart HA. When the release includes card
 changes, reload the dashboard; if it still shows the previous card, use

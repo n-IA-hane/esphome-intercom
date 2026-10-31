@@ -22,11 +22,22 @@ phones, then add the features you need. The ESP firmware also works with
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
+![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
 
-![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
+_The VoIP Dashboard is already working on `dev` and will ship with the next
+release. The phone cards below remain available alongside it._
 
-_A call from a MOBOTIX video door station, with the local webcam off._
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/phone-cards/softphone-ringing.png" width="240"/><br/><b>Incoming call</b></td>
+    <td align="center"><img src="docs/images/phone-cards/phonebook.png" width="240"/><br/><b>Shared phonebook</b></td>
+    <td align="center"><img src="docs/images/phone-cards/softphone-voicemail.png" width="240"/><br/><b>Voicemail</b></td>
+  </tr>
+</table>
+
+_Current Home Assistant cards in the Frosted Glass Dark theme, captured with
+demo contacts and illustrative call states. Each card controls the phone selected
+in its editor._
 
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
 Development preview: [2026.11.1-dev changes](docs/WHATS_NEW_2026_11_1_DEV.md),
@@ -49,20 +60,19 @@ when updating existing firmware.
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.10.0%2B-18bcf2.svg)](https://esphome.io)
 
-![Dashboard demo](docs/images/dashboard.gif)
-
-_One dashboard can control a browser phone, an ESP endpoint and the shared
-phonebook. Each room phone still has its own identity and call state._
-
 <table>
   <tr>
-    <td align="center"><img src="docs/images/call-from-esp-to-homeassistant.gif" width="180"/><br/><b>ESP to HA</b></td>
-    <td align="center"><img src="docs/images/ha-sip-video-call.gif" width="180"/><br/><b>SIP video</b></td>
-    <td align="center"><img src="docs/images/assistant-animated.gif" width="180"/><br/><b>ESP Voice Assistant</b></td>
-    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="180"/><br/><b>ESP TTS response</b></td>
-    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="180"/><br/><b>Runtime audio controls</b></td>
+    <td align="center"><img src="docs/images/esp32-s3-video-call-cropped.jpg" width="300"/><br/><b>SIP video on an S3 display</b></td>
+    <td align="center"><img src="docs/images/assistant-animated.gif" width="300"/><br/><b>ESP Voice Assistant</b></td>
   </tr>
 </table>
+
+_Photographs of real ESP displays. The S3 receives remote video while its call
+audio runs in both directions; the assistant animation is a separate recording._
+
+See the [video guide](docs/SIP_VIDEO.md) for S3 and P4 profiles and the
+[earlier real MOBOTIX call](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png)
+for the published door-station video example.
 
 Maintained ESP firmware profiles require **ESPHome 2026.10.0 or newer**.
 See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
@@ -136,7 +146,7 @@ before upgrading.
 
 | Goal | What VoIP Stack provides | Start here |
 |---|---|---|
-| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Standard ESP profiles remain audio-only; qualified ESP32-P4 profiles can also send and receive SIP video. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
+| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Video-configured S3 profiles can send camera video or display the remote caller; P4 videophone profiles combine both directions. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
 | Room-to-room calls | Create a logical HA phone and dedicated dashboard view for each kiosk or tablet. Calls may be private audio or video. | [Logical phones](#logical-home-assistant-phones) |
 | ESP room phones | Flash one maintained VoIP YAML per room. ESPs can call names and extensions from the shared phonebook. | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
 | Full ESP voice device | Flash a maintained full-experience YAML to combine a local Voice Assistant, Micro Wake Word, media, TTS, optional Sendspin and VoIP on one device. | [Full ESP experience](#full-esp-voice-experience) |
@@ -225,7 +235,8 @@ media bridges, groups, conferences and automation services. Dashboard phones
 and standard SIP equipment connect to that backend.
 
 ESP devices become standards-based SIP phones, with audio on every maintained
-VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
+VoIP profile and optional video through S3 camera/display or P4 videophone
+profiles. Home Assistant
 can be a SIP video softphone, call router, RTP bridge, local registrar,
 conference focus, callable Assist destination and optional trunk endpoint.
 Browser phones, wall tablets, ESP room stations, standard SIP clients and an
@@ -242,7 +253,7 @@ The project therefore has three cooperating, independently useful surfaces:
 | Surface | Runs on | Purpose |
 |---|---|---|
 | Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
-| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone for VoIP Stack or a conventional PBX, with audio and optional qualified P4 video. |
+| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone for VoIP Stack or another PBX, with audio and optional S3 JPEG or P4 videophone capabilities. |
 | Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
 
 Install only the surfaces you need. A VoIP-only ESP does not require the local
@@ -779,9 +790,10 @@ are not a claim that every board with the same chip has the same wiring.
 The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
 
-S3 camera profiles transmit JPEG video during calls; displaying the remote
-video on an S3 screen is not implemented. Supported P4 profiles transmit their
-camera and display the remote video. Devices with both a microphone and a
+S3 camera profiles transmit JPEG video during calls. The optional S3 JPEG
+renderer also displays remote video through LVGL; the two directions have been
+tested on separate S3 boards. Supported P4 profiles transmit their camera and
+display remote video on the same board. Devices with both a microphone and a
 speaker keep bidirectional audio on either platform. See the
 [SIP video guide](docs/SIP_VIDEO.md#esp32-s3-camera-preview-and-sip-video).
 

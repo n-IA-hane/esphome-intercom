@@ -78,7 +78,9 @@ The HA-side test also received and displayed actual Mobotix video through that
 PBX with the browser webcam off. SDP acceptance alone is not proof that images
 are arriving: inspect RTP and the displayed result as well.
 
-![Actual Mobotix video received by the HA phone](images/pbx-mobotix-video-green.png)
+[View the original MOBOTIX call screenshot](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png).
+This historical capture uses the earlier frontend theme; the current phone
+controls are shown in the [user guide](USER_GUIDE.md#read-the-phone-card).
 
 For another deployment, separately test upgrades initiated from either side,
 video removal, hold/resume, early media, transfers, queues, IVRs, conferences
