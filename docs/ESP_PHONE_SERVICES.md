@@ -122,6 +122,9 @@ the last page stays there. Sliders and dropdowns retain their own touch controls
 
 <img src="images/phone-services/dtmf.jpg" width="240" alt="In-call DTMF keypad with the current peer, elapsed time and red hangup control" />
 
+_The long voicemail title is scrolling in this native frame. The call timer,
+number keys and hangup control remain visible._
+
 Open the dialpad from the call screen to interact with voicemail or another
 IVR. While connected, each key sends a negotiated RTP telephone event; the
 header shows the peer and elapsed time, and the red control ends the call.
