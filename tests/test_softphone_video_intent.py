@@ -119,6 +119,67 @@ async def test_enabling_video_commits_reserved_media_only_after_reinvite(
     assert not reservation.released
 
 
+@pytest.mark.parametrize("outcome", ["accepted", "rejected", "superseded"])
+async def test_enabling_video_keeps_audio_reservation_owned_until_client_cleanup(
+    intent, monkeypatch, outcome,
+) -> None:
+    from custom_components.voip_stack import media_ports
+    from custom_components.voip_stack.sip_client import SipCallClient
+
+    module, _store = intent
+    hass = object()
+    runtime = SimpleNamespace(rtp_port_pool={"used": {40022, 40024, 40026, 40028}})
+    monkeypatch.setattr(media_ports, "require_runtime_data", lambda _hass: runtime)
+    original = media_ports.RtpPortReservation(hass, (40022, 40024))
+    staged = media_ports.RtpPortReservation(hass, (40026, 40028))
+    audio_socket, previous_rtp, previous_rtcp = _Socket(), _Socket(), _Socket()
+    new_rtp, new_rtcp = _Socket(), _Socket()
+    previous = SimpleNamespace(video_format=None, local_video_rtp_port=0, local_video_direction="inactive")
+    candidate = SimpleNamespace(video_format=object(), local_video_rtp_port=40028, local_video_direction="sendrecv")
+    client = SipCallClient(
+        local_ip="127.0.0.1", local_name="browser", local_sip_port=5060,
+        local_rtp_port=40022, local_video_rtp_port=40024,
+        media_reservation=original, video_rtp_socket=previous_rtp,
+        video_rtcp_socket=previous_rtcp,
+    )
+    client.dialog = previous
+    client.audio_rtp_socket = audio_socket
+    client.async_prepare_video_reinvite = AsyncMock(return_value=None if outcome == "rejected" else candidate)
+    client.commit_prepared_reinvite = Mock(return_value=True)
+    registry = _Registry(client)
+    if outcome == "superseded":
+        registry.is_generation_current = lambda *_args: False
+    monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(module, "reserve_sip_video_media", lambda _hass: (staged, new_rtp, new_rtcp))
+
+    if outcome != "accepted":
+        assert not await module.async_apply_send_video_intent(hass, "phone", True)
+        assert client.media_reservation is original
+        assert runtime.rtp_port_pool["used"] == {40022, 40024}
+        assert not audio_socket.closed and not previous_rtp.closed and not previous_rtcp.closed
+        assert new_rtp.closed and new_rtcp.closed
+        runtime.rtp_port_pool["used"].update({40026, 40028})
+        await client.close()
+        assert audio_socket.closed and previous_rtp.closed and previous_rtcp.closed
+        assert runtime.rtp_port_pool["used"] == {40026, 40028}
+        return
+
+    assert await module.async_apply_send_video_intent(hass, "phone", True)
+    assert runtime.rtp_port_pool["used"] == {40022, 40028}
+    assert client.media_reservation.ports == (40022, 40028)
+    assert previous_rtp.closed and previous_rtcp.closed
+    assert not audio_socket.closed and not new_rtp.closed and not new_rtcp.closed
+    # Another call can immediately reuse the discarded video and staging ports.
+    runtime.rtp_port_pool["used"].update({40024, 40026})
+    original.release()
+    staged.release()
+    assert runtime.rtp_port_pool["used"] == {40022, 40024, 40026, 40028}
+
+    await client.close()
+    assert audio_socket.closed and new_rtp.closed and new_rtcp.closed
+    assert runtime.rtp_port_pool["used"] == {40024, 40026}
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 @pytest.mark.parametrize("outgoing", [False, True])
 @pytest.mark.parametrize("committed", [False, True])

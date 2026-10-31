@@ -13,7 +13,7 @@ from .const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
 from .core import sdp
 from .core.sdp import DEFAULT_VIDEO_FORMATS, browser_video_send_supported
 from .endpoint_lifecycle import call_registry
-from .media_ports import reserve_sip_video_media
+from .media_ports import RtpPortReservation, reserve_sip_video_media
 from .media_session_updates import commit_video_session_update
 from .runtime_data import require_runtime_data, sip_endpoint_manager
 from .websocket_api import _fire_call_event, _ha_softphone_store
@@ -215,6 +215,18 @@ async def async_apply_send_video_intent(
                 video_session.media_generation += 1
                 video_session.update_event.set()
             if reservation is not None and accepted_video:
+                previous_reservation = getattr(client, "media_reservation", None)
+                if previous_reservation is not None:
+                    retained = RtpPortReservation.merge(
+                        hass, (previous_reservation.ports, reservation.ports),
+                        (previous_reservation.ports[0], reservation.ports[1]),
+                    )
+                    previous_reservation.detach()
+                    reservation.detach()
+                    reservation = retained
+                for previous_socket in (client.video_rtp_socket, client.video_rtcp_socket):
+                    if previous_socket is not None:
+                        previous_socket.close()
                 client.media_reservation = reservation
                 client.video_rtp_socket = rtp_socket
                 client.video_rtcp_socket = rtcp_socket
