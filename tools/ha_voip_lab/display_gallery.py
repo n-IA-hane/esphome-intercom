@@ -141,6 +141,7 @@ def gallery_witness(esp):
             result.update(page=self.expected_page, native_before=before, native_after=after,
                           semantic_review="pending", physical_touch_qualified=False)
             self.captures.append(result)
+            hil.write_private(self.args.output / "capture-provenance.json", self.captures)
             return result
 
     return Witness
@@ -161,16 +162,22 @@ async def state_ready(witness, target, state):
 async def create_accounts(fixture):
     fixture.baseline = {row["username"] for row in (await fixture.action("list_accounts", response=True))["accounts"]}
     names = ("Garage", "Home", "Office", "Guest")
-    if any("Gallery" + name in fixture.baseline for name in names):
+    if any(("Gallery" + name).casefold() in {value.casefold() for value in fixture.baseline} for name in names):
         raise RuntimeError("Gallery refuses to replace an existing account")
     for name in names:
         username = "Gallery" + name
         row = {"username": username, "display_name": "Demo " + name + " " + fixture.run_id}
         fixture.owned[username] = dict(row)
+        # Keep ownership before the request, including the case where HA
+        # creates the account but its HTTP response is interrupted.
+        hil.write_private(fixture.output / "fixture-accounts.json", {
+            "run_id": fixture.run_id, "baseline": sorted(fixture.baseline), "owned": list(fixture.owned.values())})
         value = await fixture.action("create_account", row, response=True)
         if not value.get("password_generated") or not value.get("password"):
             raise RuntimeError("The PBX did not return the owned generated credential")
         fixture.owned[username].update(value)
+        hil.write_private(fixture.output / "fixture-accounts.json", {
+            "run_id": fixture.run_id, "baseline": sorted(fixture.baseline), "owned": list(fixture.owned.values())})
     return list(fixture.owned.values())
 
 
@@ -379,6 +386,10 @@ async def run(args):
                     finally:
                         await asyncio.to_thread(actor.close)
                 await fixture.cleanup_accounts()
+                account_names = {row["username"] for row in
+                    (await fixture.action("list_accounts", response=True))["accounts"]}
+                if account_names != fixture.baseline:
+                    raise RuntimeError("The account baseline changed; unrelated accounts were preserved")
                 await witness.service("refresh_ldap_directory")
                 await hil.wait_snapshot(witness, lambda row: row["contacts"] == baseline["contacts"])
                 await witness.wait(lambda: witness.values.get(surface_key) == baseline_surface)
@@ -391,6 +402,9 @@ async def run(args):
                                      "audio_quiescent": True, "owned_accounts_removed": True}
                 for username in fixture.owned:
                     (args.output / username / "accounts").unlink(missing_ok=True)
+                hil.write_private(args.output / "fixture-accounts.json", {
+                    "run_id": fixture.run_id, "baseline": sorted(fixture.baseline),
+                    "owned_ids": sorted(fixture.owned), "cleanup_verified": True})
         except BaseException as error:
             result["cleanup_failure_type"] = type(error).__name__
             raise

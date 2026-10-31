@@ -41,13 +41,29 @@ def test_gallery_requires_the_exact_preserved_profile_and_artifact(tmp_path):
         gallery.checked_profile_receipt(profile, receipt)
 
 
-async def test_existing_gallery_account_prevents_every_account_mutation():
+@pytest.mark.parametrize("username", ["GalleryHome", "galleryhome"])
+async def test_existing_gallery_account_prevents_every_account_mutation(username):
     fixture = SimpleNamespace(owned={}, run_id="fresh", action=AsyncMock(return_value={
-        "accounts": [{"username": "GalleryHome"}]}))
+        "accounts": [{"username": username}]}))
     with pytest.raises(RuntimeError, match="existing account"):
         await gallery.create_accounts(fixture)
     assert fixture.action.await_args_list[0].args == ("list_accounts",)
     assert fixture.action.await_count == 1 and fixture.owned == {}
+
+
+async def test_gallery_journals_ownership_before_a_create_request_can_fail(tmp_path):
+    async def action(name, data=None, **_kwargs):
+        if name == "list_accounts":
+            return {"accounts": []}
+        record = json.loads((tmp_path / "fixture-accounts.json").read_text())
+        assert record["baseline"] == [] and record["run_id"] == "fresh"
+        assert record["owned"] == [data]
+        assert (tmp_path / "fixture-accounts.json").stat().st_mode & 0o777 == 0o600
+        raise RuntimeError("interrupted response")
+    fixture = SimpleNamespace(output=tmp_path, owned={}, run_id="fresh", action=action)
+    with pytest.raises(RuntimeError, match="interrupted response"):
+        await gallery.create_accounts(fixture)
+    assert set(fixture.owned) == {"GalleryGarage"}
 
 
 class OfflineWs:
