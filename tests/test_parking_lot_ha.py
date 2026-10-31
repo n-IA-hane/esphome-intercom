@@ -1012,6 +1012,7 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.sip_client import SipCallClient
 
     runtime = trunks
     entry = config_entry(runtime.hass)
@@ -1060,12 +1061,36 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
             while not predicate():
                 await asyncio.sleep(.01)
 
+    final_received = asyncio.Event()
+    release_final = asyncio.Event()
+    native_read_response = SipCallClient._read_response
+
+    async def hold_final_answer(client, *args, **kwargs):
+        response = await native_read_response(client, *args, **kwargs)
+        if response is not None:
+            message, _address = response
+            if (message.status_code == 200
+                    and message.header("CSeq").endswith(" INVITE")):
+                final_received.set()
+                await release_final.wait()
+        return response
+
+    monkeypatch.setattr(SipCallClient, "_read_response", hold_final_answer)
+
     try:
         await runtime.hass.services.async_call('voip_stack', 'call', {
             'device_id': endpoint.device_id, 'destination': 'transfer_a', 'media_client_id': 'direct-browser-media',
         }, blocking=True)
         call_id = runtime.runtime.endpoints.get(endpoint.endpoint_id).active_call_id
         client = runtime.calls.sip_client_for(call_id)
+        await asyncio.wait_for(final_received.wait(), 2)
+        # The call service returns at 180; blocking=True does not wait for
+        # the peer's final answer. Keep that valid window deterministic.
+        assert client.dialog is None
+        assert runtime.calls.get_session(call_id).state == 'remote_ringing'
+        release_final.set()
+        await wait_for(lambda: client.dialog is not None
+                       and runtime.calls.get_session(call_id).state == 'in_call')
         assert client.dialog is not None and client.dialog.video_format is None
         assert runtime.calls.resource_for(call_id, 'softphone_media') is None
         if offer_video:
@@ -1103,6 +1128,7 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
                 heard += sum(abs(value - 1200) < 80 for value in samples)
         assert heard > 1000, 'The retained SIP peer did not receive browser audio after pickup'
     finally:
+        release_final.set()
         for task in tasks:
             if not task.done():
                 task.cancel()
