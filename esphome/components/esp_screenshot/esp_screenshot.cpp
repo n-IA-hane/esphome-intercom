@@ -22,10 +22,11 @@ static void send_http_status(AsyncWebServerRequest *request, const char *status,
 }
 
 void EspScreenshot::setup() {
+  this->publish_status_("No screenshot");
   if (this->task_core_ >= 0 &&
       this->task_core_ >= static_cast<int>(portNUM_PROCESSORS)) {
     ESP_LOGE(TAG, "Requested worker core %d is unavailable", this->task_core_);
-    this->mark_failed();
+    this->fail_setup_("Requested worker core is unavailable");
     return;
   }
 #ifdef USE_ESP_SCREENSHOT_MIPI_DSI
@@ -41,9 +42,8 @@ void EspScreenshot::setup() {
         lv_display_get_render_mode(display) != LV_DISPLAY_RENDER_MODE_PARTIAL ||
         lv_display_get_offset_x(display) != 0 ||
         lv_display_get_offset_y(display) != 0) {
-      ESP_LOGE(TAG, "LVGL capture requires RGB565 partial rendering without "
-                    "display offsets");
-      this->mark_failed();
+      this->fail_setup_("LVGL capture requires RGB565 partial rendering without "
+                        "display offsets");
       return;
     }
     this->width_ = lv_display_get_horizontal_resolution(display);
@@ -52,8 +52,7 @@ void EspScreenshot::setup() {
 #endif
   if (this->width_ == 0 || this->height_ == 0 || this->width_ > 4096 ||
       this->height_ > 4096) {
-    ESP_LOGE(TAG, "Display dimensions are unavailable or exceed 4096 pixels");
-    this->mark_failed();
+    this->fail_setup_("Display dimensions are unavailable or exceed 4096 pixels");
     return;
   }
   const uint32_t buffer_caps =
@@ -119,6 +118,7 @@ void EspScreenshot::setup() {
 
 void EspScreenshot::fail_setup_(const char *reason) {
   ESP_LOGE(TAG, "%s", reason);
+  this->publish_status_(std::string("Error: ") + reason);
   if (this->encoder_ != nullptr) {
     jpeg_enc_close(this->encoder_);
     this->encoder_ = nullptr;
@@ -136,15 +136,24 @@ void EspScreenshot::fail_setup_(const char *reason) {
   this->mark_failed();
 }
 
+void EspScreenshot::publish_status_(const std::string &status) {
+  if (this->capture_status_sensor_ != nullptr)
+    this->capture_status_sensor_->publish_state(status);
+}
+
 bool EspScreenshot::capture() {
   if (this->is_failed() || this->worker_handle_ == nullptr ||
-      this->stopping_.load())
+      this->stopping_.load()) {
+    this->publish_status_("Error: Screenshot is unavailable");
     return false;
+  }
   bool expected = false;
   if (!this->busy_.compare_exchange_strong(expected, true)) {
     ESP_LOGW(TAG, "Screenshot capture is busy");
+    this->publish_status_("Busy");
     return false;
   }
+  this->publish_status_("Capturing");
   this->requested_.store(true, std::memory_order_release);
   this->enable_loop_soon_any_context();
   return true;
@@ -157,6 +166,7 @@ void EspScreenshot::cancel_capture_(const char *reason) {
   xSemaphoreGive(this->mutex_);
   this->writing_slot_ = -1;
   this->busy_.store(false, std::memory_order_release);
+  this->publish_status_(std::string("Error: ") + reason);
 }
 
 void EspScreenshot::loop() {
@@ -181,6 +191,7 @@ void EspScreenshot::loop() {
                this->height_, unsigned(this->jpeg_size_[this->writing_slot_]));
       this->writing_slot_ = -1;
       this->busy_.store(false, std::memory_order_release);
+      this->publish_status_("Ready");
     } else {
       this->cancel_capture_("JPEG encoding failed or exceeded max_jpeg_size");
     }

@@ -30,6 +30,11 @@ ROOT = Path(__file__).resolve().parents[1]
                 "task_stack_size": 8192,
                 "task_stack_in_psram": False,
                 "buffer_in_psram": False,
+                "capture_id": {"id": "screenshot_id_entity", "name": "Screenshot ID"},
+                "capture_status": {
+                    "id": "screenshot_status_entity",
+                    "name": "Screenshot status",
+                },
             },
             True,
         ),
@@ -83,6 +88,8 @@ def test_screenshot_schema_and_native_api_package(tmp_path, settings, expected):
     assert (result.returncode == 0) is expected, result.stdout + result.stderr
     if expected:
         assert "take_screenshot" in result.stdout
+        assert "name: Take screenshot" in result.stdout
+        assert "entity_category: diagnostic" in result.stdout
         if "task_core" not in settings:
             assert "task_core: any" in result.stdout
 
@@ -101,5 +108,7 @@ def test_screenshot_schema_and_native_api_package(tmp_path, settings, expected):
             "set_task_stack_size(8192)",
             "set_task_stack_in_psram(false)",
             "set_buffer_in_psram(false)",
+            "set_capture_id_sensor(screenshot_id_entity)",
+            "set_capture_status_sensor(screenshot_status_entity)",
         ]:
             assert call in main

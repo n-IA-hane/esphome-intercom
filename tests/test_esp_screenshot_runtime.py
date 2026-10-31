@@ -333,6 +333,10 @@ TaskHandle_t xTaskCreateStaticPinnedToCore(void(*)(void*),const char*,size_t n,v
 }
 struct Display{int get_width(){return 8;}int get_height(){return 8;}};
 struct Server{void add_handler(void*){}void init(){}};
+struct TextSensor {
+ std::string state;
+ void publish_state(const std::string &value){state=value;}
+};
 struct EspScreenshot {
  Display *mipi_display_{};Server *web_server_{};unsigned width_{},height_{};
  size_t pixel_size_{},jpeg_capacity_=4096;uint8_t *pixels_{},*coverage_{},*jpeg_[2]{};
@@ -340,7 +344,9 @@ struct EspScreenshot {
  jpeg_enc_handle_t encoder_{};uint8_t quality_=85;uint32_t boot_id_{};TaskHandle_t worker_handle_{};
  uint32_t task_stack_size_=6144;int8_t task_core_=-1;uint8_t task_priority_=1;
  bool task_stack_in_psram_=true,buffer_in_psram_=true,failed=false,loop_disabled=false;
- void setup();void fail_setup_(const char*);void mark_failed(){failed=true;}
+ TextSensor *capture_status_sensor_{};
+ void setup();void fail_setup_(const char*);void publish_status_(const std::string&);
+ void mark_failed(){failed=true;}
  void disable_loop(){loop_disabled=true;}static void worker_entry_(void*){}
 };
 """
@@ -359,23 +365,30 @@ int main(){
   for(const auto &entry:allocations)assert(entry.second==expected_stack_caps);
   component.fail_setup_("test fixture has no real worker");assert(allocations.empty());
  }
+ TextSensor status;
  EspScreenshot default_core;default_core.mipi_display_=&display;default_core.web_server_=&server;
+ default_core.capture_status_sensor_=&status;
  expected_core=tskNO_AFFINITY;expected_priority=1;expected_stack_bytes=6144;
  expected_stack_caps=MALLOC_CAP_8BIT|MALLOC_CAP_SPIRAM;
- default_core.setup();assert(!default_core.failed);
+ default_core.setup();assert(!default_core.failed&&status.state=="No screenshot");
  default_core.fail_setup_("test fixture has no real worker");assert(allocations.empty());
  const int before=task_creations;
- EspScreenshot invalid_core;invalid_core.task_core_=2;
+ EspScreenshot invalid_core;invalid_core.task_core_=2;invalid_core.capture_status_sensor_=&status;
  invalid_core.setup();assert(invalid_core.failed&&allocations.empty()&&task_creations==before);
+ assert(status.state=="Error: Requested worker core is unavailable");
  for(int failure=1;failure<=4;failure++){
   EspScreenshot component;component.mipi_display_=&display;component.web_server_=&server;
+  component.capture_status_sensor_=&status;
   allocation_count=0;fail_allocation=failure;
   component.setup();assert(component.failed&&component.worker_handle_==nullptr);
   assert(allocations.empty()&&task_creations==before);
+  assert(status.state=="Error: Unable to preallocate screenshot resources; no memory fallback");
  }
  fail_allocation=0;encoder_error=true;
  EspScreenshot failed;failed.mipi_display_=&display;failed.web_server_=&server;
+ failed.capture_status_sensor_=&status;
  failed.setup();assert(failed.failed&&allocations.empty()&&task_creations==before);
+ assert(status.state=="Error: Unable to initialize the software JPEG encoder");
 }
 """
     )
@@ -390,6 +403,135 @@ int main(){
             "-fsanitize=address,undefined",
             "-fno-pie",
             "-no-pie",
+            str(harness),
+            "-o",
+            str(binary),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+
+
+def test_capture_status_reports_completion_and_failures_without_replacing_last_image(
+    tmp_path,
+):
+    source = (HEADERS / "esp_screenshot.cpp").read_text()
+    methods = "void EspScreenshot::publish_status_(" + source.split(
+        "void EspScreenshot::publish_status_(", 1
+    )[1].split("\nbool EspScreenshot::copy_display_()", 1)[0]
+    harness = tmp_path / "lifecycle.cpp"
+    harness.write_text(
+        r"""
+#include "snapshot_store.h"
+#include <atomic>
+#include <cassert>
+#include <cstdio>
+#include <string>
+#include <vector>
+using namespace esphome::esp_screenshot;
+static const char *TAG="test";
+template<typename... Args>void sink(Args...args){((void)args,...);}
+#define ESP_LOGW(...) sink(__VA_ARGS__)
+#define ESP_LOGD(...) sink(__VA_ARGS__)
+constexpr int portMAX_DELAY=1;
+static bool locked=false;
+static int notifications=0;
+void xSemaphoreTake(void*,int){assert(!locked);locked=true;}
+void xSemaphoreGive(void*){assert(locked);locked=false;}
+void xTaskNotifyGive(void*){notifications++;}
+struct TextSensor {
+ std::string state;std::vector<std::string> history;
+ void publish_state(const std::string &value){state=value;history.push_back(value);}
+};
+struct EspScreenshot {
+ TextSensor *capture_id_sensor_{},*capture_status_sensor_{};
+ std::atomic_bool busy_{false},requested_{false},completed_{false},stopping_{false};
+ SnapshotSlots slots_{};int writing_slot_=-1;void *worker_handle_=this,*mutex_=this;
+ bool failed=false,copy_available=true,encode_success_=false,loop_enabled=false;
+ unsigned width_=8,height_=8;size_t jpeg_size_[2]{};char capture_id_[2][18]{};
+ bool capture();void cancel_capture_(const char*);void loop();
+ void publish_status_(const std::string&);
+ bool is_failed(){return failed;}
+ bool copy_display_(){return copy_available;}
+ void enable_loop_soon_any_context(){loop_enabled=true;}
+ void disable_loop(){loop_enabled=false;}
+ int published_slot(){int index=slots_.acquire();if(index>=0)slots_.release(index);return index;}
+ void finish_encoder(bool success,const char *id=""){
+  assert(writing_slot_>=0);
+  encode_success_=success;
+  if(success){
+   std::snprintf(capture_id_[writing_slot_],18,"%s",id);
+   jpeg_size_[writing_slot_]=100;
+   assert(slots_.publish(writing_slot_));
+  }
+  completed_.store(true);
+  loop();
+ }
+};
+"""
+        + methods
+        + r"""
+int main(){
+ TextSensor status,id;EspScreenshot component;
+ component.capture_status_sensor_=&status;component.capture_id_sensor_=&id;
+ assert(component.capture()&&component.loop_enabled&&status.state=="Capturing");
+ assert(id.history.empty()&&component.published_slot()==-1);
+ assert(!component.capture()&&status.state=="Busy");
+ component.loop();assert(notifications==1&&id.history.empty());
+ component.finish_encoder(true,"boot0001-00000001");
+ assert(status.state=="Ready"&&id.state=="boot0001-00000001"&&!component.busy_.load());
+ const int first=component.published_slot();
+ assert(first>=0&&!component.loop_enabled);
+
+ // Encoding failure and unavailable display keep the successful image and ID.
+ assert(component.capture());component.loop();
+ component.finish_encoder(false);
+ assert(status.state=="Error: JPEG encoding failed or exceeded max_jpeg_size");
+ assert(component.published_slot()==first&&id.history.size()==1&&!component.busy_.load());
+ component.copy_available=false;
+ assert(component.capture());component.loop();
+ assert(status.state=="Error: A complete display capture is unavailable");
+ assert(component.published_slot()==first&&id.history.size()==1&&!component.busy_.load());
+
+ // A reader leasing the old image prevents a third capture from reusing it.
+ component.copy_available=true;
+ const int reader=component.slots_.acquire();assert(reader==first);
+ assert(component.capture());component.loop();
+ component.finish_encoder(true,"boot0001-00000002");
+ const int second=component.published_slot();assert(second!=first);
+ assert(component.capture());component.loop();
+ assert(status.state=="Error: Image readers still own the available buffer");
+ assert(component.published_slot()==second&&id.state=="boot0001-00000002");
+ assert(id.history.size()==2&&!component.busy_.load());component.slots_.release(reader);
+
+ component.failed=true;
+ assert(!component.capture()&&status.state=="Error: Screenshot is unavailable");
+ assert(component.published_slot()==second&&id.history.size()==2);
+ component.failed=false;component.stopping_.store(true);
+ assert(!component.capture()&&status.state=="Error: Screenshot is unavailable");
+
+ // Existing configurations without either optional sensor still work.
+ EspScreenshot optional;
+ assert(optional.capture());optional.loop();optional.finish_encoder(true,"boot0002-00000001");
+ assert(optional.published_slot()>=0&&!optional.busy_.load()&&!locked);
+}
+"""
+    )
+    binary = tmp_path / "lifecycle"
+    subprocess.run(
+        [
+            "g++",
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            "-fno-pie",
+            "-no-pie",
+            "-I",
+            str(HEADERS),
             str(harness),
             "-o",
             str(binary),

@@ -20,6 +20,7 @@ CONF_QUALITY = "quality"
 CONF_MIPI_DSI_ID = "mipi_dsi_id"
 CONF_LVGL_ID = "lvgl_id"
 CONF_CAPTURE_ID = "capture_id"
+CONF_CAPTURE_STATUS = "capture_status"
 CONF_MAX_JPEG_SIZE = "max_jpeg_size"
 CONF_PATH = "path"
 CONF_TASK_CORE = "task_core"
@@ -59,6 +60,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_LVGL_ID): cv.use_id(LvglComponent),
             cv.Optional(CONF_CAPTURE_ID): text_sensor.text_sensor_schema(
                 icon="mdi:camera"
+            ),
+            cv.Optional(CONF_CAPTURE_STATUS): text_sensor.text_sensor_schema(
+                icon="mdi:monitor-screenshot"
             ),
             cv.Optional(CONF_QUALITY, default=85): cv.int_range(min=1, max=100),
             cv.Optional(CONF_MAX_JPEG_SIZE, default=262144): cv.All(
@@ -126,6 +130,9 @@ async def to_code(config):
     if CONF_CAPTURE_ID in config:
         sensor = await text_sensor.new_text_sensor(config[CONF_CAPTURE_ID])
         cg.add(var.set_capture_id_sensor(sensor))
+    if CONF_CAPTURE_STATUS in config:
+        sensor = await text_sensor.new_text_sensor(config[CONF_CAPTURE_STATUS])
+        cg.add(var.set_capture_status_sensor(sensor))
     cg.add_define("USE_ESP_SCREENSHOT")
     add_idf_component(name="espressif/esp_new_jpeg", ref="1.0.2")
     if config[CONF_TASK_STACK_IN_PSRAM]:

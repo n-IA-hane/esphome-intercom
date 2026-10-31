@@ -54,13 +54,17 @@ esp_screenshot:
   max_jpeg_size: 65536  # Bytes per JPEG slot; increase if encoding overflows
   capture_id:
     name: Screenshot ID
+  capture_status:
+    name: Screenshot status
 
-api:
-  actions:
-    - action: take_screenshot
-      then:
-        - esp_screenshot.capture:
-            id: screen_capture
+button:
+  - platform: template
+    name: Take screenshot
+    icon: mdi:monitor-screenshot
+    entity_category: diagnostic
+    on_press:
+      - esp_screenshot.capture:
+          id: screen_capture
 ```
 
 For P4, select the maintained MIPI DSI display instead:
@@ -78,58 +82,116 @@ esp_screenshot:
   max_jpeg_size: 262144
   capture_id:
     name: Screenshot ID
+  capture_status:
+    name: Screenshot status
 ```
 
-Keep the same `api.actions` block from the S3 example. Alternatively, include
-`packages/diagnostics/screenshot.yaml`, which exposes that action for the
-component ID `screen_capture`. The package accepts `screenshot_id` when the
-component uses a different ID.
+Keep the same `button` block from the S3 example. Alternatively, include
+`packages/diagnostics/screenshot.yaml`, which exposes **Take screenshot** and
+the existing `take_screenshot` native API action for the component ID
+`screen_capture`. The package accepts `screenshot_id` when the component uses
+a different ID. Configure the capture backend, `capture_id` and
+`capture_status` on `esp_screenshot` in the main YAML.
 
 A local button or another automation can call `esp_screenshot.capture` directly.
 The action requests capture and returns immediately. **The Screenshot ID changes
 only after a JPEG is successfully published.** A busy or failed capture preserves
-the preceding image and its identifier. Errors are reported in the ESPHome log.
+the preceding image and its identifier. The optional Screenshot status sensor
+shows `No screenshot` after startup, `Capturing`, `Ready`, `Busy` or `Error:`
+followed by the failure reason. Errors are also reported in the ESPHome log.
 
-## Home Assistant
+## Home Assistant, capture and view with one click
 
-The native API action appears in Home Assistant as
-`esphome.<node_name>_take_screenshot`. The exact action and entity IDs depend on
-the node and entity names; choose them from Home Assistant's selectors.
+The **Take screenshot** button and the two sensors appear through the existing
+ESPHome integration. Use Home Assistant's built-in **Template Image** helper
+to display the JPEG. This works with both backends and leaves the device's
+camera available for its normal purpose. No custom Home Assistant integration
+or separate image server is required.
 
-1. Call **Take screenshot** once before adding the camera. Generic Camera checks
-   the image during setup and needs a successful capture.
-2. Add the **Generic Camera** integration with this templated Still Image URL,
-   replacing the host and sensor with your device's values:
+1. Open **Settings > Devices & services > Helpers > Create helper > Template >
+   Image**. Name it **Screen screenshot** and optionally attach it to the
+   existing ESPHome device.
+2. Set its **URL** to the following template, replacing the host and sensor
+   with your device's values:
 
    ```jinja
    http://screen.local/esp_screenshot/screen/image.jpg?capture={{ states('sensor.screen_screenshot_id') }}
    ```
 
-3. Enable **Limit refetch to URL change** in Generic Camera's advanced options.
-   The changing capture ID makes each successful screenshot a new URL; requests
-   for the same URL can use Home Assistant's cache.
-4. Add a vertical stack containing the camera and a capture button:
+3. Under **Additional options**, set **Availability** to:
 
-   ```yaml
-   type: vertical-stack
-   cards:
-     - type: picture-entity
-       entity: camera.screen
-       show_name: false
-       show_state: false
-     - type: button
-       name: Take screenshot
-       icon: mdi:camera
-       icon_height: 40px
-       tap_action:
-         action: perform-action
-         perform_action: esphome.screen_take_screenshot
+   ```jinja
+   {{ has_value('sensor.screen_screenshot_id') and states('sensor.screen_screenshot_id') != '' }}
    ```
 
-The image updates when the camera frontend next fetches it. This is a still
-image service, not a live video stream. Repeated HTTP GETs only read the stored
-JPEG and never trigger display work. If web server authentication is configured,
-the endpoint inherits it; configure the same credentials in Generic Camera.
+   The helper can be created before taking the first screenshot. Until a JPEG
+   exists, it is unavailable and Screenshot status shows `No screenshot`.
+4. Add this standard **Picture Glance** card, selecting your actual image,
+   button and status entity IDs:
+
+   ```yaml
+   type: picture-glance
+   title: Screenshot
+   image_entity: image.screen_screenshot
+   fit_mode: contain
+   entities:
+     - entity: button.screen_take_screenshot
+       icon: mdi:camera
+       show_state: false
+       tap_action:
+         action: perform-action
+         perform_action: button.press
+         target:
+           entity_id: button.screen_take_screenshot
+     - entity: sensor.screen_screenshot_status
+       show_state: true
+   ```
+
+Press the camera icon to take and display a fresh screenshot. The successful
+capture changes Screenshot ID, which changes the helper's URL and invalidates
+its cached image. The card updates from the image entity's state change.
+Repeated reads use the cached JPEG; they do not request another capture. A failed
+capture keeps the last successful image visible and shows its error in the
+status sensor. After a device restart, take a new screenshot to populate the
+device's empty image store.
+
+For YAML-managed helpers, the equivalent configuration is:
+
+```yaml
+template:
+  - image:
+      - name: Screen screenshot
+        unique_id: screen_screenshot
+        availability: >-
+          {{ has_value('sensor.screen_screenshot_id') and states('sensor.screen_screenshot_id') != '' }}
+        url: >-
+          http://screen.local/esp_screenshot/screen/image.jpg?capture={{ states('sensor.screen_screenshot_id') }}
+```
+
+The image is fetched by Home Assistant and served to the dashboard through its
+image proxy. There is no periodic image capture or image-fetch polling. Use the
+image entity directly in the card, as above, so Home Assistant adds its image
+state to the browser URL for cache invalidation.
+
+### Authenticated HTTP endpoint
+
+If web server authentication is configured, the screenshot endpoint inherits
+it. Template Image has no dedicated HTTP authentication fields. Use the built-in
+**Generic Camera** integration for an authenticated endpoint:
+
+1. Press **Take screenshot** once before adding Generic Camera, because its
+   setup validates the JPEG.
+2. Use the same templated URL above as **Still Image URL**. Leave **Stream
+   Source** empty and enter the endpoint's **Username** and **Password** in
+   their dedicated fields. Select the matching **Authentication** type under
+   advanced options.
+3. Enable **Limit refetch to URL change** in the integration's options after
+   setup. Use its `camera` entity in a standard picture card alongside the
+   same capture button and status sensor.
+
+Generic Camera displays a changed JPEG on the frontend's next image request.
+It does not trigger captures. Keep the endpoint's authentication enabled and
+keep credentials out of URLs and dashboard configuration.
 
 An explicit expired `capture` identifier receives HTTP 410 instead of a different
 image under an old URL. Before the first successful capture the endpoint returns
@@ -205,6 +267,8 @@ copy's rotation, endianness, DMA busy and cache-error paths. Firmware compilatio
 checks API and dependency integration. These checks do not substitute for
 physical screenshots of a particular panel during video and subsequent hangup.
 
-References: [ESPHome native API actions](https://esphome.io/components/api/#user-defined-actions),
+References: [ESPHome template button](https://esphome.io/components/button/template/),
+[Home Assistant Template Image](https://www.home-assistant.io/integrations/template/#image),
+[Home Assistant Picture Glance](https://www.home-assistant.io/dashboards/picture-glance/),
 [Home Assistant Generic Camera](https://www.home-assistant.io/integrations/generic/),
 [Espressif software JPEG codec](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/readme).

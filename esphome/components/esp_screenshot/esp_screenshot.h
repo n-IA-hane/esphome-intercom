@@ -40,6 +40,9 @@ public:
   void set_capture_id_sensor(text_sensor::TextSensor *sensor) {
     this->capture_id_sensor_ = sensor;
   }
+  void set_capture_status_sensor(text_sensor::TextSensor *sensor) {
+    this->capture_status_sensor_ = sensor;
+  }
 #ifdef USE_ESP_SCREENSHOT_MIPI_DSI
   void set_mipi_display(mipi_dsi::MipiDsi *display) {
     this->mipi_display_ = display;
@@ -64,6 +67,7 @@ protected:
   bool copy_display_();
   void cancel_capture_(const char *reason);
   void fail_setup_(const char *reason);
+  void publish_status_(const std::string &status);
 #ifdef USE_ESP_SCREENSHOT_LVGL
   static void flush_event_(lv_event_t *event);
   lvgl::LvglComponent *lvgl_{nullptr};
@@ -75,6 +79,7 @@ protected:
 #endif
   web_server_base::WebServerBase *web_server_{nullptr};
   text_sensor::TextSensor *capture_id_sensor_{nullptr};
+  text_sensor::TextSensor *capture_status_sensor_{nullptr};
   std::string url_{"/esp_screenshot/screen/image.jpg"};
   uint8_t quality_{85};
   unsigned width_{0}, height_{0};

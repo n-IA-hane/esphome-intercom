@@ -1,8 +1,16 @@
 # Add esp_screenshot and choose its display backend in the main YAML.
-# This package exposes the existing capture primitive through the native API.
+# This package exposes a native button and the existing native API action.
 # The screenshot component ID defaults to screen_capture.
 defaults:
   screenshot_id: screen_capture
+button:
+  - platform: template
+    name: Take screenshot
+    icon: mdi:monitor-screenshot
+    entity_category: diagnostic
+    on_press:
+      - esp_screenshot.capture:
+          id: ${screenshot_id}
 api:
   actions:
     - action: take_screenshot
