@@ -42,7 +42,7 @@ assignments; the screen captures come from the real ESP display.
 
 ### Contacts, live BLF and voicemail
 
-<img src="images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu showing contact types, live call states and the voicemail envelope" />
+<img src="images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu showing numbers, contact types and live call states" />
 
 Drag the list vertically to browse the directory, then tap a contact to call.
 The left icon identifies an ESP (chip), SIP phone (desk phone), browser phone

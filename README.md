@@ -95,14 +95,14 @@ the PBX's spoken menu. The in-call keypad sends DTMF. Directory, BLF and MWI
 can each be selected in YAML, including on VoIP-only profiles.
 
 <p>
-  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with contact types, live BLF states and message waiting" />
+  <img src="docs/images/phone-services/contacts-scroll.gif" width="240" alt="Real ESP contact menu with numbers, contact types and live BLF states" />
   <img src="docs/images/phone-services/options.jpg" width="240" alt="Real ESP display with audio and telephone options" />
   <img src="docs/images/phone-services/dtmf.jpg" width="240" alt="Real ESP display with the in-call DTMF keypad" />
 </p>
 
 _Real on-device LVGL screenshots captured with
 [`esp_screenshot`](docs/ESP_SCREENSHOT.md), using demo directory entries.
-The animated contact menu shows live BLF and message waiting;
+The animated contact menu shows numbers, contact types and live BLF states;
 options and the in-call keypad are shown separately._
 
 See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
