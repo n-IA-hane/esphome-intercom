@@ -109,6 +109,7 @@ def test_p4_snapshot_serializes_dma_and_converts_rotation_and_byte_order(tmp_pat
 #include <cstdint>
 #include <cstddef>
 #include <utility>
+#include <vector>
 static bool locked=false, sync_failure=false;
 static int syncs=0;
 constexpr int pdTRUE=1, ESP_OK=0, ESP_CACHE_MSYNC_FLAG_DIR_M2C=8;
@@ -119,49 +120,68 @@ uint16_t convert_big_endian(uint16_t v){return uint16_t((v>>8)|(v<<8));}
 namespace display {
 enum Rotation{DISPLAY_ROTATION_0_DEGREES=0,DISPLAY_ROTATION_90_DEGREES=90,
  DISPLAY_ROTATION_180_DEGREES=180,DISPLAY_ROTATION_270_DEGREES=270};
+using DisplayRotation=Rotation;
 constexpr int COLOR_BITNESS_565=16;
 }
 struct MipiDsi {
- int color_depth_=16; bool big_endian_=false; size_t width_=3,height_=2;
+ int color_depth_=16; bool big_endian_=false,failed_=false; size_t width_=3,height_=2;
  uint8_t *frame_buffer_=nullptr;size_t frame_buffer_size_=12;
  void *submit_mutex_=this;int rotation_=0;
- bool is_failed(){return false;}
+ bool is_failed(){return failed_;}
  int get_width(){return rotation_==90||rotation_==270?2:3;}
  int get_height(){return rotation_==90||rotation_==270?3:2;}
- bool copy_frame_buffer_rgb565(uint8_t*,size_t);
+ bool copy_frame_buffer_rgb565(uint8_t*,size_t,display::Rotation=display::DISPLAY_ROTATION_0_DEGREES);
 """
         + rotate
         + "\n};\n"
         + method
         + r"""
+using Matrix=std::vector<std::vector<uint16_t>>;
+Matrix clockwise(Matrix input,unsigned turns){
+ while(turns--){
+  Matrix next(input[0].size(),std::vector<uint16_t>(input.size()));
+  for(size_t y=0;y<input.size();++y)
+   for(size_t x=0;x<input[0].size();++x)next[x][input.size()-1-y]=input[y][x];
+  input=next;
+ }
+ return input;
+}
 int main(){
- MipiDsi d;std::array<uint16_t,6> input{1,2,3,4,5,6},output{};
+ MipiDsi d;std::array<uint16_t,6> input{1,2,3,4,5,6};
+ std::array<uint16_t,8> output{};
  d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data());
- assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert(output==input&&!locked&&syncs==1);
- d.rotation_=90;
- assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert((output==std::array<uint16_t,6>{3,6,2,5,1,4}));
- d.rotation_=180;
- assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert((output==std::array<uint16_t,6>{6,5,4,3,2,1}));
- d.rotation_=270;
- assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert((output==std::array<uint16_t,6>{4,1,5,2,6,3}));
- d.rotation_=0;d.big_endian_=true;
- for(auto &pixel:input)pixel=convert_big_endian(pixel);
- assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert((output==std::array<uint16_t,6>{1,2,3,4,5,6}));
- const auto before=output;const int previous_syncs=syncs;
- locked=true;
- assert(!d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert(output==before&&syncs==previous_syncs);
+ auto *target=reinterpret_cast<uint8_t*>(output.data());
+ const Matrix native{{1,2,3},{4,5,6}};
+ for(int driver:{0,90,180,270})for(int rotation:{0,90,180,270})for(bool big:{false,true}){
+  d.rotation_=driver;d.big_endian_=big;
+  for(size_t i=0;i<input.size();++i)input[i]=big?convert_big_endian(i+1):i+1;
+  const auto immutable=input;output.fill(0xaaaa);
+  const auto logical=clockwise(native,(360-driver)%360/90);
+  const auto expected=clockwise(logical,rotation/90);
+  const auto previous_syncs=syncs;
+  assert(d.copy_frame_buffer_rgb565(target,sizeof(output),static_cast<display::Rotation>(rotation)));
+  size_t index=0;for(const auto &row:expected)for(auto pixel:row)assert(output[index++]==pixel);
+  assert(index==input.size()&&output[6]==0xaaaa&&output[7]==0xaaaa);
+  assert(input==immutable&&!locked&&syncs==previous_syncs+1);
+  // Existing two-argument callers retain the driver's logical orientation.
+  assert(d.copy_frame_buffer_rgb565(target,sizeof(input)));
+  index=0;for(const auto &row:logical)for(auto pixel:row)assert(output[index++]==pixel);
+ }
+ d.rotation_=0;d.big_endian_=false;input={1,2,3,4,5,6};
+ output.fill(0xbbbb);const auto before=output;const auto immutable=input;const int previous_syncs=syncs;
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)-1,display::DISPLAY_ROTATION_90_DEGREES));
+ assert(!d.copy_frame_buffer_rgb565(nullptr,sizeof(input)));
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),static_cast<display::Rotation>(45)));
+ d.frame_buffer_size_=10;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.frame_buffer_size_=12;
+ d.frame_buffer_=nullptr;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data());
+ d.submit_mutex_=nullptr;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.submit_mutex_=&d;
+ d.failed_=true;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.failed_=false;
+ d.color_depth_=24;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.color_depth_=16;
+ locked=true;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));
+ assert(output==before&&input==immutable&&syncs==previous_syncs);
  locked=false;sync_failure=true;
- assert(!d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert(output==before&&!locked);
- sync_failure=false;d.color_depth_=24;
- assert(!d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(output.data()),12));
- assert(!locked);
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),display::DISPLAY_ROTATION_270_DEGREES));
+ assert(output==before&&input==immutable&&!locked&&syncs==previous_syncs+1);
 }
 """
     )
@@ -295,6 +315,7 @@ def test_setup_honors_explicit_memory_and_worker_parameters_without_fallback(tmp
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #define USE_ESP_SCREENSHOT_MIPI_DSI
 constexpr int MALLOC_CAP_8BIT=1,MALLOC_CAP_INTERNAL=2,MALLOC_CAP_SPIRAM=4;
 constexpr int JPEG_PIXEL_FORMAT_RGB565_LE=1,JPEG_SUBSAMPLE_444=1,JPEG_ERR_OK=0;
@@ -320,7 +341,12 @@ void *xSemaphoreCreateMutexStatic(StaticSemaphore_t *p){return p;}
 struct jpeg_enc_config_t {int width{},height{},src_type{},subsampling{},quality{};bool task_enable{};};
 #define DEFAULT_JPEG_ENC_CONFIG() jpeg_enc_config_t{}
 using jpeg_enc_handle_t=void*;
-int jpeg_enc_open(jpeg_enc_config_t*,void **h){if(encoder_error)return 1;*h=reinterpret_cast<void*>(1);return 0;}
+static int encoder_width,encoder_height;
+int jpeg_enc_open(jpeg_enc_config_t *config,void **h){
+ encoder_width=config->width;encoder_height=config->height;
+ if(encoder_error)return 1;
+ *h=reinterpret_cast<void*>(1);return 0;
+}
 void jpeg_enc_close(void*){}
 uint32_t esp_random(){return 42;}
 static int expected_core,expected_priority,expected_stack_caps;
@@ -331,7 +357,15 @@ TaskHandle_t xTaskCreateStaticPinnedToCore(void(*)(void*),const char*,size_t n,v
  assert(int(priority)==expected_priority&&core==expected_core&&tcb!=nullptr);
  task_creations++;return reinterpret_cast<void*>(2);
 }
-struct Display{int get_width(){return 8;}int get_height(){return 8;}};
+namespace display {
+enum DisplayRotation{DISPLAY_ROTATION_0_DEGREES=0,DISPLAY_ROTATION_90_DEGREES=90,
+ DISPLAY_ROTATION_180_DEGREES=180,DISPLAY_ROTATION_270_DEGREES=270};
+}
+struct Display{
+ int rotation=0;
+ int get_width(){return rotation==90||rotation==270?4:8;}
+ int get_height(){return rotation==90||rotation==270?8:4;}
+};
 struct Server{void add_handler(void*){}void init(){}};
 struct TextSensor {
  std::string state;
@@ -343,6 +377,7 @@ struct EspScreenshot {
  StackType_t *worker_stack_{};StaticTask_t worker_tcb_{};StaticSemaphore_t mutex_storage_{};void *mutex_{};
  jpeg_enc_handle_t encoder_{};uint8_t quality_=85;uint32_t boot_id_{};TaskHandle_t worker_handle_{};
  uint32_t task_stack_size_=6144;int8_t task_core_=-1;uint8_t task_priority_=1;
+ display::DisplayRotation rotation_=display::DISPLAY_ROTATION_0_DEGREES;
  bool task_stack_in_psram_=true,buffer_in_psram_=true,failed=false,loop_disabled=false;
  TextSensor *capture_status_sensor_{};
  void setup();void fail_setup_(const char*);void publish_status_(const std::string&);
@@ -373,6 +408,17 @@ int main(){
  expected_stack_caps=MALLOC_CAP_8BIT|MALLOC_CAP_SPIRAM;
  default_core.setup();assert(!default_core.failed&&status.state=="No screenshot");
  default_core.fail_setup_("test fixture has no real worker");assert(allocations.empty());
+ for(int driver:{0,90,180,270})for(int output:{0,90,180,270}){
+  display.rotation=driver;
+  EspScreenshot component;component.mipi_display_=&display;component.web_server_=&server;
+  component.rotation_=static_cast<display::DisplayRotation>(output);component.setup();
+  const bool swapped=((driver/90)%2)!=((output/90)%2);
+  const unsigned width=swapped?4:8,height=swapped?8:4;
+  assert(!component.failed&&component.width_==width&&component.height_==height);
+  assert(encoder_width==int(width)&&encoder_height==int(height)&&component.pixel_size_==64);
+  component.fail_setup_("test fixture has no real worker");assert(allocations.empty());
+ }
+ display.rotation=0;
  const int before=task_creations;
  EspScreenshot invalid_core;invalid_core.task_core_=2;invalid_core.capture_status_sensor_=&status;
  invalid_core.setup();assert(invalid_core.failed&&allocations.empty()&&task_creations==before);

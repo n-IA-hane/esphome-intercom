@@ -19,7 +19,9 @@ Choose exactly one backend. The P4 backend uses the maintained Intercom
 framebuffer copy API. The adaptation is compiled only when screenshots are
 included. The copy takes the same mutex as panel DMA submissions and returns
 busy immediately when a transfer owns the framebuffer. It exports RGB565 in
-logical display orientation, including rotation and byte order conversion.
+the display driver's logical orientation, including its rotation and byte order
+conversion. An optional `rotation` applies an additional clockwise rotation to
+the screenshot only, with values `0` (default), `90`, `180` or `270`.
 RGB888 framebuffer capture is currently unsupported. This backend reads the
 driver framebuffer, rather than the physical panel controller.
 
@@ -36,6 +38,15 @@ Use the framebuffer backend when anything draws outside LVGL. The LVGL backend
 cannot capture independent direct-to-panel video or another writer's pixels.
 Some SPI displays keep their only complete framebuffer inside the panel itself;
 the component does not claim readback support for those panels.
+
+LVGL's software rotation is independent of the display driver's rotation. A
+portrait MIPI framebuffer can therefore contain a landscape GUI sideways even
+when the display driver reports rotation `0`. For example, the maintained P4
+FULL landscape UI uses `lvgl.rotation: 270` on an 800x1280 native framebuffer;
+set screenshot `rotation: 90` to obtain an upright 1280x800 JPEG from that MIPI
+backend. This does not change the panel, touch, video or LVGL configuration.
+The LVGL capture backend already follows LVGL's logical coordinates and rejects
+an additional nonzero screenshot rotation.
 
 ## Add to an existing firmware
 
@@ -77,6 +88,7 @@ external_components:
 esp_screenshot:
   id: screen_capture
   mipi_dsi_id: main_display  # ID of your existing RGB565 MIPI DSI display
+  rotation: 0  # Additional clockwise image rotation; use 90 for P4 FULL landscape
   path: screen
   quality: 85
   max_jpeg_size: 262144
@@ -229,6 +241,11 @@ continuous framebuffer mirror and no encoder task created per request. The
 LVGL backend requests a full refresh and copies its rectangles in the main
 loop; this can briefly delay UI work. Exclude that requested-capture window
 from continuous timing baselines. JPEG compression runs in the worker.
+
+MIPI image rotation is part of the existing synchronized RGB565 copy. It uses
+the same snapshot buffer and one pixel pass; 90 and 270 degrees swap the JPEG
+width and height. It does not enable the encoder's rotation option, which does
+not support this RGB565 input format.
 
 ## Optional execution and memory tuning
 

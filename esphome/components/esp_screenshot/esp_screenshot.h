@@ -47,6 +47,7 @@ public:
   void set_mipi_display(mipi_dsi::MipiDsi *display) {
     this->mipi_display_ = display;
   }
+  void set_rotation(display::DisplayRotation rotation) { this->rotation_ = rotation; }
 #endif
 #ifdef USE_ESP_SCREENSHOT_LVGL
   void set_lvgl(lvgl::LvglComponent *display) { this->lvgl_ = display; }
@@ -77,6 +78,7 @@ protected:
 #endif
 #ifdef USE_ESP_SCREENSHOT_MIPI_DSI
   mipi_dsi::MipiDsi *mipi_display_{nullptr};
+  display::DisplayRotation rotation_{display::DISPLAY_ROTATION_0_DEGREES};
 #endif
   web_server_base::WebServerBase *web_server_{nullptr};
   text_sensor::TextSensor *capture_id_sensor_{nullptr};

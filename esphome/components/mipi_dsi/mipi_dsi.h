@@ -84,9 +84,11 @@ class MipiDsi final : public display::Display {
   uint8_t *get_frame_buffer() const { return this->frame_buffer_; }
   size_t get_frame_buffer_size() const { return this->frame_buffer_size_; }
 #ifdef USE_ESP_SCREENSHOT
-  /// Copy completed RGB565 pixels in logical display orientation. Returns busy
+  /// Copy completed RGB565 pixels in logical display orientation, followed by
+  /// an optional clockwise output rotation. Returns busy
   /// without waiting when a panel DMA submission owns the framebuffer.
-  bool copy_frame_buffer_rgb565(uint8_t *target, size_t capacity);
+  bool copy_frame_buffer_rgb565(uint8_t *target, size_t capacity,
+                               display::DisplayRotation rotation = display::DISPLAY_ROTATION_0_DEGREES);
 #endif
   void dump_config() override;
 

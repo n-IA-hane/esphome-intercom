@@ -314,9 +314,13 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
 
 
 #ifdef USE_ESP_SCREENSHOT
-bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity) {
+bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity, display::DisplayRotation rotation) {
   const size_t required = this->width_ * this->height_ * sizeof(uint16_t);
-  if (this->is_failed() || this->color_depth_ != display::COLOR_BITNESS_565 ||
+  if ((rotation != display::DISPLAY_ROTATION_0_DEGREES &&
+       rotation != display::DISPLAY_ROTATION_90_DEGREES &&
+       rotation != display::DISPLAY_ROTATION_180_DEGREES &&
+       rotation != display::DISPLAY_ROTATION_270_DEGREES) ||
+      this->is_failed() || this->color_depth_ != display::COLOR_BITNESS_565 ||
       target == nullptr || capacity < required || this->frame_buffer_ == nullptr ||
       this->frame_buffer_size_ != required || this->submit_mutex_ == nullptr ||
       xSemaphoreTake(this->submit_mutex_, 0) != pdTRUE)
@@ -331,9 +335,29 @@ bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity) {
     auto *output = reinterpret_cast<uint16_t *>(target);
     const int width = this->get_width();
     const int height = this->get_height();
-    for (int y = 0; y < height; ++y) {
-      for (int x = 0; x < width; ++x) {
+    const bool swap_axes = rotation == display::DISPLAY_ROTATION_90_DEGREES ||
+                           rotation == display::DISPLAY_ROTATION_270_DEGREES;
+    for (int y = 0; y < (swap_axes ? width : height); ++y) {
+      for (int x = 0; x < (swap_axes ? height : width); ++x) {
         int native_x = x, native_y = y;
+        // Undo the requested output rotation, then reuse the driver's mapping
+        // from logical display coordinates to its native framebuffer.
+        switch (rotation) {
+          case display::DISPLAY_ROTATION_90_DEGREES:
+            native_x = y;
+            native_y = height - x - 1;
+            break;
+          case display::DISPLAY_ROTATION_180_DEGREES:
+            native_x = width - x - 1;
+            native_y = height - y - 1;
+            break;
+          case display::DISPLAY_ROTATION_270_DEGREES:
+            native_x = width - y - 1;
+            native_y = x;
+            break;
+          default:
+            break;
+        }
         this->rotate_(native_x, native_y);
         const uint16_t pixel = source[size_t(native_y) * this->width_ + native_x];
         *output++ = this->big_endian_ ? convert_big_endian(pixel) : pixel;

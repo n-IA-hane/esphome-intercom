@@ -3,11 +3,11 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import text_sensor, web_server_base
+from esphome.components import display as display_component, text_sensor, web_server_base
 from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
 from esphome.components.lvgl.lvcode import LvglComponent
 from esphome.components.mipi_dsi import display as mipi_dsi_display
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_ROTATION
 from esphome.core import CORE
 from esphome.final_validate import full_config
 
@@ -58,6 +58,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_MIPI_DSI_ID): cv.use_id(mipi_dsi_display.MipiDsi),
             cv.Optional(CONF_LVGL_ID): cv.use_id(LvglComponent),
+            cv.Optional(CONF_ROTATION, default=0): display_component.validate_rotation,
             cv.Optional(CONF_CAPTURE_ID): text_sensor.text_sensor_schema(
                 icon="mdi:camera"
             ),
@@ -84,6 +85,8 @@ CONFIG_SCHEMA = cv.All(
 def _validate_paths(config):
     full = full_config.get()
     instances = full.get("esp_screenshot", [])
+    if CONF_LVGL_ID in config and config[CONF_ROTATION] != 0:
+        raise cv.Invalid("rotation applies only to mipi_dsi_id; LVGL capture already uses its logical orientation")
     if (
         config[CONF_TASK_STACK_IN_PSRAM] or config[CONF_BUFFER_IN_PSRAM]
     ) and "psram" not in full:
@@ -122,6 +125,7 @@ async def to_code(config):
             raise cv.Invalid("mipi_dsi_id requires ESP32-P4")
         display = await cg.get_variable(config[CONF_MIPI_DSI_ID])
         cg.add(var.set_mipi_display(display))
+        cg.add(var.set_rotation(display_component.DISPLAY_ROTATIONS[config[CONF_ROTATION]]))
         cg.add_define("USE_ESP_SCREENSHOT_MIPI_DSI")
     else:
         display = await cg.get_variable(config[CONF_LVGL_ID])

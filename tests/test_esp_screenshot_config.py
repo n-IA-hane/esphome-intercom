@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
     ("settings", "expected"),
     [
         ({"lvgl_id": "ui"}, True),
+        ({"lvgl_id": "ui", "rotation": 0}, True),
+        ({"lvgl_id": "ui", "rotation": 90}, False),
+        ({"lvgl_id": "ui", "rotation": 45}, False),
         ({}, False),
         ({"lvgl_id": "ui", "mipi_dsi_id": "screen"}, False),
         ({"lvgl_id": "ui", "max_jpeg_size": 1024}, False),
@@ -112,3 +115,42 @@ def test_screenshot_schema_and_native_api_package(tmp_path, settings, expected):
             "set_capture_status_sensor(screenshot_status_entity)",
         ]:
             assert call in main
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270, 45, 360])
+def test_mipi_screenshot_rotation_schema_and_codegen(tmp_path, rotation):
+    config = {
+        "esphome": {"name": "screenshot-p4", "build_path": str(tmp_path / "build")},
+        "esp32": {"board": "esp32-p4-evboard", "framework": {"type": "esp-idf"}},
+        "network": {},
+        "psram": {},
+        "esp_ldo": [{"channel": 3, "voltage": "2.5V"}],
+        "external_components": [
+            {
+                "source": {"type": "local", "path": str(ROOT / "esphome/components")},
+                "components": ["esp_screenshot", "mipi_dsi"],
+            }
+        ],
+        "display": [{"platform": "mipi_dsi", "id": "screen", "model": "WAVESHARE-P4-NANO-10.1"}],
+        "esp_screenshot": {"id": "screen_capture", "mipi_dsi_id": "screen", "rotation": rotation},
+    }
+    path = tmp_path / "p4.yaml"
+    path.write_text(yaml.safe_dump(config))
+    result = subprocess.run(
+        [sys.executable, "-m", "esphome", "config", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    valid = rotation in (0, 90, 180, 270)
+    assert (result.returncode == 0) is valid, result.stdout + result.stderr
+    if valid:
+        generated = subprocess.run(
+            [sys.executable, "-m", "esphome", "compile", str(path), "--only-generate"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert generated.returncode == 0, generated.stdout + generated.stderr
+        main = (tmp_path / "build/src/main.cpp").read_text()
+        assert f"screen_capture->set_rotation(display::DISPLAY_ROTATION_{rotation}_DEGREES)" in main

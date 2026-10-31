@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace esphome::esp_screenshot {
 
@@ -33,6 +34,9 @@ void EspScreenshot::setup() {
   if (this->mipi_display_ != nullptr) {
     this->width_ = this->mipi_display_->get_width();
     this->height_ = this->mipi_display_->get_height();
+    if (this->rotation_ == display::DISPLAY_ROTATION_90_DEGREES ||
+        this->rotation_ == display::DISPLAY_ROTATION_270_DEGREES)
+      std::swap(this->width_, this->height_);
   }
 #endif
 #ifdef USE_ESP_SCREENSHOT_LVGL
@@ -209,7 +213,7 @@ bool EspScreenshot::copy_display_() {
 #ifdef USE_ESP_SCREENSHOT_MIPI_DSI
   if (this->mipi_display_ != nullptr)
     return this->mipi_display_->copy_frame_buffer_rgb565(this->pixels_,
-                                                         this->pixel_size_);
+                                                         this->pixel_size_, this->rotation_);
 #endif
 #ifdef USE_ESP_SCREENSHOT_LVGL
   if (this->lvgl_ != nullptr) {
