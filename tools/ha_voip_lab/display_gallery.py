@@ -69,6 +69,18 @@ def checked_profile_receipt(config, receipt):
     return value
 
 
+def compiled_transition_seconds(receipt):
+    """Read the navigation contract from the source matching this artifact."""
+    source = Path(receipt["private_debug_source"]) / "src/main.cpp"
+    if hashlib.sha256(source.read_bytes()).hexdigest() != receipt["main_sha256"]:
+        raise RuntimeError("Preserved UI source differs from the compiled receipt")
+    values = [int(value) for value in re.findall(
+        r"^\s*nav_anim_ms->value\(\)\s*=\s*(\d+);", source.read_text(), re.MULTILINE) if int(value)]
+    if not values:
+        raise RuntimeError("The compiled image has no identified round navigation duration")
+    return max(values) / 1000
+
+
 def load_esp_tool(source):
     spec = spec_from_file_location("display_gallery_esp", source / "tools/qualify_sip_registration_esp.py")
     module = module_from_spec(spec)
@@ -83,6 +95,8 @@ def gallery_witness(esp):
             self.args, self.server = args, server
             self.native_samples, self.captures = [], []
             self.expected_page = None
+            self._diagnostic_lock = asyncio.Lock()
+            self._diagnostic_completed_at = 0.0
 
         def on_log(self, entry):
             super().on_log(entry)
@@ -90,6 +104,23 @@ def gallery_witness(esp):
             if "ui.hil" in value:
                 self.log.append({"time": time.monotonic(), "message": value})
                 self.changed.set()
+
+        async def service(self, name, data=None):
+            if name not in {"phone_runtime_snapshot", "registration_runtime_diagnostics"}:
+                return await super().service(name, data)
+            # Both private actions call the same native diagnostics owner.
+            # dump_diagnostics() refuses concurrent requests and requests less
+            # than 1000 ms apart. Observe its END before releasing this boundary.
+            async with self._diagnostic_lock:
+                remaining = self._diagnostic_completed_at + 1.01 - time.monotonic()
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+                first = len(self.log)
+                try:
+                    await super().service(name, data)
+                    await self.wait(lambda: hil._completed_diagnostic_dump(self.log[first:]) is not None, timeout=5)
+                finally:
+                    self._diagnostic_completed_at = time.monotonic()
 
         async def native_status(self):
             first = len(self.log)
@@ -136,6 +167,21 @@ def gallery_witness(esp):
             if self.expected_page not in {"call_idle", "call_dialer", "settings"}:
                 raise RuntimeError("A safe expected page is required for a gallery capture")
             before = await self.ui_checkpoint()
+            if "transition" in before:
+                deadline = time.monotonic() + 5
+                while before["transition"] not in {"0", "NO"}:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("The native screen load has not completed")
+                    before = await self.ui_checkpoint()
+                before["native_screen_load_observed"] = True
+            else:
+                # Older private images expose the selected logical page only.
+                # Honor their exact compiled animation duration, then require
+                # a fresh checkpoint. Pixel semantic review remains mandatory.
+                await asyncio.sleep(self.args.ui_transition_seconds)
+                before = await self.ui_checkpoint()
+                before["native_screen_load_observed"] = False
+                before["compiled_transition_ms"] = round(self.args.ui_transition_seconds * 1000)
             result = await super().screenshot(address, output, expected_size=(self.args.width, self.args.height))
             after = await self.ui_checkpoint()
             result.update(page=self.expected_page, native_before=before, native_after=after,
@@ -256,6 +302,7 @@ async def run(args):
     from aioesphomeapi import APIClient
 
     receipt = checked_profile_receipt(args.config, args.receipt)
+    args.ui_transition_seconds = compiled_transition_seconds(receipt)
     if args.output.exists():
         raise RuntimeError("Select a fresh private output directory; existing evidence is preserved")
     args.output.mkdir(parents=True, mode=0o700)
@@ -411,6 +458,8 @@ async def run(args):
         finally:
             peers.TEST_CAPTURE_DIR = peer_capture_root
             await witness.close()
+            result["native_status_samples"] = witness.native_samples
+            hil.write_private(args.output / "native-api-log.json", witness.log)
             hil.write_private(args.output / "gallery-result.json", result)
     return result
 

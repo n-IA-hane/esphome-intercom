@@ -3,10 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import hashlib
 import json
+import asyncio
+import time
 
 import pytest
 
 from tools.ha_voip_lab import display_gallery as gallery
+from tests.test_phone_services_hil_tool import native_audio_dump
+from tests.test_esp_screenshot_witness import witness_module
 
 
 def test_native_readiness_requires_all_eight_actual_getter_records():
@@ -39,6 +43,18 @@ def test_gallery_requires_the_exact_preserved_profile_and_artifact(tmp_path):
     artifact.write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="artifact"):
         gallery.checked_profile_receipt(profile, receipt)
+
+
+def test_navigation_wait_uses_the_matching_compiled_source_contract(tmp_path):
+    source = tmp_path / "src/main.cpp"
+    source.parent.mkdir()
+    source.write_text("nav_anim_ms->value() = 0;\nnav_anim_ms->value() = 300;\n// nav_anim_ms->value() = 9000;\n")
+    receipt = {"private_debug_source": str(tmp_path),
+               "main_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    assert gallery.compiled_transition_seconds(receipt) == .3
+    source.write_text("nav_anim_ms->value() = 9000;\n")
+    with pytest.raises(RuntimeError, match="compiled receipt"):
+        gallery.compiled_transition_seconds(receipt)
 
 
 @pytest.mark.parametrize("username", ["GalleryHome", "galleryhome"])
@@ -134,6 +150,37 @@ async def test_mailbox_target_adapter_restores_original_waiter_when_scenario_fai
     assert gallery.hil.MwiTrace.waiting is original
 
 
+def deferred_diagnostic_witness():
+    module = witness_module()
+    client = SimpleNamespace()
+    witness = gallery.gallery_witness(module)(client, SimpleNamespace(), "example.invalid")
+    witness.services = {"phone_runtime_snapshot": "snapshot", "registration_runtime_diagnostics": "ui"}
+    requests = []
+
+    async def execute(service, _data):
+        requests.append(time.monotonic())
+        loop = asyncio.get_running_loop()
+        if service == "snapshot":
+            loop.call_soon(witness.on_log, SimpleNamespace(message=b"[phone.hil] contacts=8"))
+        for index, message in enumerate(native_audio_dump(1000 * len(requests))):
+            loop.call_later(index * .001, witness.on_log, SimpleNamespace(message=message.encode()))
+    client.execute_service = execute
+    return witness, requests
+
+
+async def test_gallery_diagnostic_service_waits_for_the_real_deferred_dump_boundary():
+    witness, _requests = deferred_diagnostic_witness()
+    await witness.service("phone_runtime_snapshot")
+    assert gallery.hil._completed_audio_dump(witness.log) is not None
+
+
+async def test_gallery_serializes_both_diagnostic_actions_through_one_second_admission():
+    witness, requests = deferred_diagnostic_witness()
+    await asyncio.gather(witness.service("phone_runtime_snapshot"),
+                         witness.service("registration_runtime_diagnostics"))
+    assert len(requests) == 2 and requests[1] - requests[0] >= 1.0
+
+
 @pytest.mark.parametrize("page,avatar,expected,accepted", [
     ("call_idle", "NO", "call_idle", True),
     ("unknown", "NO", "settings", True),
@@ -146,9 +193,10 @@ async def test_native_page_checkpoint_never_promotes_unknown_or_private_avatar(p
         def __init__(self, _client):
             self.log = []
 
-        async def service(self, name):
+        async def service(self, name, data=None):
             assert name == "registration_runtime_diagnostics"
             self.log.append({"message": f"[ui.hil] page={page} avatar_visible={avatar}"})
+            self.log.extend({"message": value} for value in native_audio_dump())
 
         async def wait(self, predicate, timeout):
             assert predicate() and timeout == 5

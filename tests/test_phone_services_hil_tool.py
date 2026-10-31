@@ -89,6 +89,14 @@ def native_audio_dump(uptime=1000):
     return ["[I][voip_stack.diagnostics:123]: " + body for body in bodies]
 
 
+def test_generic_diagnostic_boundary_does_not_weaken_the_audio_request_marker():
+    from tools.ha_voip_lab.phone_services_hil import _completed_audio_dump, _completed_diagnostic_dump
+    records = [{"message": line} for line in native_audio_dump()]
+    assert _completed_diagnostic_dump(records) == native_audio_dump()
+    assert _completed_audio_dump(records) is None
+    assert _completed_diagnostic_dump(records[:-1]) is None
+
+
 def test_complete_native_audio_dump_retains_the_authoritative_identity_and_counters():
     from tools.ha_voip_lab.phone_services_hil import parse_full_audio_snapshot
     value = parse_full_audio_snapshot(native_audio_dump())

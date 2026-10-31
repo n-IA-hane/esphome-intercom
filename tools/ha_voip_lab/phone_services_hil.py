@@ -303,8 +303,13 @@ def _completed_audio_dump(records):
                    and re.search(r"\bcontacts=\d+\b", record["message"])), None)
     if marker is None:
         return None
+    return _completed_diagnostic_dump(records[marker + 1:])
+
+
+def _completed_diagnostic_dump(records):
+    """Read the shared native diagnostic owner without inventing an RPC marker."""
     messages, uptime = [], None
-    for record in records[marker + 1:]:
+    for record in records:
         message = record["message"]
         if "voip_stack.diagnostics" not in message:
             continue
