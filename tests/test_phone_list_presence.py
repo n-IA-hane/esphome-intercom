@@ -54,6 +54,39 @@ int main(){
  phone.current.state=BlfState::RINGING;phone.current.ringing_dialogs=0;
  row=Row{};render(0,row);assert(row.detail=="Ringing"&&row.action==0);
  row=output(BlfState::UNKNOWN,PresenceState::OPEN,false);assert(row.detail=="Unknown");
+ // HA groups and services intentionally have no endpoint subscription.
+ // Their absence of BLF data must not become a visible phone status.
+ phone.contact.auto_blf=false;
+ for (auto kind : {ContactKind::GROUP,ContactKind::AUTOMATION}) {
+  phone.contact.kind=kind;
+  row=output(BlfState::UNKNOWN,PresenceState::UNKNOWN,false);
+  assert(row.detail.empty()&&row.trailing.empty()&&!row.blink&&row.action==0);
+  assert(!row.leading.empty()&&!row.name.empty());
+  // An explicit, valid watch still owns the displayed call activity.
+  row=output(BlfState::ACTIVE,PresenceState::OPEN);
+  assert(row.detail=="In call"&&row.color==0xF87171);
+ }
+ phone.contact.kind=ContactKind::BROWSER;
+ row=output(BlfState::UNKNOWN,PresenceState::UNKNOWN,false);assert(row.detail=="Unknown");
+ phone.contact.kind=ContactKind::GROUP;phone.contact.auto_blf=true;
+ row=output(BlfState::UNKNOWN,PresenceState::UNKNOWN,false);assert(row.detail=="Unknown");
+ for (auto kind : {ContactKind::ESP,ContactKind::BROWSER,ContactKind::SIP_ACCOUNT}) {
+  phone.contact.kind=kind;phone.contact.number="00101";
+  row=output(BlfState::IDLE,PresenceState::OPEN);assert(row.detail=="00101"&&row.color==0x4ADE80);
+  row=output(BlfState::ACTIVE,PresenceState::OPEN);assert(row.detail=="In call");
+  row=output(BlfState::IDLE,PresenceState::CLOSED);assert(row.detail=="Unavailable");
+  phone.contact.number.clear();
+  row=output(BlfState::IDLE,PresenceState::OPEN);assert(row.detail=="Idle");
+ }
+ phone.contact.kind=ContactKind::CONTACT;phone.contact.auto_blf=false;phone.contact.number="+3900123456";
+ row=output(BlfState::UNKNOWN,PresenceState::UNKNOWN,false);
+ assert(row.detail=="+3900123456"&&row.trailing.empty()&&!row.blink&&row.action==0);
+ row=output(BlfState::IDLE,PresenceState::OPEN);assert(row.detail=="+3900123456");
+ row=output(BlfState::RINGING,PresenceState::OPEN);assert(row.detail=="Ringing: pickup");
+ for (auto kind : {ContactKind::GROUP,ContactKind::AUTOMATION}) {
+  phone.contact.kind=kind;phone.contact.number="700";
+  row=output(BlfState::UNKNOWN,PresenceState::UNKNOWN,false);assert(row.detail.empty());
+ }
 }
 '''.replace("BODY", str(body)))
     binary = tmp_path / "render"
@@ -61,5 +94,5 @@ int main(){
         "-I", str(tmp_path), "-I", str(VOIP / "esphome/components/voip_stack"), str(source), "-o", str(binary)],
         capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
-    result = subprocess.run([binary], capture_output=True, text=True, timeout=5)
+    result = subprocess.run([binary], capture_output=True, text=True, timeout=5, cwd=tmp_path)
     assert result.returncode == 0, result.stderr

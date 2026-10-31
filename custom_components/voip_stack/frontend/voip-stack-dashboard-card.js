@@ -6,7 +6,7 @@ const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIC
 const { softphoneSnapshotSupersedes } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
 const {
   DashboardPhoneStore, normaliseDashboardConfig, parseDashboardRoster, ownerDeviceInfo,
-  dashboardSections, phonePresentation, distinctCalls, dashboardCanCall,
+  dashboardSections, phonePresentation, dashboardCanCall,
   dashboardPickupCandidate, dashboardColumnCount, dashboardTranslate, dashboardIconFor, dashboardTypeFor,
 } = await import(`./voip-stack-dashboard-model.js?v=${encodeURIComponent(VERSION)}`);
 const { buildDashboardSkeleton, buildDashboardTile, dashboardElement, dashboardIcon } = await import(`./voip-stack-dashboard-view.js?v=${encodeURIComponent(VERSION)}`);
@@ -384,7 +384,10 @@ class VoipStackDashboardCard extends HTMLElement {
     tile.pickup.setAttribute("aria-label", `${tile.pickupLabel.textContent}: ${phone.name}`);
     const canCall = dashboardCanCall(owner, phone, this._store.ready && !this._pending);
     const description = [phone.owner ? this._t("Your phone") : "", phone.mailbox?.waiting ? `${this._t("Voicemail")}: ${phone.mailbox.new || 0}` : ""].filter(Boolean).join(". ");
-    tile.main.setAttribute("aria-label", `${phone.name || ""}${phone.extension ? `, ${phone.extension}` : ""}. ${typeLabel}. ${tile.statusCopy.textContent || this._t("Unknown")}.${description ? ` ${description}.` : ""} ${this._t(canCall ? "Call" : "Call details")}`);
+    const identity = `${phone.name || ""}${phone.extension ? `, ${phone.extension}` : ""}`;
+    tile.main.setAttribute("aria-label", [identity, typeLabel,
+      tile.statusCopy.textContent || this._t(state.summaryLabel), description,
+      this._t(canCall ? "Call" : "Call details")].filter(Boolean).join(". "));
     tile.main.title = `${typeLabel}, ${this._t(canCall ? "Call" : "Call details")}`;
     tile.main.disabled = !!this._pending;
     tile.pickup.dataset.callId = candidate?.id || "";
@@ -456,12 +459,13 @@ class VoipStackDashboardCard extends HTMLElement {
 
   _renderDetails() {
     const phone = this._tileData.get(this._detailKey); const e = this._els;
+    const presentation = phonePresentation(phone);
     e.detailsTitle.textContent = phone?.name || this._t("Call details");
-    e.detailsSummary.textContent = [phone?.extension || phone?.number, this._t(phonePresentation(phone).label)].filter(Boolean).join(" · ");
+    e.detailsSummary.textContent = [phone?.extension || phone?.number, this._t(presentation.label)].filter(Boolean).join(" · ");
     e.detailsRows.replaceChildren();
-    const owner = this._owner(); const calls = distinctCalls(phone);
+    const owner = this._owner(); const calls = presentation.calls;
     if (!calls.length) {
-      e.detailsRows.append(dashboardElement("p", "empty", this._t(phonePresentation(phone).label || "Unknown")));
+      if (presentation.summaryLabel) e.detailsRows.append(dashboardElement("p", "empty", this._t(presentation.summaryLabel)));
       return;
     }
     for (const call of calls) {

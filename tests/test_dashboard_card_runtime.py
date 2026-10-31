@@ -251,7 +251,7 @@ def test_dashboard_endpoint_icons_availability_and_automation_routing(dashboard_
     gate = page.locator(".tile[data-key='contact:gate']")
     assert gate.locator(".tile-icon > ha-icon").first.get_attribute("icon") == "mdi:robot"
     assert gate.locator(".availability-icon").is_hidden()
-    assert gate.locator(".tile-main").get_attribute("aria-label") == "Open gate, 301. Automation. Unknown. Call details"
+    assert gate.locator(".tile-main").get_attribute("aria-label") == "Open gate, 301. Automation. Call details"
     assert page.locator(".tile[data-key='contact:mobile'] .availability-icon").is_hidden()
     page.evaluate("""()=>{const owner={...fixture.phones.find(x=>x.endpoint_id==='studio'),state:'idle',calls:[]};engine.push({kind:'delta',revision:1,phones:[owner],removed:[]})}""")
     gate.locator(".tile-main").click()
@@ -318,6 +318,32 @@ def test_dashboard_editor_selects_owner_only_and_retains_missing_config(dashboar
     assert page.locator("voip-stack-dashboard-card-editor select option[value='office-device']").count() == 0
     page.evaluate("editor.setConfig({device_id:'missing-device'})")
     assert page.locator("voip-stack-dashboard-card-editor select").input_value() == "missing-device"
+
+
+@pytest.mark.browser_real
+@pytest.mark.parametrize("metadata,type_label", [
+    ({"virtual_endpoint": "assist_pipeline"}, "Assist pipeline"),
+    ({"virtual_endpoint": "automation"}, "Automation"),
+    ({"group_type": "ring"}, "Ring group"),
+    ({"group_type": "conference"}, "Conference group"),
+])
+def test_dashboard_service_details_omit_inapplicable_phone_state(dashboard_page, metadata, type_label):
+    page = dashboard_page
+    page.evaluate("""metadata => {
+      const roster=JSON.parse(hass.states['sensor.renamed_phonebook'].attributes.roster_json);
+      roster.contacts.find(contact=>contact.id==='gate').metadata=metadata;
+      hass={...hass,states:{...hass.states,'sensor.renamed_phonebook':{
+        attributes:{roster_json:JSON.stringify(roster)}}}};
+      card.hass=hass;
+    }""", metadata)
+    service = page.locator(".tile[data-key='contact:gate'] .tile-main")
+    assert service.get_attribute("aria-label") == f"Open gate, 301. {type_label}. Call details"
+    service.click()
+    dialog = page.get_by_role("dialog")
+    assert dialog.is_visible()
+    assert dialog.get_by_text("Unknown", exact=True).count() == 0
+    assert dialog.get_by_text("Available", exact=True).count() == 0
+    assert dialog.locator(".details-summary").inner_text() == "301"
 
 
 @pytest.mark.browser_real

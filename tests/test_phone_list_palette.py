@@ -38,6 +38,8 @@ def palette_config(build, output, body, icon_font):
         using namespace esphome::voip_stack;
         struct Contact {
           std::string_view name; ContactKind kind;
+          bool auto_blf{true};
+          std::string number;
           std::string_view stable_id()const{return name;}
         };
         struct Phone {

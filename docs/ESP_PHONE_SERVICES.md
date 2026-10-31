@@ -79,6 +79,15 @@ pickup; a missing presence report remains unknown rather than implying idle.
 Pickup requires a confirmed incoming ringing leg. A legacy BLF report without
 direction can still show Ringing, with the normal call action instead of pickup.
 
+Assist, automation destinations and call groups without an endpoint BLF watch
+show their name and contact-type icon, without an Unknown status or status icon.
+Real phones retain their unknown or unavailable indication when their state
+cannot be established.
+When idle, a phone shows its directory extension when provided, otherwise Idle.
+Saved static contacts show their telephone number. Ringing, active and held
+calls keep their call-state indication. Display numbers come from the directory
+and remain separate from the SIP routing identity.
+
 A new-message notification lights the envelope above the idle view's status
 indicators. Tap it to call the PBX's mailbox. SIP MWI supplies the waiting
 state and mailbox address; the regular SIP/RTP call carries the spoken menu.

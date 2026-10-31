@@ -12,6 +12,10 @@ font:
 defaults:
   _contacts_blf_render: |-
     const auto state = id(phone).get_contact_blf(contact->stable_id());
+    if (!state.available && !contact->auto_blf &&
+        (contact->kind == ContactKind::GROUP || contact->kind == ContactKind::AUTOMATION)) return;
+    if (!state.available && !contact->auto_blf &&
+        contact->kind == ContactKind::CONTACT && !number.empty()) return;
     if (state.presence == PresenceState::CLOSED &&
         (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) {
       row.set_detail("Unavailable"); row.set_trailing("\U000F0DEF"); row.color = 0xA3A3A3; return;
@@ -20,7 +24,7 @@ defaults:
       row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0xA3A3A3; return;
     }
     switch (state.state) {
-      case BlfState::IDLE: row.set_detail("Idle"); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
+      case BlfState::IDLE: row.set_detail(number.empty() ? std::string_view("Idle") : number); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
       case BlfState::CALLING: row.set_detail("Calling"); row.set_trailing("\U000F03FB"); row.color=0x38BDF8; break;
       case BlfState::RINGING:
         row.set_detail(state.ringing_dialogs > 0 ? "Ringing: pickup" : "Ringing");
@@ -76,6 +80,9 @@ phone_list_view:
         default: break;
       }
       row.set_leading(icon);
+      const std::string_view number(contact->number.data(), contact->number.size());
+      if (contact->kind != ContactKind::GROUP && contact->kind != ContactKind::AUTOMATION)
+        row.set_detail(number);
       ${ _contacts_blf_render if 'blf' in firmware_features else '' }
     on_select:
       - lambda: !lambda |

@@ -2,6 +2,7 @@
 
 const ACTIVE_STATES = new Set(["ringing", "calling", "connecting", "answering", "in_call", "held", "terminating"]);
 const INTERNAL_KINDS = new Set(["browser", "ha_softphone", "esphome", "sip_account"]);
+const SERVICE_TYPES = new Set(["Automation", "Assist pipeline", "Ring group", "Conference group"]);
 
 export function normaliseDashboardConfig(value = {}) {
   if (value.device_id != null && typeof value.device_id !== "string") {
@@ -145,6 +146,7 @@ export function primaryDashboardCall(phone) {
 
 export function phonePresentation(phone) {
   const state = String(phone?.state || "unknown").toLowerCase();
+  const unknownLabel = SERVICE_TYPES.has(dashboardTypeFor(phone)) ? "" : "Unknown";
   const calls = distinctCalls(phone);
   const primary = primaryDashboardCall(phone);
   const unavailable = ["offline", "unavailable"].includes(String(phone?.availability || "")) && !ACTIVE_STATES.has(state);
@@ -157,9 +159,9 @@ export function phonePresentation(phone) {
   else if (state === "held") label = "On hold";
   else if (visual === "busy") label = "In call with";
   else if (phone?.dnd) label = "Do not disturb";
-  else if (state === "unknown") label = "Unknown";
+  else if (state === "unknown") label = unknownLabel;
   return {
-    visual, state, label, primary, calls,
+    visual, state, label, summaryLabel: label || unknownLabel, primary, calls,
     peer: String(primary?.peer_name || ""),
     held: calls.filter((call) => call.held),
     incoming: calls.filter((call) => call.pickup_available || (call.direction === "incoming" && call.state === "early")),
