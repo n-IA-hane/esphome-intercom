@@ -6,9 +6,11 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field, replace
 from functools import partial
+import errno
 import logging
 import secrets
 from typing import Any, Awaitable, Callable, Protocol
+from weakref import WeakValueDictionary
 
 from .sip_capture import capture_io, send_sip_datagram
 
@@ -567,6 +569,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         request_router: ApplicationRequestRouter | None = None,
         send_override: SendHandler | None = None,
         request_route: Callable[[sip.SipUri, tuple[str, int]], Awaitable[tuple[str, int]]] | None = None,
+        notify_tcp_endpoint: Callable[[], SipUdpEndpoint | None] | None = None,
         signaling_transport: str = "UDP",
         flow_trunk_id: str = "",
         enable_video: bool = False,
@@ -595,6 +598,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.request_router = request_router
         self.send_override = send_override
         self.request_route = request_route
+        self.notify_tcp_endpoint = notify_tcp_endpoint
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.flow_trunk_id = flow_trunk_id
         self.enable_video = bool(enable_video)
@@ -1355,10 +1359,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             _LOGGER.warning("SIP application follow-up rejected: %s", err)
             return None
 
-        target = self._next_hop_target(routing.next_hop_uri)
-        next_hop = (target.host, sip.sip_default_port(target))
-        if self.request_route is not None:
-            next_hop = await self.request_route(target, addr)
+        sender = self
+        wire_transport = self.signaling_transport
+        tcp_rejected = False
+        next_hop = None
         deadline = asyncio.get_running_loop().time() + _INVITE_2XX_TIMEOUT
         authentication = DigestChallengeTracker()
         credentials = result.follow_up_credentials
@@ -1367,9 +1371,44 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
-            response = await self._run_client_transaction(
+            if (follow_up.method == "NOTIFY" and sender.signaling_transport == "UDP"
+                    and len(raw) > 1300 and not tcp_rejected):
+                # RFC 3261 18.1.1: unknown path MTU requires a congestion
+                # controlled transport above 1300 bytes. Keep the subscription
+                # target and Contact; only this transaction moves to TCP.
+                sender = self.notify_tcp_endpoint() if self.notify_tcp_endpoint is not None else None
+                if sender is None:
+                    _LOGGER.warning("Large SIP NOTIFY requires the TCP listener")
+                    return None
+                next_hop = None
+            if next_hop is None:
+                target = sender._next_hop_target(routing.next_hop_uri)
+                next_hop = (target.host, sip.sip_default_port(target))
+                if sender.request_route is not None:
+                    try:
+                        next_hop = await sender.request_route(target, addr)
+                    except OSError as err:
+                        # RFC 3261 18.1.1 retains UDP interoperability after a
+                        # TCP refusal/reset or ICMP protocol-unreachable only.
+                        if sender is self or err.errno not in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}:
+                            raise
+                        sender, next_hop, tcp_rejected = self, None, True
+                        continue
+            if wire_transport != sender.signaling_transport:
+                wire_transport = sender.signaling_transport
+                transaction_headers = sip.dialog_headers(
+                    request_uri=routing.request_uri, local_uri=local_uri, remote_uri=remote_uri,
+                    dialog=ids, method=follow_up.method, contact_uri=contact_uri, transport=wire_transport,
+                )
+                headers = [(key, value) for key, value in headers if key.casefold() != "via"]
+                headers.extend((key, value) for key, value in transaction_headers if key.casefold() == "via")
+                raw = sip.build_request(follow_up.method, routing.request_uri, headers, follow_up.body)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            response = await sender._run_client_transaction(
                 raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
-                transport=self.signaling_transport, creating_dialog=not ids.remote_tag,
+                transport=sender.signaling_transport, creating_dialog=not ids.remote_tag,
                 timeout=remaining,
             )
             if response is None:
@@ -1404,7 +1443,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             transaction_headers = sip.dialog_headers(
                 request_uri=routing.request_uri, local_uri=local_uri, remote_uri=remote_uri,
                 dialog=ids, method=follow_up.method, contact_uri=contact_uri,
-                transport=self.signaling_transport,
+                transport=sender.signaling_transport,
             )
             headers.extend((key, value) for key, value in transaction_headers if key.casefold() in {"via", "cseq"})
             headers.append((header, authorization))
@@ -3779,6 +3818,7 @@ class SipUdpServer:
         on_refer: ReferHandler | None = None,
         on_request: RequestHandler | None = None,
         request_router: ApplicationRequestRouter | None = None,
+        notify_tcp_endpoint: Callable[[], SipUdpEndpoint | None] | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -3800,6 +3840,7 @@ class SipUdpServer:
         self.on_refer = on_refer
         self.on_request = on_request
         self.request_router = request_router
+        self.notify_tcp_endpoint = notify_tcp_endpoint
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -3829,6 +3870,7 @@ class SipUdpServer:
                     on_refer=self.on_refer,
                     on_request=self.on_request,
                     request_router=self.request_router,
+                    notify_tcp_endpoint=self.notify_tcp_endpoint,
                     signaling_transport="UDP",
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
@@ -3948,6 +3990,7 @@ class SipTcpServer:
         self._dialog_queues: dict[tuple[tuple[str, int], str], asyncio.Queue[bytes]] = {}
         self._client_tasks: set[asyncio.Task] = set()
         self._connections_by_host: dict[str, int] = {}
+        self._connection_locks: WeakValueDictionary[tuple[str, int], asyncio.Lock] = WeakValueDictionary()
 
     async def start(self) -> bool:
         if self.server is not None:
@@ -3999,33 +4042,42 @@ class SipTcpServer:
 
         async with asyncio.timeout(8.0):
             candidates = await SipServerResolver().resolve(target, transport="TCP")
+            errors = []
             for candidate in candidates:
                 for host, port, transport in candidate.endpoints():
                     if transport != "TCP":
                         continue
-                    if (host, port) == source and source in self._tcp_writers:
-                        return source
                     address = (host, port)
-                    if address in self._tcp_writers:
-                        return address
-                    if len(self._client_tasks) >= self.max_connections:
-                        raise ConnectionError("SIP TCP connection budget exhausted")
-                    try:
-                        reader, writer = await asyncio.open_connection(host, port)
-                    except OSError:
-                        continue
-                    ready = asyncio.get_running_loop().create_future()
-                    task = asyncio.create_task(self._handle_client(reader, writer, ready), name="voip-sip-outbound-flow")
-                    task.add_done_callback(self._outbound_flow_done)
-                    try:
-                        published = await ready
-                    except BaseException:
-                        task.cancel()
+                    # Concurrent subscriptions share one established peer flow.
+                    # Locks live only while callers are connecting or waiting.
+                    lock = self._connection_locks.setdefault(address, asyncio.Lock())
+                    async with lock:
+                        if self.server is None:
+                            raise ConnectionError("SIP TCP listener is stopped")
+                        tx = self._tcp_writers.get(address)
+                        if tx is not None and not tx.writer.is_closing() and not tx.task.done():
+                            return address
+                        if len(self._client_tasks) >= self.max_connections:
+                            raise ConnectionError("SIP TCP connection budget exhausted")
+                        try:
+                            reader, writer = await asyncio.open_connection(host, port)
+                        except OSError as err:
+                            errors.append(err)
+                            continue
+                        ready = asyncio.get_running_loop().create_future()
+                        task = asyncio.create_task(self._handle_client(reader, writer, ready), name="voip-sip-outbound-flow")
+                        task.add_done_callback(self._outbound_flow_done)
+                        try:
+                            published = await ready
+                        except BaseException:
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
+                            raise
+                        if published:
+                            return published
                         await asyncio.gather(task, return_exceptions=True)
-                        raise
-                    if published:
-                        return published
-                    await asyncio.gather(task, return_exceptions=True)
+            if errors and all(error.errno in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT} for error in errors):
+                raise errors[-1]
             raise ConnectionError("SIP subscription next hop is unreachable")
 
     @staticmethod
@@ -4034,6 +4086,14 @@ class SipTcpServer:
             _LOGGER.warning("Outgoing SIP subscription flow failed: %s", error)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, ready=None) -> None:
+        endpoint = self.endpoint
+        if self.server is None or endpoint is None:
+            if ready is not None and not ready.done():
+                ready.set_result(None)
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            return
         peer = writer.get_extra_info("peername") or ("0.0.0.0", 0)
         addr = (str(peer[0]), int(peer[1]))
         active_for_host = self._connections_by_host.get(addr[0], 0)
@@ -4065,11 +4125,6 @@ class SipTcpServer:
         if ready is not None and not ready.done():
             ready.set_result(addr)
 
-        endpoint = self.endpoint
-        if endpoint is None:
-            await tx.close()
-            writer.close()
-            return
         first_message = True
         keepalive_half = False
         try:

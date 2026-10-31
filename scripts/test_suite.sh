@@ -137,6 +137,7 @@ ha_tests=(
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
   tests/test_ha_sip_application.py
+  tests/test_notify_transport_ha.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py
   tests/test_endpoint_dialing.py

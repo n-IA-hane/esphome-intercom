@@ -220,6 +220,7 @@ class SipEndpointManager:
                     on_refer=self.on_refer,
                     on_request=self.on_request,
                     request_router=self.request_router,
+                    notify_tcp_endpoint=lambda: getattr(self.tcp_server, "endpoint", None),
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
                     prefer_browser_video_send=self.prefer_browser_video_send,
