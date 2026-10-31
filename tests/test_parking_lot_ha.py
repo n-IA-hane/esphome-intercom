@@ -15,6 +15,134 @@ from .test_voicemail_ha import custom_integrations as custom_integrations
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.fault
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize(
+    "boundary,via_service",
+    [("leg", True), ("leg", False), ("relay", True)],
+    ids=["leg-service", "leg-refer", "relay-service"],
+)
+async def test_caller_bye_owns_resources_after_parking_close(
+    registered_phones, trunks, monkeypatch, boundary, via_service
+):
+    from custom_components.voip_stack.endpoint_session import CallLeg, EndpointCallSession
+    from custom_components.voip_stack.parking import get_parking_lot
+    from custom_components.voip_stack.sip_rtp_bridge import SipRtpRelay
+    from custom_components.voip_stack.store import config_entry
+
+    runtime = trunks
+    entry = config_entry(runtime.hass)
+    runtime.hass.config_entries.async_update_entry(
+        entry, data={**entry.data, "parking": {"enabled": True}}
+    )
+    caller, operator, _picker = registered_phones
+
+    async def wait_for(predicate):
+        async with asyncio.timeout(5):
+            while not predicate():
+                await asyncio.sleep(0.01)
+
+    await asyncio.to_thread(caller.dial, "transfer_b")
+    await wait_for(
+        lambda: any(s.state == "in_call" for s in runtime.calls.sessions.values())
+    )
+    session = next(iter(runtime.calls.sessions.values()))
+    leg = session.legs[runtime.calls.bridge_link_for(session.call_id)]
+    relay = runtime.calls.resource_for(session.call_id, "relay")
+    retained_transport = relay.left_transport
+    closed, resume, terminating, cleanup = (asyncio.Event() for _ in range(4))
+    native_close = CallLeg.close
+    native_stop = SipRtpRelay.stop
+    native_cleanup = EndpointCallSession._run_termination
+    paused_task = None
+    stop_claimed = False
+    service_task = None
+
+    async def pause_after_close():
+        nonlocal paused_task
+        paused_task = asyncio.current_task()
+        closed.set()
+        await resume.wait()
+
+    async def close_leg(current, reason):
+        await native_close(current, reason)
+        if (
+            boundary == "leg"
+            and current is leg
+            and asyncio.current_task().get_name().startswith("parking-retire-")
+        ):
+            await pause_after_close()
+
+    async def stop_relay(current):
+        nonlocal stop_claimed
+        pause = boundary == "relay" and current is relay and not stop_claimed
+        stop_claimed |= pause
+        await native_stop(current)
+        if pause:
+            await pause_after_close()
+
+    async def terminate(current, intent):
+        if current is session:
+            terminating.set()
+            await cleanup.wait()
+        return await native_cleanup(current, intent)
+
+    monkeypatch.setattr(CallLeg, "close", close_leg)
+    monkeypatch.setattr(SipRtpRelay, "stop", stop_relay)
+    monkeypatch.setattr(EndpointCallSession, "_run_termination", terminate)
+    try:
+        if via_service:
+            runtime.runtime.endpoints.update("transfer_b", device_id="operator-device")
+            service_task = asyncio.create_task(
+                runtime.hass.services.async_call(
+                    "voip_stack", "park", {"device_id": "operator-device"},
+                    blocking=True, return_response=True,
+                )
+            )
+        else:
+            await asyncio.to_thread(
+                operator.command,
+                f'/transfer sip:700@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}',
+            )
+        await asyncio.wait_for(closed.wait(), 5)
+        lot = get_parking_lot(runtime.hass)
+        assert lot.calls["701"].session is session
+        assert runtime.calls.resource_for(session.call_id, "relay").transport is retained_transport
+        assert caller.read().count("Call established") == 1
+
+        # BYE claims termination before its cleanup task can drain resources.
+        # Resume the already-completed close in that exact scheduling window.
+        await asyncio.to_thread(caller.hangup)
+        await asyncio.wait_for(terminating.wait(), 5)
+        assert not session.live
+        with pytest.raises(RuntimeError, match="cleanup has started"):
+            session.ensure_transferable()
+        resume.set()
+        result = (await asyncio.gather(paused_task, return_exceptions=True))[0]
+        assert not isinstance(result, BaseException), repr(result)
+        retired = leg if boundary == "leg" else relay
+        assert any(resource.value is retired for resource in session.resources)
+        if service_task is not None:
+            response = await service_task
+            assert response == {
+                "call_id": session.call_id, "slot": "701", "generation": session.generation,
+            }
+    finally:
+        resume.set()
+        cleanup.set()
+        if session._termination_task is not None:
+            result = await asyncio.wait_for(asyncio.shield(session._termination_task), 5)
+            assert not result.errors
+        if paused_task is not None:
+            await asyncio.gather(paused_task, return_exceptions=True)
+        if service_task is not None:
+            await asyncio.gather(service_task, return_exceptions=True)
+        assert not runtime.calls.sessions
+        assert not runtime.runtime.rtp_port_pool["used"]
+        assert not get_parking_lot(runtime.hass).calls
+        assert not session.endpoint_claims
+
+
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("hangup_side", [0, 1])
 async def test_real_sip_parking_pickup_keeps_audio_and_releases_resources(registered_phones, trunks, tmp_path, hangup_side):

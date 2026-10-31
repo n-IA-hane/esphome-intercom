@@ -440,7 +440,8 @@ async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=
     async def finish():
         if from_callee:
             await destination_leg.close("parked")
-            registry.release_resource(goal.call_id, retiring_name, value=destination_leg)
+            if goal.live:
+                registry.release_resource(goal.call_id, retiring_name, value=destination_leg)
         else:
             await registry.terminate_call_wait(original.call_id, reason="forwarded")
     def after_refer(_task=None):
@@ -454,7 +455,8 @@ async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=
     else:
         after_refer()
     await relay.stop()
-    registry.release_resource(goal.call_id, retired_name, value=relay)
+    if goal.live:
+        registry.release_resource(goal.call_id, retired_name, value=relay)
     if old_watcher is not None:
         await asyncio.gather(old_watcher, return_exceptions=True)
     return application
