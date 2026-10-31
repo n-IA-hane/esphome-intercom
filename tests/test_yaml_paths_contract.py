@@ -125,8 +125,11 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
                       'packages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@main\n')
     tool.rewrite_yaml(config, 'local')
     text = config.read_text()
-    for key in ('ext_components_source', 'voip_stack_components_source', 'audio_stack_components_source'):
+    for key in ('ext_components_source', 'voip_stack_components_source', 'audio_stack_components_source',
+                'esp_screenshot_components_source', 'esp_video_renderer_components_source'):
         assert key + ':' in text
+    assert str(tool.relative(config.parent, tool.ROOT.parent / 'esphome-screenshot/esphome/components')) in text
+    assert str(tool.relative(config.parent, tool.ROOT.parent / 'esphome-video-renderer/esphome/components')) in text
     assert 'camera_components_source:' in text
     assert 'intercom_idf_root:' in text
     assert '!include ' in text
@@ -134,6 +137,8 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
     text = config.read_text()
     assert 'packages/devices/waveshare-p4-phone-jpeg.yaml@dev' in text
     assert 'github://n-IA-hane/esphome-audio-stack@dev' in text
+    assert 'github://n-IA-hane/esphome-screenshot@dev' in text
+    assert 'github://n-IA-hane/esphome-video-renderer@dev' in text
     assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
     assert 'intercom_idf_ref: "dev"' in text
     assert 'intercom_idf_root: ""' in text

@@ -13,6 +13,8 @@ REPOSITORIES = {
     'esphome-voip-stack': 'n-IA-hane/esphome-voip-stack',
     'esphome-audio-stack': 'n-IA-hane/esphome-audio-stack',
     'esphome-runtime-controller': 'n-IA-hane/esphome-runtime-controller',
+    'esphome-screenshot': 'n-IA-hane/esphome-screenshot',
+    'esphome-video-renderer': 'n-IA-hane/esphome-video-renderer',
     'esphome-esp-video-camera': 'Psix-anp/esphome-esp-video-camera',
 }
 

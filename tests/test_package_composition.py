@@ -40,6 +40,8 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         ('audio_stack_components_source', Path(os.environ.get('AUDIO_STACK_REPO', ROOT.parent / 'esphome-audio-stack'))),
         ('voip_stack_components_source', Path(os.environ.get('VOIP_STACK_REPO', ROOT.parent / 'esphome-voip-stack'))),
         ('runtime_controller_components_source', Path(os.environ.get('RUNTIME_CONTROLLER_REPO', ROOT.parent / 'esphome-runtime-controller'))),
+        ('esp_screenshot_components_source', Path(os.environ.get('ESP_SCREENSHOT_REPO', ROOT.parent / 'esphome-screenshot'))),
+        ('esp_video_renderer_components_source', Path(os.environ.get('ESP_VIDEO_RENDERER_REPO', ROOT.parent / 'esphome-video-renderer'))),
         ('camera_components_source', Path(os.environ.get('ESP_VIDEO_CAMERA_REPO', ROOT.parent / 'esphome-esp-video-camera'))),
     ):
         component_path = 'components' if key == 'camera_components_source' else 'esphome/components'

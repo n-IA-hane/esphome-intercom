@@ -69,6 +69,8 @@
 # =============================================================================
 
 substitutions:
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, display, diagnostics]
   runtime_controller_debug: "false"

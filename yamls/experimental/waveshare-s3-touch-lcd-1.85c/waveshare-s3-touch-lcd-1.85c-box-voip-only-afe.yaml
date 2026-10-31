@@ -48,6 +48,8 @@
 # =============================================================================
 
 substitutions:
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""

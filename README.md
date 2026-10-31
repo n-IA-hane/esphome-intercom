@@ -101,7 +101,7 @@ can each be selected in YAML, including on VoIP-only profiles.
 </p>
 
 _Real on-device LVGL screenshots captured with
-[`esp_screenshot`](docs/ESP_SCREENSHOT.md), using demo directory entries.
+[`esp_screenshot`](https://github.com/n-IA-hane/esphome-screenshot/blob/dev/README.md), using demo directory entries.
 The animated contact menu shows numbers, contact types and live BLF states;
 options and the in-call keypad are shown separately._
 
@@ -362,13 +362,15 @@ software JPEG rendering are available on supported ESP32-S3 configurations.
 ESP32-P4 videophone profiles select JPEG or H.264 with their hardware renderer.
 HA can convert formats when a routed call requires it.
 
-Audio component details live in the companion projects:
+Component details live in the companion projects:
 
 - [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack)
 - [`esp_aec`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_aec)
 - [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_afe)
 - [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack)
 - [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller)
+- [`esp_screenshot`](https://github.com/n-IA-hane/esphome-screenshot)
+- [`esp_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer)
 
 ## Full ESP voice experience
 

@@ -12,6 +12,8 @@ spec.loader.exec_module(module)
 def test_default_and_exact_manifest():
     refs = module.requested_refs(None, 'dev')
     assert refs['esphome-voip-stack'] == 'dev'
+    assert refs['esphome-screenshot'] == 'dev'
+    assert refs['esphome-video-renderer'] == 'dev'
     assert refs['esphome-esp-video-camera'] == 'main'
     components = {name: {'repository': repo, 'sha': str(i)*40}
                   for i, (name, repo) in enumerate(module.REPOSITORIES.items(), 1)}

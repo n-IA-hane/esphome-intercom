@@ -188,7 +188,7 @@ Renderer and screenshot workers expose `task_core`, `task_priority`,
 `task_stack_size`, `task_stack_in_psram` and `buffer_in_psram` for explicit
 execution and memory placement.
 
-[ESP video renderer guide](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/ESP_VIDEO_RENDERER.md)
+[ESP video renderer guide](https://github.com/n-IA-hane/esphome-video-renderer/blob/dev/README.md)
 
 ### Register the ESP with a PBX
 

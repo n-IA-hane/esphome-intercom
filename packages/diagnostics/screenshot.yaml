@@ -1,4 +1,4 @@
-# Add esp_screenshot and choose its display backend in the main YAML.
+# Add esp_screenshot from n-IA-hane/esphome-screenshot and choose its display backend in the main YAML.
 # This package exposes a native button and the existing native API action.
 # The screenshot component ID defaults to screen_capture.
 defaults:

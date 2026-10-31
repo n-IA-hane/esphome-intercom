@@ -76,6 +76,8 @@
 # =============================================================================
 
 substitutions:
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics]
   # Hardware-shared identity: dropping firmware-variant suffix keeps build cache

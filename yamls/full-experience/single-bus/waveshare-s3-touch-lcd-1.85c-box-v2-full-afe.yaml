@@ -24,6 +24,8 @@
 # Support: https://github.com/sponsors/n-IA-hane
 
 substitutions:
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"

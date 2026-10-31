@@ -15,6 +15,8 @@ REPOS = {
     "voip_stack_components_source": ("github://n-IA-hane/esphome-voip-stack", ROOT.parent / "esphome-voip-stack"),
     "audio_stack_components_source": ("github://n-IA-hane/esphome-audio-stack", ROOT.parent / "esphome-audio-stack"),
     "runtime_controller_components_source": ("github://n-IA-hane/esphome-runtime-controller", ROOT.parent / "esphome-runtime-controller"),
+    "esp_screenshot_components_source": ("github://n-IA-hane/esphome-screenshot", ROOT.parent / "esphome-screenshot"),
+    "esp_video_renderer_components_source": ("github://n-IA-hane/esphome-video-renderer", ROOT.parent / "esphome-video-renderer"),
     "camera_components_source": (CAMERA_URL, ROOT.parent / "esphome-esp-video-camera"),
 }
 CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"

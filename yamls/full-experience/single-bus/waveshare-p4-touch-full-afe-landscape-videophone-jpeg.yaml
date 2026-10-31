@@ -88,6 +88,8 @@
 # =============================================================================
 
 substitutions:
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"
   gmf_ai_audio_source: ""
   intercom_idf_root: ""

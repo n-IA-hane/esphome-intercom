@@ -1,12 +1,13 @@
 # Receive JPEG on an S3 LVGL display. The caller supplies call_video_surface.
 # Add a camera_id to voip_stack.video separately when the board also has a camera.
 substitutions:
+  esp_video_renderer_components_source: ${ esp_video_renderer_components_source | default("github://n-IA-hane/esphome-video-renderer@dev") }
   s3_sip_jpeg_width: '320'
   s3_sip_jpeg_height: '240'
   s3_sip_jpeg_fps: '2'
   s3_video_container_id: call_video_surface
 external_components:
-  - source: ${voip_stack_components_source}
+  - source: ${esp_video_renderer_components_source}
     components:
       - esp_video_renderer
 esp_video_renderer:
