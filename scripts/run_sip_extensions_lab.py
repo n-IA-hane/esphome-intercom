@@ -22,6 +22,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "tools"), str(ROOT / "scripts")]
 
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from inbound_routing_qualification import (  # noqa: E402
     FlowSnapshot,
     HomeAssistantApi,
@@ -465,7 +466,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "test_captures/sip-extensions-lab",
+        default=CAPTURE_ROOT / "sip-extensions-lab",
     )
     return parser.parse_args()
 
@@ -485,7 +486,7 @@ def _wait_runtime(base_url: str, token: str) -> dict[str, object]:
 def main() -> int:
     args = parse_args()
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
     _wait_runtime(args.ha_url, token)

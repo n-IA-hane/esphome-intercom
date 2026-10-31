@@ -14,6 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+
 
 DEFAULT_URL = os.environ.get(
     "HA_CARD_URL",
@@ -109,13 +111,14 @@ def main() -> int:
     parser.add_argument("--seconds", type=float, default=50.0)
     parser.add_argument("--interval", type=float, default=0.1)
     parser.add_argument(
-        "--out", default=str(ROOT / "test_captures" / "ha_softphone_card_trace.json")
+        "--out", default=str(CAPTURE_ROOT / "ha-softphone-card-trace" / "result.json")
     )
     parser.add_argument("--screenshots-dir")
     parser.add_argument("--viewport-width", type=int, default=1440)
     parser.add_argument("--viewport-height", type=int, default=900)
     parser.add_argument("--language", choices=("de", "en", "it", "pt-BR"))
     args = parser.parse_args()
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     from ha_playwright_auth import context_kwargs
     from playwright.sync_api import sync_playwright
 
@@ -165,7 +168,7 @@ def main() -> int:
         page.evaluate(INSTALL_TRACE)
         screenshots_dir = Path(args.screenshots_dir) if args.screenshots_dir else None
         if screenshots_dir:
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            screenshots_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         screenshot_records: list[dict[str, object]] = []
         last_signature: tuple[str, str, str] | None = None
         started = time.monotonic()

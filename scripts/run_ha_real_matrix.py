@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from inbound_routing_qualification import (  # noqa: E402
     EventTrace,
     FlowSnapshot,
@@ -759,7 +760,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "test_captures/ha-real-matrix",
+        default=CAPTURE_ROOT / "ha-real-matrix",
     )
     parser.add_argument(
         "--installed-package",
@@ -792,7 +793,7 @@ def main() -> int:
             "Home Assistant is not running the checked-in qualification package"
         )
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     delayed_cancel = run_dir / "inbound-cancel-after-forward-delay.xml"
     delayed_cancel.write_text(
         (ROOT / "tests/sipp/inbound-cancel.xml")
@@ -1297,7 +1298,7 @@ def main() -> int:
     summary_text = json.dumps(artifact, indent=2)
     summary.write_text(summary_text, encoding="utf-8")
     if args.summary_output is not None:
-        args.summary_output.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         args.summary_output.write_text(summary_text + "\n", encoding="utf-8")
     print(
         json.dumps(

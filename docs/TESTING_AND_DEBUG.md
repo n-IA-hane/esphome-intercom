@@ -7,6 +7,27 @@ This project has enough call paths that manual spot checks are not enough.
 Use this page as the standard regression checklist before release-level
 changes.
 
+## Temporary qualification outputs
+
+Maintained call, browser and JTAG capture tools save their small reports,
+WAV files and screenshots under `/tmp/voip-tests/` by default, in a private
+subdirectory for each tool. Explicit `--out`/`--out-dir` paths and the matrix
+output environment overrides remain available. Choose a separate output path
+for concurrent runs, and remove disposable captures after reading the results.
+Existing fixtures and historical evidence keep their original locations.
+
+Compiler output follows a separate policy: keep generated host builds under
+`/var/tmp/voip-builds/` and ESP SDK builds in their configured persistent disk
+paths. A compiler `TMPDIR` override does not change the capture defaults.
+
+When diagnosing missing RTP, verify the peer's actual packet payload and
+sampling geometry against its SDP before attributing the failure to the ESP.
+For example, mono 16-bit PCM at 16 kHz occupies 320 bytes per 10 ms or
+640 bytes per 20 ms.
+A peer can advertise one interval while producing another. Use a peer with
+compatible packetization, or a PBX media route that performs the required
+standard conversion. Direct ESP calls remain supported with compatible peers.
+
 ## Automated local tests
 
 Run the regular suite through the project runner:
@@ -485,8 +506,8 @@ esphome config device.yaml > device-expanded.yaml
 ./.venv/bin/python tools/render_lvgl.py \
   --input device-expanded.yaml --page settings_continuous_page \
   --width 240 --height 240 \
-  --output test_captures/options-preview \
-  --build-parent /tmp/options-preview-build
+  --output /tmp/voip-tests/options-preview \
+  --build-parent /var/tmp/voip-builds/options-preview
 ```
 
 Use the complete config dump here, without `--no-defaults`, so native generated
@@ -644,7 +665,7 @@ regression by itself.
 
 Complete source audits and local regression gates before uploading a profiling
 candidate. Collect dumps/PCM separately from the main measurement windows.
-Keep captures private under `test_captures/`; profiling does not replace
+Keep new captures private under `/tmp/voip-tests/`; profiling does not replace
 independent continuity, acoustic or wake-word hit-rate tests.
 
 On ESPHome 2026.7 and newer native ESP-IDF builds, custom partition tables use

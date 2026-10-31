@@ -22,8 +22,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "tools"))
+
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+
+TEST_CAPTURE_DIR = CAPTURE_ROOT / "ha-softphone-matrix"
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -232,7 +235,7 @@ class BareSip:
         video_codec: str = "",
         wait_for_registration: bool = True,
     ) -> None:
-        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         if dtmf_mode and dtmf_mode not in {"auto", "info", "rtpevent"}:
             raise ValueError(f"unsupported bareSIP DTMF mode: {dtmf_mode}")
         self._temporary_config: tempfile.TemporaryDirectory[str] | None = None
@@ -542,10 +545,11 @@ def dial_browser_inbound() -> BareSip:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(ROOT / "test_captures" / "ha_softphone_matrix.json")
+        "--out", default=str(TEST_CAPTURE_DIR / "ha_softphone_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     args = parser.parse_args()
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     from ha_playwright_auth import context_kwargs
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright

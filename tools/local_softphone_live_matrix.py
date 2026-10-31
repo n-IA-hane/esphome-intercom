@@ -15,7 +15,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "tools"))
+
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
 EXPECT_VIDEO = os.environ.get("EXPECT_VIDEO", "") == "1"
@@ -136,7 +137,7 @@ def _parse_args() -> argparse.Namespace:
         "--out",
         default=os.environ.get(
             "LOCAL_SOFTPHONE_MATRIX_OUT",
-            str(ROOT / "test_captures" / "local_softphone_live_matrix.json"),
+            str(CAPTURE_ROOT / "local-softphone-live-matrix" / "result.json"),
         ),
     )
     parser.add_argument(
@@ -464,7 +465,7 @@ def main() -> int:
         casa_context.close()
         test_context.close()
         browser.close()
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     output.write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
     return 1 if any(item["status"] != "pass" for item in results) else 0

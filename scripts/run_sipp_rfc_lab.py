@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from inbound_routing_qualification import FlowSnapshot, HomeAssistantApi  # noqa: E402
 from live_voip_qualification import candidate_revision  # noqa: E402
 from run_answered_sipp_lab import lab_token, runtime_quiescence  # noqa: E402
@@ -148,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "test_captures" / "sipp-rfc-lab",
+        default=CAPTURE_ROOT / "sipp-rfc-lab",
     )
     parser.add_argument("--only", action="append", default=[])
     return parser.parse_args()
@@ -157,7 +158,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
     ha_version = api.get("/api/config").get("version")

@@ -29,9 +29,12 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools"))
+
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+
+TEST_CAPTURE_DIR = CAPTURE_ROOT / "inbound-routing"
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -148,7 +151,7 @@ class BareSip:
         *,
         wait_registered: bool = True,
     ) -> None:
-        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
             ["baresip", "-f", str(config)],
@@ -764,7 +767,7 @@ def trace_types(trace: EventTrace, call_id: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(ROOT / "test_captures" / "inbound_routing_matrix.json")
+        "--out", default=str(TEST_CAPTURE_DIR / "inbound_routing_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument(
@@ -772,6 +775,7 @@ def main() -> int:
         help="rename the single selected case in the evidence artifact",
     )
     args = parser.parse_args()
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     api = HomeAssistantApi()
     snapshot = FlowSnapshot.capture(api)
     def optional_automation_state(entity_id: str) -> bool | None:

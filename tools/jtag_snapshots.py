@@ -23,6 +23,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 DEFAULT_GDB_CANDIDATES = (
     *sorted(
         (ROOT.parent / ".cache/esphome/idf/tools/xtensa-esp-elf-gdb").glob(
@@ -282,7 +285,7 @@ def main() -> int:
         help="Do not print FreeRTOS task tables",
     )
     parser.add_argument(
-        "--out-dir", default="test_captures/jtag_snapshots", help="Output directory"
+        "--out-dir", default=str(CAPTURE_ROOT / "jtag-snapshots"), help="Output directory"
     )
     parser.add_argument(
         "--keep-openocd-log",
@@ -353,7 +356,7 @@ def main() -> int:
     gdb_python_path = _find_gdb_python_path(args.gdb_python_path)
     elf = _find_elf(args.elf, args.device)
     out_dir = (ROOT / args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     gdb_log = out_dir / f"{args.device}-jtag-{stamp}.log"

@@ -20,6 +20,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from live_voip_qualification import candidate_revision  # noqa: E402
 
 from custom_components.voip_stack.core import sip  # noqa: E402
@@ -306,7 +307,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "test_captures" / "sip-transport-lab",
+        default=CAPTURE_ROOT / "sip-transport-lab",
     )
     parser.add_argument("--ca-cert", type=Path, required=True)
     parser.add_argument("--server-cert", type=Path, required=True)

@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import time
 from typing import Any
 import urllib.error
@@ -44,11 +45,15 @@ except (
     websockets = None
 
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+
 DEFAULT_HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:18123").rstrip("/")
 DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex")
 DEFAULT_AUTH_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_home_auth.json")
-OUT = Path("test_captures/live_voip_qualification")
-ROOT = Path(__file__).resolve().parents[1]
+OUT = CAPTURE_ROOT / "live-voip-qualification"
 
 
 def candidate_revision() -> dict[str, object]:
@@ -1439,7 +1444,7 @@ async def run(args: argparse.Namespace) -> int:
             port=int(args.esp_api_port or esp_spec.port),
         )
     output_dir = Path(args.out_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     results: list[dict[str, Any]] = []
     async with HaWs(args.ha_url, token, insecure=args.insecure) as ws:
         async with EspApi(

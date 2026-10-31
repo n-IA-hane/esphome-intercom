@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+
 from ha_voip_lab.refresh_playwright_auth import refresh_playwright_auth  # noqa: E402
 from live_voip_qualification import HaWs  # noqa: E402
 
@@ -33,7 +35,7 @@ async def qualify(args):
 
     if urlsplit(args.url).hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("Use the isolated loopback HA laboratory for this call test")
-    args.out.mkdir(parents=True, exist_ok=True)
+    args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
     # systemd can report active before HA has opened its HTTP listener.
     host = urlsplit(args.url).hostname
     port = urlsplit(args.url).port or 80
@@ -791,7 +793,7 @@ def main():
     parser.add_argument("--url", default="http://127.0.0.1:18123")
     parser.add_argument("--credentials", type=Path, default=lab / ".credentials")
     parser.add_argument("--storage", type=Path, default=lab / "playwright-storage.json")
-    parser.add_argument("--out", type=Path, default=ROOT / "test_captures/voip-dashboard")
+    parser.add_argument("--out", type=Path, default=CAPTURE_ROOT / "voip-dashboard")
     parser.add_argument("--owner", default="default")
     parser.add_argument("--video", action="store_true", help="Include a real two-browser video call")
     parser.add_argument("--fake-video-file", type=Path, help="Y4M camera fixture for the browser video call")

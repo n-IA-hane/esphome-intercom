@@ -15,6 +15,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from ha_softphone_matrix import BareSip  # noqa: E402
 from ha_voip_lab.auth import lab_token  # noqa: E402
 from live_voip_qualification import HaWs, candidate_revision  # noqa: E402
@@ -153,7 +154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "test_captures" / "sipp-answered-lab",
+        default=CAPTURE_ROOT / "sipp-answered-lab",
     )
     parser.add_argument(
         "--quiescence-only",
@@ -165,7 +166,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    args.out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     token = lab_token(args.ha_url, args.credentials)
     if args.quiescence_only:
         print(json.dumps(asyncio.run(runtime_quiescence(args.ha_url, token))))
