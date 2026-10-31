@@ -628,6 +628,18 @@ For browser calls:
 - receiving a remote camera does not require local camera permission;
 - reset the Companion frontend cache after upgrading the bundled card.
 
+## Auto answer
+
+Auto Answer on a browser phone needs microphone access before a call arrives.
+When Auto Answer is first turned on the card requests microphone and camera
+immediately. If opened on another browser, the card checks it as soon as the
+phone is shown: a browser that has not decided yet asks at that moment, and an
+Android WebView (Companion app or a kiosk app,) requests it through the app.
+If the microphone cannot be opened, the card shows why and calls ring for a
+manual answer. A camera that cannot be opened answers without sending video.
+After allowing the microphone in Android settings, reload the dashboard or
+turn Auto Answer off and on again to activate it.
+
 ## Health, repairs and diagnostics
 
 Use **Settings > System > Repairs** for actionable problems such as missing
