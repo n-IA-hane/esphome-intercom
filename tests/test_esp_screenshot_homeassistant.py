@@ -1,23 +1,29 @@
 """Exercise the documented screenshot helper against official Home Assistant."""
 
 import json
+import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.ha
 
 
 def test_template_image_updates_from_capture_ids_and_caches_demand_fetches(tmp_path):
-    interpreter = Path(
-        os.environ.get(
-            "HA_PYTHON", str(ROOT.parent / "ha-voip-lab/.venv/bin/python")
-        )
-    )
-    if not interpreter.is_file():
+    interpreter = os.environ.get("HA_PYTHON")
+    if not interpreter:
+        local = ROOT.parent / "ha-voip-lab/.venv/bin/python"
+        if local.is_file():
+            interpreter = str(local)
+        elif importlib.util.find_spec("homeassistant") is not None:
+            interpreter = sys.executable
+    if not interpreter or shutil.which(interpreter) is None:
         pytest.skip("Set HA_PYTHON to an interpreter with Home Assistant installed")
 
     documented = (ROOT / "docs/ESP_SCREENSHOT.md").read_text().split(

@@ -87,6 +87,7 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_esp_screenshot_homeassistant.py
   tests/test_phone_routing_ha.py
   tests/test_phone_settings_ha.py
   tests/test_phone_policy_runtime_ha.py

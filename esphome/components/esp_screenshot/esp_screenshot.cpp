@@ -118,7 +118,7 @@ void EspScreenshot::setup() {
 
 void EspScreenshot::fail_setup_(const char *reason) {
   ESP_LOGE(TAG, "%s", reason);
-  this->publish_status_(std::string("Error: ") + reason);
+  this->publish_error_(reason);
   if (this->encoder_ != nullptr) {
     jpeg_enc_close(this->encoder_);
     this->encoder_ = nullptr;
@@ -141,9 +141,15 @@ void EspScreenshot::publish_status_(const std::string &status) {
     this->capture_status_sensor_->publish_state(status);
 }
 
+void EspScreenshot::publish_error_(const char *reason) {
+  if (this->capture_status_sensor_ != nullptr)
+    this->capture_status_sensor_->publish_state(std::string("Error: ") + reason);
+}
+
 bool EspScreenshot::capture() {
-  if (this->is_failed() || this->worker_handle_ == nullptr ||
-      this->stopping_.load()) {
+  if (this->is_failed())
+    return false;
+  if (this->worker_handle_ == nullptr || this->stopping_.load()) {
     this->publish_status_("Error: Screenshot is unavailable");
     return false;
   }
@@ -166,7 +172,7 @@ void EspScreenshot::cancel_capture_(const char *reason) {
   xSemaphoreGive(this->mutex_);
   this->writing_slot_ = -1;
   this->busy_.store(false, std::memory_order_release);
-  this->publish_status_(std::string("Error: ") + reason);
+  this->publish_error_(reason);
 }
 
 void EspScreenshot::loop() {

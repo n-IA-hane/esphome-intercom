@@ -68,6 +68,7 @@ protected:
   void cancel_capture_(const char *reason);
   void fail_setup_(const char *reason);
   void publish_status_(const std::string &status);
+  void publish_error_(const char *reason);
 #ifdef USE_ESP_SCREENSHOT_LVGL
   static void flush_event_(lv_event_t *event);
   lvgl::LvglComponent *lvgl_{nullptr};

@@ -346,6 +346,7 @@ struct EspScreenshot {
  bool task_stack_in_psram_=true,buffer_in_psram_=true,failed=false,loop_disabled=false;
  TextSensor *capture_status_sensor_{};
  void setup();void fail_setup_(const char*);void publish_status_(const std::string&);
+ void publish_error_(const char*);
  void mark_failed(){failed=true;}
  void disable_loop(){loop_disabled=true;}static void worker_entry_(void*){}
 };
@@ -452,7 +453,7 @@ struct EspScreenshot {
  bool failed=false,copy_available=true,encode_success_=false,loop_enabled=false;
  unsigned width_=8,height_=8;size_t jpeg_size_[2]{};char capture_id_[2][18]{};
  bool capture();void cancel_capture_(const char*);void loop();
- void publish_status_(const std::string&);
+ void publish_status_(const std::string&);void publish_error_(const char*);
  bool is_failed(){return failed;}
  bool copy_display_(){return copy_available;}
  void enable_loop_soon_any_context(){loop_enabled=true;}
@@ -506,8 +507,8 @@ int main(){
  assert(component.published_slot()==second&&id.state=="boot0001-00000002");
  assert(id.history.size()==2&&!component.busy_.load());component.slots_.release(reader);
 
- component.failed=true;
- assert(!component.capture()&&status.state=="Error: Screenshot is unavailable");
+ component.failed=true;status.publish_state("Error: Setup failed with its original reason");
+ assert(!component.capture()&&status.state=="Error: Setup failed with its original reason");
  assert(component.published_slot()==second&&id.history.size()==2);
  component.failed=false;component.stopping_.store(true);
  assert(!component.capture()&&status.state=="Error: Screenshot is unavailable");
@@ -541,3 +542,106 @@ int main(){
         text=True,
     )
     subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+
+
+def test_omitted_status_sensor_does_not_allocate_error_messages(tmp_path):
+    source = (HEADERS / "esp_screenshot.cpp").read_text()
+    methods = "void EspScreenshot::fail_setup_(" + source.split(
+        "void EspScreenshot::fail_setup_(", 1
+    )[1].split("\nbool EspScreenshot::capture()", 1)[0]
+    methods += "void EspScreenshot::cancel_capture_(" + source.split(
+        "void EspScreenshot::cancel_capture_(", 1
+    )[1].split("\nvoid EspScreenshot::loop()", 1)[0]
+    harness = tmp_path / "optional-status.cpp"
+    harness.write_text(
+        r"""
+#include "snapshot_store.h"
+#include <atomic>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <new>
+#include <string>
+using namespace esphome::esp_screenshot;
+static size_t allocation_calls=0;
+void *operator new(size_t size){
+ ++allocation_calls;
+ if(void *ptr=std::malloc(size))return ptr;
+ throw std::bad_alloc();
+}
+void operator delete(void *ptr) noexcept {std::free(ptr);}
+void operator delete(void *ptr,size_t) noexcept {std::free(ptr);}
+static const char *TAG="test";
+template<typename... Args>void sink(Args...args){((void)args,...);}
+#define ESP_LOGE(...) sink(__VA_ARGS__)
+#define ESP_LOGW(...) sink(__VA_ARGS__)
+constexpr int portMAX_DELAY=1;
+void xSemaphoreTake(void*,int){}
+void xSemaphoreGive(void*){}
+void jpeg_enc_close(void*){}
+void heap_caps_free(void *ptr){std::free(ptr);}
+struct TextSensor {
+ std::string state;
+ void publish_state(const std::string &value){state=value;}
+};
+struct EspScreenshot {
+ TextSensor *capture_status_sensor_{};void *encoder_{},*mutex_=this;
+ void *pixels_{},*coverage_{},*worker_stack_{},*jpeg_[2]{};
+ SnapshotSlots slots_{};int writing_slot_=-1;
+ std::atomic_bool busy_{false};bool failed=false;
+ void fail_setup_(const char*);void cancel_capture_(const char*);
+ void publish_status_(const std::string&);void publish_error_(const char*);
+ void mark_failed(){failed=true;}
+};
+"""
+        + methods
+        + r"""
+int main(){
+ constexpr const char *reason="A deliberately long failure reason exceeds small-string storage even on the host";
+ EspScreenshot setup;
+ auto before=allocation_calls;setup.fail_setup_(reason);
+ const auto setup_allocations=allocation_calls-before;
+ assert(setup.failed);
+ EspScreenshot capture;
+ const int old=capture.slots_.begin_write();assert(capture.slots_.publish(old));
+ capture.writing_slot_=capture.slots_.begin_write();capture.busy_=true;
+ before=allocation_calls;capture.cancel_capture_(reason);
+ const auto capture_allocations=allocation_calls-before;
+ assert(!capture.busy_&&capture.writing_slot_==-1);
+ const int reader=capture.slots_.acquire();assert(reader==old);capture.slots_.release(reader);
+ std::fprintf(stderr,"Omitted status allocations: setup=%zu capture=%zu\n",setup_allocations,capture_allocations);
+ assert(setup_allocations==0&&capture_allocations==0);
+
+ // With the optional sensor enabled, preserve the complete published error text.
+ TextSensor status;setup.capture_status_sensor_=&status;
+ before=allocation_calls;setup.fail_setup_(reason);
+ assert(allocation_calls>before&&status.state==std::string("Error: ")+reason);
+ status.state.clear();capture.capture_status_sensor_=&status;
+ capture.cancel_capture_(reason);
+ assert(status.state==std::string("Error: ")+reason);
+}
+"""
+    )
+    binary = tmp_path / "optional-status"
+    compiled = subprocess.run(
+        [
+            "g++",
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            "-fno-pie",
+            "-no-pie",
+            "-I",
+            str(HEADERS),
+            str(harness),
+            "-o",
+            str(binary),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert compiled.returncode == 0, compiled.stderr
+    result = subprocess.run([str(binary)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
