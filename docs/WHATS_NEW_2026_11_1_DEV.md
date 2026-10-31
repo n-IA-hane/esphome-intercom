@@ -225,6 +225,12 @@ device name is presented as the caller's name.
   offline phone stays unavailable even when its last call is idle.
   Automatic watches cover phone endpoints; saved contacts and groups remain
   callable without consuming SIP subscription slots.
+- **Readable contact details:** saved contacts show their telephone number;
+  idle phones show their extension when available. Assist and call groups omit
+  the inapplicable Unknown status.
+- **Registered audio negotiation:** SIP registration preserves known audio
+  capabilities. Directional phones whose OPTIONS omit packet times negotiate
+  from Home Assistant's supported PCM offer and their actual SDP answer.
 - **Mailbox shortcut and DTMF:** SIP MWI shows an envelope when messages wait.
   Tap it to call the PBX's mailbox menu and use the regular in-call keypad to
   listen, repeat or delete messages. The same SIP audio path serves calls and
