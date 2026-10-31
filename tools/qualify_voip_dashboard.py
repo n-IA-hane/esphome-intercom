@@ -26,6 +26,9 @@ from live_voip_qualification import HaWs  # noqa: E402
 
 
 async def qualify(args):
+    video_file = getattr(args, "fake_video_file", None)
+    if video_file is not None and not video_file.is_file():
+        raise ValueError("The fake camera Y4M file does not exist")
     from playwright.async_api import async_playwright, expect
 
     if urlsplit(args.url).hostname not in {"127.0.0.1", "localhost", "::1"}:
@@ -95,7 +98,8 @@ async def qualify(args):
         async with async_playwright() as runner:
             browser = await runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
                 args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
-                      "--autoplay-policy=no-user-gesture-required"])
+                      "--autoplay-policy=no-user-gesture-required",
+                      *([f"--use-file-for-fake-video-capture={video_file.resolve()}"] if video_file else [])])
             context = await browser.new_context(storage_state=str(args.storage), permissions=["microphone", "camera"],
                                                  viewport={"width": 1500, "height": 1100})
             await context.add_init_script("""navigator.mediaDevices.getUserMedia =
@@ -790,6 +794,7 @@ def main():
     parser.add_argument("--out", type=Path, default=ROOT / "test_captures/voip-dashboard")
     parser.add_argument("--owner", default="default")
     parser.add_argument("--video", action="store_true", help="Include a real two-browser video call")
+    parser.add_argument("--fake-video-file", type=Path, help="Y4M camera fixture for the browser video call")
     parser.add_argument("--setup", action="store_true", help="Create dedicated lab views before the test")
     parser.add_argument("--spa-navigation", action="store_true", help="Verify media ownership across real Lovelace views")
     parser.add_argument("--clone-window", action="store_true", help="Verify the real opener sessionStorage copy boundary")
