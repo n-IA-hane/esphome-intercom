@@ -89,10 +89,13 @@ class EspHomeProvisioner:
     @callback
     def _state_changed(self, event):
         old, new = event.data.get("old_state"), event.data.get("new_state")
-        if new is None or new.state in _OFFLINE or (old is not None and old.state not in _OFFLINE):
+        if new is None or new.state in {"unknown", "unavailable"}:
             return
         entity = er.async_get(self.hass).async_get(event.data["entity_id"])
-        if entity is not None and entity_role(entity) == "voip_state":
+        role = entity_role(entity) if entity is not None else ""
+        if role == "voip_extension" and (old is None or old.state != new.state):
+            self.schedule()
+        elif role == "voip_state" and new.state and (old is None or old.state in _OFFLINE):
             self._delivered.pop(entity.device_id, None)
             self.schedule()
 
@@ -214,7 +217,7 @@ class EspHomeProvisioner:
                     for entity in er.async_entries_for_device(er.async_get(self.hass), device.id):
                         if entity_role(entity) == "voip_extension":
                             state = self.hass.states.get(entity.entity_id)
-                            if state is not None and state.state not in _OFFLINE:
+                            if state is not None and state.state not in {"unknown", "unavailable"}:
                                 extension = state.state.strip()
                     phone = ManagedPhone(
                         device_id=device.id, origin_entry_id=origin.entry_id, mac=info.mac_address,
@@ -223,9 +226,6 @@ class EspHomeProvisioner:
                         route_id=slugify_route_id(info.name), api_host=origin.data.get("host", ""),
                         extension=extension,
                     )
-                    records[device.id] = phone
-                    self._save(records)
-                    self._refresh_accounts()
                     registry = require_runtime_data(self.hass).endpoints
                     old = registry.get(phone.endpoint_id)
                     directory_changed |= previous != phone or old is None or (
@@ -237,6 +237,11 @@ class EspHomeProvisioner:
                             capabilities=frozenset({"audio", "dtmf"}), availability=EndpointAvailability.OFFLINE))
                     else:
                         registry.update(phone.endpoint_id, name=phone.display_name, username=phone.username, extension=phone.extension)
+                    # The canonical registry validates aliases before account
+                    # persistence; a rejected alias must not partially commit.
+                    records[device.id] = phone
+                    self._save(records)
+                    self._refresh_accounts()
                     await self._deliver(phone, native, services)
                 except Exception as error:
                     # Exception types are sufficient; configuration RPC errors

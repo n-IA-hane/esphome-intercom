@@ -34,6 +34,11 @@ class VoipStackDashboardCard extends HTMLElement {
     this._syncPending = false;
     this._phonePresentation = {video:false,settings:false,keypad:false,keypadAvailable:false,optionsAvailable:false};
     this._videoFocusCallId = "";
+    this._connectionReady = () => {
+      if (!this.isConnected) return;
+      this._devicesLoaded = false; this._deviceRequest = null;
+      this._bind();
+    };
     this._engineListener = () => {
       this._syncOwner(); this._render();
       const owner = this._owner();
@@ -84,6 +89,8 @@ class VoipStackDashboardCard extends HTMLElement {
 
   connectedCallback() {
     this._epoch++;
+    this._pending = "";
+    this._connection?.addEventListener?.("ready", this._connectionReady);
     voipStackEngine.addEventListener("state", this._engineListener);
     if (this._els) {
       this._resizeObserver.observe(this._els.card);
@@ -94,6 +101,9 @@ class VoipStackDashboardCard extends HTMLElement {
 
   disconnectedCallback() {
     this._epoch++;
+    this._pending = "";
+    this._deviceRequest = null;
+    this._connection?.removeEventListener?.("ready", this._connectionReady);
     this._resizeObserver.disconnect();
     this._unsubPhones?.(); this._unsubPhones = null;
     this._releaseOwner();
@@ -107,7 +117,11 @@ class VoipStackDashboardCard extends HTMLElement {
     if (!connection) return;
     if (connection !== this._connection) {
       this._epoch++;
+      this._pending = "";
+      this._deviceRequest = null;
+      this._connection?.removeEventListener?.("ready", this._connectionReady);
       this._connection = connection;
+      connection.addEventListener?.("ready", this._connectionReady);
       this._store.reset(); this._devices = []; this._devicesLoaded = false;
       this._unsubPhones?.(); this._unsubPhones = null;
       this._releaseOwner(); this._ownerSnapshot = null;
@@ -119,20 +133,25 @@ class VoipStackDashboardCard extends HTMLElement {
         if (this._store.apply(event)) { this._bindOwner(); this._render(); }
       });
     }
-    if (!this._devicesLoaded && this._deviceRequestConnection !== connection) this._loadDevices(connection);
+    if (!this._devicesLoaded && !this._deviceRequest) this._loadDevices(connection);
     this._bindOwner();
   }
 
   async _loadDevices(connection) {
-    this._deviceRequestConnection = connection;
+    const request = {};
+    this._deviceRequest = request;
     try {
       const result = await connection.sendMessagePromise({ type: "voip_stack/list_devices" });
-      if (this._hass?.connection !== connection) return;
+      if (this._deviceRequest !== request || this._hass?.connection !== connection) return;
       this._devices = result?.devices || [];
-      this._devicesLoaded = true; this._devicesRevision++;
+      this._devicesLoaded = true; this._devicesRevision++; this._error = "";
       this._configurePhoneView(); this._bindOwner(); this._render();
     } catch (error) {
-      if (this._hass?.connection === connection) { this._error = error?.message || String(error); this._render(); }
+      if (this._deviceRequest === request && this._hass?.connection === connection) {
+        this._error = error?.message || String(error); this._render();
+      }
+    } finally {
+      if (this._deviceRequest === request) this._deviceRequest = null;
     }
   }
 

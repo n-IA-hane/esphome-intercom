@@ -222,6 +222,94 @@ async def test_device_name_change_reuses_owner_and_mailbox_identity(phone_lab):
     assert "renamed_node" in lab.registrar.accounts
 
 
+@pytest.mark.parametrize("extension", ["102", ""])
+async def test_online_extension_change_updates_shared_alias_without_reregistering(phone_lab, extension):
+    from homeassistant.helpers import entity_registry as er
+
+    lab = phone_lab
+    entity = er.async_get(lab.hass).async_get_or_create(
+        "text", "esphome", "84c7bb000001-voip_extension",
+        config_entry=lab.native, device_id=lab.device.id,
+        suggested_object_id="phone_voip_extension",
+    )
+    lab.native.runtime_data.services[2] = SimpleNamespace(name="register_account")
+    lab.hass.states.async_set(entity.entity_id, "101")
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    previous = managed_records(lab.entry)[lab.device.id]
+    sent = list(lab.sent)
+    assert lab.runtime.endpoints.by_extension("101").endpoint_id == previous.endpoint_id
+
+    lab.hass.states.async_set(entity.entity_id, extension)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    current = managed_records(lab.entry)[lab.device.id]
+    assert current.extension == extension
+    assert current.password == previous.password
+    assert lab.registrar.accounts[current.username].extension == extension
+    assert lab.runtime.endpoints.get(current.endpoint_id).extension == extension
+    assert lab.runtime.directory.get(current.endpoint_id).extension == extension
+    assert lab.runtime.endpoints.by_extension("101") is None
+    if extension:
+        assert lab.runtime.endpoints.by_extension(extension).endpoint_id == current.endpoint_id
+    assert lab.sent == sent
+
+
+async def test_extension_collision_preserves_the_existing_account_and_endpoint(phone_lab):
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+
+    lab = phone_lab
+    entity = er.async_get(lab.hass).async_get_or_create(
+        "text", "esphome", "84c7bb000001-voip_extension",
+        config_entry=lab.native, device_id=lab.device.id,
+    )
+    lab.hass.states.async_set(entity.entity_id, "101")
+    await lab.controller.async_sync()
+    previous = managed_records(lab.entry)[lab.device.id]
+    other = PhoneEndpoint(endpoint_id="sip:other", name="Other phone", username="reserved",
+                          kind=EndpointKind.SIP_ACCOUNT)
+    lab.runtime.endpoints.register(other)
+    lab.hass.states.async_set(entity.entity_id, "reserved")
+    await lab.controller.async_sync()
+    assert managed_records(lab.entry)[lab.device.id] == previous
+    assert lab.registrar.accounts[previous.username].extension == "101"
+    assert lab.runtime.endpoints.get(previous.endpoint_id).extension == "101"
+    assert lab.runtime.endpoints.resolve("reserved") == other
+
+
+async def test_duplicate_extension_uses_existing_ambiguity_and_repair(phone_lab):
+    from homeassistant.helpers import entity_registry as er, issue_registry as ir
+    from custom_components.voip_stack.const import DOMAIN
+    from custom_components.voip_stack.endpoint_registry import EndpointAmbiguousError
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+
+    lab = phone_lab
+    sensor = VoipPhonebookSensor(lab.hass)
+    sensor.entity_id = None  # Exercise its projection without adding an HA entity.
+    lab.runtime.phonebook_sensor = sensor
+    entity = er.async_get(lab.hass).async_get_or_create(
+        "text", "esphome", "84c7bb000001-voip_extension",
+        config_entry=lab.native, device_id=lab.device.id,
+    )
+    other = PhoneEndpoint(endpoint_id="sip:other", name="Other phone", username="other",
+                          kind=EndpointKind.SIP_ACCOUNT, extension="102")
+    lab.runtime.endpoints.register(other)
+    lab.hass.states.async_set(entity.entity_id, "101")
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    lab.hass.states.async_set(entity.entity_id, "102")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    with pytest.raises(EndpointAmbiguousError):
+        lab.runtime.endpoints.resolve("102")
+    assert ir.async_get(lab.hass).async_get_issue(DOMAIN, "duplicate_extensions") is not None
+    assert lab.runtime.endpoints.resolve("other") == other
+    lab.hass.states.async_set(entity.entity_id, "103")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert lab.runtime.endpoints.resolve("102") == other
+    assert ir.async_get(lab.hass).async_get_issue(DOMAIN, "duplicate_extensions") is None
+
+
 async def test_offline_preserves_account_and_reconnect_reuses_password(phone_lab):
     lab = phone_lab
     await lab.controller.async_sync()

@@ -603,6 +603,116 @@ def test_dashboard_remount_restores_responsive_measurement(dashboard_page):
 
 
 @pytest.mark.browser_real
+def test_dashboard_remount_releases_visual_pending_without_repeating_the_command(dashboard_page):
+    page = dashboard_page
+    page.set_default_timeout(2000)
+    page.evaluate("""()=>{
+      card.setConfig({device_id:'reception-device'});
+      engine.dashboardStartCall=(owner,target)=>{
+        engine.actions.push(['call',owner.device_id,target.name]);
+        return new Promise(resolve=>window.finishCommand=resolve);
+      };
+    }""")
+    contact = page.locator(".tile[data-key='contact:support'] .tile-main")
+    contact.click()
+    assert contact.is_disabled()
+    page.evaluate("()=>{card.remove();document.body.append(card);finishCommand()}")
+    page.wait_for_function("!card._pending")
+    assert contact.is_enabled()
+    assert page.evaluate("engine.actions") == [["call", "reception-device", "Support desk"]]
+    assert page.evaluate("engine.closed") == 0
+    contact.click()
+    assert page.evaluate("engine.actions.length") == 2
+    page.evaluate("finishCommand()")
+
+
+@pytest.mark.browser_real
+def test_dashboard_old_command_completion_keeps_the_new_owner_pending(dashboard_page):
+    page = dashboard_page
+    page.set_default_timeout(2000)
+    page.evaluate("""()=>{
+      card.setConfig({device_id:'reception-device'});
+      window.finishCommands=[];
+      engine.dashboardStartCall=(owner,target)=>{
+        engine.actions.push(['call',owner.device_id,target.name]);
+        return new Promise(resolve=>finishCommands.push(resolve));
+      };
+    }""")
+    contact = page.locator(".tile[data-key='contact:support'] .tile-main")
+    contact.click()
+    page.evaluate("()=>{card.remove();document.body.append(card);card.setConfig({device_id:'bedroom-device'})}")
+    contact.click()
+    page.evaluate("finishCommands[0]()")
+    assert contact.is_disabled()
+    assert page.evaluate("card._pending") == "call"
+    assert page.evaluate("engine.actions.length") == 2
+    page.evaluate("finishCommands[1]()")
+    page.wait_for_function("!card._pending")
+    assert contact.is_enabled()
+
+
+@pytest.mark.browser_real
+def test_dashboard_failed_device_load_recovers_on_the_same_connection_ready(dashboard_page):
+    page = dashboard_page
+    page.set_default_timeout(2000)
+    page.evaluate("""()=>{
+      const devices=card._devices;
+      window.connection=new EventTarget();window.deviceRequests=0;
+      connection.sendMessagePromise=async()=>{
+        deviceRequests++;
+        if(deviceRequests===2)throw new Error('Temporary device lookup failure');
+        return {devices,entity_ids:{phonebook:'sensor.renamed_phonebook'}};
+      };
+      window.recovered=document.createElement('voip-stack-dashboard-card');
+      recovered.setConfig({device_id:'reception-device'});
+      recovered.hass={...hass,connection};
+      document.body.append(recovered);
+    }""")
+    page.wait_for_function("recovered._error==='Temporary device lookup failure'")
+    assert page.evaluate("deviceRequests") == 2
+    page.evaluate("connection.dispatchEvent(new Event('ready'))")
+    page.wait_for_function("recovered._devicesLoaded")
+    assert page.evaluate("recovered._owner().device_id") == "reception-device"
+    assert page.evaluate("recovered._error") == ""
+    assert page.evaluate("deviceRequests") == 3
+    page.evaluate("recovered.remove();connection.dispatchEvent(new Event('ready'))")
+    assert page.evaluate("deviceRequests") == 3
+
+
+@pytest.mark.browser_real
+def test_dashboard_device_load_ignores_the_old_connection_and_keeps_the_new_request(dashboard_page):
+    page = dashboard_page
+    page.set_default_timeout(2000)
+    page.evaluate("""()=>{
+      const devices=card._devices;
+      window.oldConnection=new EventTarget();window.newConnection=new EventTarget();
+      window.oldRequests=0;window.newRequests=0;
+      oldConnection.sendMessagePromise=()=>{
+        oldRequests++;
+        return oldRequests===1?Promise.resolve({devices}):new Promise(resolve=>window.finishOldDevices=resolve);
+      };
+      newConnection.sendMessagePromise=()=>{
+        newRequests++;
+        return newRequests===1?Promise.resolve({devices}):new Promise(resolve=>window.finishNewDevices=resolve);
+      };
+      window.recovered=document.createElement('voip-stack-dashboard-card');
+      recovered.setConfig({device_id:'reception-device'});
+      recovered.hass={...hass,connection:oldConnection};document.body.append(recovered);
+    }""")
+    page.wait_for_function("oldRequests===2")
+    page.evaluate("recovered.hass={...hass,connection:newConnection}")
+    page.wait_for_function("newRequests===2")
+    page.evaluate("finishOldDevices({devices:[{name:'Obsolete owner'}]})")
+    page.evaluate("recovered.hass={...hass,connection:newConnection}")
+    assert page.evaluate("newRequests") == 2
+    assert page.evaluate("recovered._devicesLoaded") is False
+    page.evaluate("finishNewDevices({devices:card._devices})")
+    page.wait_for_function("recovered._devicesLoaded")
+    assert page.evaluate("recovered._owner().device_id") == "reception-device"
+    page.evaluate("recovered.remove()")
+
+
+@pytest.mark.browser_real
 def test_dashboard_keypad_and_options_toggle_the_same_native_surface(dashboard_page):
     page = dashboard_page
     install_native_phone_contract(page)
