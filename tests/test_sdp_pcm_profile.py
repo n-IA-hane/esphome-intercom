@@ -1333,6 +1333,11 @@ class SdpPcmProfileTest(unittest.TestCase):
             sdp.audio_format_to_rtp(audio_format.AudioFormat(48000, "s32le", 1, 20), 96)
 
     def test_offer_filters_non_rtp_mappable_pcm_formats(self) -> None:
+        for directional in (False, True):
+            with self.subTest(directional=directional):
+                self._assert_offer_filters_non_rtp_mappable_pcm_formats(directional)
+
+    def _assert_offer_filters_non_rtp_mappable_pcm_formats(self, directional: bool) -> None:
         offer = sdp.build_offer_directional(
             "192.168.1.10",
             "192.168.1.10",
@@ -1347,12 +1352,28 @@ class SdpPcmProfileTest(unittest.TestCase):
                 audio_format.AudioFormat(48000, "s16le", 2, 10),
                 audio_format.AudioFormat(16000, "s16le", 1, 10),
             ],
+            allow_directional_payloads=directional,
         )
         offered = sdp.offered_pcm_formats(offer)
         self.assertEqual(
             [(fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms) for fmt in offered],
             [("L16", 48000, 1, 10), ("L16", 16000, 1, 10)],
         )
+
+    def test_directional_generic_offer_keeps_compressed_codecs_and_safe_pcm(self) -> None:
+        formats = list(audio_format.HA_TRUNK_AUDIO_FORMATS)
+        offer = sdp.build_offer_directional(
+            "192.0.2.1", "192.0.2.1", 40000, formats, formats,
+            include_common_codecs=True, allow_directional_payloads=True,
+        )
+        offered = sdp.offered_pcm_formats(offer)
+        self.assertTrue(any(fmt.encoding == "PCMA" for fmt in offered))
+        self.assertTrue(any(fmt.encoding == "PCMU" for fmt in offered))
+        if "OPUS" in codec_capabilities.common_sip_codecs():
+            self.assertTrue(any(fmt.encoding == "OPUS" and fmt.channels == 2 for fmt in offered))
+        pcm = [fmt for fmt in offered if fmt.encoding in {"L16", "L24"}]
+        self.assertEqual([(fmt.sample_rate, fmt.channels) for fmt in pcm], [(16000, 1), (8000, 1)])
+        self.assertIn("a=ptime:20\r\n", offer)
 
     def test_offer_caps_payloads_to_compact_udp_safe_profile_without_losing_esp_baseline(self) -> None:
         browser_tx_formats = [

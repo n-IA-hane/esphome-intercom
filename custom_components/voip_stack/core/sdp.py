@@ -1599,7 +1599,7 @@ def build_offer_directional(
                     *(fmt for fmt in send_formats if fmt.frame_ms == frame_ms),
                 ]
             )
-            for fmt in capability_formats:
+            for fmt in rtp_mappable_formats(capability_formats):
                 key = _format_key(fmt)
                 rtp_key = _rtp_encoding_key(audio_format_to_rtp(fmt, 96))
                 directional_flows[rtp_key] = (

@@ -2950,10 +2950,8 @@ class VoipStackCard extends HTMLElement {
       }
     }
     this._activeDeviceInfo = null;
-    if (wasSoftphone) {
-      this._softphoneSnapshot = null;
-      this._activeSessionDeviceId = null;
-    }
+    // Call cleanup does not own the backend phone projection. Keep its
+    // endpoint identity available when an outbound service request fails.
   }
 
   async _tryAutoAnswer(options = {}) {

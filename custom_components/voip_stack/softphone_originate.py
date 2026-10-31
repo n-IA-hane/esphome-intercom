@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from functools import partial
 import logging
+import traceback
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -351,11 +352,6 @@ async def async_originate_browser_call(
             bridge_uri = ha_uri_for(route.target or target, contacts)
         route = replace(route, action=RouteAction.BRIDGE, sip_uri=bridge_uri)
     use_trunk = route.action is RouteAction.TRUNK and trunk_ready
-    use_registered_contact_codecs = bool(
-        route.entry is not None
-        and route.entry.sip_uri
-        and route.entry.metadata.get("registered")
-    )
     if route.action is RouteAction.TRUNK and not use_trunk:
         raise trunk_selection.unavailable_error()
     if route.action is RouteAction.GROUP and route.entry is not None:
@@ -506,6 +502,13 @@ async def async_originate_browser_call(
         None,
         route.entry,
         dest_device,
+    )
+    use_registered_contact_codecs = bool(
+        route.entry is not None
+        and route.entry.sip_uri
+        and route.entry.metadata.get("registered")
+        and rtp_audio_profile is None
+        and not _supports_directional_audio_payloads(None, route.entry)
     )
     native_audio_endpoint = bool(
         entry_metadata.get("local_ha")
@@ -815,6 +818,11 @@ async def async_originate_browser_call(
             timeout=SIP_TIMER_B if use_trunk else 8.0,
         )
     except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.
+        _LOGGER.error(
+            "SIP call setup failed type=%s stack=%s", type(err).__name__,
+            " > ".join(f"{frame.filename.rsplit('/', 1)[-1]}:{frame.name}:{frame.lineno}"
+                       for frame in traceback.extract_tb(err.__traceback__)),
+        )
         await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
             TerminalReason.TRANSPORT_UNREACHABLE.value,

@@ -854,6 +854,36 @@ await hall._answer();
 assert.equal(serviceCalls.length, blockedActionCount);
 engine.releaseSoftphoneSession("kitchen-call", "kitchen");
 
+// A failed outbound service request must not erase the selected phone. The
+// real engine rejects an empty endpoint before sending another service call.
+const failedStart = makeCard();
+failedStart.config = {{ mode: "ha_softphone", device_id: "device-casa" }};
+failedStart._applySoftphoneSnapshot({{
+  endpoint_id: "browser:casa", device_id: "device-casa", state: "idle",
+  name: "Casa", capabilities: ["audio", "video"], sequence: 1,
+}});
+const failedStartSnapshot = failedStart._softphoneSnapshot;
+const priorStartHaSoftphone = engine.startHaSoftphone;
+const startAttempts = [];
+engine.startHaSoftphone = async (target, session, options) => {{
+  startAttempts.push({{ target, session, options }});
+  throw new Error("could not start SIP call to Waveshare P4 Touch");
+}};
+await failedStart._startCall("Waveshare P4 Touch");
+assert.match(failedStart._errorMsg, /could not start SIP call to Waveshare P4 Touch/);
+assert.equal(failedStart._softphoneSnapshot, failedStartSnapshot);
+assert.equal(failedStart._getSoftphoneEndpointId(), "browser:casa");
+assert.equal(failedStart._starting, false);
+assert.equal(engine.mediaIntent, null);
+assert.equal(engine.ownedSoftphoneCalls.size, 0);
+await failedStart._startCall("Another endpoint");
+assert.equal(startAttempts.length, 2, "Retry must reach the call service again");
+assert.deepEqual(startAttempts.map(item => item.options.endpoint_id), ["browser:casa", "browser:casa"]);
+assert.deepEqual(startAttempts.map(item => item.options.device_id), ["device-casa", "device-casa"]);
+assert.equal(engine.mediaIntent, null);
+assert.doesNotMatch(failedStart._errorMsg, /already handling another phone call/);
+engine.startHaSoftphone = priorStartHaSoftphone;
+
 // The page-level reservation is atomic across awaits: two cards cannot both
 // answer after observing an initially free engine.
 const kitchenRace = makeCard();

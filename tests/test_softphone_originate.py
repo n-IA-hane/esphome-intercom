@@ -271,6 +271,150 @@ def test_provider_leg_uses_trunk_account_identity(softphone_originate) -> None:
     )
 
 
+def test_sip_start_failure_logs_location_without_exception_secrets(
+    softphone_originate, monkeypatch, caplog,
+) -> None:
+    module = softphone_originate
+    endpoint = SimpleNamespace(
+        endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        availability=_Availability.AVAILABLE, supports=lambda _cap: True,
+    )
+    hass = SimpleNamespace(
+        data={"voip_stack": {}}, states=SimpleNamespace(get=lambda _: None),
+    )
+    entry = SimpleNamespace(metadata={}, sip_uri="sip:door@192.0.2.10", display_name="Door")
+    route = SimpleNamespace(action=_RouteAction.DIRECT, reason=None, entry=entry, sip_uri=entry.sip_uri)
+    module.ha_router_decision = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, "Door", None))
+    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": False})
+    module.CallState.CALLING = SimpleNamespace(value="calling")
+    module.TerminalReason.TRANSPORT_UNREACHABLE = SimpleNamespace(value="transport_unreachable")
+    registry = module._call_registry.return_value
+    registry.upsert.return_value = SimpleNamespace(
+        call_id="test-call", state="calling", owner="ha_softphone",
+        caller="Casa", callee="Door", generation=1,
+    )
+    failure = ValueError("credential-DO-NOT-LOG")
+    client = SimpleNamespace(dialog_ids=SimpleNamespace(call_id="test-call"), invite=AsyncMock(side_effect=failure))
+    sys.modules[f"{module.__package__}.sip_client"].SipCallClient = Mock(return_value=client)
+    sys.modules[f"{module.__package__}.sip_runtime"].configure_local_contact = Mock()
+    sys.modules[f"{module.__package__}.endpoint_session"].CleanupStage = SimpleNamespace(OBSERVER="observer")
+    for name, attributes in {
+        "browser_dialog_updates": {"attach_browser_dialog_updates": Mock()},
+        "dtmf_events": {"attach_direct_client_dtmf_events": Mock()},
+        "browser_playback": {"BrowserPlayback": Mock(return_value=SimpleNamespace(close=Mock()))},
+    }.items():
+        dependency = types.ModuleType(f"{module.__package__}.{name}")
+        dependency.__dict__.update(attributes)
+        monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
+    terminate = AsyncMock()
+    module.EndpointTerminationHandler = Mock(return_value=SimpleNamespace(terminate_reason=terminate))
+
+    with pytest.raises(_ServiceValidationError) as caught:
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination="Door"), endpoint_id="caller", browser_endpoint=endpoint,
+        ))
+
+    assert caught.value.translation_key == "sip_call_start_failed"
+    assert caught.value.__cause__ is failure
+    terminate.assert_awaited_once_with("test-call", "transport_unreachable", "runtime")
+    assert "SIP call setup failed type=ValueError" in caplog.text
+    assert "softphone_originate.py:async_originate_browser_call:" in caplog.text
+    assert "credential-DO-NOT-LOG" not in caplog.text
+    assert str(ROOT) not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+@pytest.mark.parametrize("profile", ["directional_unspecified", "directional_explicit", "registered_generic"])
+def test_registered_peer_offer_preserves_directional_profile(
+    softphone_originate, monkeypatch, profile,
+) -> None:
+    module = softphone_originate
+    media = importlib.import_module(f"{module.__package__}.core.sdp")
+    audio = importlib.import_module(f"{module.__package__}.core.audio_format")
+    directional = profile != "registered_generic"
+    endpoint = SimpleNamespace(
+        endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        availability=_Availability.AVAILABLE, supports=lambda _cap: True,
+    )
+    metadata = {"registered": True, "endpoint_kind": "esphome" if directional else "sip_account",
+                "tx_formats": [], "rx_formats": [], "sip_audio_tx_formats": [],
+                "sip_audio_rx_formats": [], "sdp_features": ["directional_audio_v1"] if directional else []}
+    entry = SimpleNamespace(metadata=metadata, sip_uri="sip:esphome-ha@192.0.2.10:5060;transport=udp", display_name="Panel")
+    route = SimpleNamespace(action=_RouteAction.DIRECT, reason=None, entry=entry, sip_uri=entry.sip_uri)
+    hass = SimpleNamespace(data={"voip_stack": {}}, states=SimpleNamespace(get=lambda _: None))
+    module.ha_router_decision = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, "Panel", None))
+    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": False})
+    module._supports_directional_audio_payloads = Mock(return_value=directional)
+    defaults = [fmt for fmt in audio.HA_SIP_PCM_TX_FORMATS if fmt.frame_ms == 10]
+    module._sip_target_audio_profile = Mock(return_value=(defaults, defaults))
+    if profile == "directional_explicit":
+        send = media.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        recv = media.RtpPcmFormat(97, "L16", 16000, 1, 10)
+        module._sip_target_rtp_audio_profile = Mock(return_value=SimpleNamespace(
+            send_formats=(send.audio_format,), recv_formats=(recv.audio_format,),
+            send_rtp_formats=(send,), recv_rtp_formats=(recv,),
+            sdp_features=frozenset({"directional_audio_v1"}),
+        ))
+    module.CallState.CALLING = SimpleNamespace(value="calling")
+    module.TerminalReason.TRANSPORT_UNREACHABLE = SimpleNamespace(value="transport_unreachable")
+    module.EndpointTerminationHandler = Mock(return_value=SimpleNamespace(terminate_reason=AsyncMock()))
+    module._call_registry.return_value.upsert.return_value = SimpleNamespace(
+        call_id="test-call", state="calling", owner="ha_softphone",
+        caller="Casa", callee="Panel", generation=1,
+    )
+    sys.modules[f"{module.__package__}.sip_runtime"].configure_local_contact = Mock()
+    sys.modules[f"{module.__package__}.endpoint_session"].CleanupStage = SimpleNamespace(OBSERVER="observer")
+    for name, attributes in {
+        "browser_dialog_updates": {"attach_browser_dialog_updates": Mock()},
+        "dtmf_events": {"attach_direct_client_dtmf_events": Mock()},
+        "browser_playback": {"BrowserPlayback": Mock(return_value=SimpleNamespace(close=Mock()))},
+    }.items():
+        dependency = types.ModuleType(f"{module.__package__}.{name}")
+        dependency.__dict__.update(attributes)
+        monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
+    captured = {}
+
+    class OfferBuilt(BaseException):
+        pass
+
+    def client_factory(**kwargs):
+        captured.update(kwargs)
+
+        async def invite(**_kwargs):
+            captured["offer"] = media.build_offer_directional(
+                "192.0.2.1", "192.0.2.1", kwargs["local_rtp_port"],
+                kwargs["supported_send_formats"], kwargs["supported_recv_formats"],
+                send_rtp_formats=kwargs["supported_send_rtp_formats"],
+                recv_rtp_formats=kwargs["supported_recv_rtp_formats"],
+                include_common_codecs=kwargs["include_common_codecs"],
+                allow_directional_payloads=kwargs["allow_directional_audio_payloads"],
+            )
+            raise OfferBuilt
+
+        return SimpleNamespace(dialog_ids=SimpleNamespace(call_id="test-call"), invite=invite)
+
+    sys.modules[f"{module.__package__}.sip_client"].SipCallClient = client_factory
+    with pytest.raises(OfferBuilt):
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination="Panel"), endpoint_id="caller", browser_endpoint=endpoint,
+        ))
+    parsed = media.offered_pcm_formats(captured["offer"])
+    assert {fmt.frame_ms for fmt in parsed} == ({10} if directional else {20})
+    if profile == "directional_explicit":
+        assert captured["supported_send_rtp_formats"] == (send,)
+        assert captured["supported_recv_rtp_formats"] == (recv,)
+        assert "a=x-voip-stack-flow:96 send\r\n" in captured["offer"]
+        assert "a=x-voip-stack-flow:97 recv\r\n" in captured["offer"]
+    elif directional:
+        assert any(fmt.encoding == "L16" and fmt.sample_rate == 48000 for fmt in parsed)
+    else:
+        assert captured["supported_send_formats"] == list(audio.HA_TRUNK_AUDIO_FORMATS)
+        assert any(fmt.encoding == "PCMA" for fmt in parsed)
+        assert any(fmt.encoding == "PCMU" for fmt in parsed)
+
+
 def test_direct_leg_preserves_local_display_name(softphone_originate) -> None:
     assert softphone_originate._trunk_leg_identity({}, "Kitchen tablet") == (
         "Kitchen tablet"
