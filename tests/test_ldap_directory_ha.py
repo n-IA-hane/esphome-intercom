@@ -150,6 +150,35 @@ async def test_ldap_assist_uses_robot_category_and_other_services_keep_their_kin
         await writer.wait_closed()
 
 
+async def test_canonical_group_type_exports_group_ou_over_ldap(server):
+    for name, kind in (("Reception ring", "ring"), ("Family call", "conference")):
+        server.directory.upsert(RosterEntry(name, name=name,
+            sip_uri=f"sip:{name.replace(' ', '%20')}@pbx.example.org",
+            metadata={"group_type": kind, "members": ["kitchen"]}))
+    reader, writer = await connected(server)
+    try:
+        # Exclude the organizational-unit container, as the real directory
+        # client does by requiring a callable contact's attributes.
+        group_contacts = tlv(0xA0, equality("ou", b"group") + tlv(0x87, b"uid"))
+        writer.write(search(filter=group_contacts, attributes=("uid", "ou")))
+        await writer.drain()
+        frames = await collect(reader, 2)
+        assert len([frame for frame in frames if response(frame)[1] == 0x64]) == 2
+        for frame in frames:
+            if response(frame)[1] != 0x64:
+                continue
+            fields = parts(parts(parts(frame)[0][1])[1][1])
+            assert b",ou=group," in fields[0][1]
+            attributes = {
+                parts(attribute[1])[0][1]: tuple(value[1] for value in parts(parts(attribute[1])[1][1]))
+                for attribute in parts(fields[1][1])
+            }
+            assert attributes[b"ou"] == (b"group",)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
 def test_directory_single_record_identity_atomic_update_and_offline():
     value = directory()
     events = []

@@ -89,6 +89,70 @@ async def test_one_account_same_password_and_no_secret_event(phone_lab, caplog):
     assert managed_records(lab.entry)[lab.device.id].password == first.password
 
 
+async def test_managed_native_groups_reach_canonical_directory_without_endpoint_sensor(phone_lab, monkeypatch):
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.device_resolver import get_resolver
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory, directory_uri
+    from custom_components.voip_stack.ldap_server import LdapDirectoryServer
+    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+
+    lab = phone_lab
+    fields = {}
+    for domain, role, value in (
+        ("text", "voip_ring_groups", "RG Casa"),
+        ("text", "voip_conference_groups", "CG Casa"),
+        ("switch", "voip_ring_on_conference", "on"),
+    ):
+        entity = er.async_get(lab.hass).async_get_or_create(
+            domain, "esphome", f"84c7bb000001-{domain}-{role}",
+            config_entry=lab.native, device_id=lab.device.id,
+            suggested_object_id=f"phone_{role}",
+        )
+        fields[role] = entity.entity_id
+        lab.hass.states.async_set(entity.entity_id, value)
+    await lab.controller.async_sync()
+    phone = managed_records(lab.entry)[lab.device.id]
+    monkeypatch.setattr(lab.registrar, "registered_contacts", lambda username: (
+        SimpleNamespace(contact_uri="sip:phone_node@192.0.2.10:5060", transport="udp"),
+    ) if username == phone.username else ())
+
+    devices = await get_resolver(lab.hass).list_devices()
+    device, = devices
+    assert "voip_endpoint" not in device["entities"]
+    assert (device["ring_group"], device["conference_group"], device["conference_ring"]) == ("RG Casa", "CG Casa", True)
+    rows = await async_refresh_directory(lab.hass, registered=[])
+    assert {entry.name for entry in rows if entry.metadata.get("group_type")} == {"RG Casa", "CG Casa"}
+    server = LdapDirectoryServer(lab.runtime.directory, lab.controller.authenticate,
+        uri_for=lambda row: directory_uri(lab.hass, row))
+    exported = {attrs["cn"][0]: attrs for _dn, attrs in server.records() if "uid" in attrs}
+    assert exported[b"RG Casa"]["ou"] == exported[b"CG Casa"]["ou"] == (b"group",)
+    assert b"RG%20Casa@" in exported[b"RG Casa"]["labeleduri"][0]
+
+    sensor = VoipPhonebookSensor(lab.hass)
+    sensor.entity_id = None
+    await sensor.async_added_to_hass()
+    try:
+        # Temporarily missing native states keep the existing endpoint owner,
+        # without adding another group cache or polling task.
+        for entity_id in fields.values():
+            lab.hass.states.async_remove(entity_id)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        device, = await get_resolver(lab.hass).list_devices()
+        assert (device["ring_group"], device["conference_group"], device["conference_ring"]) == ("RG Casa", "CG Casa", True)
+
+        # Empty and off are authoritative. Exercise the real state bus so the
+        # ordinary phonebook observer removes groups without a manual refresh.
+        lab.hass.states.async_set(fields["voip_ring_groups"], "")
+        lab.hass.states.async_set(fields["voip_conference_groups"], "")
+        lab.hass.states.async_set(fields["voip_ring_on_conference"], "off")
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        device, = await get_resolver(lab.hass).list_devices()
+        assert (device["ring_group"], device["conference_group"], device["conference_ring"]) == ("", "", False)
+        assert not [entry for entry in lab.runtime.directory.snapshot() if entry.metadata.get("group_type")]
+    finally:
+        await sensor.async_will_remove_from_hass()
+
+
 async def test_mailbox_event_runs_provisioning_on_ha_loop_and_unsubscribes(phone_lab, monkeypatch):
     """The real event dispatcher must not send native API work to its executor."""
     lab = phone_lab

@@ -244,6 +244,8 @@ class LdapDirectoryServer:
             virtual = str(entry.metadata.get("virtual_endpoint") or "")
             if virtual:
                 kind = "automation" if virtual in {"automation", "assist_pipeline"} else "group" if virtual in {"ring_group", "conference"} else "service"
+            elif entry.metadata.get("group_type") in {"ring", "conference"}:
+                kind = "group"
             if kind not in _CATEGORIES:
                 kind = "contact"
             identity = str(entry.metadata.get("endpoint_id") or entry.id)

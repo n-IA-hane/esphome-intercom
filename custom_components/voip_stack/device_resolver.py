@@ -439,6 +439,12 @@ class VoipDeviceResolver:
                     "rtp_port": previous.get("rtp_port", 40000),
                     "sip_transport": binding.transport.lower() if binding is not None else phone.sip_transport,
                     "extension": self._state_value(entities.get("voip_extension")) or phone.extension,
+                    "ring_group": self._state_value(entities.get("voip_ring_groups"),
+                        str(previous.get("ring_group") or getattr(logical, "ring_group", "") or "")),
+                    "conference_group": self._state_value(entities.get("voip_conference_groups"),
+                        str(previous.get("conference_group") or getattr(logical, "conference_group", "") or "")),
+                    "conference_ring": _parse_bool(self._state_value(entities.get("voip_conference_ring"),
+                        "on" if previous.get("conference_ring", getattr(logical, "conference_ring", False)) else "off")),
                     "audio_mode": caps.get("audio_mode", previous.get("audio_mode", "full_duplex")),
                     "tx_formats": previous.get("tx_formats", []),
                     "rx_formats": previous.get("rx_formats", []),
@@ -507,12 +513,12 @@ class VoipDeviceResolver:
                 out[role] = eid
         return out
 
-    def _state_value(self, entity_id: str | None) -> str:
+    def _state_value(self, entity_id: str | None, default: str = "") -> str:
         if not entity_id:
-            return ""
+            return default
         state = self.hass.states.get(entity_id)
         if state is None or str(state.state or "").strip().lower() in ("unknown", "unavailable"):
-            return ""
+            return default
         return str(state.state or "").strip()
 
 
