@@ -421,6 +421,12 @@ A local development checkout can use `scripts/yaml_paths.sh`; inspect its help a
 review the diff before publication. Do not publish machine-local paths. The CI
 records component SHAs with `scripts/coordinated_sources.py`, and can replay a
 previous manifest through the workflow's `component_manifest` input.
+One coordinator resolves the source set before the parallel lanes start, and
+every lane selects the manifest's backend commit. Development P4 profiles and
+CI use `n-IA-hane/esphome-esp-video-camera@dev`; an explicit
+`camera_components_source` override remains authoritative. Historical manifests
+retain their recorded Camera repository, including the former upstream source,
+and must replay with their own backend commit.
 
 The native matrix in `tests/test_package_composition.py` loads and validates the
 real packages, removes features and generates C++ for representative combinations.

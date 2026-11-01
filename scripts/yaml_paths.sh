@@ -9,7 +9,10 @@ import subprocess
 import sys
 
 ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
-CAMERA_URL = "github://Psix-anp/esphome-esp-video-camera"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.coordinated_sources import CAMERA, source_url  # noqa: E402
+
+CAMERA_URL = source_url(CAMERA, 'dev').rsplit('@', 1)[0]
 REPOS = {
     "ext_components_source": ("github://n-IA-hane/esphome-intercom", ROOT),
     "voip_stack_components_source": ("github://n-IA-hane/esphome-voip-stack", ROOT.parent / "esphome-voip-stack"),
@@ -24,7 +27,7 @@ P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
 OWNED_REMOTE = re.compile(
     r'github://n-IA-hane/(?:esphome-intercom|esphome-voip-stack|esphome-audio-stack|'
-    r'esphome-runtime-controller|esphome-screenshot|esphome-video-renderer)'
+    r'esphome-runtime-controller|esphome-screenshot|esphome-video-renderer|esphome-esp-video-camera)'
     r'(?:/[^\s\'"@(){}\[\]]+)?@([^\s\'"(){}\[\]]+)'
 )
 OWNED_ASSETS = re.compile(
@@ -56,6 +59,10 @@ def rewrite_remote_defaults(path, ref):
     for pattern in (OWNED_REMOTE, OWNED_ASSETS):
         text = pattern.sub(lambda match: match.group(0)[:match.start(1) - match.start()]
                            + ref + match.group(0)[match.end(1) - match.start():], text)
+    text = re.sub(r'github://n-IA-hane/esphome-esp-video-camera@[^\s\'"(){}\[\]]+',
+                  source_url(CAMERA, ref), text)
+    camera_default = r'''(camera_components_source\s*\|\s*default\(["'])github://(?:n-IA-hane|Psix-anp)/esphome-esp-video-camera@[^"']+(["'])'''
+    text = re.sub(camera_default, lambda match: match[1] + source_url(CAMERA, ref) + match[2], text)
     path.write_text(text)
 
 
@@ -143,8 +150,8 @@ def rewrite_yaml(path, ref):
         if key == "camera_components_source" and not p4:
             continue
         component_dir = "components" if key == "camera_components_source" else "esphome/components"
-        remote_ref = "main" if key == "camera_components_source" else ref
-        overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else f"{url}@{remote_ref}"
+        remote = source_url(CAMERA, ref) if key == "camera_components_source" else f"{url}@{ref}"
+        overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else remote
     if device_entrypoint:
         overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" else ""
     if p4:
@@ -187,7 +194,7 @@ def camera_source_root(path):
 def rewrite_camera(path, ref):
     lines = path.read_text().splitlines()
     source_root = camera_source_root(path)
-    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@main"
+    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else source_url(CAMERA, ref)
     for index in range(1, len(lines)):
         if re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", lines[index]):
             if "${camera_components_source}" in lines[index - 1]:

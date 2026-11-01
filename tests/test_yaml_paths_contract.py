@@ -79,7 +79,7 @@ def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
     assert source == "../../../../esphome-esp-video-camera/components"
 
 
-def test_remote_camera_source_uses_upstream_main(tmp_path: Path) -> None:
+def test_remote_camera_source_uses_the_coordinated_owner(tmp_path: Path) -> None:
     yaml_paths = _load_yaml_paths()
     config = tmp_path / "camera.yaml"
     config.write_text(
@@ -88,10 +88,10 @@ def test_remote_camera_source_uses_upstream_main(tmp_path: Path) -> None:
         "    components: [esp_video_camera]\n"
     )
 
-    for ref in ("dev", "main"):
+    for ref, owner in (("dev", "n-IA-hane"), ("main", "Psix-anp")):
         yaml_paths.rewrite_camera(config, ref)
         assert (
-            "source: github://Psix-anp/esphome-esp-video-camera@main"
+            f"source: github://{owner}/esphome-esp-video-camera@{ref}"
             in config.read_text()
         )
 
@@ -142,7 +142,7 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
     assert 'github://n-IA-hane/esphome-audio-stack@dev' in text
     assert 'github://n-IA-hane/esphome-screenshot@dev' in text
     assert 'github://n-IA-hane/esphome-video-renderer@dev' in text
-    assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
+    assert 'github://n-IA-hane/esphome-esp-video-camera@dev' in text
     assert 'intercom_idf_ref: "dev"' in text
     assert 'intercom_idf_root: ""' in text
 
@@ -179,6 +179,19 @@ def test_remote_default_rewrite_preserves_upstream_and_local_mode_inputs(tmp_pat
     assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
     tool.rewrite_remote_defaults(path, 'main')
     assert set(tool.owned_remote_refs(path)) == {'main'}
+
+
+def test_public_camera_default_round_trip_preserves_an_explicit_upstream_override(tmp_path):
+    tool = _load_yaml_paths()
+    path = tmp_path / 'device.yaml'
+    path.write_text('substitutions:\n'
+        '  camera_components_source: \'${ camera_components_source | default("github://n-IA-hane/esphome-esp-video-camera@dev") }\'\n'
+        '  custom_source: github://Psix-anp/esphome-esp-video-camera@main\n')
+    tool.rewrite_remote_defaults(path, 'main')
+    assert 'default("github://Psix-anp/esphome-esp-video-camera@main")' in path.read_text()
+    tool.rewrite_remote_defaults(path, 'dev')
+    assert 'default("github://n-IA-hane/esphome-esp-video-camera@dev")' in path.read_text()
+    assert 'custom_source: github://Psix-anp/esphome-esp-video-camera@main' in path.read_text()
 
 
 def test_package_selection_ignores_untracked_private_overlays(tmp_path):

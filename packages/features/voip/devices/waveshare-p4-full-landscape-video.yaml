@@ -17,4 +17,4 @@ packages:
   video: !include '../../../voip/p4_full_video_jpeg.yaml'
 
 defaults:
-  camera_components_source: '${ camera_components_source | default("github://Psix-anp/esphome-esp-video-camera@main") }'
+  camera_components_source: '${ camera_components_source | default("github://n-IA-hane/esphome-esp-video-camera@dev") }'
