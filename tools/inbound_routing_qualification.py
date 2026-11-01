@@ -478,7 +478,14 @@ class FlowSnapshot:
             result = api.post(flow_path, values)
             if result.get("type") not in {"create_entry", "abort"} or (
                 result.get("type") == "abort" and result.get("reason") != "reconfigure_successful"):
-                raise RuntimeError("Native qualification trunk was not committed")
+                def code(value):
+                    return value if (isinstance(value, str) and value.isascii() and len(value) <= 80
+                                     and value.replace("_", "").isalnum()) else "unknown"
+                errors = ",".join(sorted({code(value) for value in (result.get("errors") or {}).values()}))
+                # Report only flow identifiers and validation codes. The
+                # returned form/schema can carry current credential defaults.
+                raise RuntimeError("Native qualification trunk was not committed "
+                    f"(type={code(result.get('type'))}, step={code(result.get('step_id'))}, errors={errors or 'none'})")
             self._owned_trunk = self._find_owned_trunk(api)
             if self._owned_trunk is None:
                 raise RuntimeError("Committed qualification trunk is missing")

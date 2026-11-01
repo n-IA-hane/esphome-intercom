@@ -130,21 +130,55 @@ def test_optional_esphome_mailbox_regression_uses_the_ha_interpreter(tmp_path: P
     assert f"--ignore={path}" in arguments
 
 
+def test_native_trunk_validation_stays_in_the_catalogued_ha_module(tmp_path: Path) -> None:
+    ha_path, software_path = tmp_path / "ha", tmp_path / "software"
+    ha_path.mkdir()
+    software_path.mkdir()
+    ha_arguments = _record_suite_arguments(ha_path, "ha")
+    software_arguments = _record_suite_arguments(software_path, "software-full")
+    assert "tests/test_trunk_config_flow.py" in ha_arguments
+    assert "--ignore=tests/test_trunk_config_flow.py" in software_arguments
+    assert "tests/test_qualification_tooling_boundaries.py" not in ha_arguments
+    assert "--ignore=tests/test_qualification_tooling_boundaries.py" not in software_arguments
+
+
+def test_catalog_guard_detects_uncatalogued_function_level_ha_markers(monkeypatch, tmp_path: Path) -> None:
+    project = tmp_path / "source"
+    tests = project / "tests"
+    tests.mkdir(parents=True)
+    (tests / "test_known.py").write_text("import pytest\npytestmark = pytest.mark.ha\n")
+    (tests / "test_uncatalogued.py").write_text(
+        "import pytest\n@pytest.mark.ha\nasync def test_real_flow(hass):\n    pass\n")
+    monkeypatch.setitem(globals(), "ROOT", project)
+    monkeypatch.setitem(globals(), "_record_suite_arguments", lambda _path, mode: (
+        ["tests/test_known.py"] if mode == "ha" else ["tests", "--ignore=tests/test_known.py"]))
+    gate = tmp_path / "gate"
+    gate.mkdir()
+    with pytest.raises(AssertionError, match="test_uncatalogued.py"):
+        test_all_ha_marked_modules_use_the_ha_interpreter(gate)
+
+
 def test_all_ha_marked_modules_use_the_ha_interpreter(tmp_path: Path) -> None:
     ha_marked = set()
     for path in (ROOT / "tests").glob("test_*.py"):
         module = ast.parse(path.read_text())
-        for assignment in module.body:
+        assignments = list(module.body)
+        marker_expressions = []
+        for declaration in ast.walk(module):
+            if isinstance(declaration, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                marker_expressions.extend(declaration.decorator_list)
+            if isinstance(declaration, ast.ClassDef):
+                assignments.extend(declaration.body)
+        for assignment in assignments:
             if not isinstance(assignment, ast.Assign) or not any(
                 isinstance(target, ast.Name) and target.id == "pytestmark"
                 for target in assignment.targets
             ):
                 continue
-            if any(
-                isinstance(node, ast.Attribute) and ast.unparse(node) == "pytest.mark.ha"
-                for node in ast.walk(assignment.value)
-            ):
-                ha_marked.add(str(path.relative_to(ROOT)))
+            marker_expressions.append(assignment.value)
+        if any(isinstance(node, ast.Attribute) and ast.unparse(node) == "pytest.mark.ha"
+               for expression in marker_expressions for node in ast.walk(expression)):
+            ha_marked.add(str(path.relative_to(ROOT)))
 
     assert ha_marked
     ha_path = tmp_path / "ha"

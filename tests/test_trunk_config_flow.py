@@ -11,6 +11,36 @@ class TrunkForm(TrunkFormMixin, VoipStackConfigFlow):
 pytestmark = pytest.mark.ha
 
 
+async def test_actual_static_trunk_form_requires_explicit_trusted_sources(hass, enable_custom_integrations, monkeypatch):
+    from pathlib import Path
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from homeassistant.components.config.config_entries import SubentryManagerFlowIndexView
+    from tests.test_tool_output_storage import load_tool
+    import custom_components
+    monkeypatch.setattr(custom_components, "__path__", [*custom_components.__path__,
+        str(Path(__file__).parents[1] / "custom_components")])
+    hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    entry = MockConfigEntry(domain="voip_stack", data={})
+    entry.add_to_hass(hass)
+    module = load_tool("inbound_routing_qualification")
+    serializer = SubentryManagerFlowIndexView(hass.config_entries.subentries)
+    form_result = await hass.config_entries.subentries.async_init((entry.entry_id, "trunk"), context={"source": "user"})
+    flow_id = form_result["flow_id"]
+    try:
+        form_result = await hass.config_entries.subentries.async_configure(flow_id,
+            {"name": "Static fixture", "trunk_enabled": True, "trunk_register": False})
+        values = module.schema_defaults(serializer._prepare_result_json(form_result))
+        values.update(trunk_server="192.0.2.10", trunk_port=15192, trunk_domain="192.0.2.10",
+                      trunk_inbound_default_target="Casa", trunk_audio_codecs=["PCMA"])
+        assert values["trunk_allowed_ips"] == []
+        rejected = await hass.config_entries.subentries.async_configure(flow_id, values)
+        assert rejected["type"] == "form"
+        assert rejected["errors"] == {"trunk_allowed_ips": "trunk_allowed_ips_invalid"}
+        assert not entry.subentries
+    finally:
+        hass.config_entries.subentries.async_abort(flow_id)
+
+
 @pytest.mark.asyncio
 async def test_mode_switch_hides_registration_expiry_and_requires_source_acl(hass):
     flow = TrunkForm()

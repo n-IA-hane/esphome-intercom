@@ -169,6 +169,25 @@ def test_capture_uses_native_menu_and_aborts_without_committing_preferences():
     assert api.original == (api.records, api.options, api.messages)
 
 
+def test_native_trunk_validation_reports_error_codes_without_form_defaults():
+    module = load_tool("inbound_routing_qualification")
+    api = NativeFlows()
+    snapshot = module.FlowSnapshot.capture(api)
+    post = api.post
+    def invalid_form(path, data):
+        if api.flows.get("trunk") == "trunk_form":
+            return {**form("trunk", {"trunk_password": "private-default-value"}, "trunk"),
+                    "errors": {"trunk_allowed_ips": "trunk_allowed_ips_invalid"}}
+        return post(path, data)
+    api.post = invalid_form
+    with pytest.raises(RuntimeError, match="trunk_allowed_ips_invalid") as failure:
+        snapshot.apply(api, trunk_override={"trunk_register": False})
+    assert "private-default-value" not in str(failure.value)
+    assert "data_schema" not in str(failure.value)
+    assert not api.flows
+    assert api.original == (api.records, api.options, api.messages)
+
+
 def test_native_trunk_roundtrip_changes_only_owned_fixture(monkeypatch):
     module = load_tool("inbound_routing_qualification")
     api = NativeFlows()
