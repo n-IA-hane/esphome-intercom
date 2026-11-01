@@ -242,6 +242,9 @@ async def async_commit_outbound_bridge(
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
+        transfer_audio = getattr(winner.ports, "transfer_audio_sockets", None)
+        if transfer_audio is not None:
+            transfer_audio(relay)
         source_media = registry.resource_for(invite.call_id, "preanswered") or {}
         audio_source = source_media.get("audio_rtp_source")
         if isinstance(audio_source, AudioRtpSenderState):

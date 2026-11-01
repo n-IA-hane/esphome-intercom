@@ -87,6 +87,80 @@ class FakeHass:
 
 
 class MediaPortPoolTest(unittest.TestCase):
+    @staticmethod
+    def _audio_reservation():
+        hass = FakeHass()
+        probes = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+        try:
+            for probe in probes:
+                probe.bind(("0.0.0.0", 0))
+            ports = tuple(probe.getsockname()[1] for probe in probes)
+        finally:
+            for probe in probes:
+                probe.close()
+        hass.runtime.rtp_port_pool = {"used": set(ports)}
+        return hass, media_ports.RtpPortReservation(hass, ports)
+
+    def test_audio_prebind_retains_socket_identity_budget_and_exclusive_release(self):
+        hass, owner = self._audio_reservation()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as default:
+            receive_budget = default.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+        try:
+            owner.bind_audio_sockets()
+            sockets = owner._audio_sockets
+            owner.bind_audio_sockets()
+            self.assertIs(owner._audio_sockets, sockets)
+            for sock, port in zip(sockets, owner.ports, strict=True):
+                self.assertFalse(sock.getblocking())
+                self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF), receive_budget)
+                self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 1)
+                self.assertEqual(sock.getsockopt(socket.IPPROTO_IP, socket.IP_TOS), 0xB8)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    with self.assertRaises(OSError):
+                        probe.bind(("0.0.0.0", port))
+            owner.release()
+            owner.release()
+            self.assertTrue(all(sock.fileno() < 0 for sock in sockets))
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+            for port in owner.ports:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.bind(("0.0.0.0", port))
+        finally:
+            owner.release()
+
+    def test_audio_prebind_failure_closes_first_socket_and_releases_pair(self):
+        hass, owner = self._audio_reservation()
+        opened = []
+        binder = media_ports.bind_sip_audio_socket
+
+        def bind(port, **kwargs):
+            sock = binder(port, **kwargs)
+            opened.append(sock)
+            return sock
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
+            occupied.bind(("0.0.0.0", owner.ports[1]))
+            with patch.object(media_ports, "bind_sip_audio_socket", bind):
+                with self.assertRaises(OSError):
+                    owner.bind_audio_sockets()
+            self.assertEqual(len(opened), 1)
+            self.assertLess(opened[0].fileno(), 0)
+            self.assertTrue(owner.released)
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.bind(("0.0.0.0", owner.ports[0]))
+
+    def test_detaching_unused_audio_closes_sockets_but_transfers_port_lease(self):
+        hass, owner = self._audio_reservation()
+        owner.bind_audio_sockets()
+        sockets = owner._audio_sockets
+        ports = owner.detach()
+        self.assertEqual(ports, owner.ports)
+        self.assertTrue(all(sock.fileno() < 0 for sock in sockets))
+        self.assertEqual(hass.runtime.rtp_port_pool["used"], set(ports))
+        media_ports.release_sip_rtp_port_pair(hass, ports)
+        self.assertFalse(hass.runtime.rtp_port_pool["used"])
+
     def test_adopt_bound_source_reserves_only_source_and_spare(self):
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):
