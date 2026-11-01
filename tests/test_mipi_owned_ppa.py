@@ -310,10 +310,7 @@ def test_consumer_provider_handshake_uses_the_merged_package_graph(tmp_path):
         if not new_provider:
             legacy = components / "mipi_dsi"
             shutil.copytree(DRIVER, legacy, ignore=shutil.ignore_patterns("__pycache__"))
-            for name in ("display.py", "mipi_dsi.h", "mipi_dsi.cpp"):
-                result = subprocess.run(["git", "show", f"a7ba2d27:esphome/components/mipi_dsi/{name}"],
-                                        cwd=ROOT, check=True, capture_output=True, text=True)
-                legacy.joinpath(name).write_text(result.stdout)
+            shutil.copyfile(ROOT / "tests/fixtures/mipi_legacy/display.py", legacy / "display.py")
             provider = components
         declaration = "p4_video_renderer: {}\n"
         if packaged:

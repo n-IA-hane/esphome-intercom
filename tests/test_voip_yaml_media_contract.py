@@ -579,9 +579,23 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("void P4VideoRenderer::loop()") :
         renderer_cpp.index("void P4VideoRenderer::dump_config()")
     ]
-    assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
-        renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
-    )
+    # A stale generation can be discarded before presentation. The current
+    # surface's failure-release branch must still follow the completed attempt.
+    presentation_start = renderer_loop.index("const bool presented =")
+    presentation = renderer_loop[
+        presentation_start:renderer_loop.index("#else", presentation_start)
+    ]
+    failed_release = presentation[presentation.index("if (!presented)"):]
+    assert presentation.index("this->commit_direct_surface_(pending)") < presentation.index("if (!presented)")
+    assert "int expected = pending;" in failed_release
+    assert "this->pending_surface_.compare_exchange_strong(" in failed_release
+    assert "expected, -1, std::memory_order_acq_rel" in failed_release
+    stale_release = renderer_loop[
+        renderer_loop.index("if (pending >= 0 && !pending_current)"):
+        renderer_loop.index("if (this->rx_running_.load")
+    ]
+    assert "this->pending_surface_.compare_exchange_strong(" in stale_release
+    assert "commit_direct_surface_" not in stale_release
     assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
         renderer_loop.index("const bool page_active")
     )
@@ -738,7 +752,16 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "this->direct_display_->draw_pixels_at(" in direct_present
+    native_blit = renderer_cpp[
+        renderer_cpp.index("bool P4VideoRenderer::present_native_rgb565_("):
+        renderer_cpp.index("bool P4VideoRenderer::present_surface_direct_(")
+    ]
+    assert "this->present_native_rgb565_(native_x, native_y, output_width," in direct_present
+    assert "this->owned_display_->draw_native_rgb565(x, y, width, height, pixels," in native_blit
+    assert "this->direct_display_->draw_pixels_at(x, y, width, height, pixels," in native_blit
+    assert "display::COLOR_ORDER_RGB" in native_blit
+    assert "display::COLOR_BITNESS_565, false" in native_blit
+    assert "display_rotation_" not in native_blit
     assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
