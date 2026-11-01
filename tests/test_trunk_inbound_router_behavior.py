@@ -30,10 +30,11 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
     captured = {}
 
     def client(**kwargs):
+        ports.bind_audio_sockets.assert_called_once_with()
         captured.update(kwargs)
         raise ClientObserved
 
-    ports = SimpleNamespace(ports=(44000, 44002))
+    ports = SimpleNamespace(ports=(44000, 44002), bind_audio_sockets=Mock())
     monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
     monkeypatch.setattr(bridge, "SipCallClient", client)
     runtime = SimpleNamespace(
@@ -76,6 +77,7 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
     captured = {}
 
     def client(**kwargs):
+        ports.bind_audio_sockets.assert_called_once_with()
         captured.update(kwargs)
         # Exercise the real SDP builder with the exact downstream client
         # inputs. The failing route used to pass stereo PCM to its mono map.
@@ -114,7 +116,8 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
         metadata.update(sip_audio_tx_formats=["PCMU/8000/1/20"],
                         sip_audio_rx_formats=["PCMU/8000/1/20"])
     entry = SimpleNamespace(sip_uri="sip:phone@192.0.2.30:5060", metadata=metadata)
-    monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: SimpleNamespace(ports=(44000, 44002)))
+    ports = SimpleNamespace(ports=(44000, 44002), bind_audio_sockets=Mock())
+    monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
     monkeypatch.setattr(bridge, "SipCallClient", client)
     runtime = SimpleNamespace(hass=object(), config={"sip_port": 15060},
         local_ip="192.0.2.10", sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA")
