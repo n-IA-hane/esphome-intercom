@@ -45,6 +45,9 @@ default JPEG offer includes `a=imageattr:26 send * recv *`, allowing the peer to
 answer with its receive preferences. Sending and receiving keep independent
 image-size contracts, including after a video re-offer.
 
+With optional SIP video transcoding enabled, an encoded JPEG bridge can resize
+either media direction, including when the phone receiving video starts the call.
+
 The browser sender fits the camera picture into the selected receive bounds
 before JPEG compression. It preserves the picture's proportions and avoids
 upscaling. The JPEG canvas uses dimensions divisible by eight, adding minimal
