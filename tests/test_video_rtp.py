@@ -1473,6 +1473,23 @@ class H264SdpTest(unittest.TestCase):
         self.assertEqual(selected.direction, "sendrecv")
         self.assertEqual(selected.max_framerate, 15.0)
 
+    def test_bridge_answer_preserves_lowest_declared_framerate(self) -> None:
+        from dataclasses import replace
+
+        for encoding in ("JPEG", "H264", "VP8"):
+            for source_limit, destination_limit, expected in (
+                (10, 2, 2), (2, 10, 2), (None, 2, 2), (2, None, 2), (None, None, None),
+            ):
+                with self.subTest(encoding=encoding, source=source_limit, destination=destination_limit):
+                    source = sdp.RtpVideoFormat(payload_type=102, encoding=encoding, max_framerate=source_limit)
+                    destination = replace(source, payload_type=110, max_framerate=destination_limit)
+                    answer = sdp.video_answer_contract(source, destination)
+                    legacy = sdp.video_answer_contract(replace(source, max_framerate=None),
+                                                       replace(destination, max_framerate=None))
+                    self.assertIsNotNone(answer)
+                    self.assertEqual(answer.max_framerate, expected)
+                    self.assertEqual(replace(answer, max_framerate=None), legacy)
+
     def test_jpeg_answer_framerate_limits_local_browser_sender(self) -> None:
         offer = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
         answer = (

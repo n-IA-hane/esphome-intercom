@@ -25,6 +25,19 @@ from .voip_phase1_support import (
 
 
 class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_bridge_offer_retains_source_send_framerate_when_receive_limit_absent(self):
+        for encoding in ("JPEG", "H264", "VP8"):
+            for send_limit, receive_limit, expected in (
+                (2, None, 2), (10, 2, 2), (None, 2, 2), (None, None, None),
+            ):
+                with self.subTest(encoding=encoding, send=send_limit, receive=receive_limit):
+                    source_send = sdp.RtpVideoFormat(payload_type=103, encoding=encoding, max_framerate=send_limit)
+                    source_receive = dataclasses.replace(source_send, payload_type=104, max_framerate=receive_limit)
+                    offered = sip_bridge.video_bridge_offer_formats(source_send, source_receive=source_receive,
+                        enable_transcoding=True, target_codec=encoding)
+                    self.assertEqual(offered[0], dataclasses.replace(source_receive, max_framerate=expected))
+                    self.assertTrue(all(item.max_framerate == expected for item in offered))
+
     def test_video_reoffer_preserves_established_audio_payload(self):
         """A video-only re-offer must retain its accepted audio mapping."""
 
@@ -156,6 +169,25 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             sockets=(None, None, None, None),
         )
         return invite, dialog, relay
+
+    def test_destination_framerate_reaches_source_answer_and_activation_reoffer(self):
+        invite, dialog, _relay = self._cross_codec_video_fixture()
+        source = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10)
+        invite = dataclasses.replace(invite, video_format=source, local_video_format=source,
+                                     video_answer_format=source)
+        dialog.video_format = dataclasses.replace(source, max_framerate=2)
+        dialog.local_video_format = source
+        relay = sip_bridge.build_pending_invite_video_relay(invite, remote_host=dialog.remote_host,
+            left_port=44000, right_port=44002, sockets=(None, None, None, None))
+        answer = sip_bridge.configure_answered_invite_video_relay(invite, dialog, relay)
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.video_format.max_framerate, 2)
+        self.assertEqual(relay.left.recv_format.max_framerate, 2)
+        for formats in ((answer.video_format,), (relay.left.recv_format, relay.left.send_format)):
+            offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 44004,
+                [invite.send_format.audio_format], [invite.recv_format.audio_format], video_port=44000, video_formats=formats)
+            self.assertIn("a=framerate:2\r\n", offer)
+            self.assertIn("a=rtpmap:26 JPEG/90000\r\n", offer)
 
     def test_cross_codec_video_offer_keeps_direct_codec_first(self) -> None:
         invite, _dialog, _relay = self._cross_codec_video_fixture()

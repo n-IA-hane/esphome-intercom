@@ -67,6 +67,9 @@ def video_bridge_offer_formats(
     """Offer what the source can receive, with bounded transcoding fallbacks."""
 
     source = source_receive or source_send
+    frame_limit = sdp.video_framerate_limit(source_send, source_receive)
+    if source.max_framerate != frame_limit:
+        source = replace(source, max_framerate=frame_limit)
     if target_codec == "":
         return ()
 

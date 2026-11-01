@@ -584,6 +584,13 @@ def directional_video_renegotiation_compatible(
     )
 
 
+def video_framerate_limit(*formats: RtpVideoFormat | None) -> float | None:
+    """Return the lowest declared frame-rate ceiling, or None."""
+    limits = [item.max_framerate for item in formats
+              if item is not None and item.max_framerate is not None]
+    return min(limits) if limits else None
+
+
 def video_answer_contract(
     offered: RtpVideoFormat,
     answered: RtpVideoFormat,
@@ -602,6 +609,11 @@ def video_answer_contract(
         or offered.transport_profile != answered.transport_profile
     ):
         return None
+    frame_limit = video_framerate_limit(offered, answered)
+    if offered.max_framerate != frame_limit:
+        offered = replace(offered, max_framerate=frame_limit)
+    if answered.max_framerate != frame_limit:
+        answered = replace(answered, max_framerate=frame_limit)
     if offered.encoding == "VP8":
         # The answer describes the answering endpoint's decoder limits. A
         # B2BUA relays those limits to the original offerer while retaining
@@ -2933,13 +2945,9 @@ def _video_media_lines_many(
             )
             for value in feedback:
                 lines.append(f"a=rtcp-fb:{payload_type} {value}")
-    frame_limits = [
-        item.max_framerate
-        for item in formats
-        if item.max_framerate is not None
-    ]
-    if frame_limits:
-        lines.append(f"a=framerate:{min(frame_limits):g}")
+    frame_limit = video_framerate_limit(*formats)
+    if frame_limit is not None:
+        lines.append(f"a=framerate:{frame_limit:g}")
     if int(media_port) > 0:
         lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
