@@ -1352,6 +1352,90 @@ observers[2].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"fresh"
 assert.equal(dashboard._phoneStates.has("fresh"),true);
 releaseReconnecting();
 
+// Runtime unload does not close HA's socket. One shared, nonsensitive HA
+// lifecycle listener must recover all cards with a new revision stream.
+const {{DashboardPhoneStore,dashboardCanCall,ownerDeviceInfo}} = await import(
+  pathToFileURL({json.dumps(str(ROOT / 'custom_components/voip_stack/frontend/voip-stack-dashboard-model.js'))})
+);
+const runtimeDashboard=new Engine();
+const runtimeObservers=[], lifecycleObservers=[];
+let lifecycleReleased=0, runtimeReleased=0;
+const runtimeConnection={{
+  subscribeEvents:async(listener,type)=>{{
+    lifecycleObservers.push({{listener,type}});
+    return()=>{{lifecycleReleased++;}};
+  }},
+  subscribeMessage:async(listener,request)=>{{
+    runtimeObservers.push({{listener,request}});
+    return()=>{{runtimeReleased++;}};
+  }},
+}};
+runtimeDashboard.configure({{connection:runtimeConnection}});
+const firstStore=new DashboardPhoneStore(), secondStore=new DashboardPhoneStore();
+const selectedDevice="desk-device";
+const releaseRuntimeOne=runtimeDashboard.subscribePhoneStates(event=>firstStore.apply(event));
+const releaseRuntimeTwo=runtimeDashboard.subscribePhoneStates(event=>secondStore.apply(event));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,1);
+assert.equal(lifecycleObservers.length,1);
+assert.equal(lifecycleObservers[0].type,"voip_stack.runtime_ready");
+const freshPhone={{endpoint_id:"desk",device_id:selectedDevice,kind:"browser",state:"idle",availability:"available"}};
+runtimeObservers[0].listener({{kind:"snapshot",revision:12,phones:[freshPhone]}});
+runtimeObservers[0].listener({{kind:"closed",reason:"runtime_unloaded"}});
+assert.equal(firstStore.ready,false);
+assert.equal(secondStore.phones.size,0);
+assert.equal(runtimeDashboard._phoneStateUnsub,null);
+assert.equal(runtimeReleased,1);
+runtimeObservers[0].listener({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(firstStore.phones.size,0);
+// Readiness must refresh even when the old subscription never rejected.
+runtimeDashboard._phoneStateFailed=false;
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2);
+runtimeObservers[1].listener({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(firstStore.ready,true);
+assert.equal(secondStore.revision,1);
+const owner=ownerDeviceInfo([freshPhone],firstStore.phones,selectedDevice);
+assert.equal(owner.device_id,selectedDevice);
+assert.equal(dashboardCanCall(owner,{{kind:"contact",name:"Support",state:"unknown"}},firstStore.ready),true);
+assert.equal(runtimeDashboard._softphoneScopeSubscriptions.size,0);
+runtimeObservers[1].listener({{kind:"closed",reason:"permissions_revoked"}});
+assert.equal(firstStore.phones.size,0);
+assert.equal(secondStore.ready,false);
+assert.equal(lifecycleReleased,1);
+runtimeDashboard.configure({{connection:runtimeConnection}});
+lifecycleObservers[0].listener({{}});
+runtimeDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2,"revoked access must not enter a retry loop");
+releaseRuntimeOne();releaseRuntimeTwo();
+assert.equal(lifecycleReleased,1);
+
+// A subscription acknowledgement arriving after unload must be retired,
+// without clearing or replacing the new generation's pending request.
+const pendingDashboard=new Engine(), pendingObservers=[];
+let acknowledgeOld, oldReleased=0;
+pendingDashboard.configure({{connection:{{subscribeMessage:(listener)=>{{
+  pendingObservers.push(listener);
+  if(pendingObservers.length===1)return new Promise(resolve=>{{acknowledgeOld=resolve;}});
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releasePendingDashboard=pendingDashboard.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+pendingObservers[0]({{kind:"closed",reason:"runtime_unloaded"}});
+pendingDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+acknowledgeOld(()=>{{oldReleased++;}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(oldReleased,1);
+assert.equal(pendingObservers.length,2);
+pendingObservers[0]({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(pendingDashboard._phoneStates.size,0);
+pendingObservers[1]({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(pendingDashboard._phoneStates.has("desk"),true);
+releasePendingDashboard();
+
 // Removing the final card must preserve the presence lease of its active call.
 const ownedView = new Engine();
 let viewUnsubscribe=0;

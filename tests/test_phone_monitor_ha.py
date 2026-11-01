@@ -201,7 +201,7 @@ async def test_user_revocation_clears_rows_and_releases_subscription(hass, monit
         connection.user.is_active = False
     hass.bus.async_fire(event_type, {"user_id": connection.user.id})
     await hass.async_block_till_done()
-    assert payload(connection) == {"kind": "delta", "revision": 2, "phones": [], "removed": ["kitchen"]}
+    assert payload(connection) == {"kind": "closed", "reason": "permissions_revoked"}
     assert not phone_state_observer(hass).projection_listeners
     # Revocation releases the observer; HA retains ownership of its callback slot.
     assert connection.subscriptions[20].__self__.closed
@@ -231,11 +231,85 @@ async def test_shared_owner_close_retracts_monitor_data(hass, monitor):
     connection = subscribe(hass, "sensor.kitchen_monitor")
     observer = phone_state_observer(hass)
     await observer.close()
-    assert payload(connection)["removed"] == ["kitchen"]
+    assert payload(connection) == {"kind": "closed", "reason": "runtime_unloaded"}
     assert not observer.projection_listeners
     assert connection.subscriptions[20].__self__.closed
     connection.subscriptions.pop(20)()
     assert not observer.unsubscribers and not observer.access_unsubscribers
+
+
+async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(hass, monkeypatch):
+    """Run actual entry setup/unload on one surviving HA transport connection."""
+    from unittest.mock import AsyncMock
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from custom_components import voip_stack
+    from custom_components.voip_stack import phone_services
+    from custom_components.voip_stack.endpoint_lifecycle import call_registry
+    from custom_components.voip_stack.runtime_data import require_runtime_data
+
+    entry = MockConfigEntry(domain="voip_stack", data={})
+    entry.add_to_hass(hass)
+    hass.data["voip_stack"] = {}
+    monkeypatch.setattr(voip_stack, "_async_setup_shared", AsyncMock())
+    monkeypatch.setattr(voip_stack, "_async_start_sip_trunk", AsyncMock())
+    monkeypatch.setattr(voip_stack, "_deferred_phonebook_sync", AsyncMock())
+    monkeypatch.setattr(phone_services, "async_setup_phone_services", AsyncMock())
+    async def forward_platforms(entry, platforms):
+        # Give the platform boundary its normal endpoint permission identity.
+        for endpoint in entry.runtime_data.endpoints.endpoints:
+            entry.runtime_data.endpoints.update(endpoint.endpoint_id, entity_ids={"sensor.reload_phone"})
+
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", forward_platforms)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True))
+
+    async def start_transport(hass):
+        call_registry(hass).activate()
+        return True
+
+    monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start_transport)
+    connection = Connection({"sensor.reload_phone"})
+    ready = []
+
+    from homeassistant.core import callback
+    @callback
+    def on_ready(event):
+        # The real lifecycle event must arrive only after snapshot readiness.
+        runtime = require_runtime_data(hass)
+        ready.append((event.event_type, runtime.sip, tuple(runtime.endpoints.endpoints)))
+        subscribe(hass, msg_id=20 + len(ready), connection=connection)
+
+    unsubscribe = hass.bus.async_listen("voip_stack.runtime_ready", on_ready)
+    try:
+        assert await voip_stack.async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert len(ready) == 1
+        first_runtime = ready[0][1]
+        initial = payload(connection)
+        assert initial["kind"] == "snapshot" and initial["revision"] == 1
+        assert len(initial["phones"]) == 1
+        phone = initial["phones"][0]
+        assert phone["state"] == "idle" and phone["availability"] == "available"
+        assert not entry.runtime_data.softphone_presence
+        assert await voip_stack.async_unload_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert payload(connection) == {"kind": "closed", "reason": "runtime_unloaded"}
+        assert connection.subscriptions[21].__self__.closed
+        assert await voip_stack.async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert len(ready) == 2 and ready[1][1] is not first_runtime
+        assert payload(connection)["revision"] == 1
+        restored, = payload(connection)["phones"]
+        assert (restored["endpoint_id"], restored["device_id"], restored["state"]) == (
+            phone["endpoint_id"], phone["device_id"], "idle")
+        assert not entry.runtime_data.softphone_presence
+        observer = phone_state_observer(hass)
+        assert len(observer.projection_listeners) == 1
+    finally:
+        unsubscribe()
+        for close in tuple(connection.subscriptions.values()):
+            close()
+        if entry.runtime_data.sip is not None:
+            await voip_stack.async_unload_entry(hass, entry)
 
 
 async def test_multi_call_and_hold_preserve_the_blf_projection(hass, monitor):

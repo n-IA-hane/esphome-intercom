@@ -790,6 +790,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     _register_runtime_shutdown(hass, entry)
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
+    # Transport subscriptions survive an entry reload. Announce readiness only
+    # after the new runtime and its platforms can serve a fresh snapshot.
+    hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
     return True
 
 

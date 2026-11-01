@@ -403,7 +403,7 @@ class VoipDeviceResolver:
 
         # New phones are identified by their ESPHome owner and SIP account.
         # Keep the old descriptor parser only for firmware migration.
-        from .managed_phones import managed_records
+        from .managed_phones import managed_phone_mode, managed_records
         from .core import sip
 
         entry = next(iter(self.hass.config_entries.async_entries(DOMAIN)), None)
@@ -416,6 +416,14 @@ class VoipDeviceResolver:
                 device = device_registry.async_get(phone.device_id)
                 origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
                 if device is None or origin is None or origin.domain != "esphome":
+                    continue
+                if managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
+                    # Keep the descriptor's physical SIP address and capabilities.
+                    # Identity and user-facing name survive firmware rollback.
+                    if phone.device_id in current:
+                        current[phone.device_id].update(endpoint_id=phone.endpoint_id,
+                            name=device.name_by_user or phone.display_name,
+                            extension=current[phone.device_id].get("extension") or phone.extension)
                     continue
                 bindings = registrar.registered_contacts(phone.username) if registrar is not None else ()
                 binding = bindings[0] if bindings else None

@@ -75,4 +75,38 @@ def active_managed_accounts(hass, entry) -> list[SipAccount]:
         phone.account() for phone in managed_records(entry).values()
         if (origin := hass.config_entries.async_get_entry(phone.origin_entry_id)) is not None
         and origin.domain == "esphome"
+        and managed_phone_mode(hass, origin, phone.device_id, phone.mac) is not False
     ]
+
+
+def managed_phone_mode(hass, origin, device_id: str, mac: str, *, require_inventory=False) -> bool | None:
+    """Derive ownership from ESPHome's last complete, MAC-verified inventory.
+
+    ESPHome retains this inventory on disconnect. Bootstrap of a replacement
+    API owner keeps the provisioner's last verified decision. Neither case is
+    a firmware change. There is no second persisted account database.
+    """
+    from .runtime_data import runtime_data
+
+    def normalize_mac(value):
+        return str(value).replace(":", "").replace("-", "").casefold()
+
+    runtime = runtime_data(hass)
+    modes = getattr(getattr(runtime, "phone_provisioning", None), "_firmware_modes", {})
+    key = (getattr(origin, "entry_id", ""), device_id, normalize_mac(mac))
+    previous = None if require_inventory else modes.get(key)
+    native = getattr(origin, "runtime_data", None)
+    complete = getattr(native, "first_connect_done", None)
+    if complete is None or not complete.is_set():
+        return previous
+    info = getattr(native, "device_info", None)
+    if info is None or not mac or normalize_mac(info.mac_address) != normalize_mac(mac):
+        return previous
+    services = getattr(native, "services", None)
+    if not isinstance(services, Mapping):
+        return previous
+    names = {service.name for service in services.values()}
+    mode = {AUTO_REGISTER_ACTION, "set_account"} <= names
+    if not require_inventory or mode or key in modes:
+        modes[key] = mode
+    return mode

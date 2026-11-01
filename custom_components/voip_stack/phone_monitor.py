@@ -14,6 +14,8 @@ class PhoneStateSubscription:
     Events are ``{kind: 'snapshot', revision: 1, phones: [...]}``, followed by
     ``{kind: 'delta', revision: 2, phones: [...], removed: [...]}``. Revision is
     local to this subscription. Reconnecting starts with a new full snapshot.
+    ``{kind: 'closed', reason: 'runtime_unloaded' | 'permissions_revoked'}``
+    retracts the entire projection and terminates this subscription.
     """
 
     def __init__(self, hass, connection, msg_id):
@@ -73,12 +75,16 @@ class PhoneStateSubscription:
                 return
             if event.event_type == EVENT_USER_REMOVED:
                 self.revoked = True
+        terminal = "runtime_unloaded" if update.closed else "permissions_revoked" if not self._user_active() else ""
         try:
-            self._publish(update=update)
+            if terminal:
+                self.connection.send_event(self.msg_id, {"kind": "closed", "reason": terminal})
+            else:
+                self._publish(update=update)
         except Exception:
             self.close()
             raise
-        if update.closed or not self._user_active():
+        if terminal:
             self.close()
 
     def _publish(self, *, snapshot=False, update=None):

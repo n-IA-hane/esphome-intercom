@@ -10,7 +10,7 @@ import logging
 
 from homeassistant.components import network
 from homeassistant.config_entries import ConfigEntryChange, SIGNAL_CONFIG_ENTRY_CHANGED
-from homeassistant.const import EVENT_SERVICE_REGISTERED, EVENT_STATE_CHANGED
+from homeassistant.const import EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED, EVENT_STATE_CHANGED
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -20,7 +20,8 @@ from .const import CONF_REGISTRAR_ENABLED
 from .device_resolver import entity_role, slugify_route_id
 from .endpoint_lifecycle import create_runtime_task
 from .managed_phones import (
-    AUTO_REGISTER_ACTION, CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID, ManagedPhone, managed_records,
+    AUTO_REGISTER_ACTION, CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID, ManagedPhone,
+    active_managed_accounts, managed_phone_mode, managed_records,
 )
 from .phone_endpoint import EndpointAvailability, EndpointKind, PhoneEndpoint
 from .runtime_data import require_runtime_data, sip_registrar
@@ -28,10 +29,6 @@ from .sip_registrar import generate_password, normalize_username
 
 _LOGGER = logging.getLogger(__name__)
 _OFFLINE = {"unknown", "unavailable", ""}
-
-
-def _mac(value: str) -> str:
-    return value.replace(":", "").replace("-", "").casefold()
 
 
 class EspHomeProvisioner:
@@ -43,6 +40,7 @@ class EspHomeProvisioner:
         self._lock = asyncio.Lock()
         self._unsubscribers = []
         self._delivered = {}
+        self._firmware_modes = {}
         self._task = None
         self._closed = False
         self._removed_origins = set()
@@ -57,6 +55,7 @@ class EspHomeProvisioner:
     def start(self):
         self._unsubscribers = [
             self.hass.bus.async_listen(EVENT_SERVICE_REGISTERED, self._service_changed),
+            self.hass.bus.async_listen(EVENT_SERVICE_REMOVED, self._service_changed),
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed),
             self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
             self.hass.bus.async_listen("voip_stack_voicemail_changed", self._mailbox_changed),
@@ -84,6 +83,8 @@ class EspHomeProvisioner:
         if event.data.get("domain") == "esphome":
             name = str(event.data.get("service") or "")
             if name.endswith(("_" + AUTO_REGISTER_ACTION, "_set_account", "_configure_directory", "_configure_voicemail")):
+                self._revoke(lambda phone: managed_phone_mode(self.hass,
+                    self.hass.config_entries.async_get_entry(phone.origin_entry_id), phone.device_id, phone.mac) is False)
                 self.schedule()
 
     @callback
@@ -93,7 +94,7 @@ class EspHomeProvisioner:
             return
         entity = er.async_get(self.hass).async_get(event.data["entity_id"])
         role = entity_role(entity) if entity is not None else ""
-        if role == "voip_extension" and (old is None or old.state != new.state):
+        if role in {"voip_extension", "voip_endpoint"} and (old is None or old.state != new.state):
             self.schedule()
         elif role == "voip_state" and new.state and (old is None or old.state in _OFFLINE):
             self._delivered.pop(entity.device_id, None)
@@ -136,12 +137,20 @@ class EspHomeProvisioner:
         registrar = sip_registrar(self.hass)
         if registrar is not None:
             registrar.update_accounts(sip_accounts(self.hass))
-            registrar.enabled = bool(transport_config(self.hass).get(CONF_REGISTRAR_ENABLED) or managed_records(self.entry))
+            registrar.enabled = bool(transport_config(self.hass).get(CONF_REGISTRAR_ENABLED)
+                                     or active_managed_accounts(self.hass, self.entry))
 
-    def _current(self, phone):
-        return (not self._closed and phone.origin_entry_id not in self._removed_origins
-                and phone.device_id not in self._removed_devices
-                and self.hass.config_entries.async_get_entry(phone.origin_entry_id) is not None)
+    def _current(self, phone, native=None):
+        if (self._closed or phone.origin_entry_id in self._removed_origins
+                or phone.device_id in self._removed_devices):
+            return False
+        origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
+        if origin is None or (native is not None and (getattr(origin, "runtime_data", None) is not native
+                              or not native.available or not native.client.is_connected)):
+            return False
+        mode = managed_phone_mode(self.hass, origin, phone.device_id, phone.mac,
+                                  require_inventory=native is not None)
+        return mode is True if native is not None else mode is not False
 
     def _principal(self, username):
         if self._closed:
@@ -183,6 +192,16 @@ class EspHomeProvisioner:
                     directory_changed = True
                     records.pop(phone.device_id, None)
             self._save(records)
+            # A firmware-mode change suspends credentials and cached delivery,
+            # but never enters the permanent device-removal purge lifecycle.
+            suspended = False
+            for phone in records.values():
+                origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
+                if managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
+                    suspended = True
+                    directory_changed |= self._delivered.pop(phone.device_id, None) is not None
+            if suspended:
+                self._refresh_accounts()
             for device_id in self._removed_devices:
                 endpoint = require_runtime_data(self.hass).endpoints.by_device_id(device_id)
                 if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
@@ -195,15 +214,16 @@ class EspHomeProvisioner:
                 if origin.entry_id in self._removed_origins or device.id in self._removed_devices:
                     continue
                 native = getattr(origin, "runtime_data", None)
-                client = getattr(native, "client", None)
-                services = {service.name: service for service in getattr(native, "services", {}).values()}
-                if (AUTO_REGISTER_ACTION not in services or "set_account" not in services
-                        or not getattr(client, "is_connected", False) or not getattr(native, "available", True)):
+                if (not getattr(native, "available", False)
+                        or not getattr(getattr(native, "client", None), "is_connected", False)):
                     continue
                 info = getattr(native, "device_info", None)
-                if info is None or not any(kind == dr.CONNECTION_NETWORK_MAC and _mac(value) == _mac(info.mac_address)
+                if info is None or not any(kind == dr.CONNECTION_NETWORK_MAC
+                                           and managed_phone_mode(self.hass, origin, device.id, value,
+                                                                  require_inventory=True) is True
                                            for kind, value in device.connections):
                     continue
+                services = {service.name: service for service in native.services.values()}
                 try:
                     username = normalize_username(info.name)
                     if len(username) > 64:
@@ -276,7 +296,7 @@ class EspHomeProvisioner:
         # A secret is never copied into a HA ServiceCall/event or our logs.
         delivered = self._delivered.setdefault(phone.device_id, {})
         for action, data in actions:
-            if not self._current(phone):
+            if not self._current(phone, native):
                 return
             if action not in services:
                 continue
@@ -284,12 +304,14 @@ class EspHomeProvisioner:
             if delivered.get(action) == signature:
                 continue
             await native.client.execute_service(services[action], data)
-            if self._current(phone):
+            if self._current(phone, native):
                 delivered[action] = signature
 
     async def _purge(self, phone):
         await self._purge_endpoint(phone.endpoint_id, phone.username)
         self._delivered.pop(phone.device_id, None)
+        self._firmware_modes.pop((phone.origin_entry_id, phone.device_id,
+            phone.mac.replace(":", "").replace("-", "").casefold()), None)
 
     async def _purge_endpoint(self, endpoint_id, username):
         from .mailbox import async_remove_mailbox
@@ -333,3 +355,4 @@ class EspHomeProvisioner:
         self._unsubscribers.clear()
         async with self._lock:
             self._delivered.clear()
+            self._firmware_modes.clear()

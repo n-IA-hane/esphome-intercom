@@ -24,6 +24,9 @@ pytestmark = pytest.mark.ha
 
 @pytest.fixture
 async def phone_lab(hass):
+    from aioesphomeapi import UserService
+    from homeassistant.components.esphome.entry_data import RuntimeEntryData
+    from unittest.mock import MagicMock
     entry = MockConfigEntry(domain="voip_stack", data={})
     entry.add_to_hass(hass)
     endpoints = EndpointRegistry()
@@ -52,10 +55,13 @@ async def phone_lab(hass):
             gate.entered.set()
             await gate.release.wait()
 
-    services = {i: SimpleNamespace(name=name) for i, name in enumerate(("set_ha_display_name", "set_account"))}
-    native.runtime_data = SimpleNamespace(client=SimpleNamespace(is_connected=True, execute_service=execute_service),
+    services = {i: UserService(name=name, key=i, args=[])
+                for i, name in enumerate(("set_ha_display_name", "set_account"))}
+    native.runtime_data = RuntimeEntryData(entry_id=native.entry_id, title=native.title,
+        client=SimpleNamespace(is_connected=True, execute_service=execute_service), store=MagicMock(),
         device_info=SimpleNamespace(name="phone_node", friendly_name="Ingresso", mac_address="84:C7:BB:00:00:01"),
-        services=services)
+        services=services, available=True)
+    native.runtime_data.first_connect_done.set()
     unsub = hass.bus.async_listen("call_service", lambda event: events.append(dict(event.data)))
     controller = EspHomeProvisioner(hass, entry)
     entry.runtime_data.phone_provisioning = controller
@@ -385,6 +391,230 @@ async def test_offline_preserves_account_and_reconnect_reuses_password(phone_lab
     assert lab.runtime.endpoints.get(first.endpoint_id) is not None
     lab.native.runtime_data.client.is_connected = True
     await lab.controller.async_sync()
+    assert managed_records(lab.entry)[lab.device.id].password == first.password
+
+
+@pytest.mark.parametrize("manual_registration", [False, True])
+async def test_firmware_legacy_mode_preserves_identity_and_revokes_managed_access(phone_lab, manual_registration, monkeypatch, tmp_path):
+    """Both real legacy API inventories must route without a REGISTER."""
+    from aioesphomeapi import UserService
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.device_resolver import get_resolver
+    from custom_components.voip_stack.mailbox import CONF_ESPHOME_MAILBOXES
+    from custom_components.voip_stack.websocket_api import _get_voip_devices
+    from custom_components.voip_stack import mailbox
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.core.media_archive import MediaArchive
+    from custom_components.voip_stack.phone_config import CONF_ESPHOME_PHONE_POLICIES
+
+    lab = phone_lab
+    extension = er.async_get(lab.hass).async_get_or_create("text", "esphome",
+        "84c7bb000001-voip_extension", config_entry=lab.native, device_id=lab.device.id)
+    lab.hass.states.async_set(extension.entity_id, "101")
+    entity = er.async_get(lab.hass).async_get_or_create("sensor", "esphome",
+        "84c7bb000001-voip_endpoint", config_entry=lab.native, device_id=lab.device.id)
+    lab.hass.states.async_set(entity.entity_id,
+        "Old descriptor name|192.0.2.10|5070|40000|full_duplex|16000:s16le:1:20|16000:s16le:1:20|sip_udp|101")
+    await lab.controller.async_sync()
+    phone = managed_records(lab.entry)[lab.device.id]
+    archive = MediaArchive(tmp_path / "archive", lab.hass.async_add_executor_job)
+    await archive.load()
+    writer = await archive.begin(phone.endpoint_id, caller="Controlled caller")
+    assert writer.offer(b"\x10\0" * 1600, AudioFormat(16000, frame_ms=20))
+    recording = await writer.finish()
+    original_uids = await archive.imap_snapshot(phone.endpoint_id)
+    recording_path = archive.segment_path(recording["id"], phone.endpoint_id)
+    recording_bytes = recording_path.read_bytes()
+    def forbidden_purge(*args):
+        pytest.fail("A firmware mode change must not delete mailbox data")
+    monkeypatch.setattr(mailbox, "async_remove_mailbox", forbidden_purge)
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        CONF_ESPHOME_MAILBOXES: {phone.endpoint_id: {"enabled": True}},
+        CONF_ESPHOME_PHONE_POLICIES: {phone.endpoint_id: {"outbound_trunk_id": "preferred-pbx"}}})
+    original_services = lab.native.runtime_data.services
+    # ha_integration.h: set_ha_display_name is AUTO_REGISTER-only; account
+    # methods are also exposed by manual PBX registration firmware.
+    names = ["start_call", "start_call_via_ha", "hangup_call_if_id", "answer_call", "decline_call",
+             "hangup_call", "send_dtmf", "set_media_route", "set_ha_peer_name", "set_roster_json",
+             "set_contacts", "add_contact", "remove_contact", "flush_contacts", "update_contacts"]
+    if manual_registration:
+        names += ["set_account", "remove_account", "reset_account", "register_account",
+                  "unregister_account", "select_line", "start_call_on_line"]
+    lab.native.runtime_data.services = {i: UserService(name=name, key=i, args=[])
+                                        for i, name in enumerate(names)}
+    await lab.controller.async_sync()
+    device, = await get_resolver(lab.hass).list_devices()
+    assert not device.get("managed")
+    assert device["sip_port"] == 5070 and device["host"] == "192.0.2.10"
+    assert device["name"] == phone.display_name
+    assert device["endpoint_id"] == phone.endpoint_id
+    assert not lab.registrar.registrations
+    assert phone.username not in lab.registrar.accounts
+    assert not await lab.controller.authenticate(phone.username, phone.password.encode())
+    assert not await lab.controller.authenticate_verifier(phone.username, lambda _: True)
+    assert managed_records(lab.entry)[lab.device.id] == phone
+    assert lab.entry.data[CONF_ESPHOME_MAILBOXES][phone.endpoint_id] == {"enabled": True}
+    assert lab.entry.data[CONF_ESPHOME_PHONE_POLICIES][phone.endpoint_id] == {"outbound_trunk_id": "preferred-pbx"}
+    assert recording_path.read_bytes() == recording_bytes
+    assert await archive.imap_snapshot(phone.endpoint_id) == original_uids
+    await _get_voip_devices(lab.hass)
+    assert lab.runtime.endpoints.get(phone.endpoint_id).availability.value == "available"
+    lab.native.runtime_data.services = original_services
+    await lab.controller.async_sync()
+    restored = managed_records(lab.entry)[lab.device.id]
+    assert restored.password == phone.password and restored.endpoint_id == phone.endpoint_id
+    assert restored.extension == "101"
+    assert lab.registrar.accounts[phone.username].password == phone.password
+    assert [name for name, _ in lab.sent].count("set_account") == 2
+    await archive.close()
+
+
+@pytest.mark.parametrize("incomplete", ["disconnected", "unavailable", "bootstrap", "wrong_mac", "no_inventory", "no_runtime"])
+async def test_incomplete_api_inventory_is_not_a_firmware_mode_change(phone_lab, incomplete):
+    from custom_components.voip_stack.device_resolver import get_resolver
+
+    lab = phone_lab
+    await lab.controller.async_sync()
+    phone = managed_records(lab.entry)[lab.device.id]
+    native = lab.native.runtime_data
+    if incomplete == "disconnected":
+        native.client.is_connected = False
+    elif incomplete == "unavailable":
+        native.available = False
+    elif incomplete == "bootstrap":
+        native.first_connect_done.clear()
+        native.services = {}
+    elif incomplete == "wrong_mac":
+        native.device_info.mac_address = "00:00:00:00:00:00"
+        native.services = {}
+    elif incomplete == "no_inventory":
+        native.services = None
+    else:
+        lab.native.runtime_data = None
+    await lab.controller.async_sync()
+    device, = await get_resolver(lab.hass).list_devices()
+    assert device["managed"] is True
+    assert managed_records(lab.entry)[lab.device.id] == phone
+    assert lab.registrar.accounts[phone.username].password == phone.password
+    assert await lab.controller.authenticate(phone.username, phone.password.encode()) == phone.endpoint_id
+
+
+async def test_legacy_mode_without_descriptor_suspends_auth_without_losing_record(phone_lab):
+    from custom_components.voip_stack.device_resolver import get_resolver
+    lab = phone_lab
+    await lab.controller.async_sync()
+    phone = managed_records(lab.entry)[lab.device.id]
+    lab.native.runtime_data.services = {}
+    await lab.controller.async_sync()
+    assert not await get_resolver(lab.hass).list_devices()
+    assert not sip_accounts(lab.hass)
+    account_still_active = phone.username in lab.registrar.accounts
+    assert not account_still_active
+    assert managed_records(lab.entry)[lab.device.id] == phone
+    assert lab.runtime.endpoints.get(phone.endpoint_id) is not None
+
+
+@pytest.mark.parametrize("managed_return", [False, True])
+async def test_verified_legacy_mode_survives_api_outage_and_replacement_bootstrap(phone_lab, managed_return):
+    from dataclasses import replace
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.device_resolver import get_resolver
+    from custom_components.voip_stack.managed_phones import managed_phone_mode
+    lab = phone_lab
+    entity = er.async_get(lab.hass).async_get_or_create("sensor", "esphome",
+        "84c7bb000001-voip_endpoint", config_entry=lab.native, device_id=lab.device.id)
+    lab.hass.states.async_set(entity.entity_id,
+        "Legacy|192.0.2.10|5070|40000|full_duplex|16000:s16le:1:20|16000:s16le:1:20|sip_udp")
+    await lab.controller.async_sync()
+    phone = managed_records(lab.entry)[lab.device.id]
+    original_services = lab.native.runtime_data.services
+    lab.native.runtime_data.services = {}
+    await lab.controller.async_sync()
+    lab.native.runtime_data.client.is_connected = False
+    lab.native.runtime_data.available = False
+    await lab.controller.async_sync()
+    assert not sip_accounts(lab.hass)
+    assert not await lab.controller.authenticate(phone.username, phone.password.encode())
+    device, = await get_resolver(lab.hass).list_devices()
+    assert not device.get("managed") and device["sip_port"] == 5070
+
+    # Replacement's empty bootstrap inventory cannot resurrect managed auth.
+    lab.native.runtime_data = replace(lab.native.runtime_data,
+        first_connect_done=asyncio.Event(), services={}, available=True)
+    lab.native.runtime_data.client.is_connected = True
+    await lab.controller.async_sync()
+    assert not sip_accounts(lab.hass)
+    assert managed_phone_mode(lab.hass, lab.native, "different-device", phone.mac) is None
+    other_origin = MockConfigEntry(domain="esphome", data={})
+    other_origin.runtime_data = lab.native.runtime_data
+    assert managed_phone_mode(lab.hass, other_origin, phone.device_id, phone.mac) is None
+    lab.native.runtime_data.services = original_services if managed_return else {}
+    lab.native.runtime_data.first_connect_done.set()
+    await lab.controller.async_sync()
+    assert bool(sip_accounts(lab.hass)) is managed_return
+    assert managed_records(lab.entry)[lab.device.id].password == phone.password
+    assert managed_records(lab.entry)[lab.device.id].endpoint_id == phone.endpoint_id
+
+
+async def test_firmware_switch_during_native_rpc_cannot_deliver_stale_credentials(phone_lab):
+    from homeassistant.const import EVENT_SERVICE_REMOVED
+    lab = phone_lab
+    lab.gate.entered, lab.gate.release = asyncio.Event(), asyncio.Event()
+    lab.controller.start()
+    await asyncio.wait_for(lab.gate.entered.wait(), 2)
+    phone = managed_records(lab.entry)[lab.device.id]
+    lab.native.runtime_data.services = {}
+    lab.hass.bus.async_fire(EVENT_SERVICE_REMOVED,
+        {"domain": "esphome", "service": "phone_node_set_ha_display_name"})
+    await lab.hass.async_block_till_done()
+    assert not await lab.controller.authenticate(phone.username, phone.password.encode())
+    assert phone.username not in lab.registrar.accounts
+    lab.gate.release.set()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert [name for name, _ in lab.sent] == ["set_ha_display_name"]
+    assert phone.username not in lab.registrar.accounts
+    assert managed_records(lab.entry)[lab.device.id] == phone
+
+
+async def test_replaced_native_connection_does_not_finish_the_old_delivery(phone_lab):
+    from dataclasses import replace
+    lab = phone_lab
+    original = lab.native.runtime_data
+    lab.gate.entered, lab.gate.release = asyncio.Event(), asyncio.Event()
+    lab.controller.start()
+    await asyncio.wait_for(lab.gate.entered.wait(), 2)
+    replacement_sent = []
+
+    async def replacement_rpc(service, data):
+        replacement_sent.append(service.name)
+
+    lab.native.runtime_data = replace(original,
+        client=SimpleNamespace(is_connected=True, execute_service=replacement_rpc))
+    lab.controller.schedule()
+    lab.gate.release.set()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert [name for name, _ in lab.sent] == ["set_ha_display_name"]
+    assert replacement_sent == ["set_ha_display_name", "set_account"]
+
+
+async def test_legacy_firmware_does_not_revoke_another_phone_or_manual_account(phone_lab):
+    from dataclasses import replace
+    from custom_components.voip_stack.const import CONF_SIP_ACCOUNTS
+    lab = phone_lab
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        CONF_SIP_ACCOUNTS: [{"username": "manual", "password": "test-manual-password"}]})
+    other = MockConfigEntry(domain="esphome", data={"host": "192.0.2.11", "device_name": "other_node"})
+    other.add_to_hass(lab.hass)
+    other_device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=other.entry_id,
+        connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:02")}, name="Other phone")
+    other.runtime_data = replace(lab.native.runtime_data, entry_id=other.entry_id,
+        device_info=SimpleNamespace(name="other_node", friendly_name="Other phone", mac_address="84:C7:BB:00:00:02"))
+    await lab.controller.async_sync()
+    first, second = (managed_records(lab.entry)[device.id] for device in (lab.device, other_device))
+    lab.native.runtime_data.services = {}
+    await lab.controller.async_sync()
+    assert set(lab.registrar.accounts) == {"other_node", "manual"}
+    assert lab.registrar.accounts[second.username].password == second.password
     assert managed_records(lab.entry)[lab.device.id].password == first.password
 
 
