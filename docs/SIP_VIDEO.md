@@ -59,6 +59,16 @@ No extra YAML setting is needed for this negotiation. Peers that omit the
 attribute retain the existing behavior, while unsupported optional preferences
 leave the audio call available. Frame rate remains a separate SDP setting.
 
+The SDP `framerate` recommendation belongs to the negotiated media path, not
+to a global phone-system limit. A display profile advertising 10 FPS keeps
+that budget; a compatible peer advertising 25 FPS can use 25. When no frame
+rate is declared, the browser's preferred capture rate is 30 FPS without an
+extra fixed maximum, subject to the actual camera and codec capabilities.
+Compatible RTP relay preserves the source cadence. Capture and conversion
+respect receiver limits without discarding nominal-rate frames just because
+of small timing variations, or duplicating a slow source to fill the limit.
+See [SDP frame-rate semantics](https://www.rfc-editor.org/rfc/rfc8866.html#section-6.13).
+
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
 The codec matrix below explains what happens when endpoints support different
@@ -381,11 +391,14 @@ release that single slot instead of failing the next video offer.
 There is no intermediate recording or complete video file. FFmpeg receives
 and emits RTP continuously on loopback. The transcode path is intentionally
 bounded to one active call and at most one subprocess per incompatible active
-direction. Every subprocess uses one encoder thread. Browser VP8 output is
-limited to 1280x720, 15 frames per second, 700 kbit/s target and 900 kbit/s
-maximum. SIP H.264 output follows the receiver's level envelope and uses a
-bounded low-latency baseline profile. SIP JPEG output is limited to 800x800 at
-10 frames per second. A second simultaneous transcode call remains audio-only
+direction. Every subprocess uses one encoder thread. Browser VP8 output uses
+an envelope up to 1280x720, 700 kbit/s target and 900 kbit/s maximum, subject
+to the receiver's format parameters. SIP H.264 output follows the receiver's
+level envelope and uses a bounded low-latency baseline profile. SIP JPEG uses
+the negotiated image-size plan, with an 800x800 fallback. There is no generic
+10- or 15-FPS transcode ceiling: source timestamps are retained, and a real
+receiver or codec frame-rate limit only removes excess input pictures.
+A second simultaneous transcode call remains audio-only
 instead of starting unbounded codec workers.
 
 VoIP Stack first uses the FFmpeg binary configured by Home Assistant and then
