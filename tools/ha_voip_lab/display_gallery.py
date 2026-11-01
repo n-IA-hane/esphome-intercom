@@ -119,9 +119,12 @@ def gallery_witness(esp):
             self._diagnostic_completed_at = 0.0
 
         def on_log(self, entry):
+            first = len(self.log)
             super().on_log(entry)
             value = entry.message.decode(errors="replace") if isinstance(entry.message, bytes) else str(entry.message)
-            if "ui.hil" in value:
+            # --source may select an older qualifier. Preserve that adapter
+            # without duplicating samples admitted by the current log owner.
+            if "ui.hil" in value and len(self.log) == first:
                 self.log.append({"time": time.monotonic(), "message": value})
                 self.changed.set()
 
@@ -166,14 +169,7 @@ def gallery_witness(esp):
             await self.wait(lambda: any("ui.hil" in r["message"] and "page=" in r["message"]
                                        for r in self.log[first:]), timeout=5)
             message = next(r["message"] for r in self.log[first:] if "ui.hil" in r["message"] and "page=" in r["message"])
-            fields = dict(re.findall(r"(\w+)=([^\s]+)", message))
-            known_page = fields.get("page") not in {None, "unknown"}
-            if ((not known_page and self.expected_page != "settings") or
-                    (known_page and fields["page"] != self.expected_page) or
-                    fields.get("avatar_visible") != "NO"):
-                raise RuntimeError("Gallery UI checkpoint differs from the requested safe phone page")
-            fields["page_identity_available"] = known_page
-            return fields
+            return hil.ui_checkpoint_fields(message, self.expected_page)
 
         async def screenshot(self, address, output):
             # Reuse the existing mailbox scenario while keeping its two idle

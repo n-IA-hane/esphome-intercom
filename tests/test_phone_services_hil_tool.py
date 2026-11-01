@@ -18,6 +18,123 @@ def test_invalid_geometry_cannot_produce_a_pointer_action():
         contact_page_offsets(2, row_height=0)
 
 
+@pytest.mark.parametrize("ready_at", [4.0, 4.6], ids=["compiled-terminal-hold", "delayed-screen-marker"])
+async def test_contact_capture_waits_for_native_page_after_sip_idle(tmp_path, monkeypatch, ready_at):
+    from types import SimpleNamespace
+    from tools.ha_voip_lab import phone_services_hil as hil
+
+    now = 0.0
+    observed = []
+
+    async def advance(duration):
+        nonlocal now
+        now += duration
+
+    class Witness:
+        call_state = "idle"
+
+        def __init__(self):
+            self.log = []
+
+        async def service(self, name, data=None):
+            observed.append((now, name))
+            if name == "registration_runtime_diagnostics":
+                page = "unavailable" if now < 4.0 else "call_idle"
+                transition = int(now < ready_at)
+                for line in (f"[I][ui.hil]: page={page} transition={transition} avatar_visible=NO",
+                             f"[I][voip_stack.diagnostics]: BEGIN v=1 uptime_ms={int(now*1000)}",
+                             f"[I][voip_stack.diagnostics]: END v=1 uptime_ms={int(now*1000)}"):
+                    self.log.append({"message": line, "time": now})
+
+        async def wait(self, predicate, timeout=5):
+            assert predicate(), "The native RPC fixture emits one complete diagnostic"
+
+        async def screenshot(self, address, output):
+            assert now >= ready_at, "SIP idle does not release the terminal page or an LVGL transition"
+            observed.append((now, "native_jpeg"))
+            return {"capture_id": "fresh-native-id"}
+
+    monkeypatch.setattr(hil, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(hil.asyncio, "sleep", advance)
+    args = SimpleNamespace(contacts_row_height=52, contacts_viewport=208,
+        contacts_capture_offset=None, output=tmp_path / "blf.json", address="192.0.2.1")
+    images = await hil.capture_contact_pages(Witness(), args, "blf-held", 1)
+    assert len(images) == 1
+    assert next(at for at, action in observed if action == "native_jpeg") >= ready_at
+    assert all(action != "screenshot_show_idle" for _at, action in observed)
+
+
+def test_existing_esp_log_owner_retains_one_native_ui_checkpoint():
+    import os
+    from pathlib import Path
+    from types import SimpleNamespace
+    from tools.ha_voip_lab import display_gallery as gallery
+
+    source = Path(os.environ.get("VOIP_STACK_REPO", Path(__file__).resolve().parents[2] / "esphome-voip-stack"))
+    esp = gallery.load_esp_tool(source)
+    message = SimpleNamespace(message=b"[I][ui.hil]: page=call_idle transition=0 avatar_visible=NO")
+    witness = esp.EspWitness(None)
+    witness.on_log(message)
+    assert len(witness.log) == 1
+    adapted = gallery.gallery_witness(esp)(None, SimpleNamespace(), "example.invalid")
+    adapted.on_log(message)
+    assert len(adapted.log) == 1, "The gallery adapter must not duplicate the shared logger's sample"
+
+    class LegacyWitness:
+        def __init__(self, _client):
+            from asyncio import Event
+            self.log = []
+            self.changed = Event()
+
+        def on_log(self, _entry):
+            pass
+
+    legacy = gallery.gallery_witness(SimpleNamespace(EspWitness=LegacyWitness))(
+        None, SimpleNamespace(), "example.invalid")
+    legacy.on_log(message)
+    assert len(legacy.log) == 1, "An explicitly selected historical source keeps its existing gallery adapter"
+
+
+async def test_native_ui_readiness_has_a_deadline_without_a_forced_page_change(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tools.ha_voip_lab import phone_services_hil as hil
+
+    now = 0.0
+
+    async def advance(duration):
+        nonlocal now
+        now += duration
+
+    witness = SimpleNamespace(service=AsyncMock())
+    observe = AsyncMock(return_value={"page": "unavailable", "transition": "0", "avatar_visible": "NO"})
+    monkeypatch.setattr(hil, "native_ui_checkpoint", observe)
+    monkeypatch.setattr(hil, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(hil.asyncio, "sleep", advance)
+    with pytest.raises(RuntimeError, match="did not become ready"):
+        await hil.wait_ui_page(witness, "call_idle", timeout=1)
+    assert now < 1.5
+    assert observe.await_count > 1
+    witness.service.assert_not_awaited()
+
+
+async def test_page_change_during_native_jpeg_does_not_publish_a_successful_checkpoint(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tools.ha_voip_lab import phone_services_hil as hil
+
+    witness = SimpleNamespace(screenshot=AsyncMock(return_value={"capture_id": "native-id"}))
+    monkeypatch.setattr(hil, "wait_ui_page", AsyncMock(return_value={
+        "page": "call_idle", "transition": "0", "avatar_visible": "NO"}))
+    monkeypatch.setattr(hil, "native_ui_checkpoint", AsyncMock(return_value={
+        "page": "unavailable", "transition": "0", "avatar_visible": "NO"}))
+    output = tmp_path / "contacts.jpg"
+    with pytest.raises(RuntimeError, match="changed during"):
+        await hil.capture_ui_page(witness, "192.0.2.1", output, "call_idle")
+    witness.screenshot.assert_awaited_once()
+    assert not output.with_suffix(".ui.json").exists()
+
+
 def test_snapshot_reads_only_the_canonical_contact_count():
     assert parse_snapshot("[I][phone.hil] contacts=8") == {"contacts": 8}
     with pytest.raises(ValueError):

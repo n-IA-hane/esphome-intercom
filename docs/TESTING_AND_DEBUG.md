@@ -716,6 +716,17 @@ to playback metadata alone must not redraw an unchanged volume control.
 
 ### ESP32-S3 profiling without application probes
 
+When the firmware logs through USB Serial/JTAG, keep its serial console
+continuously drained throughout qualification. Opening the JTAG interface
+alone does not read the separate CDC console. Espressif documents a bounded
+50 ms wait when the console buffer fills without a reader; the driver used
+by ESPHome can therefore disturb the workload being measured. Preserve the
+console state in the workload record and compare packet timestamps, local
+jitter-buffer discards and speaker progress separately. A successful run
+with a console reader does not qualify operation without one, or explain
+unrelated network losses. See the official
+[USB Serial/JTAG buffering notes](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/api-guides/usb-serial-jtag-console.html#data-buffering).
+
 `tools/esp_profile.py` collects DEBUGPC samples and whole-core PMU counters
 through stock OpenOCD `irscan`/`drscan` commands, following the ESP32-S3 JTAG
 NAR protocol in the qualified Espressif release `v0.12.0-esp32-20260831`.

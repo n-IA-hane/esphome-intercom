@@ -351,7 +351,7 @@ def parse_full_audio_snapshot(messages):
                            map(int, jitter.groups()), strict=True))}
 
 
-async def full_audio_snapshot(witness):
+async def _native_diagnostic_records(witness, service, completed):
     # Firmware emits a dump across several loop turns and admits at most one
     # per second. Drain and respect that existing boundary before requesting
     # another; otherwise an old idle RTP section can masquerade as this call.
@@ -368,9 +368,64 @@ async def full_audio_snapshot(witness):
             if remaining > 0:
                 await asyncio.sleep(remaining)
     first = len(witness.log)
-    await witness.service("phone_runtime_snapshot")
-    await witness.wait(lambda: _completed_audio_dump(witness.log[first:]) is not None, timeout=5)
-    return parse_full_audio_snapshot(_completed_audio_dump(witness.log[first:]))
+    await witness.service(service)
+    await witness.wait(lambda: completed(witness.log[first:]) is not None, timeout=5)
+    return witness.log[first:]
+
+
+async def full_audio_snapshot(witness):
+    records = await _native_diagnostic_records(witness, "phone_runtime_snapshot", _completed_audio_dump)
+    return parse_full_audio_snapshot(_completed_audio_dump(records))
+
+
+def ui_checkpoint_fields(message, expected_page=None):
+    """Share the native rendered-page contract with the existing gallery."""
+    fields = dict(re.findall(r"(\w+)=([^\s]+)", message))
+    known_page = fields.get("page") not in {None, "unknown"}
+    if expected_page is not None and (
+            (not known_page and expected_page != "settings") or
+            (known_page and fields["page"] != expected_page) or
+            fields.get("avatar_visible") != "NO"):
+        raise RuntimeError("Gallery UI checkpoint differs from the requested safe phone page")
+    fields["page_identity_available"] = known_page
+    return fields
+
+
+async def native_ui_checkpoint(witness):
+    records = await _native_diagnostic_records(witness, "registration_runtime_diagnostics", _completed_diagnostic_dump)
+    samples = [record for record in records if "ui.hil" in record["message"] and "page=" in record["message"]]
+    if len(samples) != 1:
+        raise RuntimeError("Native UI diagnostic has missing or repeated rendered-page identity")
+    return ui_checkpoint_fields(samples[0]["message"])
+
+
+async def wait_ui_page(witness, expected_page, *, timeout=12):
+    """SIP idle does not release a terminal page or complete LVGL navigation."""
+    deadline = time.monotonic() + timeout
+    last = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"Native UI page {expected_page} did not become ready: {last}")
+        async with asyncio.timeout(remaining):
+            last = await native_ui_checkpoint(witness)
+        if (last.get("page") == expected_page and last.get("transition") == "0"
+                and last.get("avatar_visible") == "NO"):
+            return last
+        await asyncio.sleep(.3)
+
+
+async def capture_ui_page(witness, address, output, expected_page, *, before=None):
+    if before is None:
+        before = await wait_ui_page(witness, expected_page)
+    capture = await witness.screenshot(address, output)
+    after = await native_ui_checkpoint(witness)
+    if (after.get("page") != expected_page or after.get("transition") != "0"
+            or after.get("avatar_visible") != "NO"):
+        raise RuntimeError("Native UI changed during the admitted screenshot")
+    write_private(output.with_suffix(".ui.json"), {"expected_page": expected_page,
+        "native_before": before, "native_after": after, "capture": capture})
+    return capture
 
 
 def check_audio_continuity(before, after):
@@ -543,9 +598,10 @@ async def capture_contact_pages(witness, args, label, count):
             raise ValueError("Requested contact capture is outside the actual scroll extent")
         offsets = [requested]
     for offset in offsets:
+        before = await wait_ui_page(witness, "call_idle")
         await witness.service("screenshot_scroll_phone_list", {"list": "contacts", "offset": offset})
         path = args.output.with_name(args.output.stem + f"-{label}-{offset}.jpg")
-        await witness.screenshot(args.address, path)
+        await capture_ui_page(witness, args.address, path, "call_idle", before=before)
         images.append(str(path))
     return images
 
@@ -698,8 +754,9 @@ async def mailbox_menu_scenario(witness, args, fixture, ws, result, sip_host, lo
                 owned.add(event["message_id"])
             await mailbox_counts(fixture, args.mailbox_device, 2, 0)
             result["mwi_unread"] = await trace.waiting("yes", since=enabled_at)
-            await witness.service("screenshot_show_idle")
-            await witness.screenshot(args.address, args.output.with_name(args.output.stem + "-idle-unread.jpg"))
+            await witness.service("screenshot_show_contacts")
+            await capture_ui_page(witness, args.address,
+                args.output.with_name(args.output.stem + "-idle-unread.jpg"), "call_idle")
             menu_started_at = time.time()
             await witness.service("start_call_on_line", {"dest": "*97", "line": "ha"})
             await witness.wait(lambda: witness.call_state == "in_call", timeout=20)
@@ -732,7 +789,8 @@ async def mailbox_menu_scenario(witness, args, fixture, ws, result, sip_host, lo
             result["mailbox_replay"] = {"archive_play_completed": True,
                 "rtp_before": media_before, "rtp_after": media_after}
             await witness.service("screenshot_show_keypad")
-            await witness.screenshot(args.address, args.output.with_name(args.output.stem + "-mailbox-call.jpg"))
+            await capture_ui_page(witness, args.address,
+                args.output.with_name(args.output.stem + "-mailbox-call.jpg"), "call_dialer")
             for selection in ("", "01#"):
                 for digit in selection:
                     await press(digit)
@@ -751,8 +809,9 @@ async def mailbox_menu_scenario(witness, args, fixture, ws, result, sip_host, lo
             await press("#")
             await witness.wait(lambda: witness.call_state == "idle", timeout=15)
             await mailbox_counts(fixture, args.mailbox_device, 0, 0)
-            await witness.service("screenshot_show_idle")
-            await witness.screenshot(args.address, args.output.with_name(args.output.stem + "-idle-read.jpg"))
+            await witness.service("screenshot_show_contacts")
+            await capture_ui_page(witness, args.address,
+                args.output.with_name(args.output.stem + "-idle-read.jpg"), "call_idle")
             result["mailbox_menu"] = {"passed": True, "owned_messages": sorted(owned),
                 "deleted_messages": sorted(deleted), "native_dtmf": True,
                 "transport_evidence": str(trace.path), "acoustic_qualification": False}
@@ -791,10 +850,13 @@ async def run(witness, args, result, wire_class):
         raise ValueError("Select an existing ordinary speech WAV with --speech-audio")
     required = {"phone_runtime_snapshot", "take_screenshot"}
     if "mailbox-menu" in phases:
-        required.update({"send_dtmf", "screenshot_show_idle", "screenshot_show_keypad", "start_call_on_line", "hangup_call"})
+        required.update({"send_dtmf", "screenshot_show_contacts", "screenshot_show_keypad", "start_call_on_line", "hangup_call",
+                         "registration_runtime_diagnostics"})
     if phases & {"blf", "subscriptions"}:
         required.update({"refresh_ldap_directory", "screenshot_show_contacts", "start_call_on_line",
                          "screenshot_scroll_phone_list"})
+    if "blf" in phases:
+        required.add("registration_runtime_diagnostics")
     if not required <= witness.services.keys():
         raise RuntimeError("Running firmware lacks the required existing diagnostics")
     result["phone_services_stage"] = "home_authentication"
@@ -913,6 +975,7 @@ module_app account.so
                 await asyncio.to_thread(peers[0].hangup)
                 await witness.wait(lambda: witness.call_state == "idle", timeout=15)
                 await witness.service("screenshot_show_contacts")
+                await wait_ui_page(witness, "call_idle")
                 result["phone_services_stage"] = "held_dialog"
                 first = len(peers[1].output)
                 caller_start = len(peers[0].output)
