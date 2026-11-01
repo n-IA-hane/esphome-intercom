@@ -467,17 +467,16 @@ async def test_activity_projection_tracks_dialogs_and_occupied_slots(lab, blf):
     assert activity_snapshot(lab.runtime) == {"parked": [], "phones": []}
 
 
-async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch):
+async def test_activity_subscription_updates_and_unsubscribes(lab, blf, hass_read_only_user):
     from types import SimpleNamespace
     from custom_components.voip_stack import websocket_api
     from custom_components.voip_stack.parking import PARKING_CHANGED
     from custom_components.voip_stack.parking_lot import ParkingLot
 
     events = []
-    connection = SimpleNamespace(subscriptions={}, send_result=lambda *args: None,
+    connection = SimpleNamespace(user=hass_read_only_user, subscriptions={}, send_result=lambda *args: None,
                                  send_event=lambda identity, value: events.append(value))
-    monkeypatch.setattr(websocket_api, "require_websocket_read", lambda *args: None)
-    monkeypatch.setattr(websocket_api, "require_websocket_endpoint_read", lambda *args: None)
+    assert hass_read_only_user.is_active and not hass_read_only_user.is_admin
     websocket_api.websocket_subscribe_call_events(lab.hass, connection, {"id": 77, "include_activity": True})
     assert events[-1] == {"event_type": "voip_stack.activity", "data": {"parked": [], "phones": []}}
     lot = ParkingLot(("701",), lambda: lab.hass.bus.async_fire(PARKING_CHANGED))
@@ -507,6 +506,11 @@ async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypa
     lab.hass.bus.async_fire(websocket_api.CALL_EVENT, {"type": "example"})
     await lab.hass.async_block_till_done()
     assert events[-1] == {"event_type": websocket_api.CALL_EVENT, "data": {"type": "example"}}
+    await lab.hass.auth.async_update_user(hass_read_only_user, group_ids=[])
+    count = len(events)
+    lab.hass.bus.async_fire(websocket_api.CALL_EVENT, {"type": "unreadable"})
+    await lab.hass.async_block_till_done()
+    assert len(events) == count
     connection.subscriptions[78]()
 
 
