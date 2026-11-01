@@ -152,7 +152,7 @@ int main(){
  assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),display::DISPLAY_ROTATION_270_DEGREES));
  assert(output==before&&input==immutable&&!locked&&syncs==previous_syncs+1);
  sync_failure=false;
- for(const auto dimensions:{std::pair<size_t,size_t>{1,1},{1,65},{65,1},{7,9},
+ for(const auto &dimensions:{std::pair<size_t,size_t>{1,1},{1,65},{65,1},{7,9},
                             {31,33},{32,32},{33,31},{47,71},{79,35},{129,97}})
   check_geometry(dimensions.first,dimensions.second);
  // Exact physical shape/rotation in addition to all irregular/tiny matrices.
@@ -161,7 +161,7 @@ int main(){
 """
     )
     binary = tmp_path / "p4"
-    subprocess.run(
+    compiled = subprocess.run(
         [
             "g++",
             "-std=c++17",
@@ -176,8 +176,11 @@ int main(){
             "-o",
             str(binary),
         ],
-        check=True,
         capture_output=True,
         text=True,
+    )
+    assert compiled.returncode == 0, (
+        f"C++ harness compilation failed (exit {compiled.returncode}):\n"
+        f"{compiled.stdout}{compiled.stderr}"
     )
     subprocess.run([str(binary)], check=True, capture_output=True, text=True)
