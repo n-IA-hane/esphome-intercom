@@ -1306,8 +1306,14 @@ await asymmetric.close("test-complete");
 const dashboard = new Engine();
 const observers = [];
 let monitorUnsubscribed = 0;
+let monitorBusRequests=0, monitorBusStops=0;
 const monitorConnection = {{
   subscribeMessage: async (listener, request) => {{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      monitorBusRequests++;
+      assert.equal(request.include_runtime_ready,true);
+      return()=>{{monitorBusStops++;}};
+    }}
     observers.push({{listener, request}});
     return () => {{monitorUnsubscribed++;}};
   }},
@@ -1322,6 +1328,7 @@ observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",
 const releaseSecondMonitor = dashboard.subscribePhoneStates(event => secondMonitorEvents.push(event));
 assert.equal(secondMonitorEvents[0].phones[0].state,"idle");
 assert.equal(observers.length,1);
+assert.equal(monitorBusRequests,1);
 observers[0].listener({{kind:"delta",revision:1,phones:[{{endpoint_id:"desk",state:"ringing"}}],removed:[]}});
 observers[0].listener({{kind:"delta",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}],removed:[]}});
 assert.equal(secondMonitorEvents.at(-1).phones[0].state,"ringing");
@@ -1334,6 +1341,7 @@ releaseMonitor();
 assert.equal(monitorUnsubscribed,0);
 releaseSecondMonitor();
 assert.equal(monitorUnsubscribed,1);
+assert.equal(monitorBusStops,1);
 assert.equal(dashboard._phoneStates.size,0);
 assert.equal(dashboard._softphoneScopeSubscriptions.size,0);
 
@@ -1361,11 +1369,12 @@ const runtimeDashboard=new Engine();
 const runtimeObservers=[], lifecycleObservers=[];
 let lifecycleReleased=0, runtimeReleased=0;
 const runtimeConnection={{
-  subscribeEvents:async(listener,type)=>{{
-    lifecycleObservers.push({{listener,type}});
-    return()=>{{lifecycleReleased++;}};
-  }},
+  subscribeEvents:()=>{{throw new Error("Generic custom events require HA admin");}},
   subscribeMessage:async(listener,request)=>{{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      lifecycleObservers.push({{listener,request}});
+      return()=>{{lifecycleReleased++;}};
+    }}
     runtimeObservers.push({{listener,request}});
     return()=>{{runtimeReleased++;}};
   }},
@@ -1378,7 +1387,7 @@ const releaseRuntimeTwo=runtimeDashboard.subscribePhoneStates(event=>secondStore
 await new Promise(resolve=>setImmediate(resolve));
 assert.equal(runtimeObservers.length,1);
 assert.equal(lifecycleObservers.length,1);
-assert.equal(lifecycleObservers[0].type,"voip_stack.runtime_ready");
+assert.equal(lifecycleObservers[0].request.include_runtime_ready,true);
 const freshPhone={{endpoint_id:"desk",device_id:selectedDevice,kind:"browser",state:"idle",availability:"available"}};
 runtimeObservers[0].listener({{kind:"snapshot",revision:12,phones:[freshPhone]}});
 runtimeObservers[0].listener({{kind:"closed",reason:"runtime_unloaded"}});
@@ -1405,18 +1414,35 @@ assert.equal(firstStore.phones.size,0);
 assert.equal(secondStore.ready,false);
 assert.equal(lifecycleReleased,1);
 runtimeDashboard.configure({{connection:runtimeConnection}});
-lifecycleObservers[0].listener({{}});
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
 runtimeDashboard._phoneStateReady();
 await new Promise(resolve=>setImmediate(resolve));
 assert.equal(runtimeObservers.length,2,"revoked access must not enter a retry loop");
 releaseRuntimeOne();releaseRuntimeTwo();
 assert.equal(lifecycleReleased,1);
 
+// A late bus rejection must not schedule retries after access was revoked.
+const revokedPending=new Engine();
+let rejectRevokedBus, revokedPhoneListener;
+revokedPending.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return new Promise((_resolve,reject)=>{{rejectRevokedBus=reject;}});
+  revokedPhoneListener=listener;
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releaseRevokedPending=revokedPending.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+revokedPhoneListener({{kind:"closed",reason:"permissions_revoked"}});
+rejectRevokedBus(new Error("access revoked before subscription acknowledgement"));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(revokedPending._busSubscribeRetryTimer,null);
+releaseRevokedPending();
+
 // A subscription acknowledgement arriving after unload must be retired,
 // without clearing or replacing the new generation's pending request.
 const pendingDashboard=new Engine(), pendingObservers=[];
 let acknowledgeOld, oldReleased=0;
-pendingDashboard.configure({{connection:{{subscribeMessage:(listener)=>{{
+pendingDashboard.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return Promise.resolve(()=>{{}});
   pendingObservers.push(listener);
   if(pendingObservers.length===1)return new Promise(resolve=>{{acknowledgeOld=resolve;}});
   return Promise.resolve(()=>{{}});

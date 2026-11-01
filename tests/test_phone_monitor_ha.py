@@ -238,14 +238,59 @@ async def test_shared_owner_close_retracts_monitor_data(hass, monitor):
     assert not observer.unsubscribers and not observer.access_unsubscribers
 
 
-async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(hass, monkeypatch):
-    """Run actual entry setup/unload on one surviving HA transport connection."""
+async def test_nonadmin_runtime_ready_uses_the_integration_transport(
+    hass, monitor, hass_ws_client, hass_read_only_access_token, hass_read_only_user,
+):
+    """Exercise HA's real WS command dispatcher and its generic-event denial."""
+    client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    assert not hass_read_only_user.is_admin
+    websocket_api.async_register_websocket_api(hass)
+    await client.send_json({"id": 1, "type": "subscribe_events", "event_type": "voip_stack.runtime_ready"})
+    denied = await client.receive_json()
+    assert denied["success"] is False and denied["error"]["code"] == "unauthorized"
+    await client.send_json({"id": 2, "type": "voip_stack/subscribe_call_events",
+                            "include_runtime_ready": True})
+    accepted = await client.receive_json()
+    assert accepted["success"] is True
+    hass.bus.async_fire("voip_stack.runtime_ready")
+    ready = await client.receive_json()
+    assert ready == {"id": 2, "type": "event", "event": {"event_type": "voip_stack.runtime_ready", "data": {}}}
+
+
+async def test_runtime_transport_never_grants_or_retains_call_permissions(hass, monitor):
+    from homeassistant.helpers import entity_registry as er
+    entry = next(iter(hass.config_entries.async_entries("voip_stack")))
+    entity = er.async_get(hass).async_get_or_create("event", "voip_stack", "voip_stack_call_event", config_entry=entry)
+    connection = Connection({entity.entity_id})
+    websocket_api.websocket_subscribe_call_events(hass, connection, {
+        "id": 30, "include_activity": True, "include_runtime_ready": True,
+    })
+    observer = phone_state_observer(hass)
+    assert len(observer.activity_listeners) == 1
+    connection.events.clear()
+    connection.user.permissions.entities.clear()
+    incoming(monitor)
+    hass.bus.async_fire(websocket_api.CALL_EVENT, {"private": "unreadable call"})
+    hass.bus.async_fire("voip_stack.runtime_ready", {"private": "must not be forwarded"})
+    await hass.async_block_till_done()
+    assert connection.events == [(30, {"event_type": "voip_stack.runtime_ready", "data": {}})]
+    assert not observer.activity_listeners
+    connection.user.is_active = False
+    hass.bus.async_fire("voip_stack.runtime_ready")
+    await hass.async_block_till_done()
+    assert len(connection.events) == 1
+    connection.subscriptions.pop(30)()
+
+
+async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
+    hass, monkeypatch, hass_ws_client, hass_read_only_access_token, hass_read_only_user,
+):
+    """Actual setup/unload and command authorization on one non-admin socket."""
     from unittest.mock import AsyncMock
     from pytest_homeassistant_custom_component.common import MockConfigEntry
     from custom_components import voip_stack
     from custom_components.voip_stack import phone_services
     from custom_components.voip_stack.endpoint_lifecycle import call_registry
-    from custom_components.voip_stack.runtime_data import require_runtime_data
 
     entry = MockConfigEntry(domain="voip_stack", data={})
     entry.add_to_hass(hass)
@@ -267,24 +312,19 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(hass,
         return True
 
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start_transport)
-    connection = Connection({"sensor.reload_phone"})
-    ready = []
-
-    from homeassistant.core import callback
-    @callback
-    def on_ready(event):
-        # The real lifecycle event must arrive only after snapshot readiness.
-        runtime = require_runtime_data(hass)
-        ready.append((event.event_type, runtime.sip, tuple(runtime.endpoints.endpoints)))
-        subscribe(hass, msg_id=20 + len(ready), connection=connection)
-
-    unsubscribe = hass.bus.async_listen("voip_stack.runtime_ready", on_ready)
+    client = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    assert not hass_read_only_user.is_admin
+    websocket_api.async_register_websocket_api(hass)
     try:
         assert await voip_stack.async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert len(ready) == 1
-        first_runtime = ready[0][1]
-        initial = payload(connection)
+        first_runtime = entry.runtime_data.sip
+        await client.send_json({"id": 1, "type": "voip_stack/subscribe_call_events",
+                                "include_activity": True, "include_runtime_ready": True})
+        assert (await client.receive_json())["success"] is True
+        await client.send_json({"id": 2, "type": "voip_stack/subscribe_phone_states"})
+        assert (await client.receive_json())["success"] is True
+        initial = (await client.receive_json())["event"]
         assert initial["kind"] == "snapshot" and initial["revision"] == 1
         assert len(initial["phones"]) == 1
         phone = initial["phones"][0]
@@ -292,22 +332,44 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(hass,
         assert not entry.runtime_data.softphone_presence
         assert await voip_stack.async_unload_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert payload(connection) == {"kind": "closed", "reason": "runtime_unloaded"}
-        assert connection.subscriptions[21].__self__.closed
+        assert (await client.receive_json())["event"] == {"kind": "closed", "reason": "runtime_unloaded"}
         assert await voip_stack.async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert len(ready) == 2 and ready[1][1] is not first_runtime
-        assert payload(connection)["revision"] == 1
-        restored, = payload(connection)["phones"]
+        ready = await client.receive_json()
+        assert ready == {"id": 1, "type": "event", "event": {"event_type": "voip_stack.runtime_ready", "data": {}}}
+        assert entry.runtime_data.sip is not first_runtime and not client.closed
+        await client.send_json({"id": 3, "type": "voip_stack/subscribe_phone_states"})
+        assert (await client.receive_json())["success"] is True
+        new_snapshot = (await client.receive_json())["event"]
+        assert new_snapshot["revision"] == 1
+        restored, = new_snapshot["phones"]
         assert (restored["endpoint_id"], restored["device_id"], restored["state"]) == (
             phone["endpoint_id"], phone["device_id"], "idle")
         assert not entry.runtime_data.softphone_presence
         observer = phone_state_observer(hass)
         assert len(observer.projection_listeners) == 1
+        # Endpoint-only readers do not inherit global call or activity access.
+        assert not observer.activity_listeners
+        hass.bus.async_fire(websocket_api.CALL_EVENT, {"private": "unreadable call"})
+        await hass.async_block_till_done()
+        await client.send_json({"id": 4, "type": "ping"})
+        assert await client.receive_json() == {"id": 4, "type": "pong"}
+        await hass.auth.async_update_user(hass_read_only_user, group_ids=[])
+        await hass.async_block_till_done()
+        revoked = (await client.receive_json())["event"]
+        assert revoked["kind"] == "delta" and revoked["phones"] == []
+        assert revoked["removed"] == [phone["endpoint_id"]]
+        hass.bus.async_fire("voip_stack.runtime_ready")
+        await hass.async_block_till_done()
+        assert (await client.receive_json())["event"] == {"event_type": "voip_stack.runtime_ready", "data": {}}
+        await client.send_json({"id": 5, "type": "unsubscribe_events", "subscription": 3})
+        assert (await client.receive_json())["success"] is True
+        await client.send_json({"id": 6, "type": "voip_stack/subscribe_phone_states"})
+        assert (await client.receive_json())["success"] is True
+        assert (await client.receive_json())["event"] == {"kind": "snapshot", "revision": 1, "phones": []}
     finally:
-        unsubscribe()
-        for close in tuple(connection.subscriptions.values()):
-            close()
+        await client.close()
+        await hass.async_block_till_done()
         if entry.runtime_data.sip is not None:
             await voip_stack.async_unload_entry(hass, entry)
 

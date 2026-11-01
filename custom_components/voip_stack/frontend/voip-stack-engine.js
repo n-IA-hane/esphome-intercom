@@ -185,7 +185,6 @@ class VoipStackEngine extends EventTarget {
     this._phoneStateEpoch = 0;
     this._phoneStateFailed = false;
     this._phoneStateRevoked = false;
-    this._phoneStateReadyOwner = null;
     this._phoneStateReady = () => {
       if (this._phoneStateRevoked) return;
       this._resetPhoneStateSubscription("runtime_ready");
@@ -270,7 +269,6 @@ class VoipStackEngine extends EventTarget {
     if (conn !== this._busConnection) {
       this._busConnection?.removeEventListener?.("ready", this._phoneStateReady);
       this._busConnection?.removeEventListener?.("disconnected", this._phoneStateDisconnected);
-      this._releasePhoneStateReadySubscription();
       this._phoneStateRevoked = false;
       this._resetPhoneStateSubscription("connection_changed");
       if (this._busUnsub) this._busUnsub();
@@ -292,7 +290,7 @@ class VoipStackEngine extends EventTarget {
   }
 
   _scheduleBusSubscriptionRetry(conn) {
-    if (this._busConnection !== conn || this._busSubscribeRetryTimer) return;
+    if (this._busConnection !== conn || this._busSubscribeRetryTimer || !this._wantsBusSubscription()) return;
     this._busSubscribeRetryTimer = setTimeout(() => {
       this._busSubscribeRetryTimer = null;
       if (this._busConnection === conn) this._ensureBusSubscriptions(conn);
@@ -300,7 +298,8 @@ class VoipStackEngine extends EventTarget {
   }
 
   _wantsBusSubscription() {
-    return this._callSubscribers.size > 0 || this.active || this._ownedSoftphoneCalls.size > 0;
+    return this._callSubscribers.size > 0 || this.active || this._ownedSoftphoneCalls.size > 0 ||
+      (this._phoneStateSubscribers.size > 0 && !this._phoneStateRevoked);
   }
 
   _ensureBusSubscriptions(conn) {
@@ -315,7 +314,9 @@ class VoipStackEngine extends EventTarget {
     }
     if (wanted && !this._busUnsub && !this._busSubscribePending) {
       this._busSubscribePending = true;
-      conn.subscribeMessage((event) => this._onBusEvent(event), { type: WS_SUBSCRIBE_CALL_EVENTS, include_activity: true })
+      conn.subscribeMessage((event) => {
+        if (conn === this._busConnection) this._onBusEvent(event);
+      }, { type: WS_SUBSCRIBE_CALL_EVENTS, include_activity: true, include_runtime_ready: true })
       .then((unsub) => {
         if (this._busConnection === conn && this._wantsBusSubscription()) this._busUnsub = unsub;
         else unsub();
@@ -347,33 +348,8 @@ class VoipStackEngine extends EventTarget {
     }
   }
 
-  _releasePhoneStateReadySubscription() {
-    const owner = this._phoneStateReadyOwner;
-    this._phoneStateReadyOwner = null;
-    try { owner?.unsubscribe?.(); } catch (_) {}
-  }
-
-  _ensurePhoneStateReadySubscription() {
-    const conn = this._busConnection;
-    if (!conn?.subscribeEvents || this._phoneStateReadyOwner || this._phoneStateRevoked ||
-        !this._phoneStateSubscribers.size) return;
-    const owner = {};
-    this._phoneStateReadyOwner = owner;
-    // A lifecycle-only HA transport event survives an integration reload. It
-    // carries no phone data and creates no PBX observer or media owner.
-    Promise.resolve().then(() => conn.subscribeEvents(() => {
-      if (owner === this._phoneStateReadyOwner && conn === this._busConnection) this._phoneStateReady();
-    }, "voip_stack.runtime_ready")).then((unsubscribe) => {
-      if (owner === this._phoneStateReadyOwner) owner.unsubscribe = unsubscribe;
-      else unsubscribe();
-    }).catch(() => {
-      if (owner === this._phoneStateReadyOwner) this._phoneStateReadyOwner = null;
-    });
-  }
-
   _ensurePhoneStateSubscription() {
     const conn = this._busConnection;
-    this._ensurePhoneStateReadySubscription();
     if (!conn || !this._phoneStateSubscribers.size || this._phoneStateUnsub ||
         this._phoneStatePending || this._phoneStateFailed || this._phoneStateRevoked) return;
     const epoch = ++this._phoneStateEpoch;
@@ -386,7 +362,7 @@ class VoipStackEngine extends EventTarget {
         this._phoneStateFailed = true;
         if (event.reason === "permissions_revoked") {
           this._phoneStateRevoked = true;
-          this._releasePhoneStateReadySubscription();
+          this._ensureBusSubscriptions(this._busConnection);
         }
         return;
       }
@@ -432,7 +408,7 @@ class VoipStackEngine extends EventTarget {
       listener({ kind: "snapshot", revision: this._phoneStateRevision,
         phones: [...this._phoneStates.values()] });
     }
-    this._ensurePhoneStateSubscription();
+    this._ensureBusSubscriptions(this._busConnection);
     let released = false;
     return () => {
       if (released) return;
@@ -440,7 +416,7 @@ class VoipStackEngine extends EventTarget {
       this._phoneStateSubscribers.delete(listener);
       if (!this._phoneStateSubscribers.size) {
         this._resetPhoneStateSubscription("unsubscribed");
-        this._releasePhoneStateReadySubscription();
+        this._ensureBusSubscriptions(this._busConnection);
       }
     };
   }
@@ -1321,6 +1297,10 @@ class VoipStackEngine extends EventTarget {
   }
 
   _onBusEvent(event) {
+    if (event?.event_type === "voip_stack.runtime_ready") {
+      this._phoneStateReady();
+      return;
+    }
     if (event?.event_type === "voip_stack.activity") {
       this._lastActivityEvent = event;
       for (const cb of this._callSubscribers) {
