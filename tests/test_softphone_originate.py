@@ -211,6 +211,7 @@ def softphone_originate(monkeypatch):
         },
         "sip_runtime": {
             "enable_reused_signaling_flow": Mock(),
+            "select_registered_outbound_flow": Mock(return_value=None),
             "uri_transport": Mock(),
         },
         "softphone_commands": {"bind_service_call_controller": Mock()},

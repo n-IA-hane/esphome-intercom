@@ -358,7 +358,7 @@ async def route_sip_bridge(
         selected_trunk_id = getattr(decision, "trunk_id", "")
         reuse_registered_trunk_flow(sip_trunk(hass, selected_trunk_id) if selected_trunk_id else sip_trunk(hass), client)
     else:
-        from ..sip_runtime import configure_local_contact
+        from ..sip_runtime import configure_local_contact, select_registered_outbound_flow
         configure_local_contact(hass, client)
         runtime.enable_reused_signaling_flow(
             hass,
@@ -366,6 +366,8 @@ async def route_sip_bridge(
             decision_uri,
             target=decision.target or invite.target,
             default_sip_port=int(cfg["sip_port"]),
+            selected_flow=select_registered_outbound_flow(hass, decision_uri,
+                entry=decision.entry, peer=peer_target),
         )
 
     logical_source_endpoint = (

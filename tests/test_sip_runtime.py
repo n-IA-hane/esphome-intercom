@@ -56,6 +56,7 @@ runtime_data.endpoint_directory = lambda hass: hass.data.get(DOMAIN, {}).get(
 runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(DOMAIN, {}).get(
     "sip_endpoint"
 )
+runtime_data.sip_registrar = lambda hass: hass.data.get(DOMAIN, {}).get("sip_registrar")
 runtime_data.sip_trunk = lambda hass: hass.data.get(DOMAIN, {}).get("sip_trunk")
 runtime_data.sip_trunks = lambda hass: {"": runtime_data.sip_trunk(hass)} if runtime_data.sip_trunk(hass) is not None else {}
 sys.modules[runtime_data.__name__] = runtime_data

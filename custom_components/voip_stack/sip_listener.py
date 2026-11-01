@@ -717,7 +717,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         task.add_done_callback(self._request_task_done)
         return True
 
-    def open_reused_dialog(self, addr: tuple[str, int], call_id: str):
+    def open_reused_dialog(self, addr: tuple[str, int], call_id: str,
+                           *, flow_active: Callable[[], bool] | None = None):
         """Borrow one local socket; each request retains its selected next-hop."""
         key = (addr, call_id)
         if self.transport is None or not call_id or key in self._dialog_queues:
@@ -728,8 +729,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._reused_dialog_keys[queue] = keys
 
         def send(raw, target):
-            if self._dialog_queues.get(key) is not queue:
+            if (self._dialog_queues.get(key) is not queue
+                    or (flow_active is not None and not flow_active())):
                 return False
+            if flow_active is not None:
+                target = addr
             alias = None
             try:
                 request = sip.parse_message(raw)

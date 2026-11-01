@@ -83,6 +83,7 @@ from .service_endpoints import (
 from .service_errors import service_error as _service_error
 from .sip_runtime import (
     enable_reused_signaling_flow as _enable_reused_signaling_flow,
+    select_registered_outbound_flow,
     uri_transport as _sip_uri_transport,
 )
 from .softphone_commands import (
@@ -690,6 +691,7 @@ async def async_originate_browser_call(
             uri,
             target=target,
             default_sip_port=int(cfg["sip_port"]),
+            selected_flow=select_registered_outbound_flow(hass, uri, entry=route.entry),
         )
     registry = _call_registry(hass)
     session = registry.upsert(

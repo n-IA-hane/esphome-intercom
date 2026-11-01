@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from .sip_registrar import AuthenticatedOutboundFlow
 
 from .runtime_data import (
     call_projection,
     endpoint_directory,
     sip_endpoint_manager,
+    sip_registrar,
     sip_trunks,
 )
 from .endpoint_session import SipTerminationDisposition, TerminationIntent
@@ -184,6 +186,22 @@ def uri_transport(uri) -> str:
     return "TLS" if str(getattr(uri, "scheme", "sip")).lower() == "sips" else "UDP"
 
 
+def select_registered_outbound_flow(hass, uri, *, entry=None, peer=None) -> AuthenticatedOutboundFlow | None:
+    """Carry the resolved account's selected Contact into transport ownership.
+
+    Public phonebook records need no transport objects. Rejoin their logical
+    account identity with the registrar's current authenticated binding after
+    Contact selection, including individual fork candidates.
+    """
+    username = str(getattr(entry, "id", "") or getattr(peer, "sip_uri_user", ""))
+    if not username or uri_transport(uri).upper() != "UDP":
+        return None
+    registrar = sip_registrar(hass)
+    if registrar is None:
+        return None
+    return registrar.select_outbound_flow(username, uri)
+
+
 def enable_reused_signaling_flow(
     hass: HomeAssistant,
     client,
@@ -191,6 +209,7 @@ def enable_reused_signaling_flow(
     *,
     target: str,
     default_sip_port: int,
+    selected_flow: AuthenticatedOutboundFlow | None = None,
 ) -> bool:
     """Borrow the local UDP listener or the client's registered TCP flow.
 
@@ -201,12 +220,24 @@ def enable_reused_signaling_flow(
     clue when a registered door station never sees HA's outbound INVITE.
     """
     transport = uri_transport(uri).upper()
+    if selected_flow is not None:
+        registrar = sip_registrar(hass)
+        binding = (registrar.resolve_outbound_flow(selected_flow)
+                   if registrar is selected_flow.registrar else None)
+        from .core import sip
+        contact = sip.parse_sip_uri(binding.contact_uri) if binding is not None else None
+        if (transport != "UDP" or registrar is not selected_flow.registrar
+                or contact is None or contact.user != uri.user
+                or not sip.sip_endpoints_equal(contact.host, contact.port, uri.host, uri.port)):
+            raise ConnectionError("Selected SIP outbound binding is no longer current")
     if transport not in {"UDP", "TCP"}:
         return False
     endpoint = sip_endpoint_manager(hass)
     server = (getattr(getattr(endpoint, "udp_server", None), "endpoint", None)
               if transport == "UDP" else getattr(endpoint, "tcp_server", None))
     if server is None:
+        if selected_flow is not None:
+            raise ConnectionError("Selected SIP outbound listener is not running")
         _LOGGER.debug(
             "SIP %s flow reuse unavailable for %s: listener is not running",
             transport,
@@ -222,10 +253,24 @@ def enable_reused_signaling_flow(
             return False
         sock = server.transport.get_extra_info("socket") if server.transport is not None else None
         if sock is None or (address.version == 6 and sock.family != socket.AF_INET6):
+            if selected_flow is not None:
+                raise ConnectionError("Selected SIP outbound UDP socket is unavailable")
             return False
-    remote_addr = (uri.host, int(uri.port or default_sip_port))
-    reuse = server.open_reused_dialog(remote_addr, client.dialog_ids.call_id)
+    remote_addr = ((binding.source_host, binding.source_port) if selected_flow is not None
+                   else (uri.host, int(uri.port or default_sip_port)))
+    if selected_flow is not None:
+        # Authentication belongs to the registrar; a dialog owns only this
+        # lease. REGISTER renewal/removal must not rewrite an existing dialog.
+        def flow_active():
+            return (sip_registrar(hass) is selected_flow.registrar
+                    and sip_endpoint_manager(hass) is endpoint)
+        reuse = server.open_reused_dialog(remote_addr, client.dialog_ids.call_id,
+            flow_active=flow_active)
+    else:
+        reuse = server.open_reused_dialog(remote_addr, client.dialog_ids.call_id)
     if reuse is None:
+        if selected_flow is not None:
+            raise ConnectionError("Selected SIP outbound dialog could not acquire its flow")
         _LOGGER.debug(
             "SIP %s flow reuse unavailable for %s: no live flow "
             "at %s:%s; the client may open a new connection",
@@ -243,6 +288,7 @@ def enable_reused_signaling_flow(
             server.close_reused_dialog(addr, call_id)
         ),
         datagram_family=sock.family if transport == "UDP" else socket.AF_UNSPEC,
+        udp_next_hop=remote_addr if selected_flow is not None else None,
     )
     if transport == "UDP":
         client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])

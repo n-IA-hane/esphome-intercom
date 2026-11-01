@@ -557,6 +557,7 @@ class SipCallClient:
         self._reused_flow_responses: asyncio.Queue[bytes | tuple[bytes, tuple[str, int]] | None] | None = None
         self._reused_flow_close: Callable[[], None] | None = None
         self._reused_udp_family = socket.AF_UNSPEC
+        self._reused_udp_next_hop: tuple[str, int] | None = None
         self._prepared_udp_targets: dict[tuple[str, int, int, str], tuple[str, int]] = {}
         self.bind_signaling_usage: Callable[[str], Callable[[], None]] | None = None
         self.queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=128)
@@ -877,6 +878,7 @@ class SipCallClient:
         self._reused_flow_send = None
         self._reused_flow_responses = None
         self._reused_udp_family = socket.AF_UNSPEC
+        self._reused_udp_next_hop = None
         self._prepared_udp_targets.clear()
         try:
             try:
@@ -919,12 +921,14 @@ class SipCallClient:
         responses: asyncio.Queue[bytes | tuple[bytes, tuple[str, int]] | None],
         close: Callable[[], None],
         datagram_family: int = socket.AF_UNSPEC,
+        udp_next_hop: tuple[str, int] | None = None,
     ) -> None:
         """Borrow one transport reader, retaining each UDP request's next-hop."""
         if self._closing or self._closed:
             close()
             raise RuntimeError("SIP client is already closed")
         self._reused_udp_family = datagram_family
+        self._reused_udp_next_hop = udp_next_hop
         self._reused_flow_send = send if datagram_family != socket.AF_UNSPEC else lambda raw, _target: send(raw)
         self._reused_flow_responses = responses
         self._reused_flow_close = close
@@ -1019,6 +1023,8 @@ class SipCallClient:
     def _signaling_target(
         self, remote_host: str, remote_sip_port: int, *, use_dialog_cache: bool = True,
     ) -> tuple[str, int]:
+        if self._reused_flow_send is not None and self._reused_udp_next_hop is not None:
+            return self._reused_udp_next_hop
         if self._resolved_signaling_target is not None and (
             self.outbound_proxy
             or self._signaling_nominal == (remote_host, int(remote_sip_port))
@@ -1136,6 +1142,8 @@ class SipCallClient:
         return (f"<{uri}>",)
 
     async def _send_raw(self, raw: bytes, remote_host: str, remote_sip_port: int) -> None:
+        if self._reused_udp_next_hop is not None and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES:
+            raise ConnectionError("Selected SIP outbound UDP flow cannot carry an oversized request")
         if self.signaling_transport == "UDP":
             remote_host, remote_sip_port = await self._prepare_udp_target(remote_host, remote_sip_port)
         if self._reused_flow_send is not None:
@@ -1163,6 +1171,8 @@ class SipCallClient:
 
     def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
         try:
+            if self._reused_udp_next_hop is not None and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES:
+                raise ConnectionError("Selected SIP outbound UDP flow cannot carry an oversized request")
             if self._reused_flow_send is not None:
                 selected = self._signaling_target(host, int(port))
                 if self._reused_udp_family != socket.AF_UNSPEC:
@@ -2358,7 +2368,12 @@ class SipCallClient:
         async def prepare_request_transport():
             nonlocal endpoints, endpoint_index, request_uri, route_uri, logical_uri
             nonlocal transport_param, contact_uri, local_uri, remote_uri, raw, udp_fallback_used
-            if self.signaling_transport != "UDP" or len(raw) <= _SIP_UDP_SAFE_REQUEST_BYTES or udp_fallback_used:
+            if self._reused_udp_next_hop is not None and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES:
+                return self._transport_failure(ConnectionError(
+                    "Selected SIP outbound UDP flow cannot carry an oversized request"),
+                    target, remote_host, remote_sip_port)
+            if (self.signaling_transport != "UDP" or len(raw) <= _SIP_UDP_SAFE_REQUEST_BYTES
+                    or udp_fallback_used):
                 return None
             borrowed_flow = (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close)
             udp_local_port = self.local_sip_port

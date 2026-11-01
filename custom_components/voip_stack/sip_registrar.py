@@ -20,6 +20,19 @@ from .roster import RosterEntry
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedOutboundFlow:
+    """An internal selection of one authenticated RFC 5626 UDP binding."""
+
+    registrar: SipRegistrar
+    username: str
+    flow_key: tuple[str, str, str, int, str]
+    instance_id: str
+    reg_id: int
+
+
 def _register_digest_uri_matches(auth_uri: str, request_uri: str) -> bool:
     """Allow an omitted default port without changing the signed Digest URI."""
     if auth_uri == request_uri:
@@ -416,6 +429,33 @@ class SipRegistrar:
                 key=lambda registration: (-registration.q, registration.contact_uri),
             )
         )
+
+    def select_outbound_flow(self, username: str, uri: sip.SipUri) -> AuthenticatedOutboundFlow | None:
+        """Select by resolved account and exact Contact, never by source IP alone."""
+        account = self.accounts.get(username.casefold())
+        if account is None or not account.enabled:
+            return None
+        for binding in self.registered_contacts(account.username):
+            contact = sip.parse_sip_uri(binding.contact_uri)
+            if (binding.outbound and binding.transport.upper() == "UDP"
+                    and contact.user == uri.user
+                    and sip.sip_endpoints_equal(contact.host, contact.port, uri.host, uri.port)):
+                return AuthenticatedOutboundFlow(self, binding.username, binding.flow_key,
+                    binding.instance_id, binding.reg_id)
+        return None
+
+    def resolve_outbound_flow(self, selected: AuthenticatedOutboundFlow) -> SipRegistration | None:
+        """Reject a stale selection before transferring a dialog lease."""
+        if selected.registrar is not self:
+            return None
+        account = self.accounts.get(selected.username.casefold())
+        if account is None or not account.enabled:
+            return None
+        return next((binding for binding in self.registered_contacts(selected.username)
+                     if binding.outbound and binding.transport.upper() == "UDP"
+                     and binding.flow_key == selected.flow_key
+                     and binding.instance_id == selected.instance_id
+                     and binding.reg_id == selected.reg_id), None)
 
     def resolve_gruu(self, uri: sip.SipUri) -> tuple[SipRegistration, ...] | None:
         """Return only the addressed instance; None denotes an ordinary AoR."""
