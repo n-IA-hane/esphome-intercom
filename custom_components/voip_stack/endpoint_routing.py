@@ -142,8 +142,18 @@ def sip_target_has_unspecified_audio(
     )
     if kind in {"browser", "assist"}:
         return False
+
+    def has_concrete_rtp_format(direction):
+        for token in _rtp_capability_tokens(peer, entry, direction, device):
+            try:
+                sdp.parse_rtp_audio_capability(token)
+            except sdp.SdpError:
+                continue
+            return True
+        return False
+
     return not any(
-        _rtp_capability_tokens(peer, entry, direction, device)
+        has_concrete_rtp_format(direction)
         or peer_audio_formats(peer, direction + "_formats")
         or roster_entry_formats(entry, direction + "_formats")
         or device_formats(device, direction + "_formats")

@@ -20,7 +20,7 @@ CAPS = b"\r\n".join([
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("packet_time", [True, False])
+@pytest.mark.parametrize("packet_time", [10, None, 30])
 @pytest.mark.parametrize("directional", [True, False])
 async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_call(
     trunks, monkeypatch, packet_time, directional,
@@ -51,7 +51,9 @@ async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_ca
     options_ports = []
     invites = asyncio.Queue()
     replies = asyncio.Queue()
-    caps = CAPS if packet_time else CAPS.replace(b"a=ptime:10\r\n", b"")
+    known_quantum = packet_time == 10
+    caps = CAPS.replace(b"a=ptime:10\r\n",
+        f"a=ptime:{packet_time}\r\n".encode() if packet_time is not None else b"")
     if not directional:
         caps = caps.replace(b"a=x-voip-stack-flow:96 send\r\n", b"")
         caps = caps.replace(b"a=x-voip-stack-flow:97 recv\r\n", b"")
@@ -89,7 +91,7 @@ async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_ca
                 body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Ordinary phone\r\n"
                     "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                     f"m=audio 34000 RTP/AVP {payloads}\r\n{audio}"
-                    f"a=ptime:{10 if directional or packet_time else 20}\r\na=sendrecv\r\n"
+                    f"a=ptime:{10 if directional or known_quantum else 20}\r\na=sendrecv\r\n"
                     "m=video 34002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=sendrecv\r\n").encode()
                 headers.append(("Contact", f"<sip:{username}@127.0.0.1:{self.transport.get_extra_info('sockname')[1]}>"))
             elif message.method == "ACK":
@@ -144,8 +146,8 @@ async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_ca
         assert entry.metadata["sdp_features"] == (["directional_audio_v1"] if directional else [])
         expected_rx = ["L16/48000/1/10"] if directional else ["L16/16000/1/10", "L16/48000/1/10"]
         expected_tx = ["L16/16000/1/10"] if directional else expected_rx
-        assert entry.metadata["sip_audio_rx_formats"] == (expected_rx if packet_time else [])
-        assert entry.metadata["sip_audio_tx_formats"] == (expected_tx if packet_time else [])
+        assert entry.metadata["sip_audio_rx_formats"] == (expected_rx if known_quantum else [])
+        assert entry.metadata["sip_audio_tx_formats"] == (expected_tx if known_quantum else [])
         initial = registrar.registered_contacts(username)[0]
         learned = initial.capabilities
         register(3, authorize(3))
@@ -181,7 +183,7 @@ async def test_generic_registered_peer_discovers_wire_profile_before_ordinary_ca
         client = runtime.calls.sip_client_for(request.header("Call-ID"))
         assert client.dialog.send_format.sample_rate == (48000 if directional else 16000)
         assert client.dialog.recv_format.sample_rate == 16000
-        assert client.dialog.send_format.frame_ms == (10 if directional or packet_time else 20)
+        assert client.dialog.send_format.frame_ms == (10 if directional or known_quantum else 20)
         # An answer's ptime controls HA transmission. Local receive framing
         # remains independent, bounded by the actual offer's maxptime.
         assert client.dialog.recv_format.frame_ms == 10
@@ -272,7 +274,7 @@ async def test_options_uses_owned_transactions_and_creates_no_call(socket_enable
 
 
 @pytest.mark.parametrize("role", ["full_duplex", "mic_only", "speaker_only"])
-@pytest.mark.parametrize("time_hint", [b"", b"a=maxptime:32\r\n"])
+@pytest.mark.parametrize("time_hint", [b"", b"a=maxptime:32\r\n", b"a=ptime:30\r\n"])
 def test_options_unknown_packet_quantum_preserves_role_and_video(role, time_hint):
     body = CAPS.replace(b"a=ptime:10\r\n", time_hint)
     if role == "mic_only":
@@ -289,6 +291,23 @@ def test_options_unknown_packet_quantum_preserves_role_and_video(role, time_hint
     assert result["audio_mode"] == role
     assert result["sip_video_codec"] == "jpeg"
     assert result["sdp_features"] == (["directional_audio_v1"] if role == "full_duplex" else [])
+
+
+@pytest.mark.parametrize("quantum,unknown", [(30, True), (20, False)])
+def test_legacy_unrepresentable_cached_quantum_is_ignored_by_the_consumer(quantum, unknown):
+    from custom_components.voip_stack.endpoint_routing import (
+        _assign_capability_payloads, sip_target_has_unspecified_audio, sip_target_rtp_audio_profile,
+    )
+    from custom_components.voip_stack.roster import RosterEntry
+
+    tokens = [f"L16/16000/1/{quantum}"]
+    assert bool(_assign_capability_payloads(tokens)) is not unknown
+    usable, = _assign_capability_payloads([*tokens, "L16/16000/1/20"])
+    assert usable.frame_ms == 20
+    entry = RosterEntry("ordinary", metadata={"sip_audio_tx_formats": tokens, "sip_audio_rx_formats": tokens})
+    assert sip_target_has_unspecified_audio(None, entry) is unknown
+    profile = sip_target_rtp_audio_profile(None, entry)
+    assert (profile is None) is unknown
 
 
 def test_options_zero_rtcp_transport_is_ignored_only_for_zero_port_capability():
@@ -373,9 +392,15 @@ async def test_options_real_udp_and_existing_tcp_connection(hass, socket_enabled
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("registered,legacy_profile,expected,hint_only", [(True, False, 200, False),
-    (True, False, 200, True), (False, False, 200, False), (True, True, 488, False)])
-async def test_native_directional_offer_without_optional_options_metadata(trunks, monkeypatch, registered, legacy_profile, expected, hint_only):
+@pytest.mark.parametrize("registered,legacy_profile,expected,hint_only,probe_outcome", [
+    (True, False, 200, False, "empty"), (True, False, 200, True, "empty"),
+    (False, False, 200, False, "empty"), (True, True, 488, False, "empty"),
+    (True, False, 200, False, "405"), (True, False, 200, False, "timeout"),
+    (True, False, 200, False, "invalid"),
+])
+async def test_native_directional_offer_without_optional_options_metadata(
+    trunks, monkeypatch, registered, legacy_profile, expected, hint_only, probe_outcome,
+):
     """Real REGISTER/INVITE: capability absence differs from a concrete limit."""
     from custom_components.voip_stack import peer_snapshot
     from custom_components.voip_stack.core.sip_auth import build_digest_authorization
@@ -405,10 +430,17 @@ async def test_native_directional_offer_without_optional_options_metadata(trunks
         def datagram_received(self, raw, address):
             message = sip.parse_message(raw)
             if message.method == "OPTIONS":
+                options.set()
+                if probe_outcome == "timeout":
+                    return
                 headers = [(key, message.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
                 headers += [("To", message.header("To") + ";tag=unsupported")]
-                self.transport.sendto(sip.build_response(200, "OK", headers), address)
-                options.set()
+                body = b"invalid SDP\r\n" if probe_outcome == "invalid" else b""
+                if body:
+                    headers.append(("Content-Type", "application/sdp"))
+                status = 405 if probe_outcome == "405" else 200
+                self.transport.sendto(sip.build_response(status,
+                    "Method Not Allowed" if status == 405 else "OK", headers, body), address)
             else:
                 replies.put_nowait(message)
 
@@ -466,6 +498,9 @@ async def test_native_directional_offer_without_optional_options_metadata(trunks
             assert call_id in runtime.calls.sessions
             request("BYE", remote_target, 2, to=response.header("To"))
             assert (await final("BYE")).status_code == 200
+        if registered:
+            await asyncio.wait_for(asyncio.shield(runtime.runtime.capability_probes[username.casefold()]), 4)
+            assert registrar.registered_contacts(username)[0].capabilities is None
     finally:
         for session in tuple(runtime.calls.sessions.values()):
             await runtime.calls.request_termination(session.call_id, TerminationIntent("test_done"))

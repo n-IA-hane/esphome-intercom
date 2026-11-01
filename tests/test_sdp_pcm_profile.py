@@ -26,6 +26,11 @@ class SdpPcmProfileTest(unittest.TestCase):
         with self.assertRaises(sdp.SdpError):
             sdp.parse_rtp_audio_capability("opus/16000/1/20")
 
+    def test_rtp_audio_capability_rejects_unrepresentable_quantum_as_sdp_error(self) -> None:
+        for token in ("L16/16000/1/30", "L16/44100/1/16", "PCMU/8000/1/0"):
+            with self.subTest(token=token), self.assertRaises(sdp.SdpError):
+                sdp.parse_rtp_audio_capability(token)
+
     def test_known_video_target_gets_narrow_codec_offer(self) -> None:
         jpeg = sdp.video_offer_formats_for_target_codec("jpeg")
         h264 = sdp.video_offer_formats_for_target_codec("h264")

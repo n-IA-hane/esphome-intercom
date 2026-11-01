@@ -20,6 +20,7 @@ from .imageattr import (
     ImageConstraints as ImageConstraints, ImageRange as ImageRange, ImageSet as ImageSet,
     ImageAttributeFallbackRequired, constraints_usable, intersect_constraints,
     parse_imageattr, plan_jpeg_image, serialize_imageattr, merge_image_attributes,
+    resolve_image_attributes,
 )
 
 
@@ -217,7 +218,12 @@ def parse_rtp_audio_capability(
     fmt = RtpPcmFormat(int(payload_type), encoding, rate, channels, frame_ms)
     if encoding == "OPUS" and (rate != 48000 or channels != 2):
         raise SdpError("Opus SDP capability must use opus/48000/2")
-    fmt.audio_format
+    try:
+        if frame_ms <= 0:
+            raise ValueError("packet quantum must be positive")
+        fmt.audio_format
+    except ValueError as err:
+        raise SdpError(f"unrepresentable RTP audio capability {token!r}: {err}") from err
     return fmt
 
 
@@ -2403,8 +2409,10 @@ def offered_video_formats(sdp_body: str | bytes, *, capabilities: bool = False) 
                 # Retain advertised capabilities without inventing any.
                 rtcp_feedback=feedback,
                 max_framerate=parsed["framerate"],
-                image_attributes=(parsed["image_attributes"].get(payload_type,
-                    parsed["image_attributes"].get(None)) if encoding == "JPEG" else None),
+                image_attributes=(resolve_image_attributes(
+                    parsed["image_attributes"].get(None),
+                    parsed["image_attributes"].get(payload_type),
+                ) if encoding == "JPEG" else None),
             )
         )
     return out
@@ -3431,7 +3439,15 @@ def options_capabilities(body: str | bytes) -> dict:
         # Codec/direction hints cannot supply the missing concrete quantum.
         if not parsed["ptime"]:
             return []
-        return [f"{fmt.encoding}/{fmt.sample_rate}/{fmt.channels}/{parsed['ptime']}" for fmt in formats]
+        result = []
+        for fmt in formats:
+            token = f"{fmt.encoding}/{fmt.sample_rate}/{fmt.channels}/{parsed['ptime']}"
+            try:
+                parse_rtp_audio_capability(token, fmt.payload_type)
+            except SdpError:
+                continue
+            result.append(token)
+        return result
 
     tx, rx = tokens(sending), tokens(receiving)
     video = offered_video_formats(body, capabilities=True)

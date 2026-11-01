@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from inspect import isawaitable
 import ssl
 import logging
 
@@ -112,7 +113,9 @@ class SipMessageDispatcher:
                             mailbox.deliver(item)
                             break
                     else:
-                        self.on_unmatched(message, addr)
+                        preparation = self.on_unmatched(message, addr)
+                        if isawaitable(preparation):
+                            await preparation
                 elif len(self.requests) >= (32 if self.is_control(message, addr) else 24):
                     self.reject_request(message, addr)
                 else:

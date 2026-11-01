@@ -242,6 +242,7 @@ def enable_reused_signaling_flow(
         close=lambda addr=remote_addr, call_id=client.dialog_ids.call_id: (
             server.close_reused_dialog(addr, call_id)
         ),
+        datagram_family=sock.family if transport == "UDP" else socket.AF_UNSPEC,
     )
     if transport == "UDP":
         client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])

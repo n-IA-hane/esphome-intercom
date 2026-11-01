@@ -47,6 +47,44 @@ def _load_module(name: str):
 
 sip_transaction = _load_module("sip_transaction")
 sip_dialog = _load_module("sip_dialog")
+sip_transport = _load_module("sip_transport")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_dispatcher_prepares_unmatched_response_on_its_single_reader(asynchronous):
+    incoming = asyncio.Queue()
+    started, resume, processed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    reads, failures = [], []
+
+    async def read(_timeout):
+        reads.append(asyncio.current_task())
+        return await incoming.get()
+
+    def synchronous(_message, _source):
+        started.set()
+        processed.set()
+
+    async def preparation(_message, _source):
+        started.set()
+        await resume.wait()
+        processed.set()
+
+    dispatcher = sip_transport.SipMessageDispatcher(
+        read, AsyncMock(), preparation if asynchronous else synchronous,
+        failures.append, lambda *_: None, lambda *_: False,
+    )
+    dispatcher.start()
+    try:
+        incoming.put_nowait((sip_transaction.sip.SipMessage(status_code=200), ("127.0.0.1", 5060)))
+        await asyncio.wait_for(started.wait(), 1)
+        if asynchronous:
+            assert len(reads) == 1 and not processed.is_set()
+            resume.set()
+        await asyncio.wait_for(processed.wait(), 1)
+        assert len(reads) == 2 and len(set(reads)) == 1
+        assert not failures
+    finally:
+        await dispatcher.close()
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):

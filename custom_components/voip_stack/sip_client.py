@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from ipaddress import ip_address
 import errno
 import logging
 import re
@@ -61,6 +62,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _S24_SIGN_EXTENSION = bytes(0xFF if value & 0x80 else 0x00 for value in range(256))
 _SIP_UDP_SAFE_REQUEST_BYTES = 1300
+_MAX_PREPARED_UDP_TARGETS = 64
 
 
 def _uri_with_transport(uri: sip.SipUri, transport: str) -> sip.SipUri:
@@ -551,9 +553,11 @@ class SipCallClient:
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
         self._tcp_writer: SipTcpWriter | None = None
-        self._reused_flow_send: Callable[[bytes], bool | None] | None = None
-        self._reused_flow_responses: asyncio.Queue[bytes] | None = None
+        self._reused_flow_send: Callable[[bytes, tuple[str, int]], bool | None] | None = None
+        self._reused_flow_responses: asyncio.Queue[bytes | tuple[bytes, tuple[str, int]] | None] | None = None
         self._reused_flow_close: Callable[[], None] | None = None
+        self._reused_udp_family = socket.AF_UNSPEC
+        self._prepared_udp_targets: dict[tuple[str, int, int, str], tuple[str, int]] = {}
         self.bind_signaling_usage: Callable[[str], Callable[[], None]] | None = None
         self.queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=128)
         self._deferred_signaling: list[tuple[sip.SipMessage, tuple[str, int]]] = []
@@ -872,6 +876,8 @@ class SipCallClient:
             self._reused_flow_close = None
         self._reused_flow_send = None
         self._reused_flow_responses = None
+        self._reused_udp_family = socket.AF_UNSPEC
+        self._prepared_udp_targets.clear()
         try:
             try:
                 if tcp_writer is not None:
@@ -904,22 +910,24 @@ class SipCallClient:
         responses: asyncio.Queue[bytes],
         close: Callable[[], None],
     ) -> None:
-        if self._closing or self._closed:
-            close()
-            raise RuntimeError("SIP client is already closed")
-        self._reused_flow_send = send
-        self._reused_flow_responses = responses
-        self._reused_flow_close = close
+        self.use_reused_signaling_flow(send=send, responses=responses, close=close)
 
     def use_reused_signaling_flow(
         self,
         *,
-        send: Callable[[bytes], bool | None],
-        responses: asyncio.Queue[bytes],
+        send: Callable[..., bool | None],
+        responses: asyncio.Queue[bytes | tuple[bytes, tuple[str, int]] | None],
         close: Callable[[], None],
+        datagram_family: int = socket.AF_UNSPEC,
     ) -> None:
-        """Use one externally owned SIP flow for this dialog."""
-        self.use_reused_tcp_connection(send=send, responses=responses, close=close)
+        """Borrow one transport reader, retaining each UDP request's next-hop."""
+        if self._closing or self._closed:
+            close()
+            raise RuntimeError("SIP client is already closed")
+        self._reused_udp_family = datagram_family
+        self._reused_flow_send = send if datagram_family != socket.AF_UNSPEC else lambda raw, _target: send(raw)
+        self._reused_flow_responses = responses
+        self._reused_flow_close = close
 
     async def _connect_tcp(self, remote_host: str, remote_sip_port: int) -> None:
         async with self._start_lock:
@@ -1008,12 +1016,18 @@ class SipCallClient:
         else:
             await self.start()
 
-    def _signaling_target(self, remote_host: str, remote_sip_port: int) -> tuple[str, int]:
+    def _signaling_target(
+        self, remote_host: str, remote_sip_port: int, *, use_dialog_cache: bool = True,
+    ) -> tuple[str, int]:
         if self._resolved_signaling_target is not None and (
             self.outbound_proxy
             or self._signaling_nominal == (remote_host, int(remote_sip_port))
         ):
             return self._resolved_signaling_target
+        if use_dialog_cache and self.signaling_transport == "UDP":
+            prepared = self._prepared_udp_targets.get(self._udp_target_key(remote_host, remote_sip_port))
+            if prepared is not None:
+                return prepared
         proxy = str(self.outbound_proxy or "").strip()
         if not proxy:
             return remote_host, int(remote_sip_port)
@@ -1029,6 +1043,76 @@ class SipCallClient:
             except ValueError:
                 return host.strip(), int(remote_sip_port)
         return proxy, int(remote_sip_port)
+
+    def _udp_target_family(self):
+        if self._reused_flow_send is not None:
+            return self._reused_udp_family
+        info = getattr(self.transport, "get_extra_info", lambda _name: None)
+        sock = info("socket")
+        return getattr(sock, "family", socket.AF_INET6 if ":" in (self._udp_family_host or self.local_ip) else socket.AF_INET)
+
+    def _udp_target_key(self, host, port):
+        return (str(host).casefold(), int(port), self._udp_target_family(), str(self.outbound_proxy or "").strip())
+
+    async def _prepare_udp_target(self, host, port, *, uri="", deadline=None):
+        """Resolve the selected hop before enqueue, leaving SIP URI policy intact."""
+        selected = self._signaling_target(host, int(port), use_dialog_cache=False)
+        if self.signaling_transport != "UDP" or (
+            self._reused_flow_send is not None and self._reused_udp_family == socket.AF_UNSPEC
+        ):
+            return selected
+        try:
+            ip_address(selected[0])
+            return selected
+        except ValueError:
+            pass
+        target = sip.parse_sip_uri(uri) if uri else sip.SipUri("", *selected)
+        if (target.host, int(target.port or 5060)) != selected:
+            target = sip.SipUri("", *selected)
+        family = self._udp_target_family()
+        async with asyncio.timeout_at(deadline):
+            resolved = await self.target_resolver.resolve(target, transport="UDP")
+        if not self._has_signaling_path():
+            raise ConnectionError("SIP signaling closed during target resolution")
+        for candidate in resolved:
+            for address, target_port, transport in candidate.endpoints():
+                version = ip_address(address).version
+                if transport != "UDP" or (family == socket.AF_INET and version != 4) or (
+                    family == socket.AF_INET6 and version != 6
+                ):
+                    continue
+                key = self._udp_target_key(host, port)
+                if key not in self._prepared_udp_targets and len(self._prepared_udp_targets) >= _MAX_PREPARED_UDP_TARGETS:
+                    self._prepared_udp_targets.pop(next(iter(self._prepared_udp_targets)))
+                self._prepared_udp_targets[key] = (address, int(target_port))
+                return address, int(target_port)
+        raise ConnectionError(f"No UDP SIP address for {target} matches the local socket family")
+
+    async def _prepare_invite_response_target(self, message, *, initial, deadline=None):
+        if not sip.extract_tag(message.header("To")) or self.signaling_transport != "UDP" or (
+            self._reused_flow_send is not None and self._reused_udp_family == socket.AF_UNSPEC
+        ):
+            return
+        current = self.dialog
+        if initial and current is not None and sip.extract_tag(message.header("To")) == self.dialog_ids.remote_tag:
+            target, routes = current.remote_target_uri or current.remote_uri, current.route_set
+        else:
+            target = (current.remote_target_uri or current.remote_uri) if current else self._pending_request_uri
+            try:
+                target = sip.contact_target_uri(message) or target
+            except (TypeError, ValueError, sip.SipError):
+                pass
+            if initial:
+                try:
+                    routes = sip.record_route_set(message, reverse=True) or self._preloaded_route_set()
+                except (TypeError, ValueError, sip.SipError):
+                    routes = self._preloaded_route_set()
+            else:
+                routes = current.route_set if current else self._preloaded_route_set()
+        routing = sip.dialog_request_routing(target, routes)
+        host, port = self._dialog_next_hop(routing.next_hop_uri,
+            self._pending_remote_host, self._pending_remote_sip_port)
+        await self._prepare_udp_target(host, port, uri=routing.next_hop_uri, deadline=deadline)
 
     def _preloaded_route_set(self) -> tuple[str, ...]:
         """Return the configured outbound proxy as one loose SIP route."""
@@ -1052,8 +1136,10 @@ class SipCallClient:
         return (f"<{uri}>",)
 
     async def _send_raw(self, raw: bytes, remote_host: str, remote_sip_port: int) -> None:
+        if self.signaling_transport == "UDP":
+            remote_host, remote_sip_port = await self._prepare_udp_target(remote_host, remote_sip_port)
         if self._reused_flow_send is not None:
-            if self._reused_flow_send(raw) is False:
+            if self._reused_flow_send(raw, self._signaling_target(remote_host, int(remote_sip_port))) is False:
                 raise ConnectionError("reused SIP signaling flow is not writable")
             return
         if self.signaling_transport in {"TCP", "TLS"}:
@@ -1078,7 +1164,13 @@ class SipCallClient:
     def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
         try:
             if self._reused_flow_send is not None:
-                return self._reused_flow_send(raw) is not False
+                selected = self._signaling_target(host, int(port))
+                if self._reused_udp_family != socket.AF_UNSPEC:
+                    try:
+                        ip_address(selected[0])
+                    except ValueError:
+                        raise ConnectionError("SIP UDP next-hop was not prepared") from None
+                return self._reused_flow_send(raw, selected) is not False
             if self.signaling_transport in {"TCP", "TLS"}:
                 if self.writer is None:
                     return False
@@ -1885,10 +1977,14 @@ class SipCallClient:
                 return None
             try:
                 if self._reused_flow_responses is not None:
-                    raw = await asyncio.wait_for(
+                    received = await asyncio.wait_for(
                         self._reused_flow_responses.get(), timeout=remaining
                     )
-                    addr = (self._pending_remote_host, self._pending_remote_sip_port)
+                    if isinstance(received, tuple):
+                        raw, addr = received
+                    else:
+                        raw = received
+                        addr = (self._pending_remote_host, self._pending_remote_sip_port)
                 elif self.signaling_transport in {"TCP", "TLS"}:
                     if self.reader is None:
                         return None
@@ -2006,9 +2102,13 @@ class SipCallClient:
         ):
             return False
         try:
+            deadline = asyncio.get_running_loop().time() + SIP_TIMER_B
+            next_host, next_port = await self._prepare_udp_target(next_host, next_port,
+                uri=request.routing.next_hop_uri, deadline=deadline)
             if self._dialog_dispatcher is not None:
                 prack_response = await self._run_built_dialog_request(
-                    request, next_host, next_port, method="PRACK", timeout=SIP_TIMER_B,
+                    request, next_host, next_port, method="PRACK",
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
                     active=lambda: not self._closing and not self._closed,
                 )
             else:
@@ -2024,7 +2124,7 @@ class SipCallClient:
                     ),
                     active=lambda: not self._closing and not self._closed,
                     transport=self.signaling_transport,
-                    timeout=SIP_TIMER_B,
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
                     on_unmatched=lambda message, source: self._deferred_signaling.append(
                         (message, source)
                     ),
@@ -2580,6 +2680,10 @@ class SipCallClient:
                 await asyncio.sleep(0)
                 continue
             if msg.status_code and 200 <= msg.status_code < 300:
+                try:
+                    await self._prepare_invite_response_target(msg, initial=True, deadline=transaction.deadline)
+                except (OSError, RuntimeError, sip.SipError) as err:
+                    return self._transport_failure(err, target, remote_host, remote_sip_port)
                 if not self._commit_200_ok(msg, target, remote_host, int(remote_sip_port), request_uri, local_uri, remote_uri):
                     return (
                         "cancelled"
@@ -3247,12 +3351,30 @@ class SipCallClient:
                 if self._refer_subscription is not None:
                     self._refer_subscription.close()
 
+            async def unmatched(message, _addr):
+                if self.dialog is None or not sip.extract_tag(message.header("To")) or not (
+                    200 <= int(message.status_code or 0) < 300
+                ) or not (
+                    sip.response_matches_dialog_transaction(message,
+                        replace(self.dialog_ids, remote_tag="", cseq=self._invite_cseq), "INVITE", creating_dialog=True)
+                ):
+                    return
+                try:
+                    await self._prepare_invite_response_target(message, initial=True,
+                        deadline=asyncio.get_running_loop().time() + SIP_TIMER_B)
+                except (OSError, RuntimeError, sip.SipError) as err:
+                    _LOGGER.info("SIP retransmitted/forked INVITE target unavailable: %s", err)
+                    return
+                # ACK enqueue and the existing independent BYE owner cannot
+                # wait for a response on this dispatcher's own reader.
+                self._ack_retransmitted_invite_2xx(message)
+
             self._dialog_dispatcher = SipMessageDispatcher(
                 self._read_response, request,
-                lambda message, _addr: self._ack_retransmitted_invite_2xx(message),
+                unmatched,
                 failed,
                 lambda message, addr: self._send_response_to_request(
-                    message, *addr, 503, "Service Unavailable"),
+                    message, addr[0], addr[1], 503, "Service Unavailable"),
                 self.knows_control_request,
             )
             self._dialog_dispatcher.start()
@@ -3263,6 +3385,9 @@ class SipCallClient:
         active: Callable[[], bool], on_provisional=None, on_final=None, dialog_scoped=True,
     ) -> sip.SipMessage | None:
         """Await this transaction's mailbox; only the dispatcher reads SIP."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        host, port = await self._prepare_udp_target(host, port,
+            uri=request.routing.next_hop_uri, deadline=deadline)
         dispatcher = self._ensure_dialog_dispatcher()
         def matches(message):
             return sip.response_matches_dialog_transaction(message, request.ids, method, creating_dialog=not dialog_scoped)
@@ -3272,10 +3397,13 @@ class SipCallClient:
             response = await async_run_dialog_request_transaction(
                 send=lambda: self._send_dialog_request(request.raw, host, port),
                 read=mailbox.receive, matches=matches, active=active,
-                transport=self.signaling_transport, timeout=timeout,
+                transport=self.signaling_transport,
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
                 on_provisional=on_provisional, on_final=on_final,
                 on_sent=lambda: sip.mark_sip_event(self, method),
             )
+            if response is not None and method == "INVITE" and 200 <= int(response.status_code or 0) < 300:
+                await self._prepare_invite_response_target(response, initial=False, deadline=deadline)
             if response is None and dialog_scoped and self._dialog_result.done():
                 raise ConnectionAbortedError(self._dialog_result.result())
             return response
@@ -3478,7 +3606,7 @@ class SipCallClient:
         local_offer_pending: bool = False,
     ) -> str | None:
         """Dispatch one sequential request without creating a second reader."""
-
+        addr = (addr[0], addr[1])
         if msg.method in {"BYE", "REFER", "NOTIFY", "INFO", "OPTIONS", "SUBSCRIBE"}:
             cached = self._find_in_dialog_response(msg)
             if cached is not None:
@@ -5045,6 +5173,11 @@ class SipCallClient:
             elif cseq_method == "INVITE" and 200 <= msg.status_code < 300:
                 # The final 2xx won the race with CANCEL. RFC 3261 requires us
                 # to accept it, ACK it, then end the confirmed dialog with BYE.
+                try:
+                    await self._prepare_invite_response_target(msg, initial=True, deadline=deadline)
+                except (OSError, RuntimeError, sip.SipError) as err:
+                    return self._transport_failure(err, self._pending_target,
+                        self._pending_remote_host or addr[0], self._pending_remote_sip_port)
                 committed = self._commit_200_ok(
                     msg,
                     self._pending_target,
