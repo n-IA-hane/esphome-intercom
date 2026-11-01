@@ -2,6 +2,8 @@
 
 import asyncio
 from dataclasses import replace
+import errno
+import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,7 +14,9 @@ from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.endpoint_session import TerminationIntent
+from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.sip_client import SipCallClient
+from custom_components.voip_stack.sip_endpoint import SipEndpointManager
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack import sip_runtime
@@ -59,6 +63,7 @@ class WirePhone(asyncio.DatagramProtocol):
             answer = sdp.build_answer_directional("127.0.0.1", "127.0.0.1", 35000,
                 fmt, fmt, remote_sdp=message.body).encode()
             self.last_invite = message
+            self.last_invite_size = len(raw)
             self.last_invite_response = self.respond(message, address, body=answer,
                 headers=(("Contact", f"<{sip.SipUri('wire', *self.contact.address)}>"),))
         elif message.method == "OPTIONS":
@@ -108,7 +113,7 @@ async def wire_lab(trunks):
             phone.transport.close()
 
 
-async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None):
+async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True):
     phone = phone or wire.a
     uri = f"sip:127.0.0.1:{wire.listener[1]}"
     contact = f"<{sip.SipUri(username, *phone.address)}>"
@@ -132,18 +137,46 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
         username=username, password=PASSWORD, method="REGISTER", uri=uri)
     request(2, authorization)
     accepted, _ = await phone.receive(status=200)
-    async with asyncio.timeout(2):
-        while True:
-            binding, = wire.registrar.registered_contacts(username)
-            if binding.capabilities is not None:
-                break
-            await asyncio.sleep(.01)
+    binding, = wire.registrar.registered_contacts(username)
+    if discover:
+        async with asyncio.timeout(2):
+            while binding.capabilities is None:
+                await asyncio.sleep(.01)
     assert binding.outbound is outbound
     if outbound:
         assert accepted.header("Require") == "outbound"
     # Publish the registrar's actual selected Contact, not a synthetic flag.
     wire.lab.roster.append(next(entry for entry in wire.registrar.roster_entries() if entry.id == username))
     return binding
+
+
+@pytest.fixture
+async def original_no_options_lab(wire_lab):
+    """Keep the original public-service witness without any OPTIONS probe hook."""
+    lab = wire_lab.lab
+    previous = lab.calls, lab.runtime.sip, lab.runtime.transport_config["sip_port"]
+    registrar = SipRegistrar(enabled=True,
+        accounts=[SipAccount("outbound-phone", "Wire phone", PASSWORD)],
+        local_ip="127.0.0.1", local_sip_port=5060)
+    manager = SipEndpointManager(host="127.0.0.1", port=0, local_ip="127.0.0.1",
+        local_rtp_port=40000, supported_formats=[AudioFormat(16000, frame_ms=20)],
+        on_invite=None, on_register=registrar.handle_register)
+    calls = SipEndpointRuntime(allow_dark_sessions=True)
+    calls.attach_component("registrar", registrar)
+    calls.attach_component("udp_listener", manager)
+    calls.activate()
+    try:
+        assert await manager.start()
+        port = manager.udp_server.transport.get_extra_info("sockname")[1]
+        lab.calls = lab.runtime.sip = calls
+        lab.runtime.transport_config["sip_port"] = port
+        yield SimpleNamespace(**{**vars(wire_lab), "registrar": registrar, "manager": manager,
+            "listener": ("127.0.0.1", port)})
+    finally:
+        for session in tuple(calls.sessions.values()):
+            await calls.request_termination(session.call_id, TerminationIntent("test_done"))
+        await manager.stop()
+        lab.calls, lab.runtime.sip, lab.runtime.transport_config["sip_port"] = previous
 
 
 @pytest.mark.parametrize("outbound", [False, True], ids=["ordinary-contact-moves", "authenticated-outbound-flow"])
@@ -381,20 +414,159 @@ async def test_outbound_flow_keeps_fork_and_retransmission_targets_without_redir
     assert not wire.lab.calls.sessions
 
 
-async def test_oversized_selected_udp_flow_fails_explicitly_without_tcp_or_datagram_escape(wire_lab, monkeypatch, caplog):
-    from homeassistant.exceptions import ServiceValidationError
+@pytest.mark.parametrize("outbound", [False, True], ids=["ordinary-direct-contact", "authenticated-outbound"])
+async def test_original_no_options_offer_keeps_existing_tcp_refusal_fallback(original_no_options_lab, monkeypatch, outbound):
+    """The original >1300-byte INVITE must connect without adding capabilities."""
+    wire = original_no_options_lab
+    binding = await register_phone(wire, outbound=outbound, discover=False)
+    assert binding.capabilities is None and not wire.a.requests
+    attempts = []
+    open_connection = asyncio.open_connection
 
-    wire = wire_lab
-    await register_phone(wire)
-    wire.lab.roster[0] = replace(wire.lab.roster[0], name="Long caller " + "x" * 1400)
-    connect = AsyncMock(side_effect=AssertionError("An unrelated TCP connection is not the selected flow"))
-    monkeypatch.setattr(SipCallClient, "_connect_tcp", connect)
-    with pytest.raises(ServiceValidationError):
-        await dial(wire.lab, Context(), destination="outbound-phone", answer_timeout=2)
-    assert "Selected SIP outbound UDP flow cannot carry an oversized request" in caplog.text
-    assert not [request for request in wire.a.requests if request.method != "OPTIONS"]
-    assert not wire.b.requests
-    connect.assert_not_called()
+    async def observe(host, port, *args, **kwargs):
+        attempts.append((host, port))
+        return await open_connection(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "open_connection", observe)
+    # Reserve this TCP port without listening: the OS returns a real refusal,
+    # and another concurrent fixture cannot accidentally accept the attempt.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as refused:
+        refused.bind(wire.a.address)
+        context = Context()
+        token = await dial(wire.lab, context, destination="outbound-phone", answer_timeout=2)
+    destination = wire.a if outbound else wire.b
+    ack, address = await destination.receive("ACK")
+    assert wire.a.last_invite_size > 1300
+    assert ack.uri == str(sip.SipUri("wire", *wire.b.address))
+    assert address == wire.listener
+    assert attempts and set(attempts) == {wire.a.address}
+    assert wire.registrar.registered_contacts("outbound-phone")[0].capabilities is None
+    assert not [request for request in (wire.b if outbound else wire.a).requests if request.method == "ACK"]
+    await wire.lab.hass.services.async_call("voip_stack", "hangup", {
+        "call_id": token["call_id"], "expected_generation": token["generation"],
+    }, blocking=True, context=context)
+    bye, _ = await destination.receive("BYE")
+    assert bye.uri == ack.uri
     assert not wire.manager.udp_server.endpoint._dialog_queues
     assert not wire.lab.calls.sessions
     assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+
+
+async def test_original_no_options_connect_timeout_never_retries_invite_over_udp(original_no_options_lab, monkeypatch):
+    from homeassistant.exceptions import ServiceValidationError
+
+    wire = original_no_options_lab
+    await register_phone(wire, discover=False)
+    attempts = []
+
+    async def timeout(host, port, *args, **kwargs):
+        attempts.append((host, port))
+        raise TimeoutError(errno.ETIMEDOUT, "Controlled TCP connect deadline")
+
+    monkeypatch.setattr(asyncio, "open_connection", timeout)
+    with pytest.raises(ServiceValidationError):
+        await dial(wire.lab, Context(), destination="outbound-phone", answer_timeout=1)
+    assert attempts and set(attempts) == {wire.a.address}
+    assert not wire.a.requests and not wire.b.requests
+    assert not wire.manager.udp_server.endpoint._dialog_queues
+    assert not wire.lab.calls.sessions
+    assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+
+
+@pytest.mark.parametrize("answers", [True, False], ids=["tcp-a-success", "tcp-a-response-timeout"])
+async def test_original_no_options_tcp_exchange_never_connects_to_contact_b(original_no_options_lab, answers):
+    """Observe the existing automatic TCP upgrade; it is not the UDP flow."""
+    wire = original_no_options_lab
+    await register_phone(wire, discover=False)
+    messages = {"a": asyncio.Queue(), "b": asyncio.Queue()}
+    connections = []
+    writers, tasks = set(), set()
+
+    async def peer(name, reader, writer):
+        task = asyncio.current_task()
+        tasks.add(task)
+        writers.add(writer)
+        connections.append((name, writer.get_extra_info("sockname")[:2]))
+        try:
+            while True:
+                try:
+                    header = await reader.readuntil(b"\r\n\r\n")
+                except asyncio.IncompleteReadError:
+                    return
+                length = next(int(line.partition(b":")[2]) for line in header.split(b"\r\n")
+                    if line.lower().startswith(b"content-length:"))
+                raw = header + await reader.readexactly(length)
+                request = sip.parse_message(raw)
+                messages[name].put_nowait((request, raw))
+                if request.method == "ACK":
+                    continue
+                if request.method == "INVITE" and not answers:
+                    continue
+                headers = [(key, request.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+                to = request.header("To")
+                headers.append(("To", to if ";tag=" in to else to + ";tag=tcp-phone"))
+                body = b""
+                if request.method == "INVITE":
+                    fmt = next(item for item in sdp.offered_pcm_formats(request.body)
+                        if item.encoding == "L16" and item.sample_rate == 16000)
+                    body = sdp.build_answer_directional("127.0.0.1", "127.0.0.1", 35000,
+                        fmt, fmt, remote_sdp=request.body).encode()
+                    headers.extend([("Content-Type", "application/sdp"),
+                        ("Contact", f"<{sip.SipUri('wire', *wire.b.address)}>" )])
+                writer.write(sip.build_response(200, "OK", headers, body))
+                await writer.drain()
+        finally:
+            writers.discard(writer)
+            tasks.discard(task)
+            writer.close()
+            await writer.wait_closed()
+
+    servers = []
+    try:
+        for name, phone in (("a", wire.a), ("b", wire.b)):
+            servers.append(await asyncio.start_server(
+                lambda reader, writer, name=name: peer(name, reader, writer), *phone.address))
+        context = Context()
+        if not answers:
+            from homeassistant.exceptions import ServiceValidationError
+
+            with pytest.raises(ServiceValidationError, match="did not answer"):
+                await dial(wire.lab, context, destination="outbound-phone", answer_timeout=1)
+            invite, raw = await asyncio.wait_for(messages["a"].get(), 2)
+            assert invite.method == "INVITE" and len(raw) > 1300
+            assert connections == [("a", wire.a.address)]
+            assert not wire.a.requests and not wire.b.requests and messages["b"].empty()
+            assert not wire.manager.udp_server.endpoint._dialog_queues
+            assert not wire.lab.calls.sessions
+            assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+            return
+        token = await dial(wire.lab, context, destination="outbound-phone", answer_timeout=2)
+        async with asyncio.timeout(2):
+            invite, raw = await messages["a"].get()
+            ack, _ = await messages["a"].get()
+        assert invite.method == "INVITE" and len(raw) > 1300
+        assert sip.parse_via(invite.header("Via")).transport == "TCP"
+        assert ack.method == "ACK" and ack.uri == str(sip.SipUri("wire", *wire.b.address))
+        assert connections == [("a", wire.a.address)]
+        assert messages["b"].empty() and not wire.a.requests and not wire.b.requests
+        # A TCP success is a new connection. The prior UDP lease is released,
+        # while the authenticated UDP registration remains independently live.
+        assert not wire.manager.udp_server.endpoint._dialog_queues
+        binding, = wire.registrar.registered_contacts("outbound-phone")
+        assert binding.transport == "UDP" and binding.capabilities is None
+        await wire.lab.hass.services.async_call("voip_stack", "hangup", {
+            "call_id": token["call_id"], "expected_generation": token["generation"],
+        }, blocking=True, context=context)
+        bye, _ = await asyncio.wait_for(messages["a"].get(), 2)
+        assert bye.method == "BYE" and bye.uri == ack.uri
+        assert connections == [("a", wire.a.address)] and messages["b"].empty()
+        assert not wire.lab.calls.sessions
+        assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+    finally:
+        for server in servers:
+            server.close()
+            await server.wait_closed()
+        for writer in tuple(writers):
+            writer.close()
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tuple(tasks)), 3)
