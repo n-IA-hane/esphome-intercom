@@ -11,7 +11,8 @@ handling, clipping, rotation and dirty-region updates are retained.
 
 The remaining functional adaptations are the qualified settling delays,
 serialized submit/completion ownership, failure handling before waiting for a
-DMA callback, and framebuffer access used only by the diagnostic capture tool.
+DMA callback, the owned RGB565 transform described below, and diagnostic
+framebuffer capture.
 The old periodic flush counters have been removed.
 
 The optional `esp_screenshot` component enables a guarded RGB565 framebuffer
@@ -19,6 +20,17 @@ copy. It takes the existing panel submission mutex without waiting, checks cache
 coherency, and normalizes rotation and byte order into the caller's buffer.
 The capture API is excluded when screenshots are absent. It reads the driver
 framebuffer; it does not read back pixels from the physical panel controller.
+
+RGB565 little-endian displays can perform logical rotation and media transforms
+through one display-owned blocking PPA transaction. This uses the existing
+panel framebuffer and submission mutex, with one normal panel completion.
+Screenshot read-copy remains a separate operation under the same owner; no
+framebuffer write pointer escapes. Native-coordinate blits preserve codec
+output that has already been oriented. An older P4 renderer consumer disables
+the hardware-rotation codegen capability; an unavailable runtime PPA client
+retains the scalar drawing path and its initialized compatibility canvas.
+This adaptation does not change LVGL draw-buffer sizing or the capture API's
+additional output-rotation semantics.
 
 The retained driver waits are 120 ms after SLEEP_OUT and 20 ms after DISPLAY_ON.
 The generated sequence adds its own waits; for the maintained JD9365 profile

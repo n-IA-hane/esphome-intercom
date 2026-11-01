@@ -84,6 +84,14 @@ int main(){
   assert(d.copy_frame_buffer_rgb565(target,sizeof(input)));
   index=0;for(const auto &row:logical)for(auto pixel:row)assert(output[index++]==pixel);
  }
+ // Explicit migration preserves additional-rotation semantics: old SW-LVGL
+ // driver0 + screenshot90 equals owned HW-LVGL driver270 + screenshot0.
+ d.rotation_=0;d.big_endian_=false;input={1,2,3,4,5,6};
+ std::array<uint16_t,6> old_view{},new_view{};
+ assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(old_view.data()),sizeof(old_view),display::DISPLAY_ROTATION_90_DEGREES));
+ d.rotation_=270;
+ assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(new_view.data()),sizeof(new_view),display::DISPLAY_ROTATION_0_DEGREES));
+ assert(old_view==new_view&&d.get_width()==2&&d.get_height()==3);
  d.rotation_=0;d.big_endian_=false;input={1,2,3,4,5,6};
  output.fill(0xbbbb);const auto before=output;const auto immutable=input;const int previous_syncs=syncs;
  assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)-1,display::DISPLAY_ROTATION_90_DEGREES));

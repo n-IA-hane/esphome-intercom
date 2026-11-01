@@ -3,11 +3,14 @@
 #include "mipi_dsi.h"
 #include "esphome/core/helpers.h"
 
-#include <algorithm>
-#include <cstring>
-#ifdef USE_ESP_SCREENSHOT
 #include "esp_cache.h"
+#include "esp_heap_caps.h"
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+#include "esp_private/esp_cache_private.h"
 #endif
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace esphome::mipi_dsi {
 
@@ -195,6 +198,27 @@ void MipiDsi::setup() {
     return;
   }
 
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+  if (this->color_depth_ == display::COLOR_BITNESS_565 && !this->big_endian_) {
+    size_t alignment = 0;
+    if (esp_cache_get_alignment(MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA,
+                                &alignment) == ESP_OK &&
+        alignment != 0 &&
+        reinterpret_cast<uintptr_t>(this->frame_buffer_) % alignment == 0 &&
+        this->frame_buffer_size_ % alignment == 0) {
+      ppa_client_config_t config{};
+      config.oper_type = PPA_OPERATION_SRM;
+      config.max_pending_trans_num = 1;
+      if (ppa_register_client(&config, &this->transform_client_) != ESP_OK) {
+        this->transform_client_ = nullptr;
+        ESP_LOGW(
+            TAG,
+            "PPA rotation unavailable; retaining display compatibility path");
+      }
+    }
+  }
+#endif
+
   ESP_LOGCONFIG(TAG, "MIPI DSI setup complete");
 }
 
@@ -251,6 +275,14 @@ void MipiDsi::draw_pixels_compat_(int x_start, int y_start, int w, int h, const 
                                    int x_pad) {
   if (w <= 0 || h <= 0)
     return;
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+  if (bitness == display::COLOR_BITNESS_565 && !big_endian &&
+      this->rotation_ != display::DISPLAY_ROTATION_0_DEGREES &&
+      !this->is_clipping() && !this->updating_ &&
+      this->draw_rotated_rgb565_(x_start, y_start, w, h, ptr, x_offset,
+                                 y_offset, x_pad))
+    return;
+#endif
   if (bitness != this->color_depth_ || (bitness == display::COLOR_BITNESS_565 && big_endian != this->big_endian_) ||
       this->rotation_ != display::DISPLAY_ROTATION_0_DEGREES || this->is_clipping()) {
     display::Display::draw_pixels_at(x_start, y_start, w, h, ptr, display::COLOR_ORDER_RGB, bitness, big_endian, x_offset, y_offset, x_pad);
@@ -282,6 +314,206 @@ void MipiDsi::draw_pixels_compat_(int x_start, int y_start, int w, int h, const 
   this->write_to_display_(x_start, y_start, w, h, ptr, x_offset, y_offset, x_pad);
 }
 
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+bool MipiDsi::supports_native_rgb565() const {
+  return this->color_depth_ == display::COLOR_BITNESS_565 &&
+         !this->big_endian_ && this->frame_buffer_ != nullptr &&
+         this->frame_buffer_size_ ==
+             this->width_ * this->height_ * sizeof(uint16_t);
+}
+
+bool MipiDsi::supports_rgb565_transform() const {
+  return this->supports_native_rgb565() && this->transform_client_ != nullptr;
+}
+
+void MipiDsi::mirror_native_rgb565_(int x, int y, int width, int height,
+                                    const uint8_t *data, size_t stride) {
+  if (this->buffer_ == nullptr)
+    return;
+  for (int row = 0; row < height; ++row) {
+    const size_t offset =
+        (size_t(y + row) * this->width_ + x) * sizeof(uint16_t);
+    std::memcpy(this->buffer_ + offset, data + row * stride,
+                width * sizeof(uint16_t));
+  }
+}
+
+bool MipiDsi::draw_native_rgb565(int x, int y, int width, int height,
+                                 const uint8_t *data, size_t bytes) {
+  if (this->is_failed() || !this->supports_native_rgb565() ||
+      this->submit_mutex_ == nullptr || this->io_lock_ == nullptr ||
+      this->handle_ == nullptr || data == nullptr || x < 0 || y < 0 ||
+      width <= 0 || height <= 0 || size_t(x) > this->width_ ||
+      size_t(y) > this->height_ || size_t(width) > this->width_ - x ||
+      size_t(height) > this->height_ - y ||
+      size_t(width) > bytes / sizeof(uint16_t) / height)
+    return false;
+  xSemaphoreTake(this->submit_mutex_, portMAX_DELAY);
+  this->mirror_native_rgb565_(x, y, width, height, data,
+                              width * sizeof(uint16_t));
+  const bool success =
+      this->submit_bitmap_locked_(x, y, x + width, y + height, data);
+  xSemaphoreGive(this->submit_mutex_);
+  return success;
+}
+
+bool MipiDsi::draw_rgb565_transformed(const ppa_srm_oper_config_t &operation,
+                                      size_t input_bytes, int native_x,
+                                      int native_y, int output_width,
+                                      int output_height,
+                                      WriteAdmission still_current,
+                                      void *context) {
+  const auto &input = operation.in;
+  if (this->is_failed() || !this->supports_rgb565_transform() ||
+      this->submit_mutex_ == nullptr || this->io_lock_ == nullptr ||
+      this->handle_ == nullptr || input.buffer == nullptr ||
+      input.srm_cm != PPA_SRM_COLOR_MODE_RGB565 || input.pic_w == 0 ||
+      input.pic_h == 0 ||
+      input.pic_w > input_bytes / sizeof(uint16_t) / input.pic_h ||
+      input.block_w == 0 || input.block_h == 0 ||
+      input.block_offset_x > input.pic_w ||
+      input.block_offset_y > input.pic_h ||
+      input.block_w > input.pic_w - input.block_offset_x ||
+      input.block_h > input.pic_h - input.block_offset_y || native_x < 0 ||
+      native_y < 0 || output_width <= 0 || output_height <= 0 ||
+      size_t(native_x) > this->width_ || size_t(native_y) > this->height_ ||
+      size_t(output_width) > this->width_ - native_x ||
+      size_t(output_height) > this->height_ - native_y)
+    return false;
+
+  const auto scale_units = [](float scale) -> uint32_t {
+    const float units = scale * 16.0f;
+    return std::isfinite(units) && units >= 1.0f && units <= 4095.0f &&
+                   std::floor(units) == units
+               ? static_cast<uint32_t>(units)
+               : 0;
+  };
+  const uint32_t scale_x = scale_units(operation.scale_x),
+                 scale_y = scale_units(operation.scale_y);
+  size_t scaled_width = uint64_t(input.block_w) * scale_x / 16;
+  size_t scaled_height = uint64_t(input.block_h) * scale_y / 16;
+  switch (operation.rotation_angle) {
+  case PPA_SRM_ROTATION_ANGLE_90:
+  case PPA_SRM_ROTATION_ANGLE_270:
+    std::swap(scaled_width, scaled_height);
+    break;
+  case PPA_SRM_ROTATION_ANGLE_0:
+  case PPA_SRM_ROTATION_ANGLE_180:
+    break;
+  default:
+    return false;
+  }
+  const uintptr_t source = reinterpret_cast<uintptr_t>(input.buffer);
+  const uintptr_t target = reinterpret_cast<uintptr_t>(this->frame_buffer_);
+  if (scale_x == 0 || scale_y == 0 || scaled_width != size_t(output_width) ||
+      scaled_height != size_t(output_height) ||
+      input_bytes > UINTPTR_MAX - source ||
+      (source < target + this->frame_buffer_size_ &&
+       target < source + input_bytes))
+    return false;
+
+  // All framebuffer writers, including the ordinary LCD copy, share this
+  // owner. The screenshot read-copy uses a nonblocking take of the same lock.
+  xSemaphoreTake(this->submit_mutex_, portMAX_DELAY);
+  // Recheck media admission after waiting for another display writer. This
+  // predicate is synchronous/read-only and never receives the framebuffer.
+  if (still_current != nullptr && !still_current(context)) {
+    xSemaphoreGive(this->submit_mutex_);
+    return false;
+  }
+  auto config = operation;
+  config.out = {};
+  config.out.buffer = this->frame_buffer_;
+  config.out.buffer_size = this->frame_buffer_size_;
+  config.out.pic_w = this->width_;
+  config.out.pic_h = this->height_;
+  config.out.block_offset_x = native_x;
+  config.out.block_offset_y = native_y;
+  config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+  config.mode = PPA_TRANS_MODE_BLOCKING;
+  config.user_data = nullptr;
+  // IDF cleans the input and invalidates the complete output-row window
+  // before DMA. No CPU or screenshot reader can repopulate it while locked.
+  // IDF BLOCKING has no timeout: ownership survives until its DMA-done ISR.
+  // Validation/enqueue rejection returns before DMA is accepted.
+  const esp_err_t error =
+      ppa_do_scale_rotate_mirror(this->transform_client_, &config);
+  bool success = false;
+  if (error == ESP_OK) {
+    // A pointer inside the DPI framebuffer selects IDF's no-copy cache-sync
+    // path and its normal single completion callback. Source DMA is finished.
+    const auto *pixels =
+        this->frame_buffer_ +
+        (size_t(native_y) * this->width_ + native_x) * sizeof(uint16_t);
+    this->mirror_native_rgb565_(native_x, native_y, output_width, output_height,
+                                pixels, this->width_ * sizeof(uint16_t));
+    success =
+        this->submit_bitmap_locked_(native_x, native_y, native_x + output_width,
+                                    native_y + output_height, pixels);
+  } else {
+    ESP_LOGW(TAG, "PPA framebuffer transform failed: %s",
+             esp_err_to_name(error));
+  }
+  if (still_current != nullptr && !still_current(context))
+    success = false;
+  xSemaphoreGive(this->submit_mutex_);
+  return success;
+}
+
+bool MipiDsi::draw_rotated_rgb565_(int x, int y, int width, int height,
+                                   const uint8_t *data, int x_offset,
+                                   int y_offset, int x_pad) {
+  const int64_t stride = int64_t(x_offset) + width + x_pad;
+  const int64_t rows = int64_t(y_offset) + height;
+  if (data == nullptr || x_offset < 0 || y_offset < 0 || x_pad < 0 ||
+      stride <= 0 || stride > UINT32_MAX || rows <= 0 || rows > UINT32_MAX ||
+      uint64_t(stride) * rows > SIZE_MAX / sizeof(uint16_t))
+    return false;
+  const int left = std::max(0, x), top = std::max(0, y);
+  const int right = std::min<int64_t>(this->get_width(), int64_t(x) + width);
+  const int bottom = std::min<int64_t>(this->get_height(), int64_t(y) + height);
+  if (right <= left || bottom <= top)
+    return true;
+  ppa_srm_oper_config_t config{};
+  config.in.buffer = data;
+  config.in.pic_w = stride;
+  config.in.pic_h = rows;
+  config.in.block_offset_x = int64_t(x_offset) + left - x;
+  config.in.block_offset_y = int64_t(y_offset) + top - y;
+  config.in.block_w = right - left;
+  config.in.block_h = bottom - top;
+  config.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+  config.scale_x = config.scale_y = 1.0f;
+  int native_x = left, native_y = top, out_width = right - left,
+      out_height = bottom - top;
+  switch (this->rotation_) {
+  case display::DISPLAY_ROTATION_90_DEGREES:
+    native_x = this->width_ - bottom;
+    native_y = left;
+    std::swap(out_width, out_height);
+    config.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
+    break;
+  case display::DISPLAY_ROTATION_180_DEGREES:
+    native_x = this->width_ - right;
+    native_y = this->height_ - bottom;
+    config.rotation_angle = PPA_SRM_ROTATION_ANGLE_180;
+    break;
+  case display::DISPLAY_ROTATION_270_DEGREES:
+    native_x = top;
+    native_y = this->height_ - right;
+    std::swap(out_width, out_height);
+    config.rotation_angle = PPA_SRM_ROTATION_ANGLE_90;
+    break;
+  default:
+    config.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    break;
+  }
+  return this->draw_rgb565_transformed(
+      config, size_t(stride) * rows * sizeof(uint16_t), native_x, native_y,
+      out_width, out_height);
+}
+#endif
+
 bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
                              const uint8_t *ptr) {
   if (this->is_failed() || this->handle_ == nullptr ||
@@ -292,6 +524,14 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   // complete submit-and-wait transaction so LVGL and direct video cannot
   // consume each other's completion token.
   xSemaphoreTake(this->submit_mutex_, portMAX_DELAY);
+  const bool success =
+      this->submit_bitmap_locked_(x_start, y_start, x_end, y_end, ptr);
+  xSemaphoreGive(this->submit_mutex_);
+  return success;
+}
+
+bool MipiDsi::submit_bitmap_locked_(int x_start, int y_start, int x_end,
+                                    int y_end, const uint8_t *ptr) {
   // A binary semaphore may still contain a completion edge from setup or a
   // prior transfer. Drain it before submitting so this transaction can only
   // consume the callback generated by its own DMA operation.
@@ -299,7 +539,6 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   const esp_err_t err = esp_lcd_panel_draw_bitmap(
       this->handle_, x_start, y_start, x_end, y_end, ptr);
   if (err != ESP_OK) {
-    xSemaphoreGive(this->submit_mutex_);
     this->smark_failed(LOG_STR("lcd_panel_draw_bitmap failed"), err);
     return false;
   }
@@ -308,10 +547,8 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   // path above must return before waiting because no callback is guaranteed
   // when the driver rejects the submit.
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
-  xSemaphoreGive(this->submit_mutex_);
   return true;
 }
-
 
 #ifdef USE_ESP_SCREENSHOT
 bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity, display::DisplayRotation rotation) {
@@ -399,10 +636,32 @@ bool MipiDsi::check_buffer_() {
   // this is dependent on the enum values.
   auto bytes_per_pixel = 3 - this->color_depth_;
   RAMAllocator<uint8_t> allocator;
-  this->buffer_ = allocator.allocate(this->height_ * this->width_ * bytes_per_pixel);
+  const size_t bytes = this->height_ * this->width_ * bytes_per_pixel;
+  this->buffer_ = allocator.allocate(bytes);
   if (this->buffer_ == nullptr) {
     this->mark_failed(LOG_STR("Could not allocate buffer for display!"));
     return false;
+  }
+  // A scalar compatibility draw can begin after LVGL/video has already
+  // painted the panel. Seed this existing fallback canvas from that image;
+  // widening its dirty region must not publish uninitialized background.
+  if (this->frame_buffer_ != nullptr && this->frame_buffer_size_ == bytes &&
+      this->submit_mutex_ != nullptr) {
+    xSemaphoreTake(this->submit_mutex_, portMAX_DELAY);
+    const bool synced =
+        esp_cache_msync(this->frame_buffer_, bytes,
+                        ESP_CACHE_MSYNC_FLAG_DIR_M2C |
+                            ESP_CACHE_MSYNC_FLAG_UNALIGNED) == ESP_OK;
+    if (synced)
+      std::memcpy(this->buffer_, this->frame_buffer_, bytes);
+    xSemaphoreGive(this->submit_mutex_);
+    if (!synced) {
+      this->mark_failed(
+          LOG_STR("Could not synchronize the display compatibility canvas"));
+      return false;
+    }
+  } else {
+    std::memset(this->buffer_, 0, bytes);
   }
   return true;
 }
