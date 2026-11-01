@@ -11,6 +11,8 @@ import types
 
 import pytest
 
+from tests.test_media_session_updates import MEDIA_SESSION_UPDATES
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
@@ -84,6 +86,7 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         "media_session_updates",
         commit_audio_session_update=lambda *_args, **_kwargs: None,
         commit_video_session_update=lambda *_args, **_kwargs: None,
+        committed_video_format_state=MEDIA_SESSION_UPDATES.committed_video_format_state,
     )
     _module("phone_endpoint", DEFAULT_ENDPOINT_ID="default")
     _module(

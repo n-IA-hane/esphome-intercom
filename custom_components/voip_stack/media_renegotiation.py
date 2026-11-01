@@ -29,6 +29,7 @@ from .media_ports import (
 from .media_session_updates import (
     commit_audio_session_update,
     commit_video_session_update,
+    committed_video_format_state,
 )
 from .runtime_data import endpoint_directory, require_runtime_data
 from .core.sdp import (
@@ -746,21 +747,7 @@ async def async_prepare_media_update(
                             else "inactive"
                         ),
                         "video_failure_reason": "",
-                        "video_format": (
-                            updated_video.wire_token()
-                            if updated_video is not None
-                            else ""
-                        ),
-                        "video_send_format": (
-                            updated.send_video_format.wire_token()
-                            if updated.send_video_format is not None
-                            else ""
-                        ),
-                        "video_receive_format": (
-                            updated.recv_video_format.wire_token()
-                            if updated.recv_video_format is not None
-                            else ""
-                        ),
+                        **committed_video_format_state(updated),
                         "video_direction": video_direction,
                         "video_connection_held": updated.remote_video_connection_held,
                         "last_sip_event": method,
