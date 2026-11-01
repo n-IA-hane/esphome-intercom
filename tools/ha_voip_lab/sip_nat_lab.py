@@ -37,8 +37,9 @@ def validate_native_idle_capture(output: Path, interval: int) -> None:
     for side, client in (("rc0", CLIENT_IP), ("rs0", NAT_IP)):
         capture = output / (side + ".pcap")
         subprocess.run(["capinfos", "-c", str(capture)], capture_output=True, text=True, check=True)
-        fields = ["ip.src", "udp.srcport", "tcp.srcport", "sip.Method", "sip.Call-ID", "sip.Expires", "sip.Content-Length"]
-        command = ["tshark", "-r", str(capture), "-Y", "sip", "-T", "fields"]
+        fields = ["ip.src", "udp.srcport", "tcp.srcport", "sip.Method", "sip.Call-ID", "sip.Expires", "sip.Content-Length",
+                  "sip.CSeq.seq", "sip.Accept"]
+        command = ["tshark", "-r", str(capture), "-Y", "sip and not icmp and not icmpv6", "-T", "fields"]
         for field in fields:
             command.extend(("-e", field))
         rows = [dict(zip(fields, line.split("\t"))) for line in subprocess.run(command,
@@ -47,20 +48,45 @@ def validate_native_idle_capture(output: Path, interval: int) -> None:
         if {item["sip.Expires"] for item in registrations if item["sip.Expires"] != "0"} != {"3600"}:
             raise RuntimeError("Keepalive qualification changed the native REGISTER expiry")
         tuples = {}
+        registration_sequences = {}
         for item in registrations:
             tuples.setdefault(item["sip.Call-ID"], set()).add((item["udp.srcport"], item["tcp.srcport"]))
+            if item["sip.Expires"] != "0" and item["sip.CSeq.seq"].isdigit():
+                protocol = "udp" if item["udp.srcport"] else "tcp"
+                registration_sequences.setdefault((protocol, item["sip.Call-ID"]), set()).add(int(item["sip.CSeq.seq"]))
         probes = [item for item in rows if item["ip.src"] == client and item["sip.Method"] == "OPTIONS"]
         if any(item["sip.Content-Length"] != "0" or item["sip.Expires"]
                 or (item["udp.srcport"], item["tcp.srcport"]) not in tuples.get(item["sip.Call-ID"], set()) for item in probes):
             raise RuntimeError("Native keepalive did not reuse its REGISTER signaling tuple with an empty body")
         protocols = Counter("udp" if item["udp.srcport"] else "tcp" for item in probes)
-        if (interval == 0 and probes) or (interval and any(protocols[mode] < 3 for mode in ("udp", "tcp"))):
+        purposes = {}
+        for item in probes:
+            protocol = "udp" if item["udp.srcport"] else "tcp"
+            sequence = item["sip.CSeq.seq"]
+            accept = item["sip.Accept"].strip().casefold()
+            if not sequence.isdigit() or accept not in {"", "application/sdp"}:
+                raise RuntimeError("Native OPTIONS has an unknown purpose or CSeq")
+            identity = (protocol, item["sip.Call-ID"], int(sequence))
+            discovery = bool(accept)
+            if discovery and int(sequence) - 1 not in registration_sequences.get(identity[:2], set()):
+                raise RuntimeError("Native capability discovery did not immediately follow REGISTER CSeq")
+            if identity in purposes and purposes[identity] != discovery:
+                raise RuntimeError("Native OPTIONS CSeq changed its purpose")
+            purposes[identity] = discovery
+        discovery = Counter(key[0] for key, capability in purposes.items() if capability)
+        periodic = Counter(key[0] for key, capability in purposes.items() if not capability)
+        if (interval == 0 and periodic) or (interval and any(periodic[mode] < 3 for mode in ("udp", "tcp"))):
             raise RuntimeError("Native OPTIONS cadence does not match the enabled/disabled idle case")
         summary[side] = {"native_options_by_transport": dict(protocols), "register_expiry_seconds": 3600,
+            "capability_discovery_by_transport": dict(discovery), "periodic_keepalive_by_transport": dict(periodic),
             "same_registration_signaling_tuple": True, "native_options_have_no_sdp": True}
     results = {mode: json.loads((output / "ha-wire" / mode / "result.json").read_text()) for mode in ("udp", "tcp")}
-    if not all(item["passed"] for item in results.values()):
-        raise RuntimeError("The native post-idle request witness did not pass")
+    for mode, item in results.items():
+        expected = None if interval == 0 and mode == "udp" else 200
+        if (item.get("passed") is not True or item.get("initial_request_status") != 200
+                or "after_idle_request_status" not in item or item["after_idle_request_status"] != expected
+                or item.get("native_probe_exit_code") != 0):
+            raise RuntimeError("The native post-idle request witness did not pass")
     private_json(output / "native-idle-integrity.json", {"passed": True,
         "keepalive_interval_seconds": interval, "namespace_udp_idle_timeout_seconds": 5,
         "idle_window_seconds": 8, "wire": summary, "results": results,
