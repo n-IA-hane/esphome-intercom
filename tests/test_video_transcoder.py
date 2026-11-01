@@ -883,8 +883,9 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sender.returncode, 0, stderr.decode(errors="replace"))
             diagnostic = "\n".join(transcoder.stderr_tail)
             self.assertGreater(input_packets, 20, diagnostic)
-            self.assertGreater(packets, 8, diagnostic)
-            self.assertGreaterEqual(len(access_units), 3, diagnostic)
+            self.assertGreaterEqual(packets, len(access_units), diagnostic)
+            self.assertGreaterEqual(len(access_units), 8, diagnostic)
+            self.assertNotIn("MB rate (", diagnostic)
             if restart_source:
                 self.assertGreaterEqual(len(access_units), 20, diagnostic)
             self.assertTrue(any(item.key_frame for item in access_units))

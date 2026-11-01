@@ -11,6 +11,7 @@ import asyncio
 from collections import deque
 import contextlib
 from dataclasses import dataclass, field
+from fractions import Fraction
 import logging
 import os
 import shutil
@@ -254,25 +255,25 @@ def _positive_fmtp_integer(video_format: RtpVideoFormat, name: str) -> int:
     return value if value > 0 else 0
 
 
-def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, int]:
-    """Select a conservative frame envelope inside the receiver contract."""
+def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, float | None]:
+    """Select geometry and only the FPS bounds declared by the receiver/codec."""
 
     encoding = str(video_format.encoding or "").upper()
-    max_fps = 15
-    if video_format.max_framerate is not None and video_format.max_framerate > 0:
-        max_fps = min(max_fps, max(1, int(video_format.max_framerate)))
+    max_fps = video_format.max_framerate
+    if max_fps is not None and max_fps <= 0:
+        max_fps = None
 
     if encoding == "JPEG":
         plan = sdp.jpeg_image_plan(video_format, 800, 800)
         if plan is not None:
-            return plan.width, plan.height, min(max_fps, 10)
+            return plan.width, plan.height, max_fps
         receiving = video_format.image_attributes.recv if video_format.image_attributes is not None else None
         if receiving is not None and not receiving.wildcard:
             raise VideoTranscoderError("JPEG receiver has no usable image size")
-        return 800, 800, min(max_fps, 10)
+        return 800, 800, max_fps
 
     max_fs = 3600
-    max_mbps = 108000
+    max_mbps = None
     if encoding == "H264":
         limits = sdp.h264_receiver_limits(video_format)
         if limits is None:
@@ -281,10 +282,9 @@ def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, int]:
         max_mbps = int(limits["max-mbps"])
     elif encoding == "VP8":
         max_fs = _positive_fmtp_integer(video_format, "max-fs") or max_fs
-        max_fps = min(
-            max_fps,
-            _positive_fmtp_integer(video_format, "max-fr") or max_fps,
-        )
+        max_fr = _positive_fmtp_integer(video_format, "max-fr")
+        if max_fr:
+            max_fps = min(max_fps, max_fr) if max_fps is not None else max_fr
 
     candidates = (
         (1280, 720),
@@ -305,7 +305,9 @@ def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, int]:
         candidates[-1],
     )
     macroblocks = ((width + 15) // 16) * ((height + 15) // 16)
-    max_fps = min(max_fps, max(1, max_mbps // max(1, macroblocks)))
+    if max_mbps is not None:
+        codec_fps = max_mbps / max(1, macroblocks)
+        max_fps = min(max_fps, codec_fps) if max_fps is not None else codec_fps
     return width, height, max_fps
 
 
@@ -329,10 +331,16 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
         )
     width, height, framerate = _transcode_envelope(video_format)
     scale = (
-        f"fps={framerate},"
         f"scale=w='min({width},iw)':h='min({height},ih)':"
         "force_original_aspect_ratio=decrease:force_divisible_by=2"
     )
+    if framerate is not None:
+        # Select at most one source picture per negotiated time slot. The
+        # half-frame phase absorbs timestamp jitter; unlike fps=, select can
+        # only drop and never fills a slow source or a stall with duplicates.
+        slot = f"floor((t-start_t)*{framerate}+0.5)"
+        previous = f"floor((prev_selected_t-start_t)*{framerate}+0.5)"
+        scale = f"select='isnan(prev_selected_t)+gt({slot},{previous})'," + scale
     encoding = str(video_format.encoding).upper()
     if encoding == "JPEG" and video_format.image_attributes is not None:
         receiving = video_format.image_attributes.recv
@@ -341,7 +349,12 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
             # another aspect ratio. Scale preserves content; padding never
             # stretches it or silently changes an exact receiver dimension.
             scale += f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
-    common = ["-vf", scale, "-threads", "1"]
+    common = ["-vf", scale, "-threads", "1", "-fps_mode", "passthrough"]
+    # GOP lengths count frames; this preference is not a frame-rate limit.
+    nominal_rate = Fraction(
+        str(framerate if framerate is not None else 30)
+    ).limit_denominator()
+    key_interval = max(1, round(nominal_rate))
     if encoding == "VP8":
         return common + [
             "-pix_fmt",
@@ -359,9 +372,9 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
             "-bufsize",
             "1400k",
             "-g",
-            str(max(1, framerate * 2)),
+            str(key_interval * 2),
             "-keyint_min",
-            str(max(1, framerate)),
+            str(key_interval),
         ]
     if encoding == "JPEG":
         return common + [
@@ -396,17 +409,23 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
         "-bufsize",
         "800k",
         "-g",
-        str(max(1, framerate)),
+        str(key_interval),
         "-keyint_min",
-        str(max(1, framerate)),
+        str(key_interval),
         "-x264-params",
         (
-            f"keyint={max(1, framerate)}:min-keyint={max(1, framerate)}:"
+            # A live RTP demuxer may report its 90-kHz clock as guessed FPS.
+            # Describe the encoder's nominal rate independently of passthrough
+            # PTS, without manufacturing frames or changing the RTP timeline.
+            f"fps={nominal_rate.numerator}/{nominal_rate.denominator}:"
+            f"keyint={key_interval}:min-keyint={key_interval}:"
             # Espressif's constrained-baseline decoder accepts one slice per
             # picture.  MTU shaping belongs to RFC 6184 FU-A packetization,
             # which FFmpeg already performs through pkt_size below, not to
             # codec-level multi-slice output.
-            "scenecut=0:bframes=0:repeat-headers=1:slices=1"
+            # zerolatency otherwise sets force-CFR in x264's VUI even though
+            # source frames retain their variable-rate presentation times.
+            "scenecut=0:bframes=0:repeat-headers=1:slices=1:force-cfr=0"
         ),
     ]
 

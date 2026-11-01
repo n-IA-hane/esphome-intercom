@@ -9,6 +9,7 @@ import contextlib
 from dataclasses import dataclass, field
 import json
 import logging
+import math
 import socket
 import struct
 import time
@@ -88,7 +89,6 @@ _MAX_BROWSER_ACCESS_UNIT_BYTES = 1024 * 1024
 _MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES = 2 * 1024 * 1024
 _MAX_BROWSER_JPEG_DIMENSION = 1280
 _MAX_BROWSER_JPEG_PIXELS = 1280 * 800
-_JPEG_BROWSER_MAX_FPS = 15
 # Do not introduce a private RTP MTU contract. The queue byte budget below is
 # the memory backstop; this ceiling only rejects datagrams that cannot be valid
 # UDP payloads.
@@ -101,6 +101,44 @@ _SYMMETRIC_RTP_KEEPALIVE_INTERVAL = 0.25
 _SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS = 8
 _SYMMETRIC_RTP_REFRESH_INTERVAL = 15.0
 _VIDEO_PACKETIZE_SEMAPHORE = asyncio.Semaphore(1)
+
+
+class _VideoFrameCadence:
+    """Reserve one frame slot or return its wait, without accumulating bursts."""
+
+    __slots__ = ("period", "next_at", "last_at")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.period = 0.0
+        self.next_at: float | None = None
+        self.last_at: float | None = None
+
+    def delay(self, now: float, framerate: float | None) -> float:
+        # This downstream meter needs one frame of arrival credit in addition
+        # to the current frame: upstream selection and network delivery both
+        # add jitter. It is a two-frame token bucket (R*t + 2), using only the
+        # server clock. Long stalls cannot accumulate more than that credit.
+        period = (
+            1.0 / framerate
+            if framerate is not None and math.isfinite(framerate) and framerate > 0
+            else 0.0
+        )
+        if period != self.period or (self.last_at is not None and now < self.last_at):
+            self.period = period
+            self.next_at = None
+        self.last_at = now
+        if not period:
+            return 0.0
+        if self.next_at is None or now - self.next_at >= period:
+            self.next_at = now
+            return 0.0
+        if now < self.next_at:
+            return self.next_at - now
+        self.next_at += period
+        return 0.0
 
 
 def _video_loss_requires_key_frame(
@@ -969,20 +1007,11 @@ async def _video_access_units_to_ws(
     access_units: _ByteBudgetQueue,
     ws_send_lock: asyncio.Lock,
 ) -> None:
-    last_jpeg_sent = 0.0
-    loop = asyncio.get_running_loop()
     while not closed.is_set():
         access_unit = await access_units.get()
         if access_unit.encoding == "JPEG":
-            due = last_jpeg_sent + (1.0 / _JPEG_BROWSER_MAX_FPS)
-            wait_seconds = max(0.0, due - loop.time())
-            if wait_seconds:
-                try:
-                    await asyncio.wait_for(closed.wait(), timeout=wait_seconds)
-                    return
-                except TimeoutError:
-                    pass
-            # A newer independent JPEG may have arrived while pacing.
+            # Socket backpressure and the bounded queue already limit work.
+            # Keep the newest independent image without imposing a global FPS.
             while True:
                 try:
                     access_unit = access_units.get_nowait()
@@ -994,8 +1023,6 @@ async def _video_access_units_to_ws(
                 _VIDEO_HEADER.pack(_VIDEO_ACCESS_UNIT, flags, access_unit.timestamp)
                 + access_unit.data
             )
-        if access_unit.encoding == "JPEG":
-            last_jpeg_sent = loop.time()
 
 
 class _BrowserJpegNormalizer:
@@ -2048,7 +2075,7 @@ async def _run_video_session(
         nonlocal jpeg_normalization_required, browser_tx_drop_logs
         observed_generation = int(session.media_generation)
         received_in_burst = 0
-        last_access_unit_at = 0.0
+        cadence = _VideoFrameCadence()
         async for msg in ws:
             received_in_burst += 1
             if received_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -2056,7 +2083,7 @@ async def _run_video_session(
                 await asyncio.sleep(0)
             if observed_generation != session.media_generation:
                 observed_generation = int(session.media_generation)
-                last_access_unit_at = 0.0
+                cadence.reset()
                 if not await refresh_media_state(observed_generation):
                     return
             if msg.type == WSMsgType.BINARY:
@@ -2080,29 +2107,6 @@ async def _run_video_session(
                 try:
                     packet_generation = observed_generation
                     send_format = session.send_video_format
-                    max_framerate = send_format.max_framerate
-                    if max_framerate is not None and max_framerate > 0:
-                        now = loop.time()
-                        due = last_access_unit_at + (1.0 / max_framerate)
-                        if last_access_unit_at > 0.0 and now < due:
-                            counters["video_rate_limited_access_units"] += 1
-                            if send_format.encoding == "JPEG":
-                                # JPEG pictures are independent, so dropping
-                                # an early frame cannot damage a later one.
-                                continue
-                            # H.264/VP8 access units form a dependency chain.
-                            # Dropping one delta frame here leaves an RTP-clean
-                            # but undecodable GOP at the SIP receiver. Apply
-                            # backpressure for the short cadence remainder
-                            # instead; the browser's bounded WebSocket queue
-                            # remains the overload gate.
-                            try:
-                                await asyncio.wait_for(closed.wait(), timeout=due - now)
-                                return
-                            except TimeoutError:
-                                pass
-                            now = loop.time()
-                        last_access_unit_at = now
 
                     def media_current(generation: int = packet_generation) -> bool:
                         return bool(
@@ -2113,6 +2117,31 @@ async def _run_video_session(
                             and session.can_send
                             and not session.remote_connection_held
                         )
+
+                    max_framerate = send_format.max_framerate
+                    wait_seconds = cadence.delay(loop.time(), max_framerate)
+                    if wait_seconds > 0:
+                        counters["video_rate_limited_access_units"] += 1
+                        if send_format.encoding == "JPEG":
+                            # Independent pictures may be discarded before
+                            # normalization; client timestamps grant no credit.
+                            continue
+                        # H.264/VP8 pictures retain their dependency chain.
+                        # Backpressure waits for admission instead of dropping
+                        # an arbitrary already-encoded delta frame.
+                        while wait_seconds > 0:
+                            try:
+                                await asyncio.wait_for(
+                                    closed.wait(), timeout=wait_seconds
+                                )
+                                return
+                            except TimeoutError:
+                                pass
+                            if not media_current():
+                                break
+                            wait_seconds = cadence.delay(loop.time(), max_framerate)
+                        if not media_current():
+                            continue
 
                     access_unit = data[_VIDEO_HEADER.size :]
                     if send_format.encoding == "JPEG" and jpeg_normalization_required:

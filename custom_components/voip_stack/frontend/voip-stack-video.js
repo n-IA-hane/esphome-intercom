@@ -27,6 +27,38 @@ const CODEC_SETUP_TIMEOUT_MS = 3000;
 const MEDIA_CLEANUP_TIMEOUT_MS = 500;
 const JPEG_CAMERA_QUALITY = 0.72;
 
+class VideoFrameCadence {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this.period = 0;
+    this.nextAt = null;
+    this.lastAt = null;
+  }
+
+  // Admit a frame when zero is returned, otherwise report its remaining wait.
+  // Keep phase across capture jitter. Like WebRTC's FramerateController, the
+  // first target is half an interval ahead; a stall never banks extra frames.
+  delay(now, framerate) {
+    const period = Number.isFinite(framerate) && framerate > 0 ? 1 / framerate : 0;
+    if (period !== this.period || (this.lastAt !== null && now < this.lastAt)) {
+      this.period = period;
+      this.nextAt = null;
+    }
+    this.lastAt = now;
+    if (!period) return 0;
+    if (this.nextAt === null || now - this.nextAt >= period) {
+      this.nextAt = now + period / 2;
+      return 0;
+    }
+    if (now < this.nextAt) return this.nextAt - now;
+    this.nextAt += period;
+    return 0;
+  }
+}
+
 function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   let timer;
   const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
@@ -1011,6 +1043,7 @@ export class VoipStackVideo extends EventTarget {
         prepared.encoder,
         generation,
         senderGeneration,
+        prepared.maxFramerate,
       );
       prepared = null;
       this._canSend = true;
@@ -1128,6 +1161,10 @@ export class VoipStackVideo extends EventTarget {
         encoder,
         reader,
         framerate,
+        maxFramerate: Math.min(
+          captureContract.maxFr,
+          captureContract.maxMbps / Math.max(1, macroblocks),
+        ),
         deviceId: String(settings.deviceId || deviceId || ""),
         settings,
       };
@@ -1168,12 +1205,12 @@ export class VoipStackVideo extends EventTarget {
     return base;
   }
 
-  async _encodeCamera(framerate, reader, encoder, generation, senderGeneration) {
+  async _encodeCamera(
+    framerate, reader, encoder, generation, senderGeneration, maxFramerate = framerate,
+  ) {
     const keyInterval = Math.max(1, Math.round(framerate * 2));
-    const minimumFrameIntervalMs = 1000 / Math.max(1, framerate);
-    const minimumFrameIntervalUs = minimumFrameIntervalMs * 1000;
-    let lastAcceptedSourceTimestamp = null;
-    let nextAcceptedFrameAt = 0;
+    const cadence = new VideoFrameCadence();
+    let usingSourceClock = null;
     try {
       while (
         this._senderIsCurrent(generation, senderGeneration) &&
@@ -1193,24 +1230,17 @@ export class VoipStackVideo extends EventTarget {
             break;
           }
           const sourceTimestamp = Number(frame.timestamp);
-          if (Number.isFinite(sourceTimestamp) && sourceTimestamp >= 0) {
-            if (
-              lastAcceptedSourceTimestamp !== null &&
-              sourceTimestamp >= lastAcceptedSourceTimestamp &&
-              sourceTimestamp - lastAcceptedSourceTimestamp <
-                minimumFrameIntervalUs
-            ) {
-              this._stats.dropped++;
-              continue;
-            }
-            lastAcceptedSourceTimestamp = sourceTimestamp;
-          } else {
-            const now = performance.now();
-            if (now < nextAcceptedFrameAt) {
-              this._stats.dropped++;
-              continue;
-            }
-            nextAcceptedFrameAt = now + minimumFrameIntervalMs;
+          const sourceClock = Number.isFinite(sourceTimestamp) && sourceTimestamp >= 0;
+          if (sourceClock !== usingSourceClock) {
+            cadence.reset();
+            usingSourceClock = sourceClock;
+          }
+          const now = sourceClock ? sourceTimestamp / 1000000 : performance.now() / 1000;
+          // Track FPS is an encoder/GOP estimate. Only the negotiated codec
+          // envelope limits admission; an absent setting is not a hidden cap.
+          if (cadence.delay(now, maxFramerate) > 0) {
+            this._stats.dropped++;
+            continue;
           }
           // getUserMedia constraints are advisory on some browsers. Enforce
           // the negotiated SDP a=framerate envelope at the actual encoder

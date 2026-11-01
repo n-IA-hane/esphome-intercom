@@ -691,7 +691,7 @@ assert.deepEqual(
   [h264LowContract.maxWidth, h264LowContract.maxHeight],
   [352, 288],
 );
-assert.equal(h264LowContract.maxFr, 20);
+assert.equal(h264LowContract.maxFr, 30);
 
 const h264OneB = new Video();
 h264OneB._encoding = "H264";

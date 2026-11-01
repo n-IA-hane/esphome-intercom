@@ -1,0 +1,12 @@
+[
+  {"name":"ten_fps_jitter","fps":10,"times":[0,0.0999,0.2,0.2999,0.4,0.4999,0.6,0.6999,0.8,0.8999],"accepted":[0,1,2,3,4,5,6,7,8,9]},
+  {"name":"twenty_five_fps_jitter","fps":25,"times":[0,0.0399,0.08,0.1199,0.16,0.1999],"accepted":[0,1,2,3,4,5]},
+  {"name":"thirty_fps_jitter","fps":30,"times":[0,0.0333,0.0667,0.0999,0.1333,0.1666],"accepted":[0,1,2,3,4,5]},
+  {"name":"fractional_29_97","fps":29.97,"times":[0,0.0333,0.0668,0.1,0.1335,0.1667],"accepted":[0,1,2,3,4,5]},
+  {"name":"slow_source","fps":25,"times":[0,0.2,0.4,0.6,0.8],"accepted":[0,1,2,3,4]},
+  {"name":"fractional_rate","fps":2.5,"times":[0,0.3999,0.8,1.1999,1.6,1.9999],"accepted":[0,1,2,3,4,5]},
+  {"name":"overrate","fps":10,"times":[0,0.02,0.04,0.06,0.08,0.1,0.12,0.14,0.16,0.18,0.2],"accepted":[0,3,8],"backend_accepted":[0,1,5,10]},
+  {"name":"duplicate","fps":10,"times":[0,0,0.01,0.0999,0.0999,0.2],"accepted":[0,3,5],"backend_accepted":[0,1,5]},
+  {"name":"clock_restart","fps":10,"times":[1,1.1,0.1,0.1999,0.3],"accepted":[0,1,2,3,4]},
+  {"name":"stall_without_catchup","fps":10,"times":[0,0.1,5,5,5.01,5.0499,5.05,5.1,5.15],"accepted":[0,1,2,6,8],"backend_accepted":[0,1,2,3,7]}
+]
