@@ -152,6 +152,7 @@ ha_tests=(
   tests/test_local_sip_flow_ha.py
   tests/test_optional_sip_capabilities_ha.py
   tests/test_bridge_capabilities_wire_ha.py
+  tests/test_bridge_video_framerate_wire_ha.py
   tests/test_video_keepalive_runtime.py
   tests/test_imageattr_ws.py
   tests/test_video_transcoder.py

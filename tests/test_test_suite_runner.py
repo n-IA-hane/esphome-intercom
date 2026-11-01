@@ -128,3 +128,36 @@ def test_optional_esphome_mailbox_regression_uses_the_ha_interpreter(tmp_path: P
     assert path in _record_suite_arguments(ha_path, "ha")
     arguments = _record_suite_arguments(software_path, "software-full")
     assert f"--ignore={path}" in arguments
+
+
+def test_all_ha_marked_modules_use_the_ha_interpreter(tmp_path: Path) -> None:
+    ha_marked = set()
+    for path in (ROOT / "tests").glob("test_*.py"):
+        module = ast.parse(path.read_text())
+        for assignment in module.body:
+            if not isinstance(assignment, ast.Assign) or not any(
+                isinstance(target, ast.Name) and target.id == "pytestmark"
+                for target in assignment.targets
+            ):
+                continue
+            if any(
+                isinstance(node, ast.Attribute) and ast.unparse(node) == "pytest.mark.ha"
+                for node in ast.walk(assignment.value)
+            ):
+                ha_marked.add(str(path.relative_to(ROOT)))
+
+    assert ha_marked
+    ha_path = tmp_path / "ha"
+    software_path = tmp_path / "software"
+    ha_path.mkdir()
+    software_path.mkdir()
+    ha_arguments = _record_suite_arguments(ha_path, "ha")
+    software_arguments = _record_suite_arguments(software_path, "software-full")
+    assert not (missing := ha_marked - set(ha_arguments)), f"HA suite omits: {sorted(missing)}"
+    software_ignores = {
+        argument.removeprefix("--ignore=")
+        for argument in software_arguments if argument.startswith("--ignore=")
+    }
+    assert not (missing := ha_marked - software_ignores), (
+        f"Regular interpreter collects HA modules: {sorted(missing)}"
+    )
