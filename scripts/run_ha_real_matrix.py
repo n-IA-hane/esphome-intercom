@@ -110,6 +110,7 @@ class QualificationPackage:
             "input_text.voip_qualification_destination",
             "input_text.voip_qualification_false_destination",
             "input_text.voip_qualification_forward_destination",
+            "input_text.voip_qualification_last_decision",
             "input_text.voip_qualification_last_forward",
         )
         self.original = {entity: self.api.state(entity)["state"] for entity in entities}
@@ -378,12 +379,29 @@ def _run_final_response(
         timeout=15,
         check=False,
     )
+    traces = sorted(out_dir.glob(f"{scenario.stem}_*_messages.log"), key=lambda path: path.stat().st_mtime_ns)
+    trace = traces[-1] if traces else None
+    trace_text = trace.read_text(encoding="utf-8", errors="replace") if trace else ""
+    final_codes = [int(value) for value in re.findall(r"^SIP/2\.0 ([2-6]\d\d)\b", trace_text, re.MULTILINE)]
     if completed.returncode:
         raise RuntimeError(
             f"SIPp expected {status}, exit {completed.returncode}: "
-            f"{completed.stdout[-2000:]}"
+            f"final codes={final_codes}, trace={trace}; {completed.stdout[-2000:]}"
         )
-    return {"sip_status": status}
+    headers_by_method = {
+        method: re.findall(rf"^{method}[^\r\n]+\r?\n(.*?)\r?\n\r?\n", trace_text, re.MULTILINE | re.DOTALL)
+        for method in ("INVITE", "ACK")
+    }
+    call_ids_by_method = {
+        method: {match.group(1).strip() for headers in messages
+                 if (match := re.search(r"^Call-ID:\s*([^\r\n]+)", headers, re.MULTILINE | re.IGNORECASE))}
+        for method, messages in headers_by_method.items()
+    }
+    call_ids = call_ids_by_method["INVITE"]
+    if (len(call_ids) != 1 or call_ids_by_method["ACK"] != call_ids
+            or not final_codes or set(final_codes) != {status}):
+        raise RuntimeError(f"SIPp final response trace is incomplete or inconsistent: {trace}")
+    return {"sip_status": status, "sipp_call_id": call_ids.pop(), "sip_trace": str(trace)}
 
 
 def _run_sipp_scenario(
@@ -481,6 +499,40 @@ async def _ha_ws_command(
                 raise RuntimeError("Home Assistant WebSocket authentication failed")
             await websocket.send_json({"id": 1, **command})
             return dict(await websocket.receive_json(timeout=5))
+
+
+def _finish_guarded_route(api, request, *, reject_stale=False):
+    """Keep route-guard qualification independent of an ambient fallback."""
+    call_id = str(request.get("call_id") or "")
+    state = str(request.get("state") or "")
+    sequence = int(request.get("sequence") or 0)
+    if not call_id or not state or sequence <= 0 or not request.get("route_request"):
+        raise RuntimeError("Incomplete pending route event for guarded decision")
+    guard = {"call_id": call_id, "expected_state": state, "expected_sequence": sequence}
+    detail = {"call_id": call_id, "observed_state": state, "observed_sequence": sequence}
+    if reject_stale:
+        rejection = asyncio.run(_ha_ws_command(api, {
+            "type": "call_service", "domain": "voip_stack", "service": "select_inbound_destination",
+            "service_data": {**guard, "destination": "video_sink", "expected_sequence": sequence + 1},
+        }))
+        error = rejection.get("error") or {}
+        expected = {"code": "service_validation_error", "translation_domain": "voip_stack",
+                    "translation_key": "call_sequence_mismatch"}
+        placeholders = error.get("translation_placeholders") or {}
+        if rejection.get("success") is not False or any(error.get(key) != value for key, value in expected.items()) or (
+            placeholders != {"call_id": call_id, "actual": str(sequence), "expected": str(sequence + 1)}
+        ):
+            raise RuntimeError("Expected exact call_sequence_mismatch from the pending route")
+        detail.update(rejected_sequence=sequence + 1, rejection=error)
+    completion = asyncio.run(_ha_ws_command(api, {
+        "type": "call_service", "domain": "voip_stack", "service": "route",
+        "service_data": {**guard, "action": "busy"},
+    }))
+    if completion.get("success") is not True:
+        raise RuntimeError("The matching pending-route guard did not accept the busy decision")
+    detail["matching_guard_accepted"] = True
+    detail["terminal_action"] = "busy"
+    return detail
 
 
 async def _ha_ws_result(
@@ -1100,87 +1152,62 @@ def main() -> int:
 
             def stale_route_sequence() -> dict[str, object]:
                 package.select("no_action")
-                with EventTrace(api) as trace:
-                    with ThreadPoolExecutor(max_workers=1) as executor:
+                trace = EventTrace(api)
+                trace_path = run_dir / "stale-route-events.json"
+                try:
+                    with trace, ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(
                             _run_final_response,
-                            404,
+                            486,
                             host=target_host,
                             port=target_port,
                             local_port=trunk_source_port,
                             out_dir=run_dir,
                         )
                         request = _route_requests(trace, minimum=1)[0]
-                        call_id = str(request.get("call_id") or "")
-                        sequence = int(request.get("sequence") or 0)
-                        state = str(request.get("state") or "")
-                        if not call_id or not request.get("route_request"):
-                            raise RuntimeError(
-                                f"incomplete route request event: {request}"
-                            )
-                        rejection = asyncio.run(
-                            _ha_ws_command(
-                                api,
-                                {
-                                    "type": "call_service",
-                                    "domain": "voip_stack",
-                                    "service": "select_inbound_destination",
-                                    "service_data": {
-                                        "destination": "video_sink",
-                                        "call_id": call_id,
-                                        "expected_state": state,
-                                        "expected_sequence": sequence + 1,
-                                    },
-                                },
-                            )
-                        )
-                        if rejection.get("success"):
-                            raise RuntimeError("stale route sequence was accepted")
+                        detail = _finish_guarded_route(api, request, reject_stale=True)
                         sip_result = future.result()
-                return {
-                    **sip_result,
-                    "call_id": call_id,
-                    "observed_sequence": sequence,
-                    "rejected_sequence": sequence + 1,
-                    "rejection": rejection.get("error"),
-                }
+                        if sip_result["sipp_call_id"] != detail["call_id"]:
+                            raise RuntimeError("Route guard and SIP trace identify different calls")
+                finally:
+                    trace_path.write_text(json.dumps(trace.items, indent=2), encoding="utf-8")
+                return {**sip_result, **detail, "event_trace": str(trace_path)}
 
             execute(MatrixCase(CONCURRENCY_CASES[0], stale_route_sequence))
 
             def concurrent_route_requests() -> dict[str, object]:
                 package.select("no_action")
-                with EventTrace(api) as trace:
-                    sip_results = _parallel_sipp(
-                        (
-                            lambda: _run_final_response(
-                                404,
+                trace = EventTrace(api)
+                trace_path = run_dir / "concurrent-route-events.json"
+                try:
+                    with trace, ThreadPoolExecutor(max_workers=2) as executor:
+                        futures = [
+                            executor.submit(
+                                _run_final_response,
+                                486,
                                 host=target_host,
                                 port=target_port,
-                                local_port=trunk_source_port,
+                                local_port=local_port,
                                 out_dir=run_dir,
-                            ),
-                            lambda: _run_final_response(
-                                404,
-                                host=target_host,
-                                port=target_port,
-                                local_port=trunk_source_port + 1,
-                                out_dir=run_dir,
-                            ),
-                        )
-                    )
-                    requests = _route_requests(trace, minimum=2)
-                call_ids = {
-                    str(request.get("call_id") or "") for request in requests
-                }
-                call_ids.discard("")
-                if len(call_ids) != 2:
-                    raise RuntimeError(
-                        f"concurrent route requests were not distinct: {requests}"
-                    )
+                            )
+                            for local_port in (trunk_source_port, trunk_source_port + 1)
+                        ]
+                        requests = _route_requests(trace, minimum=2)
+                        call_ids = {str(request.get("call_id") or "") for request in requests}
+                        if len(requests) != 2 or "" in call_ids or len(call_ids) != 2:
+                            raise RuntimeError("Concurrent pending route requests were not distinct")
+                        decisions = [_finish_guarded_route(api, request) for request in requests]
+                        sip_results = [future.result() for future in futures]
+                        if {result["sipp_call_id"] for result in sip_results} != call_ids:
+                            raise RuntimeError("Concurrent route and SIP trace Call-IDs differ")
+                finally:
+                    trace_path.write_text(json.dumps(trace.items, indent=2), encoding="utf-8")
                 return {
                     "call_ids": sorted(call_ids),
                     "route_request_count": len(requests),
+                    "decisions": decisions,
                     "sip_results": sip_results,
+                    "event_trace": str(trace_path),
                 }
 
             execute(MatrixCase(CONCURRENCY_CASES[1], concurrent_route_requests))

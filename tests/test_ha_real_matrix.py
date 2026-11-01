@@ -45,6 +45,95 @@ def test_final_response_scenario_is_a_real_sipp_dialog() -> None:
     assert "CSeq: 1 ACK" in scenario
 
 
+def test_guarded_route_requires_the_exact_sequence_rejection_then_matching_positive_control(monkeypatch) -> None:
+    runner = load_runner()
+    commands = []
+
+    async def command(_api, payload):
+        commands.append(payload)
+        if len(commands) == 1:
+            return {"success": False, "error": {
+                "code": "service_validation_error", "translation_domain": "voip_stack",
+                "translation_key": "call_sequence_mismatch",
+                "translation_placeholders": {"call_id": "pending-call", "actual": "7", "expected": "8"},
+            }}
+        return {"success": True}
+
+    monkeypatch.setattr(runner, "_ha_ws_command", command)
+    detail = runner._finish_guarded_route(
+        object(), {"call_id": "pending-call", "state": "route_requested", "sequence": 7, "route_request": True},
+        reject_stale=True,
+    )
+
+    assert detail["matching_guard_accepted"] is True
+    assert detail["rejected_sequence"] == 8
+    assert [(item["service"], item["service_data"]) for item in commands] == [
+        ("select_inbound_destination", {"call_id": "pending-call", "expected_state": "route_requested",
+                                         "expected_sequence": 8, "destination": "video_sink"}),
+        ("route", {"call_id": "pending-call", "expected_state": "route_requested",
+                   "expected_sequence": 7, "action": "busy"}),
+    ]
+
+
+@pytest.mark.parametrize("error", [
+    {"code": "unauthorized"},
+    {"code": "service_validation_error", "translation_domain": "voip_stack", "translation_key": "call_not_found"},
+    {"code": "service_validation_error", "translation_domain": "voip_stack", "translation_key": "call_sequence_mismatch",
+     "translation_placeholders": {"call_id": "other-call", "actual": "7", "expected": "8"}},
+])
+def test_guarded_route_does_not_accept_an_unrelated_ws_rejection(monkeypatch, error) -> None:
+    runner = load_runner()
+    commands = []
+
+    async def command(_api, payload):
+        commands.append(payload)
+        return {"success": False, "error": error}
+
+    monkeypatch.setattr(runner, "_ha_ws_command", command)
+    with pytest.raises(RuntimeError, match="exact call_sequence_mismatch"):
+        runner._finish_guarded_route(
+            object(), {"call_id": "pending-call", "state": "route_requested", "sequence": 7, "route_request": True},
+            reject_stale=True,
+        )
+    assert len(commands) == 1
+
+
+def test_guarded_route_requires_the_matching_positive_control(monkeypatch) -> None:
+    runner = load_runner()
+
+    async def command(_api, _payload):
+        return {"success": False, "error": {"code": "service_validation_error"}}
+
+    monkeypatch.setattr(runner, "_ha_ws_command", command)
+    with pytest.raises(RuntimeError, match="matching pending-route guard"):
+        runner._finish_guarded_route(
+            object(), {"call_id": "pending-call", "state": "route_requested", "sequence": 7, "route_request": True},
+        )
+
+
+@pytest.mark.parametrize(("status", "ack_id", "accepted"), [(486, "wire-call", True), (480, "wire-call", False), (486, "wrong-call", False)])
+def test_final_response_correlates_exact_status_and_ack_call_id(tmp_path, monkeypatch, status, ack_id, accepted) -> None:
+    runner = load_runner()
+
+    def run(_command, **_kwargs):
+        (tmp_path / "route-486-19999_123_messages.log").write_text(
+            "INVITE sip:9999@host SIP/2.0\nCall-ID: wire-call\nCSeq: 1 INVITE\n\n"
+            f"SIP/2.0 {status} response\nCall-ID: wire-call\n\n"
+            f"ACK sip:9999@host SIP/2.0\nCall-ID: {ack_id}\nCSeq: 1 ACK\n\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess([], returncode=0, stdout="")
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    if accepted:
+        detail = runner._run_final_response(486, host="host", port=5060, local_port=19999, out_dir=tmp_path)
+        assert detail["sipp_call_id"] == "wire-call"
+        assert detail["sip_status"] == 486
+    else:
+        with pytest.raises(RuntimeError, match="trace is incomplete or inconsistent"):
+            runner._run_final_response(486, host="host", port=5060, local_port=19999, out_dir=tmp_path)
+
+
 def test_manual_baresip_config_changes_only_answer_policy(tmp_path: Path) -> None:
     runner = load_runner()
     source = tmp_path / "source"
@@ -59,6 +148,34 @@ def test_manual_baresip_config_changes_only_answer_policy(tmp_path: Path) -> Non
 
     assert "answermode=manual" in (destination / "accounts").read_text()
     assert (destination / "config").read_text() == "audio_player null\n"
+
+
+@pytest.mark.parametrize("original", ["", "previous-call|busy|"])
+def test_qualification_package_restores_last_decision_after_failure(original) -> None:
+    runner = load_runner()
+    entity_id = "input_text.voip_qualification_last_decision"
+
+    class Api:
+        values = {entity_id: original}
+
+        def state(self, name):
+            default = "on" if name.startswith("automation.") else "off" if name.startswith("input_boolean.") else ""
+            return {"state": self.values.get(name, default), "entity_id": name}
+
+        def service(self, domain, service, data):
+            self.values[data["entity_id"]] = (
+                data["value"] if domain == "input_text" else data["option"] if domain == "input_select"
+                else "on" if service == "turn_on" else "off"
+            )
+
+    api = Api()
+    with pytest.raises(RuntimeError, match="failed witness"):
+        with runner.QualificationPackage(api) as package:
+            package.select("busy")
+            api.values[entity_id] = "new-call|busy|"
+            raise RuntimeError("failed witness")
+
+    assert api.values[entity_id] == original
 
 
 def test_matrix_declares_required_route_and_answer_cases() -> None:
