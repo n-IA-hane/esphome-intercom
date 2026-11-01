@@ -312,12 +312,27 @@ class BareSip:
                         accounts,
                     )
                 if video_codec:
-                    accounts = re.sub(r";video_codecs=[^;>]+", "", accounts)
-                    accounts = re.sub(
-                        r">",
-                        f";video_codecs={video_codec.strip().upper()}>",
-                        accounts,
-                    )
+                    lines = []
+                    for line in accounts.splitlines(keepends=True):
+                        if line.lstrip().startswith("#") or not line.strip():
+                            lines.append(line)
+                            continue
+                        # Quoted display names and opaque auth parameters may
+                        # contain semicolons or SIP-looking text of their own.
+                        line = re.sub(
+                            r'("(?:\\.|[^"\\])*"|;video_codecs=(?:"(?:\\.|[^"\\])*"|[^;>\r\n]*))',
+                            lambda match: match[0] if match[0].startswith('"') else "",
+                            line, flags=re.IGNORECASE,
+                        )
+                        line, replaced = re.subn(
+                            r'^((?:[^"<\r\n]|"(?:\\.|[^"\\])*")*<sips?:[^>\r\n]*>)',
+                            rf"\g<1>;video_codecs={codec}",
+                            line, count=1, flags=re.IGNORECASE,
+                        )
+                        if not replaced:
+                            raise ValueError("Video codec selection requires a bracketed SIP account URI")
+                        lines.append(line)
+                    accounts = "".join(lines)
                 accounts_path.write_text(accounts, encoding="utf-8")
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(

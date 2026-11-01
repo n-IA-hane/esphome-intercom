@@ -447,6 +447,22 @@ def _cleanup(base_url: str, token: str) -> dict[str, object]:
     return asyncio.run(runtime_quiescence(base_url, token))
 
 
+def _restore_matrix_state(api, snapshot, base_url: str, token: str) -> list[dict[str, object]]:
+    """Attempt both existing cleanup owners and retain failures in the result."""
+    failures = []
+    for name, operation in (
+        ("restore_integration_configuration", lambda: snapshot.apply(api)),
+        ("runtime_cleanup", lambda: _cleanup(base_url, token)),
+    ):
+        try:
+            operation()
+        except Exception as error:
+            # Flow exceptions can embed schemas, defaults and passwords.
+            failures.append({"name": name, "status": "failed",
+                             "error": f"Cleanup failed ({type(error).__name__})"})
+    return failures
+
+
 async def _ha_ws_command(
     api: HomeAssistantApi, command: dict[str, object]
 ) -> dict[str, object]:
@@ -1280,10 +1296,7 @@ def main() -> int:
                     )
                 )
     finally:
-        with suppress(Exception):
-            snapshot.apply(api)
-        with suppress(Exception):
-            _cleanup(args.ha_url, token)
+        results.extend(_restore_matrix_state(api, snapshot, args.ha_url, token))
 
     artifact = {
         "schema_version": 1,
