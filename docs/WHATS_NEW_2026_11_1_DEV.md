@@ -124,6 +124,8 @@ changes. Monitoring a phone is passive: its presence, microphone and media
 ownership stay with their existing owners. Closing a view releases its
 display listeners, and connection cleanup follows Home Assistant's
 subscription lifecycle.
+Read-only users recover their permitted phone monitors after navigation,
+reload and reconnect without requiring administrator access.
 
 ## Calls with ordinary SIP accounts
 
@@ -133,6 +135,8 @@ ESPHome device entry is an optional management link for these calls.
 SIP OPTIONS can describe the peer's capabilities;
 the call's offer and answer select the actual media. An unknown peer can start
 with the local supported offer, so capability discovery remains optional.
+Unsupported advisory packet times in discovery do not reject a subsequent
+compatible INVITE.
 
 Directional peers can agree separate playback and microphone formats, including
 48 kHz receive and 16 kHz send at 10 ms. Registered ESP lines now discover a
@@ -144,15 +148,21 @@ share that media contract. Relayed calls adapt longer packets to the receiving
 leg's limit through the existing media pipeline, preserving the audio samples.
 
 UDP signaling reuses the registered flow for compatible outgoing dialogs,
-preserving reachability through NAT. TCP connections and busy-lamp subscriptions
+preserving reachability through NAT. Each dialog retains its own next hop and
+feeds the existing bounded receive queue when sharing that UDP endpoint.
+TCP connections and busy-lamp subscriptions
 retire cleanly when their transport closes. An existing message-waiting
 subscription can finish its final unsubscribe after account deregistration.
+Managed account updates preserve ownership and recover the legacy direct
+configuration when automatic registration is disabled.
 
 The browser keeps the selected phone after a failed start, ready for another
 Call. Adding or removing camera transmission preserves the audio owner, and
 Hangup releases the current media ports for immediate redial.
 
 The automated SIP, native-component and HA runtime gates cover these changes.
+Physical P4 audio startup can still encounter downstream backpressure in
+composed mixer/resampler pipelines and remains under investigation.
 Physical retests of the final directional outgoing firmware and mailbox updates
 remain part of the device qualification recorded in the
 [qualification matrix](voip_test_matrix.md).
@@ -218,6 +228,9 @@ The shared FULL video policy suspends MWW during video and restores listening
 according to the user's Wake Word setting when video ends.
 
 JPEG calls can negotiate image dimensions with standard SDP `imageattr`.
+Send and receive limits are evaluated independently, including payload-specific
+attributes alongside a wildcard. The optional transcoder can resize a JPEG
+bridge for a constrained receiver while retaining the call's audio owner.
 Compatible browser senders fit the camera picture to the receiver's preferred
 size before compression, preserving proportions and reducing decoding work on
 the ESP. Peers without this optional attribute keep the existing video path.
