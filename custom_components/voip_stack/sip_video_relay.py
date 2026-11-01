@@ -23,6 +23,7 @@ from .video_transcoder import (
     _claim_transcoder_slot,
     _release_transcoder_slot,
     video_transcode_supported,
+    jpeg_size_transcode_required,
 )
 from .core.video_rtcp import (
     RtcpError,
@@ -278,8 +279,8 @@ class SipVideoRtpRelay:
             raise ValueError(f"unknown video relay side: {side}")
         return side in self._transcode.directions
 
-    @staticmethod
     def transcode_directions_for(
+        self,
         left: VideoRtpPeer,
         right: VideoRtpPeer,
     ) -> set[str]:
@@ -291,7 +292,9 @@ class SipVideoRtpRelay:
             if video_formats_passthrough_compatible(
                 source.recv_format,
                 destination.send_format,
-            ):
+            ) and not (self._transcode_hass is not None and jpeg_size_transcode_required(
+                source.recv_format, destination.send_format,
+            )):
                 continue
             if not video_transcode_supported(
                 source.recv_format,
@@ -359,12 +362,9 @@ class SipVideoRtpRelay:
 
         if self.started or self._start_task is not None:
             raise RuntimeError("cannot configure transcoding after relay start")
-        directions = self.transcode_directions_for(self.left, self.right)
-        if not directions:
-            return
         self._transcode_hass = hass
         self._transcode_call_id = str(call_id or "sip-video")
-        self._transcode.directions = directions
+        self._transcode.directions = self.transcode_directions_for(self.left, self.right)
 
     async def start(self) -> None:
         async with self._lifecycle_lock:

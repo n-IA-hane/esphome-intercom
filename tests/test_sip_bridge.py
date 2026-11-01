@@ -25,6 +25,41 @@ from .voip_phase1_support import (
 
 
 class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_unusable_jpeg_receiver_size_is_rejected_by_existing_bridge_contract(self):
+        invite, dialog, _relay = self._cross_codec_video_fixture()
+        source = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG",
+            image_attributes=sdp.parse_imageattr("26 recv [x=800,y=800]")[1])
+        invite = dataclasses.replace(invite, video_format=source, local_video_format=source, video_answer_format=source)
+        dialog.video_format = dataclasses.replace(source,
+            image_attributes=sdp.parse_imageattr("26 recv [x=1,y=1]")[1])
+        dialog.local_video_format = source
+        relay = sip_bridge.build_pending_invite_video_relay(invite, remote_host=dialog.remote_host,
+            left_port=44000, right_port=44002, sockets=(None, None, None, None))
+        answer = sip_bridge.configure_answered_invite_video_relay(invite, dialog, relay,
+            hass=types.SimpleNamespace(data={}), enable_transcoding=True)
+        self.assertIsNone(answer)
+        self.assertFalse(relay.transcoding)
+
+    def test_jpeg_size_mismatch_enters_existing_transcoder_only_when_enabled(self):
+        for enabled in (False, True):
+            with self.subTest(transcoding=enabled):
+                invite, dialog, _relay = self._cross_codec_video_fixture()
+                source = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10,
+                    image_attributes=sdp.parse_imageattr("26 recv [x=800,y=800]")[1])
+                receiver = dataclasses.replace(source, image_attributes=sdp.parse_imageattr(
+                    "26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+                invite = dataclasses.replace(invite, video_format=source, local_video_format=source, video_answer_format=source)
+                dialog.video_format = receiver
+                dialog.local_video_format = source
+                relay = sip_bridge.build_pending_invite_video_relay(invite, remote_host=dialog.remote_host,
+                    left_port=44000, right_port=44002, sockets=(None, None, None, None))
+                answer = sip_bridge.configure_answered_invite_video_relay(invite, dialog, relay,
+                    hass=types.SimpleNamespace(data={}), enable_transcoding=enabled)
+                self.assertIsNotNone(answer)
+                self.assertEqual(relay.transcodes_from("left"), enabled)
+                self.assertFalse(relay.transcodes_from("right"))
+                self.assertEqual(invite.recv_video_format, source)
+
     def test_bridge_offer_retains_source_send_framerate_when_receive_limit_absent(self):
         for encoding in ("JPEG", "H264", "VP8"):
             for send_limit, receive_limit, expected in (

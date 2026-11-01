@@ -223,6 +223,28 @@ def video_transcode_supported(
     )
 
 
+def jpeg_size_transcode_required(source: RtpVideoFormat | None, destination: RtpVideoFormat | None) -> bool:
+    """Compare the known incoming JPEG envelope with the receiver contract.
+
+    Missing/wildcard source metadata retains the existing legacy path. This
+    decision is used only by callers which already opted into transcoding.
+    """
+    if source is None or destination is None or source.encoding != "JPEG" or destination.encoding != "JPEG":
+        return False
+    incoming = source.image_attributes.recv if source.image_attributes is not None else None
+    receiving = destination.image_attributes.recv if destination.image_attributes is not None else None
+    if incoming is None or incoming.wildcard or receiving is None or receiving.wildcard:
+        return False
+    for alternative in incoming.sets:
+        width, height = alternative.x.maximum, alternative.y.maximum
+        plan = sdp.jpeg_image_plan(destination, width, height)
+        if plan is None:
+            raise VideoTranscoderError("JPEG receiver has no usable image size")
+        if (plan.width, plan.height) != (width, height):
+            return True
+    return False
+
+
 def _positive_fmtp_integer(video_format: RtpVideoFormat, name: str) -> int:
     raw = sdp.video_fmtp_parameters(video_format).get(name, "")
     try:
@@ -241,6 +263,12 @@ def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, int]:
         max_fps = min(max_fps, max(1, int(video_format.max_framerate)))
 
     if encoding == "JPEG":
+        plan = sdp.jpeg_image_plan(video_format, 800, 800)
+        if plan is not None:
+            return plan.width, plan.height, min(max_fps, 10)
+        receiving = video_format.image_attributes.recv if video_format.image_attributes is not None else None
+        if receiving is not None and not receiving.wildcard:
+            raise VideoTranscoderError("JPEG receiver has no usable image size")
         return 800, 800, min(max_fps, 10)
 
     max_fs = 3600
@@ -306,6 +334,13 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
         "force_original_aspect_ratio=decrease:force_divisible_by=2"
     )
     encoding = str(video_format.encoding).upper()
+    if encoding == "JPEG" and video_format.image_attributes is not None:
+        receiving = video_format.image_attributes.recv
+        if receiving is not None and not receiving.wildcard:
+            # Keep the chosen canvas inside imageattr even for a source with
+            # another aspect ratio. Scale preserves content; padding never
+            # stretches it or silently changes an exact receiver dimension.
+            scale += f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
     common = ["-vf", scale, "-threads", "1"]
     if encoding == "VP8":
         return common + [

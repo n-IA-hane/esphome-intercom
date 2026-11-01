@@ -41,6 +41,14 @@ def _runtime_data_adapter(monkeypatch):
 
 
 class TranscoderInputTimelineTests(unittest.TestCase):
+    def test_jpeg_output_respects_negotiated_receiver_image_size(self):
+        receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10,
+            image_attributes=sdp.parse_imageattr("26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+        width, height, fps = video_transcoder._transcode_envelope(receiver)
+        self.assertLessEqual(width, 320)
+        self.assertLessEqual(height, 240)
+        self.assertEqual(fps, 10)
+
     def test_source_restart_preserves_packet_contract(self) -> None:
         timeline = video_transcoder._TranscoderInputTimeline()
 
@@ -780,7 +788,9 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
         output_format=None,
         gop: int = 10,
         restart_source: bool = False,
-    ) -> None:
+        source_filter: str = "testsrc2=size={size}:rate=10",
+        expected_output_size: tuple[int, int] | None = None,
+    ) -> list:
         output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         output.setblocking(False)
         output.bind(("127.0.0.1", 0))
@@ -831,7 +841,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                 "-loglevel", "error",
                 "-re",
                 "-f", "lavfi",
-                "-i", f"testsrc2=size={size}:rate=10",
+                "-i", source_filter.format(size=size),
                 "-t", "2.8",
                 "-an",
                 "-c:v", encoder,
@@ -880,6 +890,10 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any(item.key_frame for item in access_units))
             timestamps = [item.timestamp for item in access_units]
             self.assertEqual(timestamps, sorted(timestamps))
+            if expected_output_size is not None:
+                for unit in access_units:
+                    frame = video_rtp._parse_jpeg_for_rtp(unit.data)
+                    self.assertEqual((frame.width, frame.height), expected_output_size)
         finally:
             forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
@@ -889,6 +903,34 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             await transcoder.async_close()
             output.close()
             source.close()
+        self.assertIsNone(transcoder.hass.runtime.media.transcoder)
+        self.assertIsNone(transcoder.process)
+        return access_units
+
+    async def test_jpeg_same_codec_resizes_wire_frames_and_preserves_square_content(self):
+        source_format = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10,
+            image_attributes=sdp.parse_imageattr("26 recv [x=800,y=800]")[1])
+        receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10,
+            image_attributes=sdp.parse_imageattr("26 recv [x=320,y=240]")[1])
+        units = await self._qualify_codec(video_format=source_format, encoder="mjpeg", size="800x800",
+            encoder_args=("-threads", "1", "-huffman", "default", "-force_duplicated_matrix", "1"),
+            source_filter="color=c=red:size={size}:rate=10", output_format=receiver, expected_output_size=(320, 240))
+        decoder = await asyncio.create_subprocess_exec(shutil.which("ffmpeg") or "ffmpeg",
+            "-hide_banner", "-loglevel", "error", "-f", "mjpeg", "-i", "pipe:0", "-frames:v", "1",
+            "-threads", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        rgb, error = await asyncio.wait_for(decoder.communicate(units[0].data), 5)
+        self.assertEqual(decoder.returncode, 0, error.decode())
+        self.assertEqual(len(rgb), 320 * 240 * 3)
+        def pixel(x, y):
+            offset = (y * 320 + x) * 3
+            return tuple(rgb[offset:offset + 3])
+        # A square source fits as 240x240 with 40-pixel black side margins.
+        # Stretching to the receiver canvas would make these samples red.
+        self.assertLess(max(pixel(10, 120)), 30)
+        self.assertLess(max(pixel(310, 120)), 30)
+        self.assertGreater(pixel(160, 10)[0], 180)
+        self.assertGreater(pixel(160, 120)[0], 180)
 
     async def test_vp8_source_restart_keeps_jpeg_output_running(self) -> None:
         await self._qualify_codec(

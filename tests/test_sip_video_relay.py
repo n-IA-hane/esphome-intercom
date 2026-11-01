@@ -56,6 +56,44 @@ VideoRtpPeer = sip_video_relay.VideoRtpPeer
 build_pli = sys.modules[f"{PKG_NAME}.core.video_rtcp"].build_pli
 
 
+def test_explicit_transcoding_adapts_incompatible_jpeg_image_sizes():
+    source = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
+        "26 recv [x=800,y=800]")[1])
+    receiver = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
+        "26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+    legacy = RtpVideoFormat(payload_type=26, encoding="JPEG")
+    relay = SipVideoRtpRelay(
+        left=VideoRtpPeer("192.0.2.1", 10000, 10001, legacy, local_video_format=source),
+        right=VideoRtpPeer("192.0.2.2", 20000, 20001, receiver, local_video_format=legacy),
+        left_port=30000, right_port=30002,
+    )
+    relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-size-contract")
+    assert relay.transcodes_from("left")
+    assert not relay.transcodes_from("right")
+
+
+@pytest.mark.parametrize("source_hint,receiver_hint,opt_in,expected", [
+    ("26 recv [x=800,y=800]", "26 recv [x=[8:8:320],y=[8:8:240]]", False, False),
+    (None, "26 recv [x=[8:8:320],y=[8:8:240]]", True, False),
+    ("26 recv [x=800,y=800]", None, True, False),
+    ("26 recv [x=800,y=800]", "26 recv *", True, False),
+    ("26 recv [x=800,y=800]", "26 recv [x=800,y=800]", True, False),
+    ("26 recv [x=800,y=800]", "26 recv [x=[8:8:320],y=[8:8:240]]", True, True),
+])
+def test_jpeg_size_adaptation_preserves_opt_in_and_legacy_contract(source_hint, receiver_hint, opt_in, expected):
+    def fmt(hint):
+        return RtpVideoFormat(payload_type=26, encoding="JPEG",
+            image_attributes=sdp.parse_imageattr(hint)[1] if hint else None)
+    source, receiver, legacy = fmt(source_hint), fmt(receiver_hint), fmt(None)
+    relay = SipVideoRtpRelay(
+        left=VideoRtpPeer("192.0.2.1", 10000, 10001, legacy, local_video_format=source),
+        right=VideoRtpPeer("192.0.2.2", 20000, 20001, receiver, local_video_format=legacy),
+        left_port=30000, right_port=30002)
+    if opt_in:
+        relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-size-policy")
+    assert ("left" in relay.transcode_directions_for(relay.left, relay.right)) is expected
+
+
 class _Transport:
     def __init__(self) -> None:
         self.sent: list[tuple[bytes, tuple[str, int]]] = []
@@ -81,6 +119,44 @@ def _format(
 
 
 class SipVideoRelayTests(unittest.TestCase):
+    def test_jpeg_receiver_reoffer_reuses_generation_commit_and_rollback(self):
+        async def scenario():
+            source = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
+                "26 recv [x=800,y=800]")[1])
+            bounded = replace(source, image_attributes=sdp.parse_imageattr(
+                "26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+            self.left.video_format = self.left.local_video_format = source
+            self.right.video_format = self.right.local_video_format = source
+            self.relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-reoffer")
+            self.assertFalse(self.relay.transcoding)
+            self.relay.started = True
+            async def build(_loop, left, right, **_kwargs):
+                return sip_video_relay._TranscodeGeneration(self.relay.transcode_directions_for(left, right), {}, {}, {})
+            with mock.patch.object(self.relay, "_build_transcode_generation", side_effect=build), \
+                 mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
+                 mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
+                try:
+                    shrunk = replace(self.right, video_format=bounded)
+                    self.relay.stage_peer_reconfiguration("right", shrunk)
+                    _commit, rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=shrunk)
+                    self.assertFalse(self.relay.transcoding)
+                    await rollback()
+                    self.assertIs(self.relay.right, self.right)
+                    self.assertFalse(self.relay._transcode_slot_claimed)
+                    self.relay.stage_peer_reconfiguration("right", shrunk)
+                    commit, _rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=shrunk)
+                    await commit()
+                    self.assertTrue(self.relay.transcodes_from("left"))
+                    restored = replace(shrunk, video_format=source)
+                    self.relay.stage_peer_reconfiguration("right", restored)
+                    commit, _rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=restored)
+                    await commit()
+                    self.assertFalse(self.relay.transcoding)
+                    self.assertFalse(self.relay._transcode_slot_claimed)
+                finally:
+                    await self.relay.stop()
+        asyncio.run(scenario())
+
     def setUp(self) -> None:
         self.left = VideoRtpPeer("10.0.0.1", 10000, 10001, _format(102))
         self.right = VideoRtpPeer("10.0.0.2", 20000, 20001, _format(110))
