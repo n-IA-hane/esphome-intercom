@@ -71,6 +71,14 @@ def video_bridge_offer_formats(
     frame_limit = sdp.video_framerate_limit(source_send, source_receive)
     if source.max_framerate != frame_limit:
         source = replace(source, max_framerate=frame_limit)
+    if source.encoding == "JPEG" and source.image_attributes is not None:
+        attributes = source.image_attributes
+        if attributes.send is None and attributes.recv is None:
+            # An inactive local-RX projection is not a camera capability.
+            # The opted-in relay can learn the peer's actual send geometry;
+            # the original caller's receive limits stay on its own relay leg.
+            source = replace(source, image_attributes=(
+                sdp.ANY_IMAGE_ATTRIBUTES if enable_transcoding else None))
     if target_codec == "":
         return ()
 
