@@ -570,34 +570,53 @@ bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity, display
   if (synced) {
     const auto *source = reinterpret_cast<const uint16_t *>(this->frame_buffer_);
     auto *output = reinterpret_cast<uint16_t *>(target);
-    const int width = this->get_width();
-    const int height = this->get_height();
-    const bool swap_axes = rotation == display::DISPLAY_ROTATION_90_DEGREES ||
-                           rotation == display::DISPLAY_ROTATION_270_DEGREES;
-    for (int y = 0; y < (swap_axes ? width : height); ++y) {
-      for (int x = 0; x < (swap_axes ? height : width); ++x) {
-        int native_x = x, native_y = y;
-        // Undo the requested output rotation, then reuse the driver's mapping
-        // from logical display coordinates to its native framebuffer.
-        switch (rotation) {
-          case display::DISPLAY_ROTATION_90_DEGREES:
-            native_x = y;
-            native_y = height - x - 1;
-            break;
-          case display::DISPLAY_ROTATION_180_DEGREES:
-            native_x = width - x - 1;
-            native_y = height - y - 1;
-            break;
-          case display::DISPLAY_ROTATION_270_DEGREES:
-            native_x = width - y - 1;
-            native_y = x;
-            break;
-          default:
-            break;
+    // Native-to-logical rotation is the inverse of the driver's mapping.
+    // Compose it with the requested clockwise output rotation once.
+    const unsigned output_rotation =
+        (360U + static_cast<unsigned>(rotation) - static_cast<unsigned>(this->rotation_)) % 360U;
+    const size_t pixels = required / sizeof(uint16_t);
+    const bool byte_swap = this->big_endian_;
+    if (output_rotation == 0) {
+      if (!byte_swap) {
+        std::memcpy(output, source, required);
+      } else {
+        for (size_t i = 0; i < pixels; ++i)
+          output[i] = convert_big_endian(source[i]);
+      }
+    } else if (output_rotation == 180) {
+      for (size_t i = 0; i < pixels; ++i) {
+        const uint16_t pixel = source[pixels - i - 1];
+        output[i] = byte_swap ? convert_big_endian(pixel) : pixel;
+      }
+    } else {
+      const size_t output_width = this->height_;
+      const size_t output_height = this->width_;
+      const ptrdiff_t native_width = static_cast<ptrdiff_t>(this->width_);
+      const ptrdiff_t source_origin = output_rotation == 90
+          ? (static_cast<ptrdiff_t>(this->height_) - 1) * native_width : native_width - 1;
+      const ptrdiff_t source_x_step = output_rotation == 90 ? -native_width : native_width;
+      const ptrdiff_t source_y_step = output_rotation == 90 ? 1 : -1;
+      // A 32-pixel RGB565 span occupies one P4 cache line. Tiles reuse both
+      // source and destination lines instead of walking an entire strided
+      // PSRAM column before returning to its adjacent pixels. No scratch copy.
+      static constexpr size_t TILE_SIZE = 32;
+      for (size_t top = 0; top < output_height; top += TILE_SIZE) {
+        const size_t bottom = std::min(top + TILE_SIZE, output_height);
+        for (size_t left = 0; left < output_width; left += TILE_SIZE) {
+          const size_t right = std::min(left + TILE_SIZE, output_width);
+          for (size_t y = top; y < bottom; ++y) {
+            ptrdiff_t source_index = source_origin + static_cast<ptrdiff_t>(y) * source_y_step +
+                                     static_cast<ptrdiff_t>(left) * source_x_step;
+            auto *row = output + y * output_width + left;
+            for (size_t x = left; x < right; ++x) {
+              const uint16_t pixel = source[source_index];
+              *row++ = byte_swap ? convert_big_endian(pixel) : pixel;
+              // Keep the stride as an integer: the last increment may be
+              // outside the image, where forming a source pointer is invalid.
+              source_index += source_x_step;
+            }
+          }
         }
-        this->rotate_(native_x, native_y);
-        const uint16_t pixel = source[size_t(native_y) * this->width_ + native_x];
-        *output++ = this->big_endian_ ? convert_big_endian(pixel) : pixel;
       }
     }
   }

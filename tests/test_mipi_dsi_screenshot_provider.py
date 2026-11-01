@@ -22,17 +22,20 @@ def test_p4_snapshot_serializes_dma_and_converts_rotation_and_byte_order(tmp_pat
     harness.write_text(
         r"""
 #include <array>
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <utility>
 #include <vector>
 static bool locked=false, sync_failure=false;
 static int syncs=0;
+static size_t expected_sync_size=12;
 constexpr int pdTRUE=1, ESP_OK=0, ESP_CACHE_MSYNC_FLAG_DIR_M2C=8;
 int xSemaphoreTake(void*,int ticks){assert(ticks==0);if(locked)return 0;locked=true;return 1;}
 void xSemaphoreGive(void*){assert(locked);locked=false;}
-int esp_cache_msync(void*,size_t size,int flags){assert(locked&&size==12&&flags==8);syncs++;return sync_failure?1:0;}
+int esp_cache_msync(void*,size_t size,int flags){assert(locked&&size==expected_sync_size&&flags==8);syncs++;return sync_failure?1:0;}
 uint16_t convert_big_endian(uint16_t v){return uint16_t((v>>8)|(v<<8));}
 namespace display {
 enum Rotation{DISPLAY_ROTATION_0_DEGREES=0,DISPLAY_ROTATION_90_DEGREES=90,
@@ -45,8 +48,8 @@ struct MipiDsi {
  uint8_t *frame_buffer_=nullptr;size_t frame_buffer_size_=12;
  void *submit_mutex_=this;int rotation_=0;
  bool is_failed(){return failed_;}
- int get_width(){return rotation_==90||rotation_==270?2:3;}
- int get_height(){return rotation_==90||rotation_==270?3:2;}
+ int get_width(){return rotation_==90||rotation_==270?height_:width_;}
+ int get_height(){return rotation_==90||rotation_==270?width_:height_;}
  bool copy_frame_buffer_rgb565(uint8_t*,size_t,display::Rotation=display::DISPLAY_ROTATION_0_DEGREES);
 """
         + rotate
@@ -62,6 +65,47 @@ Matrix clockwise(Matrix input,unsigned turns){
   input=next;
  }
  return input;
+}
+void check_geometry(size_t width,size_t height,bool full_matrix=true){
+ constexpr size_t guard=5;
+ const size_t count=width*height,bytes=count*sizeof(uint16_t);
+ std::vector<uint16_t> input(count+2*guard,0xcafe),output(count+2*guard+3,0xaaaa);
+ Matrix native(height,std::vector<uint16_t>(width));
+ for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x)
+  native[y][x]=uint16_t(0x1234+(y*width+x)*73+y*37);
+ MipiDsi d;d.width_=width;d.height_=height;d.frame_buffer_size_=bytes;
+ d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data()+guard);
+ auto *target=reinterpret_cast<uint8_t*>(output.data()+guard);
+ expected_sync_size=bytes;
+ for(int driver:{0,90,180,270})for(bool big:{false,true}){
+  if(!full_matrix&&(driver!=270||big))continue;
+  d.rotation_=driver;d.big_endian_=big;
+  for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x){
+   const uint16_t pixel=native[y][x];input[guard+y*width+x]=big?convert_big_endian(pixel):pixel;
+  }
+  const auto immutable=input;
+  const auto logical=clockwise(native,(360-driver)%360/90);
+  for(int rotation:{0,90,180,270}){
+   if(!full_matrix&&rotation!=0)continue;
+   const auto expected=clockwise(logical,rotation/90);std::fill(output.begin(),output.end(),0xaaaa);
+   const int previous_syncs=syncs;
+   assert(d.copy_frame_buffer_rgb565(target,bytes,static_cast<display::Rotation>(rotation)));
+   size_t index=0;for(const auto&row:expected)for(auto pixel:row)assert(output[guard+index++]==pixel);
+   assert(index==count&&input==immutable&&!locked&&syncs==previous_syncs+1);
+   for(size_t i=0;i<guard;++i)assert(output[i]==0xaaaa);
+   for(size_t i=guard+count;i<output.size();++i)assert(output[i]==0xaaaa);
+   // Extra destination capacity is not permission to copy beyond the image.
+   std::fill(output.begin(),output.end(),0xaaaa);
+   assert(d.copy_frame_buffer_rgb565(target,bytes+6,static_cast<display::Rotation>(rotation)));
+   for(size_t i=guard+count;i<output.size();++i)assert(output[i]==0xaaaa);
+   assert(input==immutable);
+   // Rejected attempts must not touch either image, even at tile boundaries.
+   const auto untouched=output;const auto before_reject=syncs;
+   assert(!d.copy_frame_buffer_rgb565(target,bytes-1,static_cast<display::Rotation>(rotation)));
+   locked=true;assert(!d.copy_frame_buffer_rgb565(target,bytes,static_cast<display::Rotation>(rotation)));locked=false;
+   assert(output==untouched&&input==immutable&&syncs==before_reject);
+  }
+ }
 }
 int main(){
  MipiDsi d;std::array<uint16_t,6> input{1,2,3,4,5,6};
@@ -107,6 +151,12 @@ int main(){
  locked=false;sync_failure=true;
  assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),display::DISPLAY_ROTATION_270_DEGREES));
  assert(output==before&&input==immutable&&!locked&&syncs==previous_syncs+1);
+ sync_failure=false;
+ for(const auto dimensions:{std::pair<size_t,size_t>{1,1},{1,65},{65,1},{7,9},
+                            {31,33},{32,32},{33,31},{47,71},{79,35},{129,97}})
+  check_geometry(dimensions.first,dimensions.second);
+ // Exact physical shape/rotation in addition to all irregular/tiny matrices.
+ check_geometry(800,1280,false);
 }
 """
     )
@@ -118,6 +168,7 @@ int main(){
             "-Wall",
             "-Wextra",
             "-Werror",
+            "-O2",
             "-fsanitize=address,undefined",
             "-fno-pie",
             "-no-pie",
