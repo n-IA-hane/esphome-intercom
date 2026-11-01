@@ -37,6 +37,7 @@ from .core.sdp import (
     constrained_video_direction,
     first_offered_dtmf_format,
     offered_video_formats as sdp_video_formats,
+    video_framerate_limit,
     video_fmtp_parameters,
     remote_can_receive,
     remote_can_send,
@@ -51,6 +52,25 @@ from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _constrain_bridge_video_framerate(invite: SipInvite, receiver) -> SipInvite:
+    """Retain the current downstream decoder budget in the staged RX answer."""
+
+    answer = invite.answer_video_format
+    if answer is None:
+        return invite
+    frame_limit = video_framerate_limit(invite.video_format, answer, receiver)
+    if frame_limit is None:
+        return invite
+    receive = invite.recv_video_format
+    if answer.max_framerate == frame_limit and receive.max_framerate == frame_limit:
+        return invite
+    return replace(
+        invite,
+        video_answer_format=replace(answer, max_framerate=frame_limit),
+        local_video_format=replace(receive, max_framerate=frame_limit),
+    )
 
 
 async def _prepare_bridge_video_contract_change(
@@ -229,6 +249,9 @@ async def _prepare_bridge_video_contract_change(
             )
             if not video_offer.accepted:
                 return SipInviteResult(488, "Not Acceptable Here")
+            updated = _constrain_bridge_video_framerate(
+                updated, candidate_video_peer.send_format
+            )
             answer_video_format = updated.answer_video_format
             answer_video_direction = constrained_video_direction(
                 updated.video_format.direction,
@@ -900,6 +923,9 @@ async def async_prepare_media_update(
                 video_offer.reason,
             )
             return SipInviteResult(488, "Not Acceptable Here")
+        updated = _constrain_bridge_video_framerate(
+            updated, getattr(video_relay, opposite).send_format
+        )
         video_direction = constrained_video_direction(
             updated.video_format.direction,
             allow_send=(

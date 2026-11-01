@@ -105,6 +105,7 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
         first_offered_dtmf_format=lambda _sdp: None,
         offered_video_formats=lambda _sdp: (),
+        video_framerate_limit=lambda *_formats: None,
         video_fmtp_parameters=lambda fmt: dict(
             part.split("=", 1) for part in fmt.fmtp.split(";") if part
         ),
