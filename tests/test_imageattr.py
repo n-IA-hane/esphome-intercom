@@ -59,6 +59,27 @@ def test_pt_and_wildcard_matching_does_not_touch_other_codecs():
     assert next(f for f in sdp.offered_video_formats(body) if f.encoding == "H264").image_attributes is None
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_payload_specific_direction_inherits_other_wildcard_direction(reverse):
+    lines = ["a=imageattr:* recv [x=240,y=240]\r\n",
+             "a=imageattr:26 send [x=320,y=240]\r\n"]
+    if reverse:
+        lines.reverse()
+    selected = sdp.offered_video_formats(video_sdp("".join(lines)))[0]
+    assert selected.image_attributes.send == parsed("26 send [x=320,y=240]").send
+    plan = sdp.jpeg_image_plan(selected, 640, 480)
+    assert plan is not None and (plan.width, plan.height) == (240, 240)
+
+
+def test_specific_wildcard_direction_overrides_bounded_default():
+    selected = sdp.offered_video_formats(video_sdp(
+        "a=imageattr:* recv [x=240,y=240] send [x=640,y=480]\r\n"
+        "a=imageattr:26 recv *\r\n"))[0]
+    assert selected.image_attributes.recv.wildcard
+    assert selected.image_attributes.send == parsed("* send [x=640,y=480]").send
+    assert sdp.jpeg_image_plan(selected, 640, 480) is None
+
+
 def test_default_offer_and_legacy_answer_are_independent():
     jpeg = next(f for f in sdp.DEFAULT_VIDEO_FORMATS if f.encoding == "JPEG")
     lines = sdp._video_media_lines_many(40002, (jpeg,), direction="sendrecv")

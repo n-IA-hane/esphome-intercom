@@ -216,6 +216,20 @@ def serialize_imageattr(payload_type: int, attributes: ImageAttributes) -> str:
     return "imageattr:" + " ".join(parts)
 
 
+def resolve_image_attributes(
+    wildcard: ImageAttributes | None, specific: ImageAttributes | None
+) -> ImageAttributes | None:
+    """Overlay only the directions explicitly declared for this payload."""
+    if wildcard is None:
+        return specific
+    if specific is None:
+        return wildcard
+    return ImageAttributes(
+        specific.send if specific.send is not None else wildcard.send,
+        specific.recv if specific.recv is not None else wildcard.recv,
+    )
+
+
 def merge_image_attributes(first: ImageAttributes | None, second: ImageAttributes) -> ImageAttributes:
     """Retain split send/recv lines and bounded alternatives in wire order."""
     if first is None:
