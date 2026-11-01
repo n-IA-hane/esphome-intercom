@@ -22,6 +22,6 @@ voip_stack:
           - lvgl.label.update:
               id: call_media_route_label
               text: !lambda |-
-                if (x == "direct") return std::string("Direct");
-                if (x == "ha_transcoding") return std::string("HA transcoding");
+                if (x == "direct") return std::string("No conversion");
+                if (x == "ha_transcoding") return std::string("HA processing");
                 return std::string();

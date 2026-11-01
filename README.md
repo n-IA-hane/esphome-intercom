@@ -251,6 +251,11 @@ Browser phones, wall tablets, ESP room stations, standard SIP clients and an
 external PBX can share one phonebook without requiring a separate Asterisk or
 FreeSWITCH server for the normal home use case.
 
+The in-call audio labels distinguish **No conversion** from **HA processing**.
+Compatible audio can still pass through HA's RTP relay; the label does not
+promise a peer-to-peer network path. HA processing also includes packet
+reframing when required.
+
 VoIP is only one part of the project. The optional full-experience ESP YAMLs
 also provide an independent on-device Voice Assistant, Micro Wake Word, media
 playback, TTS, Sendspin support, runtime audio controls and touch interfaces.
@@ -769,8 +774,7 @@ for photographs, validation details and update instructions.
   without the retired VoIP HA packages.
 - Modular full profiles preserve paused music and handle interrupted replies,
   ringtones and overlapping voice/media activity more consistently.
-- P4 video changes during calls preserve the negotiated media path; on-device
-  labels distinguish Direct from HA transcoding.
+- P4 video changes during calls preserve the negotiated media path.
 - Audio and VoIP diagnostic actions help capture a useful issue report without
   enabling verbose audio tracing.
 

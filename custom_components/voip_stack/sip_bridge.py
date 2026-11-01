@@ -22,6 +22,20 @@ from .sip_video_relay import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
+    """Resolve the still-unanswered caller against the accepted destination."""
+    if invite.initial_response_sent:
+        return invite
+    selected = sdp.negotiate_directional(
+        invite.remote_sdp,
+        list(dict.fromkeys((destination.recv_format.audio_format, invite.send_format.audio_format))),
+        list(dict.fromkeys((destination.send_format.audio_format, invite.recv_format.audio_format))),
+        allow_dahua_pcm=invite.peer_profile == "dahua",
+        codec_policy=invite.codec_policy,
+    )
+    return replace(invite, send_format=selected.send, recv_format=selected.recv) if selected is not None else invite
+
+
 @dataclass(frozen=True, slots=True)
 class VideoBridgeAnswer:
     """Video contract that can be committed to the inbound answer."""

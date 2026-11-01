@@ -1113,6 +1113,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         """Build and activate one UAS dialog from its authoritative INVITE."""
 
         invite = self._parse_invite(request, addr, codec_policy=pending.codec_policy) if request.body else None
+        if invite is not None and pending.answer_sdp:
+            # The routed answer may select a common codec with the other leg.
+            # Retain that accepted contract instead of repeating HA's initial
+            # preference over the caller's original offer.
+            accepted = sdp.negotiate_answer_directional(
+                pending.answer_sdp, self.supported_recv_formats, self.supported_send_formats,
+                local_offer_sdp=request.body, allow_dahua_pcm=invite.peer_profile == "dahua",
+            )
+            if accepted is not None:
+                invite = replace(invite, send_format=accepted.recv, recv_format=accepted.send)
         initial_invite = (
             self._parse_initial_invite(request, addr) if not request.body else None
         )

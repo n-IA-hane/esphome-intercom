@@ -1502,6 +1502,35 @@ def build_offer(
     return build_offer_directional(origin_ip, media_ip, media_port, formats, formats)
 
 
+def audio_offer_formats(
+    formats: list[AudioFormat],
+    *,
+    capability_formats: list[AudioFormat] | None = None,
+    include_common_codecs: bool = False,
+    include_dahua_pcm: bool = False,
+    preferred_frame_ms: int | None = None,
+) -> list[RtpPcmFormat]:
+    """Build the canonical RTP candidates shared by SDP and bridge planning."""
+    pcm_formats = rtp_offer_formats(formats)
+    if not pcm_formats:
+        raise SdpError("SDP offer requires at least one RTP-mappable audio format")
+    result = _common_codec_offer_formats(
+        capability_formats if capability_formats is not None else formats,
+        include_common_codecs=include_common_codecs,
+        include_dahua_pcm=include_dahua_pcm,
+        preferred_frame_ms=preferred_frame_ms,
+    ) if include_common_codecs or include_dahua_pcm else []
+    next_payload = 96
+    used_payloads = {fmt.payload_type for fmt in result}
+    for fmt in pcm_formats:
+        while next_payload in used_payloads:
+            next_payload += 1
+        result.append(audio_format_to_rtp(fmt, next_payload))
+        used_payloads.add(next_payload)
+        next_payload += 1
+    return result
+
+
 def build_offer_directional(
     origin_ip: str,
     media_ip: str,
@@ -1620,30 +1649,13 @@ def build_offer_directional(
                 audio_direction,
             )
             pcm_formats = capability_formats
-        formats = rtp_offer_formats(pcm_formats)
-        if not formats:
-            raise SdpError(
-                f"SDP {audio_direction} offer requires at least one compatible "
-                "RTP-mappable PCM format"
-            )
-        rtp_formats = (
-            _common_codec_offer_formats(
-                capability_formats,
-                include_common_codecs=include_common_codecs,
-                include_dahua_pcm=include_dahua_pcm,
-                preferred_frame_ms=preferred_frame_ms,
-            )
-            if include_common_codecs or include_dahua_pcm
-            else []
+        rtp_formats = audio_offer_formats(
+            pcm_formats,
+            capability_formats=capability_formats,
+            include_common_codecs=include_common_codecs,
+            include_dahua_pcm=include_dahua_pcm,
+            preferred_frame_ms=preferred_frame_ms,
         )
-        next_payload = 96
-        used_payloads = {fmt.payload_type for fmt in rtp_formats}
-        for fmt in formats:
-            while next_payload in used_payloads:
-                next_payload += 1
-            rtp_formats.append(audio_format_to_rtp(fmt, next_payload))
-            used_payloads.add(next_payload)
-            next_payload += 1
     if codec_policy is not None:
         rtp_formats = list(codec_policy.audio_formats(rtp_formats))
         if not rtp_formats:

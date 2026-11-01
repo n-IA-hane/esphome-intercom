@@ -205,6 +205,47 @@ def sip_target_rtp_audio_profile(
     )
 
 
+def bridge_audio_profile(
+    invite,
+    send_formats: list[AudioFormat],
+    recv_formats: list[AudioFormat],
+    profile: SipAudioCapabilityProfile | None,
+    *,
+    include_common_codecs: bool,
+) -> SipAudioCapabilityProfile:
+    """Prefer the caller's wire audio while retaining destination fallbacks.
+
+    OPTIONS capabilities constrain the existing target profile when concrete;
+    an absent quantum keeps the ordinary generic offer available. Both paths
+    use the SDP owner's codec expansion and payload assignment.
+    """
+    if profile is None:
+        frame_ms = choose_common_frame_ms(send_formats, recv_formats)
+        formats = sdp.audio_offer_formats(
+            [fmt for fmt in [*send_formats, *recv_formats] if fmt.frame_ms == frame_ms],
+            capability_formats=[*send_formats, *recv_formats],
+            include_common_codecs=include_common_codecs,
+            preferred_frame_ms=frame_ms,
+        )
+        send = tuple(fmt for fmt in formats if fmt.audio_format in send_formats)
+        recv = tuple(fmt for fmt in formats if fmt.audio_format in recv_formats)
+        profile = SipAudioCapabilityProfile(tuple(send_formats), tuple(recv_formats), send, recv, frozenset())
+
+    def prefer(formats, source):
+        return tuple(sorted(formats, key=lambda fmt: (
+            fmt.encoding.upper(), fmt.sample_rate, fmt.channels, fmt.frame_ms
+        ) != (source.encoding.upper(), source.sample_rate, source.channels, source.frame_ms)))
+
+    send = prefer(profile.send_rtp_formats, invite.recv_format)
+    recv = prefer(profile.recv_rtp_formats, invite.send_format)
+    # SDP's advertised preference does not remove the decoder/encoder quanta
+    # needed for a legal answer (for example G.722 with a 20 ms packet time).
+    return replace(profile,
+        send_formats=tuple(dict.fromkeys([*(fmt.audio_format for fmt in send), *profile.send_formats])),
+        recv_formats=tuple(dict.fromkeys([*(fmt.audio_format for fmt in recv), *profile.recv_formats])),
+        send_rtp_formats=send, recv_rtp_formats=recv)
+
+
 def same_route_name(left: str, right: str) -> bool:
     def norm(value: str) -> str:
         return "".join(ch for ch in value.lower() if ch.isalnum())

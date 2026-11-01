@@ -120,7 +120,9 @@ async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registrati
         local_ip="192.0.2.10", sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA")
     invite = SimpleNamespace(trunk_id="", call_id="registered-capability-contract",
         caller="Caller", routing_caller="Caller", target="phone", routing_target="phone",
-        source_host="192.0.2.20", source_port=5060, video_format=None)
+        source_host="192.0.2.20", source_port=5060, video_format=None,
+        send_format=sdp.RtpPcmFormat(96, "L16", 48000, 1, 10),
+        recv_format=sdp.RtpPcmFormat(96, "L16", 48000, 1, 10))
     decision = SimpleNamespace(target="phone", entry=entry, sip_uri=entry.sip_uri)
     with pytest.raises(ClientObserved):
         await bridge.route_sip_bridge(runtime=runtime, invite=invite, decision=decision,
