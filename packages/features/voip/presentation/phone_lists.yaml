@@ -1,0 +1,110 @@
+# Contacts and optional BLF share one bounded row renderer.
+external_components:
+  - source: ${ext_components_source}
+    components:
+      - phone_list_view
+font:
+  - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    id: phone_list_icons
+    size: 20
+    glyphs: ${ _contacts_base_glyphs + (_contacts_blf_glyphs if 'blf' in firmware_features
+      else []) }
+defaults:
+  _contacts_order_presence: |-
+    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    if (state.presence == PresenceState::CLOSED &&
+        (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) return 4;
+  _contacts_blf_render: |-
+    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    if (!state.available && !contact->auto_blf &&
+        (contact->kind == ContactKind::GROUP || contact->kind == ContactKind::AUTOMATION)) return;
+    if (!state.available && !contact->auto_blf &&
+        contact->kind == ContactKind::CONTACT && !number.empty()) return;
+    if (state.presence == PresenceState::CLOSED &&
+        (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) {
+      row.set_detail("Unavailable"); row.set_trailing("\U000F0DEF"); row.color = 0xA3A3A3; return;
+    }
+    if (!state.available || (state.state == BlfState::IDLE && state.presence != PresenceState::OPEN)) {
+      row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0xA3A3A3; return;
+    }
+    switch (state.state) {
+      case BlfState::IDLE: row.set_detail(number.empty() ? std::string_view("Idle") : number); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
+      case BlfState::CALLING: row.set_detail("Calling"); row.set_trailing("\U000F03FB"); row.color=0x38BDF8; break;
+      case BlfState::RINGING:
+        row.set_detail(state.ringing_dialogs > 0 ? "Ringing: pickup" : "Ringing");
+        row.set_trailing("\U000F11AB"); row.color=0x38BDF8; row.blink=true;
+        row.action=state.ringing_dialogs > 0 ? 1 : 0; break;
+      case BlfState::ACTIVE: row.set_detail("In call"); row.set_trailing("\U000F03F6"); row.color=0xF87171; break;
+      case BlfState::HELD: row.set_detail("On hold"); row.set_trailing("\U000F03FC"); row.color=0xFBBF24; break;
+      default: row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color=0xA3A3A3; break;
+    }
+  _contacts_blf_updates:
+    voip_stack:
+      on_blf_state:
+        - lambda: id(contacts_list_view).request_refresh();
+  _contacts_base_glyphs:
+    - "\U000F061A"
+    - "\U000F01C3"
+    - "\U000F07D0"
+    - "\U000F011C"
+    - "\U000F06A9"
+    - "\U000F0849"
+    - "\U000F0625"
+  _contacts_blf_glyphs:
+    - "\U000F11AB"
+    - "\U000F03FB"
+    - "\U000F03F6"
+    - "\U000F03FC"
+    - "\U000F11A6"
+    - "\U000F05E1"
+    - "\U000F0DEF"
+packages:
+  blf_updates: ${ _contacts_blf_updates if 'blf' in firmware_features else {} }
+phone_list_view:
+  - id: contacts_list_view
+    parent_id: phone_contacts_container
+    icon_font: phone_list_icons
+    visible_rows: 8
+    row_height: 48
+    row_count: !lambda |-
+      return id(phone).get_contact_count();
+    row_key: !lambda |-
+      const auto *contact = id(phone).get_contact(index);
+      if (contact == nullptr) return {};
+      return {std::string_view(contact->name.data(), contact->name.size()), contact->stable_id()};
+    row_group: !lambda |-
+      using namespace esphome::voip_stack;
+      const auto *contact = id(phone).get_contact(index);
+      if (contact == nullptr) return 3;
+      if (contact->kind == ContactKind::BROWSER) return 0;
+      if (contact->kind == ContactKind::GROUP || contact->kind == ContactKind::AUTOMATION) return 2;
+      if (contact->kind != ContactKind::ESP && contact->kind != ContactKind::SIP_ACCOUNT) return 3;
+      ${ _contacts_order_presence if 'blf' in firmware_features else '' }
+      return 1;
+    render_row: !lambda |
+      using namespace esphome::voip_stack;
+      const auto *contact = id(phone).get_contact(index);
+      if (contact == nullptr) return;
+      row.set_id(contact->stable_id()); row.set_name(contact->name);
+      const char *icon = "\U000F0625";
+      switch (contact->kind) {
+        case ContactKind::ESP: icon = "\U000F061A"; break;
+        case ContactKind::SIP_ACCOUNT: icon = "\U000F01C3"; break;
+        case ContactKind::BROWSER: icon = "\U000F07D0"; break;
+        case ContactKind::CONTACT: icon = "\U000F011C"; break;
+        case ContactKind::AUTOMATION: icon = "\U000F06A9"; break;
+        case ContactKind::GROUP: icon = "\U000F0849"; break;
+        default: break;
+      }
+      row.set_leading(icon);
+      const std::string_view number(contact->number.data(), contact->number.size());
+      if (contact->kind != ContactKind::GROUP && contact->kind != ContactKind::AUTOMATION)
+        row.set_detail(number);
+      ${ _contacts_blf_render if 'blf' in firmware_features else '' }
+    on_select:
+      - lambda: !lambda |
+          if (!id(phone).is_idle()) return;
+          ${ 'if (action == 1) id(phone).pickup_contact(row_id); else ' if 'blf' in firmware_features else '' }id(phone).call_contact(row_id);
+voip_stack:
+  on_phonebook_update:
+    - lambda: id(contacts_list_view).request_refresh();

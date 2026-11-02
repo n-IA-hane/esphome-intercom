@@ -1,0 +1,4 @@
+# RFC 3842 notification and mailbox-call metadata, without an IMAP client.
+voip_stack:
+  registration:
+    message_waiting: true

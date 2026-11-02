@@ -16,6 +16,9 @@ substitutions:
   _fw_voice: ${ 'voice' in firmware_features }
   _fw_wake_word: ${ _fw_voice and 'wake_word' in firmware_features }
   _fw_voip: ${ 'voip' in firmware_features }
+  _fw_directory: ${ _fw_voip and 'directory' in firmware_features }
+  _fw_blf: ${ _fw_voip and 'blf' in firmware_features }
+  _fw_mwi: ${ _fw_voip and 'mwi' in firmware_features }
   _fw_music: ${ 'music' in firmware_features }
   _fw_sendspin: ${ _fw_music and 'sendspin' in firmware_features }
   _fw_timers: ${ _fw_voice and 'timers' in firmware_features }

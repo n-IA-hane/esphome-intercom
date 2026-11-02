@@ -40,6 +40,8 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         ('audio_stack_components_source', Path(os.environ.get('AUDIO_STACK_REPO', ROOT.parent / 'esphome-audio-stack'))),
         ('voip_stack_components_source', Path(os.environ.get('VOIP_STACK_REPO', ROOT.parent / 'esphome-voip-stack'))),
         ('runtime_controller_components_source', Path(os.environ.get('RUNTIME_CONTROLLER_REPO', ROOT.parent / 'esphome-runtime-controller'))),
+        ('esp_screenshot_components_source', Path(os.environ.get('ESP_SCREENSHOT_REPO', ROOT.parent / 'esphome-screenshot'))),
+        ('esp_video_renderer_components_source', Path(os.environ.get('ESP_VIDEO_RENDERER_REPO', ROOT.parent / 'esphome-video-renderer'))),
         ('camera_components_source', Path(os.environ.get('ESP_VIDEO_CAMERA_REPO', ROOT.parent / 'esphome-esp-video-camera'))),
     ):
         component_path = 'components' if key == 'camera_components_source' else 'esphome/components'
@@ -199,8 +201,18 @@ def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[s
     assert document['substitutions']['firmware_features'] == features
     assert ('lvgl' in document) is ('display' in features)
     assert ('display' in document) is ('display' in features)
+    video_receive = 'display' in features and 'voip' in features
+    assert ('esp_video_renderer' in document) is video_receive
+    if video_receive:
+        renderer = document['esp_video_renderer']
+        assert (int(renderer['width']), int(renderer['height'])) == (240, 240)
+        assert int(renderer['framerate']) == 10
+        assert document['voip_stack']['video']['codec'] == 'jpeg'
+        assert 'camera_id' not in document['voip_stack']['video']
+        assert 'source' not in document['voip_stack']['video']
     if 'display' in features:
         pages = {str(page['id']) for page in document['lvgl']['pages']}
+        assert ('call_video_page' in pages) is video_receive
         if 'voice' not in features:
             def events(value):
                 if isinstance(value, dict):
@@ -393,6 +405,7 @@ def test_standalone_phone_has_no_implicit_led_or_coordinator(tmp_path, profile_p
     expanded.write_text(result.stdout)
     document = yaml_util.load_yaml(expanded)
     assert ('voip_stack' in document) is ('voip' in features)
+    assert ('blf' in document.get('voip_stack', {})) is ('voip' in features and 'blf' in features)
     _assert_standalone_callbacks_without_runtime(document)
     if not profile_path.startswith('yamls/voip-only/'):
         return
@@ -533,7 +546,13 @@ def test_p4_standalone_phone_keeps_codec_and_display_optional(tmp_path, codec, f
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Could not resolve substitution' not in result.stderr, result.stderr
     generated = next(tmp_path.rglob('main.cpp')).read_text()
+    defines = next(tmp_path.rglob('defines.h')).read_text()
     assert ('voip_stack::VoipStack' in generated) is ('voip' in features)
+    has_display = 'voip' in features and 'display' in features
+    assert '#define USE_ESPHOME_VOIP_BLF' not in defines
+    assert ('lvgl::LvglComponent' in generated) is has_display
+    assert 'top_voicemail_label' not in generated
+    assert 'add_on_message_waiting_callback' not in generated
     assert ('esp_video_camera::ESPVideoCamera' in generated) is ('video' in features)
     assert ('esp_h264_video_source::' in generated) is ('video' in features and codec == 'h264')
     assert ('esp_jpeg_video_source::' in generated) is ('video' in features and codec == 'jpeg')
