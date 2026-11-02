@@ -48,6 +48,17 @@ MAX_NONCE_USE_RECORDS = 2048
 
 
 @dataclass(frozen=True, slots=True)
+class AuthenticatedOutboundFlow:
+    """One selected Contact lifetime, never an IP-based authorization."""
+
+    registrar: SipRegistrar
+    username: str
+    contact_uri: str
+    generation: str
+    flow_key: tuple
+
+
+@dataclass(frozen=True, slots=True)
 class SipAccount:
     username: str
     display_name: str
@@ -418,6 +429,29 @@ class SipRegistrar:
                 key=lambda registration: (-registration.q, registration.contact_uri),
             )
         )
+
+    def select_outbound_flow(self, username: str, uri: sip.SipUri) -> AuthenticatedOutboundFlow | None:
+        """Select only the resolved account's exact authenticated UDP Contact."""
+        account = self.accounts.get(username.casefold())
+        if account is None or not account.enabled:
+            return None
+        for binding in self.registered_contacts(account.username):
+            if binding.outbound and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
+                return AuthenticatedOutboundFlow(self, binding.username, binding.contact_uri,
+                    binding.capability_generation, binding.flow_key)
+        return None
+
+    def resolve_outbound_flow(self, selected: AuthenticatedOutboundFlow) -> SipRegistration | None:
+        """Fence expiry, owner replacement, revocation and binding ABA."""
+        if selected.registrar is not self:
+            return None
+        account = self.accounts.get(selected.username.casefold())
+        if account is None or not account.enabled:
+            return None
+        return next((binding for binding in self.registered_contacts(selected.username)
+            if binding.outbound and binding.transport.upper() == "UDP"
+            and binding.capability_generation == selected.generation
+            and binding.contact_uri == selected.contact_uri and binding.flow_key == selected.flow_key), None)
 
     def resolve_gruu(self, uri: sip.SipUri) -> tuple[SipRegistration, ...] | None:
         """Return only the addressed instance; None denotes an ordinary AoR."""

@@ -549,6 +549,7 @@ class SipCallClient:
         self.writer: asyncio.StreamWriter | None = None
         self._tcp_writer: SipTcpWriter | None = None
         self._reused_flow_send: Callable[[bytes], bool | None] | None = None
+        self._reused_udp_next_hop: tuple[str, int] | None = None
         self._reused_flow_responses: asyncio.Queue[bytes] | None = None
         self._reused_flow_close: Callable[[], None] | None = None
         self.bind_signaling_usage: Callable[[str], Callable[[], None]] | None = None
@@ -869,6 +870,7 @@ class SipCallClient:
             self._reused_flow_close = None
         self._reused_flow_send = None
         self._reused_flow_responses = None
+        self._reused_udp_next_hop = None
         try:
             try:
                 if tcp_writer is not None:
@@ -914,9 +916,11 @@ class SipCallClient:
         send: Callable[[bytes], bool | None],
         responses: asyncio.Queue[bytes],
         close: Callable[[], None],
+        udp_next_hop: tuple[str, int] | None = None,
     ) -> None:
         """Use one externally owned SIP flow for this dialog."""
         self.use_reused_tcp_connection(send=send, responses=responses, close=close)
+        self._reused_udp_next_hop = udp_next_hop
 
     async def _connect_tcp(self, remote_host: str, remote_sip_port: int) -> None:
         async with self._start_lock:
@@ -1006,6 +1010,8 @@ class SipCallClient:
             await self.start()
 
     def _signaling_target(self, remote_host: str, remote_sip_port: int) -> tuple[str, int]:
+        if self._reused_flow_send is not None and self._reused_udp_next_hop is not None:
+            return self._reused_udp_next_hop
         if self._resolved_signaling_target is not None and (
             self.outbound_proxy
             or self._signaling_nominal == (remote_host, int(remote_sip_port))
@@ -1807,6 +1813,8 @@ class SipCallClient:
             except asyncio.TimeoutError:
                 return None
 
+            if raw is None:
+                return None
             if raw == b"\r\n":
                 continue
             try:

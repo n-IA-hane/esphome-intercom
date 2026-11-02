@@ -355,12 +355,15 @@ class EndpointDialer:
             if policy.use_trunk_flow:
                 reuse_registered_trunk_flow(sip_trunk(self.hass, policy.trunk_id) if policy.trunk_id else sip_trunk(self.hass), client)
             elif policy.reuse_registered_flow:
+                from .sip_runtime import select_registered_outbound_flow
                 self.enable_reused_tcp_connection(
                     self.hass,
                     client,
                     uri,
                     target=member,
                     default_sip_port=int(self.config["sip_port"]),
+                    selected_flow=select_registered_outbound_flow(self.hass, uri,
+                        entry=member_entry, peer=peer_target),
                 )
             return OutboundLeg(
                 member=member,

@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import types
+import zlib
 
 import pytest
 
@@ -307,3 +308,76 @@ async def test_automatic_stop_and_header_whitespace_redaction():
     # Exercise the actual retention expiry callback without waiting 15 minutes.
     c._expiry._run()
     assert not c.capture_id and not c.buffer
+
+
+@pytest.mark.asyncio
+async def test_udp_stun_capture_preserves_binary_and_protocol_without_header_redaction(tmp_path):
+    """STUN bytes resembling SIP headers stay intact on wire and in Upper PDU."""
+    def message(kind, attributes):
+        raw = struct.pack("!HHI", kind, len(attributes) + 8, 0x2112A442) + bytes(range(1, 13)) + attributes
+        return raw + struct.pack("!HHI", 0x8028, 4, zlib.crc32(raw) ^ 0x5354554E)
+
+    def attribute(kind, value):
+        return struct.pack("!HH", kind, len(value)) + value + b"\0" * (-len(value) % 4)
+
+    software = b"wire-test\r\nAuthorization: fixture-text\r\n"
+    request = message(1, attribute(0x8022, software))
+    capture = capture_module.SipCapture()
+    loop = asyncio.get_running_loop()
+    queue = asyncio.Queue(maxsize=8)
+    transport, _ = await loop.create_datagram_endpoint(
+        lambda: udp.SipDatagramQueueProtocol(queue), local_addr=("127.0.0.1", 0)
+    )
+    responses = []
+
+    class Peer(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, raw, address):
+            assert raw == request
+            source = bytes(int(octet) for octet in address[0].split("."))
+            mapped = b"\0\1" + struct.pack("!H", address[1] ^ 0x2112)
+            mapped += bytes(a ^ b for a, b in zip(source, bytes.fromhex("2112a442")))
+            reply = message(0x0101, attribute(0x0020, mapped))
+            responses.append(reply)
+            self.transport.sendto(reply, address)
+
+    peer, _ = await loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
+    try:
+        capture.start()
+        capture_module.send_sip_datagram(transport, request, peer.get_extra_info("sockname"))
+        raw, _ = await asyncio.wait_for(queue.get(), 1)
+        assert raw == responses[0]
+        capture.stop()
+        saved, protocols = [], []
+        for packet in packets(capture.buffer):
+            offset = 0
+            while True:
+                tag, size = struct.unpack_from("!HH", packet, offset)
+                offset += 4
+                value = packet[offset:offset+size]
+                offset += size
+                if tag == 12:
+                    protocols.append(value.rstrip(b"\0"))
+                if tag == 0:
+                    saved.append(packet[offset:])
+                    break
+        target = tmp_path / "stun.pcap"
+        target.write_bytes(capture.buffer)
+        assert saved == [request, responses[0]]
+        assert protocols == [b"stun-udp", b"stun-udp"]
+        for packet in saved:
+            assert int.from_bytes(packet[2:4], "big") + 20 == len(packet)
+            assert zlib.crc32(packet[:-8]) ^ 0x5354554E == int.from_bytes(packet[-4:], "big")
+        if shutil.which("tshark"):
+            result = await asyncio.to_thread(subprocess.run,
+                ["tshark", "-r", str(target), "-T", "fields", "-e", "stun.type"],
+                capture_output=True, text=True, check=True)
+            assert result.stdout.splitlines() == ["0x0001", "0x0101"]
+        assert capture.messages == 2 and capture.dropped == 0
+    finally:
+        capture.clear()
+        transport.close()
+        peer.close()
+        await asyncio.sleep(0)

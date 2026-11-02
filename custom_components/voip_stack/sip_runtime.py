@@ -12,6 +12,7 @@ from .runtime_data import (
     call_projection,
     endpoint_directory,
     sip_endpoint_manager,
+    sip_registrar,
     sip_trunks,
 )
 from .endpoint_session import SipTerminationDisposition, TerminationIntent
@@ -182,15 +183,25 @@ def uri_transport(uri) -> str:
     return "TLS" if str(getattr(uri, "scheme", "sip")).lower() == "sips" else "UDP"
 
 
-def enable_reused_tcp_connection(
+def select_registered_outbound_flow(hass, uri, *, entry=None, peer=None):
+    """Rejoin the selected physical Contact with its registrar-owned lifetime."""
+    username = str(getattr(entry, "id", "") or getattr(peer, "sip_uri_user", ""))
+    registrar = sip_registrar(hass)
+    if not username or uri_transport(uri).upper() != "UDP" or registrar is None:
+        return None
+    return registrar.select_outbound_flow(username, uri)
+
+
+def enable_reused_signaling_flow(
     hass: HomeAssistant,
     client,
     uri,
     *,
     target: str,
     default_sip_port: int,
+    selected_flow=None,
 ) -> bool:
-    """Use the REGISTER TCP connection when a client Contact points at it.
+    """Use a selected authenticated UDP flow or the existing TCP connection.
 
     A registered endpoint behind NAT commonly advertises an unreachable
     Contact.  The registrar therefore normalizes TCP contacts to the observed
@@ -198,7 +209,41 @@ def enable_reused_tcp_connection(
     connection is valid for an ordinary URI, but is the main interoperability
     clue when a registered door station never sees HA's outbound INVITE.
     """
-    if uri_transport(uri).upper() != "TCP":
+    transport = uri_transport(uri).upper()
+    if transport == "UDP":
+        if selected_flow is None:
+            return False
+        registrar = sip_registrar(hass)
+        binding = registrar.resolve_outbound_flow(selected_flow) if registrar is selected_flow.registrar else None
+        if binding is None or binding.contact_uri != str(uri):
+            raise ConnectionError("Selected SIP outbound binding is no longer current")
+        manager = sip_endpoint_manager(hass)
+        server = getattr(getattr(manager, "udp_server", None), "endpoint", None)
+        if server is None:
+            raise ConnectionError("Selected SIP outbound listener is not running")
+        if server.transport is None:
+            raise ConnectionError("Selected SIP outbound UDP socket is unavailable")
+        address = (binding.source_host, binding.source_port)
+
+        def flow_active():
+            # REGISTER expiry/rebind does not rewrite an existing dialog.
+            return (sip_registrar(hass) is registrar and sip_endpoint_manager(hass) is manager
+                and getattr(getattr(manager, "udp_server", None), "endpoint", None) is server)
+
+        reuse = server.open_reused_dialog(address, client.dialog_ids.call_id, flow_active=flow_active)
+        if reuse is None:
+            raise ConnectionError("Selected SIP outbound dialog could not acquire its flow")
+        send, responses = reuse
+        client.use_reused_signaling_flow(send=send, responses=responses,
+            close=lambda: server.close_reused_dialog(address, client.dialog_ids.call_id, queue=responses),
+            udp_next_hop=address)
+        client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])
+        client.bind_signaling_usage = lambda usage_id: server.bind_reused_usage(address,
+            client.dialog_ids.call_id, usage_id)
+        return True
+    if selected_flow is not None:
+        raise ConnectionError("Selected SIP outbound binding requires UDP")
+    if transport != "TCP":
         return False
     endpoint = sip_endpoint_manager(hass)
     tcp_server = getattr(endpoint, "tcp_server", None)
@@ -238,6 +283,9 @@ def enable_reused_tcp_connection(
         remote_addr[1],
     )
     return True
+
+
+enable_reused_tcp_connection = enable_reused_signaling_flow
 
 
 def configure_local_contact(hass: HomeAssistant, client) -> None:
