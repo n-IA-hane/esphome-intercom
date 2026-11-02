@@ -56,6 +56,9 @@ class EspHomeProvisioner:
         return (not self._closed and runtime_data(self.hass) is self.runtime
                 and self.runtime.phone_provisioning is self)
 
+    def is_removed(self, origin_entry_id, device_id):
+        return origin_entry_id in self._removed_origins or device_id in self._removed_devices
+
     @callback
     def start(self):
         if self._unsubscribers or not self._owned():
@@ -320,6 +323,8 @@ class EspHomeProvisioner:
                     await archive.delete(message["id"], endpoint_id)
         if self._owned() and self.runtime.endpoints.get(endpoint_id) is not None:
             self.runtime.endpoints.remove(endpoint_id)
+        if self._owned() and self.runtime.directory is not None:
+            self.runtime.directory.remove(endpoint_id)
 
     async def async_close(self):
         self._closed = True

@@ -100,6 +100,7 @@ class VoipStackRuntime:
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
     phone_provisioning: Any | None = None
+    directory: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

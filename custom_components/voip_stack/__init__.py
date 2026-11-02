@@ -808,6 +808,8 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     runtime = _runtime_data(hass)
     if runtime is not None and runtime.phone_provisioning is not None:
         await runtime.phone_provisioning.async_close()
+    if runtime is not None and runtime.directory is not None:
+        runtime.directory.close()
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
 

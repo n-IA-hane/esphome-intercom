@@ -40,6 +40,10 @@ async def async_refresh_phonebook_sensor(hass: HomeAssistant) -> None:
 
 async def async_current_roster_json(hass: HomeAssistant) -> str:
     runtime = runtime_data(hass)
+    if runtime is not None and runtime.directory is not None and not runtime.directory.closed:
+        from .roster import dump_roster_json
+
+        return dump_roster_json(list(runtime.directory.snapshot()))
     sensor = runtime.phonebook_sensor if runtime is not None else None
     if sensor is not None:
         return str(sensor.extra_state_attributes.get("roster_json", "") or "")
@@ -50,7 +54,15 @@ async def async_current_roster_json(hass: HomeAssistant) -> str:
 
 
 async def async_refresh_and_push_phonebook(hass: HomeAssistant) -> None:
+    runtime = runtime_data(hass)
+    if runtime is not None and runtime.phonebook_sensor is None:
+        from .directory_runtime import async_refresh_directory
+
+        if await async_refresh_directory(hass) is None:
+            return
     await async_refresh_phonebook_sensor(hass)
+    if runtime_data(hass) is not runtime:
+        return
     roster_json = await async_current_roster_json(hass)
     await push_roster_json_to_esps(hass, roster_json)
 
@@ -213,7 +225,10 @@ def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
 async def _async_restore_phonebook_service(hass: HomeAssistant, service: str) -> None:
     """Rehydrate one restarted ESP without republishing to every phone."""
 
+    runtime = runtime_data(hass)
     await async_refresh_phonebook_sensor(hass)
+    if runtime_data(hass) is not runtime:
+        return
     roster_json = await async_current_roster_json(hass)
     await push_roster_json_to_esps(
         hass,

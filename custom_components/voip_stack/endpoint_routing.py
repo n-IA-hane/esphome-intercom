@@ -555,6 +555,16 @@ def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
+    """Share canonical identities without caching a call's Contact selection."""
+    runtime = runtime_data(hass)
+    if runtime is not None and runtime.directory is not None and not runtime.directory.closed:
+        from .directory_runtime import compose_directory_entries
+
+        return compose_directory_entries(hass, peers, registered_entries)
+    return assemble_directory_entries(hass, peers, registered_entries)
+
+
+def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
     from .const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION
     from .groups import collect_groups
     from .roster import RosterEntry, merge_roster_overrides
