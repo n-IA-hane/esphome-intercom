@@ -191,7 +191,8 @@ async def route_sip_bridge(
         bridge_ports = take_delayed_offer_ports(
             registry, invite.call_id
         ) or RtpPortReservation.allocate(hass)
-    except RuntimeError as err:
+        bridge_ports.bind_audio_sockets()
+    except (OSError, RuntimeError) as err:
         _LOGGER.warning("SIP RTP bridge port allocation failed: %s", err)
         return SipInviteResult(503, "Service Unavailable", to_tag="")
     source_relay_port, dest_relay_port = bridge_ports.ports

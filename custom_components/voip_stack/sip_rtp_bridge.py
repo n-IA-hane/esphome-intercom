@@ -31,6 +31,7 @@ from .dtmf import (
     build_telephone_event_payload,
     telephone_event_code,
 )
+from .media_ports import bind_sip_audio_socket
 from .core.sdp import RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadEncoder
@@ -38,7 +39,6 @@ from .rtp_audio_receiver import RtpAudioReceiver
 
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
-_RTP_IP_TOS = 0xB8
 _DTMF_UPDATE_SECONDS = 0.05
 
 
@@ -312,6 +312,7 @@ class SipRtpRelay:
         self.debug_capture = bool(debug_capture)
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
+        self._audio_sockets: tuple[socket.socket, socket.socket] | None = None
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
@@ -614,6 +615,19 @@ class SipRtpRelay:
                         destination.unlink()
                 raise
 
+    def adopt_audio_sockets(self, sockets: tuple[socket.socket, socket.socket]) -> None:
+        """Accept an existing reservation without opening a second media owner."""
+        if (self._released or self._stop_requested or self._start_task is not None
+                or self.left_transport is not None or self.right_transport is not None
+                or self._audio_sockets is not None):
+            raise RuntimeError("SIP RTP relay cannot adopt sockets after startup")
+        if (len(sockets) != 2 or sockets[0] is sockets[1]
+                or any(sock.fileno() < 0 or int(sock.getsockname()[1]) != port
+                       or sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_DGRAM
+                       for sock, port in zip(sockets, (self.left_port, self.right_port), strict=True))):
+            raise ValueError("RTP sockets do not match the relay reservation")
+        self._audio_sockets = sockets
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self.left_transport is not None and self.right_transport is not None:
@@ -639,8 +653,11 @@ class SipRtpRelay:
         left_sock: socket.socket | None = None
         right_sock: socket.socket | None = None
         try:
-            left_sock = self._rtp_socket(self.left_port)
-            right_sock = self._rtp_socket(self.right_port)
+            if self._audio_sockets is not None:
+                (left_sock, right_sock), self._audio_sockets = self._audio_sockets, None
+            else:
+                left_sock = self._rtp_socket(self.left_port)
+                right_sock = self._rtp_socket(self.right_port)
             left_transport, _ = await loop.create_datagram_endpoint(
                 lambda: _RelayProtocol(self, "left"),
                 sock=left_sock,
@@ -693,16 +710,7 @@ class SipRtpRelay:
 
     @staticmethod
     def _rtp_socket(port: int) -> socket.socket:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.setblocking(False)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
-            sock.bind(("0.0.0.0", int(port)))
-            return sock
-        except BaseException:
-            sock.close()
-            raise
+        return bind_sip_audio_socket(port)
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
@@ -796,6 +804,10 @@ class SipRtpRelay:
     def _close_audio_resources(self) -> None:
         """Synchronously revoke both RTP transports."""
 
+        sockets, self._audio_sockets = self._audio_sockets, None
+        for sock in sockets or ():
+            with contextlib.suppress(OSError):
+                sock.close()
         if self.left_transport is not None:
             self.left_transport.close()
             self.left_transport = None

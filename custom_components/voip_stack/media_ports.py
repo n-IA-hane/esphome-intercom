@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
+from dataclasses import dataclass, field
 import socket
 from typing import TYPE_CHECKING
 
@@ -19,15 +20,18 @@ from .media_reservation import (
 )
 
 RTP_RELAY_POOL_WIDTH = 400
+_RTP_IP_TOS = 0xB8
+_VIDEO_RTP_IP_TOS = 0x88
 
 
 @dataclass(slots=True)
 class RtpPortReservation:
-    """Owned RTP relay port pair that must be released or detached."""
+    """Owned RTP relay ports and optional pre-bound audio sockets."""
 
     hass: HomeAssistant
     ports: tuple[int, int]
     released: bool = False
+    _audio_sockets: tuple[socket.socket, socket.socket] | None = field(default=None, repr=False)
 
     @classmethod
     def allocate(cls, hass: HomeAssistant) -> "RtpPortReservation":
@@ -58,14 +62,48 @@ class RtpPortReservation:
         return cls(hass, (source_port, temporary.ports[0]))
 
     def detach(self) -> tuple[int, int]:
+        self._close_audio_sockets()
         self.released = True
         return self.ports
 
     def release(self) -> None:
+        self._close_audio_sockets()
         if self.released:
             return
         release_sip_rtp_port_pair(self.hass, self.ports)
         self.released = True
+
+    def bind_audio_sockets(self) -> None:
+        """Own the advertised ports before signaling, without starting media."""
+        if self.released:
+            raise RuntimeError("RTP reservation has already been released")
+        if self._audio_sockets is not None:
+            return
+        sockets = []
+        try:
+            for port in self.ports:
+                sock = bind_sip_audio_socket(port)
+                sockets.append(sock)
+        except BaseException:
+            for sock in sockets:
+                with contextlib.suppress(OSError):
+                    sock.close()
+            self.release()
+            raise
+        self._audio_sockets = (sockets[0], sockets[1])
+
+    def transfer_audio_sockets(self, relay) -> None:
+        """Relinquish the same sockets only after synchronous relay validation."""
+        if self._audio_sockets is None:
+            return
+        relay.adopt_audio_sockets(self._audio_sockets)
+        self._audio_sockets = None
+
+    def _close_audio_sockets(self) -> None:
+        sockets, self._audio_sockets = self._audio_sockets, None
+        for sock in sockets or ():
+            with contextlib.suppress(OSError):
+                sock.close()
 
 
 def reserve_delayed_offer_ports(
@@ -112,12 +150,27 @@ def rtp_port_available(port: int) -> bool:
         sock.close()
 
 
-def bind_sip_rtp_socket(port: int) -> socket.socket:
-    """Bind RTP before signaling so immediate media packets are retained."""
+def bind_sip_audio_socket(port: int) -> socket.socket:
+    """Bind the relay's existing audio socket policy before or after signaling."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setblocking(False)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
+        sock.bind(("0.0.0.0", int(port)))
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def bind_sip_rtp_socket(port: int, *, ip_tos: int = _RTP_IP_TOS) -> socket.socket:
+    """Pre-bind RTP with audio EF by default and an explicit video policy."""
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, ip_tos)
         sock.setblocking(False)
         sock.bind(("0.0.0.0", int(port)))
         return sock
@@ -131,9 +184,9 @@ def bind_sip_video_sockets(rtp_port: int) -> tuple[socket.socket, socket.socket]
 
     if not 1 <= int(rtp_port) < 65535:
         raise OSError("invalid video RTP/RTCP port pair")
-    rtp_socket = bind_sip_rtp_socket(int(rtp_port))
+    rtp_socket = bind_sip_rtp_socket(int(rtp_port), ip_tos=_VIDEO_RTP_IP_TOS)
     try:
-        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1)
+        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1, ip_tos=_VIDEO_RTP_IP_TOS)
     except BaseException:
         rtp_socket.close()
         raise

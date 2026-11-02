@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import socket
 import sys
@@ -87,6 +88,200 @@ class FakeHass:
 
 
 class MediaPortPoolTest(unittest.TestCase):
+    async def _assert_datagram_tos(self, sender, payload, expected_tos):
+        """Observe the actual IP header after asyncio adopts the bound FD."""
+        source_port = sender.getsockname()[1]
+        source_fd = sender.fileno()
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            asyncio.DatagramProtocol, sock=sender,
+        )
+        try:
+            adopted = transport.get_extra_info("socket")
+            self.assertEqual(adopted.fileno(), source_fd)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+                receiver.setsockopt(socket.IPPROTO_IP, socket.IP_RECVTOS, 1)
+                receiver.bind(("127.0.0.1", 0))
+                receiver.settimeout(1)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    with self.assertRaises(OSError):
+                        probe.bind(("0.0.0.0", source_port))
+                transport.sendto(payload, receiver.getsockname())
+                packet, ancillary, _, source = await asyncio.to_thread(
+                    receiver.recvmsg, 2048, 256,
+                )
+                tos = [value[0] for level, kind, value in ancillary
+                       if level == socket.IPPROTO_IP and kind == socket.IP_TOS]
+                self.assertEqual(packet, payload)
+                self.assertEqual(source[1], source_port)
+                self.assertEqual(tos, [expected_tos])
+                self.assertEqual(
+                    adopted.getsockopt(socket.IPPROTO_IP, socket.IP_TOS), expected_tos,
+                )
+        finally:
+            transport.close()
+            await asyncio.sleep(0)
+        self.assertEqual(sender.fileno(), -1)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.bind(("0.0.0.0", source_port))
+
+    def test_prebound_browser_audio_keeps_ef_on_wire_after_socket_adoption(self):
+        payload = bytes.fromhex("80600001000000a000000001") + b"\x00" * 320
+        asyncio.run(self._assert_datagram_tos(
+            media_ports.bind_sip_rtp_socket(0), payload, 0xB8,
+        ))
+
+    def test_prebound_bridge_audio_keeps_ef_on_wire_after_socket_adoption(self):
+        payload = bytes.fromhex("80600001000000a000000001") + b"\x00" * 320
+        asyncio.run(self._assert_datagram_tos(
+            media_ports.bind_sip_audio_socket(0), payload, 0xB8,
+        ))
+
+    def test_prebound_qos_failure_closes_socket_before_port_is_advertised(self):
+        sock = Mock()
+        sock.setsockopt.side_effect = [None, OSError("TOS unavailable")]
+        with patch.object(media_ports.socket, "socket", return_value=sock):
+            with self.assertRaisesRegex(OSError, "TOS unavailable"):
+                media_ports.bind_sip_rtp_socket(40000, ip_tos=0x88)
+        sock.bind.assert_not_called()
+        sock.close.assert_called_once_with()
+
+    def test_prebound_video_rtp_and_rtcp_keep_af41_on_wire_after_socket_adoption(self):
+        for _ in range(32):
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            if port >= 65535:
+                continue
+            try:
+                sockets = media_ports.bind_sip_video_sockets(port)
+                break
+            except OSError:
+                continue
+        else:
+            self.fail("Could not reserve adjacent RTP/RTCP ports")
+        try:
+            for sender, payload in zip(sockets, (
+                bytes.fromhex("801a00010000000100000001") + b"\x00" * 8,
+                bytes.fromhex("80c9000100000001"),
+            ), strict=True):
+                with self.subTest(port=sender.getsockname()[1]):
+                    asyncio.run(self._assert_datagram_tos(sender, payload, 0x88))
+        finally:
+            for sender in sockets:
+                sender.close()
+
+    def test_video_relay_created_rtp_and_rtcp_keep_the_same_af41_on_wire(self):
+        relay = _load_module("sip_video_relay").SipVideoRtpRelay
+        for payload in (
+            bytes.fromhex("801a00010000000100000001") + b"\x00" * 8,
+            bytes.fromhex("80c9000100000001"),
+        ):
+            with self.subTest(rtcp=payload[1] == 201):
+                asyncio.run(self._assert_datagram_tos(
+                    relay._socket(0), payload, 0x88,
+                ))
+
+    @staticmethod
+    def _audio_reservation():
+        hass = FakeHass()
+        probes = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+        try:
+            for probe in probes:
+                probe.bind(("0.0.0.0", 0))
+            ports = tuple(probe.getsockname()[1] for probe in probes)
+        finally:
+            for probe in probes:
+                probe.close()
+        hass.runtime.rtp_port_pool = {"used": set(ports)}
+        return hass, media_ports.RtpPortReservation(hass, ports)
+
+    def test_audio_prebind_retains_socket_identity_budget_and_exclusive_release(self):
+        hass, owner = self._audio_reservation()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as default:
+            receive_budget = default.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+        try:
+            owner.bind_audio_sockets()
+            sockets = owner._audio_sockets
+            owner.bind_audio_sockets()
+            self.assertIs(owner._audio_sockets, sockets)
+            for sock, port in zip(sockets, owner.ports, strict=True):
+                self.assertFalse(sock.getblocking())
+                self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF), receive_budget)
+                self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 1)
+                self.assertEqual(sock.getsockopt(socket.IPPROTO_IP, socket.IP_TOS), 0xB8)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    with self.assertRaises(OSError):
+                        probe.bind(("0.0.0.0", port))
+            owner.release()
+            owner.release()
+            self.assertTrue(all(sock.fileno() < 0 for sock in sockets))
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+            for port in owner.ports:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.bind(("0.0.0.0", port))
+        finally:
+            owner.release()
+
+    def test_audio_prebind_failure_closes_first_socket_and_releases_pair(self):
+        hass, owner = self._audio_reservation()
+        opened = []
+        binder = media_ports.bind_sip_audio_socket
+
+        def bind(port, **kwargs):
+            sock = binder(port, **kwargs)
+            opened.append(sock)
+            return sock
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
+            occupied.bind(("0.0.0.0", owner.ports[1]))
+            with patch.object(media_ports, "bind_sip_audio_socket", bind):
+                with self.assertRaises(OSError):
+                    owner.bind_audio_sockets()
+            self.assertEqual(len(opened), 1)
+            self.assertLess(opened[0].fileno(), 0)
+            self.assertTrue(owner.released)
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.bind(("0.0.0.0", owner.ports[0]))
+
+    def test_detaching_unused_audio_closes_sockets_but_transfers_port_lease(self):
+        hass, owner = self._audio_reservation()
+        owner.bind_audio_sockets()
+        sockets = owner._audio_sockets
+        ports = owner.detach()
+        self.assertEqual(ports, owner.ports)
+        self.assertTrue(all(sock.fileno() < 0 for sock in sockets))
+        self.assertEqual(hass.runtime.rtp_port_pool["used"], set(ports))
+        media_ports.release_sip_rtp_port_pair(hass, ports)
+        self.assertFalse(hass.runtime.rtp_port_pool["used"])
+
+    def test_released_generation_drops_queued_packets_before_same_port_redial(self):
+        hass, first = self._audio_reservation()
+        second = None
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
+            try:
+                first.bind_audio_sockets()
+                peer.sendto(b"old-generation", ("127.0.0.1", first.ports[0]))
+                self.assertEqual(first._audio_sockets[0].recv(4096, socket.MSG_PEEK), b"old-generation")
+                old_sockets = first._audio_sockets
+                first.release()
+                first.release()
+                self.assertTrue(all(sock.fileno() < 0 for sock in old_sockets))
+                hass.runtime.rtp_port_pool["used"].update(first.ports)
+                second = media_ports.RtpPortReservation(hass, first.ports)
+                second.bind_audio_sockets()
+                with self.assertRaises(BlockingIOError):
+                    second._audio_sockets[0].recv(4096)
+                peer.sendto(b"current-generation", ("127.0.0.1", second.ports[0]))
+                self.assertEqual(second._audio_sockets[0].recv(4096), b"current-generation")
+                with self.assertRaises(BlockingIOError):
+                    second._audio_sockets[0].recv(4096)
+            finally:
+                first.release()
+                if second is not None:
+                    second.release()
+                self.assertFalse(hass.runtime.rtp_port_pool["used"])
+
     def test_adopt_bound_source_reserves_only_source_and_spare(self):
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):

@@ -30,10 +30,11 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
     captured = {}
 
     def client(**kwargs):
+        ports.bind_audio_sockets.assert_called_once_with()
         captured.update(kwargs)
         raise ClientObserved
 
-    ports = SimpleNamespace(ports=(44000, 44002))
+    ports = SimpleNamespace(ports=(44000, 44002), bind_audio_sockets=Mock())
     monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
     monkeypatch.setattr(bridge, "SipCallClient", client)
     runtime = SimpleNamespace(
