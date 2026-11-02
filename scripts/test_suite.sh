@@ -92,6 +92,7 @@ ha_tests=(
   tests/test_phone_policy_runtime_ha.py
   tests/test_phone_state_ha.py
   tests/test_phone_monitor_ha.py
+  tests/test_esp_screenshot_homeassistant.py
   tests/test_ldap_directory_ha.py
   tests/test_ldap_provisioning_ha.py
   tests/test_ldap_standard_extensions_ha.py
