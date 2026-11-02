@@ -13,6 +13,7 @@ from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
     EndpointRouteResolver,
+    bridge_audio_profile,
     peer_audio_formats,
     peer_for_target,
     peer_video_codec,
@@ -203,11 +204,22 @@ class EndpointDialer:
                 member_entry.metadata if member_entry is not None else None,
                 user_agent_override=peer_user_agent_override or None,
             )
-            if bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
+            include_common_audio = (
+                policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
+                or sip_target_has_unspecified_audio(peer_target, member_entry)
+            )
+            if policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 rtp_audio_profile = None
             elif rtp_audio_profile is not None:
+                sip_send_formats = list(rtp_audio_profile.send_formats)
+                sip_recv_formats = list(rtp_audio_profile.recv_formats)
+            if invite is not None and sip_send_formats and sip_recv_formats:
+                rtp_audio_profile = bridge_audio_profile(
+                    invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
+                    include_common_codecs=include_common_audio,
+                )
                 sip_send_formats = list(rtp_audio_profile.send_formats)
                 sip_recv_formats = list(rtp_audio_profile.recv_formats)
             target_endpoint = self.route_resolver.logical_endpoint(
@@ -293,10 +305,7 @@ class EndpointDialer:
                 username=policy.username,
                 password=policy.password,
                 outbound_proxy=policy.outbound_proxy,
-                include_common_codecs=(
-                    bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
-                    or sip_target_has_unspecified_audio(peer_target, member_entry)
-                ),
+                include_common_codecs=include_common_audio,
                 allow_directional_audio_payloads=supports_directional_audio_payloads(
                     peer_target, member_entry
                 ),
