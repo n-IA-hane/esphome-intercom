@@ -504,6 +504,22 @@ export function buildMainCardSkeleton(cardVersion) {
         box-sizing: border-box;
         margin-top: 8px;
       }
+      /* The Dashboard owns its header and navigation. Keep native actions
+       * available to that owner without drawing a second toolbar. */
+      .card.dashboard-inline-options {
+        border: 0;
+        box-shadow: none;
+        background: transparent;
+      }
+      .card.dashboard-inline-options > .header,
+      .card.dashboard-inline-options > .runtime-controls {
+        display: none !important;
+      }
+      .card.dashboard-inline-options .settings-panel {
+        margin-top: 0;
+        border-top: 0;
+        background: transparent;
+      }
       .media-device-controls { margin-top: 10px; }
       .media-device-heading {
         color: var(--primary-text-color);
