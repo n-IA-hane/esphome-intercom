@@ -39,6 +39,7 @@ class SipApplicationMethods:
     subscription_timers: dict[str, asyncio.Task[object]] | None = None
     mailbox_archive: object | None = None
     mailbox_unsubscribe: Callable[[], None] | None = None
+    account_unsubscribe: Callable[[], None] | None = None
     dialog_unsubscribe: Callable[[], None] | None = None
     endpoint_unsubscribe: Callable[[], None] | None = None
     parking_unsubscribe: Callable[[], None] | None = None
@@ -60,6 +61,7 @@ class SipApplicationMethods:
         self.tasks = set()
         self.publication_timers = {}
         self.subscription_timers = {}
+        self.account_unsubscribe = self.registrar.subscribe_account_changes(self._accounts_changed)
 
     async def handle(
         self,
@@ -80,6 +82,13 @@ class SipApplicationMethods:
                     return SipRequestResult(status, reason, headers=headers, to_tag=subscription.to_tag)
             return SipRequestResult(481, "Subscription Does Not Exist")
         if account is None:
+            current = self._owned_unsubscribe(request, addr, transport, follow_up_sender)
+            if current is not None:
+                return self._subscribe(request, addr, current.subscriber, follow_up_sender,
+                    mailbox_id=current.mailbox_id, dialog_endpoint_id=current.dialog_endpoint_id,
+                    transport=transport)
+            return SipRequestResult(403, "Forbidden")
+        if not account.enabled:
             return SipRequestResult(403, "Forbidden")
         if request.method == "MESSAGE":
             return self._message(request, account.username)
@@ -131,6 +140,7 @@ class SipApplicationMethods:
                 follow_up_sender,
                 mailbox_id=mailbox_id,
                 dialog_endpoint_id=dialog_endpoint_id,
+                transport=transport,
             )
             if (event == "dialog" and result.status == 200 and self.dialog_unsubscribe is None
                     and any(item.event == "dialog" for item in self.subscriptions.values())):
@@ -140,6 +150,40 @@ class SipApplicationMethods:
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
             return result
         return SipRequestResult(405, "Method Not Allowed")
+
+    def _owned_unsubscribe(self, request, addr, transport, sender):
+        """Contact removal does not revoke an established event dialog's cleanup."""
+        if request.method != "SUBSCRIBE":
+            return None
+        try:
+            if _publication_expires(request.header("Expires")) != 0:
+                return None
+            sequence = sip.parse_cseq(request.header("CSeq"))
+        except (TypeError, ValueError, sip.SipError):
+            return None
+        current = self.subscriptions.get(_subscription_key(request))
+        if (current is None or current.refer_notifier is not None
+                or sip.extract_tag(request.header("To")) != current.to_tag
+                or sequence.method != "SUBSCRIBE" or sequence.number <= current.dialog.remote_cseq
+                or addr != current.addr or transport.upper() != current.transport
+                or sender != current.sender or current.authentication_generation is None
+                or self.registrar.authentication_generation(current.subscriber) != current.authentication_generation):
+            return None
+        return current
+
+    @callback
+    def _accounts_changed(self, usernames):
+        """Revoke event owners on credential changes, independently of Contacts."""
+        owned = {id(item): item for item in self.subscriptions.values()}
+        owned.update(self.notifiers)
+        for subscription in owned.values():
+            if subscription.refer_notifier is not None or subscription.subscriber.casefold() not in usernames:
+                continue
+            self._end_subscription(subscription, notify=False)
+            subscription.pending_notification = None
+            subscription.notify_terminated = True
+            if subscription.notify_task is not None:
+                subscription.notify_task.cancel()
 
     def _refer(self, request, addr, transport, account, sender, flow_trunk_id):
         """Authorize Target-Dialog against the existing leg's stable principal."""
@@ -319,7 +363,7 @@ class SipApplicationMethods:
         addr: tuple[str, int],
         subscriber: str,
         follow_up_sender: "SipFollowUpSender | None",
-        *, mailbox_id: str = "", dialog_endpoint_id: str = "",
+        *, mailbox_id: str = "", dialog_endpoint_id: str = "", transport: str = "",
     ) -> SipRequestResult:
         """Create, refresh or terminate one RFC 6665 presence subscription."""
 
@@ -351,9 +395,7 @@ class SipApplicationMethods:
         if event != "dialog" and (target_account is None or not target_account.enabled):
             return SipRequestResult(404, "Not Found")
 
-        _package, parameters = sip._split_semicolon_params(request.header("Event"))
-        event_id = dict(parameters).get("id") or ""
-        key = f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{event}:{event_id}"
+        key = _subscription_key(request)
         subscriptions = self.subscriptions
         assert subscriptions is not None
         current = subscriptions.get(key)
@@ -394,6 +436,8 @@ class SipApplicationMethods:
             addr=addr,
             expires_at=time.time() + expires,
             sender=follow_up_sender,
+            transport=transport.upper(),
+            authentication_generation=self.registrar.authentication_generation(subscriber),
             notify_lock=current.notify_lock if current is not None else asyncio.Lock(),
         )
         if current is not None:
@@ -401,6 +445,7 @@ class SipApplicationMethods:
             current.addr = addr
             current.expires_at = subscription.expires_at
             current.sender = follow_up_sender
+            current.transport = transport.upper()
             subscription = current
         if expires:
             subscriptions[key] = subscription
@@ -882,6 +927,9 @@ class SipApplicationMethods:
     async def stop(self) -> None:
         """Cancel application transactions and discard expiring state."""
         self.stopping = True
+        if self.account_unsubscribe is not None:
+            self.account_unsubscribe()
+            self.account_unsubscribe = None
         retained = tuple(owner for key, owner in self.event_clients.items() if key in self.signaling_leases)
         if self.response_cache_timer is not None:
             self.response_cache_timer.cancel()
@@ -951,6 +999,8 @@ class SipEventSubscription:
     expires_at: float
     sender: SipFollowUpSender
     notify_lock: asyncio.Lock
+    transport: str = ""
+    authentication_generation: str | None = None
     event: str = "presence"
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""
@@ -961,6 +1011,12 @@ class SipEventSubscription:
     pending_notification: SipRequestResult | None = None
     notify_terminated: bool = False
     refer_notifier: sip_transfer.ReferNotifier | None = None
+
+
+def _subscription_key(request: sip.SipMessage) -> str:
+    package, parameters = sip._split_semicolon_params(request.header("Event"))
+    event_id = dict(parameters).get("id") or ""
+    return f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{package.strip().lower()}:{event_id}"
 
 
 def _publication_expires(value: str) -> int:
