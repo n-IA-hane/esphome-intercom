@@ -478,6 +478,14 @@ class SipEndpointManager:
             return bool(callable(request) and await request(call_id))
         return False
 
+    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
+        """Use the listener transport, including an already registered TCP flow."""
+        if transport.upper() not in {"UDP", "TCP"}:
+            return None
+        server = self.tcp_server if transport.upper() == "TCP" else self.udp_server
+        endpoint = getattr(server, "endpoint", None)
+        return await endpoint.async_options(uri, addr, timeout=timeout) if endpoint is not None else None
+
     async def async_send_dtmf_info(self, call_id: str, digit: str) -> bool:
         """Send DTMF INFO through the transport owning an inbound dialog."""
 

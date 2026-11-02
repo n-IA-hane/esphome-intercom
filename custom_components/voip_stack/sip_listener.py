@@ -1256,6 +1256,18 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 )
             return response
 
+    async def async_options(self, uri: str, addr: tuple[str, int], *, timeout: float = 3.0):
+        """Query one peer on the existing listener, without a call or RTP owner."""
+        ids = sip.SipDialogIds(call_id=sip.make_call_id("options"), local_tag=sip.make_tag(),
+            remote_tag="", cseq=1, branch=sip.make_branch())
+        local_uri = str(sip.SipUri("voip-stack", self.local_ip, self.local_sip_port))
+        headers = sip.dialog_headers(request_uri=uri, local_uri=local_uri, remote_uri=uri,
+            dialog=ids, method="OPTIONS", contact_uri=local_uri, transport=self.signaling_transport)
+        headers.append(("Accept", "application/sdp"))
+        return await self._run_client_transaction(raw=sip.build_request("OPTIONS", uri, headers),
+            addr=addr, ids=ids, method="OPTIONS", transport=self.signaling_transport,
+            timeout=timeout, creating_dialog=True, response_addr=addr)
+
     async def _run_client_transaction(
         self,
         *,
@@ -1267,15 +1279,29 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         active: Callable[[], bool] = lambda: True,
         timeout: float = _INVITE_2XX_TIMEOUT,
         creating_dialog: bool = False,
+        response_addr: tuple[str, int] | None = None,
     ) -> sip.SipMessage | None:
         """Run the shared non-INVITE transaction for this listener transport."""
 
         responses = SipResponseMailbox(lambda message: sip.response_matches_dialog_transaction(message, ids, method, creating_dialog=creating_dialog))
         self._client_transaction_responses[ids.branch] = responses
+
+        async def read_response(timeout):
+            # Advisory metadata belongs to the queried flow. A matching branch
+            # received from another socket is not evidence about this binding.
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return None
+                item = await responses.receive(remaining)
+                if item is None or response_addr is None or item[1] == response_addr:
+                    return item
+
         try:
             return await async_run_dialog_request_transaction(
                 send=lambda: self._send(raw, addr),
-                read=responses.receive,
+                read=read_response if response_addr is not None else responses.receive,
                 matches=lambda response: sip.response_matches_dialog_transaction(
                     response, ids, method, creating_dialog=creating_dialog
                 ),
@@ -2163,7 +2189,22 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 self._send_response(request, addr, 400, "Bad Request")
                 return
         if request.method == "OPTIONS":
-            self._send_response(request, addr, 200, "OK")
+            wants_sdp = False
+            for item in request.header("Accept", "application/sdp").split(","):
+                media_type, parameters = sip._split_semicolon_params(item)
+                try:
+                    quality = float(dict(parameters).get("q", "1"))
+                except (TypeError, ValueError):
+                    continue
+                wants_sdp |= media_type.strip().lower() == "application/sdp" and 0 < quality <= 1
+            # RFC 3261 11.2 defaults an absent Accept to application/sdp.
+            # Capability descriptions use zero ports and never reserve media.
+            body = sdp.build_offer_directional(self.local_ip, self.local_ip, 0,
+                self.supported_send_formats, self.supported_recv_formats,
+                include_common_codecs=True, allow_directional_payloads=True) if wants_sdp else ""
+            body = sdp.rewrite_sdp_origin(body, secrets.randbits(63) or 1, 0).encode() if body else b""
+            self._send_response(request, addr, 200, "OK", body=body,
+                extra_headers=(("Content-Type", "application/sdp"),) if body else ())
             return
         if request.method == "REGISTER":
             if self.on_register is not None:
