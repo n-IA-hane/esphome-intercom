@@ -623,6 +623,12 @@ async def run_ring_group_call(
             )
             return
         source_relay_port, dest_relay_port = winner.ports.ports
+        preanswered = registry.resource_for(invite.call_id, "preanswered") or {}
+        source_reservation = preanswered.get("rtp_reservation")
+        reservations = (winner.ports,)
+        if source_reservation is not None and source_reservation is not winner.ports:
+            source_relay_port = source_reservation.ports[0]
+            reservations = (source_reservation, winner.ports)
         dialed_target = entry.display_name or invite.target
         connected_party = str(winner.member or "").strip() or invite.target
         committed = await async_commit_outbound_bridge(
@@ -634,8 +640,8 @@ async def run_ring_group_call(
                 source_relay_port=source_relay_port,
                 dest_relay_port=dest_relay_port,
                 local_ip=local_ip,
-                release_port_pairs=(winner.ports.ports,),
-                detach_reservations=(winner.ports,),
+                release_port_pairs=tuple(item.ports for item in reservations),
+                detach_reservations=reservations,
                 enable_video_transcoding=bool(
                     runtime.config.get(CONF_VIDEO_TRANSCODING, False)
                 ),
@@ -650,7 +656,8 @@ async def run_ring_group_call(
                 origin=call_ingress,
                 expected_generation=call_generation,
                 local_source=ha_origin,
-                consume_pending_source=False,
+                consume_pending_source=source_reservation is not None,
+                response_already_sent=bool(preanswered.get("final_response_sent", False)),
                 answer_owner="ha_softphone",
                 endpoint_id=origin_endpoint_id if ha_origin else "",
                 source_endpoint_id=source_endpoint_id,

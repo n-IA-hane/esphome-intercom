@@ -200,13 +200,16 @@ class RtpPeer:
 
 
 class _RelayProtocol(asyncio.DatagramProtocol):
-    def __init__(self, relay: "SipRtpRelay", side: str) -> None:
+    def __init__(self, relay: "SipRtpRelay", side: str, *, paused: bool = False) -> None:
         self.relay = relay
         self.side = side
+        self.paused = paused
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport  # type: ignore[assignment]
+        if self.paused:
+            transport.pause_reading()
 
     def datagram_received(self, data: bytes, addr) -> None:
         self.relay.handle_packet(self.side, data, addr)
@@ -312,7 +315,7 @@ class SipRtpRelay:
         self.debug_capture = bool(debug_capture)
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
-        self._audio_sockets: tuple[socket.socket, socket.socket] | None = None
+        self._audio_sockets: tuple[socket.socket, ...] | None = None
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
@@ -615,18 +618,22 @@ class SipRtpRelay:
                         destination.unlink()
                 raise
 
-    def adopt_audio_sockets(self, sockets: tuple[socket.socket, socket.socket]) -> None:
+    def adopt_audio_sockets(self, sockets: tuple[socket.socket, ...]) -> None:
         """Accept an existing reservation without opening a second media owner."""
         if (self._released or self._stop_requested or self._start_task is not None
-                or self.left_transport is not None or self.right_transport is not None
-                or self._audio_sockets is not None):
+                or self.left_transport is not None or self.right_transport is not None):
             raise RuntimeError("SIP RTP relay cannot adopt sockets after startup")
-        if (len(sockets) != 2 or sockets[0] is sockets[1]
-                or any(sock.fileno() < 0 or int(sock.getsockname()[1]) != port
-                       or sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_DGRAM
-                       for sock, port in zip(sockets, (self.left_port, self.right_port), strict=True))):
+        combined = sockets if self._audio_sockets is None else self._audio_sockets + sockets
+        if any(sock.fileno() < 0 for sock in combined):
             raise ValueError("RTP sockets do not match the relay reservation")
-        self._audio_sockets = sockets
+        ports = [int(sock.getsockname()[1]) for sock in combined]
+        if (not sockets or len(combined) > 2 or len(set(ports)) != len(ports)
+                or len({sock.fileno() for sock in combined}) != len(combined)
+                or any(sock.fileno() < 0 or port not in (self.left_port, self.right_port)
+                       or sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_DGRAM
+                       for sock, port in zip(combined, ports, strict=True))):
+            raise ValueError("RTP sockets do not match the relay reservation")
+        self._audio_sockets = combined
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
@@ -653,13 +660,16 @@ class SipRtpRelay:
         left_sock: socket.socket | None = None
         right_sock: socket.socket | None = None
         try:
-            if self._audio_sockets is not None:
-                (left_sock, right_sock), self._audio_sockets = self._audio_sockets, None
-            else:
+            sockets, self._audio_sockets = self._audio_sockets or (), None
+            by_port = {int(sock.getsockname()[1]): sock for sock in sockets}
+            left_sock = by_port.get(self.left_port)
+            right_sock = by_port.get(self.right_port)
+            if left_sock is None:
                 left_sock = self._rtp_socket(self.left_port)
+            if right_sock is None:
                 right_sock = self._rtp_socket(self.right_port)
             left_transport, _ = await loop.create_datagram_endpoint(
-                lambda: _RelayProtocol(self, "left"),
+                lambda: _RelayProtocol(self, "left", paused=True),
                 sock=left_sock,
             )
             if self._stop_requested:
@@ -668,7 +678,7 @@ class SipRtpRelay:
             self.left_transport = left_transport
             left_sock = None
             right_transport, _ = await loop.create_datagram_endpoint(
-                lambda: _RelayProtocol(self, "right"),
+                lambda: _RelayProtocol(self, "right", paused=True),
                 sock=right_sock,
             )
             if self._stop_requested:
@@ -676,6 +686,9 @@ class SipRtpRelay:
                 raise asyncio.CancelledError
             self.right_transport = right_transport
             right_sock = None
+            # Both destinations exist before either queued RTP packet is read.
+            self.left_transport.resume_reading()
+            self.right_transport.resume_reading()
             if self.video_relay is not None:
                 await self.video_relay.start()
             if self._stop_requested:

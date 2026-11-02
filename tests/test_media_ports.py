@@ -282,6 +282,59 @@ class MediaPortPoolTest(unittest.TestCase):
                     second.release()
                 self.assertFalse(hass.runtime.rtp_port_pool["used"])
 
+    def test_partial_audio_handoff_preserves_spare_and_exact_first_datagram(self):
+        hass, owner = self._audio_reservation()
+        taken = None
+        try:
+            owner.bind_audio_sockets(ports=(owner.ports[0],))
+            source = owner.audio_socket(owner.ports[0])
+            source_fd = source.fileno()
+            owner.bind_audio_sockets()
+            self.assertIs(owner.audio_socket(owner.ports[0]), source)
+            self.assertEqual(source.fileno(), source_fd)
+            spare = owner.audio_socket(owner.ports[1])
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
+                peer.sendto(b"first-owned-datagram", ("127.0.0.1", owner.ports[0]))
+            taken = owner.take_audio_socket(owner.ports[0])
+            self.assertIs(taken, source)
+            self.assertEqual(taken.recv(4096), b"first-owned-datagram")
+            with self.assertRaises(BlockingIOError):
+                taken.recv(4096)
+            self.assertIs(owner.audio_socket(owner.ports[1]), spare)
+            owner.release()
+            self.assertLess(spare.fileno(), 0)
+            self.assertEqual(taken.fileno(), source_fd)
+        finally:
+            if taken is not None:
+                taken.close()
+            owner.release()
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+
+    def test_pending_reservation_reassignment_keeps_fd_packet_and_pool(self):
+        hass, owner = self._audio_reservation()
+        successor = None
+        try:
+            owner.bind_audio_sockets()
+            sockets = owner._audio_sockets
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
+                peer.sendto(b"before-forward", ("127.0.0.1", owner.ports[0]))
+            successor = owner.transfer()
+            owner.release()
+            self.assertIs(successor._audio_sockets, sockets)
+            self.assertTrue(all(sock.fileno() >= 0 for sock in sockets))
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set(owner.ports))
+            self.assertEqual(successor.audio_socket(owner.ports[0]).recv(4096), b"before-forward")
+            with self.assertRaises(RuntimeError):
+                owner.transfer()
+            successor.release()
+            successor.release()
+            self.assertTrue(all(sock.fileno() < 0 for sock in sockets))
+            self.assertFalse(hass.runtime.rtp_port_pool["used"])
+        finally:
+            owner.release()
+            if successor is not None:
+                successor.release()
+
     def test_adopt_bound_source_reserves_only_source_and_spare(self):
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):

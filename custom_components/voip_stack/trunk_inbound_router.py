@@ -145,6 +145,7 @@ async def async_route_trunk_invite(
             invite,
             info_queue=info_queue,
             source_rtp_port=source_relay_port,
+            rtp_socket=bridge_ports.audio_socket(source_relay_port),
             routes=routes,
             timeout=timeout,
             terminator=terminator,

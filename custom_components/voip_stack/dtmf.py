@@ -248,7 +248,9 @@ class DtmfCollector:
         first_digit_timeout: float | None = None,
         terminator: str = "",
         remote_host: str = "",
+        rtp_socket: socket.socket | None = None,
     ) -> None:
+        self.rtp_socket = rtp_socket
         self.host = host
         self.port = int(port)
         self.payload_type = int(payload_type)
@@ -274,12 +276,28 @@ class DtmfCollector:
             self._on_digit,
             remote_host=self.remote_host,
         )
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: protocol,
-            local_addr=(self.host, self.port),
-            family=socket.AF_INET,
-        )
-        self.transport = transport  # type: ignore[assignment]
+        transport = None
+        borrowed_fd = None
+        if self.rtp_socket is None:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: protocol,
+                local_addr=(self.host, self.port),
+                family=socket.AF_INET,
+            )
+            self.transport = transport  # type: ignore[assignment]
+        else:
+            if self.rtp_socket.getsockname()[1] != self.port or self.rtp_socket.getblocking():
+                raise ValueError("DTMF socket does not match the reserved RTP port")
+            borrowed_fd = self.rtp_socket.fileno()
+
+            def receive():
+                try:
+                    data, address = self.rtp_socket.recvfrom(65535)
+                except BlockingIOError:
+                    return
+                protocol.datagram_received(data, address)
+
+            loop.add_reader(borrowed_fd, receive)
         started = time.monotonic()
         try:
             destination = ""
@@ -309,7 +327,10 @@ class DtmfCollector:
             )
             return self.buffer, destination
         finally:
-            transport.close()
+            if borrowed_fd is not None:
+                loop.remove_reader(borrowed_fd)
+            if transport is not None:
+                transport.close()
             self.transport = None
 
     def _on_digit(self, digit: str) -> None:

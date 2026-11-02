@@ -115,6 +115,7 @@ class _SoftphoneMediaSession:
     send_format: Any
     recv_format: Any
     rtp_socket: socket.socket | None = None
+    rtp_reservation: Any = None
     recv_formats: tuple[Any, ...] = ()
     send_formats: tuple[Any, ...] = ()
     match_received_codec: bool = False
@@ -544,6 +545,7 @@ def _active_softphone_media_session(
             return _SoftphoneMediaSession(
                 call_id=invite.call_id,
                 local_rtp_port=local_rtp_port,
+                rtp_reservation=item.get("rtp_reservation"),
                 remote_rtp_host=invite.remote_rtp_host,
                 remote_rtp_port=int(invite.remote_rtp_port),
                 send_format=invite.send_format,
@@ -780,6 +782,8 @@ async def _run_audio_session(
     loop = asyncio.get_running_loop()
     bound_socket = session.rtp_socket
     session.rtp_socket = None
+    if bound_socket is None and session.rtp_reservation is not None:
+        bound_socket = session.rtp_reservation.take_audio_socket(session.local_rtp_port)
     try:
         if bound_socket is not None:
             transport, _ = await loop.create_datagram_endpoint(lambda: protocol, sock=bound_socket)

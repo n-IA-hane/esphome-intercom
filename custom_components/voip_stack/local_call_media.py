@@ -257,6 +257,8 @@ class LocalCallMedia:
                 raise RuntimeError("Local call media session is already closed")
             loop = asyncio.get_running_loop()
             bound_socket, self._rtp_socket = self._rtp_socket, None
+            if bound_socket is None:
+                bound_socket = self.reservation.take_audio_socket(self.local_rtp_port)
             try:
                 transport, _ = await loop.create_datagram_endpoint(
                     lambda: _LocalRtpProtocol(self),

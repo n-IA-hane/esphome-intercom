@@ -178,6 +178,7 @@ class EndpointDialer:
         ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None
         try:
+            ports.bind_audio_sockets(ports=(ports.ports[local_rtp_port_index],))
             remote_tx_formats = peer_audio_formats(
                 peer_target,
                 "tx_formats",

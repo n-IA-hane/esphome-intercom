@@ -31,7 +31,7 @@ class RtpPortReservation:
     hass: HomeAssistant
     ports: tuple[int, int]
     released: bool = False
-    _audio_sockets: tuple[socket.socket, socket.socket] | None = field(default=None, repr=False)
+    _audio_sockets: tuple[socket.socket, ...] | None = field(default=None, repr=False)
 
     @classmethod
     def allocate(cls, hass: HomeAssistant) -> "RtpPortReservation":
@@ -73,15 +73,21 @@ class RtpPortReservation:
         release_sip_rtp_port_pair(self.hass, self.ports)
         self.released = True
 
-    def bind_audio_sockets(self) -> None:
+    def bind_audio_sockets(self, *, ports: tuple[int, ...] | None = None) -> None:
         """Own the advertised ports before signaling, without starting media."""
         if self.released:
             raise RuntimeError("RTP reservation has already been released")
-        if self._audio_sockets is not None:
+        requested = self.ports if ports is None else ports
+        if not set(requested) <= set(self.ports):
+            raise ValueError("RTP socket is outside the reservation")
+        if self._audio_sockets is not None and all(
+                any(sock.getsockname()[1] == port for sock in self._audio_sockets) for port in requested):
             return
-        sockets = []
+        sockets = list(self._audio_sockets or ())
         try:
-            for port in self.ports:
+            for port in requested:
+                if any(sock.getsockname()[1] == port for sock in sockets):
+                    continue
                 sock = bind_sip_audio_socket(port)
                 sockets.append(sock)
         except BaseException:
@@ -90,14 +96,36 @@ class RtpPortReservation:
                     sock.close()
             self.release()
             raise
-        self._audio_sockets = (sockets[0], sockets[1])
+        self._audio_sockets = tuple(sockets)
 
-    def transfer_audio_sockets(self, relay) -> None:
-        """Relinquish the same sockets only after synchronous relay validation."""
-        if self._audio_sockets is None:
+    def audio_socket(self, port: int) -> socket.socket | None:
+        """Borrow a reserved fd; the borrower must remove its reader first."""
+        return next((sock for sock in self._audio_sockets or () if sock.getsockname()[1] == port), None)
+
+    def take_audio_socket(self, port: int) -> socket.socket | None:
+        """Move one exact socket to an existing receiver without rebinding."""
+        sock = self.audio_socket(port)
+        if sock is not None:
+            self._audio_sockets = tuple(item for item in self._audio_sockets if item is not sock) or None
+        return sock
+
+    def transfer_audio_sockets(self, relay, *, ports: tuple[int, ...] | None = None) -> None:
+        """Move matching sockets only after synchronous relay validation."""
+        sockets = self._audio_sockets if ports is None else tuple(
+            sock for sock in self._audio_sockets or () if sock.getsockname()[1] in ports)
+        if not sockets:
             return
-        relay.adopt_audio_sockets(self._audio_sockets)
+        relay.adopt_audio_sockets(sockets)
+        self._audio_sockets = tuple(sock for sock in self._audio_sockets if sock not in sockets) or None
+
+    def transfer(self) -> "RtpPortReservation":
+        """Reassign this reservation and its fds together, without a gap."""
+        if self.released:
+            raise RuntimeError("RTP reservation has already been released")
+        successor = RtpPortReservation(self.hass, self.ports, _audio_sockets=self._audio_sockets)
         self._audio_sockets = None
+        self.released = True
+        return successor
 
     def _close_audio_sockets(self) -> None:
         sockets, self._audio_sockets = self._audio_sockets, None
@@ -119,6 +147,7 @@ def reserve_delayed_offer_ports(
     if artifacts.delayed_offer_ports is not None:
         raise RuntimeError("SIP delayed offer already owns media ports")
     reservation = RtpPortReservation.allocate(hass)
+    reservation.bind_audio_sockets()
     artifacts.delayed_offer_ports = reservation
     return reservation
 

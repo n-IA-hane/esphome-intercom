@@ -785,7 +785,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
         try:
             ports = reserve_delayed_offer_ports(hass, registry, initial.call_id)
-        except RuntimeError:
+        except (OSError, RuntimeError):
             await EndpointTerminationHandler(hass).terminate_reason(
                 initial.call_id,
                 TerminalReason.TRANSPORT_UNREACHABLE.value,
