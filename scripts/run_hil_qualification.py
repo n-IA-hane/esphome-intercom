@@ -11,14 +11,20 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
+from time import monotonic
 from typing import Any, Iterator
+from uuid import uuid4
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from qualification.evidence import CLAIMS, EvidenceError, validate_hil_measurement  # noqa: E402
+
 HIL_CAPABILITIES = {"hil-s3": "ws3", "hil-p4": "p4"}
 SAFE_SNAPSHOT_FIELDS = frozenset(
     {
@@ -317,12 +323,22 @@ def _run_scenario(
     interval: float,
     snapshot_timeout: float,
     scenario_timeout: float,
+    *, job: str, plan: dict[str, object], candidate_id: str, artifact_root: Path,
 ) -> dict[str, object]:
     pre = _wait_quiescent(snapshot_command, environment, snapshot_timeout)
-    started = time.monotonic()
+    started = monotonic()
     peak: dict[str, object] = {}
     sample_count = 0
     timed_out = False
+    run_id = uuid4().hex
+    receipt_path = artifact_root / "hil-measurements" / f"{run_id}.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    environment = {**environment, "HIL_MEASUREMENT_RECEIPT": str(receipt_path),
+        "HIL_EVIDENCE_ROOT": str(artifact_root), "HIL_RUN_ID": run_id,
+        "HIL_PLAN_ID": str(plan.get("plan_id") or ""),
+        "HIL_ACTOR_STARTED_MONOTONIC": str(started),
+        "HIL_HEAD": str(plan.get("head") or ""),
+        "HIL_CANDIDATE_ID": candidate_id, "HIL_SCENARIO_ID": scenario_id}
     with (
         tempfile.TemporaryFile(mode="w+t") as stdout_file,
         tempfile.TemporaryFile(mode="w+t") as stderr_file,
@@ -337,7 +353,7 @@ def _run_scenario(
         )
         try:
             while process.poll() is None:
-                if time.monotonic() - started >= scenario_timeout:
+                if monotonic() - started >= scenario_timeout:
                     _stop_process(process)
                     timed_out = True
                     break
@@ -356,17 +372,35 @@ def _run_scenario(
         stdout = stdout_file.read()
         stderr = stderr_file.read()
     post = _wait_quiescent(snapshot_command, environment, snapshot_timeout)
+    finished = monotonic()
     result = {
         "scenario": scenario_id,
+        "run_id": run_id,
         "status": "passed" if process.returncode == 0 and not timed_out else "failed",
         "exit_code": process.returncode,
         "timed_out": timed_out,
-        "duration_seconds": round(time.monotonic() - started, 3),
+        "started_monotonic": started,
+        "finished_monotonic": finished,
+        "duration_seconds": round(finished - started, 3),
         "snapshots": {"pre": pre, "peak": peak, "post": post},
         "snapshot_samples": sample_count,
         "stdout": {"bytes": len(stdout.encode()), "sha256": _digest(stdout)},
         "stderr": {"bytes": len(stderr.encode()), "sha256": _digest(stderr)},
     }
+    contract = CLAIMS.get((scenario_id, job))
+    if result["status"] == "passed":
+        try:
+            raw = receipt_path.read_bytes()
+            result["measurement_receipt"] = {
+                "path": str(receipt_path.relative_to(artifact_root)),
+                "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+            validate_hil_measurement(result, plan=plan, candidate_id=candidate_id,
+                root=artifact_root, require_redial=contract is not None and "immediate-redial" in contract["postconditions"])
+        except (OSError, EvidenceError) as error:
+            result["status"] = "failed"
+            result["measurement_error"] = (str(error) if isinstance(error, EvidenceError)
+                else "producer did not write a measured HIL receipt")
     return result
 
 
@@ -380,6 +414,7 @@ def run_hil(
     source_lock_sha256: str = "",
     firmware_manifest: dict[str, object] | None = None,
     firmware_root: Path | None = None,
+    artifact_root: Path | None = None,
 ) -> dict[str, object]:
     if hardware.get("schema_version") != 1:
         raise HilError("hardware map schema is unsupported")
@@ -403,6 +438,8 @@ def run_hil(
 
     if candidate is None or firmware_manifest is None or firmware_root is None:
         raise HilError("required HIL job has no candidate firmware evidence")
+    artifact["candidate_id"] = str(candidate.get("candidate_id") or "")
+    artifact_root = (artifact_root or firmware_root).resolve()
 
     lock_value = hardware.get("lock_file")
     if not isinstance(lock_value, str) or not lock_value:
@@ -504,6 +541,8 @@ def run_hil(
                         interval,
                         timeout,
                         float(scenario.get("timeout_seconds", 180)),
+                        job=job, plan=plan, candidate_id=artifact["candidate_id"],
+                        artifact_root=artifact_root,
                     )
                     result["firmware_profile"] = firmware["profile"]
                     results.append(result)
@@ -560,6 +599,7 @@ def main() -> int:
                 args.firmware_manifest.read_text(encoding="utf-8")
             ),
             firmware_root=args.firmware_root,
+            artifact_root=args.output.parent,
         )
         status = 0 if artifact["status"] in {"passed", "skipped"} else 2
     except (HilError, OSError, subprocess.SubprocessError, ValueError) as error:

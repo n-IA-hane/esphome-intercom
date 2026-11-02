@@ -4,6 +4,44 @@ This matrix is mandatory before claiming the VoIP refactor complete. A test
 passes only when protocol logs, backend state, card rendering and device state
 agree. Counters alone are not proof of audible bidirectional audio.
 
+## Incremental recovery from 2026.11.0
+
+The recovery starts from the stable release's coordinated component lock, with
+the Intercom main commit's identical production sources. The quarantined work
+is a source of requirements and reproductions, not a qualified implementation.
+The [recovery inventory](../qualification/recovery_inventory.json) records the
+agreed features, their dependencies, negative acceptance cases and ownership of
+every changed production file across the seven frozen repositories.
+
+Check the inventory against those local Git objects without downloading or
+changing any source:
+
+```sh
+python scripts/check_recovery_inventory.py --sources-root /path/to/source-repositories
+```
+
+Passing this check proves catalogue coverage, not feature implementation or
+runtime acceptance. Existing stable audio profiles, P4 video and PBX APIs remain
+baseline contracts. Each new feature needs its own identified candidate and
+measured evidence before its inventory state can advance.
+
+HIL results cannot infer media or redial from an exit code and idle states.
+The measured ESP-to-HA contract requires a run-bound receipt, call-scoped RTP
+capture/report pairs, a twenty-second initial transport window, a distinct
+redial dialog and cleanup snapshots. Session times must fit the wrapper's
+observed local monotonic interval. The final verifier independently derives
+claims from the hashed inputs; a manually supplied claim file is insufficient.
+These transport observations do not establish decoded audio or acoustic quality.
+Other HIL scenarios fail closed until their measured validators are implemented.
+
+Use the existing systemd-owned HA lab through
+`scripts/with_ha_lab_candidate.sh -- command ...`. `HA_LAB_SERVICE` can select a
+different existing service. The helper restores the original component link,
+package and service state after success, failure or interruption. Independent
+peer configurations must name a currently verified local address and the
+intended lab registrar; an old private address is not evidence of a product
+regression. Do not change household phone registration to isolate this lab.
+
 ## Global gates
 
 - No ESP firmware compile or OTA before local implementation and host checks.
