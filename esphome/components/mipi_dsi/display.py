@@ -54,6 +54,7 @@ from esphome.const import (
     CONF_WIDTH,
 )
 from esphome.final_validate import full_config
+from esphome.core import CORE
 from esphome.types import ConfigType
 
 from . import mipi_dsi_ns, models
@@ -150,6 +151,20 @@ def model_schema(config: ConfigType) -> cv.All:
     )
 
 
+def _owned_rgb565_rotation(config: ConfigType) -> bool:
+    if get_color_depth(config) != 16 or config[CONF_BYTE_ORDER] != BYTE_ORDER_LITTLE:
+        return False
+    # CORE.raw_config is the complete merged package graph before component
+    # schema validation. Only domain presence is needed here, never partial
+    # validated config or unresolved IDs. Component manifests are already loaded.
+    if "p4_video_renderer" not in (CORE.raw_config or {}):
+        return True
+    from esphome.loader import get_component
+
+    consumer = get_component("p4_video_renderer")
+    return consumer is not None and getattr(consumer.module, "MIPI_NATIVE_COORDINATE_BLITS", False)
+
+
 @model_schema_extractor(MODELS, model_schema)
 def _config_schema(config: ConfigType) -> ConfigType:
     config = cv.Schema(
@@ -168,7 +183,7 @@ def _config_schema(config: ConfigType) -> ConfigType:
         config[CONF_ID],
         width,
         height,
-        has_hardware_rotation=False,
+        has_hardware_rotation=_owned_rgb565_rotation(config),
         byte_order=config[CONF_BYTE_ORDER],
         has_writer=requires_buffer(config)
         or config.get(CONF_AUTO_CLEAR_ENABLED) is True,
@@ -200,6 +215,8 @@ async def to_code(config: ConfigType) -> None:
         model.get_dimensions(config)
     )
     var = cg.new_Pvariable(config[CONF_ID], width, height, color_depth, pixel_mode)
+    if display.get_display_metadata(config[CONF_ID]).has_hardware_rotation:
+        cg.add_define("USE_MIPI_DSI_RGB565_OWNED_TRANSFORM")
     cg.add(var.set_big_endian(config[CONF_BYTE_ORDER] == BYTE_ORDER_BIG))
 
     sequence = model.get_sequence(config)
