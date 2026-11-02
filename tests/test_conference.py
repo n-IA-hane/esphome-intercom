@@ -58,6 +58,7 @@ def _install_ha_fakes() -> None:
         exceptions, "Unauthorized", _FakeUnauthorized
     )
     exceptions.UnknownUser = getattr(exceptions, "UnknownUser", _FakeUnauthorized)
+    exceptions.ConfigEntryError = getattr(exceptions, "ConfigEntryError", type("ConfigEntryError", (Exception,), {}))
     config_entries.ConfigEntry = getattr(config_entries, "ConfigEntry", type("ConfigEntry", (), {}))
     config_entries.ConfigSubentry = getattr(
         config_entries, "ConfigSubentry", type("ConfigSubentry", (), {})
@@ -150,6 +151,7 @@ class _FakeBus:
 
 class _FakeHass:
     def __init__(self, *, activate_calls: bool = True) -> None:
+        self.loop = asyncio.get_running_loop()
         endpoints = endpoint_registry_module.EndpointRegistry()
         endpoints.register(
             phone_endpoint.PhoneEndpoint(

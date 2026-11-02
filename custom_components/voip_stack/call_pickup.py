@@ -308,7 +308,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             sock = relay._rtp_socket(relay.right_port)
             try:
                 relay.right_transport, _ = await hass.loop.create_datagram_endpoint(
-                    lambda: _RelayProtocol(relay, "right"), sock=sock
+                    lambda: _RelayProtocol(relay, "right", paused=True), sock=sock
                 )
             except BaseException:
                 sock.close()
@@ -415,11 +415,20 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             await application.release_media_for_forward()
         if not session.live:
             raise ServiceValidationError("The caller ended during pickup")
+        # Retiring the previous destination may reassign this reservation.
+        # Take and detach from the same current owner, retaining its queued RTP.
+        current_source = source_ports
+        if current_source is not None:
+            current_source = (
+                registry.resource_for(session.call_id, "preanswered") or {}
+            ).get("rtp_reservation") or current_source
         if relay.left_transport is None:
-            sock = relay._rtp_socket(relay.left_port)
+            sock = current_source.take_audio_socket(relay.left_port) if current_source is not None else None
+            if sock is None:
+                sock = relay._rtp_socket(relay.left_port)
             try:
                 relay.left_transport, _ = await hass.loop.create_datagram_endpoint(
-                    lambda: _RelayProtocol(relay, "left"), sock=sock
+                    lambda: _RelayProtocol(relay, "left", paused=True), sock=sock
                 )
             except BaseException:
                 sock.close()
@@ -432,9 +441,6 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 audio_source.ssrc,
             )
         if source_ports is not None:
-            current_source = (
-                registry.resource_for(session.call_id, "preanswered") or {}
-            ).get("rtp_reservation") or source_ports
             merged = RtpPortReservation.merge(
                 hass,
                 (current_source.ports, reservation.ports),
@@ -507,6 +513,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             relay.right.can_send,
             relay.right.can_receive,
         ) = directions
+        relay.left_transport.resume_reading()
+        relay.right_transport.resume_reading()
         attach_dtmf_event_bridge(
             hass,
             relay,

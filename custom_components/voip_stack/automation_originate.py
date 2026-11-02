@@ -40,7 +40,9 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout):
     async def dial():
         # Bind the advertised media port before SIP can allocate an ephemeral
         # socket or the peer can send its first RTP packet (RFC 3264, 5.1).
-        client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
+        client.audio_rtp_socket = attempt.ports.take_audio_socket(client.local_rtp_port)
+        if client.audio_rtp_socket is None:
+            client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
         result = await client.invite(
             target=attempt.uri.user, target_display_name=destination,
             remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
@@ -172,7 +174,10 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
             raise ServiceValidationError("The destination cannot receive an outgoing automation call")
         return candidate
 
-    attempt = prepare(destination)
+    try:
+        attempt = prepare(destination)
+    except OSError as error:
+        raise ServiceValidationError("The destination RTP port is unavailable") from error
     client = attempt.client
     call_id = client.dialog_ids.call_id
     session = None
