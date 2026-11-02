@@ -77,6 +77,7 @@ HA_SIP_PCM_FORMATS = (
     AudioFormat(16000, PcmFormat.S16LE, 1, 20),
     AudioFormat(16000, PcmFormat.S16LE, 1, 32),
     AudioFormat(8000, PcmFormat.S16LE, 1, 20),
+    AudioFormat(8000, PcmFormat.S16LE, 1, 10),
 )
 HA_SIP_PCM_TX_FORMATS = HA_SIP_PCM_FORMATS
 HA_SIP_PCM_RX_FORMATS = HA_SIP_PCM_FORMATS
