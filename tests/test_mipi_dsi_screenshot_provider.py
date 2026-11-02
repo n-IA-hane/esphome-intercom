@@ -1,0 +1,186 @@
+"""Exercise the maintained MIPI DSI framebuffer provider used by screenshots."""
+
+from pathlib import Path
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_p4_snapshot_serializes_dma_and_converts_rotation_and_byte_order(tmp_path):
+    driver = ROOT / "esphome/components/mipi_dsi"
+    implementation = (driver / "mipi_dsi.cpp").read_text()
+    method = implementation.split("bool MipiDsi::copy_frame_buffer_rgb565(", 1)[
+        1
+    ].split("\n#endif", 1)[0]
+    method = "bool MipiDsi::copy_frame_buffer_rgb565(" + method
+    header = (driver / "mipi_dsi.h").read_text()
+    rotate = (
+        "  void rotate_("
+        + header.split("  void rotate_(", 1)[1].split("\n  void mark_dirty_", 1)[0]
+    )
+    harness = tmp_path / "p4.cpp"
+    harness.write_text(
+        r"""
+#include <array>
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
+#include <utility>
+#include <vector>
+static bool locked=false, sync_failure=false;
+static int syncs=0;
+static size_t expected_sync_size=12;
+constexpr int pdTRUE=1, ESP_OK=0, ESP_CACHE_MSYNC_FLAG_DIR_M2C=8;
+int xSemaphoreTake(void*,int ticks){assert(ticks==0);if(locked)return 0;locked=true;return 1;}
+void xSemaphoreGive(void*){assert(locked);locked=false;}
+int esp_cache_msync(void*,size_t size,int flags){assert(locked&&size==expected_sync_size&&flags==8);syncs++;return sync_failure?1:0;}
+uint16_t convert_big_endian(uint16_t v){return uint16_t((v>>8)|(v<<8));}
+namespace display {
+enum Rotation{DISPLAY_ROTATION_0_DEGREES=0,DISPLAY_ROTATION_90_DEGREES=90,
+ DISPLAY_ROTATION_180_DEGREES=180,DISPLAY_ROTATION_270_DEGREES=270};
+using DisplayRotation=Rotation;
+constexpr int COLOR_BITNESS_565=16;
+}
+struct MipiDsi {
+ int color_depth_=16; bool big_endian_=false,failed_=false; size_t width_=3,height_=2;
+ uint8_t *frame_buffer_=nullptr;size_t frame_buffer_size_=12;
+ void *submit_mutex_=this;int rotation_=0;
+ bool is_failed(){return failed_;}
+ int get_width(){return rotation_==90||rotation_==270?height_:width_;}
+ int get_height(){return rotation_==90||rotation_==270?width_:height_;}
+ bool copy_frame_buffer_rgb565(uint8_t*,size_t,display::Rotation=display::DISPLAY_ROTATION_0_DEGREES);
+"""
+        + rotate
+        + "\n};\n"
+        + method
+        + r"""
+using Matrix=std::vector<std::vector<uint16_t>>;
+Matrix clockwise(Matrix input,unsigned turns){
+ while(turns--){
+  Matrix next(input[0].size(),std::vector<uint16_t>(input.size()));
+  for(size_t y=0;y<input.size();++y)
+   for(size_t x=0;x<input[0].size();++x)next[x][input.size()-1-y]=input[y][x];
+  input=next;
+ }
+ return input;
+}
+void check_geometry(size_t width,size_t height,bool full_matrix=true){
+ constexpr size_t guard=5;
+ const size_t count=width*height,bytes=count*sizeof(uint16_t);
+ std::vector<uint16_t> input(count+2*guard,0xcafe),output(count+2*guard+3,0xaaaa);
+ Matrix native(height,std::vector<uint16_t>(width));
+ for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x)
+  native[y][x]=uint16_t(0x1234+(y*width+x)*73+y*37);
+ MipiDsi d;d.width_=width;d.height_=height;d.frame_buffer_size_=bytes;
+ d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data()+guard);
+ auto *target=reinterpret_cast<uint8_t*>(output.data()+guard);
+ expected_sync_size=bytes;
+ for(int driver:{0,90,180,270})for(bool big:{false,true}){
+  if(!full_matrix&&(driver!=270||big))continue;
+  d.rotation_=driver;d.big_endian_=big;
+  for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x){
+   const uint16_t pixel=native[y][x];input[guard+y*width+x]=big?convert_big_endian(pixel):pixel;
+  }
+  const auto immutable=input;
+  const auto logical=clockwise(native,(360-driver)%360/90);
+  for(int rotation:{0,90,180,270}){
+   if(!full_matrix&&rotation!=0)continue;
+   const auto expected=clockwise(logical,rotation/90);std::fill(output.begin(),output.end(),0xaaaa);
+   const int previous_syncs=syncs;
+   assert(d.copy_frame_buffer_rgb565(target,bytes,static_cast<display::Rotation>(rotation)));
+   size_t index=0;for(const auto&row:expected)for(auto pixel:row)assert(output[guard+index++]==pixel);
+   assert(index==count&&input==immutable&&!locked&&syncs==previous_syncs+1);
+   for(size_t i=0;i<guard;++i)assert(output[i]==0xaaaa);
+   for(size_t i=guard+count;i<output.size();++i)assert(output[i]==0xaaaa);
+   // Extra destination capacity is not permission to copy beyond the image.
+   std::fill(output.begin(),output.end(),0xaaaa);
+   assert(d.copy_frame_buffer_rgb565(target,bytes+6,static_cast<display::Rotation>(rotation)));
+   for(size_t i=guard+count;i<output.size();++i)assert(output[i]==0xaaaa);
+   assert(input==immutable);
+   // Rejected attempts must not touch either image, even at tile boundaries.
+   const auto untouched=output;const auto before_reject=syncs;
+   assert(!d.copy_frame_buffer_rgb565(target,bytes-1,static_cast<display::Rotation>(rotation)));
+   locked=true;assert(!d.copy_frame_buffer_rgb565(target,bytes,static_cast<display::Rotation>(rotation)));locked=false;
+   assert(output==untouched&&input==immutable&&syncs==before_reject);
+  }
+ }
+}
+int main(){
+ MipiDsi d;std::array<uint16_t,6> input{1,2,3,4,5,6};
+ std::array<uint16_t,8> output{};
+ d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data());
+ auto *target=reinterpret_cast<uint8_t*>(output.data());
+ const Matrix native{{1,2,3},{4,5,6}};
+ for(int driver:{0,90,180,270})for(int rotation:{0,90,180,270})for(bool big:{false,true}){
+  d.rotation_=driver;d.big_endian_=big;
+  for(size_t i=0;i<input.size();++i)input[i]=big?convert_big_endian(i+1):i+1;
+  const auto immutable=input;output.fill(0xaaaa);
+  const auto logical=clockwise(native,(360-driver)%360/90);
+  const auto expected=clockwise(logical,rotation/90);
+  const auto previous_syncs=syncs;
+  assert(d.copy_frame_buffer_rgb565(target,sizeof(output),static_cast<display::Rotation>(rotation)));
+  size_t index=0;for(const auto &row:expected)for(auto pixel:row)assert(output[index++]==pixel);
+  assert(index==input.size()&&output[6]==0xaaaa&&output[7]==0xaaaa);
+  assert(input==immutable&&!locked&&syncs==previous_syncs+1);
+  // Existing two-argument callers retain the driver's logical orientation.
+  assert(d.copy_frame_buffer_rgb565(target,sizeof(input)));
+  index=0;for(const auto &row:logical)for(auto pixel:row)assert(output[index++]==pixel);
+ }
+ // Explicit migration preserves additional-rotation semantics: old SW-LVGL
+ // driver0 + screenshot90 equals owned HW-LVGL driver270 + screenshot0.
+ d.rotation_=0;d.big_endian_=false;input={1,2,3,4,5,6};
+ std::array<uint16_t,6> old_view{},new_view{};
+ assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(old_view.data()),sizeof(old_view),display::DISPLAY_ROTATION_90_DEGREES));
+ d.rotation_=270;
+ assert(d.copy_frame_buffer_rgb565(reinterpret_cast<uint8_t*>(new_view.data()),sizeof(new_view),display::DISPLAY_ROTATION_0_DEGREES));
+ assert(old_view==new_view&&d.get_width()==2&&d.get_height()==3);
+ d.rotation_=0;d.big_endian_=false;input={1,2,3,4,5,6};
+ output.fill(0xbbbb);const auto before=output;const auto immutable=input;const int previous_syncs=syncs;
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)-1,display::DISPLAY_ROTATION_90_DEGREES));
+ assert(!d.copy_frame_buffer_rgb565(nullptr,sizeof(input)));
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),static_cast<display::Rotation>(45)));
+ d.frame_buffer_size_=10;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.frame_buffer_size_=12;
+ d.frame_buffer_=nullptr;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.frame_buffer_=reinterpret_cast<uint8_t*>(input.data());
+ d.submit_mutex_=nullptr;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.submit_mutex_=&d;
+ d.failed_=true;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.failed_=false;
+ d.color_depth_=24;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));d.color_depth_=16;
+ locked=true;assert(!d.copy_frame_buffer_rgb565(target,sizeof(input)));
+ assert(output==before&&input==immutable&&syncs==previous_syncs);
+ locked=false;sync_failure=true;
+ assert(!d.copy_frame_buffer_rgb565(target,sizeof(input),display::DISPLAY_ROTATION_270_DEGREES));
+ assert(output==before&&input==immutable&&!locked&&syncs==previous_syncs+1);
+ sync_failure=false;
+ for(const auto &dimensions:{std::pair<size_t,size_t>{1,1},{1,65},{65,1},{7,9},
+                            {31,33},{32,32},{33,31},{47,71},{79,35},{129,97}})
+  check_geometry(dimensions.first,dimensions.second);
+ // Exact physical shape/rotation in addition to all irregular/tiny matrices.
+ check_geometry(800,1280,false);
+}
+"""
+    )
+    binary = tmp_path / "p4"
+    compiled = subprocess.run(
+        [
+            "g++",
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O2",
+            "-fsanitize=address,undefined",
+            "-fno-pie",
+            "-no-pie",
+            str(harness),
+            "-o",
+            str(binary),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert compiled.returncode == 0, (
+        f"C++ harness compilation failed (exit {compiled.returncode}):\n"
+        f"{compiled.stdout}{compiled.stderr}"
+    )
+    subprocess.run([str(binary)], check=True, capture_output=True, text=True)
