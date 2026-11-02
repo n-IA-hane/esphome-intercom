@@ -1547,6 +1547,32 @@ def build_offer_directional(
                     if key in recv_keys
                     else ""
                 )
+        if include_common_codecs or include_dahua_pcm:
+            # Explicit RTP discovery orders preferences, while the local
+            # codec policy still permits the authoritative answer to choose
+            # an ordinary codec. Preserve every explicit mapping and ptime.
+            common = _common_codec_offer_formats(
+                _formats_for_local_direction(send_formats, recv_formats, audio_direction),
+                include_common_codecs=include_common_codecs,
+                include_dahua_pcm=include_dahua_pcm,
+                preferred_frame_ms=rtp_formats[0].frame_ms,
+            )
+            used_payloads = {fmt.payload_type for fmt in rtp_formats}
+            codec_keys = {_rtp_encoding_key(fmt) for fmt in rtp_formats}
+            for fmt in common:
+                key = _rtp_encoding_key(fmt)
+                if key in codec_keys:
+                    continue
+                if fmt.payload_type in used_payloads:
+                    payload = next((pt for pt in range(96, 128) if pt not in used_payloads), None)
+                    if payload is None:
+                        raise SdpError("No RTP payload type available for codec alternative")
+                    fmt = replace(fmt, payload_type=payload)
+                rtp_formats.append(fmt)
+                used_payloads.add(fmt.payload_type)
+                codec_keys.add(key)
+                if allow_directional_payloads and audio_direction == "sendrecv":
+                    directional_flows[key] = "sendrecv"
     else:
         if allow_directional_payloads and audio_direction == "sendrecv":
             frame_ms = choose_common_frame_ms(send_formats or [], recv_formats or [])

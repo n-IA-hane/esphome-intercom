@@ -151,6 +151,20 @@ def sip_target_has_unspecified_audio(
     )
 
 
+def sip_target_offer_common_audio(
+    peer: Peer | None,
+    entry,
+    device: dict | None = None,
+) -> bool:
+    """Keep local codec alternatives when discovery is advisory or absent."""
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    info = dict(device or (peer.device if peer is not None else None) or {})
+    return (
+        bool(metadata.get("sip_capabilities_known") or info.get("sip_capabilities_known"))
+        or sip_target_has_unspecified_audio(peer, entry, device)
+    )
+
+
 def sip_target_rtp_audio_profile(
     peer: Peer | None,
     entry,

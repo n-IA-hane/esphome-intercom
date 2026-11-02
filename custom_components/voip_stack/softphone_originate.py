@@ -42,7 +42,7 @@ from .endpoint_routing import (
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
     supports_directional_audio_payloads as _supports_directional_audio_payloads,
 )
@@ -351,11 +351,6 @@ async def async_originate_browser_call(
             bridge_uri = ha_uri_for(route.target or target, contacts)
         route = replace(route, action=RouteAction.BRIDGE, sip_uri=bridge_uri)
     use_trunk = route.action is RouteAction.TRUNK and trunk_ready
-    use_registered_contact_codecs = bool(
-        route.entry is not None
-        and route.entry.sip_uri
-        and route.entry.metadata.get("registered")
-    )
     if route.action is RouteAction.TRUNK and not use_trunk:
         raise trunk_selection.unavailable_error()
     if route.action is RouteAction.GROUP and route.entry is not None:
@@ -518,7 +513,7 @@ async def async_originate_browser_call(
         str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
-    if use_trunk or use_registered_contact_codecs or (peer_profile.is_dahua and not native_audio_endpoint):
+    if use_trunk or (peer_profile.is_dahua and not native_audio_endpoint):
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
@@ -677,9 +672,8 @@ async def async_originate_browser_call(
         match_received_codec=peer_profile.match_received_codec,
         include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
         or use_trunk
-        or use_registered_contact_codecs
         or video_enabled
-        or sip_target_has_unspecified_audio(None, route.entry, dest_device),
+        or sip_target_offer_common_audio(None, route.entry, dest_device),
         allow_directional_audio_payloads=_supports_directional_audio_payloads(
             None,
             route.entry,
