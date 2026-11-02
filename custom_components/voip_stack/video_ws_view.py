@@ -707,6 +707,7 @@ async def _run_local_video_session(
         "video_access_units_tx": 0,
         "video_access_units_rx": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_access_unit_queue_drops": 0,
         "video_rate_limited_access_units": 0,
@@ -1319,6 +1320,7 @@ async def _run_video_session(
         "video_drop_addr": 0,
         "video_drop_payload_type": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_drop_connection_hold": 0,
         "video_reordered_packets": 0,
@@ -1684,6 +1686,18 @@ async def _run_video_session(
                 return
         if needs_key_frame and not access_unit.key_frame:
             counters["video_drop_error"] += 1
+            counters["video_drop_wait_keyframe"] += 1
+            if counters["video_drop_wait_keyframe"] == 1:
+                _LOGGER.info(
+                    "HA softphone video waiting for key frame call_id=%s "
+                    "codec=%s payload_type=%s key_frame=%s nal_types=%s",
+                    session.call_id,
+                    browser_format.encoding,
+                    packet.payload_type,
+                    access_unit.key_frame,
+                    tuple(nal[0] & 0x1F for nal in split_annex_b(access_unit.data))
+                    if browser_format.encoding == "H264" else (),
+                )
             request_key_frame(now)
             return
         if access_unit.key_frame:

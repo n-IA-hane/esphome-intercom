@@ -634,6 +634,7 @@ _MEDIA_COUNTER_KEYS = (
     "video_drop_addr",
     "video_drop_payload_type",
     "video_drop_error",
+    "video_drop_wait_keyframe",
     "video_drop_direction",
     "video_drop_connection_hold",
     "video_reordered_packets",
