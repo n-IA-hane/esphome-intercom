@@ -100,6 +100,12 @@ async def test_browser_transfer_service_moves_peer_to_registered_phone(
         lambda: (session := runtime.calls.get_session(call_id)) is not None
         and session.live and session.state == "in_call"
     )
+    from custom_components.voip_stack.dialog_info import snapshot
+
+    dialogs = snapshot(runtime.runtime, endpoint.endpoint_id)
+    assert len(dialogs) == 1
+    assert dialogs[0].peer_endpoint_id == "transfer_a"
+    assert dialogs[0].peer_user == "transfer_a"
     runtime.runtime.endpoints.update("transfer_c", device_id="other-phone")
     with pytest.raises(ServiceValidationError, match="does not own"):
         await runtime.hass.services.async_call(

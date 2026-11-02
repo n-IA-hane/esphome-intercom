@@ -85,9 +85,10 @@ def snapshot_all(runtime):
             if not matching and endpoint_id in retired:
                 continue
             peer_id = str(
-                session.metadata.get(
-                    "dest_endpoint_id" if source else "source_endpoint_id"
-                )
+                ((session.metadata.get("dest_endpoint_id")
+                  or session.metadata.get("target_endpoint_id"))
+                 if source
+                 else session.metadata.get("source_endpoint_id"))
                 or ""
             )
             peer = runtime.endpoints.get(peer_id) if peer_id else None
