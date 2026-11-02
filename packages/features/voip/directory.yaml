@@ -1,0 +1,11 @@
+# Standard LDAP refresh is independent of BLF, MWI and mailbox calling.
+external_components:
+- source: ${voip_stack_components_source}
+  components: [ldap_directory, phone_client]
+ldap_directory:
+  id: phone_directory
+  voip_stack_id: phone
+  account_id: ha
+  managed_by_ha: true
+  task_stack_in_psram: true
+  buffer_in_psram: true

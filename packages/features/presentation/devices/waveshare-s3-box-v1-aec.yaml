@@ -61,6 +61,7 @@ font:
     - 󰢾
     - 󰟐
     - 󱗐
+    - ${ "\U000F01EE" if _fw_voip else "" }
 - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
   id: call_icons
   size: 42
@@ -81,6 +82,7 @@ font:
   - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
     glyphs:
     - 󰛋
+    - "\U000F061C"
 - file:
     type: gfonts
     family: ${font_family}
@@ -480,7 +482,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _v1_draw_tail_0 + _v1_draw_tail_1 + (_v1_draw_tail_2 if _fw_voip else []) + (_v1_draw_tail_3 if _fw_timers
-    else []) }
+    else []) + (_voicemail_draw if _fw_voip and 'mwi' in firmware_features else []) }
 - id: switch_to_va
   then:
   - globals.set:
@@ -541,7 +543,9 @@ script:
       else:
       - lvgl.label.update:
           id: top_battery_label
-          text: ''
+          text: !lambda |-
+            std::string ret;
+            return ret;
 - id: backlight_timer
   mode: restart
   then:
@@ -1093,102 +1097,30 @@ defaults:
         src: error_no_wifi
   _v1_page_call_idle_page:
   - id: call_idle_page
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_up: ${ _v1_gesture_58 if _fw_voip else [] }
-    on_swipe_down: ${ _v1_gesture_59 if _fw_voip else [] }
+    scrollable: false
+    bg_color: 0x10151F
+    on_swipe_up:
+    - script.execute: call_to_settings
+    on_swipe_down:
+    - script.execute: call_to_va
     widgets:
     - label:
         align: TOP_MID
         y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
+        text: Contacts
+        text_color: 0xFFFFFF
+        text_font: font_info
+    - obj:
+        id: phone_contacts_container
         align: TOP_MID
-        y: 17%
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: TOP_MID
-        y: ${call_contacts_y}
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        width: ${call_peer_width}
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
-        x: -60
-        y: -34
-        width: 60
-        height: 60
+        y: 22%
+        width: 80%
+        height: 40%
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        x: 60
-        y: -34
-        width: 60
-        height: 60
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        floating: true
-        align: CENTER
-        y: ${call_btn_below_center}
-        width: ${call_btn_size}
-        height: ${call_btn_size}
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   _v1_page_call_ringing_in_page:
   - id: call_ringing_in_page
     bg_color: 16711680
@@ -1299,15 +1231,24 @@ defaults:
   - id: call_in_call_page
     bg_color: 34816
     widgets:
-    - label:
+    - button:
+        id: call_keypad_btn
         align: TOP_MID
-        y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
+        y: 2%
+        width: 20%
+        height: 16%
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        shadow_opa: TRANSP
+        on_short_click:
+        - script.execute: open_sip_in_call_keypad
+        widgets:
+        - label:
+            align: CENTER
+            text: "\U000F061C"
+            text_color: 16777215
+            text_font: font_title
     - label:
         align: TOP_MID
         y: 17%
@@ -1770,6 +1711,7 @@ defaults:
       target = id(call_ended_page)->obj;
     }
   _v1_phone_route: |-
+
     else if (id(current_mode) == 1) {
       // VoIP mode
       const std::string s = id(phone).get_state_str();
@@ -1777,16 +1719,22 @@ defaults:
         target = id(call_ringing_in_page)->obj;
       } else if (s == "calling" || s == "remote_ringing") {
         target = id(call_ringing_out_page)->obj;
+      } else if (s == "in_call" && lv_disp_get_scr_act(nullptr) == id(sip_in_call_keypad_page)->obj) {
+        target = id(sip_in_call_keypad_page)->obj;
       } else if (s == "in_call" || s == "connecting") {
         target = id(call_in_call_page)->obj;
       } else {
         target = id(call_idle_page)->obj;
       }
     }
-  _v1_route_name_63: else if (target == id(call_idle_page)->obj) page_name = "call_idle";
+  _v1_route_name_63: |-
+
+    else if (target == id(call_idle_page)->obj) page_name = "call_idle";
   _v1_route_name_64: else if (target == id(call_ringing_in_page)->obj) page_name = "call_ringing_in";
   _v1_route_name_65: else if (target == id(call_ringing_out_page)->obj) page_name = "call_ringing_out";
-  _v1_route_name_66: else if (target == id(call_in_call_page)->obj) page_name = "call_in_call";
+  _v1_route_name_66: |-
+    else if (target == id(sip_in_call_keypad_page)->obj) page_name = "call_keypad";
+    else if (target == id(call_in_call_page)->obj) page_name = "call_in_call";
   _v1_route_name_67: else if (target == id(call_ended_page)->obj) page_name = "call_ended";
   _v1_route_name_68: else if (target == id(timer_finished_page)->obj) page_name = "timer_finished";
   _v1_draw_tail_0:
@@ -1864,7 +1812,8 @@ defaults:
       // The VA idle animation is stopped before page switches. Start the
       // idle animation loop immediately when VA idle becomes the visible
       // page, instead of waiting for the template binary_sensor refresh.
-      if (target == id(idle_page)->obj) {
+      id(display_visibility).reconcile();
+      if (target == id(idle_page)->obj && id(display_visibility).is_visible(id(idle_anim))) {
         if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
       } else if (id(ai_animation_loop).is_running()) {
         id(ai_animation_loop).stop();
@@ -1874,7 +1823,7 @@ defaults:
       id(nav_anim_ms) = 0;
 
       // Hide top layer status bar on replying/thinking pages (text overlap)
-      bool show_status = (target != id(replying_page)->obj && target != id(thinking_page)->obj);
+      bool show_status = (target != id(replying_page)->obj && target != id(thinking_page)->obj );
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
@@ -1933,6 +1882,26 @@ defaults:
   _v1_render_4:
   - script.execute: draw_display
 packages:
+  in_call_keypad: !include
+    file: ${ '../in_call_keypad.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _sip_keypad_font: font_info
+      _sip_keypad_duration_font: font_clock
+      _sip_keypad_name_width: 50%
+      _sip_keypad_return_page: call_in_call_page
+  phone_presentation: !include
+    file: ${ '../phone.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _keypad_name_label: sip_keypad_peer_label
+      _keypad_duration_label: sip_keypad_duration_label
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: true
+      _visibility_idle_widget_id: idle_anim
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip and 'mwi' in firmware_features else '' }
   phase: !include '../phase.yaml'
   settings_navigation: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   settings_volume: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'

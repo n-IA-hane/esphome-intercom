@@ -207,8 +207,15 @@ script:
         lv_indev_wait_release(input);
       }
       if (id(g_ota_in_progress) || id(init_in_progress) ||
-          ${ 'id(phone).is_active()' if _round_has_phone else 'false' } ||
           ${ 'id(runtime).is_activity_active("timer_ringing")' if _round_has_timers else 'false' }) return;
+      ${ ('if (id(phone).is_in_call() && id(voip_dialer_active) && delta < 0) {\n'
+          '  id(voip_dialer_active) = false;\n'
+          '  id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;\n'
+          '  id(nav_anim_ms) = 300;\n'
+          '  id(draw_display).execute();\n'
+          '  return;\n'
+          '}') if _round_has_phone else '' }
+      if (${ 'id(phone).is_active()' if _round_has_phone else 'false' }) return;
       if (delta == 0) return;
 
       // These are positions in the visible sequence, derived from the
@@ -285,7 +292,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _round_draw_base + (_round_draw_phone_tail if _round_has_phone else []) + (_round_draw_timer_tail if
-    _round_has_timers else []) }
+    _round_has_timers else []) + (_voicemail_draw if _round_has_phone and 'mwi' in firmware_features else []) }
 - id: switch_to_va
   then:
   - lambda: !lambda |-
@@ -310,6 +317,20 @@ switch:
   on_turn_off:
   - script.execute: draw_display
 packages:
+  visibility: !include
+    file: visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: true
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _round_has_phone and 'mwi' in firmware_features else '' }
+  phone_presentation: !include
+    file: ${ 'phone.yaml' if _round_has_phone else '../shared/absent.yaml' }
+    vars:
+      _adaptive_phone_contacts: true
+      _voicemail_y: 70%
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
+      _keypad_idle_reset: id(voip_dial_length) = 0; id(voip_dial_buffer)[0] = 0;
+      _keypad_idle_text: 'id(voip_dial_length) == 0 ? "Number / extension" : id(voip_dial_buffer).data()'
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'
@@ -319,6 +340,8 @@ packages:
   artwork: ${ _round_artwork if _fw_sendspin else {} }
   content: !include 'round_content.yaml'
 defaults:
+  _visibility_has_avatar: true
+  _visibility_has_pagination: true
   _round_navigation_up:
   - script.execute:
       id: round_navigate
@@ -378,6 +401,7 @@ defaults:
         }
       }
 
+      ${ _round_video_route | default('') }
       if (target == nullptr) return;
 
       const char* page_name = "unknown";
@@ -394,6 +418,7 @@ defaults:
       ${ _round_name_call_in_call_page if _round_has_phone else '' }
       ${ _round_name_call_ended_page if _round_has_phone else '' }
       ${ _round_timer_name if _round_has_timers else '' }
+      ${ _round_name_video_page | default('') }
       id(runtime_rendered_page) = page_name;
 
       // Skip page load if already showing (avoids redundant SPI transfer)
@@ -419,7 +444,8 @@ defaults:
       // The VA idle animation is stopped before page switches. Start the
       // idle animation loop immediately when VA idle becomes the visible
       // page, instead of waiting for the template binary_sensor refresh.
-      if (target == id(idle_page)->obj) {
+      id(display_visibility).reconcile();
+      if (target == id(idle_page)->obj && id(display_visibility).is_visible(id(idle_anim))) {
         if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
       } else if (id(ai_animation_loop).is_running()) {
         id(ai_animation_loop).stop();
@@ -437,7 +463,8 @@ defaults:
           target != id(replying_page)->obj &&
           target != id(thinking_page)->obj &&
           target != id(settings_continuous_page)->obj &&
-          ${ 'target != id(call_dialer_page)->obj' if _round_has_phone else 'true' };
+          ${ _round_video_status_allowed | default('true') } &&
+          ${ '(target != id(call_dialer_page)->obj)' if _round_has_phone else 'true' };
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);

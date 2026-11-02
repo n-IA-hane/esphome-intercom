@@ -1,4 +1,7 @@
 # Spotpear Ball v2 audio-board wiring, power measurement and connectivity.
+substitutions:
+  # Override with this board's reported voltage at a known full charge.
+  spotpear_battery_full_voltage: 4.20
 esphome:
   min_version: 2026.10.0
   name: ${name}
@@ -95,7 +98,7 @@ sensor:
       - 3.80 -> 70.0
       - 3.90 -> 80.0
       - 4.00 -> 90.0
-      - 4.20 -> 100.0
+      - ${spotpear_battery_full_voltage} -> 100.0
   - lambda: 'if (x > 100) return 100;
 
       if (x < 0) return 0;

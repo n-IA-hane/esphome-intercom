@@ -116,9 +116,15 @@ script:
       then:
       - script.execute: voip_ringing_loop
       else:
-      - script.stop: voip_ringing_loop
-      - media_player.stop:
-          announcement: true
+      - if:
+          condition:
+            or:
+            - script.is_running: voip_ringing_loop
+            - lambda: return id(ringtone_file_source).get_state() != esphome::media_source::MediaSourceState::IDLE;
+          then:
+          - script.stop: voip_ringing_loop
+          - media_player.stop:
+              announcement: true
 - id: voip_ringing_loop
   mode: restart
   then:

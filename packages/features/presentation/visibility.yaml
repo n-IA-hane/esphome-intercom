@@ -1,0 +1,15 @@
+# Native screen/layout events suspend visual work without stopping device tasks.
+external_components:
+  - source: ${ext_components_source}
+    components: [lvgl_visibility]
+lvgl_visibility:
+  id: display_visibility
+  on_change:
+    - lambda: ${ (_visibility_avatar_body if _visibility_has_avatar else '') + '\n' + (_visibility_pager_body if _visibility_has_pagination else '') + '\n' + _visibility_extra_code }
+defaults:
+  _visibility_extra_code: ""
+  _visibility_has_avatar: false
+  _visibility_has_pagination: false
+  _visibility_idle_widget_id: idle_anim
+packages:
+  voice_work: !include ${ 'visibility_voice.yaml' if _visibility_has_avatar or _visibility_has_pagination else '../shared/absent.yaml' }
