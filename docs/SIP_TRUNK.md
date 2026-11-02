@@ -1,8 +1,9 @@
 # SIP trunks
 
 Home Assistant can connect named SIP trunks to providers or PBXs, either with
-registration or as a static trunk authorized by source IP. This does not change the local contract: ESP devices remain direct SIP
-phones and do not register to the provider.
+registration or as a static trunk authorized by source IP. ESP devices can keep
+using direct SIP through HA. Firmware can also compile independent registered
+accounts for another PBX; those accounts are separate from HA's trunk settings.
 
 Each trunk has its own connection, credentials and incoming routing settings.
 Disabled trunks do not register or accept new external calls. Local calls work

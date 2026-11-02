@@ -11,7 +11,12 @@ SIP phone or softphone <--> Asterisk / FreeSWITCH <--> ESP extension 1001
 
 An ESP running `voip_stack` can be a local SIP phone for Asterisk or another PBX
 that supports static SIP peers. The PBX knows the ESP's address from its
-configuration; the ESP does not send REGISTER or need a SIP username/password.
+configuration. This static setup sends no REGISTER and needs no SIP credentials.
+Alternatively, firmware can compile optional REGISTER and multiple SIP accounts,
+with an independent selected line and Digest authentication. See the
+[registration configuration](ESP_REGISTRATION.md)
+for the candidate API. Registration and media
+interoperability require separate qualification against the chosen PBX.
 
 You can use this alongside the device's ESPHome and Assist features. The PBX
 handles telephone routing; Home Assistant can continue providing the device's
@@ -67,7 +72,8 @@ match=192.168.1.60/32
 The AOR supplies the ESP's static destination. `identify` matches incoming
 requests from that ESP to the endpoint and its dialplan context. There is no
 `auth`, `outbound_auth` or `registration` section for this peer. A password
-challenge would fail because the ESP component does not implement SIP Digest.
+challenge has no configured credentials in this static example. Configure a
+registered account when the PBX requires Digest authentication.
 
 `direct_media=no` keeps Asterisk in the audio path, allowing it to bridge or
 transcode to other phones without moving the ESP's media with a re-INVITE.
