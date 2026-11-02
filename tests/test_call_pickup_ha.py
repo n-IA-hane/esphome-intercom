@@ -1038,9 +1038,11 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
     for index, phone in enumerate(runtime.phones):
         name = f"bedroom{index}"
         runtime.runtime.endpoints.update("sip:" + name, availability="available")
-        runtime.roster.append(RosterEntry(name,
+        destination_index = next(position for position, row in enumerate(runtime.roster)
+                                 if row.metadata.get("endpoint_id") == "sip:" + name)
+        runtime.roster[destination_index] = RosterEntry(name,
             sip_uri=f"sip:{name}@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
-            metadata={"endpoint_id": "sip:" + name, "endpoint_kind": "sip_account", "registered": True}))
+            metadata={"endpoint_id": "sip:" + name, "endpoint_kind": "sip_account", "registered": True})
     browser = PhoneEndpoint(endpoint_id="route-browser", name="Route browser", device_id="route-browser-device",
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)

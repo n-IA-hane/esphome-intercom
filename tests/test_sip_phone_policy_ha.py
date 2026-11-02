@@ -744,16 +744,16 @@ async def test_immediate_sip_failure_obeys_only_matching_phone_policy(
     phone = runtime.phones[0]
     from custom_components.voip_stack.roster import RosterEntry
 
-    runtime.roster.append(
-        RosterEntry(
-            "bedroom0",
-            sip_uri=f"sip:bedroom0@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
-            metadata={
-                "endpoint_id": "sip:bedroom0",
-                "endpoint_kind": "sip_account",
-                "registered": True,
-            },
-        )
+    destination_index = next(index for index, row in enumerate(runtime.roster)
+                             if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
+    runtime.roster[destination_index] = RosterEntry(
+        "bedroom0",
+        sip_uri=f"sip:bedroom0@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
+        metadata={
+            "endpoint_id": "sip:bedroom0",
+            "endpoint_kind": "sip_account",
+            "registered": True,
+        },
     )
     receive = phone.datagram_received
 

@@ -1243,9 +1243,12 @@ async def test_blind_transfer_service_retains_opposite_phone(
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones, trunks, monkeypatch):
     """A peer without REFER retains its original call and destination claim."""
+    from unittest.mock import AsyncMock
+
     from homeassistant.core import ServiceCall
     from custom_components.voip_stack import _handle_sip_transfer_service
     from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.device_resolver import get_resolver
     from custom_components.voip_stack.roster import RosterEntry
 
     lab = trunks
@@ -1253,10 +1256,19 @@ async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones,
     legacy = lab.phones[0]
     lab.runtime.endpoints.update("sip:bedroom0", kind=EndpointKind.ESPHOME, availability="available")
     port = legacy.transport.get_extra_info("sockname")[1]
-    lab.roster.append(RosterEntry(
+    endpoint = lab.runtime.endpoints.get("sip:bedroom0")
+    # Discovery must see the same real legacy peer during registration refreshes.
+    monkeypatch.setattr(get_resolver(lab.hass), "list_devices", AsyncMock(return_value=[{
+        "device_id": endpoint.device_id, "endpoint_id": endpoint.endpoint_id,
+        "name": endpoint.name, "host": "127.0.0.1", "sip_port": port,
+        "sip_transport": "udp", "sip_uri_user": endpoint.username, "managed": False,
+    }]))
+    legacy_index = next(index for index, row in enumerate(lab.roster)
+                        if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
+    lab.roster[legacy_index] = RosterEntry(
         "bedroom0", sip_uri=f"sip:bedroom0@127.0.0.1:{port}",
         metadata={"endpoint_id": "sip:bedroom0", "endpoint_kind": "esphome"},
-    ))
+    )
     original_dispatch = legacy.datagram_received
     refers = []
 
