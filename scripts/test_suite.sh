@@ -92,6 +92,11 @@ ha_tests=(
   tests/test_phone_policy_runtime_ha.py
   tests/test_phone_state_ha.py
   tests/test_phone_monitor_ha.py
+  tests/test_ldap_directory_ha.py
+  tests/test_ldap_provisioning_ha.py
+  tests/test_ldap_standard_extensions_ha.py
+  tests/test_phone_services_ha.py
+  tests/test_phone_services_lifecycle_ha.py
   tests/test_trunk_config_flow.py
   tests/test_trunk_catalog_ha.py
   tests/test_trunk_calls_ha.py
