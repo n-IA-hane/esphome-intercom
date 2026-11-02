@@ -171,7 +171,9 @@ async def test_no_card_uses_noanswer_instead_of_unavailable_policy(
         target = f'sip:221@127.0.0.1:{lab.runtime.transport_config["sip_port"]};transport={transport}'
         await asyncio.to_thread(caller.command, f"/dial {target}")
         async with asyncio.timeout(4):
-            while not any("Call established" in peer.read() for peer in (unavailable, noanswer)):
+            while not ("Call established" in caller.read() and any(
+                "Call established" in peer.read() for peer in (unavailable, noanswer)
+            )):
                 await asyncio.sleep(.01)
         assert "Call established" not in unavailable.read(), "No card incorrectly selected unavailable"
         assert "Call established" in noanswer.read()
