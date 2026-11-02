@@ -51,6 +51,8 @@ class EspHomeProvisioner:
         self._removed_origins, self._removed_devices = set(), set()
         self._dirty = False
         self._revision = 0
+        self._directory_config = None
+        self._directory_epoch = ""
 
     def _owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -58,6 +60,13 @@ class EspHomeProvisioner:
 
     def is_removed(self, origin_entry_id, device_id):
         return origin_entry_id in self._removed_origins or device_id in self._removed_devices
+
+    @callback
+    def configure_directory_service(self, config, *, epoch=""):
+        """A temporary failure suppresses delivery; only admin disable sends false."""
+        self._directory_config = config
+        self._directory_epoch = epoch
+        self.schedule()
 
     @callback
     def start(self):
@@ -259,6 +268,13 @@ class EspHomeProvisioner:
             if changed and self._owned():
                 from .config_entry_runtime import async_refresh_and_push_phonebook
                 await async_refresh_and_push_phonebook(self.hass)
+            # Refresh only after the canonical composition has committed. The
+            # action phase above may have enrolled or renamed the first phone.
+            for phone in records.values():
+                origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
+                native = getattr(origin, "runtime_data", None)
+                if phone.active and native is not None:
+                    await self._deliver_directory_refresh(phone, native)
 
     async def _deliver(self, phone, native):
         revision, client, services = self._revision, native.client, native.services
@@ -273,6 +289,9 @@ class EspHomeProvisioner:
                 domain=host, username=phone.username, password=phone.password, auth_username=phone.username,
                 proxy="", proxy_port=5060, transport="auto", expires=3600, persist=True)),
             ("register_account", {"account_id": MANAGED_ACCOUNT_ID})]
+        directory_data = self._directory_data(host)
+        if directory_data is not None:
+            actions.append(("configure_directory", directory_data))
         scope = (native, client, services)
         previous_scope, delivered = self._delivered.get(phone.device_id, (None, {}))
         if previous_scope is None or any(left is not right for left, right in zip(previous_scope, scope)):
@@ -281,6 +300,8 @@ class EspHomeProvisioner:
         for action, data in actions:
             if not self._current(phone, native, client, services, revision):
                 return
+            if action not in by_name:
+                continue
             signature = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).digest()
             if delivered.get(action) == signature:
                 continue
@@ -291,6 +312,44 @@ class EspHomeProvisioner:
                 return
             delivered[action] = signature
             self._delivered[phone.device_id] = (scope, delivered)
+
+    def _directory_data(self, host):
+        config = self._directory_config
+        if config is None:
+            return None
+        return dict(server=host, port=config["ldap_port"], base_dn=config["base_dn"],
+            bind_dn=f"uid={{username}},ou=accounts,{config['base_dn']}",
+            account_id=MANAGED_ACCOUNT_ID, tls=config["tls"], enabled=config["enabled"])
+
+    async def _deliver_directory_refresh(self, phone, native):
+        revision, client, services = self._revision, native.client, native.services
+        if not self._current(phone, native, client, services, revision):
+            return
+        by_name = {service.name: service for service in services.values()}
+        if not {"configure_directory", "refresh_ldap_directory"} <= by_name.keys():
+            return  # A manually configured provider is not managed by HA.
+        scope = (native, client, services)
+        previous_scope, delivered = self._delivered.get(phone.device_id, (None, {}))
+        if previous_scope is None or any(left is not right for left, right in zip(previous_scope, scope)):
+            return  # The configuration phase must reach this API owner first.
+        cfg = transport_config(self.hass)
+        host = cfg.get("advertise_host") or await network.async_get_source_ip(self.hass, target_ip=phone.api_host)
+        if not self._current(phone, native, client, services, revision):
+            return
+        data = self._directory_data(host)
+        if data is None or delivered.get("configure_directory") != hashlib.sha256(json.dumps(data, sort_keys=True).encode()).digest():
+            return
+        directory = self.runtime.directory
+        if (self._directory_config is not None and self._directory_config["enabled"]
+                and directory is not None and not directory.closed and "refresh_ldap_directory" in by_name):
+            generation = directory.generation
+            signature = hashlib.sha256(f"{self._directory_epoch}:{generation}".encode()).digest()
+            if delivered.get("refresh_ldap_directory") != signature and self._current(phone, native, client, services, revision):
+                await client.execute_service(by_name["refresh_ldap_directory"], {})
+                if (self._current(phone, native, client, services, revision)
+                        and self.runtime.directory is directory and directory.generation == generation and not directory.closed):
+                    delivered["refresh_ldap_directory"] = signature
+                    self._delivered[phone.device_id] = (scope, delivered)
 
     async def _purge_endpoint(self, endpoint_id, username):
         from .endpoint_termination import EndpointTerminationHandler
@@ -312,6 +371,8 @@ class EspHomeProvisioner:
             methods = owner.component("sip_application")
             if methods is not None:
                 await methods.async_revoke_account(username)
+            if self.runtime.ldap_server is not None:
+                await self.runtime.ldap_server.async_revoke_endpoint(endpoint_id, username=username)
             if not self._owned():
                 return
             await async_remove_mailbox(self.hass, endpoint_id)

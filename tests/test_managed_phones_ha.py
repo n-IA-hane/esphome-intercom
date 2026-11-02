@@ -89,6 +89,9 @@ async def phone_lab(hass):
     yield lab
     if gate.release is not None:
         gate.release.set()
+    phone_services = getattr(entry.runtime_data, "phone_services", None)
+    if phone_services is not None:
+        await phone_services.async_close()
     owner = getattr(entry.runtime_data, "phone_provisioning", None)
     if owner is not None:
         await owner.async_close()
@@ -97,12 +100,14 @@ async def phone_lab(hass):
     unsub()
 
 
-async def test_setup_entry_provisions_mac_identity_on_existing_native_owner(phone_lab, monkeypatch):
+async def test_setup_entry_provisions_mac_identity_on_existing_native_owner(phone_lab, monkeypatch, socket_enabled):
     """The integration setup hook, rather than a test-only provisioner, must run."""
     from custom_components import voip_stack
     from custom_components.voip_stack import mailbox
 
     lab = phone_lab
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0}})
     for name in ("_async_setup_shared", "_async_apply_assist_intents", "_async_start_sip_trunk",
                  "_deferred_phonebook_sync"):
         monkeypatch.setattr(voip_stack, name, AsyncMock())

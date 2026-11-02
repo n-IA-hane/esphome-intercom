@@ -144,7 +144,22 @@
         "menu_options": {
           "user": "Impostazioni generali",
           "parking": "Parcheggio chiamate",
-          "voicemail": "Voce della segreteria"
+          "voicemail": "Voce della segreteria",
+          "phone_services": "Rubrica LDAP"
+        }
+      },
+      "phone_services": {
+        "title": "Rubrica LDAP",
+        "description": "La rubrica standard usa gli account telefonici abilitati anche quando sono offline. Il bind semplice senza TLS invia le credenziali sulla rete. Per StartTLS sul listener normale, specifica certificato e chiave; TLS abilita invece LDAPS. Un guasto temporaneo conserva la rubrica sui telefoni.",
+        "data": {
+          "enabled": "Abilita rubrica LDAP",
+          "listen_host": "Indirizzo di ascolto",
+          "ldap_port": "Porta LDAP",
+          "base_dn": "DN base",
+          "allow_anonymous": "Consenti ricerche anonime",
+          "tls": "TLS implicito (LDAPS)",
+          "certificate": "Percorso certificato PEM",
+          "private_key": "Percorso chiave privata PEM"
         }
       }
     },
@@ -165,7 +180,10 @@
       "trunk_codecs_invalid": "Seleziona codec supportati e mantieni almeno un codec audio.",
       "trunk_target_required": "Seleziona un telefono destinatario o inserisci una destinazione del piano di chiamata.",
       "trunk_media_address_invalid": "Inserisci un indirizzo IPv4 unicast raggiungibile, oppure lascia vuoto.",
-      "parking_slots_in_use": "Recupera o termina le chiamate negli slot da rimuovere prima di modificare la lista."
+      "parking_slots_in_use": "Recupera o termina le chiamate negli slot da rimuovere prima di modificare la lista.",
+      "phone_service_configuration": "Configurazione LDAP non valida.",
+      "phone_service_base_dn_invalid": "Inserisci un DN base LDAP valido.",
+      "phone_service_certificate_required": "Specifica sia il certificato sia la chiave privata per TLS."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -500,6 +518,10 @@
     "mailbox_route_conflict": {
       "title": "Conflitto con i codici della segreteria",
       "description": "Un telefono, contatto o gruppo usa un indirizzo della segreteria. Rinomina la destinazione in conflitto; le rotte esistenti restano invariate."
+    },
+    "phone_service_unavailable": {
+      "title": "Rubrica LDAP non disponibile",
+      "description": "Il listener {service} sulla porta {port} non si avvia. Controlla indirizzo, porta e percorsi del certificato nelle impostazioni della rubrica LDAP, quindi salva per riprovare. SIP continua a funzionare e i telefoni conservano la rubrica precedente."
     }
   },
   "exceptions": {
