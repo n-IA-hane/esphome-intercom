@@ -76,6 +76,10 @@ module_app account.so
                     stream.write("video_source fakevideo,nil\nvideo_display fakevideo,nil\n"
                                  "video_size 160x120\nvideo_fps 5\nvideo_bitrate 128000\n"
                                  "avcodec_keyint 5\nmodule avcodec.so\nmodule fakevideo.so\n")
+            h264_profile = getattr(request, "param", {}).get("h264_profile_level_id", "")
+            if name in video_names and h264_profile:
+                with (config / "config").open("a") as stream:
+                    stream.write(f"avcodec_profile_level_id {h264_profile}\n")
             accounts = config / "accounts"
             manual = getattr(request, "param", {}).get("manual", ())
             manual = (manual,) if isinstance(manual, str) else manual

@@ -39,6 +39,7 @@ from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     ha_router_decision,
+    peer_video_codec,
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
@@ -525,25 +526,11 @@ async def async_originate_browser_call(
         or entry_metadata.get("device_id")
         or ""
     ).strip()
-    # SIP video is HA/browser-owned. Local HA/group endpoints stay outside
-    # this path. ESPHome targets advertise explicit capabilities, so avoid a
-    # useless video m-line on audio-only firmware. Besides describing the leg
-    # accurately, this keeps UDP INVITEs below the path MTU.
-    source_video_enabled = browser_endpoint is None or browser_endpoint.supports(
-        "video"
-    )
-    target_video_enabled = bool(
-        (
-            target_endpoint is not None
-            and target_endpoint.supports("video")
-        )
-        or "video" in {
-            str(value).strip().lower()
-            for value in entry_metadata.get("capabilities", [])
-        }
-    ) if esphome_sip_endpoint else (
-        target_endpoint is None or target_endpoint.supports("video")
-    )
+    # Unknown remote capabilities are negotiated by the same video owner
+    # used for group and forwarded legs; explicit audio-only peers decline.
+    source_video_enabled = browser_endpoint is None or browser_endpoint.supports("video")
+    target_video_contract = peer_video_codec(None, route.entry)
+    target_video_enabled = target_video_contract != ""
     video_capable = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
         and (not use_trunk or bool(trunk_cfg.get("trunk_video_codecs", ["H264"])))

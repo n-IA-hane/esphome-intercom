@@ -27,8 +27,12 @@ def application_rtp_peer(source):
 
 def adopt_relay_for_application(hass, relay, side, contract, reservation, on_complete):
     """Keep one established peer's socket and clock while retiring its bridge."""
-    if side not in {"left", "right"} or relay._stop_requested or relay._start_task is not None or relay.video_relay is not None:
+    if side not in {"left", "right"} or relay._stop_requested or relay._start_task is not None:
         raise ValueError("Application handoff requires an established audio relay")
+    video = relay.video_relay
+    if video is not None and (video.transcoding or
+            any(peer.video_format.direction != "inactive" for peer in (video.left, video.right))):
+        raise ValueError("Video must be held by its existing owner before application handoff")
     transport = getattr(relay, f"{side}_transport")
     if transport is None or transport.is_closing():
         raise RuntimeError("The retained media transport has ended")
@@ -40,7 +44,16 @@ def adopt_relay_for_application(hass, relay, side, contract, reservation, on_com
     encoder = getattr(relay, f"{side}_encoder")
     if encoder is not None:
         media.encoder.follow_received(encoder.fmt)
-    media.adopt_transport(transport)
+    reverse_video = video is not None and side == "right"
+    if reverse_video:
+        video.reverse_held_sides()
+    try:
+        media.adopt_transport(transport)
+    except BaseException:
+        if reverse_video:
+            video.reverse_held_sides()
+        raise
+    media.video_relay, relay.video_relay = video, None
     setattr(relay, f"{side}_transport", None)
     relay._on_release = None
     relay._stop_requested = True
@@ -54,24 +67,32 @@ class LocalMediaBridge:
     relay: SipRtpRelay
     transport: object
     committed: bool = False
+    video_relay: object | None = None
+    video_update: object | None = None
+    video_peers: tuple | None = None
 
     @classmethod
-    async def prepare(cls, media, remote_invite):
+    async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None):
         """Bind only the spare reserved port, leaving live application media alone."""
-        if media.closed.is_set() or media.transport is None:
-            raise RuntimeError("The local application has ended")
-        invite, transport = media.invite, media.transport
-        if getattr(invite, "video_format", None) or getattr(remote_invite, "video_format", None):
-            raise ValueError("Local application handoff requires an audio-only call")
-        relay = SipRtpRelay(
-            left=application_rtp_peer(invite), right=invite_rtp_peer(remote_invite),
-            left_port=media.local_rtp_port, right_port=media.reservation.ports[1],
-        )
-        result = cls(media, invite, relay, transport)
-        sock = media.reservation.take_audio_socket(relay.right_port)
-        if sock is None:
-            sock = relay._rtp_socket(relay.right_port)
+        relay, sock = None, right_socket
         try:
+            if media.closed.is_set() or media.transport is None:
+                raise RuntimeError("The local application has ended")
+            invite, transport = media.invite, media.transport
+            video = getattr(media, "video_relay", None)
+            if (getattr(invite, "video_format", None) or getattr(remote_invite, "video_format", None)) and (
+                    video is None or video_update is None):
+                raise ValueError("Local application handoff requires an owned video update")
+            relay = SipRtpRelay(
+                left=application_rtp_peer(invite), right=application_rtp_peer(remote_invite),
+                left_port=media.local_rtp_port, right_port=media.reservation.ports[1],
+            )
+            result = cls(media, invite, relay, transport, video_relay=video, video_update=video_update,
+                         video_peers=(video.left, video.right) if video is not None else None)
+            if sock is None:
+                sock = media.reservation.take_audio_socket(relay.right_port)
+            if sock is None:
+                sock = relay._rtp_socket(relay.right_port)
             relay.right_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
                 lambda: _RelayProtocol(relay, "right", paused=True), sock=sock,
             )
@@ -81,16 +102,25 @@ class LocalMediaBridge:
         except BaseException:
             if sock is not None:
                 sock.close()
-            await relay.stop()
+            try:
+                if relay is not None:
+                    await relay.stop()
+            finally:
+                if video_update is not None and video_update.rollback is not None:
+                    await video_update.rollback()
             raise
 
     def validate(self):
         if (self.committed or self.media.closed.is_set()
                 or self.media.invite is not self.invite
                 or self.media.transport is not self.transport
+                or getattr(self.media, "video_relay", None) is not self.video_relay
                 or self.transport.is_closing()
                 or self.relay._stop_requested):
             raise RuntimeError("Application media changed during handoff")
+        if self.video_peers is not None and (
+                self.video_relay.left is not self.video_peers[0] or self.video_relay.right is not self.video_peers[1]):
+            raise RuntimeError("Parked video changed during pickup")
 
     def commit(self):
         """Switch the protocol and ownership together, without an await window."""
@@ -112,9 +142,14 @@ class LocalMediaBridge:
         left.port, left.rx_ssrc = self.media.remote_rtp_port, self.media.remote_ssrc
         if self.relay.left_encoder is not None:
             self.relay.left_encoder.follow_received(self.media.encoder.fmt)
+        if self.video_relay is not None:
+            self.relay.attach_video_relay(self.video_relay)
+            self.media.video_relay = None
         self.committed = True
         return self.relay
 
     async def rollback(self):
         if not self.committed:
             await self.relay.stop()
+            if self.video_update is not None and self.video_update.rollback is not None:
+                await self.video_update.rollback()

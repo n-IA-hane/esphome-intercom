@@ -11,6 +11,8 @@ import types
 
 import pytest
 
+from tests.test_media_session_updates import MEDIA_SESSION_UPDATES
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
@@ -84,6 +86,7 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         "media_session_updates",
         commit_audio_session_update=lambda *_args, **_kwargs: None,
         commit_video_session_update=lambda *_args, **_kwargs: None,
+        committed_video_format_state=MEDIA_SESSION_UPDATES.committed_video_format_state,
     )
     _module("phone_endpoint", DEFAULT_ENDPOINT_ID="default")
     _module(
@@ -98,8 +101,10 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         answer_calls.append(dict(kwargs))
         return "m=audio 41000 RTP/AVP 111\r\nm=video 0 RTP/AVP 104\r\n"
 
+    from .voip_phase1_support import _load_intercom_module
     _module(
         "core.sdp",
+        RtpVideoFormat=_load_intercom_module("core.sdp").RtpVideoFormat,
         build_answer_directional=build_answer_directional,
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
@@ -137,7 +142,6 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         dialog_identity: object | None = None
         finalize: object | None = None
 
-    from .voip_phase1_support import _load_intercom_module
     identity = _load_intercom_module("core.sip_dialog").PreparedDialogIdentity
     _module("core.sip_dialog", PreparedDialogIdentity=identity)
     _module("sip_listener", SipInvite=object, SipInviteResult=SipInviteResult)

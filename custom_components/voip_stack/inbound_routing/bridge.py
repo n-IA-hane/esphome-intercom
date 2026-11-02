@@ -433,6 +433,15 @@ async def route_sip_bridge(
                 decline_reason=TerminalReason.BUSY.value,
             )
 
+    call_generation = registry.current_generation(invite.call_id)
+    if call_generation is None:
+        await async_close_client_and_release(client, bridge_ports)
+        if video_relay is not None:
+            await video_relay.stop()
+        return SipInviteResult(487, "Request Terminated", to_tag="")
+    registry.attach_sip_client(invite.call_id, client.dialog_ids.call_id, client,
+        state=CallState.CALLING.value,
+        trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
     try:
         result = await client.invite(
             target=decision_uri.user,
@@ -662,6 +671,7 @@ async def route_sip_bridge(
         origin="trunk" if trunk_invite else "extension",
         source_state=CallState.CONNECTING.value,
         dest_state=result,
+        expected_generation=call_generation,
     )
     if session is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")

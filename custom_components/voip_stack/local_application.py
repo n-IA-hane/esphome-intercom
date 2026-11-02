@@ -239,6 +239,47 @@ def attach_local_application(application_type, hass, session, invite, contact, l
     return application
 
 
+async def prepare_held_application_video_update(media, source_peer):
+    """Stage a parked child's authenticated source while keeping video inactive."""
+    from .core.sdp import video_formats_renegotiation_compatible
+    from .sip_client import PreparedDialogMediaUpdate
+
+    video = media.video_relay
+    if (video is None or source_peer is None or source_peer.port <= 0
+            or any(peer.video_format.direction != "inactive" for peer in (video.left, video.right))):
+        raise ValueError("Application video must retain its existing held child")
+    # Unlike an active-path check, a held child must retain the codec budget
+    # even though neither direction is currently forwarding video.
+    if not all(video_formats_renegotiation_compatible(old, new) for old, new in (
+        (video.left.send_format, source_peer.send_format),
+        (video.left.recv_format, source_peer.recv_format),
+    )):
+        raise ValueError("The held video update exceeds its negotiated contract")
+    held_source = replace(source_peer,
+        video_format=replace(source_peer.video_format, direction="inactive"),
+        local_video_format=replace(source_peer.recv_format, direction="inactive"))
+    undo_stages = []
+    try:
+        for side, peer in (("left", held_source), ("right", video.right)):
+            _, undo = video.stage_peer_reconfiguration(side, peer)
+            undo_stages.append(undo)
+        commit_video, rollback_video = await video.async_prepare_peer_generation(
+            left=held_source, right=video.right,
+        )
+    except BaseException:
+        for undo in reversed(undo_stages):
+            undo()
+        raise
+
+    async def commit():
+        if media.video_relay is not video or media.closed.is_set():
+            raise RuntimeError("The held video child changed before commit")
+        await commit_video()
+
+    return PreparedDialogMediaUpdate(commit, rollback_video,
+        answer_video_format=held_source.recv_format, answer_video_rtp_port=video.left_port)
+
+
 def bind_application_source_dialog(application):
     """Keep a retained outgoing SIP dialog attached to its current application."""
     client = application.source_client
@@ -248,18 +289,51 @@ def bind_application_source_dialog(application):
     if media is None:
         return
     async def prepare(_previous, updated, _method):
-        if not session.live or registry.resource_for(session.call_id, "relay") is not media:
+        if (not session.live or registry.resource_for(session.call_id, "relay") is not media
+                or client.dialog is not _previous):
+            return None
+        video = getattr(media, "video_relay", None)
+        if video is not None and updated.video_format is None:
             return None
         source = ApplicationCallSource.from_peer_dialog(updated, call_id=session.call_id,
-            caller=session.caller, target=session.callee, trunk_id=str(session.metadata.get("inbound_trunk_id") or ""))
+            caller=session.caller, target=session.callee, trunk_id=str(session.metadata.get("inbound_trunk_id") or ""),
+            allow_video=video is not None)
+        previous_media_invite = media.invite
         commit_media = media.prepare_media_update(source)
-        async def commit():
+        video_update = source_peer = None
+        if video is not None:
+            from .sip_bridge import dialog_video_rtp_peer
+            try:
+                source_peer = dialog_video_rtp_peer(updated)
+                video_update = await prepare_held_application_video_update(media, source_peer)
+            except (RuntimeError, TypeError, ValueError):
+                return None
+        def require_current():
             if (not registry.is_generation_current(session.call_id, session.generation)
-                    or registry.resource_for(session.call_id, "relay") is not media):
+                    or registry.resource_for(session.call_id, "relay") is not media
+                    or application.media is not media or application.source_client is not client
+                    or client.on_media_update is not prepare or client.dialog is not _previous
+                    or getattr(media, "video_relay", None) is not video
+                    or media.invite is not previous_media_invite):
                 raise RuntimeError("The retained caller changed media owner")
+
+        async def commit():
+            require_current()
+            if video_update is not None:
+                await video_update.commit()
+                require_current()
             commit_media()
+            if video_update is not None:
+                if hasattr(application, "video_source"):
+                    application.video_source = source_peer
+                application.invite = source
             if registry.artifact_for(session.call_id, "pending_invite") is not None:
                 registry.set_pending_invite(session.call_id, source)
+        if video_update is not None:
+            from .sip_client import PreparedDialogMediaUpdate
+            return PreparedDialogMediaUpdate(commit, video_update.rollback,
+                answer_video_format=video_update.answer_video_format,
+                answer_video_rtp_port=video_update.answer_video_rtp_port)
         return commit
     client.on_media_update = prepare
     def on_info(digit):
