@@ -131,6 +131,7 @@ ha_tests=(
   tests/test_sip_capabilities_ha.py
   tests/test_contact_audio_routing_ha.py
   tests/test_rtp_offer_reservation_ha.py
+  tests/test_delayed_rtp_reservation_ha.py
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py
