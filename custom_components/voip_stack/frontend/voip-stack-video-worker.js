@@ -4,6 +4,7 @@
 // stream or canvas encode must not prevent the user from pressing Hang up.
 
 let decoder = null;
+let decoderConfig = null;
 let generation = 0;
 let workerRole = "";
 let jpegCanvas = null;
@@ -67,6 +68,41 @@ function closeDecoder() {
     try { decoder.close(); } catch (_) {}
   }
   decoder = null;
+  decoderConfig = null;
+}
+
+function configureDecoder(config, ownedGeneration) {
+  let ownedDecoder;
+  ownedDecoder = new VideoDecoder({
+    output(frame) {
+      if (generation !== ownedGeneration || decoder !== ownedDecoder) {
+        frame.close();
+        return;
+      }
+      self.postMessage({ type: "frame", generation: ownedGeneration, frame }, [frame]);
+    },
+    error(error) {
+      if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
+      self.postMessage({
+        type: "decoder_error", generation: ownedGeneration,
+        error: error?.message || String(error || "decoder failure"),
+      });
+    },
+  });
+  ownedDecoder.addEventListener("dequeue", () => {
+    if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
+    self.postMessage({
+      type: "decode_queue", generation: ownedGeneration, size: ownedDecoder.decodeQueueSize,
+    });
+  });
+  try {
+    ownedDecoder.configure(config);
+  } catch (error) {
+    if (ownedDecoder.state !== "closed") ownedDecoder.close();
+    throw error;
+  }
+  decoder = ownedDecoder;
+  decoderConfig = config;
 }
 
 function closeJpegEncoder() {
@@ -352,38 +388,7 @@ self.onmessage = async (event) => {
         throw new Error(`browser cannot decode ${message.config?.codec || "SIP video"}`);
       }
       generation = nextGeneration;
-      const ownedGeneration = generation;
-      let ownedDecoder;
-      ownedDecoder = new VideoDecoder({
-        output(frame) {
-          if (generation !== ownedGeneration || decoder !== ownedDecoder) {
-            frame.close();
-            return;
-          }
-          self.postMessage(
-            { type: "frame", generation: ownedGeneration, frame },
-            [frame],
-          );
-        },
-        error(error) {
-          if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
-          self.postMessage({
-            type: "decoder_error",
-            generation: ownedGeneration,
-            error: error?.message || String(error || "decoder failure"),
-          });
-        },
-      });
-      ownedDecoder.addEventListener("dequeue", () => {
-        if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
-        self.postMessage({
-          type: "decode_queue",
-          generation: ownedGeneration,
-          size: ownedDecoder.decodeQueueSize,
-        });
-      });
-      ownedDecoder.configure(support.config || message.config);
-      decoder = ownedDecoder;
+      configureDecoder(support.config || message.config, generation);
       workerRole = "decoder";
       reply(requestId, true, { config: support.config || message.config });
     } catch (error) {
@@ -393,11 +398,17 @@ self.onmessage = async (event) => {
     return;
   }
   if (message.type !== "decode" || !decoder ||
-      decoder.state !== "configured" ||
       Number(message.generation || 0) !== generation) {
     return;
   }
   try {
+    // WebCodecs closes the decoder before reporting an asynchronous error.
+    // A key frame can recover within this worker using the validated config;
+    // deltas must wait and may never resurrect a retired generation.
+    if (decoder.state === "closed" && message.keyFrame && decoderConfig) {
+      configureDecoder(decoderConfig, generation);
+    }
+    if (decoder.state !== "configured") return;
     decoder.decode(new EncodedVideoChunk({
       type: message.keyFrame ? "key" : "delta",
       timestamp: Number(message.timestamp || 0),

@@ -1,6 +1,7 @@
 """Real UDP checks for video NAT maintenance across SDP generations."""
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import socket
 import subprocess
@@ -9,6 +10,157 @@ from types import SimpleNamespace
 import pytest
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("owner_kind", ["client", "media", "client_with_incomplete_media"])
+@pytest.mark.parametrize("rtcp_socket", [False, True])
+async def test_video_websocket_borrows_call_bound_sockets(monkeypatch, socket_enabled, owner_kind, rtcp_socket):
+    from custom_components.voip_stack import video_ws_view as view
+    from custom_components.voip_stack.sip_client import SipCallClient
+
+    originals = []
+    for _ in range(2 if rtcp_socket else 1):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.setblocking(False)
+        originals.append(sock)
+    fields = {"video_rtp_socket": originals[0], "video_rtcp_socket": originals[1] if rtcp_socket else None}
+    client = SipCallClient(local_ip="127.0.0.1", local_name="owned", local_sip_port=5060,
+                           local_rtp_port=0, **fields)
+    media = fields.copy() if owner_kind == "media" else {} if owner_kind == "client_with_incomplete_media" else None
+    registry = SimpleNamespace(resource_for=lambda *_: media, sip_client_for=lambda *_: client)
+    monkeypatch.setattr(view, "call_projection", lambda _: registry)
+    session = SimpleNamespace(call_id="owned-dialog", rtp_socket=fields["video_rtp_socket"],
+                              rtcp_socket=fields["video_rtcp_socket"])
+    try:
+        view._detach_video_socket(object(), session)
+        assert (media["video_rtp_socket"] if owner_kind == "media" else client.video_rtp_socket) is originals[0]
+        assert session.rtp_socket is not originals[0]
+        assert session.rtp_socket.getsockname() == originals[0].getsockname()
+        session.rtp_socket.close()
+        if session.rtcp_socket is not None:
+            session.rtcp_socket.close()
+        # The original descriptors retain their receive queue across a WS gap.
+        peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            for original in originals:
+                peer.sendto(b"queued-during-ws-gap", original.getsockname())
+                assert await asyncio.wait_for(asyncio.get_running_loop().sock_recv(original, 64), 1) == b"queued-during-ws-gap"
+        finally:
+            peer.close()
+        await client.close()
+        assert all(original.fileno() == -1 for original in originals)
+    finally:
+        for owned in (session.rtp_socket, session.rtcp_socket, *originals):
+            if owned is not None:
+                owned.close()
+
+
+async def test_video_socket_second_dup_failure_preserves_originals(monkeypatch, socket_enabled):
+    from custom_components.voip_stack import video_ws_view as view
+
+    originals = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+    client = SimpleNamespace(video_rtp_socket=originals[0], video_rtcp_socket=originals[1])
+    registry = SimpleNamespace(resource_for=lambda *_: None, sip_client_for=lambda *_: client)
+    monkeypatch.setattr(view, "call_projection", lambda _: registry)
+    session = SimpleNamespace(call_id="owned", rtp_socket=originals[0], rtcp_socket=originals[1])
+    borrowed = []
+    duplicate = socket.socket.dup
+
+    def fail_second(original):
+        if original is originals[1]:
+            raise OSError("forced second descriptor failure")
+        child = duplicate(original)
+        borrowed.append(child)
+        return child
+
+    monkeypatch.setattr(socket.socket, "dup", fail_second)
+    try:
+        with pytest.raises(OSError, match="second descriptor"):
+            view._detach_video_socket(object(), session)
+        assert len(borrowed) == 1 and borrowed[0].fileno() == -1
+        assert session.rtp_socket is client.video_rtp_socket is originals[0]
+        assert session.rtcp_socket is client.video_rtcp_socket is originals[1]
+        assert all(original.fileno() >= 0 for original in originals)
+    finally:
+        for original in originals:
+            original.close()
+
+
+async def test_video_transport_start_failure_closes_only_borrowed_descriptors(monkeypatch, socket_enabled):
+    from custom_components.voip_stack import video_ws_view as view
+    from custom_components.voip_stack.core import sdp
+
+    originals = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+    for original in originals:
+        original.bind(("127.0.0.1", 0))
+        original.setblocking(False)
+    client = SimpleNamespace(video_rtp_socket=originals[0], video_rtcp_socket=originals[1])
+    registry = SimpleNamespace(resource_for=lambda *_: None, sip_client_for=lambda *_: client)
+    monkeypatch.setattr(view, "call_projection", lambda _: registry)
+    session = view._VideoMediaSession(call_id="owned", local_rtp_port=originals[0].getsockname()[1],
+        remote_rtp_host="127.0.0.1", remote_rtp_port=40000,
+        remote_rtcp_host="127.0.0.1", remote_rtcp_port=40001, remote_rtcp_mux=False,
+        video_format=sdp.RtpVideoFormat(103), local_direction="recvonly",
+        rtp_socket=originals[0], rtcp_socket=originals[1])
+    view._detach_video_socket(object(), session)
+    borrowed = (session.rtp_socket, session.rtcp_socket)
+    closed = []
+
+    async def fail_start(*args, **kwargs):
+        raise OSError("forced transport startup failure")
+
+    async def ws_close(**kwargs):
+        closed.append(kwargs)
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "create_datagram_endpoint", fail_start)
+    try:
+        await view._run_video_session(object(), SimpleNamespace(close=ws_close), session, endpoint_id="phone")
+        assert closed[0]["code"] == 1013
+        assert all(child.fileno() == -1 for child in borrowed)
+        assert all(original.fileno() >= 0 for original in originals)
+    finally:
+        for original in originals:
+            original.close()
+
+
+@pytest.mark.parametrize("change", ["terminated", "generation", "replacement"])
+async def test_video_handshake_cannot_borrow_from_changed_call(monkeypatch, change):
+    from custom_components.voip_stack import video_ws_view as view
+
+    call = SimpleNamespace(live=True, generation=1)
+    current = [call]
+    registry = SimpleNamespace(get_session=lambda *_: current[0])
+    context = SimpleNamespace(hass=object(), endpoint_id="phone", local_bridge=None)
+    prepared = SimpleNamespace(context=context, registry=registry, local_call=None,
+        resolve_current=lambda: (None, SimpleNamespace(call_id="owned")))
+    closed = []
+
+    async def prepare_request(*args, **kwargs):
+        return prepared
+
+    async def handshake(_):
+        if change == "terminated":
+            call.live = False
+        elif change == "generation":
+            call.generation += 1
+        else:
+            current[0] = SimpleNamespace(live=True, generation=1)
+
+    async def close(**kwargs):
+        closed.append(kwargs)
+
+    ws = SimpleNamespace(prepare=handshake, close=close)
+
+    @asynccontextmanager
+    async def claim(*args, **kwargs):
+        yield SimpleNamespace(websocket=ws, media_session=object())
+
+    monkeypatch.setattr(view, "async_prepare_media_websocket_request", prepare_request)
+    monkeypatch.setattr(view, "async_claimed_media_websocket", claim)
+    monkeypatch.setattr(view, "_detach_video_socket", lambda *_: pytest.fail("stale call borrowed socket"))
+    assert await view.VoipVideoWebSocketView().get(SimpleNamespace(transport=None)) is ws
+    assert closed[0]["code"] == 1008
 
 
 async def test_reoffer_wakes_video_nat_refresh_without_waiting_for_period(monkeypatch, socket_enabled):
