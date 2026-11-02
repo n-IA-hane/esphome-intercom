@@ -40,6 +40,39 @@ Omitted fields keep their current settings. Set the timeout to zero to disable
 it, or clear a forwarding destination to remove that rule. The
 [action reference](SERVICES.md) retains the advanced field names.
 
+## Office during a shift, mobile when unavailable
+
+Keep **Office** as the normal phonebook destination. Select its registered SIP
+phone or ESP endpoint, save **Mobile** as a contact, and set Office's
+**When unavailable** destination to Mobile in **Options > Call routing**.
+These fixed defaults need no automation or application YAML. Registration,
+deregistration and expiry supply the SIP phone's availability. A browser phone
+remains a logical destination when its card closes; use a no-answer rule for
+that situation.
+
+For a shift or calendar rule, add a native **VoIP call destination requested**
+automation filtered to Office. Use HA's normal time or schedule/calendar-state
+conditions to divert calls to Mobile outside the shift, with **Select inbound
+call destination**. During the shift, leave the normal Office route unchanged.
+Office can then ring when available and apply its own When unavailable rule
+when offline. The [initial-routing examples](AUTOMATION_DIALPLAN.md#override-the-initial-destination)
+show the editor actions and call context.
+
+An explicit route selection controls that call's destination. Keeping Office
+as the normal route preserves its native fallback without another availability
+condition in the automation. Add busy/DND or no-answer outcomes separately if
+you want those situations to reach Mobile too.
+
+An external Mobile number needs the intended SIP trunk and external-call
+permission. Choose the line explicitly or through the originating phone's
+preference; a selected unavailable line fails visibly. Qualify the rule with a
+local test contact before using a real provider. Controlled LAB calls have
+verified registered/unregistered routing, deregistration and expiry, SIP 486,
+DND, no-answer, external-access rejection, and a disabled selected trunk. A
+temporary HA time condition also exercised Office's default and its native
+fallback with call-linked automation traces. These are local SIP/RTP proofs,
+separate from PSTN, acoustic or calendar-provider qualification.
+
 ## Let an automation decide
 
 Use a native VoIP call trigger and its normal call-control actions when the
