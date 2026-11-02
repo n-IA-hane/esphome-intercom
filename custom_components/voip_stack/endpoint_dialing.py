@@ -20,7 +20,7 @@ from .endpoint_routing import (
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     supports_directional_audio_payloads,
 )
 from .media_ports import (
@@ -207,7 +207,7 @@ class EndpointDialer:
             )
             include_common_audio = (
                 policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
-                or sip_target_has_unspecified_audio(peer_target, member_entry)
+                or sip_target_offer_common_audio(peer_target, member_entry)
             )
             if policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)

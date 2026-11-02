@@ -136,6 +136,7 @@ ha_tests=(
   tests/test_browser_logical_availability_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_sip_capabilities_ha.py
+  tests/test_browser_contact_audio_ha.py
   tests/test_udp_outbound_flow_ha.py
   tests/test_contact_audio_routing_ha.py
   tests/test_rtp_offer_reservation_ha.py
