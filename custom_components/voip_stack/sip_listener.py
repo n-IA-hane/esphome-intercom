@@ -16,6 +16,7 @@ from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
 from .core import sdp, sip, sip_transfer
+from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
 from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
 from .core.sip_transport import SipResponseMailbox, bind_flow_usage
@@ -54,6 +55,7 @@ _MAX_SIP_UDP_TASKS = 32
 _MAX_SIP_INVITE_TASKS = 24
 _MAX_PENDING_INVITES = 64
 _MAX_COMPLETED_TRANSACTIONS = 256
+_MAX_REUSED_UDP_USAGES = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,6 +627,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._invite_tasks: set[asyncio.Task[None]] = set()
         self._maintenance_tasks: set[asyncio.Task[Any]] = set()
         self._client_transaction_responses: dict[str, SipResponseMailbox] = {}
+        self._dialog_queues: dict[tuple[tuple[str, int], str], asyncio.Queue] = {}
+        self._reused_dialog_keys: dict[asyncio.Queue, set[tuple[tuple[str, int], str]]] = {}
         self.dropped_datagrams = 0
         self.last_sip_event = ""
         self.last_sip_status_code = 0
@@ -641,6 +645,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         else:
             _LOGGER.info("SIP UDP listener closed")
         self.transport = None
+        for queue in self._reused_dialog_keys:
+            put_drop_oldest(queue, None)
+        self._dialog_queues.clear()
+        self._reused_dialog_keys.clear()
         self.cancel_request_tasks()
         if self._closed_waiter is not None and not self._closed_waiter.done():
             self._closed_waiter.set_result(None)
@@ -661,11 +669,22 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     def submit_datagram(self, data: bytes, addr) -> bool:
         """Schedule one message while preserving capacity for dialog control."""
 
+        if self.signaling_transport == "UDP" and data[:1] in (b"\0", b"\1"):
+            response = binding_keepalive_response(data, addr)
+            if response is None or self.transport is None:
+                self.dropped_datagrams += 1
+                return False
+            send_sip_datagram(self.transport, response, addr)
+            return True
         try:
             message = sip.parse_message(data)
         except (ValueError, sip.SipError):
             self.dropped_datagrams += 1
             return False
+        queue = self._dialog_queues.get(((str(addr[0]), int(addr[1])), message.header("Call-ID")))
+        if queue is not None:
+            put_drop_oldest(queue, data)
+            return True
         if message.is_response:
             try:
                 branch = sip.parse_via(message.header("Via")).branch
@@ -697,6 +716,51 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._invite_tasks.add(task)
         task.add_done_callback(self._request_task_done)
         return True
+
+    def open_reused_dialog(self, addr: tuple[str, int], call_id: str, *, flow_active):
+        """Lease this socket and authenticated next hop to one dialog reader."""
+        key = (addr, call_id)
+        transport = self.transport
+        if (transport is None or not call_id or key in self._dialog_queues
+                or len(self._dialog_queues) >= _MAX_REUSED_UDP_USAGES):
+            return None
+        queue = asyncio.Queue(maxsize=64)
+        self._dialog_queues[key] = queue
+        self._reused_dialog_keys[queue] = {key}
+
+        def send(raw):
+            if (self.transport is not transport or self._dialog_queues.get(key) is not queue
+                    or not flow_active()):
+                return False
+            return self._send(raw, addr)
+
+        return send, queue
+
+    def bind_reused_usage(self, addr, call_id, usage_id):
+        queue = self._dialog_queues.get((addr, call_id))
+        if queue is None:
+            raise ConnectionError("SIP flow owner is no longer registered")
+        if usage_id == call_id:
+            return lambda: None
+        if len(self._dialog_queues) >= _MAX_REUSED_UDP_USAGES:
+            raise RuntimeError("SIP UDP dialog usage capacity reached")
+        release = bind_flow_usage(self._dialog_queues, (addr, call_id), (addr, usage_id))
+        keys = self._reused_dialog_keys[queue]
+        keys.add((addr, usage_id))
+
+        def close():
+            release()
+            keys.discard((addr, usage_id))
+
+        return close
+
+    def close_reused_dialog(self, addr, call_id, *, queue=None):
+        current = self._dialog_queues.get((addr, call_id))
+        if current is None or (queue is not None and queue is not current):
+            return
+        for key in self._reused_dialog_keys.pop(current, ()):
+            if self._dialog_queues.get(key) is current:
+                self._dialog_queues.pop(key, None)
 
     def _next_hop_target(self, value: str) -> sip.SipUri:
         target = sip.parse_sip_uri(value)
