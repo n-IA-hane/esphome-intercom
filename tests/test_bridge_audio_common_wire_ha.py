@@ -96,10 +96,12 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         target_rate = observed["send"].sample_rate
         expected_return_rate = target_rate if target_rate in source_receive_rates else source_receive_rates[0]
         assert caller.dialog.recv_format.sample_rate == expected_return_rate
-        assert relay.left_to_right_passthrough == (source_rate == expected_receive)
-        if known:
-            assert relay.right_to_left_passthrough
-        elif expected_return_rate == target_rate:
+        # Static RX capacity may exceed the peer's TX packet budget. Keep the
+        # existing fallback ready; actual compatible10ms packets still bypass it.
+        if not relay.left_to_right_passthrough:
+            assert relay.left_decoder is not None and relay.right_encoder is not None
+            assert relay.left_to_right is not None
+        if expected_return_rate == target_rate and not relay.right_to_left_passthrough:
             # Unknown peers retain legal 20 ms codec fallbacks in HA's offer.
             # A 10 ms caller therefore needs the existing packet reframer,
             # while both PCM contracts remain identical (no sample conversion).
@@ -121,6 +123,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         assert packet.payload_type == observed["receive"].payload_type
         assert len(packet.payload) == expected_receive // 100 * 2
         assert max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 1900
+        assert relay.left_to_right_passthrough == (source_rate == expected_receive)
         if source_rate == expected_receive:
             assert packet.payload == source_payload
         target_samples = observed["send"].sample_rate // 100
@@ -134,6 +137,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             returned = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
         assert returned.payload_type == caller.dialog.recv_format.payload_type
         assert len(returned.payload) == expected_return_rate // 100 * 2
+        assert relay.right_to_left_passthrough == (expected_return_rate == target_rate)
         if expected_return_rate == target_rate:
             assert returned.payload == target_payload
         else:

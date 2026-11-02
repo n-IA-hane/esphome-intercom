@@ -70,14 +70,20 @@ def _normalized_audio_fmtp(fmt: RtpPcmFormat) -> tuple[tuple[str, str], ...]:
 def _audio_payload_relay_compatible(
     incoming: RtpPcmFormat,
     outgoing: RtpPcmFormat,
+    *,
+    payload_size: int | None = None,
 ) -> bool:
-    """Return whether the incoming payload envelope may cross unchanged."""
+    """Keep static capacity conservative; admit actual stateless quanta at runtime."""
 
-    return bool(
+    same_shape = bool(
         incoming.encoding.upper() == outgoing.encoding.upper()
         and incoming.sample_rate == outgoing.sample_rate
         and incoming.channels == outgoing.channels
-        and incoming.frame_ms == outgoing.frame_ms
+        and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
+    )
+    if not same_shape:
+        return False
+    if (incoming.frame_ms == outgoing.frame_ms
         and incoming.min_frame_ms >= outgoing.min_frame_ms
         and max(incoming.frame_ms, incoming.max_frame_ms) <= max(outgoing.frame_ms, outgoing.max_frame_ms)
         # Fixed-rate payloads have a known envelope. Longer legal input must
@@ -86,8 +92,14 @@ def _audio_payload_relay_compatible(
         # its encoded relay path and its existing fmtp constraints.
         and (incoming.encoding.upper() == "OPUS"
              or rtp.audio_payload_size_limit(incoming) <= rtp.MAX_RTP_PAYLOAD_BYTES)
-        and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
-    )
+    ):
+        return True
+    # VBR and stateful ADPCM cannot infer duration or decoder state from length.
+    return bool(payload_size is not None and incoming.encoding.upper() in {"L16", "L24", "PCM", "PCMA", "PCMU"}
+        and outgoing.frame_ms >= max(incoming.min_frame_ms, outgoing.min_frame_ms)
+        and payload_size == outgoing.rtp_timestamp_step * outgoing.channels * outgoing.bits // 8
+        and payload_size <= min(rtp.audio_payload_size_limit(incoming),
+            rtp.audio_payload_size_limit(outgoing), rtp.MAX_RTP_PAYLOAD_BYTES))
 
 
 @dataclass(slots=True)
@@ -1142,8 +1154,12 @@ class SipRtpRelay:
             wire_format = output_encoder.fmt if output_encoder is not None else dest.outbound_rtp_format
             if rtp.use_audio_clock(dest, wire_format.rtp_clock_rate):
                 (self.left_to_right_clock if side == "left" else self.right_to_left_clock).source_base = None
+            converter = self.left_to_right if side == "left" else self.right_to_left
+            packet_size = (len(packet.payload) if decoder is not None and converter is not None
+                and converter._same_pcm_contract()
+                and not decoder.has_pending_pcm and not converter.has_pending_pcm else None)
             passthrough = not self.debug_capture and _audio_payload_relay_compatible(
-                received_format, wire_format
+                received_format, wire_format, payload_size=packet_size
             )
             clock = self.left_to_right_clock if side == "left" else self.right_to_left_clock
             clock.observe_format(received_format)
@@ -1152,6 +1168,7 @@ class SipRtpRelay:
                     packet.payload,
                     received_format,
                 )
+                rtp.validate_audio_payload_size(packet.payload, wire_format)
                 if decoder is not None:
                     if decoder.has_pcm_observers:
                         try:

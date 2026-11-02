@@ -3311,6 +3311,7 @@ def negotiate_directional(
     *,
     allow_dahua_pcm: bool = False,
     codec_policy=None,
+    local_recv_capabilities: tuple[AudioFormat, ...] | None = None,
 ) -> RtpPcmDirection | None:
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
@@ -3344,7 +3345,8 @@ def negotiate_directional(
     # supported shapes for this same codec/rate/channels. Peer RX bounds apply
     # to our transmitter and must never become our own receive capacity.
     receive_shape = _format_key(selected.recv.audio_format)[:3]
-    maximum = max([selected.recv.frame_ms, *(local.frame_ms for local in local_recv_preferred
+    receive_capabilities = local_recv_preferred if local_recv_capabilities is None else local_recv_capabilities
+    maximum = max([selected.recv.frame_ms, *(local.frame_ms for local in receive_capabilities
         if _format_key(local)[:3] == receive_shape)])
     if maximum <= selected.recv.frame_ms:
         return selected
