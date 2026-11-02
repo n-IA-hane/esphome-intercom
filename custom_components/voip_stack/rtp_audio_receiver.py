@@ -83,6 +83,10 @@ class RtpAudioReceiver:
             self._active_format = None
 
     @property
+    def has_pending_pcm(self) -> bool:
+        return bool(self._pending) or (self._converter is not None and self._converter.has_pending_pcm)
+
+    @property
     def has_pcm_observers(self):
         return bool(self._pcm_observers)
 

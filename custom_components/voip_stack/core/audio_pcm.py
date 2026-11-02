@@ -134,6 +134,10 @@ class PcmFrameConverter:
             and self.src.channels == self.dst.channels
         )
 
+    @property
+    def has_pending_pcm(self) -> bool:
+        return bool(self._pending.shape[1])
+
     def convert(self, data: bytes) -> list[bytes]:
         variable_packet = self._same_pcm_contract()
         if variable_packet:
@@ -146,7 +150,7 @@ class PcmFrameConverter:
                 f"audio frame length {len(data)} does not match {self.src.wire_token()} "
                 f"({self.src.nominal_frame_bytes} bytes)"
             )
-        if self.src == self.dst and len(data) == self.dst.nominal_frame_bytes:
+        if self.src == self.dst and len(data) == self.dst.nominal_frame_bytes and not self.has_pending_pcm:
             return [data]
 
         channels = _map_channels(_decode_frame(data, self.src), self.dst.channels)

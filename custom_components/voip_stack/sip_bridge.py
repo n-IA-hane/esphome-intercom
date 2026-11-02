@@ -32,6 +32,7 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
         list(dict.fromkeys((destination.send_format.audio_format, invite.recv_format.audio_format))),
         allow_dahua_pcm=invite.peer_profile == "dahua",
         codec_policy=invite.codec_policy,
+        local_recv_capabilities=invite.local_recv_capabilities or None,
     )
     return replace(invite, send_format=selected.send, recv_format=selected.recv) if selected is not None else invite
 
