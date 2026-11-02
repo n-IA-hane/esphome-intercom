@@ -1279,6 +1279,305 @@ assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20
 assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
 assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
 await asymmetric.close("test-complete");
+// A Dashboard query can return a cached idle before the new INVITE commits.
+// Only a terminal observation of the exact owned dialog may release its media.
+const cleanupSessionBackup = new Map(session);
+const dashboardCleanup = new Engine();
+const cleanupOwner = {{device_id:"cleanup-device",endpoint_id:"cleanup",softphone:true}};
+dashboardCleanup.claimSoftphoneSession("new-dialog","cleanup");
+const dashboardReleases=[];
+dashboardCleanup._releaseTerminalMedia=async(callId,endpointId)=>dashboardReleases.push([callId,endpointId]);
+for(const snapshot of [
+ {{endpoint_id:"cleanup",state:"idle",call_id:""}},
+ {{endpoint_id:"cleanup",state:"ended",call_id:"old-dialog"}},
+ {{endpoint_id:"other",state:"ended",call_id:"new-dialog"}},
+ {{endpoint_id:"cleanup",state:"unexpected",call_id:"new-dialog"}},
+]) await dashboardCleanup.dashboardSyncOwner(cleanupOwner,snapshot);
+assert.equal(dashboardReleases.length,0);
+await dashboardCleanup.dashboardSyncOwner(cleanupOwner,{{endpoint_id:"cleanup",state:"ended",call_id:"new-dialog"}});
+assert.deepEqual(dashboardReleases,[["new-dialog","cleanup"]]);
+dashboardCleanup.releaseSoftphoneSession("new-dialog","cleanup");
+session.clear();for(const [key,value] of cleanupSessionBackup)session.set(key,value);
+
+// An operator view is passive and shares one subscription between cards.
+const dashboard = new Engine();
+const observers = [];
+let monitorUnsubscribed = 0;
+let monitorBusRequests=0, monitorBusStops=0;
+const monitorConnection = {{
+  subscribeMessage: async (listener, request) => {{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      monitorBusRequests++;
+      assert.equal(request.include_runtime_ready,true);
+      return()=>{{monitorBusStops++;}};
+    }}
+    observers.push({{listener, request}});
+    return () => {{monitorUnsubscribed++;}};
+  }},
+}};
+dashboard.configure({{connection: monitorConnection}});
+const firstMonitorEvents = [], secondMonitorEvents = [];
+const releaseMonitor = dashboard.subscribePhoneStates(event => firstMonitorEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length, 1);
+assert.equal(observers[0].request.type, "voip_stack/subscribe_phone_states");
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",device_id:"desk-device",state:"idle",availability:"available"}}]}});
+assert.equal(dashboard.phoneStateFor("desk").availability,"available");
+assert.equal(dashboard.phoneStateFor("","desk-device").state,"idle");
+assert.equal(dashboard.phoneStateFor("absent","absent"),null);
+const releaseSecondMonitor = dashboard.subscribePhoneStates(event => secondMonitorEvents.push(event));
+assert.equal(secondMonitorEvents[0].phones[0].state,"idle");
+assert.equal(observers.length,1);
+assert.equal(monitorBusRequests,1);
+observers[0].listener({{kind:"delta",revision:1,phones:[{{endpoint_id:"desk",state:"ringing"}}],removed:[]}});
+observers[0].listener({{kind:"delta",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}],removed:[]}});
+assert.equal(secondMonitorEvents.at(-1).phones[0].state,"ringing");
+// A server reconnect starts a new revision stream, even on the same HA socket object.
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",state:"in_call"}}]}});
+assert.equal(dashboard._phoneStates.get("desk").state,"in_call");
+observers[0].listener({{kind:"delta",revision:1,phones:[],removed:["desk"]}});
+assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard.phoneStateFor("desk","desk-device"),null);
+releaseMonitor();
+assert.equal(monitorUnsubscribed,0);
+releaseSecondMonitor();
+assert.equal(monitorUnsubscribed,1);
+assert.equal(monitorBusStops,1);
+assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard._softphoneScopeSubscriptions.size,0);
+
+// Losing a delta requires a new full snapshot; the old callback cannot revive state.
+const reconnectEvents=[];
+const releaseReconnecting=dashboard.subscribePhoneStates(event=>reconnectEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+observers[1].listener({{kind:"snapshot",revision:0,phones:[]}});
+observers[1].listener({{kind:"delta",revision:2,phones:[{{endpoint_id:"stale"}}]}});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length,3);
+assert.equal(reconnectEvents.at(-1).kind,"reset");
+observers[1].listener({{kind:"snapshot",revision:9,phones:[{{endpoint_id:"stale"}}]}});
+assert.equal(dashboard._phoneStates.size,0);
+observers[2].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"fresh",state:"idle"}}]}});
+assert.equal(dashboard._phoneStates.has("fresh"),true);
+releaseReconnecting();
+
+// Runtime unload does not close HA's socket. One shared, nonsensitive HA
+// lifecycle listener must recover all cards with a new revision stream.
+const {{DashboardPhoneStore,dashboardCanCall,ownerDeviceInfo}} = await import(
+  pathToFileURL({json.dumps(str(ROOT / 'custom_components/voip_stack/frontend/voip-stack-dashboard-model.js'))})
+);
+const runtimeDashboard=new Engine();
+const runtimeObservers=[], lifecycleObservers=[];
+let lifecycleReleased=0, runtimeReleased=0;
+const runtimeConnection={{
+  subscribeEvents:()=>{{throw new Error("Generic custom events require HA admin");}},
+  subscribeMessage:async(listener,request)=>{{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      lifecycleObservers.push({{listener,request}});
+      return()=>{{lifecycleReleased++;}};
+    }}
+    runtimeObservers.push({{listener,request}});
+    return()=>{{runtimeReleased++;}};
+  }},
+}};
+runtimeDashboard.configure({{connection:runtimeConnection}});
+const firstStore=new DashboardPhoneStore(), secondStore=new DashboardPhoneStore();
+const selectedDevice="desk-device";
+const releaseRuntimeOne=runtimeDashboard.subscribePhoneStates(event=>firstStore.apply(event));
+const releaseRuntimeTwo=runtimeDashboard.subscribePhoneStates(event=>secondStore.apply(event));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,1);
+assert.equal(lifecycleObservers.length,1);
+assert.equal(lifecycleObservers[0].request.include_runtime_ready,true);
+const freshPhone={{endpoint_id:"desk",device_id:selectedDevice,kind:"browser",state:"idle",availability:"available"}};
+runtimeObservers[0].listener({{kind:"snapshot",revision:12,phones:[freshPhone]}});
+runtimeObservers[0].listener({{kind:"closed",reason:"runtime_unloaded"}});
+assert.equal(firstStore.ready,false);
+assert.equal(secondStore.phones.size,0);
+assert.equal(runtimeDashboard._phoneStateUnsub,null);
+assert.equal(runtimeReleased,1);
+runtimeObservers[0].listener({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(firstStore.phones.size,0);
+// Readiness must refresh even when the old subscription never rejected.
+runtimeDashboard._phoneStateFailed=false;
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2);
+runtimeObservers[1].listener({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(firstStore.ready,true);
+assert.equal(secondStore.revision,1);
+const owner=ownerDeviceInfo([freshPhone],firstStore.phones,selectedDevice);
+assert.equal(owner.device_id,selectedDevice);
+assert.equal(dashboardCanCall(owner,{{kind:"contact",name:"Support",state:"unknown"}},firstStore.ready),true);
+assert.equal(runtimeDashboard._softphoneScopeSubscriptions.size,0);
+runtimeObservers[1].listener({{kind:"closed",reason:"permissions_revoked"}});
+assert.equal(firstStore.phones.size,0);
+assert.equal(secondStore.ready,false);
+assert.equal(lifecycleReleased,1);
+runtimeDashboard.configure({{connection:runtimeConnection}});
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
+runtimeDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2,"revoked access must not enter a retry loop");
+releaseRuntimeOne();releaseRuntimeTwo();
+assert.equal(lifecycleReleased,1);
+
+// A late bus rejection must not schedule retries after access was revoked.
+const revokedPending=new Engine();
+let rejectRevokedBus, revokedPhoneListener;
+revokedPending.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return new Promise((_resolve,reject)=>{{rejectRevokedBus=reject;}});
+  revokedPhoneListener=listener;
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releaseRevokedPending=revokedPending.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+revokedPhoneListener({{kind:"closed",reason:"permissions_revoked"}});
+rejectRevokedBus(new Error("access revoked before subscription acknowledgement"));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(revokedPending._busSubscribeRetryTimer,null);
+releaseRevokedPending();
+
+// A subscription acknowledgement arriving after unload must be retired,
+// without clearing or replacing the new generation's pending request.
+const pendingDashboard=new Engine(), pendingObservers=[];
+let acknowledgeOld, oldReleased=0;
+pendingDashboard.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return Promise.resolve(()=>{{}});
+  pendingObservers.push(listener);
+  if(pendingObservers.length===1)return new Promise(resolve=>{{acknowledgeOld=resolve;}});
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releasePendingDashboard=pendingDashboard.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+pendingObservers[0]({{kind:"closed",reason:"runtime_unloaded"}});
+pendingDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+acknowledgeOld(()=>{{oldReleased++;}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(oldReleased,1);
+assert.equal(pendingObservers.length,2);
+pendingObservers[0]({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(pendingDashboard._phoneStates.size,0);
+pendingObservers[1]({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(pendingDashboard._phoneStates.has("desk"),true);
+releasePendingDashboard();
+
+// Removing the final card must preserve the presence lease of its active call.
+const ownedView = new Engine();
+let viewUnsubscribe=0;
+ownedView._busConnection={{subscribeMessage:async()=>()=>{{viewUnsubscribe++;}}}};
+const releaseView=ownedView.subscribeSoftphoneState(()=>{{}},{{endpoint_id:"desk"}});
+await new Promise(resolve => setImmediate(resolve));
+ownedView.claimSoftphoneSession("view-call","desk");
+releaseView();
+assert.equal(viewUnsubscribe,0);
+assert.equal(ownedView.softphoneCallIdFor("desk"),"view-call");
+ownedView.releaseSoftphoneSession("view-call","desk");
+assert.equal(viewUnsubscribe,1);
+assert.equal(ownedView._softphoneScopeSubscriptions.size,0);
+
+// Permission preflight may take time: never answer the next caller by accident.
+const guarded = new Engine();
+const guardedOwner={{device_id:"desk-device",endpoint_id:"desk",softphone:true}};
+let guardedState={{endpoint_id:"desk",call_id:"incoming-A",state:"ringing"}};
+let guardedCommands=0;
+guarded._hass={{callWS:async()=>guardedState,callService:async()=>{{guardedCommands++;}}}};
+guarded.prepareAudioCall=async()=>{{guardedState={{endpoint_id:"desk",call_id:"incoming-B",state:"ringing"}};}};
+await assert.rejects(guarded.dashboardAnswer(guardedOwner,{{call_id:"incoming-A"}}),/no longer ringing/);
+assert.equal(guardedCommands,0);
+assert.equal(guarded.softphoneCallIdFor("desk"),"");
+assert.equal(guarded._dashboardOperations.size,0);
+assert.equal(guarded._mediaIntent,null);
+
+// A callee can answer before the originate service returns to the browser.
+const immediate = new Engine();
+const immediateOwner={{device_id:"fast-device",endpoint_id:"fast",softphone:true}};
+let immediateResumes=0;
+immediate._hass={{callWS:async()=>({{endpoint_id:"fast",device_id:"fast-device",state:"idle"}})}};
+immediate.prepareAudioCall=async()=>{{}};
+immediate.resumeSession=async()=>{{immediateResumes++;}};
+immediate.startHaSoftphone=async()=>{{
+  immediate.claimSoftphoneSession("fast-call","fast");
+  immediate._onSoftphoneState({{endpoint_id:"fast",device_id:"fast-device",state:"in_call",call_id:"fast-call"}});
+  return {{state:"calling",call_id:"fast-call"}};
+}};
+await immediate.dashboardStartCall(immediateOwner,{{extension:"101"}});
+assert.equal(immediateResumes,1,"A committed answer must attach media after the command gate releases");
+
+// ShadowNameVsExtension: named tiles always reach the central PBX resolver by name.
+// Exercise the real dashboard and originate methods, including their wire payload.
+const namedSessionBackup=new Map(session);
+for (const browser of [false,true]) {{
+  for (const [target,expected] of [
+    [{{name:" Shadow destination ",extension:"101",number:"202"}},"Shadow destination"],
+    [{{name:"Saved contact",number:"+12025550123"}},"Saved contact"],
+    [{{name:"101",extension:"202"}},"101"],
+    [{{name:"  ",extension:"101"}},"101"],
+    [{{extension:" ",number:"202"}},"202"],
+  ]) {{
+    session.clear();
+    const named=new Engine();const sent=[];
+    const who={{device_id:"named-device",endpoint_id:"named",softphone:browser}};
+    named._phoneStates.set("named",{{state:"idle",calls:[]}});
+    named.prepareAudioCall=async()=>{{}};
+    named._hass={{callWS:async request=>{{
+      if(request.type==="call_service")sent.push(request.service_data);
+      return {{endpoint_id:"named",device_id:"named-device",state:"idle"}};
+    }},callService:async(domain,service,data)=>{{sent.push(data);return {{}};}}}};
+    await named.dashboardStartCall(who,target);
+    assert.equal(sent.length,1);
+    assert.equal(sent[0].destination,expected,`ShadowNameVsExtension browser=${{browser}}`);
+    assert.equal(sent[0].device_id,"named-device");
+  }}
+}}
+session.clear();
+const manualDial=new Engine();let manualRequest;
+manualDial._hass={{callWS:async request=>{{manualRequest=request;return {{state:"idle",device_id:"manual-device",endpoint_id:"manual"}};}}}};
+await manualDial.startHaSoftphone({{name:"101",manual:true}},{{device_id:"manual-device",endpoint_id:"manual"}},{{callee:"101"}});
+assert.equal(manualRequest.service_data.destination,"101","Explicit keypad numbers retain their own meaning");
+session.clear();for(const [key,value] of namedSessionBackup)session.set(key,value);
+
+// A retained backend scope must also consume an answer after the last view
+// unmounts. Keeping browser presence alone does not attach the call's audio.
+const unmounted = new Engine();
+let unmountedResumes = 0;
+const releaseUnmounted = unmounted.subscribeSoftphoneState(() => {{}}, {{device_id:"unmounted-device"}});
+unmounted._lastSoftphoneStates.set("endpoint:unmounted-desk", {{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"calling",call_id:"unmounted-call",
+}});
+unmounted.claimSoftphoneSession("unmounted-call","unmounted-desk");
+unmounted.resumeSession = async (owner, deviceId, state) => {{
+  assert.equal(owner.endpoint_id,"unmounted-desk");
+  assert.equal(deviceId,"unmounted-device");
+  assert.equal(state.call_id,"unmounted-call");
+  unmountedResumes++;
+}};
+releaseUnmounted();
+assert.equal(unmounted._softphoneSubscribers.size,0);
+assert.equal(unmounted._softphoneScopeSubscriptions.size,1);
+unmounted._onSoftphoneState({{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"in_call",call_id:"unmounted-call",
+}}, {{device_id:"unmounted-device"}});
+await new Promise(resolve => setTimeout(resolve,0));
+assert.equal(unmountedResumes,1,"An answer after dashboard unmount must attach media exactly once");
+
+// A live phone card remains first to supply its microphone filtering choice.
+const preferred = new Engine();
+preferred.claimSoftphoneSession("preferred-call","preferred-desk");
+const preferredAttachments=[];
+preferred.resumeSession=async(owner)=>{{preferredAttachments.push(owner.microphone_anti_alias);}};
+const releasePreferred=preferred.subscribeSoftphoneState((snapshot)=>{{
+  void preferred.resumeSession({{microphone_anti_alias:false}},"preferred-device",snapshot);
+}},{{device_id:"preferred-device"}});
+storage.set("voip_microphone_anti_alias_preferred-device","false");
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false]);
+releasePreferred();
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false,false],"An unmounted phone keeps its saved filtering preference");
 """
     completed = subprocess.run(
         [
