@@ -249,8 +249,6 @@ async def _remove_mailbox(hass, endpoint_id):
 async def async_setup_mailboxes(hass, entry):
     """Observe persistent ownership and publish state without an idle polling task."""
     from homeassistant.core import callback
-    from homeassistant.helpers.device_registry import EVENT_DEVICE_REGISTRY_UPDATED
-    from .endpoint_lifecycle import create_runtime_task
     runtime = require_runtime_data(hass)
 
     @callback
@@ -262,16 +260,9 @@ async def async_setup_mailboxes(hass, entry):
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
 
-    @callback
-    def device_removed(event):
-        if event.data.get("action") != "remove":
-            return
-        endpoint = runtime.endpoints.by_device_id(event.data["device_id"])
-        if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
-            create_runtime_task(hass, async_remove_mailbox(hass, endpoint.endpoint_id))
-
     entry.async_on_unload(hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, changed))
-    entry.async_on_unload(hass.bus.async_listen(EVENT_DEVICE_REGISTRY_UPDATED, device_removed))
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
     await async_refresh_mailbox_state(hass)
 
 

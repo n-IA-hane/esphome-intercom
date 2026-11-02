@@ -154,6 +154,10 @@ def entry_route_mappings(
             for subentry in phone_subentries(entry)
             if subentry.subentry_id != exclude_subentry_id
         )
+        if data.get("managed_esphome_phones"):
+            from .managed_phones import managed_route_mappings
+
+            mappings.extend(managed_route_mappings(entry))
     runtime = getattr(entry, "runtime_data", None) if entry is not None else None
     endpoints = getattr(getattr(runtime, "endpoints", None), "endpoints", ())
     mappings.extend(

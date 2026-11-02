@@ -75,6 +75,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             EXTERNAL_CALL_BLOCKED_ENDPOINTS, CONF_ESPHOME_PHONE_POLICIES,
             "default_trunk_id",
             "esphome_mailboxes", "voicemail", "parking",
+            "managed_esphome_phones",
         }
     }
 

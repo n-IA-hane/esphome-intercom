@@ -860,6 +860,25 @@ class SipApplicationMethods:
             if self.tasks is not None:
                 self.tasks.discard(task)
 
+    async def async_revoke_account(self, username: str) -> None:
+        """Retire a removed principal through the existing subscription owners."""
+        tasks = []
+        for subscription in tuple(self.subscriptions.values()):
+            if subscription.subscriber.casefold() != username.casefold():
+                continue
+            self._end_subscription(subscription, notify=False)
+            if subscription.notify_task is not None:
+                subscription.notify_task.cancel()
+                tasks.append(subscription.notify_task)
+            if subscription.refer_notifier is not None:
+                await subscription.refer_notifier.close()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for key, publication in tuple(self.publications.items()):
+            if publication.target.casefold() == username.casefold():
+                self.publications.pop(key, None)
+                self._cancel_timer(self.publication_timers, key)
+
     async def stop(self) -> None:
         """Cancel application transactions and discard expiring state."""
         self.stopping = True

@@ -1403,7 +1403,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         name = str(device.get("name") or "").strip()
         if not device_id or not name:
             continue
-        endpoint_id = f"esphome:{device_id}"
+        endpoint_id = str(device.get("endpoint_id") or f"esphome:{device_id}")
         discovered_ids.add(endpoint_id)
         previous = registry.get(endpoint_id)
         capabilities = frozenset(
@@ -1416,14 +1416,16 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             name=name,
             kind=EndpointKind.ESPHOME,
             extension=str(device.get("extension") or ""),
-            username=str(device.get("sip_uri_user") or ""),
+            username=str(device.get("endpoint_username") or device.get("sip_uri_user") or ""),
             device_id=device_id,
             entity_ids=frozenset(
                 str(value)
                 for value in (device.get("entities") or {}).values()
                 if isinstance(value, str) and "." in value
             ),
-            availability=EndpointAvailability.AVAILABLE,
+            availability=(EndpointAvailability.AVAILABLE
+                          if not device.get("managed") or device.get("registered")
+                          else EndpointAvailability.OFFLINE),
             capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),
             conference_group=str(device.get("conference_group") or ""),

@@ -617,6 +617,11 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
                     "registered": True,
                 }
             )
+        if endpoint is not None:
+            # The Contact is the transport of the existing physical identity.
+            # It must not create a second phone alongside ESP discovery.
+            entries = [entry for entry in entries
+                       if entry.metadata.get("endpoint_id") != endpoint.endpoint_id]
         entries.append(replace(registered, metadata=metadata))
     assist = assist_config(hass)
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist.get(CONF_ASSIST_EXTENSION):

@@ -605,6 +605,10 @@ def validate_sip_account_namespace(
     from .contact_config import contact_dicts
 
     existing: list[Mapping[str, Any]] = contact_dicts(entry)
+    if entry.data.get("managed_esphome_phones"):
+        from .managed_phones import managed_route_mappings
+
+        existing.extend(managed_route_mappings(entry))
     from .parking_config import normalize_parking_config
     existing.append({"parking_feature_routes": normalize_parking_config(entry.data.get("parking", {}))})
     existing.append({"mailbox_feature_routes": True})
