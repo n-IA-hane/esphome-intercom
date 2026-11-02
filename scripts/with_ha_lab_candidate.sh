@@ -14,6 +14,10 @@ lab_service=${HA_LAB_SERVICE:-home-assistant-voip-lab.service}
 ha_url=${HA_LAB_URL:-http://127.0.0.1:18123}
 sip_ready_host=${HA_LAB_SIP_READY_HOST:-127.0.0.1}
 sip_ready_port=${HA_LAB_SIP_READY_PORT:-15060}
+service_control=(systemctl)
+if ((EUID != 0)); then
+  service_control=(sudo -n systemctl)
+fi
 
 if [[ ${1:-} != -- || $# -lt 2 ]]; then
   echo "usage: $0 -- command [args...] (HA_LAB_SERVICE selects the existing systemd unit)" >&2
@@ -76,7 +80,7 @@ wait_ready() {
 stop_lab() {
   local status=0 state
   service_stopped=0
-  systemctl stop -- "$lab_service" 9>&- || status=1
+  "${service_control[@]}" stop -- "$lab_service" 9>&- || status=1
   state=$(systemctl show --property=ActiveState --value -- "$lab_service") || return 1
   case "$state" in
     inactive|failed) service_stopped=1 ;;
@@ -103,7 +107,7 @@ restore_lab() {
   if ((service_touched && originals_ready && original_active)); then
     state=$(systemctl show --property=ActiveState --value -- "$lab_service") || cleanup_failed=1
     if [[ "$state" != active ]]; then
-      if systemctl start -- "$lab_service" 9>&-; then
+      if "${service_control[@]}" start -- "$lab_service" 9>&-; then
         wait_ready || cleanup_failed=1
       else
         cleanup_failed=1
@@ -143,7 +147,7 @@ files_changed=1
 mv -Tf -- "$work_dir/component.candidate" "$component_link"
 install -m 0644 "$candidate_package" "$package_file"
 candidate_started=1
-systemctl start -- "$lab_service" 9>&-
+"${service_control[@]}" start -- "$lab_service" 9>&-
 wait_ready
 
 "$@" 9>&- &

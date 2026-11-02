@@ -33,7 +33,13 @@ with open(os.environ["FAKE_TRACE"], "a") as out:
     out.write(json.dumps(event) + "\n")
 def save():
     state_path.write_text(json.dumps(state))
-if name == "systemctl":
+if name == "sudo":
+    assert sys.argv[1:] in (["-n", "systemctl", "start", "--", os.environ["FAKE_SERVICE"]],
+                           ["-n", "systemctl", "stop", "--", os.environ["FAKE_SERVICE"]]), sys.argv
+    tool = pathlib.Path(__file__).with_name("systemctl")
+    assert tool.is_symlink() and tool.resolve() == pathlib.Path(__file__).resolve()
+    os.execv(str(tool), [str(tool), *sys.argv[3:]])
+elif name == "systemctl":
     op = sys.argv[1]
     assert sys.argv[-1] == os.environ["FAKE_SERVICE"], sys.argv
     if op == "show":
@@ -125,7 +131,7 @@ def lab(tmp_path):
     tool = fake_bin / "fake-tool"
     tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
     tool.chmod(0o755)
-    for name in ("systemctl", "curl", "nc", "sleep", "install", "cp", "mv",
+    for name in ("systemctl", "sudo", "curl", "nc", "sleep", "install", "cp", "mv",
                  "tmux", "ps", "pgrep", "pkill", "killall"):
         (fake_bin / name).symlink_to(tool.name)
     command = tmp_path / "command.py"
