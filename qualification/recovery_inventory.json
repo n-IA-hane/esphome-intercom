@@ -112,7 +112,7 @@
       "depends_on": [
         0
       ],
-      "state": "pending"
+      "state": "passed"
     },
     {
       "id": 2,
@@ -548,8 +548,26 @@
           "sha": "b7713a3cf498e228d9495fe80601d76434d60363"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/availability-fresh.xml",
+          "sha256": "23df957107cbfce496b45269566fc13b1c335a63625de618852ba14f91021e27",
+          "layers": [
+            "software",
+            "wire"
+          ],
+          "tests_passed": 8
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F005",
@@ -595,8 +613,26 @@
           "sha": "e35df21e6856f9fe5e09a8c256b06894aa69fa3b"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/availability-fresh.xml",
+          "sha256": "23df957107cbfce496b45269566fc13b1c335a63625de618852ba14f91021e27",
+          "layers": [
+            "software",
+            "wire"
+          ],
+          "tests_passed": 8
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F006",
@@ -642,8 +678,25 @@
           "sha": "b8844027d69e0657883b2150b7a8d9a6eaf515e8"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/browser-closeout/frontend-candidate-manifest.json",
+          "sha256": "7e2897feca1f2235ca6523bb209d00fe2a6de41867cd51bc44aeda79ff44d710",
+          "layers": [
+            "software",
+            "browser"
+          ]
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F007",
@@ -681,8 +734,25 @@
           "sha": "b8844027d69e0657883b2150b7a8d9a6eaf515e8"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/browser-closeout/frontend-candidate-manifest.json",
+          "sha256": "7e2897feca1f2235ca6523bb209d00fe2a6de41867cd51bc44aeda79ff44d710",
+          "layers": [
+            "software",
+            "browser"
+          ]
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F008",
@@ -722,8 +792,25 @@
           "sha": "603b347cbec04d7e80003c58f89b424e3270e54d"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/browser-closeout/frontend-candidate-manifest.json",
+          "sha256": "7e2897feca1f2235ca6523bb209d00fe2a6de41867cd51bc44aeda79ff44d710",
+          "layers": [
+            "software",
+            "browser"
+          ]
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F009",
@@ -762,16 +849,35 @@
           "sha": "324d0193b2f762c7464cbd83f6ccc85e47f2521a"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "passed",
+      "evidence": [
+        {
+          "artifact": "stage-1b/browser-closeout/frontend-candidate-manifest.json",
+          "sha256": "7e2897feca1f2235ca6523bb209d00fe2a6de41867cd51bc44aeda79ff44d710",
+          "layers": [
+            "software",
+            "browser"
+          ]
+        },
+        {
+          "artifact": "stage-1b/live-final/receipt.json",
+          "sha256": "8c723c309d51a7c23ec2624d078d7ef71c03ef0d03200a9a3ad2c3c8050bca76",
+          "layers": [
+            "browser",
+            "wire"
+          ]
+        }
+      ]
     },
     {
       "id": "F010",
-      "stage": 1,
+      "stage": 11,
       "name": "compact_destination_availability",
       "behaviour": "Il selettore compatto nasconde gli endpoint offline/unavailable, conserva gli sconosciuti e non sceglie un destinatario sostitutivo.",
       "deps": [
-        "F004"
+        "F004",
+        "F056",
+        "F057"
       ],
       "acceptance": [
         "Prompt e Call disabilitato senza selezione; numero manuale resta utilizzabile; ritorno online ripristina il target."
@@ -8119,6 +8225,16 @@
         "F067"
       ],
       "ownership_state": "pending_acceptance"
+    }
+  ],
+  "schedule_revisions": [
+    {
+      "date": "2026-11-02",
+      "feature": "F010",
+      "from_stage": 1,
+      "to_stage": 11,
+      "reason": "The quarantine compact selector consumes the central passive phone monitor. Baseline list_devices is a one-time snapshot and cannot supply authoritative availability deltas. Recover with the existing monitor owner instead of adding a second state lifecycle.",
+      "required": true
     }
   ]
 }

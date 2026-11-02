@@ -4,6 +4,20 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
+## Development browser: media identity and view changes
+
+Finish active browser calls before installing this frontend update. Existing
+media identities migrate once to a new identity belonging to that browser
+window. Calls started with the previous identity cannot reclaim their media
+after that migration.
+
+After migration, a normal page reload recovers the same window's call. A new
+window or duplicated tab receives its own identity, even when the browser copies
+session storage. Switching dashboards or removing the call card keeps the
+page-owned call running, including when the remote phone answers afterward.
+An enabled browser phone also remains logically available without an open card;
+its ringing, automation and no-answer rules continue to apply.
+
 > **ESP firmware migration: start from the current YAML for your exact board.**
 > Device packages, feature composition and display/runtime bindings have changed
 > substantially. Bring your device settings into the new profile instead of

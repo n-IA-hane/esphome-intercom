@@ -182,6 +182,7 @@ PY
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
       tests/test_browser_audio_startup.py
+      tests/test_browser_call_lifecycle.py
       tests/test_frontend_media_devices_runtime.py
       -q --tb=short -m browser_real
     )

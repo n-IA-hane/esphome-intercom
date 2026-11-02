@@ -431,7 +431,8 @@ const signedPaths = [];
 const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
-session.set("voip_stack_media_client_id", "copied-session-token-1234");
+context.performance = {{ getEntriesByType: () => [{{type:"reload"}}] }};
+session.set("voip_stack_media_client_id", "media2-copied-session-token-1234");
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
@@ -442,7 +443,7 @@ signedB.configure(signingHass);
 await signedB._wsUrl("device", "signed-call", "phone");
 assert.ok(signedA._mediaClientId.length >= 16);
 assert.equal(signedA._mediaClientId, signedB._mediaClientId);
-assert.equal(signedA._mediaClientId, "copied-session-token-1234");
+assert.equal(signedA._mediaClientId, "media2-copied-session-token-1234");
 assert.equal(
   new URL(`https://ha.example${{signedPaths[0]}}`).searchParams.get("client_id"),
   signedA._mediaClientId,

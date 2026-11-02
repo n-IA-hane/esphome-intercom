@@ -2886,10 +2886,7 @@ class VoipStackCard extends HTMLElement {
       }
     }
     this._activeDeviceInfo = null;
-    if (wasSoftphone) {
-      this._softphoneSnapshot = null;
-      this._activeSessionDeviceId = null;
-    }
+    // Media cleanup does not own the backend phone projection or selection.
   }
 
   async _tryAutoAnswer(options = {}) {
@@ -3681,6 +3678,9 @@ class VoipStackCard extends HTMLElement {
       const snapshot = result || { state: "idle" };
       if (!this._softphoneSnapshotMatches(snapshot)) return;
       if (!this._applySoftphoneSnapshot(snapshot)) return;
+      // The query can finish before the subscription's first event. The page
+      // owner needs the same resolved identity while setup outlives this view.
+      voipStackEngine.rememberSoftphoneState(this._softphoneSnapshot);
       // The WebSocket subscription can publish its initial state before HA
       // recreates this card. A direct state load must therefore drive the same
       // media attachment path, especially after an in-call page reload.
