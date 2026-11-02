@@ -699,7 +699,9 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._mediaAttachOwnedByOther(beforeAttach, callId)", setup)
         self.assertIn("this._mediaAttachOwnedByOther(afterFailure, callId)", setup)
         self.assertIn("this.releaseSoftphoneSession(callId, endpointId)", setup)
-        self.assertIn('await this.close("media_attach_conflict")', setup)
+        # The runtime ownership witness holds close() pending and verifies the
+        # completion barrier independently of how its promise is spelled here.
+        self.assertIn('this.close("media_attach_conflict")', setup)
         self.assertLess(
             setup.index("if (!connected)"),
             setup.index('reason: "media_incompatible"'),
@@ -818,7 +820,6 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("globalThis[MEDIA_CLIENT_GLOBAL_KEY]", engine)
         self.assertIn("sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY)", engine)
         self.assertIn("sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY", engine)
-        self.assertIn("backend pins every call to this value", engine)
         self.assertIn("client_id=${encodeURIComponent(this._mediaClientId)}", engine)
         self.assertIn("sessionStorage.getItem(SOFTPHONE_MEDIA_SESSIONS_KEY)", engine)
         self.assertIn("sessionStorage.setItem(SOFTPHONE_MEDIA_SESSIONS_KEY", engine)

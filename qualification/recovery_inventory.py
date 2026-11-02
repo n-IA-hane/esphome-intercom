@@ -122,4 +122,8 @@ def validate_inventory(inventory: dict, *, changes: set[tuple[str, str]] | None 
         errors.extend(f"recorded path is outside the product delta: {repo}/{path}" for repo, path in sorted(recorded - changes))
     if inventory.get("user_decisions", {}).get("esp_imap_client") is not False:
         errors.append("the removed ESP IMAP client was explicitly excluded")
+    if inventory.get("user_decisions", {}).get("ha_imap_server") is not False:
+        errors.append("the HA IMAP server was explicitly excluded")
+    if any(by_id.get(identity, {}).get("state") != "excluded" for identity in ("F043", "F044", "F045")):
+        errors.append("IMAP recovery obligations must remain excluded by user decision")
     return errors

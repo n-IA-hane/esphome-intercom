@@ -54,7 +54,7 @@ def test_feature_provenance_cannot_be_erased(inventory, field):
     assert any("feature lacks source provenance" in error for error in validate_inventory(inventory))
 
 
-@pytest.mark.parametrize("mutation", ["moving_source", "unreviewed_owner", "false_pass", "lost_negative_case", "esp_imap"])
+@pytest.mark.parametrize("mutation", ["moving_source", "unreviewed_owner", "false_pass", "lost_negative_case", "esp_imap", "ha_imap", "imap_scope"])
 def test_incomplete_recovery_contract_fails(inventory, mutation):
     candidate = deepcopy(inventory)
     if mutation == "moving_source":
@@ -65,6 +65,10 @@ def test_incomplete_recovery_contract_fails(inventory, mutation):
         candidate["features"][0]["state"] = "passed"
     elif mutation == "lost_negative_case":
         candidate["features"][0]["negative_acceptance"] = []
-    else:
+    elif mutation == "esp_imap":
         candidate["user_decisions"]["esp_imap_client"] = True
+    elif mutation == "ha_imap":
+        candidate["user_decisions"]["ha_imap_server"] = True
+    else:
+        next(feature for feature in candidate["features"] if feature["id"] == "F043")["state"] = "pending"
     assert validate_inventory(candidate)

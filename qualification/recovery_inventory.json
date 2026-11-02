@@ -13,7 +13,7 @@
   "user_decisions": {
     "preserve_full_features": true,
     "esp_imap_client": false,
-    "ha_imap_server": true,
+    "ha_imap_server": false,
     "keep_household_ha_service": true,
     "publication_authorized": false
   },
@@ -179,8 +179,8 @@
     },
     {
       "id": 9,
-      "name": "IMAP server Home Assistant",
-      "scope": "Archivio canonico per client esterni, client ESP escluso.",
+      "name": "Configurazione servizi LDAP",
+      "scope": "Listener, TLS e Repair LDAP; server e client IMAP esclusi.",
       "depends_on": [
         8
       ],
@@ -312,10 +312,18 @@
       "id": "EX001",
       "feature": "esp_imap_client",
       "state": "excluded_by_user",
-      "reason": "Decisione esplicita dell'utente: non reintrodurre client IMAP, catalogo messaggi o player mailbox ESP. Il server IMAP HA per client esterni resta incluso.",
+      "reason": "Non reintrodurre client IMAP, catalogo messaggi o player mailbox ESP. Accesso voicemail e MWI restano sul percorso SIP.",
       "replacement_feature_ids": [
         "F025",
-        "F026",
+        "F026"
+      ]
+    },
+    {
+      "id": "EX002",
+      "feature": "ha_imap_server",
+      "state": "excluded_by_user",
+      "reason": "Utente ha chiarito il 2026-11-02 che IMAP va lasciato fuori anche lato HA. Candidato esplorativo separato fermato, non integrato.",
+      "excluded_feature_ids": [
         "F043",
         "F044",
         "F045"
@@ -2568,8 +2576,9 @@
           "sha": "52724f1466fb27359671e3a2f9b1202ea46cd415"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "excluded",
+      "evidence": [],
+      "exclusion_reason": "IMAP HA ed ESP esclusi esplicitamente dall utente il 2026-11-02."
     },
     {
       "id": "F044",
@@ -2615,8 +2624,9 @@
           "sha": "52724f1466fb27359671e3a2f9b1202ea46cd415"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "excluded",
+      "evidence": [],
+      "exclusion_reason": "IMAP HA ed ESP esclusi esplicitamente dall utente il 2026-11-02."
     },
     {
       "id": "F045",
@@ -2659,20 +2669,20 @@
           "sha": "52724f1466fb27359671e3a2f9b1202ea46cd415"
         }
       ],
-      "state": "pending",
-      "evidence": []
+      "state": "excluded",
+      "evidence": [],
+      "exclusion_reason": "IMAP HA ed ESP esclusi esplicitamente dall utente il 2026-11-02."
     },
     {
       "id": "F046",
       "stage": 9,
-      "name": "phone_services_setup_tls_and_repairs",
-      "behaviour": "Reconfigure HA gestisce host/porte/baseDN/anonimato/TLS e dipendenze manifest; errori listener generano Repair senza fermare SIP.",
+      "name": "ldap_setup_tls_and_repairs",
+      "behaviour": "Reconfigure HA gestisce host/porta/baseDN/anonimato/TLS LDAP e dipendenze manifest; errori listener generano Repair senza fermare SIP.",
       "deps": [
-        "F040",
-        "F043"
+        "F040"
       ],
       "acceptance": [
-        "Porte distinte, coppia certificato/chiave, errori tradotti e shutdown protocolli prima dell'archivio funzionano su HA supportato."
+        "Porta LDAP distinta da SIP, coppia certificato/chiave, errori tradotti e shutdown prima degli owner condivisi funzionano su HA supportato."
       ],
       "negative_acceptance": [
         "Bind occupato, certificato invalido e reload non abbattono il motore chiamate e non espongono segreti."

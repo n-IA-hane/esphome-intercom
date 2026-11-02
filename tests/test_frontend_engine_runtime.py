@@ -635,20 +635,29 @@ const services = [];
 const ownershipErrors = [];
 ownership._hass = {{ callService: async (...args) => services.push(args) }};
 ownership._connect = async () => {{ throw new Error("HTTP 409 owner conflict"); }};
-ownership.close = async () => {{}};
+let releaseOwnershipClose, enteredOwnershipClose;
+const ownershipCloseEntered = new Promise(resolve => {{ enteredOwnershipClose = resolve; }});
+ownership.close = () => {{
+  enteredOwnershipClose();
+  return new Promise(resolve => {{ releaseOwnershipClose = resolve; }});
+}};
 ownership._setState = () => {{}};
 ownership.addEventListener("error", (event) => ownershipErrors.push(event.detail));
 ownership.claimSoftphoneSession("call-A", "default");
-assert.equal(
-      await ownership._setupAudioOrAbort(
+let ownershipSetupFinished = false;
+const ownershipSetup = ownership._setupAudioOrAbort(
         "phone-device",
         {{ device_id: "phone-device" }},
         {{ call_id: "call-A" }},
         "",
         "default",
-  ),
-  false,
-);
+  ).then(result => {{ ownershipSetupFinished = true; return result; }});
+await ownershipCloseEntered;
+await Promise.resolve();
+assert.equal(ownershipSetupFinished, false, "Setup must await its media cleanup barrier");
+releaseOwnershipClose();
+assert.equal(await ownershipSetup, false);
+ownership.close = async () => {{}};
 assert.deepEqual(services, []);
 assert.equal(ownership.ownsSoftphoneSession("call-A", "default"), false);
 assert.equal(ownership._state, "IDLE");
