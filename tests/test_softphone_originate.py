@@ -143,6 +143,8 @@ def softphone_originate(monkeypatch):
         },
         "endpoint_routing": {
             "ha_router_decision": Mock(),
+            "peer_video_codec": lambda _peer, entry: getattr(entry, "metadata", {}).get("sip_video_codec")
+                or ("" if getattr(entry, "metadata", {}).get("capabilities") else None),
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
             "sip_target_audio_profile": Mock(return_value=([], [])),
@@ -420,7 +422,8 @@ def test_outgoing_peer_video_offer_respects_camera_and_capabilities(
         availability=_Availability.AVAILABLE,
         supports=lambda capability: source_video if capability == 'video' else True,
     )
-    metadata = {'sip_profile': profile, 'sip_video_codec': video_codec, 'registered': True}
+    metadata = {'sip_profile': profile, 'sip_video_codec': video_codec if peer_video else '',
+                'registered': True, 'capabilities': ['audio', 'dtmf'] + (['video'] if peer_video else [])}
     if kind:
         metadata['endpoint_kind'] = kind
         metadata['endpoint_id'] = 'destination'

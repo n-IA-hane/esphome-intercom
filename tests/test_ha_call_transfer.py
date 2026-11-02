@@ -225,3 +225,25 @@ def test_attended_transfer_addresses_the_known_gruu_instance():
     target = call_transfer._attended_target(consultation)
     assert target.uri == "sip:desk@pbx.example;gr=instance-a"
     assert target.replaces.call_id == "consult"
+
+
+@pytest.mark.parametrize("kind", ["esphome", "sip_account", "browser"])
+def test_named_phone_transfer_retains_local_dialplan_over_current_contact(kind):
+    import json
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    phones = EndpointRegistry()
+    phones.register(PhoneEndpoint(endpoint_id="logical-desk", device_id="managed-desk",
+        name="Logical desk", username="physical-user", extension="223", kind=EndpointKind(kind)))
+    runtime = SimpleNamespace(endpoints=phones,
+        sip=SimpleNamespace(component=lambda _: None),
+        transport_config={"advertise_host": "127.0.0.1", "sip_port": 5090},
+        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+            {"id": "physical-user", "name": "Logical desk", "extension": "223",
+             "sip_uri": "sip:physical-user@127.0.0.2:5080;transport=tcp",
+             "metadata": {"endpoint_id": "logical-desk", "endpoint_kind": kind, "registered": True}},
+        ])}))
+    target = call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070", "Logical desk")
+    assert target.uri == "sip:223@127.0.0.1:5090"
+    assert call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070",
+        "sip:explicit-contact@127.0.0.2:5080;transport=tcp").uri == "sip:explicit-contact@127.0.0.2:5080;transport=tcp"

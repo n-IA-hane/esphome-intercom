@@ -74,6 +74,12 @@ def _blind_target(
             raise sip.SipError("transfer destination is disabled")
         target = entry.extension or entry.id
         return _local_transfer_target(runtime, target, entries)
+    endpoint = runtime.endpoints.resolve(raw)
+    if endpoint is not None:
+        # A logical phone belongs to this PBX's dial plan. Its current
+        # transport address does not carry routing policy, registration flow
+        # ownership or the media negotiation performed by the PBX.
+        return _local_transfer_target(runtime, _endpoint_user(endpoint, raw), entries)
     if entry is not None and entry.address:
         route = resolve_ha_router(raw, entries)
         if route.action is RouteAction.REJECT:
@@ -82,9 +88,6 @@ def _blind_target(
             return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(route.sip_uri)))
     if entry is not None and entry.sip_uri:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(entry.sip_uri)))
-    endpoint = runtime.endpoints.resolve(raw)
-    if endpoint is not None and (endpoint.kind.is_softphone or endpoint.kind == "sip_account"):
-        return _local_transfer_target(runtime, _endpoint_user(endpoint, raw), entries)
     if not remote_uri:
         raise sip.SipError("call dialog is unavailable")
     remote = sip.parse_sip_uri(remote_uri)

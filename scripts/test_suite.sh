@@ -108,6 +108,12 @@ ha_tests=(
   tests/test_media_call_lifetime_ha.py
   tests/test_pbx_defaults_ha.py
   tests/test_parking_lot_ha.py
+  tests/test_source_video_updates_ha.py
+  tests/test_atomic_bridge_media_ha.py
+  tests/test_parking_video_lifecycle_ha.py
+  tests/test_parking_video_transcode_ha.py
+  tests/test_video_originate_unknown_ha.py
+  tests/test_logical_transfer_wire_ha.py
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
   tests/test_sip_phone_policy_ha.py

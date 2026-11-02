@@ -25,7 +25,8 @@ CAPS = (b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Standard PCM peer\r\n"
 pytestmark = pytest.mark.ha
 
 
-async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(lab, monkeypatch, tmp_path):
+@pytest.mark.parametrize("initial_video_capable", [False, True])
+async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(lab, monkeypatch, tmp_path, initial_video_capable):
     """Wire and ownership proof; no browser or synthetic RTP counter is used."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
@@ -154,6 +155,10 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
         lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(directory)})
         call_ids = []
         for cycle in range(2):
+            # Exercise both actual initial contracts: an audio-only browser
+            # later enables video, or a video-capable browser negotiates recvonly.
+            lab.runtime.endpoints.update(source.endpoint_id, capabilities=frozenset(
+                {"audio", "dtmf", "video"} if initial_video_capable else {"audio", "dtmf"}))
             await action("call", destination=receiver.name, send_video=False)
             initial_ack = await asyncio.wait_for(acks.get(), 2)
             call_id = initial_ack.header("Call-ID")
@@ -166,7 +171,12 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
             audio_formats = (client.dialog.send_format, client.dialog.recv_format)
             if cycle == 0:
                 audio_fd = client.audio_rtp_socket.fileno()
-                assert client.media_reservation is None
+                initial_reservation = client.media_reservation
+                if initial_video_capable:
+                    assert initial_reservation is not None and initial_reservation.ports[0] == audio_port
+                else:
+                    assert initial_reservation is None
+                lab.runtime.endpoints.update(source.endpoint_id, capabilities=frozenset({"audio", "dtmf", "video"}))
                 def queue_audio(marker):
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
                         with pytest.raises(OSError) as error:
@@ -189,6 +199,7 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
                     # The first independent ACK was received before this public action.
                     marker = b"queued-before-video-toggle:" + str(enabled).encode()
                     queue_audio(marker)
+                    previous_reservation = client.media_reservation
                     await action("set_send_video", send_video=enabled)
                     retained_audio(marker)
                     ack = await asyncio.wait_for(acks.get(), 2)
@@ -197,6 +208,9 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
                     assert client.local_rtp_port == audio_port
                     assert (client.dialog.send_format, client.dialog.recv_format) == audio_formats
                     assert client.media_reservation.ports[0] == audio_port
+                    if previous_reservation is not None and client.media_reservation is not previous_reservation:
+                        assert previous_reservation.released
+                        assert not (set(previous_reservation.ports) - set(client.media_reservation.ports)) & lab.runtime.rtp_port_pool["used"]
                     assert set(lab.runtime.rtp_port_pool["used"]) == set(client.media_reservation.ports)
             await action("hangup", call_id=call_id)
             assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
