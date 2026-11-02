@@ -38,7 +38,7 @@ from .endpoint_entity_manager import (
 )
 from .peer_snapshot import async_build_peer_snapshot
 from .peer import Peer
-from .runtime_data import require_runtime_data
+from .runtime_data import require_runtime_data, runtime_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -410,14 +410,21 @@ class VoipPhonebookSensor(SensorEntity):
             push_roster_json_to_esps,
             registered_roster_entries,
         )
-        from .endpoint_routing import roster_from_peers
+        from .directory_runtime import async_refresh_directory
         from .roster import dump_roster_json
 
-        peers = self._stable_phonebook_peers(await async_build_peer_snapshot(self.hass))
+        runtime = require_runtime_data(self.hass)
+        live_peers = await async_build_peer_snapshot(self.hass)
+        if runtime_data(self.hass) is not runtime or (
+                runtime.phonebook_sensor is not None and runtime.phonebook_sensor is not self):
+            return
+        peers = self._stable_phonebook_peers(live_peers)
         entries = [format_entry_unified(p) for p in peers]
-        roster_entries = roster_from_peers(
-            self.hass, peers, registered_roster_entries(self.hass)
+        roster_entries = await async_refresh_directory(
+            self.hass, peers=peers, registered=registered_roster_entries(self.hass)
         )
+        if roster_entries is None or runtime_data(self.hass) is not runtime:
+            return
         from .repairs import async_sync_extension_issues
         async_sync_extension_issues(self.hass, roster_entries)
         self._report_name_conflicts(roster_entries)
