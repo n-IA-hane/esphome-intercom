@@ -15,6 +15,8 @@ import struct
 import time
 from weakref import WeakKeyDictionary
 
+from .core.sip_stun import is_stun_message
+
 # Wireshark wsutil/exported_pdu_tlvs.h; LINKTYPE_WIRESHARK_UPPER_PDU = 252.
 _PCAP_HEADER = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 262144, 252)
 _AUTH = re.compile(
@@ -93,16 +95,19 @@ class SipCapture:
         if len(data) > 131072:
             self.dropped += 1
             return
+        stun = not tcp and is_stun_message(data)
         source, destination = (local, remote) if outgoing else (remote, local)
         metadata = (
-            _tlv(12, b"sip\0")
+            _tlv(12, b"stun-udp\0" if stun else b"sip\0")
             + _address(source, source=True)
             + _address(destination, source=False)
             + _tlv(24, struct.pack("!I", 2 if tcp else 3))
             + _tlv(0, b"")
         )
-        head, separator, body = data.partition(b"\r\n\r\n")
-        payload = metadata + _AUTH.sub(rb"\1: [redacted]", head) + separator + body
+        if not stun:
+            head, separator, body = data.partition(b"\r\n\r\n")
+            data = _AUTH.sub(rb"\1: [redacted]", head) + separator + body
+        payload = metadata + data
         if (
             len(self.buffer) + 16 + len(payload) > self.max_bytes
             or self.messages >= 20000

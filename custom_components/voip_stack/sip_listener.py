@@ -21,6 +21,7 @@ from .core import sdp, sip, sip_transfer
 from .core.codec_policy import CodecPolicy
 from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
 from .core.sip_transport import SipResponseMailbox, bind_flow_usage
+from .core.sip_stun import binding_keepalive_response
 from .core.sip_dialog import (
     PreparedDialogIdentity,
     SubscriptionDialog,
@@ -676,6 +677,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     def submit_datagram(self, data: bytes, addr) -> bool:
         """Schedule one message while preserving capacity for dialog control."""
 
+        if self.signaling_transport == "UDP" and data[:1] in (b"\0", b"\1"):
+            # RFC 5626 section 8 multiplexes keep-alives on this exact socket,
+            # before SIP parsing, without consuming a dialog/task/registration.
+            response = binding_keepalive_response(data, addr)
+            if response is None or self.transport is None:
+                self.dropped_datagrams += 1
+                return False
+            send_sip_datagram(self.transport, response, addr)
+            return True
         try:
             message = sip.parse_message(data)
         except (ValueError, sip.SipError):

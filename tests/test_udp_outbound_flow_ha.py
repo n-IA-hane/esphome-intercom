@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 import errno
 import socket
+import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -570,3 +571,184 @@ async def test_original_no_options_tcp_exchange_never_connects_to_contact_b(orig
             writer.close()
         if tasks:
             await asyncio.wait_for(asyncio.gather(*tuple(tasks)), 3)
+
+
+# Independently encode/decode STUN here, without using the production builder.
+# RFC 5769 section 2.1 verifies the CRC before it is used on our wire requests.
+_STUN_COOKIE = bytes.fromhex("2112a442")
+_STUN_TRANSACTION = bytes.fromhex("0102030405060708090a0b0c")
+
+
+def _stun_crc(raw):
+    crc = 0xFFFFFFFF
+    for byte in raw:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0xEDB88320 if crc & 1 else 0)
+    return (crc ^ 0xFFFFFFFF) ^ 0x5354554E
+
+
+def _stun_attribute(kind, value):
+    return struct.pack("!HH", kind, len(value)) + value + b"\0" * (-len(value) % 4)
+
+
+def _stun_request(*, attributes=b"", fingerprint=True, kind=1):
+    raw = struct.pack("!HH", kind, len(attributes) + (8 if fingerprint else 0)) + _STUN_COOKIE + _STUN_TRANSACTION + attributes
+    return raw + _stun_attribute(0x8028, struct.pack("!I", _stun_crc(raw))) if fingerprint else raw
+
+
+def _stun_response(raw):
+    kind, size = struct.unpack("!HH", raw[:4])
+    assert size + 20 == len(raw) and raw[4:8] == _STUN_COOKIE
+    assert raw[8:20] == _STUN_TRANSACTION
+    attrs, offset = {}, 20
+    while offset < len(raw):
+        attr, length = struct.unpack("!HH", raw[offset:offset+4])
+        attrs[attr] = raw[offset+4:offset+4+length]
+        if attr == 0x8028:
+            assert length == 4 and offset + 8 == len(raw)
+            assert struct.unpack("!I", attrs[attr])[0] == _stun_crc(raw[:offset])
+        offset += 4 + ((length + 3) & ~3)
+    assert offset == len(raw) and 0x8028 in attrs
+    return kind, attrs
+
+
+async def test_authenticated_udp_outbound_stun_uses_same_socket_without_mutating_sip(wire_lab, monkeypatch):
+    wire = wire_lab
+    replies = asyncio.Queue()
+    register_responses = []
+    original = wire.a.datagram_received
+
+    def receive(raw, address):
+        if raw[:1] in (b"\0", b"\1"):
+            replies.put_nowait((raw, address))
+        else:
+            message = sip.parse_message(raw)
+            if message.status_code == 200 and message.header("CSeq").endswith("REGISTER"):
+                register_responses.append(message)
+            original(raw, address)
+
+    monkeypatch.setattr(wire.a, "datagram_received", receive)
+    binding = await register_phone(wire)
+    assert register_responses[-1].header("Require") == "outbound"
+    assert register_responses[-1].header("Flow-Timer") == "25"
+    before = wire.registrar.registered_contacts("outbound-phone")
+    binding_before = replace(binding)
+    endpoint = wire.manager.udp_server.endpoint
+    dropped_before = endpoint.dropped_datagrams
+    pending_before = set(endpoint._request_tasks)
+    # Same real peer socket and listener: no replacement STUN listener exists.
+    for attrs, fingerprint in ((b"", True), (b"", False),
+                              (_stun_attribute(0x8022, b"baresip/re 4.6") + _stun_attribute(0x9999, b"x"), True)):
+        wire.a.transport.sendto(_stun_request(attributes=attrs, fingerprint=fingerprint), wire.listener)
+        raw, source = await asyncio.wait_for(replies.get(), 1)
+        kind, values = _stun_response(raw)
+        assert kind == 0x0101 and source == wire.listener
+        mapped = values[0x0020]
+        assert mapped[:2] == b"\0\1" and len(mapped) == 8
+        port = int.from_bytes(mapped[2:4], "big") ^ 0x2112
+        host = ".".join(str(a ^ b) for a, b in zip(mapped[4:], _STUN_COOKIE))
+        assert (host, port) == wire.a.address
+    assert wire.registrar.registered_contacts("outbound-phone") == before
+    assert binding == binding_before
+    assert wire.registrar.registered_contacts("outbound-phone")[0] is binding
+    assert endpoint.dropped_datagrams == dropped_before
+    assert set(endpoint._request_tasks) == pending_before
+    assert not endpoint._dialog_queues and not wire.lab.calls.sessions
+    assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+    # Ordinary SIP remains parseable/routable after binary keep-alives.
+    uri = f"sip:127.0.0.1:{wire.listener[1]}"
+    headers = [("Via", f"SIP/2.0/UDP {wire.a.address[0]}:{wire.a.address[1]};branch=z9hG4bK-stun-options;rport"),
+               ("From", "<sip:outbound-phone@127.0.0.1>;tag=control"),
+               ("To", "<sip:outbound-phone@127.0.0.1>"),
+               ("Call-ID", "after-stun"), ("CSeq", "1 OPTIONS")]
+    wire.a.transport.sendto(sip.build_request("OPTIONS", uri, headers), wire.listener)
+    answer, source = await wire.a.receive(status=200)
+    assert answer.header("CSeq") == "1 OPTIONS" and source == wire.listener
+    assert wire.registrar.registered_contacts("outbound-phone") == before
+    assert binding == binding_before
+
+
+async def test_udp_stun_unknown_required_attribute_gets_420_on_observed_flow(wire_lab, monkeypatch):
+    wire = wire_lab
+    replies = asyncio.Queue()
+    original = wire.a.datagram_received
+
+    def receive(raw, address):
+        if raw[:1] in (b"\0", b"\1"):
+            replies.put_nowait((raw, address))
+        else:
+            original(raw, address)
+
+    monkeypatch.setattr(wire.a, "datagram_received", receive)
+    # RFC 5626 section 8 does not require REGISTER or STUN credentials first.
+    attrs = _stun_attribute(0x7777, b"a") + _stun_attribute(0x7776, b"") + _stun_attribute(0x7777, b"")
+    wire.a.transport.sendto(_stun_request(attributes=attrs), wire.listener)
+    raw, source = await asyncio.wait_for(replies.get(), 1)
+    kind, values = _stun_response(raw)
+    assert kind == 0x0111 and source == wire.listener
+    assert values[0x0009] == b"\0\0\x04\x14Unknown Attribute"
+    assert values[0x000A] == bytes.fromhex("77767777")
+    assert 0x0020 not in values and not wire.registrar.registered_contacts("outbound-phone")
+
+
+@pytest.mark.parametrize("invalid", ["fingerprint", "truncated", "short-header", "trailing", "cookie", "unaligned",
+                                     "attribute-overrun", "fingerprint-size", "fingerprint-not-last",
+                                     "indication", "success", "error", "other-method", "mi-empty", "mi-short", "mi-long"])
+async def test_udp_stun_invalid_or_non_request_packets_receive_no_response(wire_lab, monkeypatch, invalid):
+    wire = wire_lab
+    replies = asyncio.Queue()
+    original = wire.a.datagram_received
+
+    def receive(raw, address):
+        if raw[:1] in (b"\0", b"\1"):
+            replies.put_nowait((raw, address))
+        else:
+            original(raw, address)
+
+    monkeypatch.setattr(wire.a, "datagram_received", receive)
+    valid = _stun_request()
+    packets = {
+        "fingerprint": valid[:-1] + bytes((valid[-1] ^ 1,)),
+        "truncated": valid[:-1], "trailing": valid + b"\0",
+        "short-header": valid[:19],
+        "cookie": valid[:4] + b"\0" * 4 + valid[8:],
+        "unaligned": valid[:2] + b"\0\x07" + valid[4:-1],
+        "attribute-overrun": _stun_request(attributes=bytes.fromhex("80220010"), fingerprint=False),
+        "fingerprint-size": _stun_request(attributes=_stun_attribute(0x8028, b""), fingerprint=False),
+        "fingerprint-not-last": _stun_request(attributes=_stun_attribute(0x8028, b"\0" * 4) + _stun_attribute(0x8022, b"x")),
+        "indication": _stun_request(kind=0x0011), "success": _stun_request(kind=0x0101),
+        "error": _stun_request(kind=0x0111), "other-method": _stun_request(kind=0x0002),
+        **{f"mi-{name}": _stun_request(attributes=_stun_attribute(0x0008, b"x" * size) + _stun_attribute(0x7777, b""))
+           for name, size in (("empty", 0), ("short", 19), ("long", 21))},
+    }
+    endpoint = wire.manager.udp_server.endpoint
+    before = endpoint.dropped_datagrams
+    wire.a.transport.sendto(packets[invalid], wire.listener)
+    async with asyncio.timeout(1):
+        while endpoint.dropped_datagrams == before:
+            await asyncio.sleep(0)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(replies.get(), .03)
+    assert endpoint.dropped_datagrams == before + 1
+    assert not endpoint._request_tasks and not endpoint._dialog_queues
+    assert not wire.registrar.registered_contacts("outbound-phone")
+
+
+def test_stun_crc_known_vector_ipv6_and_payload_address_cannot_override_source(trunks):
+    from custom_components.voip_stack.core.sip_stun import binding_keepalive_response
+
+    vector = bytes.fromhex("000100582112a442b7e7a701bc34d686fa87dfae802200105354554e207465737420636c69656e74002400046e0001ff80290008932ff9b151263b36000600096576746a3a68367659202020000800149aeaa70cbfd8cb56781ef2b5b2d3f249c1b571a280280004e57a3bcf")
+    assert _stun_crc(vector[:-8]) == int.from_bytes(vector[-4:], "big")
+    # A caller-supplied address attribute is unexpected and cannot redirect us.
+    spoof = _stun_attribute(0x0001, bytes.fromhex("0001270fc0000201"))
+    raw = binding_keepalive_response(_stun_request(attributes=spoof), ("2001:db8::9", 5069, 0, 0))
+    kind, values = _stun_response(raw)
+    assert kind == 0x0101 and values[0x0020][:2] == b"\0\2"
+    assert int.from_bytes(values[0x0020][2:4], "big") ^ 0x2112 == 5069
+    mask = _STUN_COOKIE + _STUN_TRANSACTION
+    host = bytes(a ^ b for a, b in zip(values[0x0020][4:], mask))
+    assert host.hex() == "20010db8000000000000000000000009"
+    # RFC 5389 section 15.4: ignore everything after MI except FINGERPRINT.
+    attrs = _stun_attribute(0x0008, b"x" * 20) + _stun_attribute(0x7777, b"ignored")
+    assert _stun_response(binding_keepalive_response(_stun_request(attributes=attrs), ("127.0.0.1", 9)))[0] == 0x0101
