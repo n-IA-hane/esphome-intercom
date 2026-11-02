@@ -163,6 +163,7 @@ ha_tests=(
   tests/test_trunk_inbound_router_behavior.py
   tests/test_softphone_video_intent.py
   tests/test_video_keepalive_runtime.py
+  tests/test_video_socket_gap.py
   tests/test_video_transcoder.py
   tests/test_sip_video_relay.py
   tests/test_accept_video_service_ha.py
@@ -213,6 +214,7 @@ PY
     pytest_args=(
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
+      tests/test_video_decoder_recovery_browser.py
       tests/test_browser_audio_startup.py
       tests/test_browser_call_lifecycle.py
       tests/test_frontend_media_devices_runtime.py

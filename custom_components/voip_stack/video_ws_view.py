@@ -512,7 +512,24 @@ class VoipVideoWebSocketView(HomeAssistantView):
                     )
                 else:
                     assert session is not None
+                    call = prepared.registry.get_session(session.call_id)
+                    generation = call.generation if call is not None else None
                     await ws.prepare(request)
+                    if (call is None or not call.live
+                            or call_projection(hass) is not prepared.registry
+                            or prepared.registry.get_session(session.call_id) is not call
+                            or call.generation != generation
+                            or media_owner.owners.get(media_owner.owner_key) is not claimed.owner
+                            or claimed.owner.handoff_requested.is_set()
+                            or media_owner.media.shutdown.is_set()):
+                        await ws.close(code=1008, message=b"video call changed before attachment")
+                        return ws
+                    try:
+                        _, session = prepared.resolve_current()
+                    except web.HTTPException:
+                        await ws.close(code=1008, message=b"video media changed before attachment")
+                        return ws
+                    assert session is not None
                     _detach_video_socket(hass, session)
                     await _run_video_session(
                         hass,
@@ -642,26 +659,43 @@ def _active_video_session(
 
 
 def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> None:
-    """Transfer pre-bound RTP/RTCP sockets from call to media lifetime."""
+    """Lend bound descriptors to this WebSocket, retaining the SIP receive queue."""
 
     registry = call_projection(hass)
     if registry is None:
         return
     item = registry.resource_for(session.call_id, "softphone_media")
-    if isinstance(item, dict) and (
-        item.get("video_rtp_socket") is session.rtp_socket
-        or item.get("video_rtcp_socket") is session.rtcp_socket
-    ):
-        if item.get("video_rtp_socket") is session.rtp_socket:
-            item.pop("video_rtp_socket", None)
-        if item.get("video_rtcp_socket") is session.rtcp_socket:
-            item.pop("video_rtcp_socket", None)
-        return
-    client = registry.sip_client_for(session.call_id)
-    if client is not None and client.video_rtp_socket is session.rtp_socket:
-        client.video_rtp_socket = None
-    if client is not None and client.video_rtcp_socket is session.rtcp_socket:
-        client.video_rtcp_socket = None
+    # A preanswered resource may exist without owning this video's contract;
+    # _active_video_session then resolves the outbound client's descriptors.
+    media_owns_video = isinstance(item, dict) and (
+        (getattr(item.get("invite"), "video_format", None) is not None
+         and item.get("local_video_rtp_port"))
+        or any(descriptor is not None and item.get(name) is descriptor for name, descriptor in (
+            ("video_rtp_socket", session.rtp_socket), ("video_rtcp_socket", session.rtcp_socket)))
+    )
+    if media_owns_video:
+        owned = (item.get("video_rtp_socket"), item.get("video_rtcp_socket"))
+    else:
+        client = registry.sip_client_for(session.call_id)
+        if client is None:
+            return
+        owned = (client.video_rtp_socket, client.video_rtcp_socket)
+    if any(expected is not current for expected, current in zip(
+            (session.rtp_socket, session.rtcp_socket), owned, strict=True)):
+        raise RuntimeError("video socket owner changed before attachment")
+    borrowed = []
+    try:
+        for original in owned:
+            borrowed.append(original.dup() if original is not None else None)
+    except BaseException:
+        for descriptor in borrowed:
+            if descriptor is not None:
+                descriptor.close()
+        raise
+    # The call retains the originals and closes them through its existing
+    # cleanup. Closing this WS's duplicates cannot unbind the SIP media port
+    # or lose SPS/PPS arriving before the replacement WS attaches.
+    session.rtp_socket, session.rtcp_socket = borrowed
 
 
 async def _run_local_video_session(
@@ -709,6 +743,7 @@ async def _run_local_video_session(
         "video_access_units_tx": 0,
         "video_access_units_rx": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_access_unit_queue_drops": 0,
         "video_rate_limited_access_units": 0,
@@ -1321,6 +1356,7 @@ async def _run_video_session(
         "video_drop_addr": 0,
         "video_drop_payload_type": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_drop_connection_hold": 0,
         "video_reordered_packets": 0,
@@ -1686,6 +1722,18 @@ async def _run_video_session(
                 return
         if needs_key_frame and not access_unit.key_frame:
             counters["video_drop_error"] += 1
+            counters["video_drop_wait_keyframe"] += 1
+            if counters["video_drop_wait_keyframe"] == 1:
+                _LOGGER.info(
+                    "HA softphone video waiting for key frame call_id=%s "
+                    "codec=%s payload_type=%s key_frame=%s nal_types=%s",
+                    session.call_id,
+                    browser_format.encoding,
+                    packet.payload_type,
+                    access_unit.key_frame,
+                    tuple(nal[0] & 0x1F for nal in split_annex_b(access_unit.data))
+                    if browser_format.encoding == "H264" else (),
+                )
             request_key_frame(now)
             return
         if access_unit.key_frame:
