@@ -20,7 +20,7 @@ from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, TerminationIntent
 from .local_application import LocalCallApplication, attach_local_application
 from .mailbox import (EVENT_VOICEMAIL_CHANGED, EVENT_VOICEMAIL_RECEIVED, get_archive,
-                      mailbox_settings, selected_mailbox, message_audio_reference)
+                      mailbox_settings, selected_mailbox, message_audio_reference, mailbox_display_name)
 from .roster import RosterEntry
 from .session_cleanup import async_wait_for_cleanup
 
@@ -157,7 +157,8 @@ async def start_voicemail_application(hass, session, invite, endpoint, local_ip,
     await get_archive(hass)
     if endpoint is not None and not mailbox_settings(hass, endpoint.endpoint_id).get("enabled"):
         raise ServiceValidationError("The selected mailbox was removed or disabled")
-    label = endpoint.name if endpoint is not None else "Voicemail"
+    label = (mailbox_display_name(endpoint) if mode != "deposit"
+             else endpoint.name if endpoint is not None else "Voicemail")
     identity = endpoint.endpoint_id if endpoint is not None else ""
 
     recorded_caller = session.callee if previous is not None and previous.outgoing else session.caller
@@ -208,8 +209,11 @@ async def route_voicemail_call(runtime, invite, decision, registry, source_endpo
     if busy := await _claim_source(hass=runtime.hass, registry=registry, invite=invite,
                                   source_endpoint=source_endpoint, state="ringing", route_kind="voicemail"):
         return busy
+    label = (mailbox_display_name(mailbox) if mode != "deposit"
+             else mailbox.name if mailbox is not None else "Voicemail")
     session = registry.upsert(invite.call_id, state="ringing", owner="router",
-                              caller=invite.caller, callee=mailbox.name if mailbox is not None else "Voicemail", route_kind="voicemail")
+                              caller=invite.caller, callee=label, route_kind="voicemail",
+                              sip_uri=str(invite.request_uri))
     registry.set_pending_invite(invite.call_id, invite)
     try:
         await start_voicemail_application(runtime.hass, session, invite, mailbox, runtime.local_ip,

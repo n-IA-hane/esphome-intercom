@@ -1036,6 +1036,10 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
             result = await client.wait_for_final(timeout=3)
         assert result == "in_call"
         session = lab.calls.get_session(client.dialog_ids.call_id)
+        assert session.callee == "Voicemail: Source"
+        assert session.metadata["sip_uri"].split("@")[0].endswith(
+            "mailbox.source" if other_mailbox else "*97"
+        )
         if other_mailbox:
             await press("0000#" + pin + "#")
         async with asyncio.timeout(3):
