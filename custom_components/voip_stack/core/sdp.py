@@ -1448,6 +1448,8 @@ def audio_offer_formats(
     pcm_formats = rtp_offer_formats(formats)
     if not pcm_formats:
         raise SdpError("SDP offer requires at least one RTP-mappable audio format")
+    if preferred_frame_ms is None:
+        preferred_frame_ms = pcm_formats[0].frame_ms
     result = _common_codec_offer_formats(
         capability_formats if capability_formats is not None else formats,
         include_common_codecs=include_common_codecs,

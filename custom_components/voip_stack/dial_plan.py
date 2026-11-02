@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
 from .dial_fork import ForkStrategy
@@ -67,10 +67,11 @@ class SipContactTarget:
     tier: int
     order: int
     user_agent: str = ""
+    roster_entry: RosterEntry | None = None
 
 
-def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
-    rows: list[tuple[str, str, float, str]] = []
+def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str, dict]]:
+    rows: list[tuple[str, str, float, str, dict]] = []
     raw_contacts = (entry.metadata or {}).get("sip_contacts")
     if raw_contacts is not None:
         if not isinstance(raw_contacts, list):
@@ -96,7 +97,18 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
                 )
             if transport not in {"udp", "tcp", "tls"}:
                 raise ValueError(f"unsupported SIP transport for {entry.id!r}")
-            rows.append((str(parsed), transport, q, user_agent))
+            # Capability evidence belongs to this physical Contact. An unknown
+            # binding cannot inherit the logical account's preferred Contact.
+            metadata = {
+                key: value for key, value in (entry.metadata or {}).items()
+                if key not in {
+                    "sip_contacts", "sip_audio_tx_formats", "sip_audio_rx_formats",
+                    "sdp_features", "sip_capabilities_known", "tx_formats", "rx_formats", "user_agent",
+                }
+            }
+            metadata.update(raw)
+            metadata["sip_transport"] = transport
+            rows.append((str(parsed), transport, q, user_agent, metadata))
     elif entry.sip_uri:
         parsed = parse_sip_uri(entry.sip_uri)
         transport = next(
@@ -113,10 +125,11 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
                 transport,
                 1.0,
                 str((entry.metadata or {}).get("user_agent") or "").strip(),
+                dict(entry.metadata or {}),
             )
         )
 
-    unique: list[tuple[str, str, float, str]] = []
+    unique: list[tuple[str, str, float, str, dict]] = []
     seen: set[str] = set()
     for row in rows:
         identity = row[0].lower()
@@ -150,7 +163,7 @@ def build_sip_contact_targets(
             q: index for index, q in enumerate(sorted({row[2] for row in contacts}, reverse=True))
         }
         base_tier = policy.member_tiers.get(str(member).strip().lower(), 0)
-        for contact_order, (uri, transport, q, user_agent) in enumerate(contacts):
+        for contact_order, (uri, transport, q, user_agent, metadata) in enumerate(contacts):
             targets.append(
                 SipContactTarget(
                     candidate_id=f"{endpoint_id}:contact:{contact_order}",
@@ -162,6 +175,7 @@ def build_sip_contact_targets(
                     tier=base_tier + q_tiers[q],
                     order=member_order * 1000 + contact_order,
                     user_agent=user_agent,
+                    roster_entry=replace(entry, sip_uri=uri, metadata=metadata),
                 )
             )
     if len({target.candidate_id for target in targets}) != len(targets):
