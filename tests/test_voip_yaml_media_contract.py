@@ -137,6 +137,20 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
     assert checked >= 3
 
 
+@pytest.mark.parametrize("relative", [
+    "full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
+    "full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml",
+])
+def test_p4_full_accepts_standard_20ms_pcm_without_losing_10ms_primary(relative) -> None:
+    audio = profile(relative)["voip_stack"]["audio"]
+    for direction in ("tx", "rx"):
+        assert any((int(fmt["sample_rate"]), fmt["pcm_format"], int(fmt["channels"]), int(fmt["frame_ms"]))
+                   == (16000, "s16le", 1, 20) for fmt in audio[f"{direction}_formats"]), relative
+        assert int(audio[direction]["frame_ms"]) == 10
+    assert int(audio["tx"]["sample_rate"]) == 16000
+    assert int(audio["rx"]["sample_rate"]) == 48000
+
+
 def test_physical_audio_stack_speakers_bound_silent_tx_lifecycle() -> None:
     for relative in PHYSICAL_AUDIO_STACK_PROFILES:
         physical = [s for s in profile(relative)['speaker'] if s.get('platform') == 'esp_audio_stack']

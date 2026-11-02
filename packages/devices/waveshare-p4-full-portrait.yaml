@@ -41,6 +41,10 @@ substitutions:
           pcm_format: s16le
           channels: 1
           frame_ms: 16
+        - sample_rate: 16000
+          pcm_format: s16le
+          channels: 1
+          frame_ms: 20
         rx:
           sample_rate: 48000
           pcm_format: s16le
@@ -63,6 +67,10 @@ substitutions:
           pcm_format: s16le
           channels: 1
           frame_ms: 32
+        - sample_rate: 16000
+          pcm_format: s16le
+          channels: 1
+          frame_ms: 20
       microphone: mic_afe
       speaker: voip_speaker_input
       delete_contact_missing_from:
