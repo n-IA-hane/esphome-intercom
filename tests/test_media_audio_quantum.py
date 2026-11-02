@@ -1,11 +1,12 @@
 """Public audio frame contracts retain every sample across legal RTP quanta."""
 
 from dataclasses import replace
+import json
 import struct
 
 import pytest
 
-from .voip_phase1_support import _load_intercom_module, g722_codec, rtp, sdp, sip_client
+from .voip_phase1_support import _load_intercom_module, audio_format, g722_codec, rtp, sdp, sip_client
 
 RtpAudioReceiver = _load_intercom_module("rtp_audio_receiver").RtpAudioReceiver
 
@@ -52,3 +53,35 @@ def test_explicit_maxptime_still_rejects_an_oversized_l16_packet():
     receiver = RtpAudioReceiver(fmt)
     with pytest.raises(rtp.RtpError):
         receiver.decode(96, bytes(21 * 16 * 2))
+
+
+@pytest.mark.parametrize("encoding,rate", [
+    ("L16", 48000), ("L16", 32000), ("L16", 16000), ("L16", 8000),
+    ("OPUS", 48000), ("G722", 8000), ("PCMA", 8000), ("PCMU", 8000),
+])
+def test_generic_offer_quantum_and_maxptime_are_receivable_for_every_codec(monkeypatch, tmp_path, encoding, rate):
+    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
+    formats = list(audio_format.HA_SIP_PCM_FORMATS)
+    offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,
+        formats, formats, include_common_codecs=True)
+    parsed = sdp.parse_sdp(offer)
+    assert parsed["ptime"] == 10 and parsed["maxptime"] == 20
+    fmt = next(fmt for fmt in sdp.offered_pcm_formats(offer)
+        if fmt.encoding == encoding and fmt.sample_rate == rate)
+    records = []
+    for packet_ms in (parsed["ptime"], parsed["maxptime"]):
+        wire_format = replace(fmt, frame_ms=packet_ms)
+        samples = wire_format.audio_format.nominal_frame_samples
+        pcm = struct.pack(f"<{samples}h", *(1000 + index % 100 for index in range(samples)))
+        payload = sip_client.RtpPayloadEncoder(wire_format).encode(pcm)
+        frames = RtpAudioReceiver(fmt).decode(fmt.payload_type, payload)
+        decoded = b"".join(frames)
+        assert len(decoded) == len(pcm)
+        assert all(len(frame) == fmt.audio_format.nominal_frame_bytes for frame in frames)
+        if encoding == "L16":
+            assert decoded == pcm
+        records.append({"packet_ms": packet_ms, "samples": samples,
+            "payload_bytes": len(payload), "decoded_bytes": len(decoded), "frames": len(frames)})
+    (tmp_path / "codec-quantum.json").write_text(json.dumps({
+        "encoding": encoding, "rate": rate, "offer": offer, "records": records,
+    }, indent=2))
