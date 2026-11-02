@@ -67,6 +67,21 @@ def test_media_oracle_requires_wire_clock_worklet_and_decoded_canvas(tool):
     tool.validate_media_progress(sample(), progressed(), video=True)
 
 
+def test_dark_physical_camera_still_requires_decoded_visible_video(tool):
+    after = progressed()
+    after["canvases"][0]["non_black"] = False
+    with pytest.raises(AssertionError, match="non-black"):
+        tool.validate_media_progress(sample(), after, video=True)
+    tool.validate_media_progress(sample(), after, video=True, allow_dark_video=True)
+    after["stats"]["video"]["rendered"] = 1
+    with pytest.raises(AssertionError, match="rendered"):
+        tool.validate_media_progress(sample(), after, video=True, allow_dark_video=True)
+    after["stats"]["video"]["rendered"] = 2
+    after["canvases"] = []
+    with pytest.raises(AssertionError, match="canvas"):
+        tool.validate_media_progress(sample(), after, video=True, allow_dark_video=True)
+
+
 def test_idle_guard_uses_live_state_and_quiescence_not_retained_terminal_id(tool):
     value = {"state": "idle", "call_id": "old-terminal-call", "media_debug": {
         "runtime_resources": {"call_scoped_quiescent": True}}}

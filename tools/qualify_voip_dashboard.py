@@ -107,7 +107,7 @@ class DashboardAudioWire:
         return {side: dict(value) for side, value in self.totals.items()}
 
 
-def validate_media_progress(before, after, *, video=False):
+def validate_media_progress(before, after, *, video=False, allow_dark_video=False):
     """Require actual PCM wire traffic and worklet consumption in one dialog."""
     if not before.get("call_id") or before["call_id"] != after.get("call_id"):
         raise AssertionError("Media observation crossed the call identity")
@@ -128,8 +128,10 @@ def validate_media_progress(before, after, *, video=False):
         for counter in ("received", "rendered"):
             if after["stats"].get("video", {}).get(counter, 0) <= before["stats"].get("video", {}).get(counter, 0):
                 raise AssertionError(f"Real video {counter} did not advance")
-        if not any(c["width"] > 0 and c["height"] > 0 and c["non_black"] for c in after["canvases"]):
-            raise AssertionError("No visible decoded non-black video canvas")
+        if not any(c["width"] > 0 and c["height"] > 0 and (allow_dark_video or c["non_black"])
+                   for c in after["canvases"]):
+            raise AssertionError("No visible decoded video canvas" if allow_dark_video
+                                 else "No visible decoded non-black video canvas")
 
 
 def require_idle_phone(value):
@@ -201,7 +203,9 @@ async def qualify_physical(args):
                  for item in origin["localStorage"] if item["name"] == "hassTokens")
     rest = HaRest(args.url, token)
     results = {"mode": "physical-peer", "ui": args.physical_ui, "direction": args.physical_direction,
-               "expected_video": args.physical_video, "cleanup_errors": [], "browser_errors": [],
+               "expected_video": args.physical_video,
+               "allow_dark_video": getattr(args, "physical_allow_dark_video", False),
+               "cleanup_errors": [], "browser_errors": [],
                "quiescent": False,
                "observer": {"real_play": True, "audible_output": False,
                             "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
@@ -330,7 +334,10 @@ async def qualify_physical(args):
                 after["wire"] = wire.snapshot()
                 results["media_proof"] = {"before": before, "after": after, "wire_errors": list(wire.capture.errors)}
                 assert not wire.capture.errors, wire.capture.errors
-                validate_media_progress(before, after, video=args.physical_video in {"recvonly", "sendrecv"})
+                validate_media_progress(
+                    before, after, video=args.physical_video in {"recvonly", "sendrecv"},
+                    allow_dark_video=getattr(args, "physical_allow_dark_video", False),
+                )
                 if args.physical_video in {"sendonly", "sendrecv"}:
                     assert after["stats"].get("video", {}).get("sent", 0) > before["stats"].get("video", {}).get("sent", 0)
                 await page.screenshot(path=str(args.out / "connected.png"), full_page=True)
@@ -1186,6 +1193,8 @@ def main():
     parser.add_argument("--physical-direction", choices=("outgoing", "incoming"), default="outgoing")
     parser.add_argument("--physical-video", choices=("audio", "recvonly", "sendonly", "sendrecv"), default="audio",
                         help="Required negotiated video direction local to the browser")
+    parser.add_argument("--physical-allow-dark-video", action="store_true",
+                        help="Allow a dark physical camera; still require received/decoded frames and a visible canvas")
     parser.add_argument("--physical-hangup", choices=("dashboard", "peer"), default="dashboard")
     parser.add_argument("--physical-hold-seconds", type=float, default=5)
     parser.add_argument("--physical-wait-seconds", type=float, default=60)
