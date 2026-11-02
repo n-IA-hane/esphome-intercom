@@ -84,7 +84,9 @@ async def test_irrecoverable_video_restore_terminates_original_not_only_temporar
     video._maintain_nat = Mock()
     alive = set()
     class Worker:
-        def __init__(self, side): self.side = side; alive.add(side)
+        def __init__(self, side):
+            self.side = side
+            alive.add(side)
         async def async_close(self): alive.discard(self.side)
     video._transcode = vr._TranscodeGeneration({"left", "right"}, {s: Worker(s) for s in ("left", "right")}, {}, {})
     async def source_update(*_args, **kwargs):

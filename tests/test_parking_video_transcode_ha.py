@@ -10,7 +10,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from .test_parking_lot_ha import registered_phones, trunks, lab, custom_integrations
+from .test_parking_lot_ha import (
+    registered_phones as registered_phones,
+    trunks as trunks,
+    lab as lab,
+    custom_integrations as custom_integrations,
+)
 from .test_sip_phone_transfers_ha import assert_h264_color_bars
 from .test_udp_outbound_flow_ha import register_phone, PASSWORD
 
