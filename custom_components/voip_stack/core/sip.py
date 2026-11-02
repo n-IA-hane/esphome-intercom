@@ -161,7 +161,7 @@ class SipUri:
             raise SipError("SIP URI requires non-empty host")
         if any(ord(ch) < 0x21 or ch in '<>"/@,;?\\' for ch in host):
             raise SipError("SIP URI contains an invalid host")
-        safe_user = quote(user, safe="!$&'()*+,-./:;=?_~")
+        safe_user = quote(user, safe="!$&'()*+,-./;=?_~")
         authority = format_host_port(host, self.port)
         scheme = self.scheme.strip().lower()
         if scheme not in {"sip", "sips"}:
