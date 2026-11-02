@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/helpers.h"
 #ifdef USE_MEDIA_PLAYER
 #include "esphome/components/media_player/media_player.h"
 #endif
@@ -25,6 +26,7 @@ namespace esphome::ui_fixture {
 
 inline uint32_t voip_action_writes{0};
 inline uint32_t dial_requests{0};
+inline uint32_t stop_requests{0};
 inline std::string last_dial_target;
 class UiPhone {
  public:
@@ -48,6 +50,13 @@ class UiPhone {
     return true;
   }
   void call_toggle() { ++voip_action_writes; }
+  void stop() {
+    if (!this->is_active()) return;
+    ++stop_requests;
+    ++voip_action_writes;
+    this->idle = true;
+    this->ringing = this->calling = this->in_call = false;
+  }
   bool call_mailbox() { ++voip_action_writes; return true; }
 #ifdef USE_SWITCH
   void set_conference_ring_switch(switch_::Switch *setting) { this->conference_ring_switch_ = setting; }
@@ -103,6 +112,10 @@ template<typename... Ts> class UiDialAction : public Action<Ts...> {
 template<typename... Ts> class UiVoipAction : public Action<Ts...> {
  public:
   void play(const Ts &...) override { ++voip_action_writes; }
+};
+template<typename... Ts> class UiStopAction : public Action<Ts...>, public Parented<UiPhone> {
+ public:
+  void play(const Ts &...) override { this->parent_->stop(); }
 };
 
 // A data owner for exercising the public media-player UI contract. It has no

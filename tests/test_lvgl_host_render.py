@@ -12,7 +12,7 @@ from PIL import Image
 import pytest
 
 from tests.test_lvgl_settings_composition import expanded_scene
-from tools.render_lvgl import find_id, yaml_input, make_host_config, make_status_config, nodes, strings
+from tools.render_lvgl import find_id, yaml_input, make_host_config, make_status_config, nodes, strings, references
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +33,11 @@ def test_owner_lookup_uses_declaration_instead_of_an_earlier_script_reference():
     declaration = {"id": "draw_display", "then": [{"lambda": Lambda("const bool show_status = true;")}]}
     assert find_id({"script": [reference, declaration]}, "script", "draw_display") is declaration
     assert find_id({"script": [reference]}, "script", "draw_display") is None
+
+
+@pytest.mark.parametrize("action", ["phone", {"id": "phone"}])
+def test_stop_action_retains_its_typed_phone_owner(action):
+    assert references({"voip_stack.stop": action}) == {"phone"}
 
 
 @pytest.mark.parametrize("scene,size", [("spot240", 240), ("box360-aec", 360)])

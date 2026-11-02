@@ -44,16 +44,15 @@ def test_video_hangup_is_a_compact_stop_target_above_the_video_surface(tmp_path,
     config = list_config(size, build, tmp_path)
     config["substitutions"] = {"font_family": "Figtree"}
     config["font"] = [font]
-    # Keep the shipped button and surface. Replace only the external phone owner
-    # with counters, so a second click after teardown cannot dial or answer.
-    button["on_click"] = [{"lambda": Lambda("++id(stop_count);id(call_active)=false;")}]
+    # Keep the shipped action too: exercise its actual schema and parent binding.
+    config["external_components"].append({"source": str(ROOT / "tests/fixtures/lvgl_host"),
+                                          "components": ["ui_fixture"]})
+    config["ui_fixture"] = {"phone_id": "phone"}
+    config["esphome"]["name"] = f"lvgl-render-{size}-{size}"
     config["lvgl"]["pages"] = [page]
     config.pop("phone_list_view")
-    config["globals"].extend([
-        {"id": "stop_count", "type": "unsigned", "initial_value": "0"},
-        {"id": "call_active", "type": "bool", "initial_value": "true"},
-    ])
     config["esphome"]["on_boot"][0]["then"] = [{"lambda": Lambda(r'''
+        id(phone).idle=false;id(phone).in_call=true;
         lv_screen_load(id(call_video_page)->obj);lv_refr_now(nullptr);
         assert(lv_obj_get_child_count(id(call_video_page)->obj)==2);
         assert(lv_obj_get_child(id(call_video_page)->obj,0)==id(call_video_surface));
@@ -70,10 +69,15 @@ def test_video_hangup_is_a_compact_stop_target_above_the_video_surface(tmp_path,
         assert(button.x1>=page.x1&&button.x2<=page.x2&&button.y1>=page.y1&&button.y2<=page.y2);
         assert(glyph.x1>=button.x1&&glyph.x2<=button.x2&&glyph.y1>=button.y1&&glyph.y2<=button.y2);
         esphome::ui_fixture::PointerProbe input(lv_display_get_default());
+        const auto clicks=input.watch(id(call_video_hangup),LV_EVENT_CLICKED);
         input.tap((button.x1+button.x2)/2,(button.y1+button.y2)/2);
-        assert(id(stop_count)==1&&!id(call_active));
+        assert(input.count(clicks)==1);
+        assert(esphome::ui_fixture::stop_requests==1&&id(phone).is_idle());
+        assert(!id(phone).is_in_call()&&esphome::ui_fixture::dial_requests==0);
         input.tap((button.x1+button.x2)/2,(button.y1+button.y2)/2);
-        assert(id(stop_count)==2&&!id(call_active));
+        assert(input.count(clicks)==2);
+        assert(esphome::ui_fixture::stop_requests==1&&id(phone).is_idle());
+        assert(esphome::ui_fixture::voip_action_writes==1&&esphome::ui_fixture::dial_requests==0);
         printf("S3_VIDEO_HANGUP stop_only=pass red_glyph=pass above_video=pass repeated_stop=pass\n");
     ''')}, {"snapshot.take": {"id": "proof_display", "filename": "s3-video-hangup"}},
         {"lambda": Lambda("::exit(0);")}]
@@ -83,7 +87,7 @@ def test_video_hangup_is_a_compact_stop_target_above_the_video_surface(tmp_path,
                               capture_output=True, text=True, timeout=360)
     (tmp_path / "compile.log").write_text(compiled.stdout + compiled.stderr)
     assert compiled.returncode == 0, (compiled.stdout + compiled.stderr)[-7000:]
-    result = subprocess.run([build / "build/.pioenvs/phone-list-proof/program"],
+    result = subprocess.run([build / f"build/.pioenvs/lvgl-render-{size}-{size}/program"],
                             capture_output=True, text=True, timeout=15,
                             env={**os.environ, "ESPHOME_SNAPSHOT_DIR": str(tmp_path)}, cwd=tmp_path)
     (tmp_path / "run.log").write_text(result.stdout + result.stderr)

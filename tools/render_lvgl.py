@@ -79,6 +79,8 @@ def references(value):
                 result.add(item)
             if key in ("script.execute", "button.press") and isinstance(item, str):
                 result.add(item)
+            if key == "voip_stack.stop" and isinstance(item, str):
+                result.add(item)
     return result
 
 

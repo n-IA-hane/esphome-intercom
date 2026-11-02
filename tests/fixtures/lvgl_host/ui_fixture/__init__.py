@@ -23,6 +23,18 @@ for name in ("voip_stack.call_toggle", "voip_stack.decline_call", "voip_stack.ne
         return cg.new_Pvariable(action_id, template_arg)
 
 
+UiStopAction = ui_fixture_ns.class_("UiStopAction", automation.Action)
+
+
+@automation.register_action("voip_stack.stop", UiStopAction,
+                            automation.maybe_simple_id({cv.GenerateID(): cv.use_id(UiPhone)}),
+                            synchronous=True)
+async def stop_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    cg.add(var.set_parent(await cg.get_variable(config["id"])))
+    return var
+
+
 async def to_code(config):
     if "phone_id" in config:
         phone = cg.new_Pvariable(config["phone_id"])
