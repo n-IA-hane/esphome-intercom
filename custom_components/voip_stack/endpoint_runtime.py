@@ -225,9 +225,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             )
         create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
+    accounts = _sip_accounts(hass)
+    from .managed_phones import active_managed_accounts
+    from .store import config_entry
+    entry = config_entry(hass)
     registrar = SipRegistrar(
-        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)),
-        accounts=_sip_accounts(hass),
+        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)
+                     or (entry is not None and active_managed_accounts(hass, entry))),
+        accounts=accounts,
         local_ip=local_ip,
         local_sip_port=int(cfg["sip_port"]),
         on_registration_change=_on_registration_change,

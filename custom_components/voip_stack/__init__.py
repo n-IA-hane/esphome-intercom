@@ -782,6 +782,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_start_sip_trunk(hass)
     from .mailbox import async_setup_mailboxes
     await async_setup_mailboxes(hass, entry)
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -803,6 +805,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     """Release media owners before closing the PBX runtime."""
     from .websocket_api import _async_shutdown_all
 
+    runtime = _runtime_data(hass)
+    if runtime is not None and runtime.phone_provisioning is not None:
+        await runtime.phone_provisioning.async_close()
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
 
