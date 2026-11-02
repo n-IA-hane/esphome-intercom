@@ -1125,6 +1125,9 @@ async def test_replacement_waits_for_destination_remote_media_commit(registered_
     async def blocked_update(*args):
         entered.set()
         await release.wait()
+        # The barrier pauses the current owner without replacing its identity
+        # when the delegated preparation later validates its commit.
+        monkeypatch.setattr(client, "on_media_update", update)
         return await update(*args)
 
     monkeypatch.setattr(client, "on_media_update", blocked_update)
