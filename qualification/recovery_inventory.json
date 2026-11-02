@@ -563,7 +563,7 @@
         "Una card aperta durante squillo puo rispondere; no-answer, forwarding e voicemail seguono la policy del telefono."
       ],
       "negative_acceptance": [
-        "Chiudere la card non attiva il fallback unavailable; il telefono disabilitato conserva le policy configurate e il rifiuto 403 TARGET_DISABLED, senza riabilitazione da parte delle card."
+        "Chiudere la card non attiva il fallback unavailable; il telefono disabilitato resta indisponibile e mantiene il rifiuto previsto dal proprio percorso, senza riabilitazione da parte delle card."
       ],
       "proof_layers": [
         "software",

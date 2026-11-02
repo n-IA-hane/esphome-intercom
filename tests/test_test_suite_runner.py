@@ -117,3 +117,10 @@ def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> N
             if isinstance(imported, str) and imported.startswith("playwright."):
                 playwright_files.add(str(path.relative_to(ROOT)))
     assert playwright_files <= set(arguments)
+
+
+def test_logical_browser_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
+    target = "tests/test_browser_logical_availability_ha.py"
+    assert target in _record_suite_arguments(tmp_path, "ha")
+    for mode in ("fast", "software-full"):
+        assert f"--ignore={target}" in _record_suite_arguments(tmp_path, mode)

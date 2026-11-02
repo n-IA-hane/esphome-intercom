@@ -54,6 +54,17 @@ After saving, the card controls the phone you selected. Incoming calls for that 
 move every connected card bound to the same Device to `ringing`. The browser
 that answers becomes the media owner.
 
+### Browser-phone availability in the recovery candidate
+
+An enabled Home Assistant phone keeps its extension available when its cards
+are closed. Incoming calls can ring logically, run call automations and follow
+the phone's no-answer rule. Open a card during ringing to answer the same call;
+the answering browser supplies its microphone and speaker with the normal
+permissions. Opening a card does not re-enable a disabled phone.
+
+This behavior belongs to the incremental recovery candidate; see its
+[qualification status](voip_test_matrix.md#incremental-recovery-from-2026110).
+
 ## Read the phone card
 
 The same icons are used in audio and video mode.

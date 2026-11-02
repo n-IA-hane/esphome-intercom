@@ -126,6 +126,7 @@ ha_tests=(
   tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
+  tests/test_browser_logical_availability_ha.py
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py

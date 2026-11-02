@@ -67,6 +67,59 @@ phone_endpoint = _load("phone_endpoint")
 endpoint_registry = _load("endpoint_registry")
 
 
+@pytest.mark.parametrize(
+    ("kind", "enabled", "expected"),
+    [
+        ("browser", True, "available"),
+        ("browser", False, "unavailable"),
+        ("sip_account", True, "offline"),
+        ("sip_account", False, "unavailable"),
+    ],
+)
+def test_configured_availability_is_independent_of_browser_cards(kind, enabled, expected):
+    endpoint = phone_config.endpoint_from_data(
+        types.SimpleNamespace(data={}),
+        {"endpoint_id": "phone", "name": "Phone", "kind": kind, "enabled": enabled},
+    )
+    assert endpoint.availability.value == expected
+
+
+@pytest.mark.parametrize("card_count", [0, 2])
+@pytest.mark.parametrize("kind", ["browser", "sip_account"])
+def test_configured_enable_cycle_preserves_policy_and_call_identity(card_count, kind):
+    subentry = types.SimpleNamespace(
+        subentry_type=phone_config.PHONE_SUBENTRY_TYPE,
+        subentry_id="phone", unique_id="phone:stable", title="Phone",
+        data={"endpoint_id": "stable", "name": "Phone", "kind": kind,
+              "enabled": False, "username": "desk",
+              "call_policy": {"unavailable": {"kind": "contact", "target": "backup"}}},
+    )
+    entry = types.SimpleNamespace(
+        data={}, options={}, subentries={"phone": subentry},
+        runtime_data=types.SimpleNamespace(
+            softphone_presence={"stable": card_count}, softphones={},
+        ),
+    )
+    hass = types.SimpleNamespace(data={"voip_stack": {}})
+    registry = phone_config.async_setup_endpoint_registry(hass, entry)
+    _bind_runtime(entry, registry)
+    original_policy = registry.require("stable").policy
+    assert registry.require("stable").availability.value == "unavailable"
+    registry.update("stable", device_id="stable-device")
+    registry.claim_call("stable", "existing-call")
+    subentry.data["enabled"] = True
+    phone_config.sync_registry_from_entry(hass, entry)
+    endpoint = registry.require("stable")
+    assert endpoint.availability.value == ("available" if kind == "browser" else "offline")
+    assert endpoint.active_call_id == "existing-call"
+    assert endpoint.device_id == "stable-device"
+    assert endpoint.policy == original_policy
+    subentry.data["enabled"] = False
+    phone_config.sync_registry_from_entry(hass, entry)
+    assert registry.require("stable").availability.value == "unavailable"
+    assert registry.require("stable").policy == original_policy
+
+
 def test_phone_policy_survives_rename_and_config_roundtrip():
     entry = types.SimpleNamespace(data={})
     data = {
