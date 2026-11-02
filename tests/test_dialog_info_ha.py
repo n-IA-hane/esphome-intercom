@@ -278,14 +278,14 @@ async def test_activity_projection_tracks_dialogs_and_occupied_slots(lab, blf):
     assert activity_snapshot(lab.runtime) == {"parked": [], "phones": []}
 
 
-async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch):
+async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch, hass_admin_user):
     from types import SimpleNamespace
     from custom_components.voip_stack import websocket_api
     from custom_components.voip_stack.parking import PARKING_CHANGED
     from custom_components.voip_stack.parking_lot import ParkingLot
 
     events = []
-    connection = SimpleNamespace(subscriptions={}, send_result=lambda *args: None,
+    connection = SimpleNamespace(user=hass_admin_user, subscriptions={}, send_result=lambda *args: None,
                                  send_event=lambda identity, value: events.append(value))
     monkeypatch.setattr(websocket_api, "require_websocket_read", lambda *args: None)
     monkeypatch.setattr(websocket_api, "require_websocket_endpoint_read", lambda *args: None)
