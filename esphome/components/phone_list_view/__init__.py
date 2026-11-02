@@ -15,9 +15,12 @@ MULTI_CONF = True
 ns = cg.esphome_ns.namespace("phone_list_view")
 PhoneListView = ns.class_("PhoneListView", cg.Component)
 RowData = ns.class_("RowData")
+RowKey = ns.class_("RowKey")
 RefreshAction = ns.class_("RefreshAction", automation.Action)
 
 def _features(config):
+    if ("row_group" in config) != ("row_key" in config):
+        raise cv.Invalid("row_group and row_key must be configured together")
     # LVGL emits lv_conf.h before dependent components' to_code callbacks.
     add_lv_use("button", "label")
     return config
@@ -28,6 +31,8 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Required("parent_id"): cv.use_id(lv_obj_t),
     cv.Required("row_count"): cv.lambda_,
     cv.Required("render_row"): cv.lambda_,
+    cv.Optional("row_group"): cv.lambda_,
+    cv.Optional("row_key"): cv.lambda_,
     cv.Optional("row_height", default=48): cv.int_range(min=36, max=160),
     cv.Optional("visible_rows", default=8): cv.int_range(min=2, max=32),
     cv.Optional("buffer_in_psram", default=True): cv.boolean,
@@ -53,6 +58,11 @@ async def to_code(config):
     render = await cg.process_lambda(config["render_row"], [(cg.uint32, "index"), (RowData.operator("ref"), "row")], return_type=cg.void)
     cg.add(var.set_count_callback(count))
     cg.add(var.set_render_callback(render))
+    if "row_group" in config:
+        group = await cg.process_lambda(config["row_group"], [(cg.uint32, "index")], return_type=cg.uint8)
+        key = await cg.process_lambda(config["row_key"], [(cg.uint32, "index")], return_type=RowKey)
+        cg.add(var.set_group_callback(group))
+        cg.add(var.set_key_callback(key))
     if "on_select" in config:
         await automation.build_automation(var.get_select_trigger(), [(cg.std_string, "row_id"), (cg.uint8, "action")], config["on_select"])
 

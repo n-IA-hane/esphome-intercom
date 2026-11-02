@@ -10,6 +10,10 @@ font:
     glyphs: ${ _contacts_base_glyphs + (_contacts_blf_glyphs if 'blf' in firmware_features
       else []) }
 defaults:
+  _contacts_order_presence: |-
+    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    if (state.presence == PresenceState::CLOSED &&
+        (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) return 4;
   _contacts_blf_render: |-
     const auto state = id(phone).get_contact_blf(contact->stable_id());
     if (!state.available && !contact->auto_blf &&
@@ -64,6 +68,19 @@ phone_list_view:
     row_height: 48
     row_count: !lambda |-
       return id(phone).get_contact_count();
+    row_key: !lambda |-
+      const auto *contact = id(phone).get_contact(index);
+      if (contact == nullptr) return {};
+      return {std::string_view(contact->name.data(), contact->name.size()), contact->stable_id()};
+    row_group: !lambda |-
+      using namespace esphome::voip_stack;
+      const auto *contact = id(phone).get_contact(index);
+      if (contact == nullptr) return 3;
+      if (contact->kind == ContactKind::BROWSER) return 0;
+      if (contact->kind == ContactKind::GROUP || contact->kind == ContactKind::AUTOMATION) return 2;
+      if (contact->kind != ContactKind::ESP && contact->kind != ContactKind::SIP_ACCOUNT) return 3;
+      ${ _contacts_order_presence if 'blf' in firmware_features else '' }
+      return 1;
     render_row: !lambda |
       using namespace esphome::voip_stack;
       const auto *contact = id(phone).get_contact(index);

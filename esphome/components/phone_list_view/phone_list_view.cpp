@@ -6,16 +6,20 @@ void PhoneListView::setup() {
   this->disable_loop();
   if (this->parent_ == nullptr || !this->count_ || !this->render_) { this->mark_failed(); return; }
   static_assert(std::is_trivially_destructible<Slot>::value, "Pool records must remain POD-like");
+  const bool ordered = bool(this->group_) && bool(this->key_);
+  const size_t pool_bytes = sizeof(Slot) * this->capacity_;
+  const size_t bytes = pool_bytes + (ordered ? sizeof(Projection) : 0);
 #ifdef USE_ESP32
-  auto *pool = static_cast<Slot *>(heap_caps_malloc(sizeof(Slot) * this->capacity_,
+  auto *pool = static_cast<Slot *>(heap_caps_malloc(bytes,
       MALLOC_CAP_8BIT | (this->buffer_in_psram_ ? MALLOC_CAP_SPIRAM : MALLOC_CAP_INTERNAL)));
 #else
-  auto *pool = static_cast<Slot *>(std::malloc(sizeof(Slot) * this->capacity_));
+  auto *pool = static_cast<Slot *>(std::malloc(bytes));
 #endif
   if (pool != nullptr)
     for (size_t i = 0; i < this->capacity_; ++i) new (&pool[i]) Slot();
   this->slots_.reset(pool);
   if (!this->slots_) { this->mark_failed(); return; }
+  if (ordered) this->projection_ = new (reinterpret_cast<uint8_t *>(pool) + pool_bytes) Projection();
   this->screen_ = lv_obj_get_screen(this->parent_);
   lv_obj_remove_flag(this->parent_, LV_OBJ_FLAG_SCROLL_ELASTIC);
   this->spacer_ = lv_obj_create(this->parent_);
@@ -79,15 +83,69 @@ bool PhoneListView::visible_() const {
   return true;
 }
 
-void PhoneListView::refresh() {
+int PhoneListView::compare_names_(std::string_view a, std::string_view b) {
+  // Locale-independent UTF-8 byte order, with ASCII case folded without a copy.
+  const auto fold = [](uint8_t ch) { return ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch; };
+  for (size_t i = 0, end = std::min(a.size(), b.size()); i < end; ++i) {
+    const auto left = fold(static_cast<uint8_t>(a[i])), right = fold(static_cast<uint8_t>(b[i]));
+    if (left != right) return left < right ? -1 : 1;
+  }
+  return a.size() < b.size() ? -1 : a.size() > b.size() ? 1 : 0;
+}
+
+int32_t PhoneListView::rebuild_order_(uint32_t count, int32_t scroll) {
+  // The visible pool retains the old identity even when the source replaced its
+  // vector. Resolve this borrowed anchor before painting overwrites any slot.
+  std::string_view anchor;
+  const int32_t top = scroll / this->row_height_ * this->row_height_;
+  for (size_t i = 0; i < this->capacity_; ++i) {
+    const auto &slot = this->slots_[i];
+    if (slot.generation != 0 && !lv_obj_has_flag(slot.button, LV_OBJ_FLAG_HIDDEN) &&
+        lv_obj_get_style_y(slot.button, LV_PART_MAIN) == top) {
+      anchor = slot.row.id.data();
+      break;
+    }
+  }
+  this->ordered_count_ = 0;
+  if (count > MAX_ORDER_ROWS) return scroll;  // Keep every row visible if a generic source exceeds the bounded projection.
+  for (uint32_t i = 0; i < count; ++i) {
+    this->projection_->indices[i] = i;
+    this->projection_->groups[i] = this->group_(i);
+  }
+  std::sort(this->projection_->indices.begin(), this->projection_->indices.begin() + count,
+            [this](uint8_t a, uint8_t b) {
+    if (this->projection_->groups[a] != this->projection_->groups[b])
+      return this->projection_->groups[a] < this->projection_->groups[b];
+    const auto left = this->key_(a), right = this->key_(b);
+    const int names = compare_names_(left.name, right.name);
+    return names != 0 ? names < 0 : left.id < right.id;
+  });
+  this->ordered_count_ = count;
+  if (!anchor.empty())
+    for (uint32_t i = 0; i < count; ++i)
+      if (this->key_(this->projection_->indices[i]).id == anchor)
+        return i * this->row_height_ + scroll % this->row_height_;
+  return scroll;
+}
+
+void PhoneListView::refresh_() {
   if (this->slots_ == nullptr || this->repainting_) return;
   if (!this->visible_()) { this->stop_blink_(); return; }
   this->repainting_ = true;
   const uint32_t count = this->count_();
+  int32_t scroll = std::max<int32_t>(0, lv_obj_get_scroll_y(this->parent_));
+  const bool reorder = this->projection_ != nullptr && (this->order_dirty_ || count != this->ordered_count_);
+  // A callback may request another update while painting. Consume only the
+  // pending update that led here, so that request survives to the next loop.
+  this->order_dirty_ = false;
+  if (reorder) scroll = this->rebuild_order_(count, scroll);
   if (count == 0) lv_obj_remove_flag(this->empty_, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_add_flag(this->empty_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_height(this->spacer_, std::max<uint32_t>(1, count * this->row_height_));
-  const int32_t scroll = std::max<int32_t>(0, lv_obj_get_scroll_y(this->parent_));
+  lv_obj_update_layout(this->parent_);
+  const int32_t limit = std::max<int32_t>(0, int32_t(count * this->row_height_) - lv_obj_get_content_height(this->parent_));
+  scroll = std::min(scroll, limit);
+  if (lv_obj_get_scroll_y(this->parent_) != scroll) lv_obj_scroll_to_y(this->parent_, scroll, LV_ANIM_OFF);
   const uint32_t visible = (scroll % this->row_height_ + std::max<int32_t>(1, lv_obj_get_content_height(this->parent_)) +
                             this->row_height_ - 1) / this->row_height_;
   uint32_t first = scroll / this->row_height_;
@@ -114,7 +172,7 @@ void PhoneListView::refresh() {
 
 void PhoneListView::paint_(Slot &slot, uint32_t index) {
   RowData next;
-  this->render_(index, next);
+  this->render_(this->ordered_count_ != 0 ? this->projection_->indices[index] : index, next);
   if (next.id[0] == '\0') next.enabled = false;
   const bool first_paint = slot.generation == 0;
   if (slot.row.id != next.id || slot.row.action != next.action) ++slot.generation;
@@ -195,7 +253,7 @@ void PhoneListView::row_event_(lv_event_t *event) {
 }
 
 void PhoneListView::parent_event_(lv_event_t *event) {
-  static_cast<PhoneListView *>(lv_event_get_user_data(event))->refresh();
+  static_cast<PhoneListView *>(lv_event_get_user_data(event))->refresh_();
 }
 
 void PhoneListView::page_event_(lv_event_t *event) {

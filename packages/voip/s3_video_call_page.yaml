@@ -7,6 +7,12 @@ substitutions:
 packages:
   receiver: !include s3_video_jpeg.yaml
   wake_word: ${ _s3_video_wake_hooks if _s3_video_has_wake_word else {} }
+font:
+  - id: !extend font_title
+    extras:
+      - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+        glyphs:
+          - "\U000F03F5"
 esp_video_renderer:
   on_first_frame:
     - script.execute: draw_display
@@ -35,3 +41,23 @@ defaults:
             border_width: 0
             bg_opa: TRANSP
             scrollable: false
+        - button:
+            id: call_video_hangup
+            width: ${ (display_width | int) // 6 }
+            height: ${ (display_width | int) // 6 }
+            align: BOTTOM_MID
+            y: ${ -(display_width | int) // 24 }
+            radius: ${ (display_width | int) // 12 }
+            pad_all: 0
+            border_width: 0
+            bg_opa: TRANSP
+            shadow_width: 0
+            scrollable: false
+            on_click:
+              - voip_stack.stop: phone
+            widgets:
+              - label:
+                  text: "\U000F03F5"
+                  text_font: font_title
+                  text_color: 0xEF4444
+                  align: CENTER

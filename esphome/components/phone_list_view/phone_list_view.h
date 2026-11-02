@@ -50,6 +50,12 @@ struct RowData {
   void set_trailing(std::string_view value) { text(this->trailing, value); }
 };
 
+// Borrowed main-loop views. Ordering never copies the source contact or its text.
+struct RowKey {
+  std::string_view name;
+  std::string_view id;
+};
+
 class PhoneListView : public Component {
  public:
   void set_parent_widget(lv_obj_t *value) { this->parent_ = value; }
@@ -60,6 +66,8 @@ class PhoneListView : public Component {
   void set_empty_text(const std::string &value) { this->empty_text_ = value; }
   void set_count_callback(std::function<uint32_t()> callback) { this->count_ = std::move(callback); }
   void set_render_callback(std::function<void(uint32_t, RowData &)> callback) { this->render_ = std::move(callback); }
+  void set_group_callback(std::function<uint8_t(uint32_t)> callback) { this->group_ = std::move(callback); }
+  void set_key_callback(std::function<RowKey(uint32_t)> callback) { this->key_ = std::move(callback); }
   void set_text_font(const lv_font_t *font) { this->text_font_ = font; }
   void set_icon_font(const lv_font_t *font) { this->icon_font_ = font; }
 #if defined(USE_FONT) && defined(USE_LVGL_FONT)
@@ -68,15 +76,22 @@ class PhoneListView : public Component {
 #endif
   Trigger<std::string, uint8_t> *get_select_trigger() { return &this->selected_; }
   void setup() override;
-  void refresh();
+  void refresh() { this->order_dirty_ = true; this->refresh_(); }
   void request_refresh() { if (!this->is_failed()) this->enable_loop_soon_any_context(); }
   void loop() override {
     this->disable_loop();
-    this->refresh();
+    this->order_dirty_ = true;
+    this->refresh_();
   }
   float get_setup_priority() const override { return setup_priority::LATE - 1; }
 
  protected:
+  static constexpr size_t MAX_ORDER_ROWS = 64;
+  struct Projection {
+    std::array<uint8_t, MAX_ORDER_ROWS> indices{};
+    std::array<uint8_t, MAX_ORDER_ROWS> groups{};
+  };
+  static_assert(sizeof(Projection) == 128, "Contact ordering must stay within its 128-byte budget");
   struct Slot {
     PhoneListView *owner{nullptr};
     lv_obj_t *button{nullptr}, *leading{nullptr}, *name{nullptr}, *detail{nullptr}, *trailing{nullptr};
@@ -87,6 +102,9 @@ class PhoneListView : public Component {
   static void parent_event_(lv_event_t *event);
   static void page_event_(lv_event_t *event);
   static void blink_(void *object, int32_t value);
+  static int compare_names_(std::string_view a, std::string_view b);
+  void refresh_();
+  int32_t rebuild_order_(uint32_t count, int32_t scroll);
   void stop_blink_();
   bool visible_() const;
   void paint_(Slot &slot, uint32_t index);
@@ -95,7 +113,9 @@ class PhoneListView : public Component {
   const lv_font_t *text_font_{LV_FONT_DEFAULT}, *icon_font_{LV_FONT_DEFAULT};
   uint16_t row_height_{48};
   uint8_t capacity_{8};
-  bool repainting_{false}, buffer_in_psram_{true};
+  bool repainting_{false}, buffer_in_psram_{true}, order_dirty_{true};
+  uint8_t ordered_count_{0};
+  Projection *projection_{nullptr};  // Tail of the existing row-pool allocation.
   struct SlotDeleter {
     void operator()(Slot *value) const {
 #ifdef USE_ESP32
@@ -108,6 +128,8 @@ class PhoneListView : public Component {
   std::unique_ptr<Slot[], SlotDeleter> slots_;
   std::function<uint32_t()> count_;
   std::function<void(uint32_t, RowData &)> render_;
+  std::function<uint8_t(uint32_t)> group_;
+  std::function<RowKey(uint32_t)> key_;
   Trigger<std::string, uint8_t> selected_;
 };
 

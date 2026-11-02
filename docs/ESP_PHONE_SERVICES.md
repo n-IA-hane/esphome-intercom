@@ -213,10 +213,24 @@ shows a type icon, name and BLF call state. Tap a normal row to call. A row
 labelled **Ringing: pickup** performs directed pickup through its SIP account.
 A ringing indicator animates while that list is visible.
 
+The list places HA browser phones first, then online or unknown ESP phones and
+SIP accounts, groups and Assist/automation services, saved contacts, and finally
+devices with confirmed closed presence. Each group is sorted by name, ignoring
+ASCII letter case; equal names use the stable contact identity. Browser phones
+remain callable without an open dashboard. Unknown presence is not offline.
+Presence changes restore a device to its normal group automatically. This is a
+display index only: the phonebook, selected destination and BLF watch order stay
+unchanged. The first visible contact and its scroll offset remain anchored when
+the list changes, if that contact still exists.
+
 For a custom display, `phone_list_view.visible_rows` reserves the widget pool
 at boot. Cover the viewport with its configured row height and two scroll
 buffer rows. The portrait P4 package reserves 9 contact rows for its larger
 viewport. This pool is separate from the BLF subscription limit.
+The shared contact view adds a 128-byte index/rank projection to that same
+allocation. Custom views can opt into the same bounded ordering with paired
+`row_group` and `row_key` lambdas; `row_key` returns borrowed name and stable-ID
+views. Group snapshots are rebuilt on requested data updates, not while scrolling.
 
 BLF uses standard SIP `SUBSCRIBE`/`NOTIFY` with the `dialog` event package.
 The optional standard `presence` subscription supplies reachability separately:

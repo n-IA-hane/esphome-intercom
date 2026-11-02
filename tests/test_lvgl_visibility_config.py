@@ -1,6 +1,7 @@
 """The visibility adapter binds real native pages without a polling task."""
 
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -89,6 +90,13 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
     code = next((tmp_path / ".esphome/build").glob("*/src/main.cpp")).read_text()
     assert "target = call_video_page->obj" in code
     assert "s3_video->attach_video_container(call_video_surface)" in code
+    assert "call_video_hangup = lv_button_create(call_video_page->obj)" in code
+    control = re.search(r"lv_obj_add_flag\(call_video_hangup, LV_OBJ_FLAG_CLICKABLE\);(.*?)"
+                        r"LvglComponent::add_event_cb\(call_video_hangup,", code, re.S)
+    assert control is not None
+    assert "voip_stack::StopAction<bool, lv_event_t *>" in control[1]
+    assert "->set_parent(phone);" in control[1]
+    assert "CallToggleAction" not in control[1]
     assert "policy.add_root(call_video_page->obj)" in code
     assert "incoming_video_overlay" not in code
     assert "target != call_video_page->obj" in code
