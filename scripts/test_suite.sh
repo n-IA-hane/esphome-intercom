@@ -135,6 +135,7 @@ ha_tests=(
   tests/test_delayed_rtp_reservation_ha.py
   tests/test_prebound_media_consumers_ha.py
   tests/test_managed_phones_ha.py
+  tests/test_phone_directory_ha.py
   tests/test_esphome_provisioning_optional_ha.py
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py
