@@ -179,7 +179,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
     bind_trunk = Mock(return_value=True)
     monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _hass: trunk)
     monkeypatch.setattr(endpoint_dialing, "reuse_registered_trunk_flow", bind_trunk)
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
     policy = endpoint_dialing.OutboundLegPolicy(
         local_uri_user="426",
         auth_username="auth-426",
@@ -206,6 +206,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
 
     assert leg is not None
     assert leg.ports is reservation
+    reservation.bind_audio_sockets.assert_called_once_with(ports=(12002,))
     bind_trunk.assert_called_once_with(trunk, leg.client)
     assert created["local_rtp_port"] == 12002
     assert created["local_uri_user"] == "426"
@@ -233,7 +234,7 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
         member="100", peers=[], roster_entries=[], local_name="Caller",
         local_rtp_port_index=1, uri_override="sip:100@example.test",
         invite=SimpleNamespace(routing_caller="source", video_format=object()),
-        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock()),
+        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),
         policy=endpoint_dialing.OutboundLegPolicy(use_trunk_flow=True),
     )
     assert leg is not None
@@ -252,7 +253,7 @@ def test_directional_audio_extension_is_limited_to_esphome_peers(
     expected: bool,
 ) -> None:
     dialer, created, _reused = _dialer(monkeypatch)
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
     peer = Peer(
         name="Phone",
         host="192.0.2.20",
@@ -283,7 +284,7 @@ def test_failed_external_leg_keeps_caller_owned_reservation(
         monkeypatch,
         client_error=RuntimeError("client construction failed"),
     )
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
 
     with pytest.raises(RuntimeError, match="client construction failed"):
         dialer.prepare_outbound_leg(
@@ -309,7 +310,7 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
     leg = dialer.prepare_outbound_leg(
         member=peer.name, peers=[peer], roster_entries=[], local_name="Caller",
         local_rtp_port_index=0,
-        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock()),
+        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),
     )
     assert leg is not None
     assert created["include_common_codecs"] is True

@@ -68,10 +68,12 @@ class LocalMediaBridge:
             left_port=media.local_rtp_port, right_port=media.reservation.ports[1],
         )
         result = cls(media, invite, relay, transport)
-        sock = relay._rtp_socket(relay.right_port)
+        sock = media.reservation.take_audio_socket(relay.right_port)
+        if sock is None:
+            sock = relay._rtp_socket(relay.right_port)
         try:
             relay.right_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
-                lambda: _RelayProtocol(relay, "right"), sock=sock,
+                lambda: _RelayProtocol(relay, "right", paused=True), sock=sock,
             )
             sock = None
             result.validate()
@@ -103,6 +105,7 @@ class LocalMediaBridge:
             self.transport.set_protocol(old_protocol)
             raise
         self.relay.left_transport = transport
+        self.relay.right_transport.resume_reading()
         left, clock = self.relay.left, self.media.rtp_source
         left.sequence, left.timestamp, left.ssrc = clock.sequence, clock.timestamp, clock.ssrc
         left.clock_rate = clock.clock_rate
