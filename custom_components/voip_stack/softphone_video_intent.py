@@ -13,8 +13,8 @@ from .const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
 from .core import sdp
 from .core.sdp import DEFAULT_VIDEO_FORMATS, browser_video_send_supported
 from .endpoint_lifecycle import call_registry
-from .media_ports import reserve_sip_video_media
-from .media_session_updates import commit_video_session_update
+from .media_ports import RtpPortReservation, reserve_sip_video_media
+from .media_session_updates import commit_video_session_update, committed_video_format_state
 from .runtime_data import require_runtime_data, sip_endpoint_manager
 from .websocket_api import _fire_call_event, _ha_softphone_store
 
@@ -40,8 +40,11 @@ def _publish_intent_result(
     accepted: bool,
     direction: str,
     reason: str = "",
+    negotiated: object | None = None,
 ) -> None:
     store = _ha_softphone_store(hass, endpoint_id)
+    if negotiated is not None:
+        store.update(committed_video_format_state(negotiated))
     store.update(
         {
             "video_active": bool(accepted and direction != "inactive"),
@@ -182,6 +185,14 @@ async def async_apply_send_video_intent(
                 direction=direction,
             )
             current_store = _ha_softphone_store(hass, endpoint_id)
+            if (
+                not registry.is_generation_current(call_id, generation)
+                or str(current_store.get("call_id") or "") != call_id
+                or str(current_store.get("state") or "") not in _ACTIVE_STATES
+            ):
+                if candidate is not None:
+                    client.abort_prepared_reinvite(previous, candidate)
+                return False
             if candidate is None:
                 reason = f"sip_{int(getattr(client, 'last_sip_status_code', 0)) or 488}"
                 _publish_intent_result(
@@ -192,9 +203,6 @@ async def async_apply_send_video_intent(
                     direction=str(previous.local_video_direction or "inactive"),
                     reason=reason,
                 )
-                return False
-            if not registry.is_generation_current(call_id, generation):
-                client.abort_prepared_reinvite(previous, candidate)
                 return False
             if not client.commit_prepared_reinvite(previous, candidate):
                 client.abort_prepared_reinvite(previous, candidate)
@@ -215,6 +223,23 @@ async def async_apply_send_video_intent(
                 video_session.media_generation += 1
                 video_session.update_event.set()
             if reservation is not None and accepted_video:
+                previous_reservation = getattr(client, "media_reservation", None)
+                if previous_reservation is not None:
+                    retained = RtpPortReservation.merge(
+                        hass, (previous_reservation.ports, reservation.ports),
+                        (previous_reservation.ports[0], reservation.ports[1]),
+                    )
+                    previous_reservation.detach()
+                    reservation.detach()
+                    reservation = retained
+                else:
+                    reservation = RtpPortReservation.adopt_bound_source(
+                        hass, client.local_rtp_port, reservation=reservation,
+                        retained_port=reservation.ports[1],
+                    )
+                for previous_socket in (client.video_rtp_socket, client.video_rtcp_socket):
+                    if previous_socket is not None:
+                        previous_socket.close()
                 client.media_reservation = reservation
                 client.video_rtp_socket = rtp_socket
                 client.video_rtcp_socket = rtcp_socket
@@ -229,6 +254,7 @@ async def async_apply_send_video_intent(
                     accepted=accepted_video,
                     direction=str(candidate.local_video_direction or "inactive"),
                     reason="" if accepted_video or not enabled else "video_rejected",
+                    negotiated=candidate,
                 )
             return accepted_video or not enabled
         finally:
@@ -266,6 +292,17 @@ async def async_apply_send_video_intent(
             direction=direction,
         )
         current_store = _ha_softphone_store(hass, endpoint_id)
+        if (
+            not registry.is_generation_current(call_id, generation)
+            or str(current_store.get("call_id") or "") != call_id
+            or str(current_store.get("state") or "") not in _ACTIVE_STATES
+        ):
+            if prepared is not None:
+                await prepared.restore(
+                    local_video_rtp_port=int(media.get("local_video_rtp_port") or 0),
+                    video_formats=formats,
+                )
+            return False
         if prepared is None:
             status, _reason = manager.video_reinvite_result(call_id)
             _publish_intent_result(
@@ -275,12 +312,6 @@ async def async_apply_send_video_intent(
                 accepted=previous.video_format is not None,
                 direction=str(media.get("video_direction") or "inactive"),
                 reason=f"sip_{status or 488}",
-            )
-            return False
-        if not registry.is_generation_current(call_id, generation):
-            await prepared.restore(
-                local_video_rtp_port=int(media.get("local_video_rtp_port") or 0),
-                video_formats=formats,
             )
             return False
         if not prepared.commit():
@@ -317,6 +348,7 @@ async def async_apply_send_video_intent(
                 enabled=enabled,
                 accepted=prepared.candidate.video_format is not None,
                 direction=negotiated_direction,
+                negotiated=prepared.candidate,
             )
         return True
     finally:

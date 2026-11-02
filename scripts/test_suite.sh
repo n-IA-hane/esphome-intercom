@@ -158,6 +158,14 @@ ha_tests=(
   tests/test_softphone_video_intent.py
   tests/test_video_keepalive_runtime.py
   tests/test_video_transcoder.py
+  tests/test_sip_video_relay.py
+  tests/test_accept_video_service_ha.py
+  tests/test_bridge_video_framerate_wire_ha.py
+  tests/test_camera_intent_wire_ha.py
+  tests/test_camera_standard_intent_wire_ha.py
+  tests/test_imageattr_ws.py
+  tests/test_video_transcoder_cadence.py
+  tests/test_video_direction_generation_ha.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do

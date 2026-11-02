@@ -2,58 +2,24 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-import importlib.util
 import socket
-import sys
 import types
 import unittest
 from unittest import mock
-from pathlib import Path
 
 import pytest
 
-
-ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
-PKG_DIR = ROOT / "custom_components" / "voip_stack"
-CORE_MODULES = {"rtp", "sdp", "video_rtcp"}
+pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
 
 
-def _load(name: str):
-    if "custom_components" not in sys.modules:
-        package = types.ModuleType("custom_components")
-        package.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = package
-    if PKG_NAME not in sys.modules:
-        package = types.ModuleType(PKG_NAME)
-        package.__path__ = [str(PKG_DIR)]
-        sys.modules[PKG_NAME] = package
-    is_core = name in CORE_MODULES
-    if is_core and f"{PKG_NAME}.core" not in sys.modules:
-        core_pkg = types.ModuleType(f"{PKG_NAME}.core")
-        core_pkg.__path__ = [str(PKG_DIR / "core")]
-        sys.modules[f"{PKG_NAME}.core"] = core_pkg
-    full_name = f"{PKG_NAME}.{'core.' if is_core else ''}{name}"
-    if full_name in sys.modules:
-        return sys.modules[full_name]
-    path = PKG_DIR / ("core" if is_core else "") / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(full_name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[full_name] = module
-    spec.loader.exec_module(module)
-    return module
+from custom_components.voip_stack.core import rtp, sdp, video_rtcp
+from custom_components.voip_stack import sip_video_relay
 
-
-rtp = _load("rtp")
-sdp = _load("sdp")
-_load("video_rtcp")
-sip_video_relay = _load("sip_video_relay")
 RtpVideoFormat = sdp.RtpVideoFormat
 video_formats_passthrough_compatible = sdp.video_formats_passthrough_compatible
 SipVideoRtpRelay = sip_video_relay.SipVideoRtpRelay
 VideoRtpPeer = sip_video_relay.VideoRtpPeer
-build_pli = sys.modules[f"{PKG_NAME}.core.video_rtcp"].build_pli
+build_pli = video_rtcp.build_pli
 
 
 class _Transport:
@@ -78,6 +44,69 @@ def _format(
         packetization_mode=1,
         direction=direction,
     )
+
+
+@pytest.mark.parametrize("outcome", ["commit", "rollback"])
+def test_direction_update_keeps_unchanged_worker_and_never_duplicates_a_direction(outcome):
+    async def scenario():
+        left = VideoRtpPeer("127.0.0.1", 41000, 41001, RtpVideoFormat(payload_type=104, encoding="VP8"))
+        right = VideoRtpPeer("127.0.0.1", 42000, 42001, RtpVideoFormat(payload_type=26, encoding="JPEG"))
+        relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+        relay.configure_transcoding(types.SimpleNamespace(data={}), "direction-owner")
+        relay.started, relay._transcode_slot_claimed = True, True
+        relay._maintain_nat = mock.Mock()
+        alive = {side: set() for side in ("left", "right")}
+        peak = {side: 0 for side in alive}
+        starts, closes = [], []
+
+        class Worker:
+            ready = True
+            def __init__(self, side):
+                self.side = side
+                alive[side].add(self)
+                peak[side] = max(peak[side], len(alive[side]))
+                starts.append(self)
+            async def async_close(self):
+                if self in alive[self.side]:
+                    alive[self.side].remove(self)
+                    closes.append(self)
+
+        async def build(_loop, candidate_left, candidate_right, *, directions=None, **_kwargs):
+            selected = relay.transcode_directions_for(candidate_left, candidate_right) if directions is None else set(directions)
+            return sip_video_relay._TranscodeGeneration(selected, {side: Worker(side) for side in selected}, {}, {})
+
+        relay._transcode = await build(None, left, right)
+        original_generation = relay._transcode
+        original_left = relay._transcode.transcoders["left"]
+        original_right = relay._transcode.transcoders["right"]
+        held_right = replace(right, video_format=replace(right.video_format, direction="recvonly"))
+        with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
+             mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
+             mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
+            try:
+                relay.stage_peer_reconfiguration("right", held_right)
+                commit, rollback = await relay.async_prepare_peer_generation(left=left, right=held_right)
+                await (commit() if outcome == "commit" else rollback())
+                assert peak == {"left": 1, "right": 1}
+                assert relay._transcode is original_generation
+                assert relay._transcode.transcoders["left"] is original_left
+                if outcome == "rollback":
+                    assert relay._transcode.transcoders["right"] is original_right
+                    assert len(starts) == 2 and not closes
+                    return
+                assert relay._transcode.directions == {"left"}
+                assert closes == [original_right] and len(starts) == 2
+                relay.stage_peer_reconfiguration("right", right)
+                commit, _rollback = await relay.async_prepare_peer_generation(left=left, right=right)
+                await commit()
+                assert relay._transcode is original_generation
+                assert relay._transcode.transcoders["left"] is original_left
+                assert relay._transcode.transcoders["right"] is not original_right
+                assert peak == {"left": 1, "right": 1} and len(starts) == 3
+            finally:
+                await relay.stop()
+        assert all(not workers for workers in alive.values())
+    asyncio.run(scenario())
 
 
 class SipVideoRelayTests(unittest.TestCase):
@@ -266,7 +295,7 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(len(self.right_rtcp.sent), 1)
         raw, destination = self.right_rtcp.sent[0]
         self.assertEqual(destination, (self.right.rtcp_host, self.right.rtcp_port))
-        feedback = sys.modules[f"{PKG_NAME}.core.video_rtcp"].parse_compound(raw)[-1]
+        feedback = video_rtcp.parse_compound(raw)[-1]
         self.assertEqual((feedback.packet_type, feedback.fmt), (206, 4))
         self.assertTrue(self.relay.arm_keyframe_request("right"))
         self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
@@ -562,8 +591,8 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertFalse(self.right_rtp.sent)
         self.assertEqual(self.relay.transcoded_input_packets, 2)
 
-    def test_cross_codec_recvonly_provisions_later_send_direction(self) -> None:
-        """An RFC 3264 direction update must not create a second relay lifecycle."""
+    def test_cross_codec_recvonly_retains_later_send_authorization(self) -> None:
+        """Only the active direction converts, retaining the same relay owner."""
 
         vp8 = RtpVideoFormat(
             payload_type=104,
@@ -580,13 +609,14 @@ class SipVideoRelayTests(unittest.TestCase):
         self.right.video_format = jpeg
         self.right.local_video_format = jpeg
 
-        self.relay.configure_transcoding(
-            types.SimpleNamespace(data={}),
-            "direction-update",
-        )
-
+        owner = types.SimpleNamespace(data={})
+        self.relay.configure_transcoding(owner, "direction-update")
+        self.assertEqual(self.relay._transcode.directions, {"right"})
+        self.assertIs(self.relay._transcode_hass, owner)
+        next_left = replace(self.left, video_format=replace(vp8, direction="sendrecv"))
+        next_right = replace(self.right, video_format=replace(jpeg, direction="sendrecv"))
         self.assertEqual(
-            self.relay._transcode.directions,  # noqa: SLF001
+            self.relay.transcode_directions_for(next_left, next_right),
             {"left", "right"},
         )
 
@@ -916,3 +946,79 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("failure", ["prepare_stale", "commit_stale", "cancel_rollback"])
+def test_direction_addition_fences_owner_and_joins_new_worker_cleanup(failure):
+    async def scenario():
+        left = VideoRtpPeer("127.0.0.1", 41000, 41001,
+            RtpVideoFormat(payload_type=104, encoding="VP8", direction="recvonly"))
+        right = VideoRtpPeer("127.0.0.1", 42000, 42001,
+            RtpVideoFormat(payload_type=26, encoding="JPEG"))
+        relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+        relay.configure_transcoding(types.SimpleNamespace(data={}), "direction-fence")
+        relay.started, relay._transcode_slot_claimed = True, True
+        relay._maintain_nat = mock.Mock()
+        alive = {side: set() for side in ("left", "right")}
+        entered, release = asyncio.Event(), asyncio.Event()
+        newer_left = replace(left, port=41002)
+
+        class Worker:
+            ready = True
+            def __init__(self, side):
+                self.side = side
+                alive[side].add(self)
+                assert len(alive[side]) == 1
+            async def async_close(self):
+                if failure == "cancel_rollback" and self.side == "left":
+                    entered.set()
+                    await release.wait()
+                alive[self.side].discard(self)
+
+        original = sip_video_relay._TranscodeGeneration({"right"}, {"right": Worker("right")}, {}, {})
+        relay._transcode = original
+        retained = original.transcoders["right"]
+
+        async def build(_loop, _left, _right, *, directions, **_kwargs):
+            result = sip_video_relay._TranscodeGeneration(set(directions),
+                {side: Worker(side) for side in directions}, {}, {})
+            if failure == "prepare_stale":
+                relay.reconfigure_peer("left", newer_left)
+            return result
+
+        async def no_slot(*_args):
+            pass
+
+        active_left = replace(left, video_format=replace(left.video_format, direction="sendrecv"))
+        with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
+             mock.patch.object(sip_video_relay, "_release_transcoder_slot", side_effect=no_slot):
+            try:
+                relay.stage_peer_reconfiguration("left", active_left)
+                relay.stage_peer_reconfiguration("right", right)
+                if failure == "prepare_stale":
+                    with pytest.raises(RuntimeError, match="changed"):
+                        await relay.async_prepare_peer_generation(left=active_left, right=right)
+                else:
+                    commit, rollback = await relay.async_prepare_peer_generation(left=active_left, right=right)
+                    if failure == "commit_stale":
+                        committing = asyncio.create_task(commit())
+                        asyncio.get_running_loop().call_soon(relay.reconfigure_peer, "left", newer_left)
+                        with pytest.raises(RuntimeError, match="changed"):
+                            await committing
+                    else:
+                        rolling_back = asyncio.create_task(rollback())
+                        await entered.wait()
+                        rolling_back.cancel()
+                        release.set()
+                        with pytest.raises(asyncio.CancelledError):
+                            await rolling_back
+                assert relay._transcode is original
+                assert original.transcoders == {"right": retained}
+                assert alive == {"left": set(), "right": {retained}}
+                assert not relay._staged_peers
+                assert relay.left is (left if failure == "cancel_rollback" else newer_left)
+            finally:
+                release.set()
+                await relay.stop()
+        assert not alive["left"] and not alive["right"]
+    asyncio.run(scenario())

@@ -23,6 +23,7 @@ from .video_transcoder import (
     _claim_transcoder_slot,
     _release_transcoder_slot,
     video_transcode_supported,
+    jpeg_size_transcode_required,
 )
 from .core.video_rtcp import (
     RtcpError,
@@ -278,8 +279,8 @@ class SipVideoRtpRelay:
             raise ValueError(f"unknown video relay side: {side}")
         return side in self._transcode.directions
 
-    @staticmethod
     def transcode_directions_for(
+        self,
         left: VideoRtpPeer,
         right: VideoRtpPeer,
     ) -> set[str]:
@@ -288,10 +289,16 @@ class SipVideoRtpRelay:
             ("left", left, right),
             ("right", right, left),
         ):
+            if not remote_can_send(source.video_format) or not remote_can_receive(
+                destination.video_format, connection_held=destination.connection_held
+            ):
+                continue
             if video_formats_passthrough_compatible(
                 source.recv_format,
                 destination.send_format,
-            ):
+            ) and not (self._transcode_hass is not None and jpeg_size_transcode_required(
+                source.recv_format, destination.send_format,
+            )):
                 continue
             if not video_transcode_supported(
                 source.recv_format,
@@ -359,12 +366,9 @@ class SipVideoRtpRelay:
 
         if self.started or self._start_task is not None:
             raise RuntimeError("cannot configure transcoding after relay start")
-        directions = self.transcode_directions_for(self.left, self.right)
-        if not directions:
-            return
         self._transcode_hass = hass
         self._transcode_call_id = str(call_id or "sip-video")
-        self._transcode.directions = directions
+        self._transcode.directions = self.transcode_directions_for(self.left, self.right)
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
@@ -490,12 +494,13 @@ class SipVideoRtpRelay:
         right: VideoRtpPeer,
         *,
         suffix: str = "",
+        directions: set[str] | None = None,
     ) -> _TranscodeGeneration:
         hass = self._transcode_hass
         if hass is None:
             raise RuntimeError("SIP video transcode has no Home Assistant owner")
         generation = _TranscodeGeneration(
-            self.transcode_directions_for(left, right),
+            self.transcode_directions_for(left, right) if directions is None else set(directions),
             {},
             {},
             {},
@@ -534,6 +539,20 @@ class SipVideoRtpRelay:
             await self._close_transcode_generation(generation)
             raise
         return generation
+
+    @staticmethod
+    def _take_transcode_resources(generation, directions):
+        """Move resources for selected directions without sharing their ownership."""
+        return _TranscodeGeneration(set(directions),
+            {side: generation.transcoders.pop(side) for side in directions if side in generation.transcoders},
+            {key: generation.transports.pop(key) for key in tuple(generation.transports) if key[0] in directions},
+            {key: generation.sockets.pop(key) for key in tuple(generation.sockets) if key[0] in directions})
+
+    @staticmethod
+    def _adopt_transcode_resources(target, source):
+        for name in ("transcoders", "transports", "sockets"):
+            getattr(target, name).update(getattr(source, name))
+            getattr(source, name).clear()
 
     def _install_transcode_generation(
         self,
@@ -741,7 +760,7 @@ class SipVideoRtpRelay:
 
         # A direction/address change does not invalidate codec reference frames.
         # Retain the existing conversion processes when their contracts match.
-        same_codecs = directions == self._transcode.directions and all(
+        matching_codecs = all(
             replace(before, direction="sendrecv") == replace(after, direction="sendrecv")
             for old, new in ((previous_left, left), (previous_right, right))
             for before, after in (
@@ -749,6 +768,7 @@ class SipVideoRtpRelay:
                 (old.send_format, new.send_format),
             )
         )
+        same_codecs = matching_codecs and directions == self._transcode.directions
         if (not self._transcode.directions and not directions) or same_codecs:
             settled = False
 
@@ -800,6 +820,103 @@ class SipVideoRtpRelay:
                         self.handle_rtp(staged_side, data, addr)
 
             return commit_passthrough, rollback_passthrough
+
+        if matching_codecs:
+            old = self._transcode
+            added = directions - old.directions
+            removed = old.directions - directions
+            if added and self._transcode_hass is None:
+                raise RuntimeError("video relay transcoding is not configured")
+            claimed_slot = bool(added and not self._transcode_slot_claimed)
+            generation = _TranscodeGeneration(set(), {}, {}, {})
+
+            def current():
+                return (
+                    not self._stop_requested and self._transcode is old
+                    and self.left is previous_left and self.right is previous_right
+                    and (staged_left is None or self._staged_peers.get("left") is staged_left)
+                    and self._staged_peers.get("right") is staged_right
+                )
+
+            def clear_stages():
+                for side, staged in (("left", staged_left), ("right", staged_right)):
+                    if self._staged_peers.get(side) is staged:
+                        self._staged_peers.pop(side, None)
+
+            async def recover():
+                try:
+                    await self._close_transcode_generation(generation)
+                finally:
+                    clear_stages()
+                    if claimed_slot:
+                        await _release_transcoder_slot(self._transcode_hass, self)
+                        self._transcode_slot_claimed = False
+
+            try:
+                if claimed_slot:
+                    await _claim_transcoder_slot(self._transcode_hass, self)
+                    self._transcode_slot_claimed = True
+                if not current():
+                    raise RuntimeError("video relay owner changed before direction preparation")
+                if added:
+                    generation = await self._build_transcode_generation(
+                        asyncio.get_running_loop(), left, right,
+                        suffix="-direction", directions=added,
+                    )
+                if not current():
+                    raise RuntimeError("video relay owner changed during direction preparation")
+            except BaseException:
+                await async_wait_for_cleanup(asyncio.create_task(recover(), name="voip-video-direction-recovery"))
+                raise
+
+            settled = False
+
+            async def rollback_directions():
+                nonlocal settled
+                if settled:
+                    return
+                settled = True
+                await async_wait_for_cleanup(asyncio.create_task(recover(), name="voip-video-direction-rollback"))
+
+            async def settle_directions():
+                if not current():
+                    await recover()
+                    raise RuntimeError("video relay owner changed before direction settlement")
+                retired = self._take_transcode_resources(old, removed)
+                self._adopt_transcode_resources(old, generation)
+                old.directions = directions
+                self.left, self.right = left, right
+                for peer in (left, right):
+                    peer.rx_ssrc = None
+                    peer.rtcp_source_port = None
+                self._maintain_nat()
+                for side in removed | added:
+                    self._keyframe_requests.pop(side, None)
+                    self._transcode_startup_rtp[side].clear()
+                    self._transcode_startup_bytes[side] = 0
+                for side in added:
+                    self.arm_keyframe_request(side)
+                await self._close_transcode_generation(retired)
+                clear_stages()
+                for side, staged in (("left", staged_left), ("right", staged_right)):
+                    if staged is not None:
+                        for data, addr in staged.packets:
+                            self.handle_rtp(side, data, addr)
+                if not directions and self._transcode_slot_claimed:
+                    await _release_transcoder_slot(self._transcode_hass, self)
+                    self._transcode_slot_claimed = False
+
+            async def commit_directions():
+                nonlocal settled
+                if settled:
+                    raise RuntimeError("video peer generation already settled")
+                if not current():
+                    await rollback_directions()
+                    raise RuntimeError("video relay peer changed before direction commit")
+                settled = True
+                await async_wait_for_cleanup(asyncio.create_task(settle_directions(), name="voip-video-direction-commit"))
+
+            return commit_directions, rollback_directions
 
         if self._transcode_hass is None:
             raise RuntimeError("video relay transcoding is not configured")

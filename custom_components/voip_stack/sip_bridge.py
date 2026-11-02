@@ -12,6 +12,7 @@ from .core.sdp import remote_can_receive, remote_can_send
 from .sip_client import SipCallClient, SipDialog
 from .sip_listener import SipInvite
 from .sip_rtp_bridge import RtpPeer, SipRtpRelay
+from .video_transcoder import jpeg_size_transcode_required
 from .sip_video_relay import (
     SipVideoRtpRelay,
     VideoRtpPeer,
@@ -81,6 +82,14 @@ def video_bridge_offer_formats(
     """Offer what the source can receive, with bounded transcoding fallbacks."""
 
     source = source_receive or source_send
+    # This offer's receive recommendation constrains the opposite camera.
+    # The original receiver is source_send, independently of local caller RX.
+    source = replace(source, max_framerate=source_send.max_framerate)
+    if source.encoding == "JPEG" and source.image_attributes is not None:
+        attributes = source.image_attributes
+        if attributes.send is None and attributes.recv is None:
+            source = replace(source, image_attributes=(
+                sdp.ANY_IMAGE_ATTRIBUTES if enable_transcoding else None))
     if target_codec == "":
         return ()
 
@@ -172,7 +181,7 @@ async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, en
             left_port=reservation.ports[0], right_port=reservation.ports[1],
             left_socket=sockets[0], left_rtcp_socket=sockets[1], right_socket=sockets[2], right_rtcp_socket=sockets[3],
             on_release=lambda _ports: reservation.release())
-        if not compatible:
+        if enable_transcoding:
             relay.configure_transcoding(hass, left_invite.call_id)
         answers = []
         for invite, peer in ((left_invite, right_invite), (right_invite, left_invite)):
@@ -260,12 +269,22 @@ def configure_answered_invite_video_relay(
             dialog.recv_video_format, source_directional.send,
         )
     )
+    if enable_transcoding and remote_video is not None:
+        try:
+            resize = jpeg_size_transcode_required(invite.recv_video_format, dialog.send_video_format) or (
+                jpeg_size_transcode_required(dialog.recv_video_format, invite.send_video_format))
+        except (RuntimeError, ValueError):
+            return None
+        if resize:
+            exact_passthrough = False
     if exact_passthrough:
         assert source_video is not None
         assert source_directional is not None
         relay.left.video_format = source_directional.send
         relay.left.local_video_format = source_directional.recv
         relay.reconfigure_peer("right", dialog_video_rtp_peer(dialog))
+        if enable_transcoding and hass is not None:
+            relay.configure_transcoding(hass, invite.call_id)
     elif (
         enable_transcoding
         and hass is not None

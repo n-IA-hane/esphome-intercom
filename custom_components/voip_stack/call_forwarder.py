@@ -977,6 +977,7 @@ async def async_forward_existing_call(
                             winner.endpoint_id,
                             str(browser_decision.get("media_client_id") or ""),
                             send_video=bool(browser_decision.get("send_video", False)),
+                            accept_video=bool(browser_decision.get("accept_video", True)),
                         )
                         reservation.release()
                         return
@@ -1009,6 +1010,8 @@ async def async_forward_existing_call(
                                 "send_video": bool(
                                     browser_decision.get("send_video", False)
                                 ),
+                                **({"accept_video": browser_decision["accept_video"]}
+                                   if "accept_video" in browser_decision else {}),
                             },
                             blocking=True,
                             context=registry.ha_context(call_id),

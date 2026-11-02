@@ -2830,6 +2830,7 @@ class VoipStackCard extends HTMLElement {
           ...this._softphoneServiceScope(),
           call_id: callId,
           send_video: sendVideo,
+          ...(typeof options.acceptVideo === "boolean" ? {accept_video:options.acceptVideo} : {}),
           media_client_id: voipStackEngine.mediaClientId,
         });
         // The backend can commit a local or SIP answer and publish in_call
