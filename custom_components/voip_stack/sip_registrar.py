@@ -348,6 +348,8 @@ class SipRegistrar:
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
         self.accounts = {account.username.lower(): account for account in accounts}
+        self._authentication_generations = {username: uuid.uuid4().hex for username in self.accounts}
+        self._account_observers = set()
         self.registrations: dict[str, SipRegistration] = {}
         self.nonces: dict[str, float] = {}
         self.nonce_uses: dict[
@@ -376,6 +378,16 @@ class SipRegistrar:
     def update_accounts(self, accounts: list[SipAccount]) -> None:
         previous_accounts = self.accounts
         self.accounts = {account.username.lower(): account for account in accounts}
+        changed = {username for username in previous_accounts.keys() | self.accounts.keys()
+                   if username not in previous_accounts or username not in self.accounts
+                   or previous_accounts[username].enabled != self.accounts[username].enabled
+                   or not hmac.compare_digest(previous_accounts[username].password.encode(),
+                                              self.accounts[username].password.encode())}
+        for username in changed:
+            if username in self.accounts:
+                self._authentication_generations[username] = uuid.uuid4().hex
+            else:
+                self._authentication_generations.pop(username, None)
         retained: dict[str, list[SipRegistration]] = {}
         retained_usernames: set[str] = set()
         for registration in self.registrations.values():
@@ -386,7 +398,7 @@ class SipRegistrar:
                 account is None
                 or not account.enabled
                 or previous is None
-                or not hmac.compare_digest(previous.password, account.password)
+                or not hmac.compare_digest(previous.password.encode(), account.password.encode())
             ):
                 continue
             registration.username = account.username
@@ -406,6 +418,21 @@ class SipRegistrar:
         self.registrations = registrations
         for username in removed:
             self._notify_registration_change(username, False)
+        if changed:
+            for observer in tuple(self._account_observers):
+                try:
+                    observer(frozenset(changed))
+                except Exception as error:
+                    _LOGGER.warning("Account observer stopped (%s)", type(error).__name__)
+
+    def authentication_generation(self, username):
+        """One private account lifetime, independent of Contact reachability."""
+        account = self.accounts.get(str(username).casefold())
+        return self._authentication_generations.get(str(username).casefold()) if account and account.enabled else None
+
+    def subscribe_account_changes(self, observer):
+        self._account_observers.add(observer)
+        return lambda: self._account_observers.discard(observer)
 
     def _registration(self, username: str) -> SipRegistration | None:
         registrations = self._registrations(username)

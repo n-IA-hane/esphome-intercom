@@ -88,6 +88,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             "default_trunk_id",
             "esphome_mailboxes", "voicemail", "parking",
             "managed_esphome_phones",
+            "phone_services",
         }
     }
 
@@ -143,6 +144,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         lot.slots = tuple(settings["slots"])
     from .trunk_runtime import async_reconcile_trunks
     await async_reconcile_trunks(hass, entry)
+    from .phone_services import async_reconcile_phone_services
+    await async_reconcile_phone_services(hass, entry)
 
     phones_changed = previous_phones is not None and previous_phones != phone_signature
     contacts_changed = (

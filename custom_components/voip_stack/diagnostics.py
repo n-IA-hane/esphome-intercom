@@ -58,6 +58,7 @@ TO_REDACT = {
     "conference_group",
     "sip_accounts",
     "managed_esphome_phones",
+    "phone_services",
     "sip_uri",
     "subentry_id",
     "title",

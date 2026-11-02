@@ -101,6 +101,8 @@ class VoipStackRuntime:
     phonebook_service_event_unsub: Any | None = None
     phone_provisioning: Any | None = None
     directory: Any | None = None
+    ldap_server: Any | None = None
+    phone_services: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
