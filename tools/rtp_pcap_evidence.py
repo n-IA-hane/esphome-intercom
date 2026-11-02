@@ -100,11 +100,21 @@ def analyze_rows(rows: Iterable[str]) -> list[dict[str, Any]]:
     return sorted(evidence, key=lambda item: (item["source"], item["ssrc"]))
 
 
-def analyze_pcap(path: Path) -> list[dict[str, Any]]:
+def _sip_decode_arguments(ports: tuple[int, ...]) -> list[str]:
+    arguments = []
+    for port in sorted(set(ports)):
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError("SIP decoding ports must be integers from 1 to 65535")
+        for transport in ("udp", "tcp"):
+            arguments.extend(("-d", f"{transport}.port=={port},sip"))
+    return arguments
+
+
+def analyze_pcap(path: Path, *, sip_ports: tuple[int, ...] = ()) -> list[dict[str, Any]]:
     tshark = shutil.which("tshark")
     if not tshark:
         raise RuntimeError("tshark is required for RTP PCAP evidence")
-    command = [tshark, "-r", str(path), "-Y", "rtp", "-T", "fields"]
+    command = [tshark, *_sip_decode_arguments(sip_ports), "-r", str(path), "-Y", "rtp", "-T", "fields"]
     for field in FIELDS:
         command.extend(("-e", field))
     result = subprocess.run(
@@ -115,7 +125,7 @@ def analyze_pcap(path: Path) -> list[dict[str, Any]]:
         text=True,
     )
     streams = analyze_rows(result.stdout.splitlines())
-    clock_rates = _sdp_audio_clock_rates(tshark, path)
+    clock_rates = _sdp_audio_clock_rates(tshark, path, sip_ports=sip_ports)
     for stream in streams:
         source_host, source_port = stream["source"].rsplit(":", 1)
         clock_rate = clock_rates.get(
@@ -167,10 +177,13 @@ def evaluate_streams(
 def _sdp_audio_clock_rates(
     tshark: str,
     path: Path,
+    *,
+    sip_ports: tuple[int, ...] = (),
 ) -> dict[tuple[str, int, int], int]:
     result = subprocess.run(
         [
             tshark,
+            *_sip_decode_arguments(sip_ports),
             "-r",
             str(path),
             "-Y",
@@ -227,6 +240,8 @@ def main() -> int:
     parser.add_argument("pcap", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--require-streams", type=int, default=1)
+    parser.add_argument("--sip-port", type=int, action="append", default=[],
+                        help="decode SIP on this TCP/UDP port (repeat for additional lab peers)")
     parser.add_argument(
         "--max-loss",
         type=int,
@@ -241,7 +256,10 @@ def main() -> int:
     )
     parser.add_argument("--max-cadence-ratio", type=float, default=1.25)
     args = parser.parse_args()
-    streams = analyze_pcap(args.pcap)
+    try:
+        streams = analyze_pcap(args.pcap, sip_ports=tuple(args.sip_port))
+    except ValueError as error:
+        parser.error(str(error))
     failures = evaluate_streams(
         streams,
         require_streams=args.require_streams,
@@ -252,6 +270,7 @@ def main() -> int:
     payload = {
         "status": "failed" if failures else "passed",
         "pcap_sha256": _sha256(args.pcap),
+        "sip_decode_ports": sorted(set(args.sip_port)),
         "streams": streams,
         "failures": failures,
     }
