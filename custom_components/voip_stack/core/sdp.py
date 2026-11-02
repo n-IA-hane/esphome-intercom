@@ -211,7 +211,12 @@ def parse_rtp_audio_capability(
     fmt = RtpPcmFormat(int(payload_type), encoding, rate, channels, frame_ms)
     if encoding == "OPUS" and (rate != 48000 or channels != 2):
         raise SdpError("Opus SDP capability must use opus/48000/2")
-    fmt.audio_format
+    try:
+        if frame_ms <= 0:
+            raise ValueError("packet time must be positive")
+        fmt.audio_format
+    except ValueError as err:
+        raise SdpError(f"unrepresentable RTP audio capability {token!r}") from err
     return fmt
 
 
@@ -1734,7 +1739,7 @@ def _common_codec_offer_formats(
     return out
 
 
-def parse_sdp(sdp: str | bytes) -> dict:
+def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     if isinstance(sdp, bytes):
         sdp = sdp.decode("utf-8", errors="strict")
     session_conn = ""
@@ -1774,9 +1779,9 @@ def parse_sdp(sdp: str | bytes) -> dict:
             # Port zero rejects this media stream. Continue looking for the
             # first active RTP/AVP audio section that this single-stream bridge
             # can actually answer.
-            if candidate_port == 0:
+            if candidate_port == 0 and not capabilities:
                 continue
-            if not 1 <= candidate_port <= 65535:
+            if not (0 if capabilities else 1) <= candidate_port <= 65535:
                 raise SdpError(f"bad audio media port: {candidate_port}")
             if not candidate_payloads or any(
                 not 0 <= pt <= 127 for pt in candidate_payloads
@@ -1830,7 +1835,7 @@ def parse_sdp(sdp: str | bytes) -> dict:
         except ValueError as err:
             raise SdpError(f"bad SDP audio attribute: {line}") from err
     connection_ip = media_conn or session_conn
-    if not connection_ip or not media_port or not payload_order:
+    if not connection_ip or (not media_port and not capabilities) or not payload_order:
         raise SdpError("SDP missing c=, m=audio port, or payload list")
     return {
         "connection_ip": connection_ip,
@@ -2970,8 +2975,9 @@ def offered_pcm_formats(
     sdp: str | bytes,
     *,
     allow_dahua_pcm: bool = False,
+    capabilities: bool = False,
 ) -> list[RtpPcmFormat]:
-    parsed = parse_sdp(sdp)
+    parsed = parse_sdp(sdp, capabilities=capabilities)
     out: list[RtpPcmFormat] = []
     for pt in parsed["payload_order"]:
         spec = _offered_audio_mapping(parsed, pt)
@@ -3004,6 +3010,48 @@ def offered_pcm_formats(
             )
         )
     return out
+
+
+def options_capabilities(body: str | bytes) -> dict:
+    """Read advisory audio hints, without turning absent ptime into a format."""
+    parsed = parse_sdp(body, capabilities=True)
+    formats = offered_pcm_formats(body, capabilities=True)
+    # Scope the private attributes to the selected audio section. Other media
+    # sections cannot establish directional audio support.
+    text = body.decode("utf-8", errors="strict") if isinstance(body, bytes) else body
+    sections = re.split(r"(?=^m=)", text.replace("\r\n", "\n"), flags=re.MULTILINE)
+    audio = next((part for part in sections if part.startswith("m=audio ")
+        and part.splitlines()[0].split()[2].upper() == "RTP/AVP"), "")
+    flows = _audio_flow_attributes(audio)
+    direction = parsed["direction"]
+
+    def permits(fmt, sending):
+        flow = flows.get(fmt.payload_type)
+        if flow:
+            return flow in ({"send", "sendrecv"} if sending else {"recv", "sendrecv"})
+        return direction in ({"sendrecv", "sendonly"} if sending else {"sendrecv", "recvonly"})
+
+    def tokens(sending):
+        if not parsed["ptime"]:
+            return []
+        result = []
+        for fmt in formats:
+            if not permits(fmt, sending):
+                continue
+            token = f"{fmt.encoding}/{fmt.sample_rate}/{fmt.channels}/{parsed['ptime']}"
+            try:
+                parse_rtp_audio_capability(token, fmt.payload_type)
+            except SdpError:
+                continue
+            result.append(token)
+        return result
+
+    # A D1 hint is explicit wire evidence even when its packet time is unknown.
+    advertised_flows = {flows.get(fmt.payload_type) for fmt in formats}
+    d1 = bool(advertised_flows & {"send", "sendrecv"}) and bool(
+        advertised_flows & {"recv", "sendrecv"})
+    return {"sip_audio_tx_formats": tokens(True), "sip_audio_rx_formats": tokens(False),
+        "sdp_features": ["directional_audio_v1"] if d1 else []}
 
 
 def _dtmf_events_from_fmtp(value: str) -> frozenset[int]:

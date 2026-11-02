@@ -160,6 +160,16 @@ def sip_target_rtp_audio_profile(
 
     remote_tx_tokens = _rtp_capability_tokens(peer, entry, "tx", device)
     remote_rx_tokens = _rtp_capability_tokens(peer, entry, "rx", device)
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    if metadata.get("sip_capabilities_known"):
+        # Discovery is a preference, never the complete local codec policy.
+        # Keep alternatives available for the authoritative INVITE answer.
+        for tokens, local_formats in ((remote_tx_tokens, HA_SIP_PCM_RX_FORMATS),
+                                      (remote_rx_tokens, HA_SIP_PCM_TX_FORMATS)):
+            for fmt in local_formats:
+                token = f"L16/{fmt.sample_rate}/{fmt.channels}/{fmt.frame_ms}"
+                if sdp.is_rtp_pcm_mappable(fmt) and token not in tokens:
+                    tokens.append(token)
     shared_payloads: dict[tuple[str, int, int, int], int] = {}
     remote_tx = _assign_capability_payloads(remote_tx_tokens, shared_payloads)
     remote_rx = _assign_capability_payloads(remote_rx_tokens, shared_payloads)

@@ -258,6 +258,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         if 200 <= int(result.status) < 300:
             registrar_expiry.reschedule()
             await _refresh_and_push_phonebook(hass)
+            from .sip_capabilities import schedule_capability_probe
+
+            try:
+                username = parse_sip_uri(request.header("To")).user
+            except ValueError:
+                username = ""
+            if username:
+                schedule_capability_probe(hass, username)
         return result
 
     def _on_flow_closed(host: str, port: int, transport: str) -> None:

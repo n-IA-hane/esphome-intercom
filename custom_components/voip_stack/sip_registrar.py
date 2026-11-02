@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, asdict, field, replace
 from enum import StrEnum
 import hmac
 import logging
@@ -82,6 +82,15 @@ class SipRegistration:
     gruu_epoch: str = ""
     public_gruu: str = ""
     temporary_gruu: str = ""
+    capabilities: dict[str, Any] | None = None
+    capability_generation: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    @property
+    def flow_key(self) -> tuple:
+        """Authenticated routing identity, excluding refresh sequence/expiry."""
+        return (self.username.casefold(), self.call_id, self.contact_uri,
+            self.advertised_contact_uri, self.source_host, self.source_port,
+            self.transport.upper(), self.instance_id, self.reg_id)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -858,7 +867,8 @@ class SipRegistrar:
                         if binding.username.casefold() == account.username.casefold() and binding.instance_id == contact.instance_id:
                             next_registrations[binding_key] = replace(binding, gruu_epoch=epoch,
                                 public_gruu=public_gruu, temporary_gruu=temporary_gruu)
-                next_registrations[key] = SipRegistration(
+                previous_binding = next_registrations.get(key)
+                updated_binding = SipRegistration(
                     username=account.username,
                     contact_uri=contact.contact_uri,
                     source_host=addr[0],
@@ -875,6 +885,10 @@ class SipRegistrar:
                     outbound=contact.outbound,
                     gruu_epoch=epoch, public_gruu=public_gruu, temporary_gruu=temporary_gruu,
                 )
+                if previous_binding is not None and previous_binding.flow_key == updated_binding.flow_key:
+                    updated_binding.capabilities = previous_binding.capabilities
+                    updated_binding.capability_generation = previous_binding.capability_generation
+                next_registrations[key] = updated_binding
 
         self.registrations = next_registrations
         is_registered = bool(self._registrations(account.username))
@@ -994,6 +1008,8 @@ class SipRegistrar:
                     sip_uri=registration.contact_uri,
                     extension=account.extension,
                     metadata={
+                        **(registration.capabilities or {}),
+                        "sip_capabilities_known": registration.capabilities is not None,
                         "sip_transport": registration.transport.lower(),
                         "registered": True,
                         "user_agent": registration.user_agent,
@@ -1007,6 +1023,8 @@ class SipRegistrar:
                         "ring_group": account.ring_group,
                         "sip_contacts": [
                             {
+                                **(binding.capabilities or {}),
+                                "sip_capabilities_known": binding.capabilities is not None,
                                 "uri": binding.contact_uri,
                                 "transport": binding.transport.lower(),
                                 "q": binding.q,
