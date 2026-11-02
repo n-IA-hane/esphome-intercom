@@ -219,6 +219,30 @@ def test_transfer_uses_address_contact_route_not_current_peer(destination):
     assert target.uri == "sip:room-speaker@192.0.2.30:5070;transport=udp"
 
 
+@pytest.mark.parametrize("kind", ["browser", "sip_account", "esphome"])
+@pytest.mark.parametrize("destination", ["Workshop", "321"])
+def test_transfer_to_owned_phone_keeps_the_pbx_dialplan(kind, destination):
+    """An address in the roster must not bypass a logical phone's routing."""
+    import json
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+
+    endpoint = PhoneEndpoint("workshop", "Workshop", kind, extension="321")
+    runtime = SimpleNamespace(
+        endpoints=SimpleNamespace(resolve=lambda value: endpoint),
+        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+            {"id": "HA", "address": "192.0.2.1", "port": 5070,
+             "metadata": {"local_ha": True, "sip_transport": "tcp"}},
+            {"id": "workshop", "name": "Workshop", "extension": "321",
+             "address": "192.0.2.30", "port": 5060,
+             "metadata": {"sip_transport": "udp"}},
+        ])}),
+    )
+
+    target = call_transfer._blind_target(runtime, "sip:caller@provider.example", destination)
+
+    assert target.uri == "sip:321@192.0.2.1:5070;transport=tcp"
+
+
 def test_attended_transfer_addresses_the_known_gruu_instance():
     consultation = _established("consult", "remote", "desk")
     consultation.dialog.remote_target_uri = "sip:desk@pbx.example;gr=instance-a"
