@@ -103,6 +103,28 @@ async def test_every_failure_cleans_owned_call_and_cannot_report_success(action_
         assert result["cleanup_error"] == "OSError: exact cleanup failure"
 
 
+async def test_cleanup_cause_survives_failed_quiescence_observation():
+    observations = 0
+
+    async def observe():
+        nonlocal observations
+        observations += 1
+        if observations > 1:
+            raise RuntimeError("secondary observation failed")
+        return snapshot()
+
+    async def action():
+        pass
+
+    async def cleanup():
+        raise LookupError("first visible click failed")
+
+    result = await run_owned_case(action, cleanup, observe)
+    assert result["status"] == "failed"
+    assert result["cleanup_error"] == "LookupError: first visible click failed"
+    assert result["quiescence_error"] == "RuntimeError: secondary observation failed"
+
+
 def jpeg_bytes():
     output = BytesIO()
     Image.new("RGB", (24, 16), (40, 90, 180)).save(output, "JPEG")

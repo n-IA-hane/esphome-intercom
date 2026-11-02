@@ -356,7 +356,8 @@ async def run_owned_case(action: Callable[[], Awaitable[object]], cleanup: Calla
             result["cleanup_error"] = result.get("cleanup_error", "Call resources differ from the measured baseline")
         result["snapshots"] = {"pre": before, "post": after}
     except Exception as error:
-        result["cleanup_error"] = f"{type(error).__name__}: {error}"
+        result["quiescence_error"] = f"{type(error).__name__}: {error}"
+        result["cleanup_error"] = result.get("cleanup_error", result["quiescence_error"])
     if "error" not in result and "cleanup_error" not in result:
         result["status"] = "observed"
     return result
