@@ -3736,8 +3736,8 @@ class SipCallClient:
             )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
-                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer, allow_dahua_pcm=self.include_dahua_pcm)],
-                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer, allow_dahua_pcm=self.include_dahua_pcm)],
+                self.supported_send_formats,
+                self.supported_recv_formats,
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=self.include_dahua_pcm,
