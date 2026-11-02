@@ -3330,15 +3330,25 @@ def negotiate_directional(
         local_send_preferred,
         local_recv_preferred,
     )
-    if explicit is not None:
-        return explicit
-    return _negotiate_for_local_direction(
+    selected = explicit or _negotiate_for_local_direction(
         offered,
         local_send_preferred,
         local_recv_preferred,
         format_direction,
         prefer_offer_order=False,
     )
+    if selected is None:
+        return None
+    # The remote ptime is a recommendation, not our decoder's receive budget.
+    # Retain the selected PCM quantum, and derive capacity only from locally
+    # supported shapes for this same codec/rate/channels. Peer RX bounds apply
+    # to our transmitter and must never become our own receive capacity.
+    receive_shape = _format_key(selected.recv.audio_format)[:3]
+    maximum = max([selected.recv.frame_ms, *(local.frame_ms for local in local_recv_preferred
+        if _format_key(local)[:3] == receive_shape)])
+    if maximum <= selected.recv.frame_ms:
+        return selected
+    return replace(selected, recv=replace(selected.recv, max_frame_ms=maximum))
 
 
 def negotiate_answer_directional(
@@ -3552,7 +3562,7 @@ def build_answer_directional(
             raise SdpError(
                 "SDP sendrecv answer requires one RTP payload usable for both TX and RX"
             )
-        selected = list(dict.fromkeys([recv, send]))
+        selected = [recv] if _rtp_contract_key(send) == _rtp_contract_key(recv) else [recv, send]
     payload_values = [str(fmt.payload_type) for fmt in selected]
     if (
         dtmf is not None
@@ -3591,10 +3601,12 @@ def build_answer_directional(
         audio_lines.append(
             f"a=fmtp:{dtmf.payload_type} {_format_dtmf_events(dtmf.events)}"
         )
+    receive_maxptime = (max(recv.frame_ms, recv.max_frame_ms)
+        if format_direction in {"recvonly", "sendrecv"} else send.frame_ms)
     audio_lines.extend(
         [
             f"a=ptime:{selected[0].frame_ms}",
-            f"a=maxptime:{selected[0].frame_ms}",
+            f"a=maxptime:{receive_maxptime}",
             f"a={audio_direction}",
         ]
     )
