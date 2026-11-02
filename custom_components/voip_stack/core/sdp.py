@@ -1133,7 +1133,6 @@ def _rtp_compatible_audio(
             local.pcm_format == PcmFormat.S16LE
             and local.sample_rate == 16000
             and local.channels == 1
-            and local.frame_ms == 20
         ):
             return RtpPcmFormat(
                 offered.payload_type,
@@ -1202,11 +1201,21 @@ def _first_offered_match(
     local_preferred: list[AudioFormat],
 ) -> RtpPcmFormat | None:
     for offered_fmt in offered:
-        for local in local_preferred:
+        # ptime states the receiver's preference. A min/max range permits
+        # alternatives; it must not displace an exactly supported preference.
+        for local in sorted(
+            local_preferred, key=lambda fmt: fmt.frame_ms != offered_fmt.frame_ms
+        ):
             selected = _rtp_compatible_audio(offered_fmt, local)
             if selected is not None:
-                return selected
+                return _with_receiver_parameters(selected, offered_fmt)
     return None
+
+
+def _with_receiver_parameters(selected: RtpPcmFormat, receiver: RtpPcmFormat) -> RtpPcmFormat:
+    """Keep the receiver's SDP bounds without retiming the validated format."""
+    return replace(selected, min_frame_ms=receiver.min_frame_ms,
+        max_frame_ms=receiver.max_frame_ms, fmtp=receiver.fmtp)
 
 
 def _rtp_contract_key(fmt: RtpPcmFormat) -> tuple[int, str, int, int, int]:
@@ -1386,20 +1395,9 @@ def _negotiate_answer_with_offer_payloads(
         for offered_format in offered:
             if not _same_rtp_audio_codec(answered_format, offered_format):
                 continue
+            send = _first_offered_match([answered_format], local_send_preferred)
+            recv = _first_offered_match([offered_format], local_recv_preferred)
             if direction == "sendonly":
-                send = next(
-                    (
-                        selected
-                        for local in local_send_preferred
-                        if (
-                            selected := _rtp_compatible_audio(
-                                answered_format, local
-                            )
-                        )
-                        is not None
-                    ),
-                    None,
-                )
                 if send is not None:
                     return RtpPcmDirection(
                         send=send,
@@ -1411,17 +1409,6 @@ def _negotiate_answer_with_offer_payloads(
                     )
                 continue
             if direction == "recvonly":
-                recv = next(
-                    (
-                        selected
-                        for local in local_recv_preferred
-                        if (
-                            selected := _rtp_compatible_audio(offered_format, local)
-                        )
-                        is not None
-                    ),
-                    None,
-                )
                 if recv is not None:
                     return RtpPcmDirection(
                         send=replace(
@@ -1433,14 +1420,8 @@ def _negotiate_answer_with_offer_payloads(
                     )
                 continue
 
-            for local_send in local_send_preferred:
-                send = _rtp_compatible_audio(answered_format, local_send)
-                if send is None:
-                    continue
-                for local_recv in local_recv_preferred:
-                    recv = _rtp_compatible_audio(offered_format, local_recv)
-                    if recv is not None:
-                        return RtpPcmDirection(send=send, recv=recv)
+            if send is not None and recv is not None:
+                return RtpPcmDirection(send=send, recv=recv)
     return None
 
 
@@ -1448,6 +1429,35 @@ def build_offer(
     origin_ip: str, media_ip: str, media_port: int, formats: list[AudioFormat]
 ) -> str:
     return build_offer_directional(origin_ip, media_ip, media_port, formats, formats)
+
+
+def audio_offer_formats(
+    formats: list[AudioFormat],
+    *,
+    capability_formats: list[AudioFormat] | None = None,
+    include_common_codecs: bool = False,
+    include_dahua_pcm: bool = False,
+    preferred_frame_ms: int | None = None,
+) -> list[RtpPcmFormat]:
+    """Build the canonical RTP candidates shared by SDP and bridge planning."""
+    pcm_formats = rtp_offer_formats(formats)
+    if not pcm_formats:
+        raise SdpError("SDP offer requires at least one RTP-mappable audio format")
+    result = _common_codec_offer_formats(
+        capability_formats if capability_formats is not None else formats,
+        include_common_codecs=include_common_codecs,
+        include_dahua_pcm=include_dahua_pcm,
+        preferred_frame_ms=preferred_frame_ms,
+    ) if include_common_codecs or include_dahua_pcm else []
+    next_payload = 96
+    used_payloads = {fmt.payload_type for fmt in result}
+    for fmt in pcm_formats:
+        while next_payload in used_payloads:
+            next_payload += 1
+        result.append(audio_format_to_rtp(fmt, next_payload))
+        used_payloads.add(next_payload)
+        next_payload += 1
+    return result
 
 
 def build_offer_directional(
@@ -1474,6 +1484,7 @@ def build_offer_directional(
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
     directional_flows: dict[tuple[str, int, int], str] = {}
+    preferred_frame_ms = None
     explicit_rtp_formats = bool(
         audio_rtp_formats is not None
         or send_rtp_formats is not None
@@ -1509,8 +1520,10 @@ def build_offer_directional(
                 else [*explicit_send, *explicit_recv]
             )
         else:
+            # A standard sendrecv offer needs codecs supported both ways.
+            # Preserve the caller's transmit preference within that set.
             selected_explicit = [
-                fmt for fmt in explicit_recv if _rtp_encoding_key(fmt) in send_keys
+                fmt for fmt in explicit_send if _rtp_encoding_key(fmt) in recv_keys
             ]
         rtp_formats = _dedupe_rtp_offer_encodings(selected_explicit)
         if not rtp_formats:
@@ -1534,6 +1547,7 @@ def build_offer_directional(
                 raise SdpError(
                     "SDP directional offer requires a common RTP packet time"
                 )
+            preferred_frame_ms = frame_ms
             send_keys = {
                 _format_key(fmt) for fmt in send_formats if fmt.frame_ms == frame_ms
             }
@@ -1541,12 +1555,15 @@ def build_offer_directional(
                 _format_key(fmt) for fmt in recv_formats if fmt.frame_ms == frame_ms
             }
             capability_formats = _dedupe_formats(
+                [*recv_formats, *send_formats]
+            )
+            pcm_formats = _dedupe_formats(
                 [
                     *(fmt for fmt in recv_formats if fmt.frame_ms == frame_ms),
                     *(fmt for fmt in send_formats if fmt.frame_ms == frame_ms),
                 ]
             )
-            for fmt in capability_formats:
+            for fmt in rtp_mappable_formats(pcm_formats):
                 key = _format_key(fmt)
                 rtp_key = _rtp_encoding_key(audio_format_to_rtp(fmt, 96))
                 directional_flows[rtp_key] = (
@@ -1562,29 +1579,14 @@ def build_offer_directional(
                 recv_formats or [],
                 audio_direction,
             )
-        formats = rtp_offer_formats(capability_formats)
-        if not formats:
-            raise SdpError(
-                f"SDP {audio_direction} offer requires at least one compatible "
-                "RTP-mappable PCM format"
-            )
-        rtp_formats = (
-            _common_codec_offer_formats(
-                capability_formats,
-                include_common_codecs=include_common_codecs,
-                include_dahua_pcm=include_dahua_pcm,
-            )
-            if include_common_codecs or include_dahua_pcm
-            else []
+            pcm_formats = capability_formats
+        rtp_formats = audio_offer_formats(
+            pcm_formats,
+            capability_formats=capability_formats,
+            include_common_codecs=include_common_codecs,
+            include_dahua_pcm=include_dahua_pcm,
+            preferred_frame_ms=preferred_frame_ms,
         )
-        next_payload = 96
-        used_payloads = {fmt.payload_type for fmt in rtp_formats}
-        for fmt in formats:
-            while next_payload in used_payloads:
-                next_payload += 1
-            rtp_formats.append(audio_format_to_rtp(fmt, next_payload))
-            used_payloads.add(next_payload)
-            next_payload += 1
     if codec_policy is not None:
         rtp_formats = list(codec_policy.audio_formats(rtp_formats))
         if not rtp_formats:
@@ -1624,9 +1626,11 @@ def build_offer_directional(
                 lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flow}")
     lines.append(f"a=rtpmap:{dtmf_payload_type} telephone-event/8000")
     lines.append(f"a=fmtp:{dtmf_payload_type} 0-15")
-    lines.append(f"a=ptime:{rtp_formats[0].frame_ms}")
-    if not allow_directional_payloads:
-        lines.append(f"a=maxptime:{rtp_formats[0].frame_ms}")
+    packet_time = preferred_frame_ms or rtp_formats[0].frame_ms
+    lines.append(f"a=ptime:{packet_time}")
+    max_packet_time = max(fmt.frame_ms for fmt in rtp_formats)
+    if not allow_directional_payloads or max_packet_time > packet_time:
+        lines.append(f"a=maxptime:{max_packet_time}")
     lines.append(f"a={audio_direction}")
     offered_video = _unique_video_payloads(
         video_formats or (() if video_format is None else (video_format,))
@@ -1689,6 +1693,7 @@ def _common_codec_offer_formats(
     *,
     include_common_codecs: bool = True,
     include_dahua_pcm: bool = False,
+    preferred_frame_ms: int | None = None,
 ) -> list[RtpPcmFormat]:
     format_set = set(formats)
     capabilities = common_sip_codecs()
@@ -1703,28 +1708,27 @@ def _common_codec_offer_formats(
     if include_common_codecs and "OPUS" in capabilities:
         # Keep the packet time of the available PCM profile. Native SIP offers
         # use 10 ms; adding Opus must not retime their existing PCM payloads.
-        for frame_ms in (20, 10):
+        for frame_ms in dict.fromkeys((preferred_frame_ms, 20, 10)):
+            if frame_ms is None:
+                continue
             if any(
                 AudioFormat(48000, PcmFormat.S16LE, channels, frame_ms) in format_set
                 for channels in (1, 2)
             ):
                 out.append(RtpPcmFormat(98, "OPUS", 48000, 2, frame_ms))
                 break
-    if (
-        include_common_codecs
-        and
-        "G722" in capabilities
-        and AudioFormat(16000, PcmFormat.S16LE, 1, 20) in format_set
-    ):
-        out.append(RtpPcmFormat(9, "G722", 8000, 1, 20))
-    if (
-        include_common_codecs
-        and AudioFormat(8000, PcmFormat.S16LE, 1, 20) in format_set
-    ):
+    if include_common_codecs and "G722" in capabilities:
+        for frame_ms in dict.fromkeys((preferred_frame_ms, 20, 10, 16, 32)):
+            if frame_ms is not None and AudioFormat(16000, PcmFormat.S16LE, 1, frame_ms) in format_set:
+                out.append(RtpPcmFormat(9, "G722", 8000, 1, frame_ms))
+                break
+    g711_frames = [fmt.frame_ms for fmt in formats if fmt.sample_rate == 8000
+        and fmt.pcm_format == PcmFormat.S16LE and fmt.channels == 1]
+    if include_common_codecs and g711_frames:
         out.extend(
             (
-                RtpPcmFormat(8, "PCMA", 8000, 1, 20),
-                RtpPcmFormat(0, "PCMU", 8000, 1, 20),
+                RtpPcmFormat(8, "PCMA", 8000, 1, max(g711_frames)),
+                RtpPcmFormat(0, "PCMU", 8000, 1, max(g711_frames)),
             )
         )
     return out
@@ -3203,6 +3207,9 @@ def negotiate_answer_directional(
         allow_dahua_pcm=allow_dahua_pcm,
     )
     if local_offer_sdp is not None:
+        offered_formats = offered_pcm_formats(
+            local_offer_sdp, allow_dahua_pcm=allow_dahua_pcm
+        )
         explicit = _negotiate_audio_flow_attributes(
             remote_sdp,
             answered_formats,
@@ -3211,10 +3218,17 @@ def negotiate_answer_directional(
         )
         if explicit is not None:
             # The ESP directional extension has a separate per-payload contract.
+            # The answer describes the peer receiver; HA's receive bounds are
+            # still those advertised in its own offer, not the peer's maxptime.
+            peer_receiver = next((fmt for fmt in answered_formats
+                if fmt.payload_type == explicit.send.payload_type and _same_rtp_audio_codec(fmt, explicit.send)), None)
+            local_receiver = next((fmt for fmt in offered_formats
+                if _same_rtp_audio_codec(fmt, explicit.recv)), None)
+            if peer_receiver is None or local_receiver is None:
+                return None
+            explicit = replace(explicit, send=_with_receiver_parameters(explicit.send, peer_receiver),
+                recv=_with_receiver_parameters(explicit.recv, local_receiver))
             return replace(explicit, recv_formats=(explicit.recv,) if local_direction in {"recvonly", "sendrecv"} else ())
-        offered_formats = offered_pcm_formats(
-            local_offer_sdp, allow_dahua_pcm=allow_dahua_pcm
-        )
         selected = _negotiate_answer_with_offer_payloads(
             answered_formats, offered_formats,
             local_send_preferred, local_recv_preferred, format_direction,
@@ -3228,21 +3242,17 @@ def negotiate_answer_directional(
             for offered in offered_formats:
                 if not any(_same_rtp_audio_codec(offered, answer) for answer in answered_formats):
                     continue
-                for local in local_recv_preferred:
-                    compatible = _rtp_compatible_audio(offered, local)
-                    if compatible is not None:
-                        receive.append(replace(offered, frame_ms=compatible.frame_ms))
-                        break
+                compatible = _first_offered_match([offered], local_recv_preferred)
+                if compatible is not None:
+                    receive.append(replace(offered, frame_ms=compatible.frame_ms))
         transmit = []
         if local_direction in {"sendonly", "sendrecv"}:
             for answer in answered_formats:
                 if not any(_same_rtp_audio_codec(answer, offered) for offered in offered_formats):
                     continue
-                for local in local_send_preferred:
-                    compatible = _rtp_compatible_audio(answer, local)
-                    if compatible is not None:
-                        transmit.append(replace(answer, frame_ms=compatible.frame_ms))
-                        break
+                compatible = _first_offered_match([answer], local_send_preferred)
+                if compatible is not None:
+                    transmit.append(replace(answer, frame_ms=compatible.frame_ms))
         return replace(selected, recv_formats=tuple(receive), send_formats=tuple(transmit))
     selected = _negotiate_for_local_direction(
         answered_formats,

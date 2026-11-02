@@ -108,7 +108,7 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> byte
     if encoding == "OPUS":
         return OpusEncoder(fmt.sample_rate, fmt.channels).encode(data)
     if encoding == "G722":
-        return G722Encoder().encode(data)
+        return G722Encoder(frame_ms=_audio_format(fmt).frame_ms).encode(data)
     fmt = _audio_format(fmt)
     if fmt.pcm_format == PcmFormat.S16LE:
         if len(data) % 2:
@@ -150,7 +150,7 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> b
     if encoding == "OPUS":
         return OpusDecoder(fmt.sample_rate, fmt.channels).decode(payload)
     if encoding == "G722":
-        return G722Decoder().decode(payload)
+        return G722Decoder(frame_ms=_audio_format(fmt).frame_ms).decode(payload)
     fmt = _audio_format(fmt)
     if fmt.pcm_format == PcmFormat.S16LE:
         if len(payload) % 2:
@@ -187,7 +187,7 @@ class RtpPayloadDecoder:
         self._codec = (
             OpusDecoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
             if fmt.encoding == "OPUS"
-            else G722Decoder()
+            else G722Decoder(frame_ms=pcm_format.frame_ms)
             if fmt.encoding == "G722"
             else None
         )
@@ -211,7 +211,7 @@ class RtpPayloadEncoder:
         codec = (
             OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
             if fmt.encoding == "OPUS"
-            else G722Encoder()
+            else G722Encoder(frame_ms=pcm_format.frame_ms)
             if fmt.encoding == "G722"
             else None
         )

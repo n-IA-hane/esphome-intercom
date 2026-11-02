@@ -87,10 +87,14 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         sample_rate = int(fmt.sample_rate)
         channels = int(fmt.channels)
         frame_ms = int(fmt.frame_ms)
+        max_frame_ms = int(getattr(fmt, "max_frame_ms", 0) or 0)
     except (AttributeError, TypeError, ValueError) as err:
         raise RtpError("invalid RTP audio format") from err
     if sample_rate <= 0 or channels <= 0 or frame_ms <= 0:
         raise RtpError("invalid RTP audio format")
+    # ptime is a preference; an explicit maxptime bounds accepted packet size.
+    # Retain the global RTP payload limit and the strict default without it.
+    frame_ms = max(frame_ms, max_frame_ms)
 
     if encoding == "OPUS":
         # RFC 6716 permits multiple same-duration frames in one Opus packet.
