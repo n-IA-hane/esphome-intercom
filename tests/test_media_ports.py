@@ -348,6 +348,52 @@ class MediaPortPoolTest(unittest.TestCase):
             other.release()
             self.assertFalse(hass.runtime.rtp_port_pool["used"])
 
+    def test_adopting_staged_leg_keeps_its_exact_fd_and_queued_packet(self):
+        hass, staged = self._audio_reservation()
+        retained = None
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as source:
+            source.bind(("127.0.0.1", 0))
+            source_port = source.getsockname()[1]
+            try:
+                staged.bind_audio_sockets()
+                keep = staged.ports[1]
+                kept_socket = staged.audio_socket(keep)
+                discarded_socket = staged.audio_socket(staged.ports[0])
+                fd = kept_socket.fileno()
+                source.sendto(b"queued-before-adoption", ("127.0.0.1", keep))
+                retained = media_ports.RtpPortReservation.adopt_bound_source(
+                    hass, source_port, reservation=staged, retained_port=keep)
+                self.assertTrue(staged.released)
+                self.assertEqual(retained.ports, (source_port, keep))
+                self.assertIs(retained.audio_socket(keep), kept_socket)
+                self.assertEqual(kept_socket.fileno(), fd)
+                self.assertEqual(kept_socket.recv(4096), b"queued-before-adoption")
+                self.assertLess(discarded_socket.fileno(), 0)
+                staged.release()
+                self.assertEqual(hass.runtime.rtp_port_pool["used"], {source_port, keep})
+            finally:
+                if retained is not None:
+                    retained.release()
+                staged.release()
+                self.assertFalse(hass.runtime.rtp_port_pool["used"])
+                self.assertGreaterEqual(source.fileno(), 0)
+
+    def test_invalid_staged_adoption_keeps_all_existing_ownership(self):
+        hass, staged = self._audio_reservation()
+        try:
+            staged.bind_audio_sockets()
+            sockets = staged._audio_sockets
+            used = set(hass.runtime.rtp_port_pool["used"])
+            with self.assertRaises(RuntimeError):
+                media_ports.RtpPortReservation.adopt_bound_source(
+                    hass, 39000, reservation=staged, retained_port=39002)
+            self.assertFalse(staged.released)
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], used)
+            self.assertIs(staged._audio_sockets, sockets)
+            self.assertTrue(all(sock.fileno() >= 0 for sock in sockets))
+        finally:
+            staged.release()
+
     def test_adopt_bound_source_rejects_owned_source_without_mutation(self):
         hass = FakeHass()
         hass.runtime.rtp_port_pool = {"used": {39000, 39002}}

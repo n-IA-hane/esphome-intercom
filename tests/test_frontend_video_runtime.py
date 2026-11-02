@@ -692,7 +692,10 @@ assert.deepEqual(
   [h264LowContract.maxWidth, h264LowContract.maxHeight],
   [352, 288],
 );
-assert.equal(h264LowContract.maxFr, 20);
+// Level 1.3 admits 11880 macroblocks/s over this 396-MB picture.
+assert.equal(h264LowContract.maxFr, 30);
+h264Low._negotiated.send.max_framerate = 20;
+assert.equal(h264Low._cameraCaptureContract().maxFr, 20);
 
 const h264OneB = new Video();
 h264OneB._encoding = "H264";

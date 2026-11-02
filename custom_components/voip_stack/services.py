@@ -48,6 +48,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             **phone_selector_fields,
             vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Optional("send_video", default=False): cv.boolean,
+            vol.Optional("accept_video", default=True): cv.boolean,
             vol.Optional("media_client_id", default=""): IDENTIFIER_TEXT,
         },
         extra=vol.PREVENT_EXTRA,

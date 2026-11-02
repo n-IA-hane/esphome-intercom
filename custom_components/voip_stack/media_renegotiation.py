@@ -32,6 +32,7 @@ from .media_session_updates import (
 )
 from .runtime_data import endpoint_directory, require_runtime_data
 from .core.sdp import (
+    RtpVideoFormat,
     build_answer_directional,
     constrained_media_direction,
     constrained_video_direction,
@@ -51,6 +52,32 @@ from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _project_passthrough_receiver_framerate(
+    invite: SipInvite, receiver: RtpVideoFormat
+) -> SipInvite:
+    """Advertise the downstream decoder budget only on this receive path."""
+
+    answer = invite.answer_video_format
+    receive = invite.recv_video_format
+    if answer is None or receive is None:
+        return invite
+    limits = tuple(
+        fmt.max_framerate
+        for fmt in (answer, receive, receiver)
+        if fmt.max_framerate is not None
+    )
+    if not limits:
+        return invite
+    limit = min(limits)
+    if answer.max_framerate == receive.max_framerate == limit:
+        return invite
+    return replace(
+        invite,
+        video_answer_format=replace(answer, max_framerate=limit),
+        local_video_format=replace(receive, max_framerate=limit),
+    )
 
 
 async def _prepare_bridge_video_contract_change(
@@ -229,6 +256,10 @@ async def _prepare_bridge_video_contract_change(
             )
             if not video_offer.accepted:
                 return SipInviteResult(488, "Not Acceptable Here")
+            if not current_video_relay.transcodes_from("left"):
+                updated = _project_passthrough_receiver_framerate(
+                    updated, candidate_video_peer.send_format
+                )
             answer_video_format = updated.answer_video_format
             answer_video_direction = constrained_video_direction(
                 updated.video_format.direction,
@@ -900,6 +931,10 @@ async def async_prepare_media_update(
                 video_offer.reason,
             )
             return SipInviteResult(488, "Not Acceptable Here")
+        if not video_relay.transcodes_from(side):
+            updated = _project_passthrough_receiver_framerate(
+                updated, getattr(video_relay, opposite).send_format
+            )
         video_direction = constrained_video_direction(
             updated.video_format.direction,
             allow_send=(

@@ -49,17 +49,29 @@ class RtpPortReservation:
         return cls(hass=hass, ports=retained)
 
     @classmethod
-    def adopt_bound_source(cls, hass: HomeAssistant, source_port: int) -> "RtpPortReservation":
-        """Reserve a spare leg beside a browser's existing, unpooled RTP socket."""
+    def adopt_bound_source(
+        cls, hass: HomeAssistant, source_port: int, *,
+        reservation: "RtpPortReservation | None" = None, retained_port: int | None = None,
+    ) -> "RtpPortReservation":
+        """Retain an existing bound source beside a staged or newly reserved leg."""
         used = require_runtime_data(hass).rtp_port_pool.get("used", set())
         if source_port in used:
             raise RuntimeError("The source RTP port already belongs to another reservation")
-        temporary = cls.allocate(hass)
+        if reservation is None and retained_port is not None:
+            raise ValueError("A retained port needs its existing reservation")
+        if reservation is not None and (
+            reservation.hass is not hass or reservation.released
+            or retained_port not in reservation.ports or not set(reservation.ports) <= used
+        ):
+            raise RuntimeError("The staged RTP reservation changed before source adoption")
+        temporary = reservation if reservation is not None else cls.allocate(hass)
+        keep = temporary.ports[0] if retained_port is None else int(retained_port)
+        retained_socket = temporary.take_audio_socket(keep)
         used = require_runtime_data(hass).rtp_port_pool["used"]
         used.add(source_port)
-        used.remove(temporary.ports[1])
+        used.difference_update(set(temporary.ports) - {keep})
         temporary.detach()
-        return cls(hass, (source_port, temporary.ports[0]))
+        return cls(hass, (source_port, keep), _audio_sockets=(retained_socket,) if retained_socket else None)
 
     def detach(self) -> tuple[int, int]:
         self._close_audio_sockets()

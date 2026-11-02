@@ -571,14 +571,15 @@ class PendingLocalSource:
             ).encode(),
         )
 
-    def connect_browser(self, endpoint_id: str, media_owner_id: str, *, send_video: bool) -> None:
+    def connect_browser(self, endpoint_id: str, media_owner_id: str, *, send_video: bool,
+                        accept_video: bool = True) -> None:
         """Adopt a selected browser winner without replacing the caller media."""
         if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
             raise RuntimeError("local source ended during forwarding")
         if self.outgoing:
             self.redirect_browser(endpoint_id, request_video=send_video)
             self.bridge.answer(self.token.call_id, endpoint_id, media_owner_id,
-                               enable_video_send=send_video)
+                               enable_video_send=send_video, accept_video=accept_video)
             return
         current = self.bridge.require_call(self.token.call_id)
         if current.callee_state is not LocalCallState.RINGING:
@@ -588,7 +589,7 @@ class PendingLocalSource:
         self.bridge.redirect_ringing(self.token.call_id, endpoint_id)
         self.committed = True
         self.bridge.answer(self.token.call_id, endpoint_id, media_owner_id,
-                           enable_video_send=send_video)
+                           enable_video_send=send_video, accept_video=accept_video)
 
     def redirect_browser(self, endpoint_id: str, *, request_video: bool | None = None) -> None:
         """Continue the actual browser caller through the existing local bridge."""
