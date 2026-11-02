@@ -114,6 +114,10 @@ class _TranscodeGeneration:
     sockets: dict[tuple[str, bool], socket.socket | None]
 
 
+class VideoTranscodeRestoreError(RuntimeError):
+    """A failed replacement also lost the previous conversion contract."""
+
+
 class _VideoRelayProtocol(asyncio.DatagramProtocol):
     def __init__(
         self, relay: "SipVideoRtpRelay", side: str, *, rtcp: bool = False
@@ -228,6 +232,36 @@ class SipVideoRtpRelay:
         reason = str(error) or type(error).__name__
         self.rtp_drop_reasons[reason] = self.rtp_drop_reasons.get(reason, 0) + 1
 
+    def reverse_held_sides(self) -> None:
+        """Keep the retained peer on the left when a held bridge changes owner."""
+        if (not self.started or self._start_task is not None or self._stop_requested
+                or self._staged_peers or self.transcoding or self._transcode_slot_claimed
+                or any(peer.video_format.direction != "inactive" for peer in (self.left, self.right))):
+            raise RuntimeError("Only a settled inactive video relay can change orientation")
+        keys = {(side, rtcp) for side in ("left", "right") for rtcp in (False, True)}
+        if keys != set(self._transports) or keys != set(self._sockets) or any(
+                not isinstance(transport.get_protocol(), _VideoRelayProtocol)
+                or transport.is_closing() for transport in self._transports.values()):
+            raise RuntimeError("The video transport owner changed before handoff")
+        self.left, self.right = self.right, self.left
+        self.left_port, self.right_port = self.right_port, self.left_port
+        for mapping in (self._sockets, self._transports):
+            for rtcp in (False, True):
+                mapping[("left", rtcp)], mapping[("right", rtcp)] = (
+                    mapping[("right", rtcp)], mapping[("left", rtcp)])
+        for (side, _rtcp), transport in self._transports.items():
+            transport.get_protocol().side = side
+        for suffix in ("rx_packets", "rx_bytes", "tx_packets", "tx_bytes"):
+            left, right = f"left_{suffix}", f"right_{suffix}"
+            old_left = getattr(self, left)
+            setattr(self, left, getattr(self, right))
+            setattr(self, right, old_left)
+        for mapping in (self._transcode_startup_rtp, self._transcode_startup_bytes):
+            mapping["left"], mapping["right"] = mapping["right"], mapping["left"]
+        self._keyframe_requests = {
+            "right" if side == "left" else "left": value for side, value in self._keyframe_requests.items()
+        }
+
     @staticmethod
     def _socket(port: int) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -289,6 +323,10 @@ class SipVideoRtpRelay:
             ("left", left, right),
             ("right", right, left),
         ):
+            if not remote_can_send(source.video_format) or not remote_can_receive(
+                destination.video_format, connection_held=destination.connection_held
+            ):
+                continue
             if video_formats_passthrough_compatible(
                 source.recv_format,
                 destination.send_format,
@@ -352,12 +390,11 @@ class SipVideoRtpRelay:
         return self._stop_requested or self._released
 
     def configure_transcoding(self, hass: Any, call_id: str) -> None:
-        """Configure every incompatible negotiated direction for FFmpeg.
+        """Authorize conversion for active negotiated directions.
 
-        A later RFC 3264 offer may change ``recvonly`` or ``sendonly`` to
-        ``sendrecv`` without changing codecs.  Provision both codec paths at
-        bridge creation so that such a direction change is an atomic peer
-        update, not a second media lifecycle.
+        Retain the budget owner even for initial passthrough. Later RFC 3264
+        offers prepare only the required directions through the same relay
+        generation; inactive parked media owns no conversion worker.
         """
 
         if self.started or self._start_task is not None:
@@ -490,12 +527,13 @@ class SipVideoRtpRelay:
         right: VideoRtpPeer,
         *,
         suffix: str = "",
+        directions: set[str] | None = None,
     ) -> _TranscodeGeneration:
         hass = self._transcode_hass
         if hass is None:
             raise RuntimeError("SIP video transcode has no Home Assistant owner")
         generation = _TranscodeGeneration(
-            self.transcode_directions_for(left, right),
+            self.transcode_directions_for(left, right) if directions is None else set(directions),
             {},
             {},
             {},
@@ -534,6 +572,20 @@ class SipVideoRtpRelay:
             await self._close_transcode_generation(generation)
             raise
         return generation
+
+    @staticmethod
+    def _take_transcode_resources(generation, directions):
+        """Move resources for selected directions without sharing their ownership."""
+        return _TranscodeGeneration(set(directions),
+            {side: generation.transcoders.pop(side) for side in directions if side in generation.transcoders},
+            {key: generation.transports.pop(key) for key in tuple(generation.transports) if key[0] in directions},
+            {key: generation.sockets.pop(key) for key in tuple(generation.sockets) if key[0] in directions})
+
+    @staticmethod
+    def _adopt_transcode_resources(target, source):
+        for name in ("transcoders", "transports", "sockets"):
+            getattr(target, name).update(getattr(source, name))
+            getattr(source, name).clear()
 
     def _install_transcode_generation(
         self,
@@ -717,6 +769,16 @@ class SipVideoRtpRelay:
 
         return commit, rollback
 
+    def update_staged_peer(self, side: str, expected: VideoRtpPeer, candidate: VideoRtpPeer) -> None:
+        """Complete an authenticated pending offer without losing its early RTP."""
+        staged = self._staged_peers.get(side)
+        if staged is None or staged.peer is not expected:
+            raise RuntimeError("video peer stage changed before its answer")
+        staged.peer = candidate
+        staged.packets[:] = [(data, addr) for data, addr in staged.packets
+                             if self._matches_staged_rtp(candidate, data, addr)]
+        staged.byte_count = sum(len(data) for data, _addr in staged.packets)
+
     async def async_prepare_peer_generation(
         self,
         *,
@@ -801,27 +863,86 @@ class SipVideoRtpRelay:
 
             return commit_passthrough, rollback_passthrough
 
-        if self._transcode_hass is None:
+        old = self._transcode
+        retained = set()
+        for side in old.directions & directions:
+            old_source, old_destination = ((previous_left, previous_right) if side == "left"
+                                            else (previous_right, previous_left))
+            source, destination = (left, right) if side == "left" else (right, left)
+            if all(replace(before, direction="sendrecv") == replace(after, direction="sendrecv")
+                    for before, after in ((old_source.recv_format, source.recv_format),
+                                          (old_destination.send_format, destination.send_format))):
+                retained.add(side)
+        new_directions = directions - retained
+        replaced = old.directions & new_directions
+        removed = old.directions - directions
+        if new_directions and self._transcode_hass is None:
             raise RuntimeError("video relay transcoding is not configured")
         loop = asyncio.get_running_loop()
-        claimed_slot = not self._transcode_slot_claimed
+        claimed_slot = bool(new_directions and not self._transcode_slot_claimed)
+        generation = _TranscodeGeneration(set(), {}, {}, {})
+
+        def current():
+            return (not self._stop_requested and self._transcode is old
+                and self.left is previous_left and self.right is previous_right
+                and (staged_left is None or self._staged_peers.get("left") is staged_left)
+                and self._staged_peers.get("right") is staged_right)
+
+        def clear_stages():
+            for side, staged in (("left", staged_left), ("right", staged_right)):
+                if self._staged_peers.get(side) is staged:
+                    self._staged_peers.pop(side, None)
+
+        async def restore_replaced():
+            # Another leg may commit an RTP tuple while this offer is pending.
+            # Restore this generation's workers without reverting that peer.
+            if not replaced or self._stop_requested or self._transcode is not old:
+                return
+            try:
+                restored = await self._build_transcode_generation(loop, previous_left, previous_right,
+                    suffix="-restore", directions=replaced)
+            except BaseException as err:
+                if self._stop_requested or self._transcode is not old:
+                    return
+                raise VideoTranscodeRestoreError("Previous video converters could not be restored") from err
+            if self._stop_requested or self._transcode is not old:
+                await self._close_transcode_generation(restored)
+                return
+            self._adopt_transcode_resources(old, restored)
+            for side in replaced:
+                self._keyframe_requests.pop(side, None)
+                self.arm_keyframe_request(side)
+
+        async def recover():
+            try:
+                await self._close_transcode_generation(generation)
+                await restore_replaced()
+            finally:
+                clear_stages()
+                if claimed_slot:
+                    await _release_transcoder_slot(self._transcode_hass, self)
+                    self._transcode_slot_claimed = False
+
         try:
-            await _claim_transcoder_slot(self._transcode_hass, self)
-            self._transcode_slot_claimed = True
-            generation = await self._build_transcode_generation(
-                loop,
-                left,
-                right,
-                suffix="-reoffer",
-            )
-        except BaseException:
-            if self._staged_peers.get("right") is staged_right:
-                self._staged_peers.pop("right", None)
-            if self._staged_peers.get("left") is staged_left:
-                self._staged_peers.pop("left", None)
             if claimed_slot:
-                await _release_transcoder_slot(self._transcode_hass, self)
-                self._transcode_slot_claimed = False
+                await _claim_transcoder_slot(self._transcode_hass, self)
+                self._transcode_slot_claimed = True
+            if not current():
+                raise RuntimeError("video relay owner changed before converter preparation")
+            # A changed codec cannot share a worker with the old contract.
+            # Stop only those directions before starting their replacements.
+            if replaced:
+                await async_wait_for_cleanup(asyncio.create_task(self._close_transcode_generation(
+                    self._take_transcode_resources(old, replaced)), name="voip-video-replace-close"))
+            if not current():
+                raise RuntimeError("video relay owner changed before replacement start")
+            if new_directions:
+                generation = await self._build_transcode_generation(loop, left, right,
+                    suffix="-reoffer", directions=new_directions)
+            if not current():
+                raise RuntimeError("video relay owner changed during generation preparation")
+        except BaseException:
+            await async_wait_for_cleanup(asyncio.create_task(recover(), name="voip-video-prepare-recovery"))
             raise
 
         settled = False
@@ -831,43 +952,28 @@ class SipVideoRtpRelay:
             if settled:
                 return
             settled = True
-            if self._staged_peers.get("right") is staged_right:
-                self._staged_peers.pop("right", None)
-            if self._staged_peers.get("left") is staged_left:
-                self._staged_peers.pop("left", None)
-            await self._close_transcode_generation(generation)
-            if claimed_slot:
-                await _release_transcoder_slot(self._transcode_hass, self)
-                self._transcode_slot_claimed = False
+            await async_wait_for_cleanup(asyncio.create_task(recover(), name="voip-video-generation-rollback"))
 
-        async def commit() -> None:
-            nonlocal settled
-            if settled:
-                raise RuntimeError("video peer generation already settled")
-            if (
-                self.left is not previous_left
-                or self.right is not previous_right
-                or (
-                    staged_left is not None
-                    and self._staged_peers.get("left") is not staged_left
-                )
-                or self._staged_peers.get("right") is not staged_right
-            ):
-                await rollback()
-                raise RuntimeError("video relay peer changed before generation commit")
-            settled = True
-            self._staged_peers.pop("right", None)
-            if staged_left is not None:
-                self._staged_peers.pop("left", None)
+        async def settle_commit() -> None:
+            if not current():
+                await recover()
+                raise RuntimeError("video relay owner changed before commit settlement")
             left.rx_ssrc = None
             left.rtcp_source_port = None
             right.rx_ssrc = None
             right.rtcp_source_port = None
-            old = self._transcode
+            retired = self._take_transcode_resources(old, removed)
+            self._adopt_transcode_resources(old, generation)
+            old.directions = directions
             self.left = left
             self.right = right
             self._maintain_nat()
-            self._install_transcode_generation(generation)
+            for side in removed | new_directions:
+                self._keyframe_requests.pop(side, None)
+            for side in new_directions:
+                self.arm_keyframe_request(side)
+            await self._close_transcode_generation(retired)
+            clear_stages()
             for side in ("left", "right"):
                 self._transcode_startup_rtp[side].clear()
                 self._transcode_startup_bytes[side] = 0
@@ -879,10 +985,19 @@ class SipVideoRtpRelay:
                     continue
                 for data, addr in staged_peer.packets:
                     self.handle_rtp(staged_side, data, addr)
-            await self._close_transcode_generation(old)
-            if not generation.directions and self._transcode_slot_claimed:
+            if not directions and self._transcode_slot_claimed:
                 await _release_transcoder_slot(self._transcode_hass, self)
                 self._transcode_slot_claimed = False
+
+        async def commit() -> None:
+            nonlocal settled
+            if settled:
+                raise RuntimeError("video peer generation already settled")
+            if not current():
+                await rollback()
+                raise RuntimeError("video relay peer changed before generation commit")
+            settled = True
+            await async_wait_for_cleanup(asyncio.create_task(settle_commit(), name="voip-video-generation-commit"))
 
         return commit, rollback
 

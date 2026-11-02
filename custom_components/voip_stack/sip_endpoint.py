@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .core import sdp
 from .core.audio_format import AudioFormat
@@ -28,6 +28,9 @@ from .sip_listener import (
 
 
 _LOGGER = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from .sip_client import SipDialog
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,17 +55,20 @@ class PreparedEndpointVideoReinvite:
     """Locally accepted offer awaiting the bridge-wide commit decision."""
 
     endpoint: Any
-    call_id: str
-    previous: SipInvite
-    candidate: SipInvite
+    call_id: str | None
+    previous: SipInvite | SipDialog
+    candidate: SipInvite | SipDialog
     committed: bool = False
+    previous_video_direction: str | None = None
 
     def commit(self) -> bool:
         if self.committed:
             return True
-        self.committed = self.endpoint.commit_prepared_reinvite(
-            self.call_id, self.previous, self.candidate
+        args = (
+            (self.previous, self.candidate) if self.call_id is None
+            else (self.call_id, self.previous, self.candidate)
         )
+        self.committed = self.endpoint.commit_prepared_reinvite(*args)
         return self.committed
 
     async def restore(
@@ -70,10 +76,19 @@ class PreparedEndpointVideoReinvite:
         *,
         local_video_rtp_port: int,
         video_formats: tuple[sdp.RtpVideoFormat, ...],
+        video_direction: str | None = None,
     ) -> bool:
         """Compensate an accepted offer with the previous video topology."""
 
+        if self.call_id is None:
+            restored = await self.endpoint.restore_prepared_reinvite(
+                self.previous, self.candidate,
+            )
+            return restored is not None
         if not self.commit():
+            return False
+        active = self.endpoint.active_dialogs.get(self.call_id)
+        if active is None or active.invite is not self.candidate:
             return False
         restoring_video = self.previous.video_format is not None
         restored = await self.endpoint.async_prepare_video_reinvite(
@@ -83,7 +98,8 @@ class PreparedEndpointVideoReinvite:
             ),
             video_formats=video_formats,
             video_direction=(
-                self.previous.video_format.direction
+                video_direction or self.previous_video_direction
+                or sdp.local_direction_for_remote(self.previous.video_format.direction)
                 if restoring_video
                 else "inactive"
             ),
@@ -436,13 +452,22 @@ class SipEndpointManager:
             if dialog is None or dialog.invite is None:
                 continue
             previous = dialog.invite
+            local_description = (
+                getattr(dialog, "local_sdp_body", "")
+                or getattr(dialog, "answer_sdp", "")
+            )
+            local_video = (
+                sdp.parse_video_sdp(local_description)
+                if previous.video_format is not None and local_description else None
+            )
             candidate = await endpoint.async_prepare_video_reinvite(
                 call_id, **kwargs
             )
             if candidate is None:
                 return None
             return PreparedEndpointVideoReinvite(
-                endpoint, call_id, previous, candidate
+                endpoint, call_id, previous, candidate,
+                previous_video_direction=(str(local_video["direction"]) if local_video else None),
             )
         return None
 

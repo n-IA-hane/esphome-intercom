@@ -623,6 +623,12 @@
     "sip_answer_failed": {
       "message": "The SIP answer transaction failed for call {call_id}."
     },
+    "video_not_supported": {
+      "message": "This parked call requires a phone with video enabled."
+    },
+    "video_renegotiation_failed": {
+      "message": "The remote party did not accept the video update."
+    },
     "sip_call_start_failed": {
       "message": "The SIP call to {destination} could not be started."
     },

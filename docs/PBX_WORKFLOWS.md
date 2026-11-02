@@ -159,8 +159,11 @@ that parked it, or another configured destination.
 
 Directed pickup is different: if Kitchen (extension 101) is still ringing,
 dial **`*8101`** or **`pickup.Kitchen`** from Office to answer it there. No parking
-step is needed. Current parking and directed pickup support audio calls and
-reject active video before moving the call. Directed pickup targets a ringing phone, including a member of a ring group.
+step is needed. Parking supports established audio calls and SIP audio/video
+calls, retaining the original SIP participant while video is paused. Retrieve
+video on a video-enabled phone; different codecs require supported video
+transcoding. Camera off still permits receiving video.
+Directed pickup remains scoped to ringing audio calls, including a member of a ring group.
 Groups containing only HA browser phones use the same pickup confirmation as
 mixed SIP/browser groups. See [parking and pickup](CALL_PARKING.md).
 

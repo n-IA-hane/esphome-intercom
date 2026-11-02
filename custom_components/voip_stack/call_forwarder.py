@@ -588,6 +588,14 @@ async def async_forward_existing_call(
         video_relay = None
         dest_call_id = ""
         direct_endpoint_id = ""
+        prepared_media = None
+        parked_audio_socket = None
+        from .parking import ParkingCall
+        from .local_call_media import LocalCallMedia
+        parked_media = (application.media if isinstance(application, ParkingCall)
+            and isinstance(application.media, LocalCallMedia)
+            and application.media.video_relay is not None
+            and registry.resource_for(call_id, "relay") is application.media else None)
 
         async def retire_application(*, pending_browser=False):
             if application is None:
@@ -600,7 +608,14 @@ async def async_forward_existing_call(
             registry.release_resource(call_id, f"{application.owner}:{call_id}", value=application)
 
         async def _cleanup_failed_route(reason: str) -> None:
-            nonlocal video_relay
+            nonlocal video_relay, parked_audio_socket
+            if parked_audio_socket is not None:
+                parked_audio_socket.close()
+                parked_audio_socket = None
+            if prepared_media is not None:
+                await prepared_media.rollback()
+                if prepared_media.committed:
+                    await parked_media.stop()
             attached_client = False
             if dest_call_id:
                 if registry.bridge_link_for(call_id) == dest_call_id:
@@ -665,7 +680,7 @@ async def async_forward_existing_call(
                             )
                             or old_was_claimed
                         )
-                    if application is not None:
+                    if application is not None and parked_media is None:
                         await application.release_media_for_forward()
                     runtime.defer_invite_to_softphone(
                         invite,
@@ -1209,7 +1224,7 @@ async def async_forward_existing_call(
                 else None
             )
             forward_video_enabled = bool(
-                preanswered is None
+                (preanswered is None or parked_media is not None)
                 and cfg.get(CONF_SIP_VIDEO, False)
                 and invite.video_format is not None
                 and (
@@ -1299,6 +1314,17 @@ async def async_forward_existing_call(
                 session.update_metadata(outbound_trunk_id=selected_trunk_id)
             video_relay = direct_winner.video_relay
             video_failure_reason = direct_winner.video_failure_reason
+            if parked_media is not None:
+                if video_relay is None:
+                    raise RuntimeError("The pickup target cannot retain the parked video")
+                # The held relay already owns its four video sockets. Retire
+                # only this unused dial candidate, then advertise the held
+                # destination port. Bind audio before the first INVITE too.
+                await video_relay.stop()
+                video_relay = direct_winner.video_relay = None
+                client.local_video_rtp_port = parked_media.video_relay.right_port
+                from .media_ports import bind_sip_audio_socket
+                parked_audio_socket = bind_sip_audio_socket(dest_relay_port)
             result = await client.invite(
                 target=bridge_uri.user,
                 target_display_name=(
@@ -1345,7 +1371,17 @@ async def async_forward_existing_call(
                 result = await client.wait_for_final()
                 if result != "in_call" or client.dialog is None:
                     raise RuntimeError(result)
-            if application is not None:
+            if parked_media is not None:
+                from .local_call_media import ApplicationCallSource
+                from .local_media_bridge import LocalMediaBridge
+                destination_source = ApplicationCallSource.from_client(client, call_id=dest_call_id,
+                    caller=destination, allow_video=True)
+                update = await application.prepare_video_pickup(destination_source)
+                prepared_media = await LocalMediaBridge.prepare(parked_media, destination_source,
+                    video_update=update, right_socket=parked_audio_socket)
+                parked_audio_socket = None
+                prepared_media.validate()
+            elif application is not None:
                 await application.release_media_for_forward()
             if local_source is not None:
                 local_source.commit()
@@ -1363,6 +1399,7 @@ async def async_forward_existing_call(
                     enable_video_transcoding=video_transcoding_enabled,
                     local_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
                     source_client=application.source_client if application is not None else None,
+                    prepared_media=prepared_media,
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,
@@ -1392,6 +1429,8 @@ async def async_forward_existing_call(
             )
             if committed is None:
                 raise RuntimeError(TerminalReason.CANCELLED.value)
+            if parked_media is not None:
+                await application.release_media_for_forward()
             await retire_application()
             if local_source is not None:
                 local_source.connected(destination, decision.action.value)
@@ -1419,6 +1458,10 @@ async def async_forward_existing_call(
                 )
         except asyncio.CancelledError:
             await _cleanup_failed_route(TerminalReason.CANCELLED.value)
+            if (parked_media is not None and session.live
+                    and registry.resource_for(call_id, "relay") is parked_media
+                    and not parked_media.closed.is_set()):
+                await async_abort_route(forward_abort, RouteAbortIntent(TerminalReason.CANCELLED.value, "resume"))
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
             reason = str(err or TerminalReason.TRANSPORT_UNREACHABLE.value)

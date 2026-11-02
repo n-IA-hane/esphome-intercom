@@ -558,6 +558,7 @@ def _active_video_session(
         video_format = getattr(invite, "video_format", None)
         local_port = int(item.get("local_video_rtp_port") or 0)
         if invite is not None and video_format is not None and local_port:
+            source_client = registry.source_sip_client_for(call_id)
             rtp_source = item.get("video_rtp_source")
             if not isinstance(rtp_source, RtpSenderState):
                 rtp_source = RtpSenderState.create(
@@ -595,7 +596,8 @@ def _active_video_session(
                 rtp_socket=item.get("video_rtp_socket"),
                 rtcp_socket=item.get("video_rtcp_socket"),
                 request_remote_keyframe=(
-                    (lambda: endpoint.async_request_video_keyframe(call_id))
+                    source_client.request_video_keyframe if source_client is not None
+                    else (lambda: endpoint.async_request_video_keyframe(call_id))
                     if endpoint is not None
                     else None
                 ),

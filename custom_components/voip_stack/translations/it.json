@@ -623,6 +623,12 @@
     "sip_answer_failed": {
       "message": "La transazione di risposta SIP è fallita per la chiamata {call_id}."
     },
+    "video_not_supported": {
+      "message": "Questa chiamata parcheggiata richiede un telefono con il video abilitato."
+    },
+    "video_renegotiation_failed": {
+      "message": "La controparte non ha accettato l'aggiornamento video."
+    },
     "sip_call_start_failed": {
       "message": "Non è stato possibile avviare la chiamata SIP verso {destination}."
     },

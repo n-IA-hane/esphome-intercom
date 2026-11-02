@@ -1016,7 +1016,9 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "dnd": _ha_softphone_dnd(hass, endpoint_id),
         "voicemail": dict(store.get("voicemail") or {"enabled": False, "new": 0, "old": 0, "total": 0}),
         "parking": {"enabled": bool(parking.get("enabled")),
-                    "unavailable_reason": parking.get("unavailable_reason", "")},
+                    "unavailable_reason": parking.get("unavailable_reason", ""),
+                    "video_supported": bool(session is not None and session.live
+                                            and session.owner in {"ha_softphone", "bridge"})},
         "recording": {"active": recording_active,
                       "finishing": recording is not None and recording.stopped.is_set(),
                       "owned": recording_active and recording.endpoint.endpoint_id == endpoint_id},

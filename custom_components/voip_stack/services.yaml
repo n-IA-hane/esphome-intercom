@@ -1390,7 +1390,7 @@ send_to_voicemail:
 
 park:
   name: Park call
-  description: Leave an established audio call in a parking slot. Another phone retrieves it by calling the slot number.
+  description: Leave an established audio or SIP audio/video call in a parking slot. Another phone retrieves it by calling the slot number; video calls require video enabled on that phone.
   fields:
     device_id:
       name: Phone

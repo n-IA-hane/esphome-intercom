@@ -794,7 +794,7 @@ complete examples, supported STT input and attachment handling.
 
 ## Park an established call
 
-`voip_stack.park` parks the selected phone's current audio call. `device_id`
+`voip_stack.park` parks the selected phone's established audio or SIP audio/video call. `device_id`
 selects the phone, `slot` optionally selects a configured parking slot, and
 `call_id` / `expected_generation` can identify a specific current call. The
 optional action response contains `slot`, `call_id` and `generation`.
@@ -802,6 +802,10 @@ The selected phone must own the call. Parking is available by default; configure
 its numbers and resolve any reported dial-plan conflicts. Retrieve the caller through the normal call action or SIP dialer
 using the slot number. See [Call parking](CALL_PARKING.md) for configuration,
 examples and the current development verification boundary.
+
+SIP video retains the existing dialog and pauses while parked. The retrieving
+phone must have video enabled, and incompatible codecs require supported video
+transcoding. This does not extend directed pickup or conferences to video.
 
 
 ## Conversation recording

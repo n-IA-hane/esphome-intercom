@@ -1143,7 +1143,8 @@ assert.equal(transfer._softphoneSnapshot.call_id,"next-call");
 assert.equal(transfer._transferDraft,null);
 
 
-// Video parking is unsupported and must not expose an actionable Park button.
+// The backend advertises video parking for its supported SIP media owner.
+// Older backends and local browser video retain their safe disabled control.
 const videoParking = makeCard();
 videoParking._els.parkBtn = new FakeElement();
 videoParking._els.parkingNotice = new FakeElement();
@@ -1151,6 +1152,13 @@ videoParking._softphoneSnapshot = {{...base,state:"in_call",parking:{{enabled:tr
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, true);
 assert.equal(videoParking._els.parkBtn.title, "Parking requires an audio-only call");
+videoParking._softphoneSnapshot.parking.video_supported = true;
+videoParking._render();
+assert.equal(videoParking._els.parkBtn.disabled, false);
+assert.equal(videoParking._els.parkBtn.title, "Park call");
+videoParking._softphoneSnapshot.parking.video_supported = false;
+videoParking._render();
+assert.equal(videoParking._els.parkBtn.disabled, true);
 videoParking._softphoneSnapshot.video_active = false;
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, false);

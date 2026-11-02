@@ -435,7 +435,12 @@ async def async_prepare_media_update(
     opposite = "left" if side == "right" else "right"
 
     preanswered = registry.resource_for(call_id, "preanswered")
-    if isinstance(preanswered, dict):
+    current_media = registry.resource_for(call_id, "relay")
+    held_application_video = (
+        isinstance(current_media, LocalCallMedia)
+        and getattr(current_media, "video_relay", None) is not None
+    )
+    if isinstance(preanswered, dict) and not held_application_video:
         # The trunk dialog is already established while DTMF and the
         # bounded automation decision select its destination.  It still
         # owns real RTP/video reservations even though no browser or relay
@@ -795,10 +800,19 @@ async def async_prepare_media_update(
     if isinstance(relay, LocalCallMedia):
         # Local applications terminate media here; they are stored under
         # the registry's generic media-owner slot for common teardown, but it
-        # is not a two-leg RTP relay.  Answer every offered media section while
-        # rejecting video with port zero, and atomically update its audio leg.
+        # is not a two-leg RTP relay. A retained parked video child keeps its
+        # port inactive; other applications still decline video with port zero.
+        video = getattr(relay, "video_relay", None)
+        video_update = source_peer = application = None
         try:
             commit_assist = relay.prepare_media_update(updated)
+            if video is not None:
+                from .local_application import prepare_held_application_video_update
+                if updated.video_format is None:
+                    raise ValueError("A held application retains its existing video stream")
+                source_peer = invite_video_rtp_peer(updated)
+                video_update = await prepare_held_application_video_update(relay, source_peer)
+                application = registry.resource_for(call_id, "parking")
             answer = build_answer_directional(
                 local_ip,
                 local_ip,
@@ -808,11 +822,13 @@ async def async_prepare_media_update(
                 dtmf=first_offered_dtmf_format(updated.remote_sdp),
                 remote_sdp=updated.remote_sdp,
                 audio_direction=updated.local_audio_direction,
-                video_port=0,
+                video_port=(video_update.answer_video_rtp_port if video_update is not None else 0),
                 video_format=updated.answer_video_format,
                 video_direction="inactive",
             )
         except (RuntimeError, TypeError, ValueError) as err:
+            if video_update is not None:
+                await async_wait_for_cleanup(asyncio.create_task(video_update.rollback(), name="voip-held-video-rollback"))
             _LOGGER.warning(
                 "SIP local application media update rejected call_id=%s reason=%s",
                 call_id,
@@ -827,15 +843,27 @@ async def async_prepare_media_update(
                 )
             if registry.resource_for(call_id, "relay") is not relay:
                 raise RuntimeError("SIP local application media owner changed before commit")
+            if getattr(relay, "video_relay", None) is not video:
+                raise RuntimeError("SIP held application video child changed before commit")
+            if application is not None and registry.resource_for(call_id, "parking") is not application:
+                raise RuntimeError("SIP parked application owner changed before commit")
             commit_assist()
+            if video_update is not None:
+                await video_update.commit()
+                if application is not None:
+                    application.video_source = source_peer
+                    application.invite = updated
+                if registry.artifact_for(call_id, "pending_invite") is not None:
+                    registry.set_pending_invite(call_id, updated)
             _LOGGER.info(
                 "SIP local application %s committed call_id=%s remote_rtp=%s:%s "
-                "audio_direction=%s video=declined",
+                "audio_direction=%s video=%s",
                 method,
                 call_id,
                 updated.remote_rtp_host,
                 updated.remote_rtp_port,
                 updated.remote_audio_direction,
+                "held" if video_update is not None else "declined",
             )
 
         return SipInviteResult(
@@ -843,6 +871,7 @@ async def async_prepare_media_update(
             "OK",
             answer_sdp=answer,
             commit=_commit_assist_update,
+            rollback=(video_update.rollback if video_update is not None else None),
         )
 
     right_peer = getattr(relay, opposite)
@@ -869,7 +898,8 @@ async def async_prepare_media_update(
         )
     )
     video_relay_missing = updated.video_format is not None and video_relay is None
-    if video_presence_changed or video_direction_changed or video_relay_missing:
+    stage_right_direction = side == "right" and video_direction_changed and not video_presence_changed and not video_relay_missing
+    if video_presence_changed or video_relay_missing or (video_direction_changed and side != "right"):
         if side == "right":
             return SipInviteResult(488, "Not Acceptable Here")
         return await _prepare_bridge_video_contract_change(
@@ -886,6 +916,14 @@ async def async_prepare_media_update(
                 call_id,
             )
             return SipInviteResult(488, "Not Acceptable Here")
+        planned_directions = None
+        if stage_right_direction:
+            try:
+                planned_directions = video_relay.transcode_directions_for(video_relay.left, invite_video_rtp_peer(updated))
+            except (TypeError, ValueError):
+                return SipInviteResult(488, "Not Acceptable Here")
+            if planned_directions and video_relay._transcode_hass is None:
+                return SipInviteResult(488, "Not Acceptable Here")
         video_offer = validate_bridged_video_reoffer(
             previous.video_format,
             updated.video_format,
@@ -895,8 +933,10 @@ async def async_prepare_media_update(
             peer_direction=getattr(video_relay, opposite).video_format,
             peer_held=getattr(video_relay, opposite).connection_held,
             updated_held=updated.remote_video_connection_held,
-            caller_to_peer_transcoding=video_relay.transcodes_from(side),
-            peer_to_caller_transcoding=video_relay.transcodes_from(opposite),
+            caller_to_peer_transcoding=(side in planned_directions if planned_directions is not None
+                                       else video_relay.transcodes_from(side)),
+            peer_to_caller_transcoding=(opposite in planned_directions if planned_directions is not None
+                                       else video_relay.transcodes_from(opposite)),
         )
         if not video_offer.accepted:
             _LOGGER.warning(
@@ -938,6 +978,7 @@ async def async_prepare_media_update(
         video_format=updated.answer_video_format,
         video_direction=video_direction,
     )
+    commit_video_generation = rollback_video_generation = None
     try:
         previous_audio_peer = getattr(relay, side)
         next_audio_peer = invite_rtp_peer(updated)
@@ -951,7 +992,16 @@ async def async_prepare_media_update(
             if video_relay is not None and updated.video_format is not None
             else None
         )
-    except (TypeError, ValueError):
+        if stage_right_direction:
+            from .bridge_media_updates import prepare_owned_video_generation
+            _commit_stage, undo_stage = video_relay.stage_peer_reconfiguration("right", next_video_peer)
+            try:
+                commit_video_generation, rollback_video_generation = await prepare_owned_video_generation(
+                    registry, session, video_relay, left=video_relay.left, right=next_video_peer)
+            except BaseException:
+                undo_stage()
+                raise
+    except (TypeError, ValueError, RuntimeError):
         return SipInviteResult(488, "Not Acceptable Here")
 
     audio_committed = video_committed = False
@@ -970,16 +1020,21 @@ async def async_prepare_media_update(
             raise RuntimeError("SIP relay media owner changed before commit")
         commit_audio()
         audio_committed = True
-        if commit_video is not None:
+        if commit_video_generation is not None:
+            await commit_video_generation()
+            video_committed = True
+        elif commit_video is not None:
             commit_video()
             video_committed = True
 
     async def _rollback_relay_update() -> None:
         nonlocal audio_committed, video_committed
+        if rollback_video_generation is not None:
+            await rollback_video_generation()
         if (not registry.is_generation_current(call_id, call_generation)
                 or registry.resource_for(call_id, "relay") is not relay):
             return
-        if video_committed and getattr(video_relay, side) is next_video_peer:
+        if video_committed and rollback_video_generation is None and getattr(video_relay, side) is next_video_peer:
             video_relay.prepare_peer_reconfiguration(side, previous_video_peer)()
             video_committed = False
         if audio_committed and getattr(relay, side) is next_audio_peer:

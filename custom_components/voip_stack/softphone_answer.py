@@ -206,7 +206,14 @@ async def async_answer_browser_call(
             call_id=call_id,
         )
 
-    preanswered = registry.take_media(call_id, provisional=True)
+    from .parking import ParkingCall
+    from .local_call_media import LocalCallMedia, ApplicationCallSource
+    parking = registry.resource_for(call_id, "parking")
+    parked_media = (parking.media if isinstance(parking, ParkingCall)
+        and isinstance(parking.media, LocalCallMedia) and parking.media.video_relay is not None
+        and registry.resource_for(call_id, "relay") is parking.media else None)
+    preanswered = (registry.resource_for(call_id, "preanswered") if parked_media is not None
+                   else registry.take_media(call_id, provisional=True))
     from .core.sdp import (
         browser_video_send_supported,
         build_answer_directional,
@@ -257,6 +264,26 @@ async def async_answer_browser_call(
     response_already_sent = bool(
         preanswered is not None and preanswered.get("final_response_sent", True)
     )
+    prepared_video = None
+    if parked_media is not None:
+        from .bridge_media_updates import prepare_source_video_update
+        if not endpoint_video_enabled:
+            raise _service_error("The parked video call requires video pickup", "video_not_supported")
+        video_media_reservation, video_rtp_socket, video_rtcp_socket = reserve_sip_video_media(hass)
+        local_video_rtp_port = video_media_reservation.ports[1]
+        try:
+            prepared_video = await prepare_source_video_update(hass, call_id, source_client=parking.source_client,
+                local_video_rtp_port=local_video_rtp_port,
+                video_formats=tuple(dict.fromkeys((invite.recv_video_format, invite.send_video_format))),
+                video_direction=desired_video_direction)
+            if prepared_video is None:
+                raise _service_error("The retained caller rejected browser video pickup", "video_renegotiation_failed")
+        except BaseException:
+            video_rtp_socket.close()
+            video_rtcp_socket.close()
+            video_media_reservation.release()
+            raise
+        video_direction = desired_video_direction
     if local_rtp_port:
         if not bool((preanswered or {}).get("final_response_sent", True)):
             local_ip = await async_advertise_host(hass)
@@ -331,7 +358,8 @@ async def async_answer_browser_call(
         "video_rtp_socket": video_rtp_socket,
         "video_rtcp_socket": video_rtcp_socket,
         "video_rtp_source": video_rtp_source,
-        "rtp_reservation": media_reservation,
+        # Until the answer commits, parking still owns its audio lease.
+        "rtp_reservation": media_reservation if parked_media is None else None,
         "video_rtp_reservation": video_media_reservation,
         "endpoint_id": endpoint_id,
         "media_client_id": str(call.data.get("media_client_id") or ""),
@@ -365,6 +393,8 @@ async def async_answer_browser_call(
     def _claim_answer() -> bool:
         if pending.get(call_id) is not invite:
             return False
+        if prepared_video is not None and not prepared_video.commit():
+            return False
         claimed = registry.transition(
             call_id,
             state=CallState.IN_CALL.value,
@@ -388,6 +418,15 @@ async def async_answer_browser_call(
     )
     if not answer_result.committed:
         failure_reason = answer_result.reason or TerminalReason.PROTOCOL_ERROR.value
+        if prepared_video is not None:
+            from .session_cleanup import async_wait_for_cleanup
+            if not await async_wait_for_cleanup(asyncio.create_task(prepared_video.restore(
+                    local_video_rtp_port=parked_media.video_relay.left_port,
+                    video_formats=tuple(dict.fromkeys((invite.recv_video_format, invite.send_video_format)))),
+                    name="voip-parking-answer-restore")):
+                await EndpointTerminationHandler(hass).terminate(call_id,
+                    TerminationIntent.bye("parking_video_restore_failed"))
+            raise _service_error("The parked browser pickup changed before commit", "sip_answer_failed", call_id=call_id)
         await EndpointTerminationHandler(hass).terminate(
             call_id,
             (
@@ -403,6 +442,15 @@ async def async_answer_browser_call(
             call_id=call_id,
         )
 
+    if prepared_video is not None:
+        registry.take_media(call_id, provisional=True)
+        softphone_media["rtp_reservation"] = media_reservation
+        invite = (ApplicationCallSource.from_peer_dialog(prepared_video.candidate, call_id=call_id,
+            caller=invite.caller, target=invite.target, trunk_id=invite.trunk_id, allow_video=True)
+            if parking.source_client is not None else prepared_video.candidate)
+        softphone_media["invite"] = invite
+        await parking.release_media_for_forward()
+
     from .sip_client import SipCallClient
     source_client = next((leg.dialog for leg in authoritative_session.legs.values()
                           if leg.role == "caller" and isinstance(leg.dialog, SipCallClient)), None)
@@ -414,6 +462,7 @@ async def async_answer_browser_call(
     registry.attach_media(call_id, softphone_media)
     if (
         response_already_sent
+        and prepared_video is None
         and invite.video_format is not None
         and local_video_rtp_port
         and desired_video_direction != video_direction

@@ -17,7 +17,7 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "bridge_media_updates.py"
 
 class _Registry:
     def __init__(self) -> None:
-        self.sessions = {"call-1": SimpleNamespace(generation=7)}
+        self.sessions = {"call-1": SimpleNamespace(call_id="call-1", generation=7)}
         self.current = True
         self.relay = None
 
@@ -214,6 +214,9 @@ def bridge_media_updates(monkeypatch):
         },
         "runtime_data": {
             "sip_endpoint_manager": lambda hass: getattr(hass, "endpoint", None),
+        },
+        "sip_video_relay": {
+            "VideoTranscodeRestoreError": type("VideoTranscodeRestoreError", (RuntimeError,), {}),
         },
         "core.sdp": {
             "video_answer_contract": lambda offered, answered: answered,

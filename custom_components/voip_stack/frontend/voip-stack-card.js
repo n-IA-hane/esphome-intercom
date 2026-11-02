@@ -2028,7 +2028,8 @@ class VoipStackCard extends HTMLElement {
       const established = softphoneMode ? this._softphoneSnapshot?.state === "in_call" : espState === "in_call";
       const parkingNeedsConfiguration = !!parking?.unavailable_reason;
       els.parkBtn.hidden = transferring || (!parking?.enabled && !parkingNeedsConfiguration) || !established;
-      const parkingVideoUnsupported = softphoneMode && !!this._softphoneSnapshot?.video_active;
+      const parkingVideoUnsupported = softphoneMode && !!this._softphoneSnapshot?.video_active &&
+        this._softphoneSnapshot?.parking?.video_supported !== true;
       els.parkBtn.disabled = !!this._parkingBusy || parkingVideoUnsupported || parkingNeedsConfiguration;
       els.parkBtn.title = this._t(parkingNeedsConfiguration ? "Configure parking in VoIP Stack settings" :
         parkingVideoUnsupported ? "Parking requires an audio-only call" : "Park call");

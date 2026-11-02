@@ -623,6 +623,12 @@
     "sip_answer_failed": {
       "message": "Transakce SIP odpovědi (answer) selhala pro hovor {call_id}."
     },
+    "video_not_supported": {
+      "message": "Tento zaparkovaný hovor vyžaduje telefon se zapnutým videem."
+    },
+    "video_renegotiation_failed": {
+      "message": "Protistrana nepřijala změnu videa."
+    },
     "sip_call_start_failed": {
       "message": "SIP volání na cíl {destination} se nepodařilo zahájit."
     },

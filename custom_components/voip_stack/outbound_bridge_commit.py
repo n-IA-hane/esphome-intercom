@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
-from .bridge_media_updates import BridgeMediaUpdateBinder
+from .bridge_media_updates import BridgeMediaUpdateBinder, prepare_source_video_update
 from .config import debug_mode, media_capture_enabled
 from .dtmf_events import attach_dtmf_event_bridge
-from .endpoint_session import TerminationIntent
+from .endpoint_session import CleanupStage, TerminationIntent
 from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import release_sip_rtp_port_pair, release_video_media_reservation
@@ -75,6 +75,7 @@ class BridgeCommitData:
     enable_video_transcoding: bool = False
     local_endpoint_id: str = ""
     source_client: Any | None = None
+    prepared_media: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +212,10 @@ async def async_commit_outbound_bridge(
             _require_current()
 
         failure_reason = TerminalReason.TRANSPORT_UNREACHABLE.value
-        if data.source_client is not None:
+        if data.prepared_media is not None:
+            relay = data.prepared_media.commit()
+            relay._on_release = _release_ports
+        elif data.source_client is not None:
             from .sip_bridge import dialog_rtp_peer
             from .sip_rtp_bridge import SipRtpRelay
             if data.source_client.dialog is None:
@@ -259,10 +263,19 @@ async def async_commit_outbound_bridge(
         for reservation in data.detach_reservations:
             reservation.detach()
         ports_transferred = True
+        if data.prepared_media is not None:
+            old_media = data.prepared_media.media
+            session.add_resource(f"retired_local_media:{id(old_media):x}", old_media,
+                lambda _reason: old_media.stop(), stage=CleanupStage.MEDIA)
+            registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=old_media)
         registry.attach_relay(invite.call_id, relay)
         relay_adopted = True
+        if data.prepared_media is not None and data.prepared_media.video_update is not None:
+            await data.prepared_media.video_update.commit()
+            _require_current()
         BridgeMediaUpdateBinder(hass).attach(
             client, relay, source_call_id=invite.call_id,
+            source_client=data.source_client,
             source_video_send_format=invite.send_video_format,
             source_video_receive_format=invite.recv_video_format,
         )
@@ -309,28 +322,26 @@ async def async_commit_outbound_bridge(
 
         request_video_keyframe = await async_start_sip_bridge_media(relay)
         _require_current()
-        if (
-            policy.response_already_sent
-            and video_answer is not None
-            and relay.video_relay is not None
-            and (
-                (endpoint := sip_endpoint_manager(hass)) is None
-                or not await endpoint.async_activate_video_reinvite(
-                    invite.call_id,
+        if policy.response_already_sent and video_answer is not None and relay.video_relay is not None:
+            video_formats = tuple(dict.fromkeys((
+                relay.video_relay.left.recv_format, relay.video_relay.left.send_format,
+            )))
+            if data.source_client is not None:
+                prepared = await prepare_source_video_update(
+                    hass, invite.call_id, source_client=data.source_client,
                     local_video_rtp_port=int(relay.video_relay.left_port),
-                    video_formats=tuple(
-                        dict.fromkeys(
-                            (
-                                relay.video_relay.left.recv_format,
-                                relay.video_relay.left.send_format,
-                            )
-                        )
-                    ),
-                    video_direction=video_answer.direction,
+                    video_formats=video_formats, video_direction=video_answer.direction,
                 )
-            )
-        ):
-            raise RuntimeError("preanswered source rejected video activation")
+                _require_current()
+                activated = bool(prepared is not None and prepared.commit())
+            else:
+                endpoint = sip_endpoint_manager(hass)
+                activated = bool(endpoint is not None and await endpoint.async_activate_video_reinvite(
+                    invite.call_id, local_video_rtp_port=int(relay.video_relay.left_port),
+                    video_formats=video_formats, video_direction=video_answer.direction,
+                ))
+            if not activated:
+                raise RuntimeError("preanswered source rejected video activation")
         _require_current()
         failure_reason = TerminalReason.PROTOCOL_ERROR.value
         answer = ""
@@ -404,6 +415,10 @@ async def async_commit_outbound_bridge(
         if winner.pickup:
             from .call_projection import publish_bridge_projection
             publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
+        if data.prepared_media is not None:
+            old_media = data.prepared_media.media
+            await old_media.stop()
+            registry.release_resource(invite.call_id, f"retired_local_media:{id(old_media):x}", value=old_media)
         return result
     except BaseException:
         # Claim in the original caller before shielding cleanup. The session

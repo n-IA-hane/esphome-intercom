@@ -623,6 +623,12 @@
     "sip_answer_failed": {
       "message": "Die SIP-Antworttransaktion für Anruf {call_id} ist fehlgeschlagen."
     },
+    "video_not_supported": {
+      "message": "Dieser geparkte Anruf erfordert ein Telefon mit aktiviertem Video."
+    },
+    "video_renegotiation_failed": {
+      "message": "Die Gegenstelle hat die Videoänderung nicht akzeptiert."
+    },
     "sip_call_start_failed": {
       "message": "Der SIP-Anruf an {destination} konnte nicht gestartet werden."
     },

@@ -385,12 +385,16 @@ def _metadata_context(intent, monkeypatch, *, outgoing, previous):
     registry = _Registry(client)
     registry.resource_for = lambda *_args: media
     monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
-    endpoint = SimpleNamespace(active=media["invite"])
+    endpoint = SimpleNamespace(
+        active=media["invite"],
+        active_dialogs={"call-1": SimpleNamespace(invite=media["invite"])},
+    )
 
     def commit_endpoint(_call_id, old, candidate):
         if endpoint.active is not old:
             return False
         endpoint.active = candidate
+        endpoint.active_dialogs[_call_id].invite = candidate
         return True
 
     endpoint.commit_prepared_reinvite = commit_endpoint

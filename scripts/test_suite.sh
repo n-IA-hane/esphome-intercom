@@ -109,6 +109,7 @@ ha_tests=(
   tests/test_media_call_lifetime_ha.py
   tests/test_pbx_defaults_ha.py
   tests/test_parking_lot_ha.py
+  tests/test_parking_video_transcode_ha.py
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
   tests/test_esphome_provisioning_ha.py
@@ -142,6 +143,7 @@ ha_tests=(
   tests/test_call_forwarder_behavior.py
   tests/test_endpoint_dialing.py
   tests/test_outbound_bridge_commit.py
+  tests/test_source_video_updates_ha.py
   tests/test_call_projection.py
   tests/test_route_abort.py
   tests/test_invite_router_behavior.py
@@ -157,6 +159,7 @@ ha_tests=(
   tests/test_bridge_video_framerate_wire_ha.py
   tests/test_video_keepalive_runtime.py
   tests/test_video_wait_keyframe_diagnostics.py
+  tests/test_sip_video_relay.py
   tests/test_imageattr_ws.py
   tests/test_video_framerate_policy.py
   tests/test_video_transcoder.py
