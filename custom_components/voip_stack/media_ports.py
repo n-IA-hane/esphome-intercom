@@ -21,6 +21,7 @@ from .media_reservation import (
 
 RTP_RELAY_POOL_WIDTH = 400
 _RTP_IP_TOS = 0xB8
+_VIDEO_RTP_IP_TOS = 0x88
 
 
 @dataclass(slots=True)
@@ -163,12 +164,13 @@ def bind_sip_audio_socket(port: int) -> socket.socket:
         raise
 
 
-def bind_sip_rtp_socket(port: int) -> socket.socket:
-    """Bind RTP before signaling so immediate media packets are retained."""
+def bind_sip_rtp_socket(port: int, *, ip_tos: int = _RTP_IP_TOS) -> socket.socket:
+    """Pre-bind RTP with audio EF by default and an explicit video policy."""
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, ip_tos)
         sock.setblocking(False)
         sock.bind(("0.0.0.0", int(port)))
         return sock
@@ -182,9 +184,9 @@ def bind_sip_video_sockets(rtp_port: int) -> tuple[socket.socket, socket.socket]
 
     if not 1 <= int(rtp_port) < 65535:
         raise OSError("invalid video RTP/RTCP port pair")
-    rtp_socket = bind_sip_rtp_socket(int(rtp_port))
+    rtp_socket = bind_sip_rtp_socket(int(rtp_port), ip_tos=_VIDEO_RTP_IP_TOS)
     try:
-        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1)
+        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1, ip_tos=_VIDEO_RTP_IP_TOS)
     except BaseException:
         rtp_socket.close()
         raise

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import socket
 import sys
@@ -87,6 +88,99 @@ class FakeHass:
 
 
 class MediaPortPoolTest(unittest.TestCase):
+    async def _assert_datagram_tos(self, sender, payload, expected_tos):
+        """Observe the actual IP header after asyncio adopts the bound FD."""
+        source_port = sender.getsockname()[1]
+        source_fd = sender.fileno()
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            asyncio.DatagramProtocol, sock=sender,
+        )
+        try:
+            adopted = transport.get_extra_info("socket")
+            self.assertEqual(adopted.fileno(), source_fd)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+                receiver.setsockopt(socket.IPPROTO_IP, socket.IP_RECVTOS, 1)
+                receiver.bind(("127.0.0.1", 0))
+                receiver.settimeout(1)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    with self.assertRaises(OSError):
+                        probe.bind(("0.0.0.0", source_port))
+                transport.sendto(payload, receiver.getsockname())
+                packet, ancillary, _, source = await asyncio.to_thread(
+                    receiver.recvmsg, 2048, 256,
+                )
+                tos = [value[0] for level, kind, value in ancillary
+                       if level == socket.IPPROTO_IP and kind == socket.IP_TOS]
+                self.assertEqual(packet, payload)
+                self.assertEqual(source[1], source_port)
+                self.assertEqual(tos, [expected_tos])
+                self.assertEqual(
+                    adopted.getsockopt(socket.IPPROTO_IP, socket.IP_TOS), expected_tos,
+                )
+        finally:
+            transport.close()
+            await asyncio.sleep(0)
+        self.assertEqual(sender.fileno(), -1)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.bind(("0.0.0.0", source_port))
+
+    def test_prebound_browser_audio_keeps_ef_on_wire_after_socket_adoption(self):
+        payload = bytes.fromhex("80600001000000a000000001") + b"\x00" * 320
+        asyncio.run(self._assert_datagram_tos(
+            media_ports.bind_sip_rtp_socket(0), payload, 0xB8,
+        ))
+
+    def test_prebound_bridge_audio_keeps_ef_on_wire_after_socket_adoption(self):
+        payload = bytes.fromhex("80600001000000a000000001") + b"\x00" * 320
+        asyncio.run(self._assert_datagram_tos(
+            media_ports.bind_sip_audio_socket(0), payload, 0xB8,
+        ))
+
+    def test_prebound_qos_failure_closes_socket_before_port_is_advertised(self):
+        sock = Mock()
+        sock.setsockopt.side_effect = [None, OSError("TOS unavailable")]
+        with patch.object(media_ports.socket, "socket", return_value=sock):
+            with self.assertRaisesRegex(OSError, "TOS unavailable"):
+                media_ports.bind_sip_rtp_socket(40000, ip_tos=0x88)
+        sock.bind.assert_not_called()
+        sock.close.assert_called_once_with()
+
+    def test_prebound_video_rtp_and_rtcp_keep_af41_on_wire_after_socket_adoption(self):
+        for _ in range(32):
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            if port >= 65535:
+                continue
+            try:
+                sockets = media_ports.bind_sip_video_sockets(port)
+                break
+            except OSError:
+                continue
+        else:
+            self.fail("Could not reserve adjacent RTP/RTCP ports")
+        try:
+            for sender, payload in zip(sockets, (
+                bytes.fromhex("801a00010000000100000001") + b"\x00" * 8,
+                bytes.fromhex("80c9000100000001"),
+            ), strict=True):
+                with self.subTest(port=sender.getsockname()[1]):
+                    asyncio.run(self._assert_datagram_tos(sender, payload, 0x88))
+        finally:
+            for sender in sockets:
+                sender.close()
+
+    def test_video_relay_created_rtp_and_rtcp_keep_the_same_af41_on_wire(self):
+        relay = _load_module("sip_video_relay").SipVideoRtpRelay
+        for payload in (
+            bytes.fromhex("801a00010000000100000001") + b"\x00" * 8,
+            bytes.fromhex("80c9000100000001"),
+        ):
+            with self.subTest(rtcp=payload[1] == 201):
+                asyncio.run(self._assert_datagram_tos(
+                    relay._socket(0), payload, 0x88,
+                ))
+
     @staticmethod
     def _audio_reservation():
         hass = FakeHass()
