@@ -1324,7 +1324,10 @@ const releaseMonitor = dashboard.subscribePhoneStates(event => firstMonitorEvent
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(observers.length, 1);
 assert.equal(observers[0].request.type, "voip_stack/subscribe_phone_states");
-observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}]}});
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",device_id:"desk-device",state:"idle",availability:"available"}}]}});
+assert.equal(dashboard.phoneStateFor("desk").availability,"available");
+assert.equal(dashboard.phoneStateFor("","desk-device").state,"idle");
+assert.equal(dashboard.phoneStateFor("absent","absent"),null);
 const releaseSecondMonitor = dashboard.subscribePhoneStates(event => secondMonitorEvents.push(event));
 assert.equal(secondMonitorEvents[0].phones[0].state,"idle");
 assert.equal(observers.length,1);
@@ -1337,6 +1340,7 @@ observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",
 assert.equal(dashboard._phoneStates.get("desk").state,"in_call");
 observers[0].listener({{kind:"delta",revision:1,phones:[],removed:["desk"]}});
 assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard.phoneStateFor("desk","desk-device"),null);
 releaseMonitor();
 assert.equal(monitorUnsubscribed,0);
 releaseSecondMonitor();

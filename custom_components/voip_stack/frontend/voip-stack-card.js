@@ -186,6 +186,7 @@ class VoipStackCard extends HTMLElement {
     this._videoDurationTimer = null;
     this._unsubCallEvents = null;
     this._unsubSoftphoneState = null;
+    this._unsubDestinationStates = null;
 
     // Static skeleton: built once per mode, then mutated via textContent/
     // hidden/className. Eliminates innerHTML interpolation of untrusted
@@ -259,6 +260,8 @@ class VoipStackCard extends HTMLElement {
   disconnectedCallback() {
     this._lifecycleGeneration++;
     this._resizeObserver.disconnect();
+    this._unsubDestinationStates?.();
+    this._unsubDestinationStates = null;
     if (this._unsubCallEvents) {
       this._unsubCallEvents();
       this._unsubCallEvents = null;
@@ -301,6 +304,11 @@ class VoipStackCard extends HTMLElement {
 
   async _subscribeBusEvents() {
     if (this._isHaSoftphoneMode()) {
+      if (!this._unsubDestinationStates) {
+        this._unsubDestinationStates = voipStackEngine.subscribePhoneStates(() => {
+          if (this.isConnected) this._render();
+        });
+      }
       if (!this._unsubSoftphoneState) {
         this._unsubSoftphoneState = voipStackEngine.subscribeSoftphoneState(
           (state) => this._onSoftphoneState(state),
@@ -741,6 +749,8 @@ class VoipStackCard extends HTMLElement {
     if (oldMode === "ha_softphone" && newMode !== "ha_softphone") {
       this._lifecycleGeneration++;
       this._callOperationId++;
+      this._unsubDestinationStates?.();
+      this._unsubDestinationStates = null;
       if (this._unsubSoftphoneState) {
         this._unsubSoftphoneState();
         this._unsubSoftphoneState = null;
@@ -1271,6 +1281,7 @@ class VoipStackCard extends HTMLElement {
       ) continue;
       const target = this._targetFromRosterEntry(entry);
       if (!target.device_id || !target.name) continue;
+      if (target.state === "unavailable" || ["offline", "unavailable"].includes(target.availability)) continue;
       targets.push(target);
     }
     return targets;
@@ -1291,7 +1302,7 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return null;
     const wanted = this._transferDraft?.targetDeviceId || this._softphoneTargetDeviceId;
-    return targets.find(d => d.device_id === wanted) || targets[0];
+    return wanted ? targets.find(d => d.device_id === wanted) || null : targets[0];
   }
 
   _activeSoftphonePeerDevice() {
@@ -1462,7 +1473,7 @@ class VoipStackCard extends HTMLElement {
       });
     }
     this._rosterEntries = rosterEntries;
-    if (this._isHaSoftphoneMode() && !this._getSoftphoneTargetDevice()) {
+    if (this._isHaSoftphoneMode() && !this._softphoneTargetDeviceId) {
       this._softphoneTargetDeviceId = this._softphoneTargets()[0]?.device_id || null;
     }
     return true;
@@ -1473,7 +1484,9 @@ class VoipStackCard extends HTMLElement {
   }
 
   _targetFromRosterEntry(entry) {
-    return targetFromRosterEntry(entry);
+    const target = targetFromRosterEntry(entry);
+    const phone = voipStackEngine.phoneStateFor(target.endpoint_id, target.device_id);
+    return { ...target, availability: phone?.availability || "", state: phone?.state || "" };
   }
 
   _normaliseTransport(value) {
@@ -1967,7 +1980,8 @@ class VoipStackCard extends HTMLElement {
     // request. In particular, a trunk call may remain in CALLING until SIP
     // timer B expires, so `_starting` must never lock out Hangup.
     els.hangupBtn.disabled = this._stopping;
-    els.callBtn.disabled = buttonDisabled || browserMediaBusy || !!this._transferBusy;
+    els.callBtn.disabled = buttonDisabled || browserMediaBusy || !!this._transferBusy ||
+      (softphoneMode && !keypadOpen && !this._getSoftphoneTargetDevice());
     els.callBtn.textContent = this._t(transferring ? "Transfer" : "Call");
     if (els.transferBtn) {
       els.transferBtn.hidden = espState !== "in_call" || !this._sessionCallId();
@@ -2376,6 +2390,14 @@ class VoipStackCard extends HTMLElement {
       opt.textContent = this._t("No endpoints");
       options.push(opt);
     } else {
+      if (!current) {
+        const prompt = document.createElement("option");
+        prompt.value = "";
+        prompt.textContent = this._t("Destination");
+        prompt.disabled = true;
+        prompt.selected = true;
+        options.push(prompt);
+      }
       for (const device of targets) {
         const opt = document.createElement("option");
         opt.value = device.device_id;

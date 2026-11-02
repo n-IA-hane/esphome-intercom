@@ -421,6 +421,18 @@ class VoipStackEngine extends EventTarget {
     };
   }
 
+  phoneStateFor(endpointId, deviceId = "") {
+    if (this._phoneStateRevision === null || this._phoneStateFailed) return null;
+    const phone = this._phoneStates.get(String(endpointId || ""));
+    if (phone) return phone;
+    if (deviceId) {
+      for (const candidate of this._phoneStates.values()) {
+        if (candidate.device_id === deviceId) return candidate;
+      }
+    }
+    return null;
+  }
+
   _isUnknownEndpointError(err) {
     const code = String(err?.code || err?.error || "").toLowerCase();
     const message = String(err?.message || err || "").toLowerCase();

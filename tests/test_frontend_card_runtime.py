@@ -69,10 +69,18 @@ source = source
 
 const serviceCalls = [];
 const engineEvents = [];
+const destinationPhones = new Map();
+const destinationListeners = new Set();
 let cameraPermissionChecks = 0;
 let audioPermissionChecks = 0;
 const engine = {{
   configure() {{}},
+  phoneStateFor(endpointId, deviceId) {{
+    return destinationPhones.get(endpointId) || [...destinationPhones.values()].find(phone => phone.device_id === deviceId) || null;
+  }},
+  subscribePhoneStates(listener) {{ destinationListeners.add(listener); return () => destinationListeners.delete(listener); }},
+  subscribeSoftphoneState() {{ return () => {{}}; }},
+  subscribeCallEvents() {{ return () => {{}}; }},
   async terminateSoftphoneCall(service, scope) {{
     const {{ endpoint_id, ...data }} = scope;
     serviceCalls.push(["voip_stack", service, data]);
@@ -270,6 +278,47 @@ const module = new vm.SourceTextModule(source, {{ context }});
 await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Card = module.namespace.VoipStackCard;
+
+// The compact card alone observes authoritative phone state. A roster can
+// retain an enabled ESP while list_devices omits it and the monitor is offline.
+const offlineEntry = {{id:"ws3-route",name:"WS3 LCD",enabled:true,
+  metadata:{{endpoint_id:"esphome:ws3",device_id:"ws3",endpoint_kind:"esphome",
+    call_policy:{{unavailable:{{action:"voicemail"}}}}}}}};
+const logicalBrowser = {{id:"browser-route",name:"Browser without open card",enabled:true,
+  metadata:{{endpoint_id:"browser:logical",device_id:"logical",endpoint_kind:"browser",local_ha:true}}}};
+const staticContact = {{id:"external-route",name:"Static contact",enabled:true,metadata:{{}}}};
+destinationPhones.set("esphome:ws3",{{endpoint_id:"esphome:ws3",device_id:"ws3",availability:"offline",state:"unavailable"}});
+destinationPhones.set("browser:logical",{{endpoint_id:"browser:logical",device_id:"logical",availability:"available",state:"idle",connected_cards:0}});
+function destinationCard() {{
+  const card=new Card();card.config={{mode:"ha_softphone",device_id:"owner"}};
+  card._softphoneSnapshot={{endpoint_id:"browser:owner"}};
+  card._rosterEntries=[offlineEntry,logicalBrowser,staticContact];card._availableDevices=[];
+  card._softphoneTargetDeviceId="ws3";
+  card._testSelect=new FakeElement();
+  card._render=()=>card._renderSoftphoneDestinationSelect(card._testSelect);
+  return card;
+}}
+const destinationOne=destinationCard(),destinationTwo=destinationCard();
+await destinationOne._subscribeBusEvents();await destinationTwo._subscribeBusEvents();
+assert.equal(destinationListeners.size,2);
+for(const listener of destinationListeners)listener({{kind:"snapshot"}});
+for(const card of [destinationOne,destinationTwo]) {{
+  assert.equal(card._getSoftphoneTargetDevice(),null);
+  assert.equal(card._testSelect.children[0].value,"");
+  assert.equal(card._testSelect.children[0].selected,true);
+  assert.equal(card._testSelect.children.some(option=>option.value==="ws3"),false);
+  assert.equal(card._testSelect.children[1].textContent,"Browser without open card");
+  assert.equal(card._testSelect.children[2].textContent,"Static contact");
+  await assert.rejects(card._startHaSoftphoneCall({{}},0),/No endpoint available/);
+}}
+destinationOne.disconnectedCallback();assert.equal(destinationListeners.size,1);
+destinationPhones.set("esphome:ws3",{{endpoint_id:"esphome:ws3",device_id:"ws3",availability:"available",state:"idle"}});
+for(const listener of destinationListeners)listener({{kind:"delta"}});
+assert.equal(destinationTwo._testSelect.children[0].textContent,"WS3 LCD");
+assert.equal(destinationTwo._getSoftphoneTargetDevice().name,"WS3 LCD");
+assert.equal(destinationTwo._getSoftphoneTargetDevice().route_id,"ws3-route");
+destinationTwo.disconnectedCallback();assert.equal(destinationListeners.size,0);
+destinationPhones.clear();
 
 assert.equal(cardModel.terminalPeerLabel({{
   direction: "incoming",
