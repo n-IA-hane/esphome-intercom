@@ -5,12 +5,18 @@ Uses the existing HA laboratory and browser authentication. The optional setup
 creates three dedicated views, preserving other views. Calls stay between
 laboratory browser phones with fake microphones and silent playback. The main
 view contains the dashboard and ordinary phonecard for the same owner.
+
+The optional physical-peer mode drives one real dashboard or compact card.
+An external operator owns the ESP/SIP actor; private signal files coordinate it
+without another server or any ESP API connection in this tool.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import AsyncExitStack
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -24,10 +30,349 @@ sys.path.insert(0, str(ROOT / "tools"))
 from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 
 from ha_voip_lab.refresh_playwright_auth import refresh_playwright_auth  # noqa: E402
-from live_voip_qualification import HaWs  # noqa: E402
+from live_voip_qualification import HaRest, HaWs  # noqa: E402
+from ha_voip_lab.browser_audio_capture import BrowserAudioCapture  # noqa: E402
+
+
+MEDIA_OBSERVER_SCRIPT = """(()=>{
+    const originalCapture=navigator.mediaDevices.getUserMedia;
+    navigator.mediaDevices.getUserMedia=async function(constraints){
+      window.__dashboardCaptureCount=(window.__dashboardCaptureCount||0)+1;
+      window.__dashboardCaptureRequests=(window.__dashboardCaptureRequests||[])
+        .concat({audio:!!constraints.audio,video:!!constraints.video});
+      return originalCapture.call(this,constraints);
+    };
+    const originalPlay=HTMLMediaElement.prototype.play;
+    window.__dashboardPlayEvents=[];
+    HTMLMediaElement.prototype.play=function(...args){
+      this.muted=true;
+      const event={kind:this.tagName,muted:this.muted,status:'pending'};
+      if(window.__dashboardPlayEvents.length<64)window.__dashboardPlayEvents.push(event);
+      return originalPlay.apply(this,args).then(value=>{
+        event.status='resolved';event.paused=this.paused;event.readyState=this.readyState;return value;
+      },error=>{event.status='rejected';event.error=error.name;throw error;});
+    };
+})();"""
+
+MEDIA_SAMPLE_SCRIPT = """(selector='voip-stack-dashboard-card')=>{
+    selector ||= 'voip-stack-dashboard-card'; // Playwright's omitted Python arg arrives as null.
+    const e=window.__qualificationEngine;
+    const canvases=[];
+    const visit=(root,inside=false)=>{for(const n of root.querySelectorAll('*')){
+      const selected=inside||n.matches?.(selector);
+      if(selected&&n.tagName==='CANVAS'&&n.classList.contains('video-canvas')&&n.getClientRects().length){
+        const w=n.width,h=n.height;let nonBlack=false;
+        if(w&&h){const c=n.getContext('2d');if(c){
+          for(let y=1;y<5;y++)for(let x=1;x<5;x++){
+            const p=c.getImageData(Math.floor(w*x/5),Math.floor(h*y/5),1,1).data;
+            nonBlack ||= p[0]+p[1]+p[2]>12;
+          }
+        }}
+        canvases.push({width:w,height:h,non_black:nonBlack});
+      }
+      if(n.shadowRoot)visit(n.shadowRoot,selected);
+    }};visit(document);
+    return {call_id:e?.callId,state:e?._state,context_state:e?._audioContext?.state,
+      context_time:e?._audioContext?.currentTime||0,stats:e?.stats||{},canvases,
+      play_events:window.__dashboardPlayEvents||[]};
+}"""
+
+
+class DashboardAudioWire:
+    """Bounded passive CDP observer, using the maintained PCM wire parser."""
+
+    def __init__(self):
+        self.capture = BrowserAudioCapture(capture_pcm=False)
+        self.sockets = set()
+        self.totals = {side: {"packets": 0, "samples": 0, "bytes": 0} for side in ("tx", "rx")}
+
+    def opened(self, event):
+        if urlsplit(event["url"]).path != "/api/voip_stack/ws":
+            return
+        if len(self.sockets) >= 64:
+            raise RuntimeError("Audio observer exceeded its 64-socket budget")
+        self.sockets.add(event["requestId"])
+
+    def frame(self, side, event):
+        request = event["requestId"]
+        if request not in self.sockets:
+            return
+        item = self.capture.record(request, side, event["response"], event["timestamp"])
+        if item and item["kind"] == "pcm":
+            self.totals[side]["packets"] += 1
+            self.totals[side]["samples"] += item["samples_per_channel"]
+            self.totals[side]["bytes"] += item["payload_bytes"]
+
+    def snapshot(self):
+        return {side: dict(value) for side, value in self.totals.items()}
+
+
+def validate_media_progress(before, after, *, video=False):
+    """Require actual PCM wire traffic and worklet consumption in one dialog."""
+    if not before.get("call_id") or before["call_id"] != after.get("call_id"):
+        raise AssertionError("Media observation crossed the call identity")
+    if after.get("state") != "IN_CALL" or after.get("context_state") != "running":
+        raise AssertionError("The real audio context is not playing an established call")
+    if after["context_time"] <= before["context_time"]:
+        raise AssertionError("The real audio clock did not advance")
+    for side in ("tx", "rx"):
+        if after["wire"][side]["samples"] <= before["wire"][side]["samples"]:
+            raise AssertionError(f"No real {side} PCM crossed the browser WebSocket")
+    for counter in ("sent", "received", "frames_in", "frames_out"):
+        if after["stats"].get(counter, 0) <= before["stats"].get(counter, 0):
+            raise AssertionError(f"The real audio worklet did not advance {counter}")
+    for counter in ("tx_dropped", "frames_drop", "underruns"):
+        if after["stats"].get(counter, 0) > before["stats"].get(counter, 0):
+            raise AssertionError(f"Audio {counter} increased during the measured window")
+    if video:
+        for counter in ("received", "rendered"):
+            if after["stats"].get("video", {}).get(counter, 0) <= before["stats"].get("video", {}).get(counter, 0):
+                raise AssertionError(f"Real video {counter} did not advance")
+        if not any(c["width"] > 0 and c["height"] > 0 and c["non_black"] for c in after["canvases"]):
+            raise AssertionError("No visible decoded non-black video canvas")
+
+
+def require_idle_phone(value):
+    # Legacy softphone snapshots intentionally retain last_terminal_call_id.
+    # Active state and the shared resource owner decide quiescence, not that ID.
+    resources = value.get("media_debug", {}).get("runtime_resources", {})
+    if value.get("state") != "idle" or resources.get("call_scoped_quiescent") is not True:
+        raise RuntimeError("A laboratory phone is not idle and call-scoped quiescent")
+
+
+def require_physical_peer(value, identity):
+    if value.get("endpoint_id") != identity or value.get("kind") not in {"esphome", "sip_account"}:
+        raise ValueError("Select one explicit ESP or standard SIP endpoint identity")
+    if value.get("availability") != "available" or value.get("state") != "idle" or value.get("calls"):
+        raise RuntimeError("The selected physical/SIP peer is not available and idle")
+    if value.get("dnd"):
+        raise RuntimeError("The selected peer has DND enabled")
+
+
+def write_signal(directory, phase, value):
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / f"{phase}.json"
+    # Exclusive creation prevents a stale ready marker from starting an actor.
+    with path.open("x") as stream:
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+    path.chmod(0o600)
+
+
+async def restore_owned_views(ws, original, output, results):
+    """Restore only the dedicated fixture views, retaining unrelated LAB edits."""
+    paths = {"voip-dashboard-qualification", "voip-dashboard-peer", "voip-dashboard-receiver"}
+    try:
+        current = (await ws.command({"type": "lovelace/config"}))["result"]
+        views = [v for v in current.get("views", []) if v.get("path") not in paths]
+        for index, view in enumerate(original.get("views", [])):
+            if view.get("path") in paths:
+                views.insert(min(index, len(views)), view)
+        await ws.command({"type": "lovelace/config/save", "config": {**current, "views": views}})
+        actual = (await ws.command({"type": "lovelace/config"}))["result"]
+        expected = [v for v in original.get("views", []) if v.get("path") in paths]
+        assert [v for v in actual.get("views", []) if v.get("path") in paths] == expected
+        results["owned_views_restored"] = True
+    except Exception as error:
+        results["cleanup_errors"].append(f"restore owned views: {error}")
+    finally:
+        (output / "result.json").write_text(json.dumps(results, indent=2))
+
+
+async def qualify_physical(args):
+    """One ordinary GUI call. Root owns every ESP action, outside this runner."""
+    if urlsplit(args.url).hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Physical QA also requires the isolated loopback HA laboratory")
+    if not 1 <= args.physical_hold_seconds <= 30 or not 10 <= args.physical_wait_seconds <= 120:
+        raise ValueError("Physical hold must be 1..30 seconds and actor wait 10..120 seconds")
+    if args.fake_video_file and not args.fake_video_file.is_file():
+        raise ValueError("The fake camera Y4M file does not exist")
+    from playwright.async_api import async_playwright, expect
+
+    args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    signals = args.signals_dir or args.out / "signals"
+    if any((signals / f"{phase}.json").exists() for phase in ("ready", "connected", "measuring", "measured", "done")):
+        raise ValueError("Use a fresh signal directory for this physical call")
+    refresh_playwright_auth(token_url=args.url, credentials_path=args.credentials,
+                            storage_path=args.storage, storage_hass_url=args.url)
+    storage = json.loads(args.storage.read_text())
+    token = next(json.loads(item["value"])["access_token"]
+                 for origin in storage["origins"] if origin["origin"] == args.url
+                 for item in origin["localStorage"] if item["name"] == "hassTokens")
+    rest = HaRest(args.url, token)
+    results = {"mode": "physical-peer", "ui": args.physical_ui, "direction": args.physical_direction,
+               "expected_video": args.physical_video, "cleanup_errors": [], "browser_errors": [],
+               "quiescent": False,
+               "observer": {"real_play": True, "audible_output": False,
+                            "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+               "scope": "Real GUI and SIP media, no ESP API, acoustic or physical-panel claim"}
+    owned_call = ""
+
+    async def action(name, data):
+        response = await asyncio.to_thread(rest._request, "POST", "/api/services/voip_stack/" + name + "?return_response", data)
+        return response.get("service_response", {})
+
+    async with HaWs(args.url, token) as ws, AsyncExitStack() as cleanup:
+        devices = (await ws.command({"type": "voip_stack/list_devices"}))["result"]["devices"]
+        owner = next(d for d in devices if d.get("softphone") and d["endpoint_id"] == args.owner)
+
+        async def owner_state():
+            return (await ws.command({"type": "voip_stack/ha_softphone_state", "device_id": owner["device_id"]}))["result"]
+
+        baseline = await owner_state()
+        require_idle_phone(baseline)
+        target = await action("get_phone_state", {"device_id": args.physical_peer})
+        require_physical_peer(target, args.physical_peer)
+        results["peer"] = {key: target[key] for key in ("endpoint_id", "device_id", "kind", "name", "extension")}
+        results["owner"] = {key: owner[key] for key in ("endpoint_id", "device_id", "name")}
+        original = (await ws.command({"type": "lovelace/config"}))["result"]
+        checkpoint = args.out / "lovelace-before.json"
+        with checkpoint.open("x") as stream:
+            json.dump(original, stream, indent=2)
+        checkpoint.chmod(0o600)
+        cleanup.push_async_callback(restore_owned_views, ws, original, args.out, results)
+
+        async def restore_preferences():
+            for service, field in (("set_send_video", "send_video"), ("set_auto_answer", "auto_answer")):
+                try:
+                    await ws.command({"type": "call_service", "domain": "voip_stack", "service": service,
+                                      "service_data": {"device_id": owner["device_id"], field: bool(baseline.get(field))}})
+                except Exception as error:
+                    results["cleanup_errors"].append(f"restore {field}: {error}")
+        cleanup.push_async_callback(restore_preferences)
+        card = {"type": "custom:voip-stack-dashboard-card" if args.physical_ui == "dashboard" else "custom:voip-stack-card",
+                "device_id": owner["device_id"]}
+        if args.physical_ui == "compact":
+            card["mode"] = "ha_softphone"
+        views = [view for view in original.get("views", []) if view.get("path") != "voip-dashboard-qualification"]
+        views.append({"title": "Physical SIP QA", "path": "voip-dashboard-qualification", "cards": [card]})
+        await ws.command({"type": "lovelace/config/save", "config": {**original, "views": views}})
+        async with async_playwright() as runner:
+            browser = await runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
+                args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--mute-audio",
+                      "--autoplay-policy=no-user-gesture-required",
+                      *([f"--use-file-for-fake-video-capture={args.fake_video_file.resolve()}"] if args.fake_video_file else [])])
+            context = await browser.new_context(storage_state=str(args.storage), permissions=["microphone", "camera"],
+                                                viewport={"width": 1100, "height": 1000})
+            await context.add_init_script(MEDIA_OBSERVER_SCRIPT)
+            page = await context.new_page()
+            page.on("pageerror", lambda error: results["browser_errors"].append(str(error)))
+            wire = DashboardAudioWire()
+            cdp = await context.new_cdp_session(page)
+            await cdp.send("Network.enable")
+            cdp.on("Network.webSocketCreated", wire.opened)
+            cdp.on("Network.webSocketFrameSent", lambda event: wire.frame("tx", event))
+            cdp.on("Network.webSocketFrameReceived", lambda event: wire.frame("rx", event))
+            selector = "voip-stack-dashboard-card" if args.physical_ui == "dashboard" else "voip-stack-card"
+            ui = page.locator(selector)
+            phone_card = ui.locator("voip-stack-card[data-dashboard-phone]") if args.physical_ui == "dashboard" else ui
+
+            async def wait_state(expected):
+                nonlocal owned_call
+                async with asyncio.timeout(args.physical_wait_seconds):
+                    while True:
+                        value = await owner_state()
+                        if value.get("state") != "idle" and value.get("call_id"):
+                            projection = await action("get_phone_state", {"device_id": owner["device_id"]})
+                            if not any(call.get("peer_endpoint_id") == args.physical_peer for call in projection.get("calls", [])):
+                                raise RuntimeError("Observed a call from a different peer; refusing ownership")
+                            if owned_call and value["call_id"] != owned_call:
+                                raise RuntimeError("The selected physical call identity changed")
+                            owned_call = value["call_id"]
+                        if value.get("state") == expected:
+                            return value
+                        await asyncio.sleep(0.1)
+
+            try:
+                await page.goto(args.url + "/lovelace/voip-dashboard-qualification")
+                await expect(ui).to_have_count(1)
+                await expect(ui).to_be_visible()
+                await page.evaluate("""async()=>{
+                  const urls=[...new Set(performance.getEntriesByType('resource').map(e=>e.name)
+                    .filter(u=>new URL(u).pathname.endsWith('/voip-stack-engine.js')))];
+                  if(urls.length!==1)throw new Error('Expected one production media engine module');
+                  window.__qualificationEngine=(await import(urls[0])).voipStackEngine;
+                }""")
+                options = ui.locator(".options") if args.physical_ui == "dashboard" else ui.locator('button[aria-controls="voip-settings-panel"]')
+                await options.click()
+                await phone_card.locator("#auto-answer-cb").set_checked(False)
+                await phone_card.locator("#ha-softphone-video-camera-cb").set_checked(args.physical_video in {"sendonly", "sendrecv"})
+                await options.click()
+                write_signal(signals, "ready", {"owner": results["owner"], "peer": results["peer"],
+                                              "direction": args.physical_direction, "ui": args.physical_ui})
+                if args.physical_direction == "outgoing":
+                    if args.physical_ui == "dashboard":
+                        await ui.locator(f'.tile[data-key="endpoint:{args.physical_peer}"] .tile-main').click()
+                    else:
+                        await phone_card.locator('button[aria-controls="voip-keypad-panel"]').click()
+                        await phone_card.locator("input.keypad-input").fill(target["extension"])
+                        await phone_card.locator("button.voip-button.call").click()
+                else:
+                    await wait_state("ringing")
+                    answer = ".answer-video" if args.physical_video != "audio" else ".answer"
+                    await ui.locator(".owner-call " + answer if args.physical_ui == "dashboard" else "button.voip-button.answer").click()
+                connected = await wait_state("in_call")
+                write_signal(signals, "connected", {"call_id": owned_call, "peer_endpoint_id": args.physical_peer})
+                if args.physical_video == "audio":
+                    assert not connected.get("video_active"), connected
+                else:
+                    assert connected.get("video_direction") == args.physical_video, connected
+                async with asyncio.timeout(10):
+                    while True:
+                        before = await page.evaluate(MEDIA_SAMPLE_SCRIPT, selector)
+                        if before["stats"].get("frames_out", 0) > 0:
+                            break
+                        await asyncio.sleep(0.1)
+                before["wire"] = wire.snapshot()
+                write_signal(signals, "measuring", {"call_id": owned_call, "hold_seconds": args.physical_hold_seconds})
+                await asyncio.sleep(args.physical_hold_seconds)
+                after = await page.evaluate(MEDIA_SAMPLE_SCRIPT, selector)
+                after["wire"] = wire.snapshot()
+                results["media_proof"] = {"before": before, "after": after, "wire_errors": list(wire.capture.errors)}
+                assert not wire.capture.errors, wire.capture.errors
+                validate_media_progress(before, after, video=args.physical_video in {"recvonly", "sendrecv"})
+                if args.physical_video in {"sendonly", "sendrecv"}:
+                    assert after["stats"].get("video", {}).get("sent", 0) > before["stats"].get("video", {}).get("sent", 0)
+                await page.screenshot(path=str(args.out / "connected.png"), full_page=True)
+                write_signal(signals, "measured", {"call_id": owned_call, "media_oracles_passed": True})
+                if args.physical_hangup == "dashboard":
+                    hangup = ui.locator(".owner-call .hangup") if args.physical_ui == "dashboard" and args.physical_video == "audio" else phone_card.locator("button.voip-button.hangup")
+                    await expect(hangup).to_be_visible()
+                    await hangup.click()
+                await wait_state("idle")
+                results["call_id"] = owned_call
+            except BaseException as error:
+                results["failure"] = str(error)
+                await page.screenshot(path=str(args.out / "failure.png"), full_page=True)
+                raise
+            finally:
+                try:
+                    current = await owner_state()
+                    if current.get("state") != "idle" and owned_call and current.get("call_id") == owned_call:
+                        await ws.command({"type": "call_service", "domain": "voip_stack", "service": "hangup",
+                                          "service_data": {"device_id": owner["device_id"], "call_id": owned_call}})
+                except Exception as error:
+                    results["cleanup_errors"].append(f"owned call cleanup: {error}")
+                await browser.close()
+                try:
+                    final = await owner_state()
+                    results["final_state"] = final.get("state")
+                    results["quiescent"] = final.get("media_debug", {}).get("runtime_resources", {}).get("call_scoped_quiescent")
+                except Exception as error:
+                    results["cleanup_errors"].append(f"final resource check: {error}")
+                write_signal(signals, "done", {"call_id": owned_call, "quiescent": results["quiescent"],
+                                             "failure": results.get("failure")})
+                (args.out / "result.json").write_text(json.dumps(results, indent=2))
+        require_idle_phone(await owner_state())
+    assert results.get("owned_views_restored") and not results["cleanup_errors"] and not results["browser_errors"], results
+    (args.out / "result.json").write_text(json.dumps(results, indent=2))
+    print(json.dumps({"mode": results["mode"], "ui": results["ui"], "peer": results["peer"]["endpoint_id"],
+                      "quiescent": results["quiescent"], "owned_views_restored": results["owned_views_restored"]}))
 
 
 async def qualify(args):
+    if getattr(args, "physical_peer", None):
+        return await qualify_physical(args)
     video_file = getattr(args, "fake_video_file", None)
     if video_file is not None and not video_file.is_file():
         raise ValueError("The fake camera Y4M file does not exist")
@@ -56,8 +401,10 @@ async def qualify(args):
                  for item in origin["localStorage"] if item["name"] == "hassTokens")
     results = {"scenarios": [], "screenshots": [], "browser_errors": [],
                "capture_proof": [], "lifecycle": [], "cleanup_errors": [], "dtmf_controls": [], "call_requests": [],
-               "audio_sockets": []}
-    async with HaWs(args.url, token) as ws:
+               "audio_sockets": [], "media_proof": [],
+               "observer": {"real_play": True, "audible_output": False,
+                            "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}}
+    async with HaWs(args.url, token) as ws, AsyncExitStack() as cleanup:
         # HTTP is available before configured integrations finish setting up.
         # Wait for HA's actual startup state before invoking their commands.
         async with asyncio.timeout(60):
@@ -72,11 +419,20 @@ async def qualify(args):
         peer = next(item for item in browsers if item["endpoint_id"] != args.owner)
         receiver = next(item for item in browsers if item["endpoint_id"] not in {owner["endpoint_id"], peer["endpoint_id"]})
         assert owner.get("extension") and peer.get("extension"), "Lab phones need extensions"
+        initial_preferences = {}
+        for endpoint in (owner, peer, receiver):
+            current = (await ws.command({"type": "voip_stack/ha_softphone_state",
+                                       "device_id": endpoint["device_id"]}))["result"]
+            require_idle_phone(current)
+            initial_preferences[endpoint["device_id"]] = {field: bool(current.get(field)) for field in ("send_video", "auto_answer")}
+        config = (await ws.command({"type": "lovelace/config"}))["result"]
+        backup = args.out / "lovelace-before.json"
+        if backup.exists():
+            raise ValueError("Use a fresh output directory to preserve the exact LAB view checkpoint")
+        backup.write_text(json.dumps(config, indent=2))
+        backup.chmod(0o600)
+        cleanup.push_async_callback(restore_owned_views, ws, config, args.out, results)
         if args.setup:
-            config = (await ws.command({"type": "lovelace/config"}))["result"]
-            backup = args.out / "lovelace-before.json"
-            if not backup.exists():
-                backup.write_text(json.dumps(config, indent=2))
             views = [view for view in config.get("views", [])
                      if view.get("path") not in {"voip-dashboard-qualification", "voip-dashboard-peer", "voip-dashboard-receiver"}]
             views.extend([
@@ -100,20 +456,19 @@ async def qualify(args):
         async with async_playwright() as runner:
             browser = await runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
                 args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
+                      "--mute-audio",
                       "--autoplay-policy=no-user-gesture-required",
                       *([f"--use-file-for-fake-video-capture={video_file.resolve()}"] if video_file else [])])
             context = await browser.new_context(storage_state=str(args.storage), permissions=["microphone", "camera"],
                                                  viewport={"width": 1500, "height": 1100})
-            await context.add_init_script("""navigator.mediaDevices.getUserMedia =
-                ((original) => async (constraints) => {
-                  window.__dashboardCaptureCount=(window.__dashboardCaptureCount||0)+1;
-                  window.__dashboardCaptureRequests=(window.__dashboardCaptureRequests||[])
-                    .concat({audio:!!constraints.audio,video:!!constraints.video});
-                  return original.call(navigator.mediaDevices,constraints);
-                })(navigator.mediaDevices.getUserMedia);
-                HTMLMediaElement.prototype.play = function() { this.muted=true;return Promise.resolve(); };
-            """)
+            await context.add_init_script(MEDIA_OBSERVER_SCRIPT)
             page = await context.new_page()
+            wire = DashboardAudioWire()
+            cdp = await context.new_cdp_session(page)
+            await cdp.send("Network.enable")
+            cdp.on("Network.webSocketCreated", wire.opened)
+            cdp.on("Network.webSocketFrameSent", lambda event: wire.frame("tx", event))
+            cdp.on("Network.webSocketFrameReceived", lambda event: wire.frame("rx", event))
             def observe_websocket(socket):
                 if urlsplit(socket.url).path == "/api/voip_stack/ws":
                     record = {"opened": asyncio.get_running_loop().time(), "closed": None}
@@ -170,6 +525,26 @@ async def qualify(args):
                 return (await ws.command({"type": "voip_stack/ha_softphone_state",
                     "device_id": endpoint["device_id"]}))["result"]
 
+            proven_audio_calls = set()
+
+            async def media_proof(call_id, *, video=False):
+                async with asyncio.timeout(8):
+                    while True:
+                        before = await page.evaluate(MEDIA_SAMPLE_SCRIPT)
+                        if before["stats"].get("frames_out", 0) > 0:
+                            break
+                        await asyncio.sleep(0.1)
+                before["wire"] = wire.snapshot()
+                await asyncio.sleep(1.2)
+                after = await page.evaluate(MEDIA_SAMPLE_SCRIPT)
+                after["wire"] = wire.snapshot()
+                proof = {"call_id": call_id, "video": video, "before": before, "after": after,
+                         "wire_errors": list(wire.capture.errors)}
+                results["media_proof"].append(proof)
+                assert after["call_id"] == call_id
+                assert not wire.capture.errors, wire.capture.errors
+                validate_media_progress(before, after, video=video)
+
             async def connected(expected_call_id=""):
                 async with asyncio.timeout(8):
                     while True:
@@ -178,6 +553,10 @@ async def qualify(args):
                             assert snapshots[0]["call_id"] == snapshots[1]["call_id"]
                             if expected_call_id:
                                 assert snapshots[0]["call_id"] == expected_call_id
+                            call_id = snapshots[0]["call_id"]
+                            if call_id not in proven_audio_calls:
+                                await media_proof(call_id)
+                                proven_audio_calls.add(call_id)
                             return snapshots
                         await asyncio.sleep(0.05)
 
@@ -667,6 +1046,7 @@ async def qualify(args):
                         encoding:window.__qualificationEngine._video?._encoding,
                         captures:window.__dashboardCaptureRequests})""")
                     video_call_id = (await connected())[0]["call_id"]
+                    await media_proof(video_call_id, video=True)
                     captures = await capture_count()
                     await embedded.get_by_role("button", name="Options", exact=True).click()
                     await expect(embedded.locator(".settings-panel")).to_be_visible()
@@ -749,14 +1129,14 @@ async def qualify(args):
                 for endpoint in (owner, peer, receiver):
                     try:
                         await ws.command({"type":"call_service","domain":"voip_stack","service":"set_send_video",
-                            "service_data":{"device_id":endpoint["device_id"],"send_video":False}})
+                            "service_data":{"device_id":endpoint["device_id"],"send_video":initial_preferences[endpoint["device_id"]]["send_video"]}})
                     except Exception as error:
                         results["cleanup_errors"].append(f"camera preference reset: {error}")
                 for endpoint in (owner, peer, receiver):
                     try:
                         await ws.command({"type": "call_service", "domain": "voip_stack", "service": "set_auto_answer",
                             "service_data": {"device_id": endpoint["device_id"],
-                                             "auto_answer": bool(endpoint.get("ha_softphone", {}).get("auto_answer"))}})
+                                             "auto_answer": initial_preferences[endpoint["device_id"]]["auto_answer"]}})
                     except Exception as error:
                         results["cleanup_errors"].append(f"restore auto answer {endpoint['endpoint_id']}: {error}")
                 try:
@@ -783,6 +1163,7 @@ async def qualify(args):
             assert not results["cleanup_errors"], results["cleanup_errors"]
             results["quiescent"] = True
     (args.out / "result.json").write_text(json.dumps(results, indent=2))
+    assert not results["cleanup_errors"], results["cleanup_errors"]
     print(json.dumps({"scenarios": results["scenarios"], "screenshots": len(results["screenshots"]),
                       "quiescent": results["quiescent"]}))
 
@@ -800,6 +1181,15 @@ def main():
     parser.add_argument("--setup", action="store_true", help="Create dedicated lab views before the test")
     parser.add_argument("--spa-navigation", action="store_true", help="Verify media ownership across real Lovelace views")
     parser.add_argument("--clone-window", action="store_true", help="Verify the real opener sessionStorage copy boundary")
+    parser.add_argument("--physical-peer", help="Canonical endpoint_id of one existing ESP or standard SIP peer")
+    parser.add_argument("--physical-ui", choices=("dashboard", "compact"), default="dashboard")
+    parser.add_argument("--physical-direction", choices=("outgoing", "incoming"), default="outgoing")
+    parser.add_argument("--physical-video", choices=("audio", "recvonly", "sendonly", "sendrecv"), default="audio",
+                        help="Required negotiated video direction local to the browser")
+    parser.add_argument("--physical-hangup", choices=("dashboard", "peer"), default="dashboard")
+    parser.add_argument("--physical-hold-seconds", type=float, default=5)
+    parser.add_argument("--physical-wait-seconds", type=float, default=60)
+    parser.add_argument("--signals-dir", type=Path, help="Fresh private ready/connected/measuring/measured/done directory for Root's actor")
     asyncio.run(qualify(parser.parse_args()))
 
 

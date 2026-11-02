@@ -12,6 +12,37 @@ pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_dashboard_media_observer_selects_its_canvas_with_playwright_null_argument():
+    from tests.test_tool_output_storage import load_tool
+
+    tool = load_tool("qualify_voip_dashboard")
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content("<voip-stack-dashboard-card></voip-stack-dashboard-card><voip-stack-card></voip-stack-card>")
+            page.evaluate("""()=>{
+              for(const [selector,w,h] of [['voip-stack-dashboard-card',80,40],['voip-stack-card',160,90]]){
+                const host=document.querySelector(selector),canvas=document.createElement('canvas');
+                canvas.className='video-canvas';canvas.width=w;canvas.height=h;
+                const c=canvas.getContext('2d');c.fillStyle='#ff0000';c.fillRect(0,0,w,h);
+                host.attachShadow({mode:'open'}).append(canvas);
+              }
+            }""")
+            # Python's omitted evaluate arg is serialized as JS null, not undefined.
+            observed = page.evaluate(tool.MEDIA_SAMPLE_SCRIPT)
+            assert observed["canvases"] == [{"width": 80, "height": 40, "non_black": True}]
+            page.evaluate("document.querySelector('voip-stack-dashboard-card').shadowRoot.querySelector('canvas').hidden=true")
+            # A real, non-black sibling phonecard cannot qualify the dashboard.
+            assert page.evaluate(tool.MEDIA_SAMPLE_SCRIPT)["canvases"] == []
+            assert page.evaluate(tool.MEDIA_SAMPLE_SCRIPT, "voip-stack-card")["canvases"] == [
+                {"width": 160, "height": 90, "non_black": True}]
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 @pytest.mark.parametrize("embedded", [None, False, True])
 def test_inline_dashboard_options_omit_native_chrome_only(embedded):
     playwright = pytest.importorskip("playwright.sync_api")
