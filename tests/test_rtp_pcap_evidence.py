@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from xml.etree import ElementTree
+
+import pytest
 
 
 PATH = Path(__file__).parents[1] / "tools" / "rtp_pcap_evidence.py"
@@ -25,6 +28,18 @@ def row(time: float, sequence: int, timestamp: int) -> str:
             str(timestamp),
         )
     )
+
+
+def sdp_pdml(*descriptions):
+    root = ElementTree.Element("pdml")
+    for source, fields in descriptions:
+        packet = ElementTree.SubElement(root, "packet")
+        network = ElementTree.SubElement(packet, "proto", name="ip")
+        ElementTree.SubElement(network, "field", name="ip.src", show=source)
+        sdp = ElementTree.SubElement(packet, "proto", name="sdp")
+        for name, value in fields:
+            ElementTree.SubElement(sdp, "field", name=name, show=value)
+    return ElementTree.tostring(root, encoding="unicode")
 
 
 def test_continuous_rtp_wrap_reports_no_loss() -> None:
@@ -63,10 +78,12 @@ def test_sdp_audio_clock_rates_bind_payload_to_advertised_port(
     monkeypatch, tmp_path
 ) -> None:
     class Result:
-        stdout = (
-            "192.0.2.1\taudio 40000 RTP/AVP 97,video 40002 RTP/AVP 103"
-            "\trtpmap:97 L16/16000/1,rtpmap:103 H264/90000\n"
-        )
+        stdout = sdp_pdml(("192.0.2.1", [
+            ("sdp.media", "audio 40000 RTP/AVP 97"),
+            ("sdp.media_attr", "rtpmap:97 L16/16000/1"),
+            ("sdp.media", "video 40002 RTP/AVP 103"),
+            ("sdp.media_attr", "rtpmap:103 H264/90000"),
+        ]))
 
     monkeypatch.setattr(MODULE.subprocess, "run", lambda *args, **kwargs: Result())
 
@@ -117,10 +134,11 @@ def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, 
 
     def capture_result(command, **kwargs):
         if command[command.index("-Y") + 1] == "sdp":
-            return SimpleNamespace(stdout=(
-                "192.0.2.1\taudio 40000 RTP/AVP 96"
-                "\trtpmap:96 opus/48000/2,ptime:20\n"
-            ))
+            return SimpleNamespace(stdout=sdp_pdml(("192.0.2.1", [
+                ("sdp.media", "audio 40000 RTP/AVP 96"),
+                ("sdp.media_attr", "rtpmap:96 opus/48000/2"),
+                ("sdp.media_attr", "ptime:20"),
+            ])))
         return SimpleNamespace(stdout="\n".join(
             row(index * interval, 100 + index, 960 * index)
             for index in range(285)
@@ -142,3 +160,61 @@ def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, 
         require_streams=1, max_audio_loss=0,
         max_video_loss=None, max_cadence_ratio=1.02,
     )
+
+
+@pytest.mark.parametrize("video_first", [False, True])
+def test_same_payload_number_in_separate_media_keeps_its_audio_clock(monkeypatch, tmp_path, video_first):
+    from types import SimpleNamespace
+    audio = [("sdp.media", "audio 40000 RTP/AVP 96"),
+             ("sdp.media_attr", "rtpmap:96 L16/16000/1")]
+    video = [("sdp.media", "video 40002 RTP/AVP 96"),
+             ("sdp.media_attr", "rtpmap:96 H264/90000")]
+    data = sdp_pdml(("192.0.2.1", video + audio if video_first else audio + video))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 96): 16000,
+    }
+
+
+def test_multiple_audio_sections_and_rejected_media_keep_independent_payloads(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    data = sdp_pdml(("192.0.2.1", [
+        ("sdp.media", "audio 40000 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1"),
+        ("sdp.media", "audio 40002 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/48000/1"),
+        ("sdp.media", "video 0 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 H264/90000"),
+    ]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 96): 16000, ("192.0.2.1", 40002, 96): 48000,
+    }
+
+
+@pytest.mark.parametrize("conflicting_fields", [
+    [("sdp.media", "video 40000 RTP/AVP 96"), ("sdp.media_attr", "rtpmap:96 H264/90000")],
+    [("sdp.media_attr", "rtpmap:96 L16/48000/1")],
+    [("sdp.media_attr", "rtpmap:96 PCMU/16000/1")],
+])
+def test_ambiguous_same_tuple_payload_fails_closed(monkeypatch, tmp_path, conflicting_fields):
+    from types import SimpleNamespace
+    data = sdp_pdml(("192.0.2.1", [
+        ("sdp.media", "audio 40000 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1"), *conflicting_fields,
+    ]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    with pytest.raises(ValueError, match="Ambiguous SDP"):
+        MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap")
+
+
+def test_consistent_repeated_sdp_and_static_audio_clocks_remain_usable(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    fields = [("sdp.media", "audio 40000 RTP/AVP 0 8 9 96"),
+              ("sdp.media_attr", "rtpmap:96 L16/16000/1")]
+    data = sdp_pdml(("192.0.2.1", fields), ("192.0.2.1", fields))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 0): 8000, ("192.0.2.1", 40000, 8): 8000,
+        ("192.0.2.1", 40000, 9): 8000, ("192.0.2.1", 40000, 96): 16000,
+    }
