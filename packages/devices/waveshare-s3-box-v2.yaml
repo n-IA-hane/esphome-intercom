@@ -24,6 +24,10 @@ substitutions:
   voip_audio_task_stacks_in_psram: 'true'
   voip_tx_task_stack_size: '12288'
   voip_rx_task_stack_size: '12288'
+  # Match the FULL LCD receive envelope; audio-only profiles omit the renderer.
+  s3_sip_jpeg_width: '320'
+  s3_sip_jpeg_height: '240'
+  s3_sip_jpeg_fps: '10'
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
   ext_components_source: github://n-IA-hane/esphome-intercom@main
@@ -173,6 +177,7 @@ packages:
   hardware: !include '../board/waveshare_s3_box_v2.yaml'
   display_hardware: !include '${ ''../board/waveshare_s3_box_v2_display.yaml'' if ''display'' in firmware_features
     else ''../features/shared/absent.yaml'' }'
+  video_receive: !include ${ '../voip/s3_video_call_page.yaml' if 'display' in firmware_features and 'voip' in firmware_features else '../features/shared/absent.yaml' }
   audio: !include ${ '../audio/profiles/waveshare-s3-box-v2-afe.yaml' if _v2_afe else '../audio/profiles/waveshare-s3-box-v2-aec.yaml' }
   boot: !include '../features/shared/spotpear_boot.yaml'
   diagnostics: ${ _round_diagnostics if 'diagnostics' in firmware_features else {} }

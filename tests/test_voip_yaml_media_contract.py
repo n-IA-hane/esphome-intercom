@@ -389,6 +389,65 @@ def test_p4_full_jpeg_framerate_override_reaches_camera_and_media_owners(tmp_pat
     assert resolved['esp_video_camera']['buffer_count'] == 2
 
 
+@pytest.mark.parametrize('entrypoint', [
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml',
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+])
+@pytest.mark.parametrize('override', [None, 20])
+def test_ws3_full_public_profile_includes_qualified_jpeg_receive(tmp_path, entrypoint, override) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/' + entrypoint
+    original = yaml_util.load_yaml(ROOT / relative)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'], relative)
+    if override is not None:
+        document = yaml_util.load_yaml(path)
+        document['substitutions']['s3_sip_jpeg_fps'] = str(override)
+        path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    renderer = resolved['esp_video_renderer']
+    expected_rate = override or 10
+    assert (int(renderer['width']), int(renderer['height']), int(renderer['framerate'])) == (320, 240, expected_rate)
+    assert renderer['voip']['id'] == 's3_video_sink'
+    video = resolved['voip_stack']['video']
+    assert (video['codec'], video['sink']) == ('jpeg', 's3_video_sink')
+    assert (int(video['width']), int(video['height']), int(video['framerate'])) == (320, 240, expected_rate)
+    assert by_id(resolved['lvgl']['pages'], 'call_video_page')
+    assert by_id(resolved['lvgl']['pages'], 'call_video_surface')
+    assert resolved['voip_stack']['on_video_start'] == [{'script.execute': 'suspend_mww_for_video'}]
+    assert resolved['voip_stack']['on_video_end'] == [{'script.execute': 'resume_mww_after_video'}]
+    assert any('micro_wake_word.stop' in action
+               for action in by_id(resolved['script'], 'suspend_mww_for_video')['then'])
+
+
+@pytest.mark.parametrize('without', ['display', 'voip'])
+def test_ws3_public_profile_omits_jpeg_receiver_without_both_features(tmp_path, without) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml'
+    original = yaml_util.load_yaml(ROOT / relative)
+    removed = {without} | ({'directory', 'blf', 'mwi'} if without == 'voip' else set())
+    features = [name for name in original['substitutions']['firmware_features'] if name not in removed]
+    path = device_config(tmp_path, features, relative)
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert 'esp_video_renderer' not in resolved
+    assert 'video' not in resolved.get('voip_stack', {})
+    providers = {name for provider in resolved['external_components'] for name in provider['components']}
+    assert 'esp_video_renderer' not in providers
+
+
 def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
     sdk = config['esp32']['framework']['sdkconfig_options']
