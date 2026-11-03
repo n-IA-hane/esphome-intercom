@@ -11,7 +11,7 @@ esp_video_camera:
   resolution: 800x800
   jpeg_quality: 10
   buffer_count: 2
-  max_framerate: 10
+  max_framerate: ${p4_sip_jpeg_fps}
   rotation: 270
 packages:
   video: !include '../../../voip/p4_full_video_jpeg.yaml'

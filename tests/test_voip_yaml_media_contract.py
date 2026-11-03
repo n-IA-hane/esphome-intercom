@@ -3,6 +3,8 @@
 from pathlib import Path
 import os
 import re
+import subprocess
+import sys
 
 import pytest
 import esphome.config_validation as cv
@@ -323,7 +325,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     for key, expected in {'id': 'p4_camera', 'name': 'P4 Camera', 'i2c_id': 'internal_i2c',
                           'device': 'jpeg', 'resolution': '800x800', 'jpeg_quality': 10,
                           'max_framerate': 10, 'rotation': 270, 'buffer_count': 2}.items():
-        assert camera[key] == expected
+        assert (float(camera[key]) if key == 'max_framerate' else camera[key]) == expected
     assert config['esp_afe']['output_prebuffer_frames'] == 1
     assert 'gmf_output_delay_samples' not in config['esp_afe']
     video = config['voip_stack']['video']
@@ -360,6 +362,32 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert 'platform: esp32_hosted' not in hosted and 'http_request:' not in hosted
     update = (ROOT / 'packages/board/esp32p4_c6_update.yaml').read_text()
     assert 'platform: esp32_hosted' in update and 'http_request:' in update and 'update_interval: 6h' in update
+
+
+def test_p4_full_jpeg_framerate_override_reaches_camera_and_media_owners(tmp_path) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    original = yaml_util.load_yaml(P4_LANDSCAPE_FULL_AFE)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'],
+                         str(P4_LANDSCAPE_FULL_AFE.relative_to(ROOT)))
+    document = yaml_util.load_yaml(path)
+    document['substitutions']['p4_sip_jpeg_fps'] = '20'
+    path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert float(resolved['esp_video_camera']['max_framerate']) == 20
+    assert int(resolved['esp_jpeg_video_source']['framerate']) == 20
+    assert int(resolved['p4_video_renderer']['framerate']) == 20
+    assert int(resolved['voip_stack']['video']['framerate']) == 20
+    assert resolved['esp_video_camera']['resolution'] == '800x800'
+    assert resolved['esp_video_camera']['jpeg_quality'] == 10
+    assert resolved['esp_video_camera']['buffer_count'] == 2
+
 
 def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
