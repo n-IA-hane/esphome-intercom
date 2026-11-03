@@ -12,15 +12,11 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+PKG_NAME = "voip_stack_local_bridge_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
 def _load_module(name: str):
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
