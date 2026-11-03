@@ -27,9 +27,8 @@ class VoipStackPhoneDialog extends HTMLElement {
     this._title = node("h2");
     this._title.id = "phone-title";
     this._dialog.setAttribute("aria-labelledby", this._title.id);
-    const close = node("button", "×");
+    const close = this._close = node("button", "×");
     close.type = "button";
-    close.setAttribute("aria-label", "Minimize call");
     close.onclick = () => this.closeDialog();
     header.append(this._title, close);
     this._view = node("div");
@@ -39,7 +38,11 @@ class VoipStackPhoneDialog extends HTMLElement {
     this.shadowRoot.append(style, this._dialog);
     this._dialog.addEventListener("cancel", event => { event.preventDefault(); this.closeDialog(); });
   }
-  set hass(value) { this._hass = value; if (this._phone) this._phone.hass = value; }
+  set hass(value) {
+    this._hass = value;
+    this._close.setAttribute("aria-label", translate(value, "Minimize call"));
+    if (this._phone) this._phone.hass = value;
+  }
   async showDialog({ presenter, callId }) {
     const generation = this._generation = (this._generation || 0) + 1;
     this._presenter = presenter;
@@ -53,18 +56,19 @@ class VoipStackPhoneDialog extends HTMLElement {
       if (!current()) return;
       if (!this._phone) {
         this._phone = document.createElement("voip-stack-card");
-        this._phone.setAttribute("data-receive-popup", "");
+        this._phone.setIncomingPopupMode(true);
         this._phone.setDashboardMode(true);
         this._phone.setConfig({ mode: "ha_softphone", device_id: presenter.phone.device_id });
         this._phone.hass = this._hass;
         this._view.append(this._phone);
       }
       this._phone.focusPhoneView();
+      this._phone.consumePhoneAnswerLink();
       presenter.minimized = false;
       presenter.renderMini();
       // HA appends its persistent dialog after invoking showDialog().
       queueMicrotask(() => { if (current() && this.isConnected && !this._dialog.open) this._dialog.showModal(); });
-    } catch (error) { this._error.textContent = error?.message || String(error); }
+    } catch (error) { this._error.textContent = translate(this._hass, error?.message || String(error)); }
   }
   closeDialog(minimize = true) {
     this._generation++;
@@ -94,11 +98,9 @@ export class VoipStackPopup extends HTMLElement {
       small { display:block; }`;
     this._mini = node("section");
     this._mini.hidden = true;
-    this._mini.setAttribute("aria-label", "Minimized call");
     this._reopen = node("button");
     this._reopen.type = "button";
     this._reopen.className = "reopen";
-    this._reopen.setAttribute("aria-label", "Reopen call");
     this._caller = node("span");
     this._duration = node("small");
     this._reopen.append(this._caller, this._duration);
@@ -106,7 +108,6 @@ export class VoipStackPopup extends HTMLElement {
     this._hangup = node("button");
     this._hangup.type = "button";
     this._hangup.className = "hangup";
-    this._hangup.setAttribute("aria-label", "Hang up call");
     const icon = node("ha-icon");
     icon.setAttribute("icon", "mdi:phone-hangup");
     this._hangup.append(icon);
@@ -115,11 +116,23 @@ export class VoipStackPopup extends HTMLElement {
     this.shadowRoot.append(style, this._mini);
     this._ready = () => { if (this.binding) void this.resolveBinding(); };
     this._modalClosed = () => this.restoreMiniHost();
+    this._answerLink = () => {
+      const params = new URLSearchParams(location.search);
+      if (["1", "true", "yes"].includes((params.get("voip_answer") || "").toLowerCase()) &&
+          params.get("voip_endpoint") === this.binding?.endpoint_id &&
+          params.get("voip_call_id") === this.state?.call_id &&
+          this.state?.direction === "incoming" && ["ringing", "incoming"].includes(this.state.state)) this.open();
+    };
+    window.addEventListener("location-changed", this._answerLink);
+    window.addEventListener("pageshow", this._answerLink);
     try { this.binding = JSON.parse(localStorage.getItem(PREFERENCE) || "null"); } catch (_) { this.binding = null; }
     if (!this.binding?.device_id || !this.binding?.endpoint_id) this.binding = null;
   }
   set hass(hass) {
     this._hass = hass;
+    this._mini.setAttribute("aria-label", translate(hass, "Minimized call"));
+    this._reopen.setAttribute("aria-label", translate(hass, "Reopen call"));
+    this._hangup.setAttribute("aria-label", translate(hass, "Hang up call"));
     if (this.minimized && !this.isConnected) this.positionMini();
     if (this.dialog) this.dialog.hass = hass;
     if (this._connection === hass?.connection) { if (this.binding) engine.configure(hass); return; }
@@ -183,7 +196,7 @@ export class VoipStackPopup extends HTMLElement {
     if (!activeCall(state) || this._pending) return;
     this._pending = this._hangup.disabled = true;
     try { await engine.dashboardTerminate(["ringing", "incoming"].includes(state.state) ? "decline" : "hangup", this.phone, state); }
-    catch (error) { this.error = error?.message || String(error); this._mini.title = this.error; }
+    catch (error) { this.error = error?.message || String(error); this._mini.title = translate(this._hass, this.error); }
     finally { this._pending = this._hangup.disabled = false; }
   }
   renderMini() {
@@ -246,30 +259,38 @@ export class VoipStackPopupSettings extends HTMLElement {
       form { max-width:560px; } label { display:block; margin:16px 0; }
       select,button { min-height:44px; font:inherit; } select { width:100%; }
       p { line-height:1.5; } .error { color:var(--error-color); }`;
-    const title = node("h1", "Call popups");
+    this._title = node("h1");
     this._form = node("form");
-    const selectLabel = node("label", "Home Assistant phone");
-    this._select = node("select"); selectLabel.append(this._select);
+    const selectLabel = node("label");
+    this._selectText = node("span");
+    this._select = node("select"); selectLabel.append(this._selectText, this._select);
     const enabledLabel = node("label");
     this._enabled = node("input"); this._enabled.type = "checkbox";
-    enabledLabel.append(this._enabled, node("span", " Receive call popups on this device"));
-    const notice = node("p", "Uses an existing softphone without a card. This choice is saved in this app/browser. X, Esc and Back minimize an active call. Audio still requires browser permission.");
-    const save = node("button", "Save"); save.type = "submit";
+    this._enabledText = node("span");
+    enabledLabel.append(this._enabled, this._enabledText);
+    this._notice = node("p");
+    this._save = node("button"); this._save.type = "submit";
     this._message = node("p"); this._message.setAttribute("role", "status");
-    this._form.append(selectLabel, enabledLabel, notice, save, this._message);
-    this.shadowRoot.append(style, title, this._form);
+    this._form.append(selectLabel, enabledLabel, this._notice, this._save, this._message);
+    this.shadowRoot.append(style, this._title, this._form);
     this._form.onsubmit = event => {
       event.preventDefault();
       const phone = this._phones?.find(item => item.device_id === this._select.value);
       try {
         if (this._enabled.checked && !phone) throw new Error("Select an existing Home Assistant phone.");
         globalThis.__voipStackPopup.bindPhone(phone, this._enabled.checked);
-        this._message.className = ""; this._message.textContent = "Saved";
-      } catch (error) { this._message.className = "error"; this._message.textContent = error?.message || String(error); }
+        this._message.className = ""; this._message.textContent = translate(this._hass, "Saved");
+      } catch (error) { this._message.className = "error"; this._message.textContent = translate(this._hass, error?.message || String(error)); }
     };
   }
   set hass(value) {
     this._hass = value;
+    this._title.textContent = translate(value, "Call popups");
+    this._selectText.textContent = translate(value, "Home Assistant phone");
+    this._enabledText.textContent = ` ${translate(value, "Receive call popups on this device")}`;
+    this._notice.textContent = translate(value, "Uses an existing softphone without a card. This choice is saved in this app/browser. X, Esc and Back minimize an active call. Audio still requires browser permission.");
+    this._save.textContent = translate(value, "Save");
+    if (this._select.options[0]) this._select.options[0].textContent = translate(value, "-- Select phone --");
     if (this._connection === value?.connection) return;
     this._connection = value?.connection;
     if (this._connection) void this.load();
@@ -282,10 +303,10 @@ export class VoipStackPopupSettings extends HTMLElement {
       const endpoint = new URL(location.href).searchParams.get("endpoint_id");
       const selected = this._phones.find(item => item.endpoint_id === endpoint) ||
         this._phones.find(item => item.device_id === presenter.binding?.device_id);
-      this._select.replaceChildren(new Option("-- Select phone --", ""), ...this._phones.map(phone => new Option(phone.name, phone.device_id)));
+      this._select.replaceChildren(new Option(translate(this._hass, "-- Select phone --"), ""), ...this._phones.map(phone => new Option(phone.name, phone.device_id)));
       this._select.value = selected?.device_id || "";
       this._enabled.checked = !!selected && presenter.binding?.device_id === selected.device_id;
-    } catch (error) { this._message.className = "error"; this._message.textContent = error?.message || String(error); }
+    } catch (error) { this._message.className = "error"; this._message.textContent = translate(this._hass, error?.message || String(error)); }
   }
 }
 

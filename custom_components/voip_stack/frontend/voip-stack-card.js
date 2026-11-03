@@ -708,6 +708,15 @@ class VoipStackCard extends HTMLElement {
     this._render();
   }
 
+  setIncomingPopupMode(enabled) {
+    this._incomingPopupMode = !!enabled;
+    this.toggleAttribute("data-receive-popup", this._incomingPopupMode);
+  }
+
+  consumePhoneAnswerLink() {
+    if (this._isSoftphoneController()) this._maybeAnswerFromUrl();
+  }
+
   focusPhoneView() {
     if (!this._isHaSoftphoneMode()) return true;
     return voipStackEngine.focusSoftphoneView(this, this._softphoneRuntimeKey(), this._getSoftphoneEndpointId());
@@ -995,6 +1004,7 @@ class VoipStackCard extends HTMLElement {
       if (!(value === "1" || value === "true" || value === "yes")) return false;
       const endpointId = String(params.get("voip_endpoint") || "").trim();
       const callId = String(params.get("voip_call_id") || "").trim();
+      if (this._incomingPopupMode && (!endpointId || !callId)) return false;
       const currentEndpoint = this._getSoftphoneEndpointId();
       // Links without a selector are scoped to the historical initial phone.
       // Additional phones require an explicit endpoint so two ringing kiosk
@@ -1014,7 +1024,7 @@ class VoipStackCard extends HTMLElement {
       url.searchParams.delete("voip_answer");
       url.searchParams.delete("voip_endpoint");
       url.searchParams.delete("voip_call_id");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {
       // Best effort only. Leaving the parameter is harmless because the local
       // consumed flag prevents repeated answers in this card instance.

@@ -213,3 +213,72 @@ def test_rx_animation_has_fixed_hitbox_and_rejects_stale_call(popup_page):
     assert page.evaluate("__voipStackPopup._duration.textContent") in {"00:12", "00:13"}
     page.evaluate("push({state:'idle',call_id:'incoming-A'})")
     assert page.evaluate("__voipStackPopup._timer===null")
+
+
+@pytest.mark.parametrize("minimized", [False, True])
+def test_foreground_answer_link_reuses_existing_answer_once(popup_page, minimized):
+    page = popup_page
+    enable(page)
+    incoming(page)
+    if minimized:
+        page.get_by_role("button", name="Minimize call").click()
+    # Only the microphone preparation boundary is controlled. The real card
+    # Answer, engine intent/Call-ID ownership and HA command are exercised.
+    page.evaluate("""() => {
+      window.prepares=0;__voipStackEngine.prepareAudioCall=async()=>{prepares++;};
+      history.pushState({},'', '/?voip_answer=1&voip_endpoint=browser%3Adesk&voip_call_id=incoming-A');
+      history.replaceState({dialog:'voip-stack-phone-dialog'},'');
+      window.dispatchEvent(new CustomEvent('location-changed'));
+    }""")
+    page.wait_for_function("services.some(item=>item.service==='answer')")
+    assert page.evaluate("services.filter(item=>item.service==='answer').length") == 1
+    data = page.evaluate("services.find(item=>item.service==='answer').data")
+    assert data["device_id"] == "desk-device"
+    assert data["call_id"] == "incoming-A"
+    assert data["media_client_id"] == page.evaluate("__voipStackEngine.mediaClientId")
+    page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow'))")
+    page.wait_for_timeout(60)
+    assert page.evaluate("prepares") == 1
+    assert page.evaluate("services.filter(item=>item.service==='answer').length") == 1
+    assert page.evaluate("new URL(location.href).searchParams.has('voip_answer')") is False
+    assert page.evaluate("history.state.dialog") == "voip-stack-phone-dialog"
+
+
+def test_answer_link_rejects_wrong_scope_and_changed_call_during_permission(popup_page):
+    page = popup_page
+    enable(page)
+    incoming(page)
+    page.evaluate("""() => {
+      window.prepares=0;window.allow=null;
+      __voipStackEngine.prepareAudioCall=()=>{prepares++;return new Promise(resolve=>{window.allow=resolve;});};
+      window.link=query=>{history.pushState({},'', '/?'+query);window.dispatchEvent(new CustomEvent('location-changed'));};
+      link('voip_answer=1&voip_endpoint=browser%3Adesk&voip_call_id=old-call');
+      link('voip_answer=1&voip_endpoint=another&voip_call_id=incoming-A');
+      link('voip_answer=1&voip_endpoint=browser%3Adesk');
+      push({state:'ringing',call_id:'incoming-A'});
+    }""")
+    assert page.evaluate("prepares") == 0
+    assert page.evaluate("services") == []
+    page.evaluate("link('voip_answer=1&voip_endpoint=browser%3Adesk&voip_call_id=incoming-A')")
+    page.wait_for_function("prepares===1 && !!allow")
+    page.evaluate("push({state:'ringing',call_id:'incoming-B'});allow()")
+    page.wait_for_timeout(80)
+    assert page.evaluate("services") == []
+    assert page.evaluate("__voipStackPopup.binding.endpoint_id") == "browser:desk"
+
+
+def test_popup_labels_follow_existing_italian_catalogue(popup_page):
+    page = popup_page
+    enable(page)
+    page.evaluate("""() => {
+      hass={...hass,language:'it-IT'};
+      for(const element of root.consumers)element.hass=hass;
+      settings.hass=hass;
+    }""")
+    assert page.get_by_role("heading", name="Popup chiamate").count() == 1
+    assert page.get_by_role("button", name="Salva", exact=True).count() == 1
+    assert page.get_by_label("Ricevi popup chiamate su questo dispositivo").count() == 1
+    incoming(page)
+    page.get_by_role("button", name="Minimizza chiamata").click()
+    assert page.get_by_role("button", name="Riapri chiamata").count() == 1
+    assert page.get_by_role("button", name="Riaggancia chiamata").count() == 1
