@@ -166,10 +166,16 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert any(node.get('text') == '\U000F006E' for node in nodes(dialer))
     assert 'voip_dial_backspace' in values_text(dialer)
     assert "if (x == 2) return '#';" in values_text(dialer)
-    assert not any(node.get('text') == '*' for node in nodes(dialer))
+    row = by_id(dialer, 'call_dial_row_del0hash')
+    assert [button['text'] for button in row['rows'][0]['buttons']] == ['*', '0', '#', '\U000F006E']
+    dispatch = values_text(row['on_click'])
+    for route in ("return x == 3;", "if (x == 0) return '*';",
+                  "if (x == 1) return '0';", "if (x == 2) return '#';"):
+        assert route in dispatch
     code = values_text(config['script'])
     assert 'circle_half_chord' not in code
-    assert 'id(phone).get_contact_count()' in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
     assert 'get_contacts_csv()' not in code
 
 
