@@ -96,6 +96,9 @@ font:
   - 󰖁
   - 󰟴
   - "\U000F061C"
+  - "\U000F06CB"
+  - "\U000F05E9"
+  - "\U000F006E"
 - file: https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf
   id: font_weather_icon_sm
   size: 36
@@ -1294,7 +1297,7 @@ defaults:
         if (!${ '(id(phone).is_idle() || id(phone).can_send_dtmf())' if _fw_voip else 'true' } || id(voip_keypad_visible)) return;
         id(voip_keypad_visible) = true;
         const bool in_call = ${ 'id(phone).is_in_call()' if _fw_voip else 'false' };
-        lv_label_set_text(id(call_keypad_action_label), in_call ? "HANG UP" : "CALL");
+        lv_label_set_text(id(call_keypad_action_label), in_call ? "\U000F03F5" : "\U000F03F2");
         lv_obj_set_style_bg_color(id(call_keypad_action_button), lv_color_hex(in_call ? 0xEF4444 : 0x22C55E), LV_PART_MAIN);
         const int name_width = lv_obj_get_width(id(call_keypad_group)) - 48;
         lv_obj_set_width(id(call_keypad_value_label), in_call ? std::max(40, name_width - 110) : name_width);
@@ -1918,9 +1921,14 @@ defaults:
               id: call_keypad_header_label
               align: TOP_MID
               y: 20
-              text: Back
+              text: "\U000F06CB"
               text_color: 8160255
-              text_font: font_ui_medium
+              text_font: font_action_icon
+              width: !lambda |-
+                lv_point_t size;
+                lv_text_get_size(&size, "Back", id(font_ui_medium).get_lv_font(), 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
+                return size.x;
+              text_align: CENTER
               clickable: true
               gesture_bubble: false
               on_click:
@@ -2018,9 +2026,9 @@ defaults:
               widgets:
               - label:
                   align: CENTER
-                  text: CLEAR
+                  text: "\U000F05E9"
                   text_color: 15067115
-                  text_font: font_small
+                  text_font: font_action_icon
           - button:
               id: call_keypad_action_button
               align: BOTTOM_MID
@@ -2051,9 +2059,9 @@ defaults:
               - label:
                   align: CENTER
                   id: call_keypad_action_label
-                  text: CALL
+                  text: "\U000F03F2"
                   text_color: 16777215
-                  text_font: font_small
+                  text_font: font_action_icon
           - button:
               align: BOTTOM_RIGHT
               x: -22
@@ -2071,9 +2079,9 @@ defaults:
               widgets:
               - label:
                   align: CENTER
-                  text: DEL
+                  text: "\U000F006E"
                   text_color: 15067115
-                  text_font: font_ui_medium
+                  text_font: font_action_icon
       - obj:
           id: call_ringing_in_group
           width: 1
