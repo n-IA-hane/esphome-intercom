@@ -241,8 +241,11 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     actions = config['lvgl']['on_boot']
     if isinstance(actions, dict):
         actions = actions['then']
-    assert action_id(actions[0], 'script.execute') == 'compute_layout_metrics'
-    assert action_id(actions[1], 'script.execute') == 'reposition_widgets'
+    boot_scripts = [action_id(action, 'script.execute') for action in actions]
+    metrics_index = boot_scripts.index('compute_layout_metrics')
+    reposition_index = boot_scripts.index('reposition_widgets')
+    assert metrics_index < reposition_index
+    assert 'id(s3_video).attach_video_container(id(call_video_surface));' in values_text(actions[:metrics_index])
     options = by_id(config['lvgl']['pages'], 'ui_aec_mode_dd')['options']
     assert options == ['sr_low_cost', 'sr_high_perf']
     assert options == by_id(config['select'], 'aec_mode_select')['options']
