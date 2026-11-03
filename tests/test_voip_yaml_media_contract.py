@@ -469,19 +469,24 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
 
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
-    navigation = []
-    for node in nodes(config['lvgl']):
-        for event in ('on_swipe_left', 'on_swipe_right'):
-            if event in node and any('voip_stack.next_contact' in action or 'voip_stack.prev_contact' in action
-                                     for action in nodes(node[event])):
-                navigation.append(node[event])
-    assert navigation
-    for actions in navigation:
-        assert 'get_current_destination()' not in values_text(actions)
-        assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(actions))
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert contacts['parent_id'] == 'phone_contacts_container'
+    assert 'contact->stable_id()' in values_text(contacts['row_key'])
+    assert 'row.set_id(contact->stable_id())' in values_text(contacts['render_row'])
+    assert 'row.set_name(contact->name)' in values_text(contacts['render_row'])
+    selection = contacts['on_select']
+    assert 'if (!id(phone).is_idle()) return;' in values_text(selection)
+    assert 'id(phone).call_contact(row_id);' in values_text(selection)
+    assert 'id(phone).pickup_contact(row_id);' in values_text(selection)
+    assert 'get_current_destination()' not in values_text(selection)
+    assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(selection))
     callback = config['voip_stack']['on_destination_changed']
     assert 'id(videophone_peer) = destination;' in values_text(callback)
     assert any(action_id(node, 'script.execute') == 'update_status' for node in nodes(callback))
+    status = values_text(by_id(config['script'], 'update_status'))
+    assert 'idle ? id(phone).get_current_destination() : id(phone).get_active_peer_name()' in status
+    assert 'if (!idle) id(videophone_peer) = peer;' in status
+    assert 'lv_label_set_text(id(videophone_peer_label), peer.c_str());' in status
 
 
 def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> None:
@@ -581,9 +586,17 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("void P4VideoRenderer::loop()") :
         renderer_cpp.index("void P4VideoRenderer::dump_config()")
     ]
-    assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
-        renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
-    )
+    stale_pending = renderer_loop[
+        renderer_loop.index("if (pending >= 0 && !pending_current)") :
+        renderer_loop.index("if (this->rx_running_.load(")
+    ]
+    assert "int expected = pending;" in stale_pending
+    assert "this->pending_surface_.compare_exchange_strong(expected, -1," in stale_pending
+    assert "this->commit_direct_surface_(pending)" not in stale_pending
+    presentation = renderer_loop[renderer_loop.index("const bool presented =") :]
+    assert presentation.index("this->commit_direct_surface_(pending)") < (
+        presentation.index("if (!presented)")
+    ) < presentation.index("this->pending_surface_.compare_exchange_strong(")
     assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
         renderer_loop.index("const bool page_active")
     )
@@ -740,7 +753,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "this->direct_display_->draw_pixels_at(" in direct_present
+    assert "return this->present_native_rgb565_(" in direct_present
+    assert "this->owned_display_->draw_rgb565_transformed(" in direct_present
+    native_present = renderer_cpp[
+        renderer_cpp.index("bool P4VideoRenderer::present_native_rgb565_(") :
+        renderer_cpp.index("bool P4VideoRenderer::present_surface_direct_(")
+    ]
+    assert "this->owned_display_->draw_native_rgb565(" in native_present
+    assert "this->direct_display_->draw_pixels_at(" in native_present
     assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
