@@ -221,6 +221,8 @@ PY
       tests/test_browser_audio_startup.py
       tests/test_browser_call_lifecycle.py
       tests/test_frontend_media_devices_runtime.py
+      tests/test_dashboard_card_runtime.py
+      tests/test_imageattr_browser.py
       -q --tb=short -m browser_real
     )
     ;;
