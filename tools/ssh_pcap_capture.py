@@ -81,7 +81,7 @@ class SshPcapWriter:
         require(re.fullmatch(r'[A-Za-z0-9_.:-]+', interface) is not None, 'Invalid capture interface')
         self.host, self.prefix = host, list(remote_prefix)
         self.output = Path(output)
-        self.argv = ['tcpdump', '--immediate-mode', '-n', '-i', interface,
+        self.argv = ['tcpdump', '-n', '-i', interface,
                      '-U', '-s', '0', '-w', '-', capture_filter(bpf)]
         self.identity = None
         self.process = None

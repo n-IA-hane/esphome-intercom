@@ -30,6 +30,11 @@ def test_capture_cannot_record_its_ssh_stream_or_plain_api_credentials():
     assert 'and not (' in bpf
 
 
+def test_capture_keeps_full_packets_and_flushes_without_forcing_fixed_linux_ring_slots(tmp_path):
+    writer = SshPcapWriter(host='capture-host', bpf='udp', output=tmp_path / 'call.pcap')
+    assert writer.argv == ['tcpdump', '-n', '-i', 'any', '-U', '-s', '0', '-w', '-', capture_filter('udp')]
+
+
 def test_stop_identity_mismatch_never_claims_valid_capture(tmp_path):
     writer = SshPcapWriter(host='hass', bpf='udp', output=tmp_path/'call.pcap')
     writer.identity = {'pid': 42, 'starttime': '77', 'cmdline': writer.argv, 'stdout': 'pipe:[1]'}
