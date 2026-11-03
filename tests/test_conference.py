@@ -16,7 +16,7 @@ import voluptuous as vol
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+PKG_NAME = "voip_stack_conference_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {"rtp", "sdp", "sip"}
 
@@ -74,10 +74,6 @@ def _install_ha_fakes() -> None:
 
 def _load_module(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
