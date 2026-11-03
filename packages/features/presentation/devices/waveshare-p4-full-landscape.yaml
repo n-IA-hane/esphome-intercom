@@ -1870,9 +1870,14 @@ defaults:
               id: call_idle_header_label
               align: TOP_MID
               y: 20
-              text: Keyboard
+              width: !lambda |-
+                lv_point_t size;
+                lv_text_get_size(&size, "Keyboard", id(font_ui_medium).get_lv_font(), 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
+                return size.x;
+              text: "\U000F061C"
               text_color: 8160255
-              text_font: font_ui_medium
+              text_font: font_action_icon
+              text_align: CENTER
               clickable: true
               gesture_bubble: false
               on_click:
