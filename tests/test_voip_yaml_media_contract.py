@@ -332,7 +332,9 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert config['voip_stack']['audio_task_stacks_in_psram'] is True
     assert by_id(config['lvgl']['pages'], 'call_video_surface')
     code = values_text(config['script'])
-    assert 'id(phone).get_contact_count()' in code and 'get_contacts_csv()' not in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
+    assert 'get_contacts_csv()' not in code
     boot = config['esphome'].get('on_boot', [])
     assert not _master_volume_boot_writes(boot, config['script']), 'Boot must not overwrite master volume'
     assert 'id(master_volume).add_on_state_callback' in values_text(boot)
