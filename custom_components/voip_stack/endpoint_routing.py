@@ -434,19 +434,16 @@ def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
 
     metadata = (getattr(entry, "metadata", None) or {}) if entry is not None else {}
     device = (peer.device or {}) if peer is not None else {}
-    value = str(
-        device.get("sip_video_codec")
-        or metadata.get("sip_video_codec")
-        or ""
-    ).strip().casefold()
-    if value in {"h264", "jpeg"}:
-        return value
-
-    endpoint_kind = str(
-        (getattr(peer, "endpoint_kind", "") if peer is not None else "")
-        or metadata.get("endpoint_kind")
-        or ""
-    ).strip().casefold()
+    for contract in (device, metadata):
+        value = contract.get("sip_video_codec")
+        if value is not None:
+            value = str(value).strip().casefold()
+            if value in {"", "h264", "jpeg"}:
+                return value
+    if any("sip_video_codec" in contract and contract["sip_video_codec"] is None
+           for contract in (device, metadata)):
+        # An incomplete discovery is not an audio-only endpoint declaration.
+        return None
     capabilities = {
         str(item).strip().casefold()
         for item in (
@@ -456,7 +453,7 @@ def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
         )
         if str(item).strip()
     }
-    if endpoint_kind == "esphome" or capabilities:
+    if capabilities:
         return "" if "video" not in capabilities else None
     return None
 
@@ -601,9 +598,7 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
                     "camera_entity_id": str(
                         (peer.device or {}).get("camera_entity_id") or ""
                     ),
-                    "sip_video_codec": str(
-                        (peer.device or {}).get("sip_video_codec") or ""
-                    ),
+                    "sip_video_codec": peer_video_codec(peer),
                     "sip_transport": (
                         str((peer.device or {}).get("sip_transport") or "tcp").lower()
                         if peer.is_ha or peer.device is not None
@@ -631,6 +626,10 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
         endpoint = endpoint_registry.by_username(registered.id)
         metadata = dict(registered.metadata or {})
         if endpoint is not None:
+            declared = next((entry for entry in entries
+                             if entry.metadata.get("endpoint_id") == endpoint.endpoint_id), None)
+            if declared is not None:
+                metadata.setdefault("sip_video_codec", peer_video_codec(None, declared))
             registered_endpoint_ids.add(endpoint.endpoint_id)
             metadata.update(
                 {

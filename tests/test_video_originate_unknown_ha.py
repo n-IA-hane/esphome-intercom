@@ -261,3 +261,215 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
         await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
         for sock in sockets:
             sock.close()
+
+
+@pytest.mark.parametrize('policy,direction', [
+    ('unknown', 'sendrecv'), ('unknown', 'sendonly'), ('unknown', 'recvonly'),
+    ('observed_audio_only', 'sendrecv'), ('observed_jpeg', 'sendrecv'),
+    ('answer_audio_only', 'sendrecv'),
+])
+async def test_registered_managed_target_negotiates_video_after_audio_only_discovery(lab, monkeypatch, policy, direction):
+    """REGISTER, partial OPTIONS and the real resolver must reach second-leg SDP."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from custom_components.voip_stack import endpoint_runtime
+    from custom_components.voip_stack.core import rtp, sip, video_rtp
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+    from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
+    from custom_components.voip_stack.endpoint_routing import peer_video_codec, roster_from_peers
+    from custom_components.voip_stack.runtime_data import sip_registrar
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from custom_components.voip_stack.store import config_entry
+    from tests.test_sip_capabilities_ha import RegisteredPeer, register_peer, wait_until
+    import pytest_socket
+
+    # HA's autouse fixture overwrites the marker allowlist during fixture setup.
+    # The larger video INVITE may try TCP before falling back to this UDP peer.
+    pytest_socket.socket_allow_hosts(['127.0.0.1', '127.0.0.2', '127.0.0.3'])
+
+    lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
+        udp.bind(('127.0.0.1', 0)); listener = udp.getsockname()[1]
+        tcp.bind(('127.0.0.1', listener))
+    lab.runtime.transport_config.update({"sip_port": listener, CONF_SIP_VIDEO: True})
+    assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
+    sockets, transports = [], []
+    def media_socket(host):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((host, 0)); sock.setblocking(False); sockets.append(sock)
+        return sock
+    source_audio = media_socket('127.0.0.2')
+    source_video = media_socket('127.0.0.2')
+    sink_audio = media_socket('127.0.0.3')
+    sink_video = media_socket('127.0.0.3')
+    jpeg = sdp.RtpVideoFormat(payload_type=26, encoding='JPEG')
+    caller = SipCallClient(local_ip='127.0.0.2', local_name='caller', local_sip_port=0,
+        local_rtp_port=source_audio.getsockname()[1],
+        supported_send_formats=[AudioFormat(16000, frame_ms=10)],
+        supported_recv_formats=[AudioFormat(48000, frame_ms=10)],
+        allow_directional_audio_payloads=True,
+        local_video_rtp_port=source_video.getsockname()[1], video_formats=(jpeg,), video_direction=direction)
+    observed = {}
+
+    class CallerWire(RegisteredPeer):
+        def datagram_received(self, raw, address):
+            if sip.parse_message(raw).is_response:
+                caller.queue.put_nowait((raw, address))
+            super().datagram_received(raw, address)
+
+    class SinkWire(RegisteredPeer):
+        def datagram_received(self, raw, address):
+            request = sip.parse_message(raw)
+            if request.method != 'INVITE':
+                super().datagram_received(raw, address)
+                return
+            videos = sdp.offered_video_formats(request.body)
+            observed.update(request=request, videos=videos)
+            audio = next(f for f in sdp.offered_pcm_formats(request.body)
+                         if f.encoding == 'L16' and f.sample_rate == 16000)
+            selected = next((f for f in videos if f.encoding == 'JPEG'), None)
+            if policy == 'answer_audio_only':
+                selected = None
+            answer_direction = {'sendonly': 'recvonly', 'recvonly': 'sendonly', 'sendrecv': 'sendrecv'}[direction]
+            body = sdp.build_answer_directional('127.0.0.3', '127.0.0.3',
+                sink_audio.getsockname()[1], audio, audio, remote_sdp=request.body,
+                video_port=sink_video.getsockname()[1] if selected else 0,
+                video_format=selected, video_direction=answer_direction)
+            self.answer(request, address, body=body.encode())
+
+    transport, source = await lab.hass.loop.create_datagram_endpoint(
+        lambda: CallerWire('no-ptime'), local_addr=('127.0.0.2', 0))
+    transports.append(transport); caller.transport, caller.protocol = transport, source
+    caller.local_sip_port = transport.get_extra_info('sockname')[1]
+    transport, sink = await lab.hass.loop.create_datagram_endpoint(
+        lambda: SinkWire('no-ptime'), local_addr=('127.0.0.3', 0))
+    transports.append(transport)
+    origin = MockConfigEntry(domain='esphome', data={'host': '127.0.0.3', 'device_name': 'managed_sink'})
+    origin.add_to_hass(lab.hass)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=origin.entry_id,
+        identifiers={('esphome', '84c7bb000003')},
+        connections={(dr.CONNECTION_NETWORK_MAC, '84:c7:bb:00:00:03')}, name='Managed sink')
+    record = ManagedPhone(device.id, origin.entry_id, '84c7bb000003', 'fixture-only',
+        username='managed_sink', display_name='Managed sink', api_host='127.0.0.3', extension='101')
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+        'managed_esphome_phones': {device.id: record.record()}})
+    restored = managed_records(entry)[device.id]
+    entity = er.async_get(lab.hass).async_get_or_create('sensor', 'esphome', 'managed_sink_voip_endpoint',
+        device_id=device.id, config_entry=origin)
+    state = ('Managed sink | 127.0.0.3 | ' + str(transport.get_extra_info('sockname')[1]) +
+        ' | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101'
+        if policy.startswith('observed_') else 'unknown')
+    if policy == 'observed_jpeg':
+        state += ' | video=jpeg'
+    lab.hass.states.async_set(entity.entity_id, state)
+    registrar = sip_registrar(lab.hass); registrar.enabled = True
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    registrar.update_accounts([restored.account(), SipAccount('caller', 'Caller', 'fixture-only')])
+    call_id = ''
+    try:
+        await register_peer(lab, sink, restored.username,
+            contact=f"sip:opaque-sink@127.0.0.3:{transport.get_extra_info('sockname')[1]};transport=udp")
+        await register_peer(lab, source, 'caller', contact=f'sip:opaque-caller@127.0.0.2:{caller.local_sip_port}')
+        await wait_until(lambda: all(registrar.registered_contacts(name)[0].capabilities is not None
+                                    for name in ['managed_sink', 'caller']))
+        peers = await async_build_peer_snapshot(lab.hass)
+        rows = roster_from_peers(lab.hass, peers, registrar.registered_roster_entries())
+        row = next(row for row in rows if row.id == restored.username)
+        assert row.metadata['sip_capabilities_known'] is True
+        assert row.metadata['capabilities'] == (['audio', 'dtmf', 'video']
+                                              if policy == 'observed_jpeg' else ['audio', 'dtmf'])
+        assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == []
+        expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if policy == 'observed_jpeg' else None)
+        assert row.metadata['sip_video_codec'] == expected_contract
+        assert peer_video_codec(None, row) == expected_contract
+        while not caller.queue.empty():
+            caller.queue.get_nowait()
+        result = await caller.invite(target='101', remote_host='127.0.0.1', remote_sip_port=listener, timeout=3)
+        if result == 'ringing':
+            result = await caller.wait_for_final(timeout=3)
+        call_id = caller.dialog_ids.call_id
+        assert result == 'in_call'
+        assert bool(observed['videos']) is (policy != 'observed_audio_only')
+        has_video = policy not in {'observed_audio_only', 'answer_audio_only'}
+        assert (caller.dialog.video_format is not None) is has_video
+        assert caller.dialog.send_format.sample_rate == 16000
+        assert caller.dialog.recv_format.sample_rate == 48000
+        assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 10
+        relay = lab.calls.resource_for(call_id, 'relay')
+        if has_video:
+            assert caller.dialog.local_video_direction == direction
+            video = relay.video_relay
+            assert video is not None and not video.transcoding
+            assert lab.runtime.media.transcoder is None
+            from io import BytesIO
+            from PIL import Image
+            encoded = BytesIO()
+            Image.new('RGB', (160, 120), (230, 15, 10)).save(encoded, format='JPEG', subsampling=2)
+            frame = encoded.getvalue()
+            for can_send, sender, receiver, port, ssrc in (
+                (direction != 'recvonly', source_video, sink_video, video.left_port, 0x1234),
+                (direction != 'sendonly', sink_video, source_video, video.right_port, 0x5678),
+            ):
+                if not can_send:
+                    continue
+                packets = list(video_rtp.packetize_jpeg(frame, payload_type=26,
+                    sequence=19, timestamp=90000, ssrc=ssrc))
+                for packet in packets:
+                    await lab.hass.loop.sock_sendto(sender, rtp.build_packet(packet), ('127.0.0.1', port))
+                decoder = video_rtp.JpegDepacketizer()
+                received, decoded = [], None
+                async with asyncio.timeout(2):
+                    while decoded is None:
+                        raw = await lab.hass.loop.sock_recv(receiver, 65535)
+                        if len(raw) < 12 or raw[0] >> 6 != 2:
+                            continue
+                        packet = rtp.parse_packet(raw)
+                        received.append(packet.payload)
+                        decoded = decoder.push(packet)
+                assert received == [packet.payload for packet in packets]
+                assert video_rtp.jpeg_dimensions(decoded.data) == (160, 120)
+                pixel = Image.open(BytesIO(decoded.data)).convert('RGB').getpixel((80, 60))
+                assert pixel[0] > 180 and pixel[1] < 60 and pixel[2] < 60
+            assert video.transcoded_output_packets == 0
+        else:
+            assert relay.video_relay is None
+    finally:
+        if caller.dialog is not None:
+            caller.bye()
+        await caller.close()
+        for session in tuple(lab.calls.sessions.values()):
+            await lab.calls.request_termination(session.call_id, TerminationIntent('test_done'))
+        await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
+        for transport in transports:
+            transport.close()
+        for sock in sockets:
+            sock.close()
+    assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get('used')
+
+
+@pytest.mark.parametrize('video_enabled', [False, True])
+async def test_registered_sip_account_preserves_configured_video_policy_without_discovery(lab, video_enabled):
+    """An absent peer must not erase the real account's explicit media policy."""
+    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, peer_video_codec
+    from custom_components.voip_stack.phone_config import endpoint_from_data, sip_account_phone_data
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import config_entry
+
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_SIP_VIDEO: True})
+    data = sip_account_phone_data({'username': 'manual-policy', 'password': 'fixture-only'})
+    data['video_enabled'] = video_enabled
+    endpoint = endpoint_from_data(entry, data)
+    lab.runtime.endpoints.register(endpoint)
+    rows = assemble_directory_entries(lab.hass, [], [RosterEntry(
+        id=endpoint.username, sip_uri='sip:opaque-manual@127.0.0.1:41000',
+        metadata={'registered': True, 'sip_transport': 'udp'},
+    )])
+    row = next(row for row in rows if row.id == endpoint.username)
+    assert endpoint.supports('video') is video_enabled
+    assert 'sip_video_codec' not in row.metadata
+    assert peer_video_codec(None, row) == (None if video_enabled else '')

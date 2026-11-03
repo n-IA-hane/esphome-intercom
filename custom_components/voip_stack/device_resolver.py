@@ -442,7 +442,7 @@ class VoipDeviceResolver:
                 "sip_audio_tx_formats": caps.get("sip_audio_tx_formats", previous.get("sip_audio_tx_formats", [])),
                 "sip_audio_rx_formats": caps.get("sip_audio_rx_formats", previous.get("sip_audio_rx_formats", [])),
                 "sdp_features": caps.get("sdp_features", previous.get("sdp_features", [])),
-                "sip_video_codec": caps.get("sip_video_codec", previous.get("sip_video_codec", "")),
+                "sip_video_codec": caps.get("sip_video_codec", previous.get("sip_video_codec")),
                 "camera_entity_id": entities.get("camera", ""),
                 "capabilities": previous.get("capabilities", ["audio", "dtmf"]),
                 "esphome_id": phone.username, "entities": entities,
