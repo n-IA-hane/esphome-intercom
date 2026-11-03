@@ -28,7 +28,7 @@ async def to_code(config):
     cv.Required(CONF_ID): cv.use_id(LvglTouchDiagnostic),
     cv.Required(CONF_X): cv.templatable(cv.int_),
     cv.Required(CONF_Y): cv.templatable(cv.int_),
-}))
+}), synchronous=True)
 async def tap_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     cg.add(var.set_parent(await cg.get_variable(config[CONF_ID])))

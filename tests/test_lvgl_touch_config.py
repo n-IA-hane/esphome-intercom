@@ -1,5 +1,8 @@
 """The coordinate service is optional and uses the standard ESPHome API action."""
 from pathlib import Path
+import os
+import json
+import shlex
 import subprocess
 import sys
 import pytest
@@ -53,6 +56,7 @@ lvgl:
     assert result.returncode == 0, result.stdout + result.stderr
     code = next((tmp_path / ".esphome/build").glob("*/src/main.cpp")).read_text()
     if enabled:
+        assert "missing the synchronous=" not in result.stderr
         assert '"touch"' in code and '"x"' in code and '"y"' in code
         # The standard API maps YAML int variables to signed 32bit arguments.
         assert "lvgl_touch_diagnostic::TapAction<int32_t, int32_t>" in code
@@ -61,3 +65,40 @@ lvgl:
     else:
         assert "lvgl_touch_diagnostic" not in code
         assert not list((tmp_path / ".esphome/build").glob("*/src/esphome/components/lvgl_touch_diagnostic"))
+
+
+@pytest.mark.diagnostic_reference
+def test_touch_action_instantiates_against_real_esphome_headers(tmp_path):
+    # Reuse the already compiled SDK that supplies LVGL_HOST_SOURCE. This is
+    # one syntax-only consumer, not an SDK build; all dependency/output flags
+    # are removed so the frozen SDK remains read-only.
+    lvgl = Path(os.environ["LVGL_HOST_SOURCE"]).resolve()
+    database = lvgl.parents[1] / "build/compile_commands.json"
+    assert database.is_file(), "Provide LVGL_HOST_SOURCE from a compiled native ESP-IDF SDK"
+    entries = json.loads(database.read_text())
+    entry = next(item for item in entries if item["file"].endswith("/src/main.cpp"))
+    original = entry.get("arguments") or shlex.split(entry["command"])
+    command = []
+    i = 0
+    while i < len(original):
+        flag = original[i]
+        if flag in {"-o", "-MT", "-MF", "-MQ"}:
+            i += 2
+            continue
+        if flag not in {"-c", "-MD", "-MMD", "-MP", entry["file"]}:
+            command.append(flag)
+        i += 1
+    source = tmp_path / "action.cpp"
+    component = ROOT / "esphome/components/lvgl_touch_diagnostic/lvgl_touch_diagnostic.h"
+    source.write_text(f'''#include "{component}"
+esphome::lvgl_touch_diagnostic::TapAction<int32_t, int32_t> actual_action;
+void consumer(esphome::lvgl_touch_diagnostic::LvglTouchDiagnostic *parent, int32_t x, int32_t y) {{
+  actual_action.set_parent(parent);
+  actual_action.set_x([](int32_t a, int32_t) -> int32_t {{ return a; }});
+  actual_action.set_y([](int32_t, int32_t b) -> int32_t {{ return b; }});
+  actual_action.play_complex(x, y);
+}}
+''')
+    result = subprocess.run(command + ["-fsyntax-only", str(source)], cwd=entry["directory"],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr

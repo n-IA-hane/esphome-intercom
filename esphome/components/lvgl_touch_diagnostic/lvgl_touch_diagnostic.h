@@ -38,7 +38,7 @@ template<typename... Ts> class TapAction : public Action<Ts...> {
   void set_parent(LvglTouchDiagnostic *parent) { this->parent_ = parent; }
   TEMPLATABLE_VALUE(int32_t, x)
   TEMPLATABLE_VALUE(int32_t, y)
-  void play(Ts... args) override { this->parent_->tap(this->x_.value(args...), this->y_.value(args...)); }
+  void play(const Ts &...args) override { this->parent_->tap(this->x_.value(args...), this->y_.value(args...)); }
 
  protected:
   LvglTouchDiagnostic *parent_;
