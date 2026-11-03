@@ -1636,6 +1636,10 @@ assert.equal(esp.endpoint_kind, "esphome");
 assert.deepEqual(esp.capabilities, ["audio", "dtmf"]);
 assert.equal(esp.camera_entity_id, "camera.kitchen_esp");
 assert.equal(esp.sip_video_codec, "");
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:null,capabilities:["audio","dtmf"]}}}}).sip_video_codec,null);
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:" JPEG "}}}}).sip_video_codec,"jpeg");
+assert.equal(model.targetFromRosterEntry({{metadata:{{capabilities:["audio","video"]}}}}).sip_video_codec,undefined);
+
 
 assert.equal(model.normaliseTransport("sip_tcp"), "TCP");
 assert.equal(model.normaliseTransport(" UDP "), "UDP");

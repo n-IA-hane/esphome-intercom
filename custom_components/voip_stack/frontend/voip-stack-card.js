@@ -428,7 +428,11 @@ class VoipStackCard extends HTMLElement {
   }
 
   _targetSupportsVideo(target = {}) {
-    if (target?.manual || !Array.isArray(target?.capabilities)) return true;
+    if (target?.manual || target?.sip_video_codec === null) return true;
+    if (typeof target?.sip_video_codec === "string") {
+      return target.sip_video_codec.trim().length > 0;
+    }
+    if (!Array.isArray(target?.capabilities) || target.capabilities.length === 0) return true;
     return target.capabilities.some(
       (item) => String(item).toLowerCase() === "video",
     );

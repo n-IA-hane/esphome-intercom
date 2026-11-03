@@ -435,3 +435,59 @@ def test_failed_start_keeps_phone_and_redials_with_fresh_browser_media(tmp_path)
         }, indent=2))
 
     asyncio.run(browser_session(check, peer=peer))
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_card_camera_intent_preserves_unknown_destination_video_contract():
+    """The real card and engine must send the user's intent to the public RPC."""
+    pytest.importorskip("playwright.async_api")
+
+    async def check(context, base):
+        scenarios = [
+            (None, ["audio", "dtmf"], True, True),
+            (None, ["audio", "dtmf"], False, False),
+            ("", ["audio", "dtmf"], True, False),
+            ("jpeg", ["audio", "dtmf"], True, True),
+            (None, ["audio", "dtmf", "video"], True, True),
+            ("__absent__", ["audio", "video"], True, True),
+            ("", ["audio", "video"], True, False),
+        ]
+        for codec, capabilities, camera_intent, expected in scenarios:
+            page = await open_engine(context, base)
+            try:
+                await page.evaluate("""async ({codec, capabilities, cameraIntent}) => {
+                    await import('/voip-stack/voip-stack-card.js');
+                    window.rpcCalls=[];
+                    const hass={language:'en',user:{is_admin:true},config:{location_name:'Home'},states:{},
+                        connection:{subscribeMessage:async()=>()=>{}},
+                        callWS:async request=>{
+                            if(request.type!=='call_service'||request.domain!=='voip_stack'||request.service!=='call')
+                                throw new Error('Unexpected RPC '+JSON.stringify(request));
+                            rpcCalls.push(request);
+                            return {response:{device_id:'browser-device',endpoint_id:'browser:own',state:'idle'}};
+                        }};
+                    engine.configure(hass);
+                    const card=document.createElement('voip-stack-card');window.card=card;
+                    card.setConfig({mode:'ha_softphone',device_id:'browser-device',name:'Browser'});
+                    card.style.cssText='display:block;width:420px;height:600px';
+                    card._hass=hass;card._softphoneStateLoaded=true;
+                    card._softphoneSnapshot={state:'idle',enabled:true,device_id:'browser-device',endpoint_id:'browser:own',
+                        capabilities:['audio','video'],video_camera_send_enabled:true,send_video:cameraIntent};
+                    card._rosterEntries=[{id:'registered-target',name:'Registered phone',enabled:true,
+                        metadata:{endpoint_id:'sip:target',device_id:'target-device',endpoint_kind:'sip_account',
+                            registered:true,capabilities,...(codec==='__absent__'?{}:{sip_video_codec:codec})}}];
+                    document.body.append(card);
+                }""", {"codec": codec, "capabilities": capabilities, "cameraIntent": camera_intent})
+                await page.get_by_role("button", name="Call", exact=True).click()
+                await page.wait_for_function("rpcCalls.length === 1")
+                request = await page.evaluate("rpcCalls[0]")
+                assert request["service_data"]["send_video"] is expected, {
+                    "codec": codec, "capabilities": capabilities,
+                    "camera_intent": camera_intent, "request": request,
+                }
+                assert request["service_data"]["destination"] == "Registered phone"
+            finally:
+                await page.evaluate("async()=>{card.remove();await engine.close('test-complete')}")
+                await page.close()
+
+    asyncio.run(browser_session(check))
