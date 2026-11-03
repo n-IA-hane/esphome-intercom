@@ -28,7 +28,8 @@ from tests.support.voip_matrix import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+# Legacy adapters belong to this matrix only, never the shared integration cache.
+PKG_NAME = "voip_stack_group_matrix_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
@@ -105,10 +106,6 @@ def _install_ha_fakes() -> None:
 
 def _load_module(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
@@ -405,7 +402,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             "session",
         )
         registry.transition("group-call", owner="bridge")
-        from custom_components.voip_stack.endpoint_session import TerminationIntent
+        from voip_stack_group_matrix_test.endpoint_session import TerminationIntent
         async def finish():
             await registry.request_termination("group-call", TerminationIntent("remote_hangup"))
         asyncio.run(finish())
