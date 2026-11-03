@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from .voip_phase1_support import rtp, sdp, sip_client
+from .test_conference import rtp, sdp, sip_client
 
 
 PCMU = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
