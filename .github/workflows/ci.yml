@@ -138,6 +138,69 @@ jobs:
           path: test-results/browser.xml
           if-no-files-found: error
 
+  assist-media-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Install host compiler and the official ESPHome Python dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ ninja-build
+          python -m pip install -r requirements-firmware-test.txt pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
+      - name: Read the pinned official host runner
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: esphome/esphome
+          ref: 704551a6c93c29a311802f7ee97d67a9e9bce718
+          path: .test-deps/esphome
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /esphome/
+            /script/
+            /tests/testing_helpers.py
+            /tests/__init__.py
+            /pyproject.toml
+            /platformio.ini
+      - name: Read pinned micro-decoder0.4.0 host sources
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: esphome-libs/micro-decoder
+          ref: 4d06df93a1ee69788dfc7d8676cbd66371b3eae9
+          path: .test-deps/micro-decoder
+          persist-credentials: false
+      - name: Read pinned micro-flac0.3.0 host sources
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: esphome-libs/micro-flac
+          ref: f9c27d4d0166021db977d7fc37d205b21d81e9f2
+          path: .test-deps/micro-flac
+          persist-credentials: false
+      - name: Run six actual VA transition-method cases
+        run: >-
+          python -m pytest -q tests/test_voice_assistant_idle_runtime.py
+          --junitxml=test-results/voice-assistant-idle.xml
+      - name: Run twelve real HTTP/player/FLAC lifecycle cases with sanitizers
+        run: |
+          python scripts/test_assist_media_host.py --esphome-source .test-deps/esphome \
+            --micro-decoder .test-deps/micro-decoder --micro-flac .test-deps/micro-flac \
+            --build-parent "$RUNNER_TEMP/assist-media-host" --junit test-results/assist-media.xml
+          python scripts/check_test_results.py test-results/voice-assistant-idle.xml
+          python scripts/check_test_results.py test-results/assist-media.xml
+      - name: Preserve media lifecycle results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: assist-media-host-results
+          path: |
+            test-results/voice-assistant-idle.xml
+            test-results/assist-media.xml
+          if-no-files-found: error
+
   documentation:
     runs-on: ubuntu-latest
     steps:

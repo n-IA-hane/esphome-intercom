@@ -1,0 +1,4 @@
+# Noncontinuous completion uses the same on_idle API as the native provider.
+external_components:
+- source: ${ext_components_source}
+  components: [voice_assistant]

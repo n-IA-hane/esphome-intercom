@@ -1,4 +1,4 @@
-"""Compile the maintained composition with installed official ESPHome providers."""
+"""Compile native providers and the three recorded lifecycle adaptations."""
 from pathlib import Path
 import base64
 import hashlib
@@ -19,14 +19,15 @@ from tests.test_package_composition import FULL, device_config
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ROOT / "esphome/components"
 OFFICIAL = (
-    "audio", "micro_wake_word", "voice_assistant", "mixer", "speaker_source",
-    "ota", "resampler", "speaker", "sendspin", "audio_http", "audio_file",
+    "audio", "micro_wake_word", "mixer",
+    "ota", "resampler", "speaker", "sendspin", "audio_file",
     "media_source", "microphone",
 )
 RETIRED = (
-    "audio", "micro_wake_word", "voice_assistant", "mixer", "speaker_source",
+    "audio", "micro_wake_word", "mixer",
     "ota", "audio_http_compat", "sendspin_compat", "audio_dsp_iram", "speaker",
 )
+LIFECYCLE = ("audio_http", "speaker_source", "voice_assistant")
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(240)]
 
 
@@ -62,13 +63,14 @@ def native_full_build(tmp_path_factory):
     return document, source
 
 
-def test_real_parser_selects_owned_components_without_native_overrides(native_full_build):
+def test_real_parser_selects_only_recorded_lifecycle_overrides(native_full_build):
     document, source = native_full_build
     providers = {
         component for provider in document.get("external_components", [])
         for component in provider.get("components", [])
     }
     assert set(OFFICIAL).isdisjoint(providers)
+    assert set(LIFECYCLE) <= providers
     assert {"esp_audio_stack", "esp_afe", "voip_stack", "runtime_controller"} <= providers
     assert not any(name in document for name in ("audio_http_compat", "sendspin_compat", "audio_dsp_iram"))
     generated = (source / "main.cpp").read_text()
@@ -119,12 +121,36 @@ def test_owned_audio_formats_reach_official_consumers(native_full_build):
         assert str(mic["id"]) in str(document[name]["microphone"])
 
 
-def test_only_remaining_local_upstream_provider_is_documented():
-    assert not (COMPONENTS / "spi").exists()
-    assert not (COMPONENTS / "audio_http").exists()
+@pytest.mark.parametrize("component", LIFECYCLE)
+def test_recorded_lifecycle_provider_reaches_generated_cpp(native_full_build, component):
+    _, source = native_full_build
     manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
-    assert set(manifest["components"]) == {"mipi_dsi"}
-    document = (COMPONENTS / "mipi_dsi/UPSTREAM.md").read_text()
-    assert manifest["revision"] in document
+    entry = manifest["components"][component]
+    local = COMPONENTS / component
+    for name, digest in entry["source_sha256"].items():
+        assert hashlib.sha256((local / name).read_bytes()).hexdigest() == digest
+    generated = source / "esphome/components" / component
+    files = [path for path in generated.rglob("*") if path.suffix in (".cpp", ".h")]
+    assert files, f"The FULL composition did not load {component}"
+    distribution = metadata.distribution("esphome")
+    records = {str(path): path for path in distribution.files}
+    for path in files:
+        relative = path.relative_to(generated)
+        assert path.read_bytes() == (local / relative).read_bytes()
+        # A local adaptation must not mutate the installed ESPHome provider.
+        installed = NATIVE_COMPONENTS / component / relative
+        record = records[str(Path("esphome/components") / component / relative)]
+        assert record.hash.mode == "sha256"
+        digest = base64.urlsafe_b64encode(hashlib.sha256(installed.read_bytes()).digest()).rstrip(b"=").decode()
+        assert digest == record.hash.value, f"Installed provider was edited: {installed}"
+
+
+def test_all_local_upstream_providers_are_documented():
+    assert not (COMPONENTS / "spi").exists()
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    assert set(manifest["components"]) == {"mipi_dsi", *LIFECYCLE}
+    for component, entry in manifest["components"].items():
+        document = (COMPONENTS / component / "UPSTREAM.md").read_text()
+        assert entry.get("upstream_revision", manifest["revision"]) in document
     assert set(manifest["native_components"]) == set(OFFICIAL)
     assert metadata.version("esphome") == manifest["native_provider_baseline"]["version"]

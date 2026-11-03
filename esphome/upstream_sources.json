@@ -11,6 +11,50 @@
         "Stable bulk drawing and code-generation APIs"
       ],
       "public_proposal": false
+    },
+    "speaker_source": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Retire a terminal source error through the existing STOP and IDLE cleanup",
+        "Preserve queued media and replacement ownership without retrying failed items"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "speaker_source_media_player.cpp": "7dc655aade30cef85cb6c02516caac74a8d9d72eb146691ee7ceffa9fc13e613",
+        "speaker_source_media_player.h": "0ee7125411afbc45a03620ac1ebf33ca14524b1643b7b707b33a7ea798e94bdc",
+        "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "media_player.py": "4aad49e9f7a9f054106655e286b7c3907a091b5202c76fd769f799809144cd57"
+      }
+    },
+    "voice_assistant": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Emit on_idle once on a real noncontinuous transition to IDLE",
+        "Publish desired state before callbacks so a newly started run retains its owner"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "voice_assistant.h": "ab25f7a66f0cf44a05f0e66a65da86c58a7efc281ae250e55795421834a30a5c",
+        "voice_assistant.cpp": "c43bda2b65765e7e83134d65d24194ba53998247cc9d7224139bc43e322d0580",
+        "__init__.py": "e7736867211050c0922584976e0ea05139f562a6e230e17fcc5b7078b5f8b0ef"
+      }
+    },
+    "audio_http": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Join completed decoder and reader workers before publishing natural IDLE",
+        "Disable the old loop before callbacks may start another playback"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
+        "audio_http_media_source.cpp": "4fadaa8ab30888895744ab4cc9318a2a46ffca8820315d6901efb5885c2480fc",
+        "media_source.py": "33ed90d0ce6cc5c4819a0ed42f98eef067e0012f9f275d5a9b4a70586c7e100d",
+        "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
     }
   },
   "dependencies": {
@@ -33,7 +77,6 @@
   "native_components": [
     "audio",
     "audio_file",
-    "audio_http",
     "media_source",
     "microphone",
     "micro_wake_word",
@@ -41,23 +84,19 @@
     "ota",
     "resampler",
     "sendspin",
-    "speaker",
-    "speaker_source",
-    "voice_assistant"
+    "speaker"
   ],
   "native_provider_baseline": {
     "distribution": "esphome",
     "version": "2026.10.0",
-    "source_policy": "Use the installed official ESPHome providers without local source overrides or vendor source replacement helpers."
+    "source_policy": "Use installed official ESPHome providers except the three explicitly recorded lifecycle fixes loaded through ext_components_source."
   },
   "retired_local_providers": [
     "audio",
     "micro_wake_word",
     "mixer",
     "ota",
-    "resampler",
-    "speaker_source",
-    "voice_assistant"
+    "resampler"
   ],
   "retired_adapters": [
     "audio_dsp_iram",

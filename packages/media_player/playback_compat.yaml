@@ -1,3 +1,6 @@
-# Playback uses the official ESPHome audio, mixer and speaker_source providers.
+# Reviewed ESPHome lifecycle fixes, preserving the standard source/player APIs.
 esphome:
   min_version: 2026.10.0
+external_components:
+- source: ${ext_components_source}
+  components: [audio_http, speaker_source]

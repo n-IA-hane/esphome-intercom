@@ -14,12 +14,20 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 | Local path | Upstream | Notes |
 |---|---|---|
 | `esphome/components/mipi_dsi/` | ESPHome community component lineage | Local P4 display support and panel models. |
+| `esphome/components/voice_assistant/` | ESPHome 2026.10.0, `704551a6` | Noncontinuous idle completion and callback ordering. |
+| `esphome/components/speaker_source/` | ESPHome 2026.10.0, `704551a6` | Terminal source error cleanup through the existing player owner. |
+| `esphome/components/audio_http/` | ESPHome 2026.10.0, `704551a6` | Release completed HTTP workers before publishing idle. |
 
-The audio, Voice Assistant, MWW, mixer, resampler, speaker-source and OTA
-providers now come from the installed official ESPHome distribution. Their
-upstream licenses apply to generated firmware. No copies of those providers
-are shipped here. The remaining P4 display adaptation retains its provenance
-and the ESPHome license.
+The three lifecycle adaptations above are loaded through the maintained
+`ext_components_source` includes. Their `UPSTREAM.md` files describe the bounded
+deltas. Other audio, MWW, mixer, resampler, speaker and OTA providers come from
+the installed official ESPHome distribution. Their upstream licenses apply to
+generated firmware. The existing ESPHome split license applies to all copied
+runtime and Python files.
+
+The host test entrypoint `tests/fixtures/assist_media/main.cpp` is derived from
+the same ESPHome revision and retains GPLv3 terms. Host-only micro-decoder and
+micro-flac sources are fetched as pinned CI dependencies and are not vendored.
 
 ## Contributed camera component
 
