@@ -322,6 +322,23 @@ def _h264_level_argument(video_format: RtpVideoFormat) -> str:
     return f"{level_idc // 10}.{level_idc % 10}"
 
 
+def _jpeg_variable_canvas_allowed(
+    video_format: RtpVideoFormat, width: int, height: int
+) -> bool:
+    """Prove every aligned output fits one unconstrained receiver rectangle."""
+
+    attributes = video_format.image_attributes
+    receiving = attributes.recv if attributes is not None else None
+    if receiving is None or receiving.wildcard or len(receiving.sets) != 1:
+        return False
+    image_set = receiving.sets[0]
+    return (
+        image_set.par is None
+        and all(image_set.x.allows(value) for value in range(8, width + 1, 8))
+        and all(image_set.y.allows(value) for value in range(8, height + 1, 8))
+    )
+
+
 def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
     """Build low-latency FFmpeg encoder arguments for one negotiated codec."""
 
@@ -345,10 +362,13 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
     if encoding == "JPEG" and video_format.image_attributes is not None:
         receiving = video_format.image_attributes.recv
         if receiving is not None and not receiving.wildcard:
-            # Keep the chosen canvas inside imageattr even for a source with
-            # another aspect ratio. Scale preserves content; padding never
-            # stretches it or silently changes an exact receiver dimension.
-            scale += f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
+            # A complete RTP/JPEG grid admits the actual scaled picture,
+            # rounded up only for the eight-pixel wire dimensions. Other
+            # constraints retain their chosen canvas and preference order.
+            canvas = f"{width}:{height}"
+            if _jpeg_variable_canvas_allowed(video_format, width, height):
+                canvas = "ceil(iw/8)*8:ceil(ih/8)*8"
+            scale += f",pad={canvas}:(ow-iw)/2:(oh-ih)/2"
     common = ["-vf", scale, "-threads", "1", "-fps_mode", "passthrough"]
     # GOP lengths count frames; this preference is not a frame-rate limit.
     nominal_rate = Fraction(
