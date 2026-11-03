@@ -8,12 +8,14 @@ import struct
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp
+from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.runtime_data import sip_endpoint_manager
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
+from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot as build_real_peer_snapshot
+from tests.test_sip_capabilities_ha import CAPS, register_peer, wait_until
 from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
 
 
@@ -31,6 +33,7 @@ pytestmark = pytest.mark.ha
 ])
 async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     trunks, monkeypatch, source_rate, receive_rates, source_receive_rates, known, directional,
+    caller_discovery=None,
 ):
     lab = trunks
     target = lab.phones[0]
@@ -74,19 +77,66 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    caller = SipCallClient(local_ip="127.0.0.2", local_name="Asymmetric caller",
+    caller = SipCallClient(local_ip="127.0.0.2", local_name="managed_caller" if caller_discovery else "Asymmetric caller",
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(source_rate, frame_ms=10)],
         supported_recv_formats=[AudioFormat(rate, frame_ms=10) for rate in source_receive_rates],
         allow_directional_audio_payloads=directional)
+    class CallerProtocol(SipDatagramQueueProtocol):
+        def __init__(self):
+            super().__init__(caller.queue)
+            self.messages = asyncio.Queue()
+            self.responses = []
+
+        def datagram_received(self, raw, address):
+            message = sip.parse_message(raw)
+            if message.method == "OPTIONS":
+                body = CAPS
+                if caller_discovery == "incompatible":
+                    body = ("v=0\r\no=- 3 3 IN IP4 127.0.0.2\r\ns=Capabilities\r\n"
+                        "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 0 RTP/AVP 96\r\n"
+                        "a=rtpmap:96 L16/8000/1\r\na=sendrecv\r\n").encode()
+                if caller_discovery != "no-ptime":
+                    body += b"a=ptime:10\r\n"
+                headers = [(key, message.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+                headers += [("To", message.header("To") + ";tag=capabilities"),
+                            ("Content-Type", "application/sdp")]
+                self.transport.sendto(sip.build_response(200, "OK", headers, body), address)
+                return
+            self.messages.put_nowait((message, address))
+            if message.is_response:
+                self.responses.append(message)
+            super().datagram_received(raw, address)
+
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))
+        CallerProtocol, local_addr=("127.0.0.2", 0))
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
+    if caller_discovery is not None:
+        build_request = caller._build_pending_invite
+
+        def native_offer():
+            # The actual caller explicitly limits receive packets to 10 ms.
+            # SipCallClient otherwise omits redundant maxptime in D1 offers.
+            if b"a=maxptime:" not in caller._pending_invite_body:
+                caller._pending_invite_body = caller._pending_invite_body.replace(
+                    b"a=ptime:10\r\n", b"a=ptime:10\r\na=maxptime:10\r\n")
+                caller._local_sdp_body = caller._pending_invite_body.decode()
+            return build_request()
+
+        monkeypatch.setattr(caller, "_build_pending_invite", native_offer)
     try:
+        if caller_discovery is not None:
+            await restore_managed_caller(lab, caller, caller_discovery)
         result = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if result == "ringing":
             result = await caller.wait_for_final(timeout=3)
+        if caller_discovery == "incompatible":
+            assert result == "media_incompatible"
+            assert any(response.status_code == 488 for response in caller.protocol.responses)
+            assert not target.invites and not lab.calls.sessions
+            assert not lab.runtime.rtp_port_pool.get("used")
+            return
         assert result == "in_call" and caller.dialog is not None
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
@@ -112,6 +162,9 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             endpoint._dialog_endpoints() if session.call_id in server.active_dialogs)
         assert uas.invite.send_format.sample_rate == caller.dialog.recv_format.sample_rate
         assert uas.invite.recv_format.sample_rate == caller.dialog.send_format.sample_rate
+        if caller_discovery is not None:
+            assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 10
+            assert sdp.parse_sdp(uas.invite.remote_sdp)["maxptime"] == 10
         source_samples = source_rate // 100
         source_payload = struct.pack(f"!{source_samples}h", *([2000] * source_samples))
         destination = (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port)
@@ -164,3 +217,54 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         for session in tuple(lab.calls.sessions.values()):
             await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
         audio.close()
+
+
+async def restore_managed_caller(lab, caller, discovery):
+    """Recreate a persisted managed owner, then learn its real REGISTER/OPTIONS."""
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
+    from custom_components.voip_stack.runtime_data import sip_registrar
+    from custom_components.voip_stack.store import config_entry
+
+    origin = MockConfigEntry(domain="esphome", data={"host": "127.0.0.2"})
+    origin.add_to_hass(lab.hass)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=origin.entry_id,
+        identifiers={("esphome", "84c7bb000001")},
+        connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:01")}, name="Managed caller")
+    phone = ManagedPhone(device.id, origin.entry_id, "84c7bb000001", "fixture-only",
+        username="managed_caller", display_name="Managed caller", api_host="127.0.0.2", extension="430")
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+        "managed_esphome_phones": {device.id: phone.record()}})
+    restored = managed_records(entry)[device.id]
+    registrar = sip_registrar(lab.hass)
+    registrar.enabled = True
+    registrar.update_accounts([restored.account()])
+    # The runtime captured this fixture callable at startup. Restore the actual
+    # resolver/projection behind that same callable, without replacing its owner.
+    peer_snapshot.async_build_peer_snapshot.side_effect = build_real_peer_snapshot
+    await register_peer(lab, caller.protocol, restored.username,
+        contact=f"sip:opaque-contact@127.0.0.2:{caller.local_sip_port}")
+    await wait_until(lambda: registrar.registered_contacts(restored.username)[0].capabilities is not None)
+    entry = registrar.registered_roster_entries()[0]
+    assert entry.metadata["sip_capabilities_known"] is True
+    if discovery == "no-ptime":
+        assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == []
+        assert entry.metadata["sdp_features"] == ["directional_audio_v1"]
+    peers = await build_real_peer_snapshot(lab.hass)
+    peer = next(item for item in peers if item.endpoint_id == restored.endpoint_id)
+    assert peer.host == "127.0.0.2" and peer.sip_uri_user == restored.username
+    assert peer.device["managed"] and peer.device["registered"]
+    assert peer.capabilities == ("audio", "dtmf")
+    while not caller.queue.empty():
+        caller.queue.get_nowait()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("discovery", ["no-ptime", "compatible", "incompatible"])
+async def test_restored_managed_caller_uses_invite_when_discovery_has_no_profile(trunks, monkeypatch, discovery):
+    await test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
+        trunks, monkeypatch, 16000, (48000, 16000), (48000, 16000), False, True,
+        caller_discovery=discovery)

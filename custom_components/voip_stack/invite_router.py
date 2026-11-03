@@ -118,30 +118,27 @@ async def route_invite(
         caller_peer = None
     if caller_peer is not None:
         caller_profile = _sip_target_rtp_audio_profile(caller_peer, None)
-        send_candidates = (
-            list(caller_profile.send_formats) if caller_profile is not None else []
-        )
-        recv_candidates = (
-            list(caller_profile.recv_formats) if caller_profile is not None else []
-        )
-        selected = sip_sdp.negotiate_directional(
-            invite.remote_sdp,
-            send_candidates,
-            recv_candidates,
-            allow_dahua_pcm=invite.peer_profile == "dahua",
-        )
-        if selected is None:
-            _LOGGER.info(
-                "SIP INVITE from %s rejected: roster directional PCM profile is incompatible",
-                invite.caller or invite.source_host,
+        # Incomplete discovery (for example OPTIONS without ptime) adds no
+        # complete constraint to the listener's authoritative INVITE selection.
+        if caller_profile is not None:
+            selected = sip_sdp.negotiate_directional(
+                invite.remote_sdp,
+                list(caller_profile.send_formats),
+                list(caller_profile.recv_formats),
+                allow_dahua_pcm=invite.peer_profile == "dahua",
             )
-            return SipInviteResult(
-                488,
-                "Not Acceptable Here",
-                to_tag="",
-                decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
-        invite = replace(invite, send_format=selected.send, recv_format=selected.recv)
+            if selected is None:
+                _LOGGER.info(
+                    "SIP INVITE from %s rejected: roster directional PCM profile is incompatible",
+                    invite.caller or invite.source_host,
+                )
+                return SipInviteResult(
+                    488,
+                    "Not Acceptable Here",
+                    to_tag="",
+                    decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                )
+            invite = replace(invite, send_format=selected.send, recv_format=selected.recv)
     application = _call_registry(hass).component("sip_application")
     gruu = dict(invite.request_uri.params).get("gr")
     local_instance = application is not None and gruu and gruu == application.gruu_id
