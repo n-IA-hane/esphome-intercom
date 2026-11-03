@@ -41,6 +41,7 @@ class SipApplicationMethods:
     mailbox_unsubscribe: Callable[[], None] | None = None
     account_unsubscribe: Callable[[], None] | None = None
     dialog_unsubscribe: Callable[[], None] | None = None
+    presence_unsubscribe: Callable[[], None] | None = None
     endpoint_unsubscribe: Callable[[], None] | None = None
     parking_unsubscribe: Callable[[], None] | None = None
     notifiers: dict[int, "SipEventSubscription"] = field(default_factory=dict)
@@ -148,6 +149,11 @@ class SipApplicationMethods:
 
                 self.dialog_unsubscribe = phone_state_observer(self.hass).subscribe(
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
+            if (event == "presence" and result.status == 200 and self.presence_unsubscribe is None
+                    and any(item.presence_endpoint_id for item in self.subscriptions.values())):
+                from .phone_state import phone_state_observer
+
+                self.presence_unsubscribe = phone_state_observer(self.hass).subscribe(self._presence_changed)
             return result
         return SipRequestResult(405, "Method Not Allowed")
 
@@ -177,7 +183,13 @@ class SipApplicationMethods:
         owned = {id(item): item for item in self.subscriptions.values()}
         owned.update(self.notifiers)
         for subscription in owned.values():
-            if subscription.refer_notifier is not None or subscription.subscriber.casefold() not in usernames:
+            if subscription.refer_notifier is not None:
+                continue
+            if subscription.subscriber.casefold() not in usernames:
+                if subscription.event == "presence" and self._presence_publisher(subscription).casefold() in usernames:
+                    target = self.registrar.accounts.get(self._presence_publisher(subscription).casefold())
+                    if target is None or not target.enabled:
+                        self._end_subscription(subscription, reason="noresource")
                 continue
             self._end_subscription(subscription, notify=False)
             subscription.pending_notification = None
@@ -391,14 +403,23 @@ class SipApplicationMethods:
             return SipRequestResult(400, "Bad Request")
         if from_user.lower() != subscriber.lower():
             return SipRequestResult(403, "Forbidden")
-        target_account = self.registrar.accounts.get(target.lower())
-        if event != "dialog" and (target_account is None or not target_account.enabled):
+        try:
+            presence_endpoint = self._presence_endpoint(target=target) if event == "presence" else None
+        except ValueError:
+            return SipRequestResult(404, "Not Found")
+        publisher = presence_endpoint.username if presence_endpoint is not None and presence_endpoint.username else target
+        target_account = self.registrar.accounts.get(publisher.casefold())
+        if event != "dialog" and ((target_account is None and presence_endpoint is None)
+                                  or (target_account is not None and not target_account.enabled)):
             return SipRequestResult(404, "Not Found")
 
         key = _subscription_key(request)
         subscriptions = self.subscriptions
         assert subscriptions is not None
         current = subscriptions.get(key)
+        if (current is not None and current.presence_endpoint_id
+                and (presence_endpoint is None or presence_endpoint.endpoint_id != current.presence_endpoint_id)):
+            return SipRequestResult(481, "Subscription Does Not Exist")
         request_to_tag = sip.extract_tag(request.header("To"))
         if (current is not None and request_to_tag != current.to_tag) or (current is None and request_to_tag):
             return SipRequestResult(481, "Call/Transaction Does Not Exist")
@@ -427,6 +448,7 @@ class SipApplicationMethods:
             event=event,
             mailbox_id=mailbox_id,
             dialog_endpoint_id=dialog_endpoint_id,
+            presence_endpoint_id=presence_endpoint.endpoint_id if presence_endpoint is not None else "",
             dialog_filter=dialog_filter,
             dialog_version=current.dialog_version if current is not None else 0,
             target=target,
@@ -490,8 +512,8 @@ class SipApplicationMethods:
                     f"Voice-Message: {min(new, 4294967295)}/{min(old, 4294967295)} (0/0)\r\n").encode()
             content_type = "application/simple-message-summary"
         else:
-            publication = self._publication(subscription.target)
-            body = publication.body if publication is not None else _closed_pidf(subscription.target)
+            body = (_closed_pidf(subscription.target) if terminated and termination_reason == "noresource"
+                    else self._presence_body(subscription))
             content_type = "application/pidf+xml"
         state = f"terminated;reason={termination_reason}" if terminated else f"active;expires={expires}"
         cseq = subscription.dialog.local_cseq
@@ -601,12 +623,55 @@ class SipApplicationMethods:
         self._release_dialog_observers_if_unused()
 
     def _release_dialog_observers_if_unused(self):
+        if (self.presence_unsubscribe is not None
+                and not any(item.presence_endpoint_id for item in (self.subscriptions or {}).values())):
+            self.presence_unsubscribe()
+            self.presence_unsubscribe = None
         if any(item.event == "dialog" for item in (self.subscriptions or {}).values()):
             return
         for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
+
+    def _presence_endpoint(self, *, target="", endpoint_id=""):
+        from .runtime_data import runtime_data
+
+        runtime = runtime_data(self.hass)
+        if runtime is None:
+            return None
+        return runtime.endpoints.get(endpoint_id) if endpoint_id else runtime.endpoints.resolve(target)
+
+    def _presence_body(self, subscription):
+        endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
+        if subscription.presence_endpoint_id and endpoint is None:
+            return _closed_pidf(subscription.target)
+        publisher = endpoint.username if endpoint is not None and endpoint.username else subscription.target
+        account = self.registrar.accounts.get(publisher.casefold())
+        if account is not None and not account.enabled:
+            return _closed_pidf(subscription.target)
+        publication = self._publication(publisher)
+        if publication is not None:
+            return publication.body
+        return _availability_pidf(subscription.target, endpoint is not None and endpoint.availability.value == "available")
+
+    def _presence_publisher(self, subscription):
+        endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
+        return endpoint.username if endpoint is not None and endpoint.username else subscription.target
+
+    @callback
+    def _presence_changed(self, change, _context=None):
+        before, after = change.get("previous"), change.get("phone")
+        if before is not None and after is not None and before["availability"] == after["availability"]:
+            return
+        for subscription in tuple((self.subscriptions or {}).values()):
+            if subscription.event != "presence" or subscription.presence_endpoint_id != change["endpoint_id"]:
+                continue
+            if after is None:
+                self._end_subscription(subscription, reason="noresource")
+            else:
+                self._schedule_notification(subscription, self._notification_result(
+                    subscription, expires=max(0, int(subscription.expires_at - time.time()))))
 
     @callback
     def _mailbox_changed(self, event) -> None:
@@ -633,7 +698,8 @@ class SipApplicationMethods:
             if subscription.expires_at <= now:
                 self._end_subscription(subscription)
                 continue
-            if subscription.event != event or subscription.target.lower() != target.lower():
+            watched = self._presence_publisher(subscription) if event == "presence" else subscription.target
+            if subscription.event != event or watched.casefold() != target.casefold():
                 continue
             result = self._notification_result(
                 subscription,
@@ -940,7 +1006,7 @@ class SipApplicationMethods:
             self.mailbox_unsubscribe()
             self.mailbox_unsubscribe = None
         self.mailbox_archive = None
-        for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
+        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
@@ -1004,6 +1070,7 @@ class SipEventSubscription:
     event: str = "presence"
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""
+    presence_endpoint_id: str = ""
     dialog_filter: tuple[str, str, str] = ("", "", "")
     dialog_version: int = 0
     dialog_snapshot: tuple = ()
@@ -1051,8 +1118,11 @@ def _uri_from_header(value: str) -> str:
 
 
 def _closed_pidf(target: str) -> bytes:
-    return (
-        '<presence xmlns="urn:ietf:params:xml:ns:pidf" '
-        f'entity="sip:{target}@localhost"><tuple id="phone">'
-        "<status><basic>closed</basic></status></tuple></presence>"
-    ).encode()
+    return _availability_pidf(target, False)
+
+
+def _availability_pidf(target: str, available: bool) -> bytes:
+    root = ElementTree.Element("presence", {"xmlns": "urn:ietf:params:xml:ns:pidf", "entity": f"sip:{target}@localhost"})
+    status = ElementTree.SubElement(ElementTree.SubElement(root, "tuple", {"id": "phone"}), "status")
+    ElementTree.SubElement(status, "basic").text = "open" if available else "closed"
+    return ElementTree.tostring(root, encoding="utf-8")
