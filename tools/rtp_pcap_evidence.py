@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 from typing import Any, Iterable
+from xml.etree import ElementTree
 
 
 FIELDS = (
@@ -181,49 +182,63 @@ def _sdp_audio_clock_rates(
     sip_ports: tuple[int, ...] = (),
 ) -> dict[tuple[str, int, int], int]:
     result = subprocess.run(
-        [
-            tshark,
-            *_sip_decode_arguments(sip_ports),
-            "-r",
-            str(path),
-            "-Y",
-            "sdp",
-            "-T",
-            "fields",
-            "-e",
-            "ip.src",
-            "-e",
-            "sdp.media",
-            "-e",
-            "sdp.media_attr",
-        ],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        [tshark, *_sip_decode_arguments(sip_ports), "-r", str(path),
+         "-Y", "sdp", "-T", "pdml"],
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     rates: dict[tuple[str, int, int], int] = {}
-    for row in result.stdout.splitlines():
-        columns = row.split("\t")
-        if len(columns) != 3:
+    mappings: dict[tuple[str, int, int], tuple[str, str, int, int]] = {}
+    media_types: dict[tuple[str, int, int], str] = {}
+    static = {0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1)}
+
+    def record(key, media, encoding, clock, channels):
+        mapping = (media, encoding.upper(), clock, channels)
+        if key in mappings and mappings[key] != mapping:
+            raise ValueError(f"Ambiguous SDP RTP mapping for {key}")
+        mappings[key] = mapping
+        if media == "audio":
+            rates[key] = clock
+
+    for packet in ElementTree.fromstring(result.stdout).findall("packet"):
+        source_field = packet.find(".//field[@name='ip.src']")
+        source = source_field.get("show", "") if source_field is not None else ""
+        if not source:
             continue
-        source, media, attributes = columns
-        audio = re.search(r"(?:^|,)audio (\d+) [^,\s]+((?: \d+)+)", media)
-        if not source or audio is None:
-            continue
-        port = int(audio.group(1))
-        payloads = {int(item) for item in audio.group(2).split()}
-        for payload, clock in re.findall(
-            r"rtpmap:(\d+) [^/,]+/(\d+)(?:/\d+)?",
-            attributes,
-            flags=re.IGNORECASE,
-        ):
-            payload_type = int(payload)
-            if payload_type in payloads:
-                rates[(source, port, payload_type)] = int(clock)
-        for payload in (0, 8, 9):
-            if payload in payloads:
-                rates.setdefault((source, port, payload), 8000)
+        for description in packet.findall(".//proto[@name='sdp']"):
+            current = None
+            for field in description.findall("field"):
+                name, value = field.get("name"), field.get("show", "")
+                if name == "sdp.media":
+                    current = None
+                    parts = value.split()
+                    if len(parts) < 4 or "RTP/" not in parts[2].upper():
+                        continue
+                    port = int(parts[1])
+                    payloads = {int(item) for item in parts[3:]}
+                    if not 0 <= port <= 65535 or any(not 0 <= pt <= 127 for pt in payloads):
+                        raise ValueError("Invalid SDP RTP port or payload type")
+                    if port == 0:
+                        continue
+                    media = parts[0].lower()
+                    current = (media, port, payloads)
+                    for pt in payloads:
+                        key = (source, port, pt)
+                        if key in media_types and media_types[key] != media:
+                            raise ValueError(f"Ambiguous SDP media for RTP mapping {key}")
+                        media_types[key] = media
+                        if media == "audio" and pt in static:
+                            record(key, media, *static[pt])
+                elif name == "sdp.media_attr" and current and value.startswith("rtpmap:"):
+                    match = re.fullmatch(r"rtpmap:(\d+) ([^/\s]+)/(\d+)(?:/(\d+))?", value)
+                    if match is None:
+                        raise ValueError("Malformed SDP rtpmap attribute")
+                    pt, encoding, clock, channels = match.groups()
+                    pt, clock, channels = int(pt), int(clock), int(channels or 1)
+                    if clock <= 0 or channels <= 0:
+                        raise ValueError("Invalid SDP RTP clock or channels")
+                    media, port, payloads = current
+                    if pt in payloads:
+                        record((source, port, pt), media, encoding, clock, channels)
     return rates
 
 
