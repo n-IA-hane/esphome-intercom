@@ -134,13 +134,16 @@ FIXTURE = {
 
 
 @pytest.fixture
-def dashboard_page():
+def dashboard_page(request):
     if shutil.which("chromium") is None:
         pytest.skip("Chromium is unavailable")
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as runner:
         browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        page = browser.new_page(viewport={"width": 1480, "height": 1100}, has_touch=True)
+        portrait = getattr(request, "param", None)
+        page = browser.new_page(viewport=portrait or {"width": 1480, "height": 1100},
+                                device_scale_factor=3 if portrait else 1,
+                                is_mobile=bool(portrait), has_touch=True)
 
         def serve(route):
             name = route.request.url.split("/")[-1].split("?")[0]
@@ -150,7 +153,7 @@ def dashboard_page():
             elif name.endswith(".js") and path.is_file():
                 route.fulfill(content_type="text/javascript", body=path.read_text())
             else:
-                route.fulfill(content_type="text/html", body="<html><body></body></html>")
+                route.fulfill(content_type="text/html", body='<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body></body></html>')
 
         page.route("http://dashboard.test/**", serve)
         page.goto("http://dashboard.test/")
@@ -537,6 +540,59 @@ def test_dashboard_video_answers_and_visibility_follow_the_first_frame(dashboard
     page.evaluate("()=>{card._phoneView.presentation={video:false,settings:false};card._phoneView.notify()}")
     assert page.locator(".scroller").is_visible()
     assert page.locator(".dashboard-header").is_visible()
+
+
+@pytest.mark.browser_real
+@pytest.mark.parametrize("dashboard_page", [
+    {"width": 360, "height": 793}, {"width": 390, "height": 844}, {"width": 430, "height": 932},
+], indirect=True, ids=["android-portrait-360", "android-portrait-390", "android-portrait-430"])
+def test_dashboard_portrait_video_answers_stay_inside_the_call_panel(dashboard_page, tmp_path):
+    page = dashboard_page
+    width, height = page.viewport_size["width"], page.viewport_size["height"]
+    # Android Companion uses the device viewport. The reported JPEG is
+    # 1080x2378 physical pixels; its CSS density is not included in the image.
+    page.evaluate("""()=>{
+      if(!customElements.get('ha-icon')) customElements.define('ha-icon',class extends HTMLElement {
+        connectedCallback(){this.style.cssText='display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);flex-shrink:0'}
+      });
+      document.body.style.margin='8px';
+    }""")
+    page.evaluate("size=>{card.style.width=(size.width-16)+'px';card.style.height=(size.height-16)+'px'}",
+                  {"width": width, "height": height})
+    install_native_phone_contract(page)
+    page.evaluate("engine.pushOwner({...ownerState,video_offered:true,sequence:2,revision:2})")
+    page.wait_for_function("card.classList.contains('narrow')")
+    assert page.evaluate("innerWidth") == width
+    page.screenshot(path=str(tmp_path / f"incoming-video-portrait-{width}.png"))
+    geometry = page.locator(".owner-call").evaluate("""panel=>{
+      const box=panel.getBoundingClientRect();
+      return [...panel.querySelectorAll('.call-actions > button:not([hidden])')].map(button=>{
+        const rect=button.getBoundingClientRect(),text=button.querySelector('span');
+        const range=document.createRange();range.selectNodeContents(text);
+        const labels=[...range.getClientRects()];
+        const x=rect.x+rect.width/2,y=rect.y+rect.height/2;
+        const hit=button.getRootNode().elementFromPoint(x,y);
+        return {label:button.innerText,left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
+          panelLeft:box.left,panelRight:box.right,panelTop:box.top,panelBottom:box.bottom,
+          width:rect.width,height:rect.height,textFits:labels.length>0&&labels.every(label=>
+            label.width>0&&label.height>0&&label.left>=rect.left&&label.right<=rect.right&&
+            label.top>=rect.top&&label.bottom<=rect.bottom),
+          centerReachable:hit===button||button.contains(hit)};
+      });
+    }""")
+    assert len(geometry) == 3
+    for button in geometry:
+        assert button["left"] >= button["panelLeft"] and button["right"] <= button["panelRight"], button
+        assert button["top"] >= button["panelTop"] and button["bottom"] <= button["panelBottom"], button
+        assert button["width"] >= 44 and button["height"] >= 44, button
+        assert button["textFits"] and button["centerReachable"], button
+    page.locator(".owner-call .answer-video").click()
+    assert page.evaluate("card._phoneView.answers.at(-1)") == {"video": True}
+    page.locator(".owner-call .answer").click()
+    assert page.evaluate("card._phoneView.answers.at(-1)") == {"video": False}
+    page.locator(".owner-call .decline").click()
+    assert page.evaluate("engine.actions.at(-1)") == ["decline", "studio-device", "mario-call"]
+    assert page.evaluate("engine.closed") == 0
 
 
 def test_dashboard_view_handoff_never_changes_the_media_session():

@@ -139,8 +139,8 @@ const STYLES = `
   :host(.compact) .header-tools { grid-column:2; grid-row:1; }
   :host(.compact) .scroller { padding:14px; }
   :host(.narrow) .owner-call { flex-wrap:wrap; }
-  :host(.narrow) .call-actions { width:100%; }
-  :host(.narrow) .call-actions .action { flex:1; }
+  :host(.narrow) .call-actions { width:100%; flex-wrap:wrap; }
+  :host(.narrow) .call-actions .action { flex:1 1 140px; min-width:0; }
   :host(.narrow) .tile-main { padding:12px; }
   :host(.narrow) .tile-head { display:grid; grid-template-columns:38px minmax(0,1fr); gap:9px; }
   :host(.narrow) .tile-icon { width:38px; height:38px; border-radius:10px; }
