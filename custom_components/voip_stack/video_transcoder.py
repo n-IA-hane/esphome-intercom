@@ -264,10 +264,15 @@ def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, float |
         max_fps = None
 
     if encoding == "JPEG":
+        receiving = video_format.image_attributes.recv if video_format.image_attributes is not None else None
+        if receiving is not None and not receiving.wildcard and len(receiving.sets) == 1:
+            width = min(receiving.sets[0].x.maximum, 800) // 8 * 8
+            height = min(receiving.sets[0].y.maximum, 800) // 8 * 8
+            if min(width, height) >= 8 and _jpeg_variable_canvas_allowed(video_format, width, height):
+                return width, height, max_fps
         plan = sdp.jpeg_image_plan(video_format, 800, 800)
         if plan is not None:
             return plan.width, plan.height, max_fps
-        receiving = video_format.image_attributes.recv if video_format.image_attributes is not None else None
         if receiving is not None and not receiving.wildcard:
             raise VideoTranscoderError("JPEG receiver has no usable image size")
         return 800, 800, max_fps

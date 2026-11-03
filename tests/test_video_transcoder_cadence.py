@@ -44,7 +44,7 @@ async def test_sparse_ffmpeg_input_keeps_exact_source_picture_count(receiver_fps
     ((352, 288), "[x=[8:8:800],y=[8:8:800],par=[1.0-1.1]]", (800, 800), (352, 288)),
     ((352, 288), "*", (352, 288), (352, 288)),
     ((352, 288), None, (352, 288), (352, 288)),
-    ((352, 288), "[x=[8:8:320],y=[8:8:240]]", (240, 200), (240, 196)),
+    ((352, 288), "[x=[8:8:320],y=[8:8:240]]", (296, 240), (292, 240)),
 ])
 async def test_ffmpeg_jpeg_canvas_honors_receiver_without_unnecessary_padding(
     source, receiving, expected, content
