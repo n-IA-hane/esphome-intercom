@@ -6,6 +6,8 @@ import asyncio
 import ssl
 import logging
 
+SIP_UDP_SAFE_REQUEST_BYTES = 1300
+
 
 async def default_tls_context() -> ssl.SSLContext:
     """Load the system trust store without blocking the event loop."""

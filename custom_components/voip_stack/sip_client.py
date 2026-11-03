@@ -23,7 +23,11 @@ from .core.g722_codec import G722Decoder, G722Encoder
 from .core.opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
-from .core.sip_transport import default_tls_context, SipMessageDispatcher
+from .core.sip_transport import (
+    SIP_UDP_SAFE_REQUEST_BYTES as _SIP_UDP_SAFE_REQUEST_BYTES,
+    default_tls_context,
+    SipMessageDispatcher,
+)
 from .core.sip_auth import (
     DigestChallengeTracker,
     build_digest_authorization,
@@ -60,7 +64,6 @@ from .core.sip_transaction import (
 _LOGGER = logging.getLogger(__name__)
 
 _S24_SIGN_EXTENSION = bytes(0xFF if value & 0x80 else 0x00 for value in range(256))
-_SIP_UDP_SAFE_REQUEST_BYTES = 1300
 
 
 def _uri_with_transport(uri: sip.SipUri, transport: str) -> sip.SipUri:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 from dataclasses import dataclass, field, replace
 from functools import partial
 import logging
@@ -19,7 +20,7 @@ from .core import sdp, sip, sip_transfer
 from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
 from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
-from .core.sip_transport import SipResponseMailbox, bind_flow_usage
+from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox, bind_flow_usage
 from .core.sip_dialog import (
     PreparedDialogIdentity,
     SubscriptionDialog,
@@ -599,6 +600,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.send_override = send_override
         self.request_route = request_route
         self.signaling_transport = (signaling_transport or "UDP").upper()
+        self.application_tcp_endpoint: SipUdpEndpoint | None = None
         self.flow_trunk_id = flow_trunk_id
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
@@ -1452,13 +1454,49 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         authentication = DigestChallengeTracker()
         credentials = result.follow_up_credentials
         target_revision = (state.remote_cseq, state.remote_target_uri) if state is not None else None
+        transaction_endpoint = self
+        udp_fallback_used = False
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
-            response = await self._run_client_transaction(
+            requested_transport = next((str(value or "").upper() for key, value in target.params
+                                        if key.casefold() == "transport"), "")
+            if (transaction_endpoint.signaling_transport == "UDP"
+                    and (requested_transport == "TCP" or len(raw) > SIP_UDP_SAFE_REQUEST_BYTES)
+                    and not udp_fallback_used):
+                tcp = self.application_tcp_endpoint
+                if tcp is None or tcp.request_route is None:
+                    _LOGGER.warning("SIP application request needs unavailable TCP transport method=%s bytes=%s",
+                                    follow_up.method, len(raw))
+                    return None
+                try:
+                    tcp_hop = await tcp.request_route(target, addr)
+                except OSError as err:
+                    # Only setup failure before any request bytes were sent may
+                    # retry UDP (RFC3261 section18.1.1), never a response timeout.
+                    if requested_transport == "TCP" or err.errno not in {
+                            errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}:
+                        raise
+                    udp_fallback_used = True
+                else:
+                    transaction_endpoint = tcp
+                    next_hop = tcp_hop
+                    contact_uri = tcp._contact_for_request(request, transport="TCP")
+                    upgraded = sip.dialog_headers(request_uri=routing.request_uri,
+                        local_uri=local_uri, remote_uri=remote_uri, dialog=ids,
+                        method=follow_up.method, contact_uri=contact_uri, transport="TCP")
+                    headers = [(key, value) for key, value in headers
+                               if key.casefold() not in {"via", "contact"}]
+                    headers.extend((key, value) for key, value in upgraded
+                                   if key.casefold() in {"via", "contact"})
+                    raw = sip.build_request(follow_up.method, routing.request_uri, headers, follow_up.body)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            response = await transaction_endpoint._run_client_transaction(
                 raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
-                transport=self.signaling_transport, creating_dialog=not ids.remote_tag,
+                transport=transaction_endpoint.signaling_transport, creating_dialog=not ids.remote_tag,
                 timeout=remaining,
             )
             if response is None:
@@ -1493,7 +1531,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             transaction_headers = sip.dialog_headers(
                 request_uri=routing.request_uri, local_uri=local_uri, remote_uri=remote_uri,
                 dialog=ids, method=follow_up.method, contact_uri=contact_uri,
-                transport=self.signaling_transport,
+                transport=transaction_endpoint.signaling_transport,
             )
             headers.extend((key, value) for key, value in transaction_headers if key.casefold() in {"via", "cseq"})
             headers.append((header, authorization))
@@ -4104,6 +4142,7 @@ class SipTcpServer:
 
         async with asyncio.timeout(8.0):
             candidates = await SipServerResolver().resolve(target, transport="TCP")
+            connection_errors = []
             for candidate in candidates:
                 for host, port, transport in candidate.endpoints():
                     if transport != "TCP":
@@ -4117,7 +4156,8 @@ class SipTcpServer:
                         raise ConnectionError("SIP TCP connection budget exhausted")
                     try:
                         reader, writer = await asyncio.open_connection(host, port)
-                    except OSError:
+                    except OSError as err:
+                        connection_errors.append(err)
                         continue
                     ready = asyncio.get_running_loop().create_future()
                     task = asyncio.create_task(self._handle_client(reader, writer, ready), name="voip-sip-outbound-flow")
@@ -4131,6 +4171,9 @@ class SipTcpServer:
                     if published:
                         return published
                     await asyncio.gather(task, return_exceptions=True)
+            if connection_errors and all(error.errno in {
+                    errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT} for error in connection_errors):
+                raise connection_errors[-1]
             raise ConnectionError("SIP subscription next hop is unreachable")
 
     @staticmethod
