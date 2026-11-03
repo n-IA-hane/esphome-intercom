@@ -825,9 +825,9 @@ defaults:
     - label:
         align: TOP_MID
         y: 8%
-        text: Contacts
+        text: "\U000F06CB"
         text_color: 0xFFFFFF
-        text_font: font_info
+        text_font: font_title
     - obj:
         id: phone_contacts_container
         align: TOP_MID
