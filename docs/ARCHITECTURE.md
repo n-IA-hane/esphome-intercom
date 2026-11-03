@@ -590,6 +590,12 @@ change. The application owner limits retained subscriptions and publications to
 256 globally and 64 per account. Each successful PUBLISH produces a new ETag;
 independent publications for the same address remain independent records.
 
+Application follow-ups select the transport for the routed request, including
+an explicit TCP Contact or Route. Oversized UDP requests use the existing TCP
+listener's connection owner under RFC 3261 section 18.1.1, with Via rebuilt for
+TCP and the same subscription dialog, CSeq and authentication state. A UDP
+subscription does not require its larger NOTIFY requests to remain on UDP.
+
 Replaces waits for the source and destination dialogs' current media transitions
 before preparing the handoff. The source media lock remains held through commit or rollback;
 BYE processing does not wait for that lock. The destination preparation exposes

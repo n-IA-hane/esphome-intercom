@@ -129,6 +129,8 @@ ha_tests=(
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py
   tests/test_dialog_info_ha.py
+  tests/test_presence_endpoints_ha.py
+  tests/test_notify_transport_ha.py
   tests/test_automation_originate_ha.py
   tests/test_announcement_media_ha.py
   tests/test_call_trigger.py

@@ -92,11 +92,15 @@ The event sender is the authenticated account, never the untrusted SIP `From`
 header. UDP requests larger than the RFC 3428 safe-path limit are rejected with
 `513 Message Too Large`; TCP messages are not subject to that UDP limit.
 
-Presence is intentionally a bounded local registrar profile. A registered
-account may publish only its own `presence` event package and may subscribe to
-configured local accounts. Publications use `SIP-ETag` and `SIP-If-Match`;
-subscribers receive immediate and changed-state PIDF `NOTIFY` requests. All
-publication and subscription timers are cancelled when the PBX runtime stops.
+Presence is a bounded local PBX profile. A registered account may publish only
+its own `presence` event package and may subscribe to local phones, including
+logical HA phones, by username or extension. Publications use `SIP-ETag` and
+`SIP-If-Match`. An active publication supplies the PIDF document; otherwise the
+PBX derives basic availability from the monitored phone's canonical state.
+Subscribers receive initial and changed-state PIDF `NOTIFY` requests. A logical
+HA phone remains available without an open card. Call activity is reported
+separately through `Event: dialog`. Publication and subscription timers are
+cancelled when the PBX runtime stops.
 
 ESP endpoints do not support session-modifying in-dialog INVITE. They answer
 hold or codec renegotiation with `488` while keeping the established dialog and

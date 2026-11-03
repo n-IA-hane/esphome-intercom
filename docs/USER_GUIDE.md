@@ -528,6 +528,11 @@ and online presence, which uses `presence`. Removing the monitored phone ends
 its BLF subscription with `noresource`. Subscriptions can request up to one hour
 and must refresh before expiry.
 
+Logical HA phones can be monitored in the same way as registered SIP phones.
+Closing their card does not make the logical phone unavailable. LDAP supplies
+contact identities and destinations; live availability and call activity arrive
+through the standard SIP subscriptions above.
+
 ## Parking and picking up calls
 
 ### Continue a conversation on another phone
