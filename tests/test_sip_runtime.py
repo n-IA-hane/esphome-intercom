@@ -11,23 +11,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+# Keep this legacy hass.data adapter out of the shared integration namespace.
+PKG_NAME = "voip_stack_sip_runtime_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
 def _load_module(name: str):
-    if "homeassistant" not in sys.modules:
-        package = types.ModuleType("homeassistant")
-        package.__path__ = []
-        sys.modules["homeassistant"] = package
-    if "homeassistant.core" not in sys.modules:
-        core = types.ModuleType("homeassistant.core")
-        core.HomeAssistant = type("HomeAssistant", (), {})
-        sys.modules["homeassistant.core"] = core
-    if "custom_components" not in sys.modules:
-        root_package = types.ModuleType("custom_components")
-        root_package.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_package
     if PKG_NAME not in sys.modules:
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
@@ -55,6 +44,9 @@ runtime_data.endpoint_directory = lambda hass: hass.data.get(DOMAIN, {}).get(
 )
 runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(DOMAIN, {}).get(
     "sip_endpoint"
+)
+runtime_data.sip_registrar = lambda hass: hass.data.get(DOMAIN, {}).get(
+    "sip_registrar"
 )
 runtime_data.sip_trunk = lambda hass: hass.data.get(DOMAIN, {}).get("sip_trunk")
 runtime_data.sip_trunks = lambda hass: {"": runtime_data.sip_trunk(hass)} if runtime_data.sip_trunk(hass) is not None else {}
@@ -343,6 +335,29 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
             uri_transport(SimpleNamespace(params=(("transport", "tcp"),))),
             "TCP",
         )
+
+    def test_registered_udp_flow_uses_selected_registrar_owner(self) -> None:
+        selected = object()
+        calls = []
+        registrar = SimpleNamespace(
+            select_outbound_flow=lambda username, uri: (
+                calls.append((username, uri)) or selected
+            )
+        )
+        hass = SimpleNamespace(data={DOMAIN: {"sip_registrar": registrar}})
+        uri = SimpleNamespace(params=())
+
+        self.assertIs(
+            sip_runtime.select_registered_outbound_flow(
+                hass, uri, entry=SimpleNamespace(id="registered-phone")
+            ),
+            selected,
+        )
+        self.assertEqual(calls, [("registered-phone", uri)])
+        self.assertIsNone(sip_runtime.select_registered_outbound_flow(
+            SimpleNamespace(data={DOMAIN: {}}), uri,
+            entry=SimpleNamespace(id="registered-phone"),
+        ))
 
     def test_tcp_contact_reuses_registered_flow_and_releases_dialog(self) -> None:
         tcp_server = _TcpServer()
