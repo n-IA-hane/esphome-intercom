@@ -26,7 +26,7 @@ async def trunks(lab, monkeypatch, request):
     full_runtime = bool(getattr(request, "param", False))
     if full_runtime:
         from unittest.mock import AsyncMock
-        from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
+        from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot, sensor
         from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
         lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
@@ -44,7 +44,10 @@ async def trunks(lab, monkeypatch, request):
             break
         else:
             raise RuntimeError("No free UDP/TCP port in the SIP laboratory range")
-        monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+        # Import before patching, then restore both lookup namespaces on teardown.
+        snapshot = AsyncMock(return_value=[])
+        monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", snapshot)
+        monkeypatch.setattr(sensor, "async_build_peer_snapshot", snapshot)
         monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
         monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
         assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
