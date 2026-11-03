@@ -92,6 +92,7 @@ ha_tests=(
   tests/test_phone_policy_runtime_ha.py
   tests/test_phone_state_ha.py
   tests/test_phone_monitor_ha.py
+  tests/test_popup_frontend_ha.py
   tests/test_esp_screenshot_homeassistant.py
   tests/test_ldap_directory_ha.py
   tests/test_ldap_provisioning_ha.py
@@ -219,6 +220,7 @@ PY
     pytest_args=(
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
+      tests/test_frontend_popup_browser.py
       tests/test_video_decoder_recovery_browser.py
       tests/test_browser_audio_startup.py
       tests/test_browser_call_lifecycle.py
