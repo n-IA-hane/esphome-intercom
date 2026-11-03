@@ -144,8 +144,23 @@
         "menu_options": {
           "user": "Obecná nastavení",
           "parking": "Parkování hovorů",
-          "voicemail": "Hlas hlasové schránky"
+          "voicemail": "Hlas hlasové schránky",
+          "phone_services": "Adresář LDAP"
         }
+      },
+      "phone_services": {
+        "data": {
+          "allow_anonymous": "Povolit anonymní vyhledávání",
+          "base_dn": "Základní DN",
+          "certificate": "Cesta k certifikátu PEM",
+          "enabled": "Povolit adresář LDAP",
+          "ldap_port": "Port LDAP",
+          "listen_host": "Naslouchací adresa",
+          "private_key": "Cesta k soukromému klíči PEM",
+          "tls": "Implicitní TLS (LDAPS)"
+        },
+        "description": "Standardní adresář umožňuje přístup povoleným telefonním účtům i v době, kdy jsou telefony offline. Jednoduché ověření (simple bind) bez TLS odesílá přihlašovací údaje po síti. Pro StartTLS na běžném naslouchacím rozhraní zadejte certifikát a klíč; volba TLS místo toho zapne implicitní LDAPS. Dočasná chyba naslouchacího rozhraní zachová adresář v telefonech.",
+        "title": "Adresář LDAP"
       }
     },
     "error": {
@@ -165,7 +180,10 @@
       "trunk_codecs_invalid": "Vyberte podporované kodeky a ponechte alespoň jeden zvukový kodek.",
       "trunk_target_required": "Vyberte přijímající telefon nebo zadejte cíl vytáčecího plánu.",
       "trunk_media_address_invalid": "Zadejte dostupnou unicast IPv4 adresu, nebo ponechte pole prázdné.",
-      "parking_slots_in_use": "Před změnou seznamu převezměte nebo ukončete hovory v odstraňovaných pozicích."
+      "parking_slots_in_use": "Před změnou seznamu převezměte nebo ukončete hovory v odstraňovaných pozicích.",
+      "phone_service_base_dn_invalid": "Zadejte platné základní DN pro LDAP.",
+      "phone_service_certificate_required": "Pro TLS zadejte certifikát i soukromý klíč.",
+      "phone_service_configuration": "Neplatná konfigurace LDAP."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -500,6 +518,10 @@
     "mailbox_route_conflict": {
       "title": "Konflikt kódů hlasové schránky",
       "description": "Telefon, kontakt nebo skupina používá adresu hlasové schránky. Přejmenujte konfliktní cíl; stávající směrování zůstane zachováno."
+    },
+    "phone_service_unavailable": {
+      "description": "Naslouchací službu {service} na portu {port} se nepodařilo spustit. V nastavení adresáře LDAP zkontrolujte adresu, port a cesty k certifikátům a poté nastavení uložte pro nový pokus. SIP nadále funguje a telefony si ponechají předchozí adresář.",
+      "title": "Adresář LDAP není dostupný"
     }
   },
   "exceptions": {

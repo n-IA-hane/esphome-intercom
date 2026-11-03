@@ -144,8 +144,23 @@
         "menu_options": {
           "user": "Allgemeine Einstellungen",
           "parking": "Anruf parken",
-          "voicemail": "Mailbox-Stimme"
+          "voicemail": "Mailbox-Stimme",
+          "phone_services": "LDAP-Verzeichnis"
         }
+      },
+      "phone_services": {
+        "data": {
+          "allow_anonymous": "Anonyme Suchanfragen zulassen",
+          "base_dn": "Basis-DN",
+          "certificate": "Pfad zum PEM-Zertifikat",
+          "enabled": "LDAP-Verzeichnis aktivieren",
+          "ldap_port": "LDAP-Port",
+          "listen_host": "Lokale Empfangsadresse",
+          "private_key": "Pfad zum privaten PEM-Schlüssel",
+          "tls": "Implizites TLS (LDAPS)"
+        },
+        "description": "Das Standardverzeichnis erlaubt aktivierten Telefonkonten den Zugriff, auch wenn die Telefone offline sind. Bei einer einfachen Bind-Anmeldung ohne TLS werden Zugangsdaten über das Netzwerk übertragen. Für StartTLS am normalen Listener geben Sie ein Zertifikat und einen Schlüssel an; die Option TLS aktiviert stattdessen implizites LDAPS. Ein vorübergehender Listener-Ausfall lässt das Verzeichnis auf den Telefonen unverändert.",
+        "title": "LDAP-Verzeichnis"
       }
     },
     "error": {
@@ -165,7 +180,10 @@
       "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
       "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
       "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
-      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst."
+      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst.",
+      "phone_service_base_dn_invalid": "Geben Sie einen gültigen LDAP-Basis-DN ein.",
+      "phone_service_certificate_required": "Geben Sie für TLS sowohl das Zertifikat als auch den privaten Schlüssel an.",
+      "phone_service_configuration": "Ungültige LDAP-Konfiguration."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -500,6 +518,10 @@
     "mailbox_route_conflict": {
       "title": "Konflikt mit Mailbox-Codes",
       "description": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Mailbox-Adresse. Benenne das betreffende Ziel um; bestehende Routen bleiben unverändert."
+    },
+    "phone_service_unavailable": {
+      "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Prüfen Sie Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses und speichern Sie diese, um es erneut zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
+      "title": "LDAP-Verzeichnis nicht verfügbar"
     }
   },
   "exceptions": {

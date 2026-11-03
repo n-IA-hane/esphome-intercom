@@ -144,8 +144,23 @@
         "menu_options": {
           "user": "Configurações gerais",
           "parking": "Estacionamento de chamadas",
-          "voicemail": "Voz do correio de voz"
+          "voicemail": "Voz do correio de voz",
+          "phone_services": "Diretório LDAP"
         }
+      },
+      "phone_services": {
+        "data": {
+          "allow_anonymous": "Permitir pesquisas anônimas",
+          "base_dn": "DN base",
+          "certificate": "Caminho do certificado PEM",
+          "enabled": "Ativar diretório LDAP",
+          "ldap_port": "Porta LDAP",
+          "listen_host": "Endereço de escuta",
+          "private_key": "Caminho da chave privada PEM",
+          "tls": "TLS implícito (LDAPS)"
+        },
+        "description": "O diretório padrão permite o acesso de contas telefônicas habilitadas mesmo quando os telefones estão offline. A autenticação simples (simple bind) sem TLS envia credenciais pela rede. Para StartTLS no serviço de escuta normal, forneça um certificado e uma chave; a opção TLS seleciona LDAPS implícito. Uma falha temporária do serviço de escuta preserva o diretório nos telefones.",
+        "title": "Diretório LDAP"
       }
     },
     "error": {
@@ -165,7 +180,10 @@
       "trunk_codecs_invalid": "Selecione codecs suportados e mantenha pelo menos um codec de áudio.",
       "trunk_target_required": "Selecione um telefone de destino ou informe um destino do plano de discagem.",
       "trunk_media_address_invalid": "Informe um endereço IPv4 unicast acessível ou deixe vazio.",
-      "parking_slots_in_use": "Recupere ou encerre as chamadas nas posições removidas antes de alterar a lista."
+      "parking_slots_in_use": "Recupere ou encerre as chamadas nas posições removidas antes de alterar a lista.",
+      "phone_service_base_dn_invalid": "Informe um DN base LDAP válido.",
+      "phone_service_certificate_required": "Forneça o certificado e a chave privada para TLS.",
+      "phone_service_configuration": "Configuração LDAP inválida."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -500,6 +518,10 @@
     "mailbox_route_conflict": {
       "title": "Conflito nos códigos do correio de voz",
       "description": "Um telefone, contato ou grupo usa um endereço do correio de voz. Renomeie o destino em conflito; as rotas existentes serão preservadas."
+    },
+    "phone_service_unavailable": {
+      "description": "O serviço de escuta {service} na porta {port} não pôde ser iniciado. Verifique o endereço, a porta e os caminhos dos certificados nas configurações do diretório LDAP e salve para tentar novamente. O SIP continua funcionando e os telefones mantêm o diretório anterior.",
+      "title": "Diretório LDAP indisponível"
     }
   },
   "exceptions": {
