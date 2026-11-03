@@ -52,6 +52,21 @@ off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
 [how to park and retrieve audio calls](docs/CALL_PARKING.md).
 [FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
 
+![Browser video call with an illustrative gate-camera feed in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
+
+_A browser-to-browser video call in the VoIP Dashboard. The gate-camera image
+is generated for this demonstration; it is transmitted between two browser
+phones, rather than captured from a physical door station._
+
+<details>
+<summary>Full Dashboard view and illustrative camera source</summary>
+
+![Complete Dashboard during the browser video demonstration](docs/images/voip-dashboard-gate-desktop-demo.png)
+
+![Generated gate-camera illustration used as the demonstration source](docs/images/illustrative-gate-camera.png)
+
+</details>
+
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
 Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
 requires ESPHome **2026.10.0 or newer**.
