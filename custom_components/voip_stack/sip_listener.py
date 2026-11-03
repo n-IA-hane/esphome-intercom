@@ -571,6 +571,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         request_router: ApplicationRequestRouter | None = None,
         send_override: SendHandler | None = None,
         request_route: Callable[[sip.SipUri, tuple[str, int]], Awaitable[tuple[str, int]]] | None = None,
+        transaction_flow: Callable[[tuple[str, int]], object] | None = None,
         signaling_transport: str = "UDP",
         flow_trunk_id: str = "",
         enable_video: bool = False,
@@ -599,6 +600,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.request_router = request_router
         self.send_override = send_override
         self.request_route = request_route
+        self.transaction_flow = transaction_flow
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.application_tcp_endpoint: SipUdpEndpoint | None = None
         self.flow_trunk_id = flow_trunk_id
@@ -1350,8 +1352,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     ) -> sip.SipMessage | None:
         """Run the shared non-INVITE transaction for this listener transport."""
 
-        responses = SipResponseMailbox(lambda message: sip.response_matches_dialog_transaction(message, ids, method, creating_dialog=creating_dialog))
+        responses = SipResponseMailbox(
+            lambda message: sip.response_matches_dialog_transaction(message, ids, method, creating_dialog=creating_dialog),
+            flow=self.transaction_flow(addr) if self.transaction_flow is not None else None,
+        )
         self._client_transaction_responses[ids.branch] = responses
+
+        def send():
+            sent = self._send(raw, addr)
+            if sent is False and self.signaling_transport == "TCP":
+                raise ConnectionError("SIP TCP flow is unavailable before send")
+            return sent
 
         async def read_response(timeout):
             # Advisory metadata belongs to the queried flow. A matching branch
@@ -1367,7 +1378,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
         try:
             return await async_run_dialog_request_transaction(
-                send=lambda: self._send(raw, addr),
+                send=send,
                 read=read_response if response_addr is not None else responses.receive,
                 matches=lambda response: sip.response_matches_dialog_transaction(
                     response, ids, method, creating_dialog=creating_dialog
@@ -1456,6 +1467,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         target_revision = (state.remote_cseq, state.remote_target_uri) if state is not None else None
         transaction_endpoint = self
         udp_fallback_used = False
+        tcp_reconnected = False
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
@@ -1494,11 +1506,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
-            response = await transaction_endpoint._run_client_transaction(
-                raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
-                transport=transaction_endpoint.signaling_transport, creating_dialog=not ids.remote_tag,
-                timeout=remaining,
-            )
+            try:
+                response = await transaction_endpoint._run_client_transaction(
+                    raw=raw, addr=next_hop, ids=ids, method=follow_up.method,
+                    transport=transaction_endpoint.signaling_transport, creating_dialog=not ids.remote_tag,
+                    timeout=remaining,
+                )
+            except ConnectionError:
+                if (follow_up.method != "NOTIFY" or transaction_endpoint.signaling_transport != "TCP"
+                        or tcp_reconnected or transaction_endpoint.request_route is None):
+                    raise
+                # Q recovery contract: one confirmed flow failure may reopen
+                # the same resolved peer, retaining raw/branch/CSeq/deadline.
+                # Timer F returns None and never enters this branch.
+                tcp_reconnected = True
+                pinned_target = replace(target, host=next_hop[0], port=next_hop[1])
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return None
+                async with asyncio.timeout(remaining):
+                    next_hop = await transaction_endpoint.request_route(pinned_target, addr)
+                continue
             if response is None:
                 return None
             status = int(response.status_code or 0)
@@ -4128,6 +4156,7 @@ class SipTcpServer:
             request_router=self.request_router,
             send_override=_send,
             request_route=self._request_route,
+            transaction_flow=lambda addr: self._writers.get(addr),
             signaling_transport="TCP",
             enable_video=self.enable_video,
             enable_video_transcoding=self.enable_video_transcoding,
@@ -4141,6 +4170,8 @@ class SipTcpServer:
         from .core.sip_resolution import SipServerResolver
 
         async with asyncio.timeout(8.0):
+            if self.server is None:
+                raise ConnectionError("SIP TCP listener is stopped")
             candidates = await SipServerResolver().resolve(target, transport="TCP")
             connection_errors = []
             for candidate in candidates:
@@ -4209,6 +4240,7 @@ class SipTcpServer:
         self._connections_by_host[addr[0]] = active_for_host + 1
         self._writers[addr] = writer
         tx = SipTcpWriter(writer, label=f"listener {addr[0]}:{addr[1]}")
+        tx.task.add_done_callback(lambda _task: writer.close())
         self._tcp_writers[addr] = tx
         if ready is not None and not ready.done():
             ready.set_result(addr)
@@ -4220,6 +4252,7 @@ class SipTcpServer:
             return
         first_message = True
         keepalive_half = False
+        flow_error = None
         try:
             while not reader.at_eof():
                 raw = await _read_sip_stream_message(
@@ -4251,6 +4284,7 @@ class SipTcpServer:
                         continue
                 endpoint.submit_datagram(raw, addr)
         except ConnectionError as err:
+            flow_error = err
             _LOGGER.debug("SIP TCP peer disconnected %s:%s: %s", addr[0], addr[1], err)
         finally:
             # Closing one TCP connection must not destroy dialogs owned by
@@ -4273,6 +4307,14 @@ class SipTcpServer:
                             addr[0],
                             addr[1],
                         )
+            if flow_error is None and (reader.at_eof() or writer.is_closing()):
+                flow_error = ConnectionError("SIP TCP flow closed while a transaction was pending")
+            for responses in tuple(endpoint._client_transaction_responses.values()):
+                if responses.flow is writer:
+                    if flow_error is not None:
+                        responses.fail(flow_error)
+                    else:
+                        responses.deliver(None)  # Local read/framing timeout is not an EOF retry.
             await tx.close()
             writer.close()
             with contextlib.suppress(Exception):

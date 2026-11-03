@@ -149,8 +149,111 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(received.done())
             self.assertIn("SIP/2.0/TCP", received.result().header("Via"))
             self.assertTrue(queue.empty())
+            self.assertEqual(len(writers), 1)
         finally:
             await manager.stop()
             for writer in writers: writer.close()
             await asyncio.gather(*handlers, return_exceptions=True)
             server.close(); await server.wait_closed()
+
+    async def test_notify_reopens_only_once_after_real_tcp_eof(self):
+        manager, _, queue, port, request, _, result = await self.setup_peer(body=b"large" * 300)
+        attempts, handlers = [], set()
+
+        async def close_before_response(reader, writer):
+            handlers.add(asyncio.current_task())
+            try:
+                attempts.append(await sip_listener._read_sip_stream_message(reader))
+            finally:
+                handlers.discard(asyncio.current_task())
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(close_before_response, "127.0.0.1", port)
+        try:
+            with self.assertRaises(ConnectionError):
+                await asyncio.wait_for(manager.udp_server.endpoint._send_application_follow_up(
+                    request, ("127.0.0.1", port), result), 2)
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(attempts[0], attempts[1])
+            self.assertTrue(queue.empty())
+        finally:
+            await manager.stop()
+            await asyncio.gather(*handlers, return_exceptions=True)
+            server.close(); await server.wait_closed()
+
+    async def test_local_tcp_reader_timeout_does_not_reopen_notify(self):
+        manager, _, queue, port, request, _, result = await self.setup_peer(body=b"large" * 300)
+        manager.tcp_server.initial_message_timeout = .05
+        attempts, handlers, writers = [], set(), []
+
+        async def silent_peer(reader, writer):
+            handlers.add(asyncio.current_task()); writers.append(writer)
+            try:
+                attempts.append(await sip_listener._read_sip_stream_message(reader))
+                await reader.read()
+            finally:
+                handlers.discard(asyncio.current_task())
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(silent_peer, "127.0.0.1", port)
+        try:
+            with patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", .5):
+                response = await manager.udp_server.endpoint._send_application_follow_up(
+                    request, ("127.0.0.1", port), result)
+            self.assertIsNone(response)
+            self.assertEqual(len(attempts), 1)
+            self.assertTrue(queue.empty())
+        finally:
+            await manager.stop()
+            for writer in writers: writer.close()
+            await asyncio.gather(*handlers, return_exceptions=True)
+            server.close(); await server.wait_closed()
+
+    async def test_closed_flow_does_not_fail_another_pending_transaction(self):
+        manager, _, _, _, _, _, _ = await self.setup_peer()
+        close_first, release_second = asyncio.Event(), asyncio.Event()
+        received = [asyncio.Event(), asyncio.Event()]
+        handlers = set()
+
+        async def serve(index, reader, writer):
+            handlers.add(asyncio.current_task())
+            try:
+                request = sip.parse_message(await sip_listener._read_sip_stream_message(reader))
+                received[index].set()
+                await (close_first if index == 0 else release_second).wait()
+                if index == 1:
+                    writer.write(self.answer(request))
+                    await writer.drain()
+                    await reader.read()
+            finally:
+                handlers.discard(asyncio.current_task())
+                writer.close()
+                await writer.wait_closed()
+
+        servers = [await asyncio.start_server(lambda r, w, i=i: serve(i, r, w), "127.0.0.1", 0)
+                   for i in range(2)]
+        endpoint = manager.tcp_server.endpoint
+        tasks = []
+        try:
+            for server in servers:
+                port = server.sockets[0].getsockname()[1]
+                uri = sip.SipUri("watcher", "127.0.0.1", port)
+                address = await manager.tcp_server._request_route(uri, ("127.0.0.1", 0))
+                tasks.append(asyncio.create_task(endpoint.async_options(str(uri), address, timeout=2)))
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in received)), 1)
+            close_first.set()
+            with self.assertRaises(ConnectionError):
+                await tasks[0]
+            self.assertFalse(tasks[1].done())
+            release_second.set()
+            self.assertEqual((await tasks[1]).status_code, 200)
+        finally:
+            close_first.set(); release_second.set()
+            for task in tasks: task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await manager.stop()
+            await asyncio.gather(*handlers, return_exceptions=True)
+            for server in servers:
+                server.close(); await server.wait_closed()

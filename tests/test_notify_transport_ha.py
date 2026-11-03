@@ -26,14 +26,18 @@ async def read_record(reader):
     return head + await reader.readexactly(length)
 
 
-@pytest.mark.parametrize("challenge", [401, 407])
-async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_target(lab, challenge):
+@pytest.mark.parametrize("challenge,close_before_200", [
+    pytest.param(401, False, id="401"), pytest.param(407, False, id="407"),
+    pytest.param(401, True, id="401-close-before-200"),
+])
+async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_target(lab, challenge, close_before_200):
     import pytest_socket
     pytest_socket.socket_allow_hosts(["127.0.0.1", "127.0.0.3"])
     loop = asyncio.get_running_loop()
     observed, responses = asyncio.Queue(), asyncio.Queue()
     writers, handlers = [], set()
     challenged = False
+    dropped = []
     watcher = "watcher"
 
     def response(request, transport, *, status=200, contact=False):
@@ -61,6 +65,10 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
                             authorization_header=request.header("Authorization" if challenge == 401 else "Proxy-Authorization"),
                             username=watcher, password="test-only", method="NOTIFY",
                             uri=request.uri, realm="watcher", nonce="independent")
+                        if close_before_200 and not dropped:
+                            dropped.append(raw)
+                            await observed.put((request, "TCP_CLOSED_BEFORE_200", raw))
+                            return
                     writer.write(response(request, "TCP", contact=True))
                 await writer.drain()
                 await observed.put((request, "TCP", raw))
@@ -129,6 +137,11 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         publish_bridge_projection(lab.hass, session)
         challenged_request, challenged_transport, _ = await next_notify()
         confirmed, confirmed_transport, _ = await next_notify()
+        if close_before_200:
+            assert confirmed_transport == "TCP_CLOSED_BEFORE_200"
+            confirmed, confirmed_transport, retried_raw = await next_notify()
+            assert retried_raw == dropped[0]
+            assert len(writers) == 2
         assert challenged_transport == confirmed_transport == "TCP"
         assert ElementTree.fromstring(confirmed.body).find("d:dialog/d:state", NS).text == "confirmed"
         assert confirmed.uri == challenged_request.uri
