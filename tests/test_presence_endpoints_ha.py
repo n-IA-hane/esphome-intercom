@@ -89,13 +89,23 @@ async def test_extension_uses_canonical_publish_updates_and_expiry_falls_back(la
                                   ("127.0.0.4", 5060), "UDP", send)
     assert updated.status == 200
     assert basic(await asyncio.wait_for(notifications.get(), 1)) == "open"
-    # Explicit publication wins even when the canonical transport becomes unavailable.
+    # Q compositor policy closes delivery while retaining the unchanged publication lease.
+    leases = dict(methods.publications)
+    published_document = methods._publication("alice").body
     lab.runtime.endpoints.update("sip:alice", availability=EndpointAvailability.OFFLINE)
-    assert basic(await asyncio.wait_for(notifications.get(), 1)) == "open"
+    assert basic(await asyncio.wait_for(notifications.get(), 1)) == "closed"
+    assert methods.publications == leases
+    assert all(methods.publications[tag] is lease for tag, lease in leases.items())
+    lab.runtime.endpoints.update("sip:alice", availability=EndpointAvailability.AVAILABLE)
+    restored = await asyncio.wait_for(notifications.get(), 1)
+    assert basic(restored) == "open" and restored.body == published_document
+    assert methods.publications == leases
     for tag, publication in tuple(methods.publications.items()):
         methods.publications[tag] = replace(publication, expires_at=time.time()-1)
     methods._notify_subscribers("alice")
-    assert basic(await asyncio.wait_for(notifications.get(), 1)) == "closed"
+    fallback = await asyncio.wait_for(notifications.get(), 1)
+    assert basic(fallback) == "open"
+    assert ElementTree.fromstring(fallback.body).attrib["entity"] == "sip:667@127.0.0.1"
     assert not methods.publications and not methods.publication_timers
 
 
@@ -156,6 +166,7 @@ async def test_real_udp_subscribe_and_notify_for_logical_phones_without_cards(tr
                         assert message.header("Event") == "presence"
                         assert message.header("Content-Type") == "application/pidf+xml"
                         assert basic(message) == "open"
+                        assert ElementTree.fromstring(message.body).attrib["entity"] == f"sip:{name}@127.0.0.1"
                         response = sip.build_response(200, "OK", [(key, message.header(key))
                             for key in ("Via", "From", "To", "Call-ID", "CSeq")])
                         await lab.hass.loop.sock_sendto(client, response, addr)

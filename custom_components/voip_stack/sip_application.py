@@ -512,7 +512,9 @@ class SipApplicationMethods:
                     f"Voice-Message: {min(new, 4294967295)}/{min(old, 4294967295)} (0/0)\r\n").encode()
             content_type = "application/simple-message-summary"
         else:
-            body = (_closed_pidf(subscription.target) if terminated and termination_reason == "noresource"
+            body = ((_endpoint_pidf(_uri_from_header(subscription.request.header("To")), False)
+                     if subscription.presence_endpoint_id else _closed_pidf(subscription.target))
+                    if terminated and termination_reason == "noresource"
                     else self._presence_body(subscription))
             content_type = "application/pidf+xml"
         state = f"terminated;reason={termination_reason}" if terminated else f"active;expires={expires}"
@@ -644,16 +646,21 @@ class SipApplicationMethods:
 
     def _presence_body(self, subscription):
         endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
+        resource_uri = _uri_from_header(subscription.request.header("To"))
         if subscription.presence_endpoint_id and endpoint is None:
-            return _closed_pidf(subscription.target)
+            return _endpoint_pidf(resource_uri, False)
         publisher = endpoint.username if endpoint is not None and endpoint.username else subscription.target
         account = self.registrar.accounts.get(publisher.casefold())
         if account is not None and not account.enabled:
-            return _closed_pidf(subscription.target)
+            return (_endpoint_pidf(resource_uri, False) if subscription.presence_endpoint_id
+                    else _closed_pidf(subscription.target))
         publication = self._publication(publisher)
+        if endpoint is not None:
+            return _endpoint_pidf(resource_uri, endpoint.availability.value == "available",
+                                  publication.body if publication is not None else None)
         if publication is not None:
             return publication.body
-        return _availability_pidf(subscription.target, endpoint is not None and endpoint.availability.value == "available")
+        return _closed_pidf(subscription.target)
 
     def _presence_publisher(self, subscription):
         endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
@@ -1118,11 +1125,30 @@ def _uri_from_header(value: str) -> str:
 
 
 def _closed_pidf(target: str) -> bytes:
-    return _availability_pidf(target, False)
+    return _endpoint_pidf(f"sip:{target}@localhost", False)
 
 
-def _availability_pidf(target: str, available: bool) -> bytes:
-    root = ElementTree.Element("presence", {"xmlns": "urn:ietf:params:xml:ns:pidf", "entity": f"sip:{target}@localhost"})
-    status = ElementTree.SubElement(ElementTree.SubElement(root, "tuple", {"id": "phone"}), "status")
-    ElementTree.SubElement(status, "basic").text = "open" if available else "closed"
-    return ElementTree.tostring(root, encoding="utf-8")
+def _endpoint_pidf(uri: str, available: bool, publication: bytes | None = None) -> bytes:
+    """Compose canonical reachability without rewriting a publication lease."""
+    if publication is not None and available:
+        return publication
+    if publication is None:
+        document = ElementTree.Element("presence", {"xmlns": "urn:ietf:params:xml:ns:pidf", "entity": uri})
+        status = ElementTree.SubElement(ElementTree.SubElement(document, "tuple", {"id": "phone"}), "status")
+        ElementTree.SubElement(status, "basic").text = "open" if available else "closed"
+    else:
+        namespace = "{urn:ietf:params:xml:ns:pidf}"
+        document = ElementTree.fromstring(publication)
+        statuses = document.findall(f"{namespace}tuple/{namespace}status")
+        if not statuses:
+            used = {part.get("id") for part in document.findall(namespace + "tuple")}
+            identity = "reachability"
+            while identity in used:
+                identity += "-1"
+            part = ElementTree.SubElement(document, namespace + "tuple", {"id": identity})
+            statuses = [ElementTree.SubElement(part, namespace + "status")]
+        for status in statuses:
+            basics = status.findall(namespace + "basic") or [ElementTree.SubElement(status, namespace + "basic")]
+            for basic in basics:
+                basic.text = "closed"
+    return ElementTree.tostring(document, encoding="utf-8")
