@@ -33,5 +33,5 @@
     "pyasn1==0.6.5"
   ],
   "single_config_entry": true,
-  "version": "2026.11.0"
+  "version": "2026.11.1-dev.1"
 }
