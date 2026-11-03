@@ -285,6 +285,15 @@ export function buildMainCardSkeleton(cardVersion) {
         font-size: 1em; font-weight: bold; transition: all 0.2s ease;
         display: flex; align-items: center; justify-content: center;
       }
+      :host([data-receive-popup]) .destination-row,
+      :host([data-receive-popup]) .runtime-controls,
+      :host([data-receive-popup]) .keypad-panel,
+      :host([data-receive-popup]) .settings-panel,
+      :host([data-receive-popup]) .voicemail-panel,
+      :host([data-receive-popup]) .voip-button.call,
+      :host([data-receive-popup]) .voip-button:not(.answer):not(.decline):not(.hangup) {
+        display: none !important;
+      }
       .voip-button[hidden] { display: none; }
       .voip-button.small { width: var(--voip-small-button-size, 80px); height: var(--voip-small-button-size, 80px); font-size: 0.9em; }
       .card:not(.video-active) .voip-button {
@@ -301,11 +310,23 @@ export function buildMainCardSkeleton(cardVersion) {
       .voip-button.call { background: #4caf50; color: white; }
       .voip-button.answer { background: #4caf50; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.decline { background: #f44336; color: white; animation: ring-pulse 1s infinite; }
-      .voip-button.hangup { background: #f44336; color: white; }
+      .voip-button.hangup { background: transparent; color: white; }
       .voip-button.hangup {
+        min-width: 44px;
+        min-height: 44px;
+        position: relative;
+        isolation: isolate;
+        transition: opacity 0.2s ease;
+      }
+      .hangup-pulse {
+        position: absolute;
+        inset: 4%;
+        z-index: -1;
+        border-radius: inherit;
+        background: #f44336;
+        pointer-events: none;
         transform: scale(var(--voip-hangup-scale, 1));
-        transform-origin: center;
-        transition: transform 80ms linear, opacity 0.2s ease;
+        transition: transform 80ms linear;
       }
       .hangup-icon, .hangup-copy, .hangup-duration { display: none; }
       .video-active .voip-button.hangup {
@@ -323,14 +344,15 @@ export function buildMainCardSkeleton(cardVersion) {
         -webkit-backdrop-filter: blur(8px) saturate(1.12);
         backdrop-filter: blur(8px) saturate(1.12);
         box-shadow: 0 -1px 0 rgba(255,255,255,.18), 0 -8px 30px rgba(0,0,0,.24);
-        transform: scaleY(var(--voip-hangup-scale, 1));
-        transform-origin: center bottom;
       }
+      .video-active .hangup-pulse { display: none; }
       .video-active .hangup-label { display: none; }
       .video-active .hangup-icon {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        transform: scale(var(--voip-hangup-scale, 1));
+        transition: transform 80ms linear;
       }
       .video-active .hangup-icon ha-icon { --mdc-icon-size: 28px; }
       .video-active .hangup-copy {
@@ -567,7 +589,7 @@ export function buildMainCardSkeleton(cardVersion) {
         font-size: .76em;
       }
       @media (prefers-reduced-motion: reduce) {
-        .voip-button.hangup { transform: none !important; transition: none; }
+        .hangup-pulse, .hangup-icon { transform: none !important; transition: none; }
       }
       .auto-answer-row {
         display: grid;
@@ -754,6 +776,10 @@ export function buildMainCardSkeleton(cardVersion) {
     hangupBtn.type = "button";
     hangupBtn.className = "voip-button hangup";
     hangupBtn.setAttribute("aria-label", translate("Hang up call"));
+    const hangupPulse = document.createElement("span");
+    hangupPulse.className = "hangup-pulse";
+    hangupPulse.setAttribute("aria-hidden", "true");
+    hangupBtn.appendChild(hangupPulse);
     const hangupLabel = document.createElement("span");
     hangupLabel.className = "hangup-label";
     hangupLabel.textContent = translate("Hangup");
@@ -927,6 +953,10 @@ export function buildMainCardSkeleton(cardVersion) {
     settingsPanel.className = "settings-panel";
     settingsPanel.id = "voip-settings-panel";
     settingsPanel.hidden = true;
+    const popupSettings = document.createElement("a");
+    popupSettings.textContent = translate("Call popups");
+    popupSettings.className = "popup-settings";
+    settingsPanel.appendChild(popupSettings);
 
     // Auto-answer toggle
     const autoAnswerRow = document.createElement("div");
@@ -1173,7 +1203,7 @@ export function buildMainCardSkeleton(cardVersion) {
       keypadPanel, keypadInput, keypadKeys, keypadGrid,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
-      runtimeControls, keypadBtn, keypadLabel, keypadIcon, settingsBtn, settingsPanel, voicemailBtn, voicemailPanel, parkBtn, transferBtn, transferHangupBtn, parkingNotice, phoneActivity, recordBtn,
+      runtimeControls, keypadBtn, keypadLabel, keypadIcon, settingsBtn, settingsPanel, popupSettings, voicemailBtn, voicemailPanel, parkBtn, transferBtn, transferHangupBtn, parkingNotice, phoneActivity, recordBtn,
       routingPanel, routingControls, ringingControls, trunkRow, trunkSelect,
       autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
       mailboxRow, mailboxCheckbox,

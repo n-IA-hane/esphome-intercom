@@ -134,7 +134,9 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("createAnalyser", engine)
         self.assertIn('CustomEvent("audio-level"', engine)
         self.assertIn('"--voip-hangup-scale"', pulse)
-        self.assertIn("scaleY(var(--voip-hangup-scale, 1))", self.view_source)
+        self.assertIn('hangupPulse.className = "hangup-pulse"', self.view_source)
+        self.assertIn("scale(var(--voip-hangup-scale, 1))", self.view_source)
+        self.assertNotIn("scaleY(var(--voip-hangup-scale, 1))", self.view_source)
         self.assertNotIn("style.width", pulse)
         self.assertNotIn("style.height", pulse)
 

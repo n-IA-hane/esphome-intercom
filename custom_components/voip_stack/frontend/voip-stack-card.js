@@ -221,7 +221,8 @@ class VoipStackCard extends HTMLElement {
       const detail = event?.detail || {};
       if (
         !this._isHaSoftphoneMode() ||
-        detail.endpoint_id !== this._getSoftphoneEndpointId()
+        detail.endpoint_id !== this._getSoftphoneEndpointId() ||
+        detail.call_id !== this._sessionCallId()
       ) return;
       this._applyHangupAudioLevel(detail.level);
     };
@@ -2066,6 +2067,10 @@ class VoipStackCard extends HTMLElement {
     if (els.ringtoneRow) {
       els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode());
       els.ringtoneCheckbox.checked = !!this._ringtoneEnabled;
+    }
+    if (els.popupSettings) {
+      els.popupSettings.hidden = !softphoneMode;
+      els.popupSettings.href = `/voip-stack-popup?endpoint_id=${encodeURIComponent(this._getSoftphoneEndpointId())}`;
     }
     if (els.microphoneAntiAliasRow) {
       els.microphoneAntiAliasRow.hidden =

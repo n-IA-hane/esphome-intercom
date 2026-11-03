@@ -4,8 +4,12 @@ import logging
 from pathlib import Path
 
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.components.frontend import (
     DATA_EXTRA_MODULE_URL,
+    add_extra_js_url,
+    async_panel_exists,
+    async_remove_panel,
     remove_extra_js_url,
 )
 from homeassistant.core import HomeAssistant
@@ -15,6 +19,7 @@ from ..const import URL_BASE, INTEGRATION_VERSION
 _LOGGER = logging.getLogger(__name__)
 
 CARD_JS = "voip-stack-card.js"
+GLOBAL_JS = "voip-stack-popup.js"
 FRONTEND_DIR = Path(__file__).parent
 
 
@@ -37,11 +42,26 @@ class JSModuleRegistration:
         """Register static path and Lovelace resource."""
         await self._async_register_path()
         modules = self.hass.data.get(DATA_EXTRA_MODULE_URL)
+        asset_stamp = await self.hass.async_add_executor_job(_frontend_asset_stamp)
+        popup_url = f"{URL_BASE}/{GLOBAL_JS}"
         if modules is not None:
             menu_url = f"{URL_BASE}/voip-stack-menu.js"
             for registered in tuple(modules.urls):
-                if registered.split("?")[0] == menu_url:
+                if registered.split("?")[0] in {menu_url, popup_url}:
                     remove_extra_js_url(self.hass, registered)
+        # Load before any dashboard card is mounted, including on other panels.
+        add_extra_js_url(
+            self.hass, f"{popup_url}?v={INTEGRATION_VERSION}-{asset_stamp}"
+        )
+        if async_panel_exists(self.hass, "voip-stack-popup"):
+            async_remove_panel(self.hass, "voip-stack-popup")
+        await async_register_panel(
+            self.hass,
+            frontend_url_path="voip-stack-popup",
+            webcomponent_name="voip-stack-popup-settings",
+            module_url=f"{popup_url}?v={INTEGRATION_VERSION}-{asset_stamp}",
+            embed_iframe=False,
+        )
 
         if self.lovelace is None:
             _LOGGER.warning("Lovelace data not available, skipping resource registration")
