@@ -95,8 +95,10 @@ header. UDP requests larger than the RFC 3428 safe-path limit are rejected with
 Presence is a bounded local PBX profile. A registered account may publish only
 its own `presence` event package and may subscribe to local phones, including
 logical HA phones, by username or extension. Publications use `SIP-ETag` and
-`SIP-If-Match`. An active publication supplies the PIDF document; otherwise the
-PBX derives basic availability from the monitored phone's canonical state.
+`SIP-If-Match`. An available phone's active publication supplies the PIDF
+document; an unavailable phone is reported as closed without deleting or
+changing its publication lease. Without a publication, the PBX derives basic
+availability from the monitored phone's canonical state.
 Subscribers receive initial and changed-state PIDF `NOTIFY` requests. A logical
 HA phone remains available without an open card. Call activity is reported
 separately through `Event: dialog`. Publication and subscription timers are

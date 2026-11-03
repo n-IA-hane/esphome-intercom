@@ -595,6 +595,9 @@ an explicit TCP Contact or Route. Oversized UDP requests use the existing TCP
 listener's connection owner under RFC 3261 section 18.1.1, with Via rebuilt for
 TCP and the same subscription dialog, CSeq and authentication state. A UDP
 subscription does not require its larger NOTIFY requests to remain on UDP.
+A confirmed TCP flow failure can reopen the same peer once for a NOTIFY,
+retaining its transaction identity and deadline. A response timeout does not
+trigger that recovery or a UDP downgrade.
 
 Replaces waits for the source and destination dialogs' current media transitions
 before preparing the handoff. The source media lock remains held through commit or rollback;
