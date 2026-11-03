@@ -1,0 +1,17 @@
+# Optional, logical display coordinates, one cooperative 80ms tap.
+external_components:
+- source: ${ext_components_source}
+  components: [lvgl_touch_diagnostic]
+lvgl_touch_diagnostic:
+  id: diagnostic_touch
+api:
+  actions:
+  - action: touch
+    variables:
+      x: int
+      y: int
+    then:
+    - lvgl_touch_diagnostic.tap:
+        id: diagnostic_touch
+        x: !lambda 'return x;'
+        y: !lambda 'return y;'
