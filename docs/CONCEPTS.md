@@ -1,7 +1,11 @@
 # Phones, contacts and calls
 
-You can make your first call without reading a SIP manual. These are the names
-you will see in the editor, and when they matter.
+Home Assistant hosts the PBX independently of ESP hardware or another PBX.
+Logical browser phones, standard SIP accounts, physical endpoints and trunks
+share its routing and call applications. You can start with two room or app
+phones and add external equipment later.
+
+These are the names you will see in the editor, and when they matter.
 
 ## The everyday terms
 
@@ -40,9 +44,13 @@ Choose the displayed phone in the picker.
 
 ## Where the work happens
 
-Home Assistant owns its phonebook, routing defaults, voicemail and call
-applications. Cards show those phones and send controls to the backend. Each
-phone still has its own card; you do not need a single central popup.
+Home Assistant owns the persistent directory, routing defaults, voicemail and
+call applications. Cards and the Dashboard control those backend phones.
+Opening a view does not create a second phone identity. Browser media belongs
+to the browser or Companion session that answers or originates the call.
+Each room phone can have its own view and controls.
+The backend phone remains available to routing when its card is not in the
+foreground; opening a browser media session is a separate step.
 
 An ESP is optional. With VoIP firmware it is a physical SIP phone. A Full ESP
 profile can also run its own wake-word Voice Assistant and media player. That
@@ -54,8 +62,8 @@ mirror does not turn your phone's microphone into that ESP's microphone.
 
 If an ESP calls another IP directly, HA's routing rules do not control that
 call. Use an HA-managed route when voicemail, forwarding or another PBX feature
-must apply. ESP firmware can also work as a static endpoint of a
-[classic PBX](CLASSIC_PBX.md).
+must apply. ESP firmware can use [registered PBX accounts](ESP_REGISTRATION.md)
+or work as a static endpoint of a [classic PBX](CLASSIC_PBX.md).
 
 ## When you need the protocol terms
 

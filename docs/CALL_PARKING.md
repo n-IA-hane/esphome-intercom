@@ -158,6 +158,8 @@ contained the other phone's input signal after each completed sequence, and the
 final HA diagnostics reported no remaining call resources.
 
 These tests do not qualify every physical handset's transfer button or BLF
-configuration. Active video calls are rejected before parking rather than
-silently losing their video session. Calls made directly between devices,
-without passing through Home Assistant, are outside this parking service.
+configuration. The browser card does not offer Park during an active browser
+video call. Supported SIP video legs can retain their video contract through
+hold and pickup when the peer accepts the required negotiation; a different
+pickup codec may require enabled transcoding. Calls made directly between
+devices, without passing through Home Assistant, are outside this parking service.

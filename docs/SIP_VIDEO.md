@@ -2,11 +2,12 @@
 
 VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
-is a supported `2026.8.0` capability. ESPHome profiles remain audio-only unless
-a video source or sink is configured. ESP32-S3 profiles with a supported native
-camera can transmit RTP/JPEG; rendering remote video on an S3 display is not
-implemented. Qualified ESP32-P4 profiles can transmit and receive RTP/JPEG or
-H.264 video without changing the audio contract.
+is available to compatible endpoints. ESPHome profiles remain audio-only unless
+a video source or sink is configured. A supported ESP32-S3 camera can transmit
+RTP/JPEG; a supported S3 display can receive JPEG through `esp_video_renderer`.
+These are independent roles, so a receive-only display does not gain a camera.
+ESP32-S3 does not decode H.264. P4 profiles select JPEG or H.264 transmit and
+receive paths without replacing their audio contract.
 
 Video is disabled by default and does not alter an audio-only installation.
 Open the VoIP Stack integration, choose **Reconfigure**, then enable
@@ -40,6 +41,20 @@ For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
 The codec matrix below explains what happens when endpoints support different
 formats; it is not a checklist you must complete for every call.
+
+## Direct media and conversion
+
+Each leg negotiates its codec, direction, dimensions and cadence through SDP.
+A compatible encoded path is preferred even when transcoding is enabled.
+Conversion is used when the negotiated codec or image constraints require it;
+it is not enabled merely because a phone registered or lacks legacy discovery
+metadata. A JPEG browser frame may also require Huffman-table normalization
+before RFC 2435 packetization.
+
+For example, a compatible JPEG call can pass through HA without video decode
+and re-encode. An upstream H.264 call can be converted by HA to JPEG for an S3
+sink when video transcoding is enabled. Disabling conversion does not authorize
+an incompatible video contract; audio can remain active when video is rejected.
 
 ## Capability matrix
 
@@ -98,11 +113,25 @@ confirmed immediate S3 camera video after updating the HA integration. That
 reported call lasted 64 minutes before an unexplained disconnect without debug
 logs, so it is not evidence of unrestricted long-uptime behavior. Both reports
 concern the S3's outgoing camera stream, independently of which side dialed;
-they do not add remote-video rendering on S3 screens.
+they concern camera transmission. S3 receive display support is provided
+separately by the JPEG renderer described below.
 
 If a camera call remains without video, collect one HA-to-S3 SIP capture and the ESP diagnostic log:
 check the INVITE's `m=video` and direction, the answer's video port and direction,
 then RTP delivery. See [Testing and debugging](TESTING_AND_DEBUG.md).
+
+## ESP32-S3 receive display
+
+The maintained S3 JPEG receive package connects the standalone
+[`esp_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer) to the
+existing VoIP video sink and LVGL call surface. It decodes complete JPEG images
+and returns the display to its ordinary UI after the video session ends.
+A board may configure a camera source independently if it has one.
+
+The selected dimensions and `framerate` bound resource use and admission; they
+do not guarantee an achieved panel frame rate. A camera-only S3 installation
+needs the receive renderer and a suitable display to show incoming video.
+An H.264 upstream leg requires HA conversion to JPEG, not an H.264 decoder on S3.
 
 ## ESP32-P4 video endpoints
 
@@ -201,8 +230,8 @@ For inbound trunk video, **Direct to default destination** reaches the selected
 phone without digit-collection delay. **DTMF extension selection** can also
 preserve video when the initial trunk offer contains a compatible video stream:
 HA pre-binds and advertises the audio/video ports while collecting digits, then
-hands those exact sockets to the selected HA browser phone. Selecting an ESP,
-Assist or another audio-only target releases the unused video resources.
+hands those exact sockets to the selected HA browser phone. Selecting an
+audio-only destination releases the unused video resources.
 
 With RTP/AVP there may be no negotiated key-frame feedback. A browser that
 attaches after DTMF collection can therefore wait until the remote sender's
@@ -215,6 +244,20 @@ PSTN leg or an audio-only ITSP may remove video while leaving audio usable.
 When a PBX bridges two HA instances, exact-codec H.264, VP8 or JPEG can remain
 passthrough; this integration does not require both homes to share one HA
 instance.
+
+### External media address on a trunk
+
+The trunk's **Outbound media IPv4 address** (`trunk_outbound_media_address`)
+is an explicit override for the HA address advertised to that PBX on an outgoing
+call. Behind NAT it must match the actual public egress address, with the
+advertised RTP/RTCP port numbers reachable unchanged. It is the address of HA,
+not the provider. Leave it empty to use the existing HA media address.
+
+If the public egress address changes, update this override in the trunk's
+reconfiguration form. Working audio through symmetric RTP does not establish
+that an independent receive-only video stream can reach the advertised address.
+The setting does not create port forwarding, discover a public address or
+change LAN calls.
 
 ### Dahua door-station interoperability
 
@@ -328,11 +371,12 @@ release that single slot instead of failing the next video offer.
 There is no intermediate recording or complete video file. FFmpeg receives
 and emits RTP continuously on loopback. The transcode path is intentionally
 bounded to one active call and at most one subprocess per incompatible active
-direction. Every subprocess uses one encoder thread. Browser VP8 output is
-limited to 1280x720, 15 frames per second, 700 kbit/s target and 900 kbit/s
-maximum. SIP H.264 output follows the receiver's level envelope and uses a
-bounded low-latency baseline profile. SIP JPEG output is limited to 800x800 at
-10 frames per second. A second simultaneous transcode call remains audio-only
+direction. Every subprocess uses one encoder thread. VP8 output uses at most
+1280x720, a 700 kbit/s target and 900 kbit/s maximum. SIP H.264 output follows
+the receiver's level envelope and uses a bounded low-latency baseline profile.
+SIP JPEG output uses at most 800x800. Cadence follows the negotiated receiver
+and codec limits; transcoding does not invent frames to meet a fixed rate.
+A second simultaneous transcode call remains audio-only
 instead of starting unbounded codec workers.
 
 VoIP Stack first uses the FFmpeg binary configured by Home Assistant and then
@@ -358,7 +402,8 @@ informational, not legal advice.
 - Permit camera access only when HA must transmit video. A remote `sendonly`
   door station needs no HA camera permission.
 - Keep SIP and RTP on a trusted LAN or VPN. This profile uses unencrypted
-  SIP/RTP and does not add SRTP, ICE, STUN or TURN.
+  SIP/RTP. Existing keepalives do not provide SRTP, ICE, TURN or automatic
+  router configuration.
 - Allow the configured HA RTP range through local firewalls. A video call
   reserves an additional even RTP/odd RTCP pair alongside audio media.
 
@@ -375,7 +420,7 @@ This profile does not claim support for:
 - VP9, AV1, MxPEG or other proprietary payloads;
 - more than one simultaneous server-side transcode;
 - more than one browser owning the same active HA video stream;
-- SRTP, DTLS, ICE, STUN or TURN;
+- SRTP, DTLS, ICE or TURN;
 - RTCP multiplexing, generic NACK retransmission or bandwidth adaptation;
 - call recording or a call-snapshot service. Qualified P4 profiles may expose
   their camera separately through the normal ESPHome camera entity;
@@ -394,13 +439,11 @@ service.
 
 SIP video is covered by the maintained test matrix and has been exercised on
 real browser-to-browser, HA-to-HA and video-capable trunk calls, including
-bidirectional media, re-INVITE and cleanup. Qualified ESP32-P4 JPEG and H.264
-profiles have also passed real incoming and outgoing bidirectional calls with
-clean teardown. The cross-codec bridge has passed simultaneous H.264-to-JPEG
-and JPEG-to-H.264 media with audio in both directions, zero RTP loss in the
-qualification capture and no retained FFmpeg or call resources after hangup.
-Compatibility with a particular third-party phone or door station still
-depends on its exact codec, SDP and RTP behavior.
+bidirectional media, re-INVITE and cleanup. ESP profile and cross-codec results
+apply to the exact boards, firmware and routes used for each qualification.
+They do not establish a guaranteed panel frame rate or universal PBX support.
+Compatibility with a particular phone or door station depends on its codec,
+SDP, media-address configuration and actual RTP/RTCP delivery.
 
 The protocol work follows
 [RFC 3264 offer/answer](https://www.rfc-editor.org/rfc/rfc3264),

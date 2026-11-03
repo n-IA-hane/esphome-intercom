@@ -3,7 +3,9 @@
 Firmware can compile optional SIP registration alongside the direct HA path.
 Each account belongs to the existing SIP worker. There is no additional media
 engine, and registering a line does not disable Assist or the direct HA route.
-These are recovery candidate features, pending complete device qualification.
+Manual SIP registration is independent of HA provisioning. Compatible managed
+firmware can also receive a named HA account while retaining additional PBX
+accounts. Endpoint, codec and network compatibility still apply to each line.
 
 ```yaml
 voip_stack:
@@ -19,7 +21,8 @@ voip_stack:
         transport: udp
 ```
 
-Omitting `registration` compiles out its account pool. Capacity is 1 to 4,
+With neither `registration` nor HA auto-registration enabled, the account pool
+is compiled out. Capacity is 1 to 4,
 default 2. An empty `accounts: []` permits runtime provisioning. Manual account
 registration supports UDP or TCP, Digest MD5/SHA-256, renewal and registrar
 expiry negotiation. The account's successful binding is required to originate

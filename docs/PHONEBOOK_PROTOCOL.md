@@ -17,6 +17,32 @@ is the wire-format reference for custom firmware and integrations, not a request
 to replace your whole roster JSON by hand. See [basic concepts](CONCEPTS.md)
 for the difference between a phone, contact, extension and external number.
 
+## Standard LDAP directory
+
+Home Assistant owns one persistent directory. The phonebook sensor, JSON
+compatibility format and LDAP service are projections of the same contacts,
+not separate contact databases. Managed phone identities remain listed while
+offline; availability describes current reachability without deleting identity.
+Names and extensions can change while a phone keeps its stable identifier.
+
+Open **VoIP Stack > Reconfigure > LDAP directory** to configure the listener,
+base DN, anonymous-search policy and certificate/key paths. The TLS option
+selects implicit LDAPS; a certificate and key also permit StartTLS on the normal
+listener. Simple bind without TLS exposes credentials on the network. Enabled
+phone accounts authenticate independently of whether a SIP registration is
+currently active; revoked or removed accounts lose access.
+
+Compatible managed ESP firmware receives its directory configuration privately
+and refreshes after effective directory changes. A successful query replaces
+the phone's LDAP snapshot atomically. A temporary connection/listener failure
+retains its last valid snapshot; administrative disabling is a separate action.
+HA Repairs reports listener or TLS setup failures.
+
+Entries retain their phone, group or service kind. Only eligible phone entries
+are automatic BLF targets. LDAP contact records and public roster metadata do
+not contain account passwords. SIP voicemail access and MWI are separate from
+the directory service.
+
 ## ESP static contacts
 
 Declare static local entries directly in `voip_stack` only when an ESP must
@@ -56,9 +82,9 @@ Rules:
 - Name-only entries are logical targets and can be resolved or bridged by HA.
 - A numeric target from an ESP is routed to HA. HA resolves `extension` as an
   internal target and `number` as an external trunk target.
-- HA-managed sync through `sensor.voip_phonebook` is the recommended path.
-  Static contacts are local additions for offline/custom installs, not a second
-  central roster.
+- LDAP is the standard shared phonebook for compatible managed ESP firmware.
+  The sensor/JSON interface remains available for HA clients and compatibility.
+  Static contacts remain local additions for offline or custom installations.
 
 The ESP-local schema is intentionally smaller than the HA central-contact
 schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
@@ -81,9 +107,11 @@ in their standard SIP roles without asking the YAML author to duplicate them.
 
 ## HA roster
 
-HA owns the central `sensor.voip_phonebook` roster. It contains ESP peers,
-HA itself, local SIP endpoints registered to HA, manual phone endpoints,
-trunk-routed external targets when configured, and groups.
+HA owns the central directory and its `sensor.voip_phonebook` projection. It
+contains managed ESP identities, logical HA phones, configured local SIP
+accounts, manual contacts, callable services, groups and configured external
+targets. A saved identity does not require an active Contact binding. Routing
+still checks the destination's actual availability and call policy.
 
 ESP discovery starts from `text_sensor platform: voip_stack type: endpoint`.
 That endpoint state is deliberately short and does not contain group lists. If

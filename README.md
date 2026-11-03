@@ -1,22 +1,43 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**An open-source SIP PBX integrated with Home Assistant.**
+**A standalone SIP PBX for Home Assistant, with browser phones and optional ESP32 videophones.**
 
-Make and receive audio and video calls from your Home Assistant dashboard.
-Connect SIP phones, ESP32 intercoms and a provider or PBX trunk. Use ordinary
-Home Assistant automations to decide which phones ring, play spoken messages,
-handle keypad input and forward unanswered calls.
+Home Assistant runs the telephone system: phone identities, SIP registration,
+call routing, media bridges and call applications. Create a logical phone for
+each room, tablet or Companion app session, then make real audio and video
+calls between them from the VoIP Stack card or Dashboard. ESP hardware and an
+external PBX are optional.
 
-- **Home Assistant:** browser phones, video calls, a shared phonebook, ring
-  groups and conferences.
-- **Automations as dialplan:** build your own call handling with native
-  triggers, conditions and actions.
-- **Optional ESPHome endpoints:** turn supported ESP32 devices into SIP phones,
-  intercoms or complete voice satellites.
+Bring existing SIP handsets, desktop softphones, door stations and provider or
+PBX trunks into the same system. Supported ESP32 devices can act as physical
+videophones with two-way audio, camera transmission and remote video display
+where the board provides those capabilities. Their
+optional FULL firmware also combines local Assist, Micro Wake Word, music and
+TTS with VoIP.
 
-ESP hardware is optional. Start with two dashboard phones or your existing SIP
-phones, then add the features you need. The ESP firmware also works with
-[conventional PBXs](#use-esp-firmware-with-an-existing-pbx).
+- **Room and app phones:** independent identities, extensions and call settings,
+  with real browser microphone, speaker and camera media.
+- **Standard SIP:** local REGISTER accounts, static SIP endpoints, named trunks
+  and outbound routing. Compatible ESP firmware can keep its HA line alongside
+  additional registered PBX accounts.
+- **A shared directory:** persistent contacts and identities, standard LDAP,
+  eligible-phone BLF and per-account voicemail message indicators.
+- **Call handling:** ring groups, audio conferences, forwarding, blind and
+  attended transfers, parking, pickup, voicemail and DTMF.
+- **Home Assistant automations:** use normal triggers, conditions and actions
+  for ringing policy, announcements, menus and call control.
+- **Negotiated media:** prefer compatible on-wire formats and forward encoded
+  video directly. Use supported conversion or optional FFmpeg transcoding when
+  the negotiated endpoints require it.
+
+Logical phone identities and routing remain available without a card in the
+foreground. Browser and Companion media need a secure context, permissions
+and an active media session. Available codecs, video directions and physical controls depend
+on the endpoint and firmware profile. ESP32-S3 receive video uses JPEG;
+H.264 on an upstream leg requires HA conversion to JPEG for that sink.
+See the media guides for the supported paths and limits.
+
+The ESP firmware also works with [conventional PBXs](#use-esp-firmware-with-an-existing-pbx).
 
 **[Start with the basic concepts](docs/CONCEPTS.md) · [Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
 
@@ -114,7 +135,7 @@ before upgrading.
 
 | Goal | What VoIP Stack provides | Start here |
 |---|---|---|
-| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Standard ESP profiles remain audio-only; qualified ESP32-P4 profiles can also send and receive SIP video. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
+| Video doorbell | Ring a browser or Companion phone, or a configured ESP display endpoint. Video direction and codecs follow the source, sink and board profile. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
 | Room-to-room calls | Create a logical HA phone and dedicated dashboard view for each kiosk or tablet. Calls may be private audio or video. | [Logical phones](#logical-home-assistant-phones) |
 | ESP room phones | Flash one maintained VoIP YAML per room. ESPs can call names and extensions from the shared phonebook. | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
 | Full ESP voice device | Flash a maintained full-experience YAML to combine a local Voice Assistant, Micro Wake Word, media, TTS, optional Sendspin and VoIP on one device. | [Full ESP experience](#full-esp-voice-experience) |
@@ -203,7 +224,8 @@ media bridges, groups, conferences and automation services. Dashboard phones
 and standard SIP equipment connect to that backend.
 
 ESP devices become standards-based SIP phones, with audio on every maintained
-VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
+VoIP profile and optional video through configured camera and display adapters.
+Home Assistant
 can be a SIP video softphone, call router, RTP bridge, local registrar,
 conference focus, callable Assist destination and optional trunk endpoint.
 Browser phones, wall tablets, ESP room stations, standard SIP clients and an
@@ -220,7 +242,7 @@ The project therefore has three cooperating, independently useful surfaces:
 | Surface | Runs on | Purpose |
 |---|---|---|
 | Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
-| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone for VoIP Stack or a conventional PBX, with audio and optional qualified P4 video. |
+| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone for VoIP Stack or a conventional PBX, with audio and optional board-specific camera and display paths. |
 | Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
 
 Install only the surfaces you need. A VoIP-only ESP does not require the local
@@ -316,12 +338,16 @@ separate user mode.
 | `mic_only` | microphone TX | Monitor or capture endpoint |
 | `speaker_only` | speaker RX | Paging or announcement target |
 
-An endpoint must have at least one real media direction. ESP VoIP intentionally
-uses uncompressed PCM for audio. Standard profiles are audio-only; qualified
-ESP32-P4 videophone profiles compile exactly one video codec, JPEG or H.264.
-HA performs format conversion when a standard SIP peer negotiates another
-supported audio codec; ESP firmware is not downgraded to a telephone codec for
-that purpose.
+An endpoint must have at least one real media direction. ESP VoIP uses PCM
+for audio. Audio-only profiles omit video resources. A supported S3 display
+can receive RTP/JPEG through the standalone JPEG renderer; an S3 camera can
+supply a separate JPEG transmit path. P4 videophone profiles select JPEG or
+H.264, with the FULL P4 profile using JPEG.
+
+The PBX negotiates audio and video independently in each direction. It prefers
+compatible formats before using supported conversion between different
+contracts. An S3 JPEG sink does not decode H.264; HA can convert a negotiated
+upstream H.264 stream to JPEG when video transcoding is enabled.
 
 Audio component details live in the companion projects:
 
@@ -337,6 +363,10 @@ The [`yamls/full-experience/`](yamls/full-experience/) profiles are complete
 ESPHome voice devices, not merely larger SIP configurations. They combine the
 VoIP endpoint with an independent local Voice Assistant stack and coordinate
 all realtime consumers through one audio and runtime ownership model.
+
+Maintained video profiles pause Micro Wake Word during a video call and resume
+it afterward when Wake Word remains enabled and its normal start conditions
+permit. This preserves the saved Wake Word setting.
 
 The underlying audio stack is also reusable without VoIP. Custom ESPHome voice
 devices can use it to share codec or I2S ownership, speaker reference, AEC/AFE
@@ -448,20 +478,24 @@ See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
 
 ## Phonebook and routing
 
-Home Assistant publishes the shared roster through
-`sensor.voip_phonebook`. It combines:
+Home Assistant keeps one persistent phone directory and publishes its public
+roster through `sensor.voip_phonebook` and the standard LDAP directory service.
+Compatible managed ESP phones use LDAP for their shared phonebook. It combines:
 
-- online ESPHome VoIP endpoints;
+- ESPHome VoIP identities, including offline managed phones;
 - logical Home Assistant phones;
-- registered local SIP accounts;
+- configured local SIP accounts;
 - manual contacts;
 - Assist destinations;
 - dynamic ring/conference groups;
 - optional trunk-routed numbers.
 
-A name is the contact identity. An `extension` is an internal alias for that
-same destination; a `number` is normally routed through the trunk. The resolver
-can also handle canonical SIP URIs.
+Phones keep stable identities when their displayed name or extension changes.
+A name or `extension` selects an internal destination; a `number` is normally
+routed through a trunk. The resolver can also handle canonical SIP URIs.
+Directory entries distinguish phones, groups and services. Contact metadata
+contains no SIP passwords, and only eligible phone entries become automatic
+BLF targets.
 
 Phonebook names must be unique across phones, contacts and Assist pipelines,
 even when their extensions differ. Duplicate names produce an error log and
@@ -593,10 +627,15 @@ call completion, fallback, time limits, concurrent callers and troubleshooting.
 
 ## Use ESP firmware with an existing PBX
 
-An ESP running VoIP Stack can also be a SIP phone for a classic PBX. Configure
-it as a static peer: the PBX knows the ESP's address, so no SIP REGISTER or
-account credentials are needed on the firmware. A normal registered desk phone
-or softphone can then dial the ESP's extension.
+An ESP running VoIP Stack can use manually configured REGISTER accounts with
+a conventional PBX, or operate as a static SIP peer. Multiple named accounts
+can coexist with the managed HA line; select the line for the call you want to
+place. This does not require HA provisioning for the manual account.
+
+Use [registered ESP accounts](docs/ESP_REGISTRATION.md) for credentials, line
+selection and persistence. For the static example below, the PBX knows the
+ESP's address, so that route does not require REGISTER or account credentials
+on the firmware. A registered desk phone or softphone can then dial its extension.
 
 For example, reserve extension **1001** on the PBX and associate it with the
 ESP's fixed address, such as `192.168.1.60:5060`. On Asterisk, a dialplan entry

@@ -37,7 +37,7 @@ explains how to carry settings from an older YAML into the new device packages.
 | Start simple and add ESP voice, calls, music or presentation | [Package walkthrough](../packages/README.md#work-through-a-full-profile) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
 | Update an existing installation | [Breaking changes](BREAKING_CHANGES.md) |
-| Connect ESP firmware to a classic PBX | [Static SIP peers without REGISTER](CLASSIC_PBX.md) |
+| Connect ESP firmware to a classic PBX | [Registered accounts](ESP_REGISTRATION.md) or [static SIP peers](CLASSIC_PBX.md) |
 | Configure ESP and HA options | [Configuration reference](reference.md) |
 | Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
@@ -55,7 +55,7 @@ release; they were not in 2026.10.1.
 | Canonical end-to-end paths | [Call flows](CALL_FLOWS.md) |
 | SIP, SDP and RTP endpoint contract | [ESP VoIP profile](voip_profile.md) |
 | Retired proprietary protocol boundary | [Intercom protocol](INTERCOM_PROTOCOL.md) |
-| Phonebook rows and media capabilities | [Phonebook protocol](PHONEBOOK_PROTOCOL.md) |
+| Standard LDAP directory, roster rows and contact types | [Phonebook protocol](PHONEBOOK_PROTOCOL.md) |
 | Name, extension, group and trunk resolution | [Dial-plan resolver](DIALPLAN_RESOLVER.md) |
 | ESP entities published to HA | [ESP entity surface](ESP_ENTITY_SURFACE.md) |
 
