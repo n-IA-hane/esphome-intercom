@@ -13,7 +13,7 @@ Coordinates refer to the current logical LVGL display, with origin at the upper 
 
 One event-driven pointer input is allocated at setup. LVGL performs normal hit testing, pressed styling, release and click callbacks. Its existing read timer releases the tap on the next normal input cycle after 80ms, including taps on empty space, then pauses again. There is no direct widget event, phone stop, navigation, new task, stack or network server.
 
-Requests are rejected while another tap/input, a screen transition or a paused/failed LVGL component is active. A physical input or screen/rotation change during a tap cancels it through LVGL's normal `PRESS_LOST` path. The simulator does not disable or write another input device. Shutdown/detach cancels an outstanding press and deletes its own input/timer.
+Requests are rejected while another tap/input, a screen transition or a paused/failed LVGL component is active. A physical input or screen/rotation change during a tap cancels it through LVGL's normal `PRESS_LOST` path. The simulator does not disable or write another input device. Shutdown cancels an outstanding press. Detach or destruction also deletes the owned input/timer.
 
 With the frozen P4 compiler and real FULL09 headers, `TapInput` is 32B and the complete ESPHome component 44B. LVGL input/timer structures are 336B/28B, plus two 8B list nodes: 380B requested at setup. Heap metadata/alignment and standard generated API/automation objects are separate. LVGL keeps its existing PSRAM-preferred allocation policy and normal fallback. No per-tap simulator allocation, affinity or RAM/PSRAM setting is added. Real LVGL drawing and callbacks can still allocate normally. The host control compares the same redraw against an independent normal pointer driver.
 
