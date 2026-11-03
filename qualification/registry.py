@@ -202,6 +202,15 @@ AREAS = (
 
 SCENARIOS = (
     ScenarioContract(
+        "full-native-assist-https-tts",
+        frozenset({"esp_control", "audio_contract"}),
+        frozenset({"ws3"}),
+        frozenset({"native-tts-playback", "https-tts", "runtime-ui-policy", "user-confirmed-output-and-panel"}),
+        frozenset({"native-idle", "no-captured-failure", "preferences-preserved",
+                   "cleanup-barrier", "resources-at-baseline"}),
+        ("baseline-F003-F088",),
+    ),
+    ScenarioContract(
         "ha-phone-policy-and-dnd-routing",
         frozenset({"ha_surface", "ha_lifecycle"}),
         frozenset({"ha-lab", "sipp"}),

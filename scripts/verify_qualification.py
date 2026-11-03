@@ -220,7 +220,9 @@ def verify(
         for field, values in normalized.items():
             observed[scenario_id][field].update(values)
         verified_evidence.append(
-            {"scenario_id": scenario_id, "job": job, "status": "passed", **normalized}
+            {"scenario_id": scenario_id, "job": job, "status": "passed", **normalized,
+             **({"proof_layers": measured["proof_layers"]}
+                if measured and "proof_layers" in measured else {})}
         )
 
     scenario_manifest: dict[str, object] = {}

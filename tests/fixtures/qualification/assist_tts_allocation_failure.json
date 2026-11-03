@@ -1,0 +1,41 @@
+{
+  "provenance": {
+    "kind": "verbatim-native-log-subset",
+    "source_sha256": "9860ccb13936e1c0a65d5708d6bbe0fa7a67cecdc55ce630ec7b87f82be69649",
+    "omitted": "duplicate error lines and private TTS URL"
+  },
+  "started_epoch": 1793688409.5441122,
+  "finished_epoch": 1793688423.8737495,
+  "logs": [
+    {
+      "epoch": 1793688412.567466,
+      "level": 3,
+      "message": "[I][va:046]: VA: tts_start"
+    },
+    {
+      "epoch": 1793688412.754179,
+      "level": 1,
+      "message": "[E][spi:183]: Transmit failed - err 101"
+    },
+    {
+      "epoch": 1793688413.1394355,
+      "level": 3,
+      "message": "[I][esp-idf:000][md_reader]: D (39437) micro_decoder.http_client: Connected: status=200 content-type='audio/flac'"
+    },
+    {
+      "epoch": 1793688414.454377,
+      "level": 3,
+      "message": "[I][esp-idf:000][md_reader]: E (40750) esp-aes: Failed to allocate memory"
+    },
+    {
+      "epoch": 1793688414.4544094,
+      "level": 3,
+      "message": "[I][esp-idf:000][md_reader]: E (40751) esp-tls-mbedtls: read error :-0x0001"
+    },
+    {
+      "epoch": 1793688415.4716158,
+      "level": 1,
+      "message": "[E][speaker_source_media_player:274]: Announcement source error"
+    }
+  ]
+}

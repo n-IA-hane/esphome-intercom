@@ -32,7 +32,7 @@ FEATURE_ORACLES = {
 def final_session_plan(head: str, candidate_id: str) -> dict[str, object]:
     """A preparation receipt cannot be supplied as a successful HIL result."""
     ids = {scenario.id for scenario in SCENARIOS}
-    contracts = ["esp-to-ha-answer-hangup", "esp-to-esp-watchdog-and-bidirectional-hangup",
+    contracts = ["full-native-assist-https-tts", "esp-to-ha-answer-hangup", "esp-to-esp-watchdog-and-bidirectional-hangup",
                  "registered-sip-to-esp-bidirectional-hangup", "p4-full-landscape-jpeg-call-lifecycle"]
     if not head or not candidate_id or not set(contracts) <= ids:
         raise ValueError("Missing candidate or maintained scenario contract")
@@ -40,6 +40,24 @@ def final_session_plan(head: str, candidate_id: str) -> dict[str, object]:
         "schema_version": 1, "status": "prepared", "head": head, "candidate_id": candidate_id,
         "hardware_actions": [], "physical": "not_run", "acoustic": "not_run",
         "required_firmware_features": ["assist", "mww", "audio", "display"],
+        "native_assist_baseline": {
+            "feature_ids": ["F003", "F088"], "profile": "waveshare-s3-full",
+            "route": "existing-native-Assist-MWW-to-HA-to-HTTPS-TTS-to-local-speaker",
+            "actor": "existing-HIL-command-and-EspObserver-owner",
+            "trigger": "existing-authorized-native-interaction-only-no-new-trigger",
+            "volume": "preserve-existing-user-value-no-mute-for-native-TTS",
+            "requires": ["candidate-bound-native-logs", "native-playback-finished",
+                         "Runtime-INFO-event-join-and-UI-policy-idle", "actual-user-complete-output-and-panel-idle",
+                         "speaker-drained", "no-captured-failure", "Wake-DND-volume-preserved"],
+            "missing_local_PCM": "measured-media-not-measured",
+            "missing_native_or_user_confirmation": "functional-blocked-not-passed",
+            "HA_idle_or_HTTP_200_alone": "insufficient",
+            "tts_provider_profile": "bind-actual-HTTPS-response-MIME-to-candidate-profile-not-all-TTS-to-FLAC",
+            "proof_layers": {"functional": "native-state-and-actual-user-review",
+                             "measured_pcm": "separate-strict-local-speaker-WAV-proof",
+                             "panel": "actual-user-confirmation-or-separate-fresh-pixels-review",
+                             "acoustic_metrology": "not-claimed-by-functional-user-listening"},
+        },
         "preserve": {"ha_owner": "home", "default_line": "ha", "master_volume": 0},
         "routes": ["ha-to-esp", "esp-to-ha", "esp-to-esp", "qa-to-esp", "esp-to-qa"],
         "manual_generic_ha": {

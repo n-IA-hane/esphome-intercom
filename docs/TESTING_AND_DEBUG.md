@@ -73,6 +73,35 @@ unchanged and create a disposable local-source variant for candidate builds.
 Test operators must record the resolved commits with the resulting evidence:
 a green CI run is not a physical-device qualification.
 
+The FULL baseline also includes `full-native-assist-https-tts` (F003/F088).
+Use the existing authorized native Assist/MWW interaction, HA pipeline and
+HTTPS TTS route, with the existing HIL actor and `EspObserver`. No alternative
+trigger, announcement server or SIP call can substitute for this witness.
+Its candidate/run-bound receipt includes the raw native log/state capture and
+the actual user message confirming complete output and panel idle, with a
+trusted actor's review quoting that message and binding it to the build/time.
+The validator reads those artifacts, with no default success flags:
+HTTP 200, HA idle, a decoded download or a declared `passed` cannot establish
+complete playback. Native playback completion, Runtime voice/response/display
+policies idle after a one-second quiet window, an empty speaker queue, unchanged
+Wake/DND/volume observations and no captured allocator/source/transport errors
+are required. INFO Runtime events from the existing media listener support the
+functional gate without requiring DEBUG messages compiled out of the profile.
+Every source/VA error vetoes a pass even if the player reports finish/idle.
+Bind the actual HTTPS provider's response MIME to the candidate profile; this
+does not require every provider to use FLAC.
+
+`proof_layer=functional` qualifies native behavior and the bound user review,
+while reporting absent local PCM as `not_measured`. `proof_layer=measured-pcm`
+additionally requires the strict local speaker WAV, fully decoded and bound to
+the entire playback window. A supplied WAV is always checked. Download/RTP WAVs
+cannot substitute for that stage. Functional acceptance never counts as PCM or
+acoustic metrology. Missing native observations or user review blocks functional
+acceptance; missing PCM blocks measured acceptance. Host fixtures prove neither
+physical output nor user feedback. Keep private TTS URLs and real user messages
+in private evidence. The trusted actor reviews the meaning of the actual quote
+(including the question context for a short answer); this is not an NLP oracle.
+
 The browser startup regression delays worklet downloads in real Chromium and
 checks the first rendered samples after preparation, using silent virtual
 devices. A separate SIP/UDP test checks that initial PCMU frames survive an
