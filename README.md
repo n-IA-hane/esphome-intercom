@@ -1,6 +1,10 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**A standalone SIP PBX for Home Assistant, with browser phones and optional ESP32 videophones.**
+**An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
+
+Connect standard SIP desk phones and softphones, make calls from Home Assistant
+cards or the VoIP Dashboard, and turn supported ESP32 boards into real SIP phones
+and videophones.
 
 Home Assistant runs the telephone system: phone identities, SIP registration,
 call routing, media bridges and call applications. Create a logical phone for
