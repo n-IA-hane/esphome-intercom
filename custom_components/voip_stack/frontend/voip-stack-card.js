@@ -3157,7 +3157,9 @@ class VoipStackCard extends HTMLElement {
   _applyHangupAudioLevel(level) {
     const card = this._els?.card;
     if (!card) return;
-    const scale = 1 + Math.max(0, Math.min(1, Number(level) || 0)) * 0.08;
+    // Make quiet received speech visible without changing the media level.
+    // The inner circle reserves room for the full 24 percent expansion.
+    const scale = 1 + Math.sqrt(Math.max(0, Math.min(1, Number(level) || 0))) * 0.24;
     card.style.setProperty("--voip-hangup-scale", scale.toFixed(4));
   }
 

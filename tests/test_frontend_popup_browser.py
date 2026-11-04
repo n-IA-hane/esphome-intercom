@@ -199,7 +199,7 @@ def test_rx_animation_has_fixed_hitbox_and_rejects_stale_call(popup_page):
     assert min(result["rect"][2:]) >= 44
     page.evaluate("level('incoming-A',1)")
     page.wait_for_timeout(130)
-    assert page.evaluate("__voipStackPopup.dialog._phone._els.card.style.getPropertyValue('--voip-hangup-scale')") == "1.0800"
+    assert page.evaluate("__voipStackPopup.dialog._phone._els.card.style.getPropertyValue('--voip-hangup-scale')") == "1.2400"
     assert page.evaluate("__voipStackPopup.dialog._phone.shadowRoot.querySelector('.hangup-pulse').getBoundingClientRect().width > initialPulse*1.06")
     assert page.evaluate("""() => {
       const b=__voipStackPopup.dialog._phone._els.hangupBtn,r=b.getBoundingClientRect();

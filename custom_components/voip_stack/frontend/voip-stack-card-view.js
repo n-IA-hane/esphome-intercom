@@ -320,7 +320,7 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .hangup-pulse {
         position: absolute;
-        inset: 4%;
+        inset: 10%;
         z-index: -1;
         border-radius: inherit;
         background: #f44336;
