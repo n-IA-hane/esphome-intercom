@@ -19,6 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 DOMAIN = "voip_stack"
 INTEGRATION_DEPENDENCIES = {
     "assist_pipeline",
+    "frontend",
     "http",
     "lovelace",
     "network",
@@ -115,7 +116,12 @@ async def test_phonebook_unique_names_do_not_notify(hass):
 
 def _prepare_integration_dependencies(hass: HomeAssistant) -> None:
     """Provide dependency surfaces without starting unrelated HA services."""
+    from homeassistant.components import frontend
+
+    # These service tests model completed dependency setup, locally. The real
+    # frontend-before-VoIP lifecycle is exercised by test_popup_frontend_ha.
     hass.config.components.update(INTEGRATION_DEPENDENCIES)
+    hass.data[frontend.DATA_EXTRA_MODULE_URL] = frontend.UrlManager(lambda *_: None, [])
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
 

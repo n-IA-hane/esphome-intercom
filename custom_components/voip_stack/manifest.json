@@ -15,6 +15,7 @@
   "dependencies": [
     "assist_pipeline",
     "ffmpeg",
+    "frontend",
     "http",
     "lovelace",
     "media_source",
