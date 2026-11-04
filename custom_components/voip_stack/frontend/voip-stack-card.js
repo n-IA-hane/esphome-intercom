@@ -2262,11 +2262,14 @@ class VoipStackCard extends HTMLElement {
     const height = card.clientHeight;
     card.style.setProperty("--voip-video-control-size", `${Math.max(24, Math.min(36, width / 12))}px`);
     const controls = this._els?.runtimeControls;
+    card.style.setProperty("--voip-video-actions-space", "0px");
     if (controls && card.classList.contains("video-active") && !this._settingsOpen) {
       const bounds = controls.getBoundingClientRect();
-      const right = card.getBoundingClientRect().right - bounds.left;
-      const gap = parseFloat(getComputedStyle(this._els.hangupBtn).columnGap) || 0;
-      card.style.setProperty("--voip-video-actions-space", `${Math.ceil(right + gap)}px`);
+      if (bounds.width > 0 && bounds.height > 0) {
+        const right = card.getBoundingClientRect().right - bounds.left;
+        const gap = parseFloat(getComputedStyle(this._els.hangupBtn).columnGap) || 0;
+        card.style.setProperty("--voip-video-actions-space", `${Math.ceil(right + gap)}px`);
+      }
       const keypad = this._els.keypadPanel;
       if (keypad && !keypad.hidden) {
         const available = this._els.hangupBtn.parentElement.offsetTop - keypad.offsetTop;

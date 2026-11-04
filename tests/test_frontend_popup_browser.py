@@ -267,6 +267,86 @@ def test_answer_link_rejects_wrong_scope_and_changed_call_during_permission(popu
     assert page.evaluate("__voipStackPopup.binding.endpoint_id") == "browser:desk"
 
 
+@pytest.mark.parametrize("hidden_mode", ["popup", "dashboard"])
+def test_video_hangup_bounds_follow_visible_runtime_controls(popup_page, hidden_mode):
+    """Exercise the production builder and layout owner in a real native dialog."""
+    page = popup_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.evaluate("""async () => {
+      await import('/voip-stack-card.js');
+      const {buildMainCardSkeleton}=await import('/voip-stack-card-view.js');
+      const Card=customElements.get('voip-stack-card');
+      const dialog=document.createElement('voip-stack-phone-dialog');
+      root.shadowRoot.append(dialog);dialog._title.textContent='Test';
+      // The static layout fixture has no phone/media lifecycle. Its template,
+      // native dialog, CSS and measured layout methods are production code.
+      const view=document.createElement('div');view.attachShadow({mode:'open'});
+      view._attachEventHandlers=()=>{};view._observeLayout=()=>{};
+      view._layoutPhoneActivity=Card.prototype._layoutPhoneActivity;
+      view._measureLayout=Card.prototype._measureLayout;
+      buildMainCardSkeleton.call(view,'layout-fixture');dialog._view.append(view);
+      const e=view._els;e.card.classList.add('video-active');
+      for(const item of [e.header,e.destRow,e.answerBtn,e.declineBtn,e.callBtn,
+          e.placeholderBtn,e.settingsPanel,e.keypadPanel,e.voicemailPanel])item.hidden=true;
+      for(const button of e.runtimeControls.querySelectorAll('button'))button.hidden=true;
+      e.settingsBtn.hidden=false;e.keypadBtn.hidden=false;e.hangupBtn.hidden=false;
+      e.hangupPeer.textContent='Waveshare P4 Touch';e.hangupDuration.textContent='00:25';
+      e.videoCanvas.hidden=false;e.videoShade.hidden=false;
+      dialog._dialog.showModal();
+      const box=node=>{const b=node.getBoundingClientRect();
+        return {left:b.left,right:b.right,top:b.top,bottom:b.bottom,width:b.width,height:b.height};};
+      const textBoxes=node=>{const r=document.createRange();r.selectNodeContents(node);
+        return [...r.getClientRects()].filter(b=>b.width>0&&b.height>0)
+          .map(b=>({left:b.left,right:b.right,top:b.top,bottom:b.bottom}));};
+      window.layoutFixture={view,e,dialog,measure:()=>view._measureLayout(),
+        inspect:()=>({card:box(e.card),button:box(e.hangupBtn),controls:box(e.runtimeControls),
+          paddingRight:parseFloat(getComputedStyle(e.hangupBtn).paddingRight),
+          copy:textBoxes(e.hangupBtn.querySelector('.hangup-copy')),
+          duration:textBoxes(e.hangupDuration)})};
+    }""")
+
+    def assert_readable(state):
+        card, button = state["card"], state["button"]
+        assert card["left"] > 100  # A hidden control's viewport origin is not card-relative.
+        assert button["width"] >= 44 and button["height"] >= 44
+        assert button["left"] >= card["left"] - 1
+        assert button["right"] <= card["right"] + 1
+        for key in ("copy", "duration"):
+            assert state[key]
+            for rect in state[key]:
+                assert rect["left"] >= max(card["left"], button["left"]) - 1
+                assert rect["right"] <= min(card["right"], button["right"]) + 1
+                assert rect["top"] >= button["top"] - 1
+                assert rect["bottom"] <= button["bottom"] + 1
+
+    # A visible toolbar still needs its own space, including after it reappears.
+    page.evaluate("layoutFixture.measure()")
+    visible = page.evaluate("layoutFixture.inspect()")
+    assert_readable(visible)
+    assert visible["controls"]["width"] > 0 and visible["paddingRight"] > 0
+    assert max(rect["right"] for rect in visible["duration"]) <= visible["controls"]["left"]
+
+    page.evaluate("""mode=>{
+      if(mode==='popup')layoutFixture.view.setAttribute('data-receive-popup','');
+      else layoutFixture.e.card.classList.add('dashboard-inline-options');
+      layoutFixture.measure();
+    }""", hidden_mode)
+    hidden = page.evaluate("layoutFixture.inspect()")
+    assert hidden["controls"]["width"] == 0 and hidden["controls"]["height"] == 0
+    assert_readable(hidden)
+    assert hidden["paddingRight"] == 0
+
+    page.evaluate("""()=>{
+      layoutFixture.view.removeAttribute('data-receive-popup');
+      layoutFixture.e.card.classList.remove('dashboard-inline-options');
+      layoutFixture.measure();
+    }""")
+    restored = page.evaluate("layoutFixture.inspect()")
+    assert_readable(restored)
+    assert restored["paddingRight"] > 0
+    assert max(rect["right"] for rect in restored["duration"]) <= restored["controls"]["left"]
+
+
 def test_popup_labels_follow_existing_italian_catalogue(popup_page):
     page = popup_page
     enable(page)
