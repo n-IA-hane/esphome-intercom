@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Check out coordinated ESP component sources
         env:
-          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !endsWith(github.ref_name, '-dev'))) && 'main' || 'dev' }}
+          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
           COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
         run: >-
           python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Check out coordinated ESP component sources
         env:
-          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !endsWith(github.ref_name, '-dev'))) && 'main' || 'dev' }}
+          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
           COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
         run: >-
           python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
