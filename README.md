@@ -2,28 +2,22 @@
 
 **An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
 
-Connect standard SIP desk phones and softphones, make calls from Home Assistant
-cards or the VoIP Dashboard, and turn supported ESP32 boards into real SIP phones
-and videophones.
+Connect standard SIP desk phones and softphones, receive audio and video calls
+from your SIP doorbell or door station, and answer from Home Assistant cards
+or the VoIP Dashboard. Make room-to-room and app-to-app calls through the same PBX.
 
 Home Assistant runs the telephone system: phone identities, SIP registration,
 call routing, media bridges and call applications. Create a logical phone for
 each room, tablet or Companion app session, then make real audio and video
-calls between them from the VoIP Stack card or Dashboard. ESP hardware and an
-external PBX are optional.
+calls between them from the VoIP Stack card or Dashboard.
 
-Bring existing SIP handsets, desktop softphones, door stations and provider or
-PBX trunks into the same system. Supported ESP32 devices can act as physical
-videophones with two-way audio, camera transmission and remote video display
-where the board provides those capabilities. Their
-optional FULL firmware also combines local Assist, Micro Wake Word, music and
-TTS with VoIP.
+Bring existing SIP handsets, desktop softphones, door stations and provider
+trunks into the same telephone system.
 
 - **Room and app phones:** independent identities, extensions and call settings,
   with real browser microphone, speaker and camera media.
 - **Standard SIP:** local REGISTER accounts, static SIP endpoints, named trunks
-  and outbound routing. Compatible ESP firmware can keep its HA line alongside
-  additional registered PBX accounts.
+  and outbound routing.
 - **A shared directory:** persistent contacts and identities, standard LDAP,
   eligible-phone BLF and per-account voicemail message indicators.
 - **Call handling:** ring groups, audio conferences, forwarding, blind and
@@ -36,12 +30,7 @@ TTS with VoIP.
 
 Logical phone identities and routing remain available without a card in the
 foreground. Browser and Companion media need a secure context, permissions
-and an active media session. Available codecs, video directions and physical controls depend
-on the endpoint and firmware profile. ESP32-S3 receive video uses JPEG;
-H.264 on an upstream leg requires HA conversion to JPEG for that sink.
-See the media guides for the supported paths and limits.
-
-The ESP firmware also works with [conventional PBXs](#use-esp-firmware-with-an-existing-pbx).
+and a running frontend.
 
 **[Start with the basic concepts](docs/CONCEPTS.md) · [Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
 
@@ -51,21 +40,19 @@ The ESP firmware also works with [conventional PBXs](#use-esp-firmware-with-an-e
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real door-station call through a FreeSWITCH-based PBX, with the local webcam
-off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
-[how to park and retrieve audio calls](docs/CALL_PARKING.md).
-[FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
+_A real video call with a MOBOTIX door station in the VoIP Stack Home Assistant
+card, with the local camera off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card)
+and [how to park and retrieve audio calls](docs/CALL_PARKING.md)._
 
-![Browser video call with an illustrative gate-camera feed in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
+![Doorbell video call demo in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
 
-_A browser-to-browser video call in the VoIP Dashboard. The gate-camera image
-is generated for this demonstration; it is transmitted between two browser
-phones, rather than captured from a physical door station._
+_Demo of receiving a doorbell video call in the VoIP Dashboard, using an
+illustrative gate-camera feed._
 
 <details>
 <summary>Full Dashboard view and illustrative camera source</summary>
 
-![Complete Dashboard during the browser video demonstration](docs/images/voip-dashboard-gate-desktop-demo.png)
+![Complete Dashboard during the doorbell video call demo](docs/images/voip-dashboard-gate-desktop-demo.png)
 
 ![Generated gate-camera illustration used as the demonstration source](docs/images/illustrative-gate-camera.png)
 
@@ -252,9 +239,8 @@ VoIP profile and optional video through configured camera and display adapters.
 Home Assistant
 can be a SIP video softphone, call router, RTP bridge, local registrar,
 conference focus, callable Assist destination and optional trunk endpoint.
-Browser phones, wall tablets, ESP room stations, standard SIP clients and an
-external PBX can share one phonebook without requiring a separate Asterisk or
-FreeSWITCH server for the normal home use case.
+Browser phones, wall tablets, ESP room stations and standard SIP clients
+share one phonebook and Home Assistant's call routing.
 
 VoIP is only one part of the project. The optional full-experience ESP YAMLs
 also provide an independent on-device Voice Assistant, Micro Wake Word, media
@@ -399,9 +385,8 @@ call. The popup shares the existing phone's audio, ringtone and Call-ID.
 
 ![Video in the global call popup](docs/images/voip-popup-video-demo.png)
 
-_Real Home Assistant UI during a browser-to-browser call. The gate image is
-an illustrative video source, not a physical door-camera capture.
-[Screenshot provenance](docs/voip-ui-provenance.json)._
+_Demo of receiving a doorbell video call in the global popup, using an
+illustrative gate-camera feed._
 
 </details>
 
@@ -418,6 +403,19 @@ an operating-system telephone channel or native incoming-call screen.
 See the [popup setup and controls](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
 
 ## ESP endpoints and media roles
+
+VoIP Stack firmware turns supported ESP32 boards into real SIP phones and full
+videophones. With a microphone, speaker, camera and display, a supported
+videophone profile can make and receive audio and video calls, transmit its
+camera and show the remote caller. Call Home Assistant phones, other ESP
+phones, standard SIP phones and SIP door stations through the same system.
+
+ESP phones support registered SIP accounts, multiple lines, LDAP contacts,
+BLF states, MWI and DTMF for voicemail menus when enabled in their profile.
+They can use VoIP Stack for Home Assistant or a
+[compatible external PBX](#use-esp-firmware-with-an-existing-pbx).
+Optional FULL firmware also combines local Assist, Micro Wake Word, music
+and TTS with VoIP.
 
 ESP media roles are derived from the configured components; they are not a
 separate user mode.
