@@ -302,39 +302,21 @@ its C6 firmware/resource notes before changing LVGL or audio features.
 
 ### Development preview firmware
 
-For **2026.11.1-dev.1**, start from the maintained YAML for your
-exact board and use its matching device package from `@dev`. Override all applicable
-component sources together in the existing `substitutions` block:
+Download the maintained YAML for your exact board from the repository's `dev`
+branch. These profiles already select the matching `@dev` device package and
+project components, including optional renderer and screenshot components.
+Keep the selected board's wiring, secrets and feature list. Updating HACS does
+not rebuild or upload ESP firmware.
 
-```yaml
-substitutions:
-  ext_components_source: github://n-IA-hane/esphome-intercom@dev
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
-  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
-  esp_video_renderer_components_source: github://n-IA-hane/esphome-video-renderer@dev
-  camera_components_source: github://n-IA-hane/esphome-esp-video-camera@dev
-  esp_screenshot_components_source: github://n-IA-hane/esphome-screenshot@dev
-  intercom_idf_ref: dev
-```
+For stable firmware, download the profile from `main` instead. Upstream
+third-party dependencies keep their own supported refs.
 
-The renderer, camera and screenshot sources apply only when the selected
-profile loads those components. `intercom_idf_ref: dev` selects the P4 PPA
-rotation fix. For example, the P4 landscape FULL JPEG profile keeps its
-existing package path and changes only its ref:
-
-```yaml
-packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-full-landscape.yaml@dev
-```
-
-Keep the selected board's wiring, secrets and feature list. The shipped
-`@main` defaults remain the stable path; this block is an explicit preview
-selection. Updating HACS does not rebuild or upload ESP firmware.
-
-The selected package and all applicable component overrides must travel
-together. The source-switch helper does not manage every renderer, screenshot
-or IDF override; inspect these values explicitly.
+For repository development, run `./scripts/yaml_paths.sh dev` before committing
+and publishing to `dev`, or `./scripts/yaml_paths.sh main` before publishing to
+`main`. Check the exact destination with
+`./scripts/yaml_paths.sh check --expect remote --ref dev` (use `main` for a main
+publication). Always run `./scripts/yaml_paths.sh local` after the push to
+return the checkout to local development. Local paths stay uncommitted.
 
 ## Optional SIP trunks
 

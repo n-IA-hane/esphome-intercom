@@ -55,16 +55,12 @@ on a wall panel; no-answer rules decide where the call goes next. Video follows
 the capabilities of the devices and route you choose. Audio conferences are
 audio-only, and not every mixed SIP ring-group route preserves video.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/pbx-mobotix-video-green.png" alt="MOBOTIX door-station video in the Home Assistant phone card"/></td>
-    <td width="50%"><img src="docs/images/voip-dashboard-gate-demo.png" alt="Doorbell video-call demonstration in the VoIP Dashboard"/></td>
-  </tr>
-  <tr>
-    <td><em>A video call with a MOBOTIX door station in the VoIP Stack Home Assistant card.</em></td>
-    <td><em>Dashboard doorbell-call demonstration using an illustrative gate-camera feed.</em></td>
-  </tr>
-</table>
+![Doorbell video-call demonstration in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
+
+_Dashboard doorbell-call demonstration using an illustrative gate-camera feed._
+
+See the [recorded MOBOTIX door-station call](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/pbx-mobotix-video-green.png)
+for a real door-station example. Its capture uses the earlier card theme.
 
 Start with the [SIP video guide](docs/SIP_VIDEO.md) for compatible cameras,
 codecs and receive/transmit directions. The [doorbell automation recipes](docs/AUTOMATION_DIALPLAN.md)
@@ -101,9 +97,9 @@ the available combination depends on the board, firmware and resources.
 During negotiated video, maintained FULL profiles pause Micro Wake Word and
 resume it afterward when enabled and ready.
 
-![Native P4 screen capture with weather, Voice Assistant and the SIP dial pad](docs/images/p4-touch-overview.jpg)
+![P4 FULL interface with a shared contact list and BLF call states](docs/images/p4-contacts-blf-demo.png)
 
-_P4 native screen: weather, Voice Assistant and VoIP._
+_P4 FULL interface demo: shared contacts, available, ringing, in call and on hold._
 
 ### An assistant with a face, and sometimes an attitude
 

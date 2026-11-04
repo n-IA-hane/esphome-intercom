@@ -18,6 +18,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify committed YAML and package source channel
+        env:
+          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
+        run: python3 scripts/yaml_paths.sh check --expect remote --ref "$COMPONENT_REF"
+
   software:
     runs-on: ubuntu-latest
     timeout-minutes: 45

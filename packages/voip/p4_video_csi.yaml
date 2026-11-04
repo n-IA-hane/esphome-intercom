@@ -1,7 +1,7 @@
 # CSI compatibility is a video-only build adaptation, not an audio dependency.
 defaults:
   intercom_idf_root: '${ intercom_idf_root | default("") }'
-  intercom_idf_ref: '${ intercom_idf_ref | default("main") }'
+  intercom_idf_ref: '${ intercom_idf_ref | default("dev") }'
   _p4_csi_remote:
     name: esp_video_csi_compat
     source: https://github.com/n-IA-hane/esphome-intercom.git

@@ -180,7 +180,8 @@ The current generated-code snapshots confirm:
   `esp_audio_stack` facade, but creates separate ESP-IDF I2S simplex channels
   for RX and TX. This path is only compiled when YAML uses `rx_bus` and `tx_bus`.
 
-![AFE runtime controls exposed through Home Assistant](images/afe-controls.png)
+For the earlier Home Assistant entity layout, see the
+[historical AFE runtime controls capture](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/afe-controls.png).
 
 ![Wake-word barge-in and media ducking](images/ducking-barge-in.gif)
 

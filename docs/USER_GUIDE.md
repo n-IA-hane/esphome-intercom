@@ -214,10 +214,9 @@ button and is not duplicated in these lists.
 The keypad closes when you start or answer a call. Open it again if an IVR or
 door station needs DTMF. On short video cards it scrolls above the call bar.
 
-![Live video received from a Mobotix door station](images/pbx-mobotix-video-green.png)
-
-A video call with a MOBOTIX door station in the VoIP Stack Home Assistant card.
-The image arrives from the door station. **P is disabled during video calls**:
+The [historical MOBOTIX video-call capture](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/pbx-mobotix-video-green.png)
+shows video received from a real door station in the VoIP Stack Home Assistant
+card. **P is disabled during video calls**:
 parking currently supports audio calls. Switching off Send Camera alone does
 not make a call audio-only when the peer is sending video.
 

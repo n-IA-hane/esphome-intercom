@@ -18,7 +18,7 @@ packages:
 
 defaults:
   intercom_idf_root: '${ intercom_idf_root | default("") }'
-  intercom_idf_ref: '${ intercom_idf_ref | default("main") }'
+  intercom_idf_ref: '${ intercom_idf_ref | default("dev") }'
   _p4_ppa_remote:
     name: esp_driver_ppa
     source: https://github.com/n-IA-hane/esphome-intercom.git

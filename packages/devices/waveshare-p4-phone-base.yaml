@@ -2,9 +2,9 @@
 substitutions:
   name: waveshare-p4-touch
   friendly_name: Waveshare P4 Touch
-  ext_components_source: github://n-IA-hane/esphome-intercom@main
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@main
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
   voip_transport: udp
   voip_sip_port: '5060'
   voip_rtp_port: '40000'

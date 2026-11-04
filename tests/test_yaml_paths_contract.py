@@ -125,7 +125,9 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
                       'packages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@main\n')
     tool.rewrite_yaml(config, 'local')
     text = config.read_text()
-    for key in ('ext_components_source', 'voip_stack_components_source', 'audio_stack_components_source'):
+    for key in ('ext_components_source', 'voip_stack_components_source', 'audio_stack_components_source',
+                'runtime_controller_components_source', 'esp_video_renderer_components_source',
+                'esp_screenshot_components_source'):
         assert key + ':' in text
     assert 'camera_components_source:' in text
     assert 'intercom_idf_root:' in text
@@ -134,6 +136,8 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
     text = config.read_text()
     assert 'packages/devices/waveshare-p4-phone-jpeg.yaml@dev' in text
     assert 'github://n-IA-hane/esphome-audio-stack@dev' in text
+    assert 'github://n-IA-hane/esphome-video-renderer@dev' in text
+    assert 'github://n-IA-hane/esphome-screenshot@dev' in text
     assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
     assert 'intercom_idf_ref: "dev"' in text
     assert 'intercom_idf_root: ""' in text
@@ -146,3 +150,85 @@ def test_camera_source_variable_is_owned_by_the_top_level_profile(tmp_path):
     config.write_text(text)
     tool.rewrite_camera(config, 'local')
     assert config.read_text() == text
+
+
+def test_remote_ref_check_rejects_mixed_component_channels(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    (tmp_path / 'yamls').mkdir()
+    (tmp_path / 'packages').mkdir()
+    config = tmp_path / 'yamls/device.yaml'
+    text = ('substitutions:\n'
+            '  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"\n'
+            '  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"\n'
+            '  camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"\n'
+            'packages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/phone.yaml@dev\n')
+    config.write_text(text)
+    assert tool.check('remote', None, 'dev') == 1
+    config.write_text(text.replace('esphome-voip-stack@main', 'esphome-voip-stack@dev'))
+    assert tool.check('remote', None, 'dev') == 0
+
+
+def test_package_defaults_and_direct_sources_follow_channel_without_changing_includes(tmp_path):
+    tool = _load_yaml_paths()
+    package = tmp_path / "fragment.yaml"
+    original = ('substitutions:\n'
+                '  esp_video_renderer_components_source: ${ esp_video_renderer_components_source | default("github://n-IA-hane/esphome-video-renderer@main") }\n'
+                'packages:\n  audio: !include ../audio/profile.yaml\n'
+                'external_components:\n  - source: github://n-IA-hane/esphome-esp-video-camera@main\n'
+                '  - source:\n      type: git\n      url: https://github.com/n-IA-hane/esphome-screenshot.git\n      ref: main\n'
+                '  - source: github://Psix-anp/esphome-esp-video-camera@main\n')
+    package.write_text(original)
+    tool.rewrite_sources(package, "dev")
+    text = package.read_text()
+    assert 'default("github://n-IA-hane/esphome-video-renderer@dev")' in text
+    assert 'audio: !include ../audio/profile.yaml' in text
+    assert 'github://n-IA-hane/esphome-esp-video-camera@dev' in text
+    assert '      ref: dev' in text
+    assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
+    assert list(tool.source_errors(package, "dev", True)) == []
+    package.write_text(text.replace('      ref: dev', '      ref: main'))
+    assert list(tool.source_errors(package, "dev", True)) == ['git source channel main, expected dev']
+
+
+def test_package_default_round_trip_preserves_expression(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    directory = tmp_path / 'packages'
+    directory.mkdir()
+    package = directory / 'source.yaml'
+    original = 'substitutions:\n  ext_components_source: ${ ext_components_source | default("github://n-IA-hane/esphome-intercom@dev") }\n'
+    package.write_text(original)
+    tool.rewrite_sources(package, 'local')
+    assert 'default("' + str(tool.URLS['github://n-IA-hane/esphome-intercom'] / 'esphome/components') + '")' in package.read_text()
+    assert list(tool.source_errors(package, 'dev', True)) == ['absolute local source path in public YAML']
+    tool.rewrite_sources(package, 'dev')
+    assert package.read_text() == original
+
+
+def test_global_managed_files_exclude_debug_not_ready_and_private(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    directory = tmp_path / 'yamls'
+    (directory / 'debug').mkdir(parents=True)
+    for relative in ('phone.yaml', 'phone-local.yaml', 'secrets.yaml', 'future_NOT_READY.yaml', 'debug/test.yaml'):
+        (directory / relative).write_text('substitutions: {}\n')
+    assert tool.yaml_files() == [directory / 'phone.yaml']
+
+
+def test_relative_sources_do_not_require_optional_checkouts(tmp_path):
+    tool = _load_yaml_paths()
+    assert tool.relative(tmp_path / 'project/yamls', tmp_path / 'native/esphome/components') == '../../native/esphome/components'
+
+
+def test_global_ref_gate_checks_package_defaults(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    (tmp_path / 'yamls').mkdir()
+    (tmp_path / 'packages').mkdir()
+    (tmp_path / 'yamls/device.yaml').write_text('packages:\n  device: github://n-IA-hane/esphome-intercom/packages/phone.yaml@dev\n')
+    package = tmp_path / 'packages/phone.yaml'
+    package.write_text('substitutions:\n  ext_components_source: github://n-IA-hane/esphome-intercom@main\n')
+    assert tool.check('remote', None, 'dev') == 1
+    tool.rewrite_sources(package, 'dev')
+    assert tool.check('remote', None, 'dev') == 0

@@ -69,7 +69,7 @@ session, HA returns `486 Busy Here`.
 The card does not decide routing and does not filter the phonebook. It displays
 the central roster and mirrors HA softphone state.
 
-![Home Assistant calling an ESP endpoint](images/call-from-home-assistant-to-esp.gif)
+See the [historical recording of Home Assistant calling an ESP endpoint](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/call-from-home-assistant-to-esp.gif).
 
 ## ESP mirror card to target
 
@@ -113,7 +113,7 @@ Unexpected log shape:
 - `SIP route requested ...` for ordinary registered endpoint calls. That means
   the call left the canonical dial plan and went into the automation fallback.
 
-![SIP bridge across transport boundaries](images/cross-transport-bridge.gif)
+See the [historical recording of a SIP bridge across transport boundaries](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/cross-transport-bridge.gif).
 
 ## Unknown or unregistered caller
 
