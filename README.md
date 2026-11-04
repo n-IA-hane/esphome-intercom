@@ -2,6 +2,11 @@
 
 **An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
 
+![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
+
+_Dashboard demo showing incoming, active and held calls, presence, voicemail
+and Do Not Disturb._
+
 Connect SIP desk phones and softphones, receive audio and video from your SIP
 doorbell, and answer in Home Assistant phone cards or the VoIP Dashboard.
 Give each room, tablet or Companion app session its own phone and extension
@@ -25,11 +30,6 @@ optional.
 **[Install](#installation) · [Make your first call](#fastest-start) · [Choose a card](#cards-dashboard-and-global-call-popups) · [Automate calls](#automations-as-dialplan) · [ESP phones and videophones](#esp-endpoints-and-media-roles)**
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
-
-![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
-
-_Dashboard demo showing incoming, active and held calls, presence, voicemail
-and Do Not Disturb._
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
