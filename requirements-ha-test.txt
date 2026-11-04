@@ -18,3 +18,7 @@ home-assistant-intents==2026.8.28
 aioesphomeapi==46.2.0
 esphome-dashboard-api==1.4.0
 bleak-esphome==4.0.0
+
+# The ESPHome provider imports Bluetooth/USB during collection (same HA tag).
+aiousbwatcher==1.1.2
+serialx==1.10.0
