@@ -26,8 +26,7 @@ route a caller according to your Home Assistant entities and automations.
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real SIP door-station call in the Home Assistant phone card. The browser
-receives the door camera while its own camera stays off. [Phone controls](docs/USER_GUIDE.md#read-the-phone-card) · [SIP video guide](docs/SIP_VIDEO.md)._
+_A video call with a MOBOTIX door station in the VoIP Stack Home Assistant card._
 
 ## What can you build?
 
