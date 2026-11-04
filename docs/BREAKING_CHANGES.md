@@ -4,6 +4,25 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
+## 2026.11.1-dev.1: optional browser call popups
+
+Reload the HA frontend or reset the Companion frontend cache after updating.
+To receive call popups over other HA views, opt in on each receiving browser
+or Companion app through the HA phone Device's **Visit** link or the phone
+card's **Options > Call popups**. Select an existing HA browser phone and save.
+There is no new phone type, Lovelace popup card or HA user mapping to migrate.
+
+X, Esc and Back minimize a call. Use Decline or Hang up to terminate it. The
+popup shares the phone's existing call and media; the receiving frontend must
+remain running with media permissions. Companion uses its existing WebView.
+See the [popup guide](USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
+
+Copied actionable-notification automations must pass the triggering `call_id`
+to Decline alongside `device_id`, and retain `voip_answer=1`, `voip_endpoint`
+and `voip_call_id` in the Answer URI. The
+[updated recipe](AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+prevents an old notification from acting on a later call.
+
 ## Development browser: media identity and view changes
 
 Finish active browser calls before installing this frontend update. Existing

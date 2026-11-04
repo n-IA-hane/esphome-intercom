@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026.11.1-dev.1
+
+Development preview following `2026.11.1-dev`, recovered incrementally from
+stable `2026.11.0`. Existing PBX functions, including parking, pickup, voicemail,
+BLF and MWI, retain their normal owners and interfaces.
+
+- Add optional global incoming-call popups for an existing HA browser phone,
+  configured per browser or Companion app. X, Esc and Back minimize the same
+  call; the small caller/timer bar reopens it. Restore that bar when an audio
+  call resumes after parking or pickup. Companion uses its existing WebView.
+- Integrate the VoIP Dashboard with shared extension status, contacts and the
+  selected HA or ESP phone's controls. Keep actions visible in portrait layouts
+  and when a video view hides its embedded toolbar. The compact card retains
+  its HA softphone, ESP mirror and phonebook modes.
+- Keep enabled logical HA phones reachable without an open card, and retain
+  browser media through dashboard changes. Browser audio and auto-answer still
+  need a running receiving frontend and media permissions. Scope notification
+  Answer and Decline to the original phone and Call-ID.
+- Restore the canonical shared directory and standard LDAP delivery from
+  existing phone owners. Preserve SIP presence composition, authenticated
+  subscription lifecycles and owned TCP notification retries. Recover managed
+  ESP accounts through the existing private ESPHome API.
+- Preserve negotiated directional audio, receive-packet capacity, per-Contact
+  capabilities and bound RTP socket ownership through routing and media
+  changes. Keep optional browser camera intent separate from receiving video,
+  and recover decoding when a video client reconnects.
+- Integrate the maintained S3 JPEG receive profile, preserve source aspect and
+  receiver geometry, and align P4 camera frame rate with the selected profile.
+  P4 display rotation uses the upstream PPA geometry correction. Add optional
+  LVGL coordinate-tap diagnostics through the existing device action path.
+- Keep coordinated preview component references and the browser, HA and media
+  regression witnesses in CI. Document the explicit
+  [preview firmware overrides](README.md#development-preview-firmware).
+
+Physical checks cover the exercised S3 and P4 profiles and call routes,
+including P4 popup video and S3 audio parking/pickup. They do not establish
+universal hardware, codec or acoustic qualification. Active-video endpoint
+retargeting on ESP is outside this preview's added contract. See the
+[qualification rules](docs/voip_test_matrix.md#incremental-recovery-from-2026110).
+
 ## 2026.11.0
 
 > **VoIP Stack for Home Assistant does not require ESPHome or ESP devices.** You can use the integration with browser softphones and standard SIP phones.

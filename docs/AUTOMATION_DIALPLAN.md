@@ -911,6 +911,12 @@ Use **VoIP call received** with the receiving phone as Destination. The notifica
 opens that phone's card or declines the triggering call. Microphone permission
 and audio remain with the browser or Companion view that answers.
 
+Use a dashboard view with the intended phone card, or enable
+[global call popups](USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
+for that phone in this Companion app. Answer opens its existing WebView;
+the app does not become a native operating-system SIP phone. Keep microphone
+permission enabled and allow for the mobile system suspending background apps.
+
 The variables below identify this notification, so an old button cannot act on
 a newer call. Copy them unchanged; you do not enter a Call-ID yourself. Replace
 the notification service, phone device, phonebook names and dashboard path.
@@ -957,6 +963,7 @@ actions:
   - action: voip_stack.decline
     data:
       device_id: <home_phone_device_id>
+      call_id: "{{ trigger.call.call_id }}"
     continue_on_error: true
 - action: notify.mobile_app_your_phone
   data:
@@ -967,10 +974,15 @@ actions:
 
 The Answer link selects both the phone and the original call. A stale link
 cannot answer a different call with another Call-ID. Decline waits only for the
-unique action sent in this notification. If the call has already ended, the
+unique action sent in this notification and passes the original `call_id` with
+the receiving phone's `device_id`. If the call has already ended, the
 call guard rejects Decline; `continue_on_error` lets the automation remove its
 old notification afterwards. A separate notification tag prevents that cleanup
 from clearing a newer notification.
+
+Decline terminates the call. To have Assist answer instead, use a routing or
+forwarding automation while the call is still active, such as the
+[unanswered-call recipe](#forward-an-unanswered-ha-call-to-assist).
 
 This follows Home Assistant's [actionable notification pattern](https://companion.home-assistant.io/docs/notifications/actionable-notifications/).
 The same automation is available in
@@ -1474,19 +1486,21 @@ and advanced multi-call work. Leave them alone for native call-triggered
 examples in this guide. Extra templates are not required just because two
 callers arrive at the same time.
 
-## Browser auto-answer needs a running receiving card
+## Browser auto-answer needs a running receiving client
 
-Auto-answer is performed by the receiving card in the browser. Keep that card
-loaded in a running browser or Companion view, with persistent microphone
-permission. Changing dashboard views can unload the card, and a mobile browser
-can suspend a background tab.
+Auto-answer needs an active HA frontend in the receiving browser or Companion
+app, with persistent microphone permission. Keep the receiving phone's card
+loaded, or enable its
+[global call popup](USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
+The browser owns the media; an enabled logical phone alone cannot answer while
+that client is closed or suspended.
 
-If Phone A calls Phone B while B's card is unloaded, A remains calling and B
-remains ringing. Opening B's card can then cause the automatic answer. The
-caller enters the connected state and its in-call keypad becomes available at
-that point. The setting is saved in HA, but answering still requires the
-receiving browser. For a two-browser-phone test, keep both receiving and
-calling cards loaded in separate browser tabs or devices.
+Without an active receiving client, the call can still ring logically and run
+the phone's routing, automation and no-answer rules. Opening the receiving card
+while it is ringing can then permit auto-answer. Once a browser call is
+established, changing HA views or removing its card keeps the page-owned media
+running. Closing the page or mobile background suspension remains a limit.
+For independent browser phones, use separate browser tabs or devices.
 
 ## Refresh the editor after updating
 

@@ -11,6 +11,8 @@ phones. For the difference between a phone, card, contact and trunk, see
 | I want to... | Start here |
 | --- | --- |
 | Choose which phone places a call | [Calling phone picker](#choose-the-calling-phone-in-the-editor) |
+| Choose a card or Dashboard | [Available card views](#choose-a-card-view) |
+| Receive a popup over another HA view | [Global call popups](#receive-calls-over-other-home-assistant-views) |
 | Add a provider or another PBX | [SIP trunks](#configure-a-trunk) |
 | Send an unanswered call somewhere else | [Ringing timeout and forwarding](#choose-what-happens-when-nobody-answers) |
 | Move an answered call to someone else | [Transfer a call](#forward-or-transfer-a-call) |
@@ -54,7 +56,22 @@ After saving, the card controls the phone you selected. Incoming calls for that 
 move every connected card bound to the same Device to `ringing`. The browser
 that answers becomes the media owner.
 
-### Browser-phone availability in the recovery candidate
+### Choose a card view
+
+The visual card picker exposes **VoIP Stack Card** and **VoIP Dashboard**.
+The compact `custom:voip-stack-card` has three modes:
+
+| Mode | Select | Media owner |
+| --- | --- | --- |
+| `ha_softphone` | An existing logical HA phone | The answering browser or Companion session |
+| `esp_mirror` | An existing physical ESPHome phone | The ESP phone |
+| `phonebook` | Shared directory, without another phone | No separate media session |
+
+The `custom:voip-stack-dashboard-card` uses one selected `device_id`, with no
+mode field. It combines extension status, contacts and the selected HA or ESP
+phone's call controls. Its visual editor asks for **Calling phone**.
+
+### Browser-phone availability
 
 An enabled Home Assistant phone keeps its extension available when its cards
 are closed. Incoming calls can ring logically, run call automations and follow
@@ -62,8 +79,46 @@ the phone's no-answer rule. Open a card during ringing to answer the same call;
 the answering browser supplies its microphone and speaker with the normal
 permissions. Opening a card does not re-enable a disabled phone.
 
-This behavior belongs to the incremental recovery candidate; see its
-[qualification status](voip_test_matrix.md#incremental-recovery-from-2026110).
+Browser audio and auto-answer still need a running receiving HA frontend,
+with a card loaded or the optional global popup enabled. A logical phone alone
+cannot supply a microphone or answer calls by itself.
+
+### Receive calls over other Home Assistant views
+
+The **2026.11.1-dev.1** preview includes optional global call popups for an
+existing HA browser phone. This is a browser setting, not another card type
+or another phone to provision.
+
+1. Open the intended phone under **Settings > Devices & services > VoIP Stack**
+   and choose **Visit** on its Device page. Alternatively, open the phone
+   card's **Options > Call popups**.
+2. Select the existing **Home Assistant phone**.
+3. Enable **Receive call popups on this device** and choose **Save**.
+4. Allow microphone access and enable browser audio when prompted. Allow
+   camera access only if you want to transmit video.
+
+![Enable call popups for an existing Home Assistant phone](images/voip-popup-settings.png)
+
+The choice persists in this browser or Companion app. Repeat it on each
+receiving device. There is no HA user-to-phone mapping. Finish the current
+call before choosing a different popup phone.
+
+Incoming calls now open over other HA views, including views without a phone
+card. The popup uses the same call controls and media as that phone's card.
+
+| Action | Result |
+| --- | --- |
+| X, Esc or Back | Minimize the active call; audio continues during a connected call. |
+| Tap the small caller/timer bar | Reopen the same call. |
+| Decline while ringing | Reject the identified incoming call. |
+| Hang up while connected | End the call and release its media. |
+
+Keep the HA frontend running. Browser permissions and mobile background
+suspension still apply. In the Companion app this runs inside the existing
+WebView, without a native operating-system call channel. Use the
+[notification recipe](AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+to open and answer a particular ringing call. To send callers to Assist or
+another destination, choose a routing automation before terminating the call.
 
 ## Read the phone card
 

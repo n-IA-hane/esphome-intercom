@@ -47,7 +47,7 @@ The ESP firmware also works with [conventional PBXs](#use-esp-firmware-with-an-e
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
+![VoIP Dashboard showing the selected phone and current extension status](docs/images/voip-dashboard-current.png)
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
@@ -85,6 +85,11 @@ The profiles below use coordinated `main` sources. See the
 [2026.11.0 changes](CHANGELOG.md), and follow the
 [current device-package migration](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
 when updating existing firmware.
+
+Development preview: **2026.11.1-dev.1**. It includes the Dashboard and optional
+global call popups, and integrates the recovered browser, SIP and ESP media
+contracts. See the [preview changes](CHANGELOG.md#2026111-dev1) and
+[coordinated firmware sources](#development-preview-firmware).
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
@@ -345,6 +350,72 @@ speaker routing remains under operating-system control.
 Each room-to-room media endpoint needs a distinct browser or Companion session.
 Two cards in one browser tab can display two phones, but one tab still owns one
 physical microphone, speaker and camera pipeline.
+
+## Cards, Dashboard and global call popups
+
+There are two public Lovelace card types. Choose the calling phone by name in
+the visual editor; Home Assistant stores its `device_id` for you.
+
+| Card type | Mode | Purpose |
+| --- | --- | --- |
+| `custom:voip-stack-card` | `ha_softphone` | A browser or Companion phone with its own microphone, speaker and optional camera. Select an existing logical HA phone. |
+| `custom:voip-stack-card` | `esp_mirror` | Control one physical ESP phone through its own call, answer and hangup actions. The ESP owns the call media. |
+| `custom:voip-stack-card` | `phonebook` | A scrollable view of the shared directory. It does not create another phone. |
+| `custom:voip-stack-dashboard-card` | No mode field | Shared extension status, contacts and call controls for the HA or ESP phone selected by `device_id`. |
+
+For example, a Dashboard bound to an existing phone uses:
+
+```yaml
+type: custom:voip-stack-dashboard-card
+device_id: <phone_device_id>
+```
+
+The Dashboard and compact card use the same phone, call state and controls.
+Opening another view does not create another SIP account or media engine.
+
+In **2026.11.1-dev.1**, **global call popups** are an optional presentation of an
+existing HA browser phone. On that phone's HA Device page, choose **Visit**, or
+open the phone card's **Options > Call popups**. Select the existing phone,
+enable **Receive call popups on this device**, and save. This choice persists
+in the current browser or Companion app; configure each receiving device
+separately. It does not associate the phone with an HA user.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/voip-popup-settings.png" alt="Optional call-popup settings for an existing Home Assistant phone"/></td>
+    <td width="50%"><img src="docs/images/voip-popup-ringing.png" alt="Incoming Casa call displayed over another Home Assistant view"/></td>
+  </tr>
+</table>
+
+An incoming call can then open over another HA view without a phone card in
+the foreground. **X**, **Esc** and **Back** minimize the call into a small
+caller/timer bar; tap it to reopen. Use **Decline** or **Hang up** to end the
+call. The popup shares the existing phone's audio, ringtone and Call-ID.
+
+<img src="docs/images/voip-popup-minimized.png" width="113" alt="Minimized call with caller, duration and explicit hangup button"/>
+
+<details>
+<summary>Video popup demonstration</summary>
+
+![Video in the global call popup](docs/images/voip-popup-video-demo.png)
+
+_Real Home Assistant UI during a browser-to-browser call. The gate image is
+an illustrative video source, not a physical door-camera capture.
+[Screenshot provenance](docs/images/voip-ui-provenance.json)._
+
+</details>
+
+The HA frontend must remain running and have the required media permissions.
+Logical ringing, routing and no-answer rules remain available when the browser
+is closed, but browser audio and auto-answer require an active receiving client
+with its card loaded or global popups enabled. Mobile systems can suspend that
+client in the background.
+
+The Companion app uses its existing WebView. An
+[actionable notification](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+can open the intended phone and answer the identified call. This does not add
+an operating-system telephone channel or native incoming-call screen.
+See the [popup setup and controls](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
 
 ## ESP endpoints and media roles
 
@@ -752,6 +823,38 @@ sources supplied with the selected profile rather than mixing release generation
 After a major ESPHome or component upgrade, clear that device's ESPHome build
 cache before compiling. The [deployment guide](docs/DEPLOYMENT_GUIDE.md)
 contains the complete component and cache instructions.
+
+### Development preview firmware
+
+For **2026.11.1-dev.1**, start from the current maintained YAML for your exact
+board and use its matching device package from `@dev`. Override all applicable
+component sources together in the existing `substitutions` block:
+
+```yaml
+substitutions:
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
+  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
+  esp_video_renderer_components_source: github://n-IA-hane/esphome-video-renderer@dev
+  camera_components_source: github://n-IA-hane/esphome-esp-video-camera@dev
+  esp_screenshot_components_source: github://n-IA-hane/esphome-screenshot@dev
+  intercom_idf_ref: dev
+```
+
+The renderer, camera and screenshot sources apply only when the selected
+profile loads those components. `intercom_idf_ref: dev` selects the P4 PPA
+rotation fix. For example, the P4 landscape FULL JPEG profile keeps its
+existing package path and changes only its ref:
+
+```yaml
+packages:
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-full-landscape.yaml@dev
+```
+
+Keep the selected board's wiring, secrets and feature list. The shipped
+`@main` defaults remain the stable path; this block is an explicit preview
+selection. Updating HACS does not rebuild or upload ESP firmware.
 
 ## Upgrading
 

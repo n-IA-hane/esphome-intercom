@@ -40,6 +40,7 @@ actions:
   - action: voip_stack.decline
     data:
       device_id: <casa_phone_device_id>
+      call_id: "{{ trigger.call.call_id }}"
     continue_on_error: true
 - action: notify.mobile_app_your_phone
   data:
