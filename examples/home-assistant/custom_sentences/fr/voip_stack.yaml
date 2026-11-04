@@ -1,0 +1,74 @@
+# Responses are rendered by Home Assistant. See docs/ASSIST_INTENTS.md.
+language: fr
+
+intents:
+  VoipCall:
+    data:
+      - sentences:
+          - "appel[le] {target}"
+          - "téléphone à {target}"
+        slots:
+          voip_response: template
+        response: default
+  VoipHangup:
+    data:
+      - sentences:
+          - "raccroche"
+          - "raccroche l'appel"
+          - "termine l'appel"
+          - "coupe l'appel"
+        slots:
+          voip_response: template
+        response: default
+  VoipAnswer:
+    data:
+      - sentences:
+          - "décroche"
+          - "décroche l'appel"
+          - "prends l'appel"
+          - "répond[s] à l'appel"
+        slots:
+          voip_response: template
+        response: default
+  VoipDecline:
+    data:
+      - sentences:
+          - "refuse"
+          - "refuse l'appel"
+          - "rejette l'appel"
+        slots:
+          voip_response: template
+        response: default
+
+lists:
+  target:
+    wildcard: true
+
+responses:
+  intents:
+    VoipCall:
+      default: &voip_response >-
+        {% set messages = {
+          "unknown_origin": "Je ne sais pas quel appareil VoIP a entendu la commande.",
+          "missing_target": "Quel contact VoIP dois-je appeler ?",
+          "not_found": "Je ne trouve aucun contact VoIP nommé " ~ slots.target ~ ".",
+          "ambiguous": "Le contact VoIP " ~ slots.target ~ " est ambigu.",
+          "ambiguous_area": "La zone Home Assistant " ~ slots.target ~ " est ambiguë.",
+          "area_empty": "La zone Home Assistant " ~ slots.target ~ " ne contient aucun appareil VoIP.",
+          "ambiguous_area_device": "La zone Home Assistant " ~ slots.target ~ " contient plus d'un appareil VoIP.",
+          "call_failed": "Je n'ai pas pu appeler " ~ slots.target ~ ".",
+          "hangup_failed": "Je n'ai pas pu raccrocher l'appel VoIP.",
+          "answer_failed": "Je n'ai pas pu répondre à l'appel VoIP.",
+          "decline_failed": "Je n'ai pas pu refuser l'appel VoIP.",
+          "VoipCall": "J'appelle " ~ slots.target ~ ".",
+          "VoipHangup": "D'accord.",
+          "VoipAnswer": "Je réponds.",
+          "VoipDecline": "Je refuse."
+        } %}
+        {{ messages.get(slots.error or slots.action, messages.call_failed) }}
+    VoipHangup:
+      default: *voip_response
+    VoipAnswer:
+      default: *voip_response
+    VoipDecline:
+      default: *voip_response
