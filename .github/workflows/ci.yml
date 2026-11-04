@@ -45,6 +45,10 @@ jobs:
         run: python -m pip install -r requirements-test.txt -r requirements-firmware-test.txt
       - name: Verify Node frontend test dependency
         run: node --version
+      - name: Install independent capture-file validator
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common
       - name: Check Python code and test fixtures
         run: python -m ruff check custom_components/voip_stack scripts tests tools/esp_profile.py
       - name: Run software suite
