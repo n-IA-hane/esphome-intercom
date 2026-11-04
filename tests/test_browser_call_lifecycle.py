@@ -491,3 +491,101 @@ def test_card_camera_intent_preserves_unknown_destination_video_contract():
                 await page.close()
 
     asyncio.run(browser_session(check))
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.parametrize("pickup", ["raw_state", "frontend_slot"])
+@pytest.mark.timeout(45)
+def test_popup_minicard_after_park_preserves_browser_media_ownership(pickup):
+    """Presentation follows a resumed call; only the ordinary card acquires media."""
+    from aiohttp import web
+
+    class RetainedPickupPeer(SoftwareCallPeer):
+        async def rpc(self, request):
+            message = await request.json()
+            if message.get("type") == "call_service" and message.get("service") == "call":
+                data = message["service_data"]
+                assert data["destination"] == "701" and data["media_client_id"]
+                self.attempts.append(dict(data))
+                self.owner = data["media_client_id"]
+                self.state["call_id"] = "retained-call-A"
+                await self.broadcast("in_call")
+                return web.json_response(dict(self.state))
+            return await super().rpc(request)
+
+    peer = RetainedPickupPeer()
+
+    async def check(context, base):
+        page = await open_engine(context, base)
+        page.set_default_timeout(5000)
+        await page.evaluate(HARNESS)
+        await page.wait_for_function("card._softphoneSnapshot?.endpoint_id === 'desk'")
+        await page.evaluate("""async () => {
+          card.remove();window.contextCount=0;
+          const Context=window.AudioContext;
+          window.AudioContext=class extends Context {constructor(...args){super(...args);contextCount++;}};
+          class HA extends HTMLElement {
+            constructor(){super();this.attachShadow({mode:'open'});this.updateComplete=Promise.resolve();}
+            provideHass(element){element.hass=testHass;}
+          }
+          customElements.define('home-assistant',HA);
+          window.root=document.createElement('home-assistant');document.body.append(root);
+          root.addEventListener('show-dialog',async event=>{
+            const {dialogTag,dialogImport,dialogParams}=event.detail;await dialogImport();
+            let dialog=root.shadowRoot.querySelector(dialogTag);
+            if(!dialog){dialog=document.createElement(dialogTag);root.provideHass(dialog);root.shadowRoot.append(dialog);}
+            dialog.showDialog(dialogParams);
+          });
+          await import('/voip-stack/voip-stack-popup.js');
+          const settings=document.createElement('voip-stack-popup-settings');
+          document.body.append(settings);settings.hass=testHass;window.settings=settings;
+        }""")
+        await page.wait_for_function("settings._select.options.length===2")
+        await page.locator("voip-stack-popup-settings select").select_option("desk-device")
+        await page.get_by_label("Receive call popups on this device").check()
+        await page.get_by_role("button", name="Save", exact=True).click()
+        await wait_until(lambda: peer.phone_subscriptions() == 1)
+        peer.state.update(call_id="retained-call-A", direction="incoming", caller="Retained peer")
+        await peer.broadcast("ringing")
+        await page.wait_for_function("!!__voipStackPopup.dialog?._dialog.open")
+        await peer.broadcast("idle")
+        await page.wait_for_function("__voipStackPopup.state?.state==='idle' && !__voipStackPopup.dialog?._dialog.open")
+        baseline = await page.evaluate("({contexts:contextCount,mics:gumCalls.length})")
+        try:
+            if pickup == "raw_state":
+                await peer.broadcast("in_call")
+                await page.wait_for_function("__voipStackPopup.state?.state==='in_call'")
+                assert await page.evaluate("engine.softphoneCallIdFor('desk')") == ""
+                assert await page.evaluate("engine.callId") == ""
+                assert await page.evaluate("({contexts:contextCount,mics:gumCalls.length})") == baseline
+                assert not peer.connections
+                assert await page.get_by_role("button", name="Reopen call", exact=True).is_visible()
+            else:
+                await page.evaluate("mountCard()")
+                await page.wait_for_function("card._softphoneSnapshot?.state==='idle'")
+                view = page.locator("body > voip-stack-card")
+                await view.get_by_role("button", name="Keypad", exact=True).click()
+                await view.get_by_role("textbox", name="Number, name or SIP URI").fill("701")
+                await view.get_by_role("button", name="Call", exact=True).click()
+                await page.wait_for_function("engine.callId==='retained-call-A' && engine._audioReady")
+                await wait_until(lambda: bool(peer.connections) and peer.connections[-1]["rx_nonzero"] >= 4)
+                owner = await page.evaluate("engine.mediaClientId")
+                assert peer.attempts[-1]["media_client_id"] == owner
+                assert await page.evaluate("engine.softphoneCallIdFor('desk')") == "retained-call-A"
+                acquired = await page.evaluate("({contexts:contextCount,mics:gumCalls.length})")
+                await page.evaluate("card.remove();history.pushState({},'', '/map')")
+                assert not await page.evaluate("!!__voipStackPopup.dialog?._dialog.open")
+                await page.get_by_role("button", name="Reopen call", exact=True).click()
+                await page.wait_for_function("!!__voipStackPopup.dialog?._dialog.open")
+                assert await page.evaluate("engine.mediaClientId") == owner
+                assert await page.evaluate("engine.callId") == "retained-call-A"
+                assert await page.evaluate("({contexts:contextCount,mics:gumCalls.length})") == acquired
+                assert len(peer.connections) == 1, "Reopening the popup replaced the existing media socket"
+        finally:
+            await peer.broadcast("idle")
+            await page.wait_for_function("!engine.softphoneCallIdFor('desk') && !engine.callId")
+            await wait_until(lambda: all(value["closed"] for value in peer.connections))
+            assert await page.evaluate("__voipStackPopup._mini.hidden && !__voipStackPopup.dialog?._dialog.open")
+            assert await page.evaluate("__voipStackPopup._timer == null")
+
+    asyncio.run(browser_session(check, peer))

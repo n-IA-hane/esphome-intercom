@@ -182,6 +182,7 @@ export class VoipStackPopup extends HTMLElement {
     void engine.syncOwnedSoftphoneState(this.phone, state).catch(error => { this.error = error?.message || String(error); });
     if (!activeCall(state)) { this.dialog?.closeDialog(false); this.minimized = false; }
     else if (incoming && this._announcedCall !== state.call_id) { this._announcedCall = state.call_id; this.open(); }
+    else if (state.state === "in_call" && !this.dialog?._dialog.open) this.minimized = true;
     this.renderMini();
   }
   open() {
