@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 from .core import sdp
 from .endpoint_lifecycle import create_runtime_task

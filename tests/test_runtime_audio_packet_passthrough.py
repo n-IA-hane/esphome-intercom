@@ -17,8 +17,10 @@ async def wire_relay(incoming_ms=10):
     with _reserved_udp_ports(4) as ports:
         left_port, right_port, source_port, sink_port = ports
     source, sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM), socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    source.bind(('127.0.0.2', source_port)); sink.bind(('127.0.0.3', sink_port))
-    source.setblocking(False); sink.setblocking(False)
+    source.bind(('127.0.0.2', source_port))
+    sink.bind(('127.0.0.3', sink_port))
+    source.setblocking(False)
+    sink.setblocking(False)
     incoming = sdp.RtpPcmFormat(96, 'L16', 16000, 1, incoming_ms, max_frame_ms=20)
     outgoing = sdp.RtpPcmFormat(97, 'L16', 16000, 1, 10, max_frame_ms=10)
     left = relay_module.RtpPeer('127.0.0.2', source_port, 96, incoming.audio_format, rtp_format=incoming)
@@ -28,7 +30,9 @@ async def wire_relay(incoming_ms=10):
         await relay.start()
         yield source, sink, relay
     finally:
-        await relay.stop(); source.close(); sink.close()
+        await relay.stop()
+        source.close()
+        sink.close()
 
 
 @pytest.mark.asyncio
@@ -54,7 +58,8 @@ async def test_real_packet_mix_preserves_pcm_order_clock_and_pending(durations, 
     async with wire_relay() as (source, sink, relay):
         decode = Mock(wraps=relay.left_decoder.decode)
         monkeypatch.setattr(relay.left_decoder, 'decode', decode)
-        original = bytearray(); timestamp = 0
+        original = bytearray()
+        timestamp = 0
         for index, duration in enumerate(durations):
             samples = 16 * duration
             payload = struct.pack(f'!{samples}h', *range(timestamp, timestamp + samples))

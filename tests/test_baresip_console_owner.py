@@ -14,7 +14,8 @@ import pytest
 ROOT=Path(__file__).resolve().parents[1]
 source=Path(os.environ.get('VOIP_CONSOLE_OWNER_SOURCE',ROOT/'tools/ha_softphone_matrix.py'))
 spec=importlib.util.spec_from_file_location('matrix_console_owner',source)
-matrix=importlib.util.module_from_spec(spec);spec.loader.exec_module(matrix)
+matrix=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(matrix)
 
 CHILD=r'''
 import os,pathlib,sys,time
@@ -32,7 +33,8 @@ for line in sys.stdin:
 
 def until(predicate,timeout):
     deadline=time.monotonic()+timeout
-    while not predicate() and time.monotonic()<deadline:time.sleep(.01)
+    while not predicate() and time.monotonic()<deadline:
+        time.sleep(.01)
     return predicate()
 
 
@@ -50,7 +52,8 @@ def test_hangup_progresses_under_real_pty_output_pressure(monkeypatch,tmp_path):
         assert until((tmp_path/'output-started').exists,1)
         owner.hangup()
         processed=until((tmp_path/'hangup-processed').exists,2)
-        queued=array.array('i',[0]);fcntl.ioctl(owner.master,termios.FIONREAD,queued,True)
+        queued=array.array('i',[0])
+        fcntl.ioctl(owner.master,termios.FIONREAD,queued,True)
         witness={'proof_layer':'host-local-FD-only','real_SIP_peer_started':False,
                  'child_pid':owner.proc.pid,'child_alive':owner.proc.poll() is None,
                  'PTY_master_queued_bytes':queued[0],'output_finished':(tmp_path/'output-finished').exists(),
@@ -64,11 +67,15 @@ def test_hangup_progresses_under_real_pty_output_pressure(monkeypatch,tmp_path):
         # RED cleanup drains explicitly after the assertion was observed.
         deadline=time.monotonic()+3
         while not (tmp_path/'output-finished').exists() and time.monotonic()<deadline:
-            owner.read();time.sleep(.005)
+            owner.read()
+            time.sleep(.005)
         master=owner.master
         owner.close()
         assert owner.proc.poll() is not None
         reader=getattr(owner,'_console_reader',None)
-        if reader is not None:assert not reader.is_alive()
-        with pytest.raises(OSError):os.fstat(master)
-        if reader is not None:owner.close()
+        if reader is not None:
+            assert not reader.is_alive()
+        with pytest.raises(OSError):
+            os.fstat(master)
+        if reader is not None:
+            owner.close()

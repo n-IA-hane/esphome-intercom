@@ -1,6 +1,5 @@
 """Independent SDP witnesses: receive budgets stay directional for every codec."""
 
-from dataclasses import replace
 
 import pytest
 

@@ -70,8 +70,10 @@ async def test_real_udp48k20_becomes_two48k10_with_exact_pcm_and_clock():
     with _reserved_udp_ports(4) as ports:
         left_port, right_port, source_port, destination_port = ports
     source, sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM), socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    source.bind(('127.0.0.2', source_port));sink.bind(('127.0.0.3', destination_port))
-    source.setblocking(False);sink.setblocking(False)
+    source.bind(('127.0.0.2', source_port))
+    sink.bind(('127.0.0.3', destination_port))
+    source.setblocking(False)
+    sink.setblocking(False)
     left = relay_module.RtpPeer('127.0.0.2', source_port, selected.recv.payload_type,
         selected.recv.audio_format, rtp_format=selected.recv, send_rtp_format=selected.send)
     right = relay_module.RtpPeer('127.0.0.3', destination_port, s3_send.payload_type,
@@ -98,4 +100,6 @@ async def test_real_udp48k20_becomes_two48k10_with_exact_pcm_and_clock():
         assert first.payload + second.payload == payload
         assert relay.dropped == 0
     finally:
-        await relay.stop();source.close();sink.close()
+        await relay.stop()
+        source.close()
+        sink.close()

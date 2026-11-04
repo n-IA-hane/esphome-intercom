@@ -134,7 +134,9 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     sockets = []
     def media_socket(host):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind((host, 0)); sock.setblocking(False); sockets.append(sock)
+        sock.bind((host, 0))
+        sock.setblocking(False)
+        sockets.append(sock)
         return sock
     source_audio = media_socket("127.0.0.2")
     source_video = media_socket("127.0.0.2")
@@ -231,7 +233,8 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
                         raw = await lab.hass.loop.sock_recv(destination_video, 65535)
                         if len(raw) < 12 or raw[0] >> 6 != 2:
                             continue
-                        packet = rtp.parse_packet(raw); received.append(packet.payload)
+                        packet = rtp.parse_packet(raw)
+                        received.append(packet.payload)
                         decoded = decoder.push(packet)
             finally:
                 sender.cancel()
@@ -292,14 +295,17 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
 
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
-        udp.bind(('127.0.0.1', 0)); listener = udp.getsockname()[1]
+        udp.bind(('127.0.0.1', 0))
+        listener = udp.getsockname()[1]
         tcp.bind(('127.0.0.1', listener))
     lab.runtime.transport_config.update({"sip_port": listener, CONF_SIP_VIDEO: True})
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     sockets, transports = [], []
     def media_socket(host):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind((host, 0)); sock.setblocking(False); sockets.append(sock)
+        sock.bind((host, 0))
+        sock.setblocking(False)
+        sockets.append(sock)
         return sock
     source_audio = media_socket('127.0.0.2')
     source_video = media_socket('127.0.0.2')
@@ -342,7 +348,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
 
     transport, source = await lab.hass.loop.create_datagram_endpoint(
         lambda: CallerWire('no-ptime'), local_addr=('127.0.0.2', 0))
-    transports.append(transport); caller.transport, caller.protocol = transport, source
+    transports.append(transport)
+    caller.transport, caller.protocol = transport, source
     caller.local_sip_port = transport.get_extra_info('sockname')[1]
     transport, sink = await lab.hass.loop.create_datagram_endpoint(
         lambda: SinkWire('no-ptime'), local_addr=('127.0.0.3', 0))
@@ -366,7 +373,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     if policy == 'observed_jpeg':
         state += ' | video=jpeg'
     lab.hass.states.async_set(entity.entity_id, state)
-    registrar = sip_registrar(lab.hass); registrar.enabled = True
+    registrar = sip_registrar(lab.hass)
+    registrar.enabled = True
     from custom_components.voip_stack.sip_registrar import SipAccount
     registrar.update_accounts([restored.account(), SipAccount('caller', 'Caller', 'fixture-only')])
     call_id = ''

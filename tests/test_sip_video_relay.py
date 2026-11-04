@@ -9,11 +9,10 @@ from unittest import mock
 
 import pytest
 
-pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
-
-
 from custom_components.voip_stack.core import rtp, sdp, video_rtcp
 from custom_components.voip_stack import sip_video_relay
+
+pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
 
 RtpVideoFormat = sdp.RtpVideoFormat
 video_formats_passthrough_compatible = sdp.video_formats_passthrough_compatible

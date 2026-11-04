@@ -8,7 +8,7 @@ import pytest
 from .test_phone_services_ha import (
     custom_integration_path as custom_integration_path,
     phone_lab as phone_lab, managed as managed,
-    directory_actions, phone_record,
+    phone_record as phone_record,
 )
 from .test_managed_phones_ha import varint, read_varint
 from .test_phone_services_lifecycle_ha import start

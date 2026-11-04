@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from homeassistant.exceptions import ServiceValidationError
 
-from .media_ports import RtpPortReservation
 from .endpoint_session import CleanupStage
 
 

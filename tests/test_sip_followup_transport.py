@@ -47,7 +47,8 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
                 writers, handlers = [], set()
 
                 async def target(reader, writer):
-                    handlers.add(asyncio.current_task()); writers.append(writer)
+                    handlers.add(asyncio.current_task())
+                    writers.append(writer)
                     try:
                         raw = await sip_listener._read_sip_stream_message(reader)
                         notification = sip.parse_message(raw)
@@ -88,11 +89,14 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(state.local_cseq, 3)
                     self.assertTrue(queue.empty())
                 finally:
-                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
                     await manager.stop()
-                    for writer in writers: writer.close()
+                    for writer in writers:
+                        writer.close()
                     await asyncio.gather(*handlers, return_exceptions=True)
-                    server.close(); await server.wait_closed()
+                    server.close()
+                    await server.wait_closed()
 
     async def test_only_pre_send_refusal_permits_udp_fallback(self):
         for mode in ("refused", "timeout", "explicit_tcp"):
@@ -116,10 +120,12 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
                         else:
                             with self.assertRaises(TimeoutError if mode == "timeout" else OSError) as raised:
                                 await task
-                            if mode == "explicit_tcp": self.assertEqual(raised.exception.errno, errno.ECONNREFUSED)
+                            if mode == "explicit_tcp":
+                                self.assertEqual(raised.exception.errno, errno.ECONNREFUSED)
                             self.assertTrue(queue.empty())
                     finally:
-                        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
                         await manager.stop()
                 self.assertFalse(endpoint._client_transaction_responses)
                 self.assertFalse(tcp._client_transaction_responses)
@@ -130,7 +136,8 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
         handlers, writers = set(), []
 
         async def target(reader, writer):
-            handlers.add(asyncio.current_task()); writers.append(writer)
+            handlers.add(asyncio.current_task())
+            writers.append(writer)
             try:
                 raw = await sip_listener._read_sip_stream_message(reader)
                 received.set_result(sip.parse_message(raw))
@@ -152,9 +159,11 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(writers), 1)
         finally:
             await manager.stop()
-            for writer in writers: writer.close()
+            for writer in writers:
+                writer.close()
             await asyncio.gather(*handlers, return_exceptions=True)
-            server.close(); await server.wait_closed()
+            server.close()
+            await server.wait_closed()
 
     async def test_notify_reopens_only_once_after_real_tcp_eof(self):
         manager, _, queue, port, request, _, result = await self.setup_peer(body=b"large" * 300)
@@ -180,7 +189,8 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.stop()
             await asyncio.gather(*handlers, return_exceptions=True)
-            server.close(); await server.wait_closed()
+            server.close()
+            await server.wait_closed()
 
     async def test_local_tcp_reader_timeout_does_not_reopen_notify(self):
         manager, _, queue, port, request, _, result = await self.setup_peer(body=b"large" * 300)
@@ -188,7 +198,8 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
         attempts, handlers, writers = [], set(), []
 
         async def silent_peer(reader, writer):
-            handlers.add(asyncio.current_task()); writers.append(writer)
+            handlers.add(asyncio.current_task())
+            writers.append(writer)
             try:
                 attempts.append(await sip_listener._read_sip_stream_message(reader))
                 await reader.read()
@@ -207,9 +218,11 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(queue.empty())
         finally:
             await manager.stop()
-            for writer in writers: writer.close()
+            for writer in writers:
+                writer.close()
             await asyncio.gather(*handlers, return_exceptions=True)
-            server.close(); await server.wait_closed()
+            server.close()
+            await server.wait_closed()
 
     async def test_closed_flow_does_not_fail_another_pending_transaction(self):
         manager, _, _, _, _, _, _ = await self.setup_peer()
@@ -250,10 +263,13 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             release_second.set()
             self.assertEqual((await tasks[1]).status_code, 200)
         finally:
-            close_first.set(); release_second.set()
-            for task in tasks: task.cancel()
+            close_first.set()
+            release_second.set()
+            for task in tasks:
+                task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await manager.stop()
             await asyncio.gather(*handlers, return_exceptions=True)
             for server in servers:
-                server.close(); await server.wait_closed()
+                server.close()
+                await server.wait_closed()

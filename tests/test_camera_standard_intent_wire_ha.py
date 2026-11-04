@@ -92,7 +92,7 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
                             self.transport.sendto(sip.build_response(488, "Not Acceptable Here", headers), address)
                             return
                         receive = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
-                        send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
+                        _send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
                         assert b"a=ptime:20\r\n" in message.body
                         assert b"a=x-voip-stack-flow:" not in message.body
                         video_offer = message.body.partition(b"m=video")[2]

@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from .voip_phase1_support import _load_intercom_module, audio_format, g722_codec, rtp, sdp, sip_client
+from .voip_phase1_support import _load_intercom_module, audio_format, rtp, sdp, sip_client
 
 RtpAudioReceiver = _load_intercom_module("rtp_audio_receiver").RtpAudioReceiver
 

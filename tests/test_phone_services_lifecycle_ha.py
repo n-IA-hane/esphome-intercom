@@ -3,7 +3,6 @@
 import asyncio
 from dataclasses import replace
 import ssl
-from unittest.mock import AsyncMock
 
 import ldap3
 import pytest
@@ -65,7 +64,6 @@ async def test_offline_configured_phone_authenticates_without_registrar_or_conta
 
 @pytest.mark.parametrize("change", ["password", "disable", "remove", "remove-readd", "suspend", "runtime", "device", "origin"])
 async def test_account_revocation_closes_authenticated_socket_before_next_search(managed, change):
-    from custom_components.voip_stack.runtime_data import VoipStackRuntime
     lab = managed
     owner = await start(lab)
     try:
@@ -218,12 +216,12 @@ async def test_certificate_failure_closes_old_plain_listener_preserving_provider
 
 
 async def test_directory_change_immediately_coalesces_refresh_and_unchanged_records_do_not(managed):
-    from custom_components.voip_stack.roster import RosterEntry
     lab = managed
     owner = await start(lab)
     try:
         directory = lab.runtime.directory
-        calls = lambda: sum(action == "refresh_ldap_directory" for action, _ in lab.sent)
+        def calls():
+            return sum(action == "refresh_ldap_directory" for action, _ in lab.sent)
         before = calls()
         await owner.async_reconcile()
         await lab.controller.async_sync()

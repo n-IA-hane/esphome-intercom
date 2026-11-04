@@ -1,6 +1,5 @@
 """Standard LDAP composition through public HA setup and private native RPC."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,7 +9,7 @@ from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,
     phone_lab as phone_lab,
     managed as managed,
-    phone_record,
+    phone_record as phone_record,
 )
 
 pytestmark = pytest.mark.ha

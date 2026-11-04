@@ -51,7 +51,8 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
 
     async def stream(reader, writer):
         nonlocal challenged
-        handlers.add(asyncio.current_task()); writers.append(writer)
+        handlers.add(asyncio.current_task())
+        writers.append(writer)
         try:
             while True:
                 raw = await read_record(reader)

@@ -6,7 +6,7 @@ import socket
 import struct
 
 import pytest
-from custom_components.voip_stack.core import rtp, sdp, sip
+from custom_components.voip_stack.core import rtp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.sip_client import SipCallClient

@@ -126,7 +126,7 @@ async def test_both_preanswer_leg_packets_survive_transport_adoption(trunks):
 
 
 async def test_local_receiver_and_spare_keep_queued_packets_and_exact_fds(application, monkeypatch):
-    from custom_components.voip_stack import local_application, local_call_media, sip_rtp_bridge
+    from custom_components.voip_stack import local_application, local_call_media
     from custom_components.voip_stack.local_media_bridge import LocalMediaBridge
 
     app, registry, caller, released = application

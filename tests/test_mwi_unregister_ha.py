@@ -16,7 +16,7 @@ from custom_components.voip_stack.sip_listener import SipUdpEndpoint, SipTcpServ
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
 
 from .test_voicemail_ha import (  # noqa: F401
-    configured_tts_provider, custom_integrations, lab, mailbox_lab,
+    configured_tts_provider, custom_integrations, lab as lab, mailbox_lab as mailbox_lab,
 )
 
 pytestmark = pytest.mark.ha

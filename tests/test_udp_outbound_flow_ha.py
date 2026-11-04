@@ -2,8 +2,6 @@
 
 import asyncio
 from dataclasses import replace
-import errno
-import socket
 import struct
 import time
 from types import SimpleNamespace
@@ -16,9 +14,7 @@ from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.endpoint_session import TerminationIntent
-from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.sip_client import SipCallClient
-from custom_components.voip_stack.sip_endpoint import SipEndpointManager
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack import sip_runtime

@@ -47,34 +47,44 @@ class DirectionalPhone(ContactPeer):
 async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monkeypatch,tmp_path):
     from custom_components.voip_stack.inbound_routing import bridge
     runtime = trunks
-    registrar = runtime.calls.component('registrar');registrar.enabled = True
+    registrar = runtime.calls.component('registrar')
+    registrar.enabled = True
     registrar.update_accounts([SipAccount('caps','Caps','fixture-only')])
     runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id='caps',name='Caps',username='caps',kind=EndpointKind.SIP_ACCOUNT))
     await sip_trunks(runtime.hass)['work'].stop()
     runtime.runtime.trunk_configs.pop('work')
     runtime.runtime.trunk_configs['home'].update(trunk_inbound_mode='direct',trunk_inbound_default_target='caps')
-    target_audio=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);target_audio.bind(('127.0.0.1',0));target_audio.setblocking(False)
+    target_audio=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    target_audio.bind(('127.0.0.1',0))
+    target_audio.setblocking(False)
     transport,phone=await runtime.hass.loop.create_datagram_endpoint(lambda:DirectionalPhone('known',target_audio),local_addr=('127.0.0.1',0))
     provider=runtime.phones[0]
     caller=SipCallClient(local_ip='127.0.0.1',local_name='AstPeer',local_sip_port=provider.transport.get_extra_info('sockname')[1],
         local_rtp_port=provider.rtp_socket.getsockname()[1],supported_formats=[AudioFormat(48000,'s16le',1,10)])
-    observed={};responses=asyncio.Queue();original_receive=provider.datagram_received;original_build=caller._build_pending_invite
+    observed={}
+    responses=asyncio.Queue()
+    original_receive=provider.datagram_received
+    original_build=caller._build_pending_invite
     original_select=bridge.bridge_source_audio
     def receive(raw,address):
         message=sip.parse_message(raw)
         if message.header('Call-ID')==caller.dialog_ids.call_id:
-            if message.status_code==200 and message.body:observed['answer']=message.body.decode()
+            if message.status_code==200 and message.body:
+                observed['answer']=message.body.decode()
             responses.put_nowait(raw)
-        else:original_receive(raw,address)
+        else:
+            original_receive(raw,address)
     monkeypatch.setattr(provider,'datagram_received',receive)
     def build():
         body=AST_OFFER.replace('192.0.2.231','127.0.0.1').replace('m=audio 18030 ',f'm=audio {provider.rtp_socket.getsockname()[1]} ')
-        caller._pending_invite_body=body.encode();caller._local_sdp_body=body
+        caller._pending_invite_body=body.encode()
+        caller._local_sdp_body=body
         return original_build()
     monkeypatch.setattr(caller,'_build_pending_invite',build)
     def select(invite,dialog):
         observed['source_before']=asdict(invite.recv_format)
-        result=original_select(invite,dialog);observed['source_after']=asdict(result.recv_format)
+        result=original_select(invite,dialog)
+        observed['source_after']=asdict(result.recv_format)
         return result
     monkeypatch.setattr(bridge,'bridge_source_audio',select)
     caller.use_reused_signaling_flow(send=lambda raw:provider.transport.sendto(raw,('127.0.0.1',runtime.runtime.transport_config['sip_port'])),
@@ -87,13 +97,15 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         runtime.roster.extend(roster_from_peers(runtime.hass,[],registrar.registered_roster_entries()))
         assert sip_trunks(runtime.hass)['home'].ready
         assert await caller.invite(target='caps',remote_host='127.0.0.1',remote_sip_port=runtime.runtime.transport_config['sip_port'],timeout=3)=='ringing'
-        await wait_until(lambda:bool(phone.offers));phone.finish()
+        await wait_until(lambda:bool(phone.offers))
+        phone.finish()
         assert await caller.wait_for_final(timeout=3)=='in_call'
         session=runtime.calls.get_session(caller.dialog_ids.call_id)
         assert session.metadata['inbound_trunk_id']=='home'
         relay=runtime.calls.resource_for(session.call_id,'relay')
         observed['relay_receiver']=asdict(relay.left.inbound_rtp_format)
-        values=tuple(range(-480,480));payload=struct.pack('!960h',*values)
+        values=tuple(range(-480,480))
+        payload=struct.pack('!960h',*values)
         packet=rtp.build_packet(rtp.RtpPacket(126,123,24000,9876,payload[:960]))[:12]+payload
         await runtime.hass.loop.sock_sendto(provider.rtp_socket,packet,(caller.dialog.remote_rtp_host,caller.dialog.remote_rtp_port))
         first=rtp.parse_packet(await asyncio.wait_for(runtime.hass.loop.sock_recv(target_audio,4096),1))
@@ -144,7 +156,10 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert not runtime.runtime.rtp_port_pool['used']
     finally:
         (tmp_path/'consumer-contract.json').write_text(json.dumps(observed,indent=2))
-        await caller.terminate();await caller.close();transport.close();target_audio.close()
+        await caller.terminate()
+        await caller.close()
+        transport.close()
+        target_audio.close()
 
 
 def test_invite_receive_capabilities_are_local_and_survive_replacement():

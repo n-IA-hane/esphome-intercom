@@ -107,7 +107,6 @@ async def test_unknown_extended_operation_returns_protocol_error(server):
 @pytest.mark.parametrize("invalid", ["unknown", "replay", "different-query", "directory-change", "rebind", "expired"])
 async def test_paging_cookie_is_bound_to_one_query_directory_and_authorization(server, invalid):
     from custom_components.voip_stack.roster import RosterEntry
-    from dataclasses import replace
     def first_page():
         connection = ldap3.Connection(ldap3.Server("127.0.0.1", port=server.port, get_info=ldap3.NONE),
             user="kitchen", password="fixture-only-password", auto_bind=True)
@@ -169,7 +168,8 @@ async def test_starttls_resets_authorization_and_disallows_repeated_upgrade(sock
     value = LdapDirectoryServer(directory(), AsyncMock(return_value="esphome:kitchen"))
     await value.async_start("127.0.0.1", 0, starttls_context=context)
     reader, writer = await connected(value)
-    request = lambda identity: message(identity, tlv(0x77, tlv(0x80, codec.START_TLS.encode())))
+    def request(identity):
+        return message(identity, tlv(0x77, tlv(0x80, codec.START_TLS.encode())))
     try:
         writer.write(request(2))
         await writer.drain()

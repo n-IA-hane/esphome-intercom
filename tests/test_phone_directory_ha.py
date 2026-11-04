@@ -4,7 +4,6 @@ import json
 import asyncio
 from dataclasses import replace
 import logging
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -55,7 +54,6 @@ def add_phone(lab, *, identity, name, kind="browser", username="", extension="",
 
 async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_services(managed, tmp_path):
     from homeassistant.helpers.entity_component import EntityComponent
-    from custom_components.voip_stack.phone_config import sync_registry_from_entry
     from custom_components.voip_stack.store import store_manual_roster_entries
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.sensor import VoipPhonebookSensor
@@ -270,7 +268,6 @@ async def test_legacy_offline_identity_is_restored_without_becoming_a_managed_ac
 
 async def test_name_extension_and_group_events_update_one_canonical_identity(managed):
     from homeassistant.helpers import entity_registry as er, device_registry as dr
-    from custom_components.voip_stack.directory_runtime import async_refresh_directory
     lab = managed
     values = {}
     for role, value in (("voip_extension", "301"), ("voip_ring_groups", "Old group")):
