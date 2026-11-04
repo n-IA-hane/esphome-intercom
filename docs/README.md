@@ -19,7 +19,7 @@ beyond the project overview in the [top-level README](../README.md).
 ## Release channels
 
 The stable release is **2026.11.0**. These `dev` guides also cover the
-**2026.11.1-dev.1** preview, including the VoIP Dashboard, global call popups,
+**2026.11.1-dev** preview, including the VoIP Dashboard, global call popups,
 the persistent LDAP directory and managed ESP SIP accounts. Version notes at
 the relevant setup steps identify preview features. Existing PBX functions
 such as voicemail, transfers, parking, SIP BLF and MWI are already in stable.

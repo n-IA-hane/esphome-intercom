@@ -27,7 +27,7 @@ names; HA stores the identifiers for you.
 **Release scope:** stable **2026.11.0** includes compact phone cards, routing,
 groups, voicemail, recording, parking, pickup and SIP BLF/MWI. The Dashboard,
 global popups, persistent LDAP directory and managed ESP registration described
-here require **2026.11.1-dev.1** and matching preview firmware where applicable.
+here require **2026.11.1-dev** and matching preview firmware where applicable.
 Choose the intended release in HACS, restart HA and refresh its frontend after
 an update. The [changelog](../CHANGELOG.md) retains release history.
 
@@ -105,7 +105,7 @@ cannot supply a microphone or answer calls by itself.
 
 ### Receive calls over other Home Assistant views
 
-The **2026.11.1-dev.1** preview includes optional global call popups for an
+The **2026.11.1-dev** preview includes optional global call popups for an
 existing HA browser phone. This is a browser setting, not another card type
 or another phone to provision.
 

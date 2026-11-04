@@ -404,7 +404,12 @@ Requires **Home Assistant 2026.7.0 or newer**. Choose one channel:
 | Channel | Version | Starting point |
 | --- | --- | --- |
 | [Stable](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0) | **2026.11.0** | Stable PBX and phone cards, with matching firmware from `main`. |
-| [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev.1) | **2026.11.1-dev.1** | The Dashboard, popups and current ESP/directory features presented here. |
+| [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev) | **2026.11.1-dev** | The Dashboard, popups and current ESP/directory features presented here. |
+
+The preview is updated under the same version. If HACS already shows
+**2026.11.1-dev**, use **Redownload** to receive its current archive, then
+restart HA and reload the frontend. A changed archive under the same version
+does not produce a new-version update notification.
 
 ### Fastest start
 

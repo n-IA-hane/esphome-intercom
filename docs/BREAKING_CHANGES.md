@@ -4,7 +4,7 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
-## 2026.11.1-dev.1: optional browser call popups
+## 2026.11.1-dev: optional browser call popups
 
 Reload the HA frontend or reset the Companion frontend cache after updating.
 To receive call popups over other HA views, opt in on each receiving browser

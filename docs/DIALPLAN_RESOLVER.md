@@ -30,7 +30,7 @@ audio formats, transport and extension. ESP group membership is read from
 dedicated sibling entities, typically `text.*_voip_ring_groups`,
 `text.*_voip_conference_groups` and `switch.*_voip_conference_ring`.
 
-In **2026.11.1-dev.1**, losing connectivity or a REGISTER binding does not
+In **2026.11.1-dev**, losing connectivity or a REGISTER binding does not
 remove a saved phone identity. Routing still checks availability, DND and the
 phone's policy. Removing the configured phone removes that identity. A dynamic
 group exists while a configured endpoint or manual contact declares it. See

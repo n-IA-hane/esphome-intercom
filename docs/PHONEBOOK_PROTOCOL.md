@@ -19,7 +19,7 @@ for the difference between a phone, contact, extension and external number.
 
 ## Standard LDAP directory
 
-LDAP and the persistent managed-phone directory require **2026.11.1-dev.1**;
+LDAP and the persistent managed-phone directory require **2026.11.1-dev**;
 use matching preview firmware for managed ESP directory provisioning. SIP BLF,
 presence and voicemail MWI are separate services already present in stable.
 

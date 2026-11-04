@@ -280,3 +280,118 @@ jobs:
           name: box-v2-firmware
           path: test-results/box-v2-*
           if-no-files-found: error
+
+  ws3-public-firmware:
+    needs: source-channel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.2"
+      - name: Install the reported official ESPHome version
+        run: python -m pip install esphome==2026.10.2
+      - name: Copy the public WS3 Audio profile without source overrides
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib.metadata
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          profile = Path('yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml')
+          project = Path(os.environ['RUNNER_TEMP']) / 'ws3-public-project'
+          project.mkdir(parents=True)
+          device = project / 'device.yaml'
+          shutil.copyfile(profile, device)
+          assert device.read_bytes() == profile.read_bytes()
+          (project / 'secrets.yaml').write_text(
+              'wifi_ssid: ci-fixture-network\nwifi_password: ci-fixture-password\n')
+          output = Path('test-results/ws3-public')
+          output.mkdir(parents=True)
+          shutil.copyfile(device, output / 'input.yaml')
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert commit == os.environ['GITHUB_SHA']
+          version = importlib.metadata.version('esphome')
+          assert version == '2026.10.2'
+          (output / 'input.json').write_text(json.dumps({
+              'checkout_commit': commit,
+              'profile': profile.as_posix(),
+              'profile_sha256': hashlib.sha256(profile.read_bytes()).hexdigest(),
+              'copied_input_sha256': hashlib.sha256(device.read_bytes()).hexdigest(),
+              'esphome_version': version,
+              'source_overrides': False,
+              'secrets': ['wifi_ssid', 'wifi_password'],
+          }, indent=2) + '\n')
+          PY
+      - name: Compile the literal public WS3 Audio configuration
+        id: ws3_compile
+        run: |
+          set -o pipefail
+          python -m esphome compile "$RUNNER_TEMP/ws3-public-project/device.yaml" 2>&1 | tee test-results/ws3-public/compile.log
+      - name: Record actual fetched source commits and firmware artifacts
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.ws3_compile.outcome }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          project = Path(os.environ['RUNNER_TEMP']) / 'ws3-public-project'
+          output = Path('test-results/ws3-public')
+          output.mkdir(parents=True, exist_ok=True)
+          clones = []
+          for domain in ('packages', 'external_components'):
+              cache = project / '.esphome' / domain
+              for checkout in sorted(cache.iterdir()) if cache.is_dir() else []:
+                  if not (checkout / '.git').exists():
+                      continue
+                  def git(*args):
+                      return subprocess.check_output(['git', '-C', str(checkout), *args], text=True).strip()
+                  clones.append({
+                      'cache': checkout.relative_to(project).as_posix(),
+                      'url': git('remote', 'get-url', 'origin'),
+                      'commit': git('rev-parse', 'HEAD'),
+                      'tree': git('rev-parse', 'HEAD^{tree}'),
+                      'tracked_changes': git('status', '--porcelain', '--untracked-files=no'),
+                  })
+          (output / 'fetched-sources.json').write_text(json.dumps(clones, indent=2) + '\n')
+          artifacts = []
+          for build in sorted((project / '.esphome/build').glob('*')):
+              for name in ('firmware.elf', 'firmware.ota.bin', 'firmware.factory.bin'):
+                  source = build / 'build' / name
+                  if source.is_file():
+                      target = output / 'firmware' / build.name / name
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copyfile(source, target)
+                      artifacts.append({
+                          'path': target.relative_to(output).as_posix(),
+                          'bytes': target.stat().st_size,
+                          'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
+                      })
+              lock = build / 'dependencies.lock'
+              if lock.is_file():
+                  shutil.copyfile(lock, output / (build.name + '-dependencies.lock'))
+          (output / 'firmware.json').write_text(json.dumps(artifacts, indent=2) + '\n')
+          if os.environ['BUILD_OUTCOME'] == 'success':
+              assert clones, 'Successful public build must record fetched Git sources'
+              assert any(item['path'].endswith('firmware.ota.bin') for item in artifacts)
+              assert any(item['path'].endswith('firmware.elf') for item in artifacts)
+          PY
+      - name: Preserve public WS3 firmware, inputs and actual source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ws3-public-firmware
+          path: test-results/ws3-public
+          if-no-files-found: error

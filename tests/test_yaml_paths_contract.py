@@ -63,7 +63,10 @@ def test_check_file_limits_the_expected_mode_gate() -> None:
     failures = [
         line for line in (result.stdout + result.stderr).splitlines() if line.startswith("FAIL:")
     ]
-    assert failures == [f"FAIL: {target} ({expected}, expected {opposite})"]
+    assert f"FAIL: {target} ({expected}, expected {opposite})" in failures
+    # One selected file may fail multiple guards, but no other file may leak
+    # into this scoped mode/source check.
+    assert all(line.startswith(f"FAIL: {target} (") for line in failures)
 
 
 def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:

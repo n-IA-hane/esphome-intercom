@@ -145,6 +145,7 @@ ha_tests=(
   tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
+  tests/test_browser_answer_noanswer_race_ha.py
   tests/test_browser_logical_availability_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_sip_capabilities_ha.py

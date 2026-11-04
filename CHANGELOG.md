@@ -1,9 +1,9 @@
 # Changelog
 
-## 2026.11.1-dev.1
+## 2026.11.1-dev
 
-Development preview following `2026.11.1-dev`, recovered incrementally from
-stable `2026.11.0`. Existing PBX functions, including parking, pickup, voicemail,
+Rolling development preview, recovered incrementally from stable `2026.11.0`.
+Existing PBX functions, including parking, pickup, voicemail,
 BLF and MWI, retain their normal owners and interfaces.
 
 - Add optional global incoming-call popups for an existing HA browser phone,
