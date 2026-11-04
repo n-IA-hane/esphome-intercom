@@ -32,13 +32,18 @@ def _custom_integrations(enable_custom_integrations):
 @pytest.fixture
 async def phones(hass):
     """Load real service registration without opening SIP or media sockets."""
+    from homeassistant.components import frontend
+
     from custom_components.voip_stack.config import entry_transport_config
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
     from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
 
-    hass.config.components.update({"assist_pipeline", "http", "lovelace", "network"})
+    # Isolate the service boundary with the declared frontend owner ready.
+    # Its actual dependency ordering is covered by test_popup_frontend_ha.
+    hass.config.components.update({"assist_pipeline", "frontend", "http", "lovelace", "network"})
+    hass.data[frontend.DATA_EXTRA_MODULE_URL] = frontend.UrlManager(lambda *_: None, [])
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
     assert await async_setup_component(hass, DOMAIN, {})
