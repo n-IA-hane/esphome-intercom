@@ -5,6 +5,11 @@ for calling, answering, declining and hanging up. The command acts on the VoIP
 device that heard it. A contact name, extension or Home Assistant area can be
 used as the destination.
 
+These commands control the phone that heard the request. To call an HA Assist
+pipeline as a telephone destination, configure
+[callable Assist](USER_GUIDE.md#make-assist-callable) separately. That call does
+not replace the local Voice Assistant on an ESP.
+
 Sentence examples are available for [English](../examples/home-assistant/custom_sentences/en/voip_stack.yaml),
 [Italian](../examples/home-assistant/custom_sentences/it/voip_stack.yaml),
 [German](../examples/home-assistant/custom_sentences/de/voip_stack.yaml) and

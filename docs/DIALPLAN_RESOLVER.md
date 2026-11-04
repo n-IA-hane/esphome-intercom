@@ -13,12 +13,15 @@ endpoints send normal SIP INVITEs to HA. Home Assistant resolves the target.
 
 The central roster is rebuilt from these sources:
 
-- Online ESPHome `voip_stack` endpoint sensors, plus optional sibling group
-  entities on the same ESPHome device.
+- ESPHome `voip_stack` identities and endpoint sensors, plus optional sibling
+  group entities on the same ESPHome device. The preview directory retains
+  managed identities while those devices are offline.
 - Home Assistant logical phones, including the phone created during setup.
 - Manual contacts created with `voip_stack.add_contact` or
   `voip_stack.set_contacts`.
-- Local SIP endpoint accounts that are currently registered to HA.
+- Configured local SIP endpoint accounts, with active registration bindings
+  providing their current reachable SIP Contact.
+- Callable Assist and Automation destinations from their configured owners.
 - Dynamic ring group and conference group entries derived from endpoint
   declarations.
 
@@ -27,9 +30,12 @@ audio formats, transport and extension. ESP group membership is read from
 dedicated sibling entities, typically `text.*_voip_ring_groups`,
 `text.*_voip_conference_groups` and `switch.*_voip_conference_ring`.
 
-If a source disappears, its dynamic roster entry disappears too. A registered
-SIP endpoint is callable only while it has an active registration. A dynamic
-group exists only while at least one endpoint/manual contact declares it.
+In **2026.11.1-dev.1**, losing connectivity or a REGISTER binding does not
+remove a saved phone identity. Routing still checks availability, DND and the
+phone's policy. Removing the configured phone removes that identity. A dynamic
+group exists while a configured endpoint or manual contact declares it. See
+[the directory contract](PHONEBOOK_PROTOCOL.md#standard-ldap-directory) for the
+preview scope and the distinction between a record and a reachable phone.
 
 ## Target classes
 
@@ -91,7 +97,8 @@ When Home Assistant or the card calls:
 - An extension resolves to the entry that owns that extension.
 - A registered SIP endpoint resolves to its current registration Contact.
 - A group name runs the group controller.
-- A public number uses the trunk when the trunk is enabled and registered.
+- A public number uses the selected available trunk. Registered and static
+  trunks have different readiness rules.
 - A missing non-numeric name is rejected.
 
 `voip_stack.forward` uses the same central dial plan. If the destination is a
@@ -127,8 +134,10 @@ Rules:
 
 - Internal `extension` wins over trunk.
 - Contact `number` can route through the trunk.
-- Raw public numbers can route through the trunk when the trunk is registered.
-- Missing trunk registration means `trunk_unavailable`.
+- Raw public numbers can route through the selected trunk when it is available.
+- A registered trunk needs a usable registration. A static trunk does not
+  REGISTER; readiness means its route is configured, not that the peer has been
+  probed. An unavailable selected line means `trunk_unavailable`.
 - Unresolved text names are not sent to the trunk.
 
 ## Groups
@@ -165,8 +174,8 @@ Conference group:
 
 - `MobileOffice` by name: HA forwards to its active Contact.
 - `210`: HA resolves to `MobileOffice`.
-- If it unregisters: it disappears from the dynamic roster and is no longer
-  callable.
+- If it unregisters: its SIP Contact is no longer callable. In the preview,
+  its saved directory identity remains and its unavailable policy can apply.
 
 `Daniele` is a manual contact with `number: 418`:
 

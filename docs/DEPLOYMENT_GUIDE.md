@@ -7,8 +7,12 @@ and video use UDP in both cases.
 Use Home Assistant 2026.7.0 or newer. Firmware builds require
 ESPHome 2026.10.0 or newer. HA and ESP firmware do not need matching version
 numbers: a HACS update and a device firmware update are separate operations.
-We recommend rebuilding from an updated maintained YAML to receive device
-fixes, particularly on Generic S3.
+Rebuild an ESP when adopting firmware-side changes. Keep the selected release's
+YAML, packages and component revisions coordinated; a documentation or HACS
+update alone does not change the running firmware. Stable uses the coordinated
+`main` sources. The current preview includes optional registered ESP accounts,
+LDAP/BLF/MWI and S3 JPEG reception; use the
+[explicit preview sources](#development-preview-firmware) for those profiles.
 
 ## Choose what to install
 
@@ -17,7 +21,7 @@ fixes, particularly on Generic S3.
 | Calls between dashboards or standard SIP phones | The VoIP Stack HA integration and a card for each browser phone. No ESP is needed. |
 | A physical ESP phone connected to HA | The integration plus the maintained VoIP-only firmware for that board. |
 | An ESP with calls, wake word, Assist and media | The integration plus that board's Full profile. Check flash and PSRAM requirements. |
-| An ESP phone for an existing Asterisk/FreeSWITCH PBX | Its VoIP firmware and a static peer in that PBX. Follow the classic-PBX guide. |
+| An ESP phone for an existing PBX | Its VoIP firmware and either a static peer or a manually configured registered account. See [classic PBX setup](CLASSIC_PBX.md) and [registered ESP lines](ESP_REGISTRATION.md). |
 
 For the first HA call, follow the [visual user guide](USER_GUIDE.md). The YAML,
 network and firmware details below are for the parts you actually install.
@@ -50,8 +54,10 @@ media-port allocation, not a promise that every call uses one fixed port.
 
 ![SIP TCP or UDP signaling with RTP media](images/tcp-udp-choice.png)
 
-Use routable IP addresses in `phonebook` or let HA publish the central
-`sensor.voip_phonebook`. For HA Container/Docker/LXC, host networking or an
+Use routable SIP destinations. Current managed ESP profiles receive their
+account configuration through the existing private ESPHome API and shared
+contacts through LDAP. `sensor.voip_phonebook` remains a public HA projection;
+it is not a credential-delivery channel. For HA Container/Docker/LXC, host networking or an
 explicit advertised host remains the simplest deployment because SIP/RTP use
 inbound UDP/TCP sockets.
 
@@ -73,9 +79,11 @@ voip_stack:
 ```
 
 Use `static_contacts` for a small fixed ESP-local dial plan. For HA-managed
-contacts, the ESP VoIP component now provides phonebook reception and discovery
-itself. Enable `custom_services: true` in the existing `api:` block; do not add
-the retired phonebook subscription package. See the
+phones, the current device packages select native enrollment and optional
+`directory`, `blf` and `mwi` services. LDAP supplies contacts; SIP subscriptions
+supply live status and message counts. The old JSON action remains compatible
+with firmware without managed LDAP. Enable `custom_services: true` in the
+existing `api:` block; do not add the retired phonebook subscription package. See the
 [ESP phone migration](ESP_ENTITY_SURFACE.md#migrating-an-existing-phone).
 
 When using Audio Stack, declare a single `esp_audio_stack` instance. Its
@@ -104,15 +112,18 @@ HTTP playback, TTS and timers. Choose according to flash size and needed feature
 | [Full AEC](../yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | 8 MB | Included | Performance |
 | [Full Lite AEC](../yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | 4 MB | Omitted from `firmware_features` | Size |
 
-**Full Lite is experimental and still requires PSRAM.** An earlier build measured
-about 1.78 MB, leaving roughly 59 KB in each 1,835,008-byte OTA application slot.
-That is historical headroom, not a size guarantee for the refreshed dependencies.
-The whole 4 MB flash is not available to one application. Check the new build's
-actual image size against its partition layout; adding `sendspin` may exceed the slot.
+**Full Lite is experimental and still requires PSRAM.** The current profile
+uses the companion [dual-OTA partition CSV](../yamls/full-experience/single-bus/partitions_4mb_lite_dual_ota.csv):
+two `0x1e0000`-byte application slots (1,966,080 bytes each) and 192 KiB NVS.
+Keep that file beside the YAML. Check the actual compiled image against the
+selected slot; adding Sendspin or other features may exceed it. Historical
+image sizes do not establish current free space.
 
 Adapt GPIOs, flash size and PSRAM settings to your actual board. If moving to a
 different partition layout, use a complete serial flash for this migration;
-an ordinary OTA application upload is not a partition-layout migration.
+an ordinary OTA application upload is not a partition-layout migration. The
+stock-to-Lite migration resets stored preferences, so preserve your device
+configuration and calibration values first.
 
 Testing on the Generic reference board exposed CPU contention between AEC and
 VoIP processing. The updated VoIP-only profiles and the single-bus Full/Full Lite
@@ -159,6 +170,24 @@ See the [runtime package guide](https://github.com/n-IA-hane/esphome-runtime-con
 for those adapters' required IDs and helpers. Do not add the old full preset to
 a new device package that already owns the runtime bindings.
 
+### FULL display examples
+
+These images show existing assistant artwork, audio controls and call feedback.
+The available pages follow the selected board and firmware features.
+
+<table>
+  <tr>
+    <td align="center"><img src="images/assistant-speaking.jpg" width="220" alt="Assistant response on an ESP display"/><br/><b>Assistant response</b></td>
+    <td align="center"><img src="images/lvgl-audio-volume.jpg" width="220" alt="On-device audio controls"/><br/><b>Audio controls</b></td>
+    <td align="center"><img src="images/lvgl-hangup-reason.jpg" width="220" alt="Call result on an ESP display"/><br/><b>Call feedback</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="images/assistant-happy.jpg" width="220" alt="Positive assistant mood artwork"/><br/><b>Positive mood</b></td>
+    <td align="center"><img src="images/assistant-neutral.jpg" width="220" alt="Neutral assistant mood artwork"/><br/><b>Neutral mood</b></td>
+    <td align="center"><img src="images/assistant-angry.jpg" width="220" alt="Negative assistant mood artwork"/><br/><b>Negative mood</b></td>
+  </tr>
+</table>
+
 ## Home Assistant
 
 ### Install through HACS
@@ -168,10 +197,12 @@ a new device package that already owns the runtime bindings.
 3. Open **Settings → Devices & services → Add integration**.
 4. Select **VoIP Stack** and complete the config flow.
 
-To update to 2026.11.0, open the existing VoIP Stack repository
-in HACS, choose **Redownload** and select **2026.11.0**. Restart HA after downloading and reload the
-dashboard. Use the coordinated stable component and package references
-when rebuilding an ESP; redownloading the HA integration does not flash it.
+For an update, open the existing VoIP Stack repository in HACS, choose
+**Redownload** and select the intended stable **2026.11.0** or preview
+**2026.11.1-dev.1** release. Restart HA and reload the frontend. The preview
+includes the Dashboard, optional global call popups and updated ESP services.
+Use matching [firmware sources](#development-preview-firmware) when rebuilding
+an ESP; redownloading the HA integration does not flash it.
 
 <table>
   <tr>
@@ -255,8 +286,10 @@ external_components:
 ```
 
 Use `esp_afe` instead of `esp_aec` only for a profile designed around the full
-AFE pipeline. After ESPHome or external-component upgrades, clear that device's
-`.esphome` build cache before compiling again.
+AFE pipeline. Reuse the device's normal persistent build output. Clean that
+device's build only when migration instructions require it or an identified
+stale generated state causes a failure; do not delete configuration, secrets
+or preserved firmware evidence as routine cache maintenance.
 
 Add the flashed node through the normal ESPHome integration:
 
@@ -266,6 +299,42 @@ For ESP32-P4 display targets, start from the maintained board profile and read
 its C6 firmware/resource notes before changing LVGL or audio features.
 
 ![Native screen capture of the Waveshare P4 touch profile](images/p4-touch-overview.jpg)
+
+### Development preview firmware
+
+For **2026.11.1-dev.1**, start from the maintained YAML for your
+exact board and use its matching device package from `@dev`. Override all applicable
+component sources together in the existing `substitutions` block:
+
+```yaml
+substitutions:
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
+  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
+  esp_video_renderer_components_source: github://n-IA-hane/esphome-video-renderer@dev
+  camera_components_source: github://n-IA-hane/esphome-esp-video-camera@dev
+  esp_screenshot_components_source: github://n-IA-hane/esphome-screenshot@dev
+  intercom_idf_ref: dev
+```
+
+The renderer, camera and screenshot sources apply only when the selected
+profile loads those components. `intercom_idf_ref: dev` selects the P4 PPA
+rotation fix. For example, the P4 landscape FULL JPEG profile keeps its
+existing package path and changes only its ref:
+
+```yaml
+packages:
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-full-landscape.yaml@dev
+```
+
+Keep the selected board's wiring, secrets and feature list. The shipped
+`@main` defaults remain the stable path; this block is an explicit preview
+selection. Updating HACS does not rebuild or upload ESP firmware.
+
+The selected package and all applicable component overrides must travel
+together. The source-switch helper does not manage every renderer, screenshot
+or IDF override; inspect these values explicitly.
 
 ## Optional SIP trunks
 

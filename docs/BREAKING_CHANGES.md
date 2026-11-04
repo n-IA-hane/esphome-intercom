@@ -45,6 +45,39 @@ its ringing, automation and no-answer rules continue to apply.
 > Follow the [device-package migration](#development-firmware-new-device-packages)
 > below.
 
+## Development adoption: managed accounts, directory and S3 JPEG
+
+Choose the upgrade path for the parts you use:
+
+- **HA/HACS only:** update the integration, restart HA and reload the frontend
+  as required above. Existing ESP firmware stays on its installed contract;
+  an HA update alone does not install account, LDAP or video support on it.
+- **Adopting current ESP profiles:** start from the maintained YAML for the
+  exact board, preserve identity, secrets, wiring and wanted features, then
+  validate, rebuild and upload that firmware. Compatible managed profiles can
+  receive a named HA SIP account and directory configuration through their
+  native API. Keep manual PBX accounts and the selected default line explicit;
+  neither all-device registration nor automatic line migration is required.
+  See [ESP accounts](ESP_REGISTRATION.md) and the
+  [entity/provisioning surface](ESP_ENTITY_SURFACE.md).
+- **Shared contacts:** compatible managed ESPs use the
+  [LDAP directory](PHONEBOOK_PROTOCOL.md#standard-ldap-directory), with an
+  actual successful refresh replacing the shared snapshot and preserving
+  manual entries. Check listener/account settings and matching preview
+  firmware. Legacy/custom JSON roster providers remain supported; sending
+  their roster action is not a managed LDAP migration or refresh.
+- **S3 displays:** a maintained LCD profile may include the optional
+  [JPEG receiver](../packages/voip/s3_video_jpeg.yaml), defaulting to
+  320x240 at 2 FPS. It needs the profile's LVGL surface and a compatible video
+  offer. Display-less S3 Audio and camera-only TX profiles have different
+  contracts; this adds neither universal S3 H.264 RX nor a new physical-board
+  qualification. See [video components](reference.md#esp-video-components).
+
+Direct/manual SIP configurations remain valid choices. The release-specific
+migrations below retain their historical context; older HA package or NoReg
+instructions describe those releases and are superseded for current firmware
+by the current device, registration and entity guides.
+
 ## Development firmware: native audio providers
 
 **Start from the updated YAML for your exact board when rebuilding this

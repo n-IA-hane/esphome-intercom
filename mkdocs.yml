@@ -3,7 +3,7 @@ site_description: SIP phones, calls and automations in Home Assistant, with opti
 repo_url: https://github.com/n-IA-hane/esphome-intercom
 repo_name: n-IA-hane/esphome-intercom
 extra:
-  source_ref: main
+  source_ref: dev
 docs_dir: docs
 site_dir: site
 hooks:
@@ -25,6 +25,7 @@ nav:
   - Get started:
       - Phones and basic concepts: CONCEPTS.md
       - User guide: USER_GUIDE.md
+      - Shared directory and phone status: PHONEBOOK_PROTOCOL.md
       - Installation and firmware: DEPLOYMENT_GUIDE.md
       - Documentation map: README.md
   - Calls and routing:
@@ -41,8 +42,11 @@ nav:
       - Dahua door stations: DAHUA.md
       - ESP with a classic PBX: CLASSIC_PBX.md
   - ESP firmware:
+      - Registered accounts and lines: ESP_REGISTRATION.md
       - Phone entities and migration: ESP_ENTITY_SURFACE.md
       - Sound and announcement actions: ESPHOME_SOUND_ACTIONS.md
+      - Screenshots and display inspection: ESP_SCREENSHOT.md
+      - Announcement diagnostics: playback_diagnostics.md
       - P4 hardware and media: P4_HARDWARE_AND_MEDIA.md
       - Espressif dependencies: ESPRESSIF_COMPONENTS.md
   - Reference:
@@ -51,7 +55,6 @@ nav:
       - Architecture: ARCHITECTURE.md
       - Call flows: CALL_FLOWS.md
       - Destination resolution: DIALPLAN_RESOLVER.md
-      - Phonebook protocol: PHONEBOOK_PROTOCOL.md
       - ESP SIP profile: voip_profile.md
       - Qualification matrix: voip_test_matrix.md
       - Troubleshooting: troubleshooting.md

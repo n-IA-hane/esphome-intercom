@@ -9,26 +9,27 @@ but direct ESP-to-ESP calls must work when a SIP URI is known.
 
 ## Security and registration
 
-The ESP profile intentionally does not implement SIP authentication or
-registration.
+The direct ESP profile can operate without registration. Current preview
+firmware can additionally compile manual SIP accounts or receive a managed HA
+account through its existing private ESPHome API. Registered lines use bounded
+Digest MD5/SHA-256 authentication, renewal and UDP/TCP signaling in the same SIP
+worker. Account capacity, persistence and line selection are described in
+[registered ESP accounts](ESP_REGISTRATION.md). Older stable firmware without
+this optional support retains its direct-call contract.
 
-- ESP does not require `Authorization`.
-- ESP does not send `WWW-Authenticate`.
-- ESP does not implement SIP `REGISTER`.
-- If a remote endpoint returns `401` or `407`, the call fails with
-  `auth_required_unsupported` or `proxy_auth_required_unsupported`.
+An account challenge is not a new call state: a configured account may retry
+401/407 authentication within its transaction; an unconfigured direct route
+cannot invent credentials. SIP signaling and RTP remain unencrypted. Use the
+existing trusted LAN/VPN and admission policies rather than treating directory
+membership or registration as transport encryption.
 
-ESP trust is provided by the existing ESPHome/Home Assistant management channel
-for roster delivery. SIP signaling and RTP media remain unencrypted and
-unauthenticated on the local network.
-
-Home Assistant may register one optional provider/PBX trunk and may separately
-act as a Digest-authenticating registrar for standard SIP endpoints. Both
-features belong to HA and do not create registrations for ESP devices.
-The HA SIP surfaces share one RFC 7616/8760 Digest implementation supporting
-MD5, SHA-256 and SHA-512-256, including `auth` and `auth-int` where the request
-body is available. Stale nonces are challenged explicitly and authentication
-retries create a new client transaction.
+Home Assistant supports multiple named provider/PBX trunks and separately acts
+as a Digest-authenticating registrar for local SIP endpoints. ESP registered
+accounts and HA trunks have different settings and lifecycles. HA's SIP surfaces
+share one RFC 7616/8760 Digest implementation supporting MD5, SHA-256 and
+SHA-512-256, including `auth` and `auth-int` where the request body is available.
+Stale nonces are challenged explicitly; authentication retries use a new client
+transaction.
 
 Phonebook membership and HA registration are not inbound caller admission
 rules. Any peer that can reach an ESP or HA SIP listener may send an INVITE;
@@ -59,7 +60,8 @@ Required SIP methods:
 - `CANCEL`
 - `BYE`
 - `OPTIONS`
-- `REGISTER` on the HA trunk client and HA local registrar only
+- `REGISTER` on HA trunks, the HA local registrar and optional configured ESP
+  accounts; the direct ESP profile does not require a registration
 - `INFO` carries in-dialog `application/dtmf-relay` digits when negotiated by
   the peer; RTP `telephone-event` remains the preferred media-plane transport
 - `UPDATE` and in-dialog `INVITE` refresh or renegotiate HA-owned dialogs
@@ -104,10 +106,14 @@ HA phone remains available without an open card. Call activity is reported
 separately through `Event: dialog`. Publication and subscription timers are
 cancelled when the PBX runtime stops.
 
-ESP endpoints do not support session-modifying in-dialog INVITE. They answer
-hold or codec renegotiation with `488` while keeping the established dialog and
-its selected media unchanged; the original dialog can still be terminated
-normally with BYE.
+Current ESP video profiles handle compatible in-dialog video changes through
+the existing dialog and media owner. They can add/remove video or update its
+direction while retaining the established audio format, payload mappings and
+RTP destination. Unsupported audio renegotiation, video codec replacement and
+active-video endpoint retargeting are rejected without replacing the established
+media. Compatible endpoint changes while video is inactive have a separate
+bounded commit path. Acceptance is conditional on the actual offer, not a rule
+that every re-INVITE receives 200. BYE remains authoritative throughout.
 
 HA-owned dialogs accept compatible peer-initiated UPDATE or re-INVITE offers.
 They may update audio direction, supported audio format and RTP endpoint, and
@@ -176,15 +182,18 @@ ESP does not implement PCMU, PCMA, Speex, GSM or G.722. A direct SIP peer must
 offer a format supported by the selected firmware. A call through HA may use
 its transcoding bridge instead. See the [component codec matrix](https://github.com/n-IA-hane/esphome-voip-stack#codec-profiles-and-media-route).
 
-Audio-only profiles do not advertise video. Supported P4 video profiles add
-their explicitly configured JPEG or H.264 paths; video is not automatically
-enabled for other boards. See [SIP video](SIP_VIDEO.md).
+Audio-only profiles do not advertise video. Supported P4 profiles add their
+configured JPEG or H.264 source/sink. S3 camera transmission and JPEG receive
+display are separate configured roles; S3 does not decode H.264. A camera
+entity alone is not an advertised SIP receive display. See [SIP video](SIP_VIDEO.md).
 
 ## Roster
 
-The public phonebook contract is canonical JSON. It resolves user-facing names,
-extensions and phone numbers into either direct SIP URIs or Home Assistant
-routes.
+Home Assistant owns one canonical directory. Its public sensor/JSON view and
+LDAP service project that same data. Current managed ESP profiles receive shared
+contacts through LDAP; the native JSON roster action remains a compatibility
+path for firmware without managed LDAP. Directory records and the selected call
+line resolve names, extensions and numbers into SIP destinations or HA routes.
 
 Direct calls use SIP URIs such as:
 
@@ -212,7 +221,8 @@ SIP events are the source of truth for VoIP phone state.
 - `BYE` -> disconnected
 - `486` -> busy
 - `488` -> media incompatible
-- `401`/`407` -> authentication unsupported
+- `401`/`407` -> an account authentication challenge, retried only when the
+  selected account has applicable credentials; otherwise setup fails
 
 Cards render the state of their owner only:
 

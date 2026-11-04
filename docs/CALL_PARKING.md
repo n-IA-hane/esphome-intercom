@@ -1,8 +1,5 @@
 # Call parking and directed pickup
 
-This guide describes the 2026.11.0 release. Redownload an older
-build with the same version label to receive these additions.
-
 Parking leaves the other party connected to Home Assistant while you put down
 your phone. Another phone retrieves that conversation by calling its parking
 slot. The caller does not have to redial.
@@ -79,8 +76,9 @@ During an established audio call, **Park call** is available without a global
 enable switch. Resolve any parking-number conflict reported by HA Repairs
 before using it. Occupied slots appear in the list on the left of the card,
 including calls parked by another phone. The list updates when a call is
-retrieved, returned or ended. The Park control is disabled during a browser video call: parking currently
-supports audio-only calls, even if the local webcam is switched off. It invokes the same action described below and displays the
+retrieved, returned or ended. The browser card's Park control requires an
+audio-only call: it is disabled while video is active, even if the local webcam
+is switched off. It invokes the same action described below and displays the
 assigned slot. The card does not choose a slot or move media itself. Dial that
 slot from the same card or another phone to retrieve its caller. For example,
 after **Park** reports **701**, open the keypad, enter **701** and press **Call**.
@@ -96,13 +94,10 @@ media. The phone leaving the call becomes available for another conversation.
 
 ## From a Home Assistant action
 
-Select **VoIP Stack: Park call** and choose the phone currently participating
-in the conversation. Leave the slot empty to select the first free slot.
-The optional response contains `slot`, `call_id` and `generation`.
-
-In the action editor, select **VoIP Stack: Park call**, then select the phone
-currently on the call in **Phone**. The response reports the assigned slot.
-If a native VoIP trigger already supplies this call, keep that call context.
+In the action editor, select **VoIP Stack: Park call** and choose the phone
+currently on the call in **Phone**. Leave the slot empty for the first free slot.
+The optional response contains `slot`, `call_id` and `generation`. If a native
+VoIP trigger already supplies this call, keep that call context.
 
 To retrieve it from another phone, add **VoIP Stack: Call**, select that other
 phone in **Calling phone** and enter the reported slot (for example `701`) in
@@ -138,8 +133,10 @@ still connected, another member can answer or another phone can try pickup.
 A phone that already declined this group call cannot recover that same call;
 its failed attempt does not make it ring again. Later calls remain available.
 
-Conferences, active video calls and Automation-owned announcements are not
-supported pickup targets.
+Conferences and Automation-owned announcements are not supported directed
+pickup targets. A video source that has already been answered is also rejected
+by the directed-pickup path. Parking-slot retrieval and an unanswered SIP video
+invitation have different media contracts; see the limits below.
 
 ## Current verification boundary
 
@@ -159,7 +156,10 @@ final HA diagnostics reported no remaining call resources.
 
 These tests do not qualify every physical handset's transfer button or BLF
 configuration. The browser card does not offer Park during an active browser
-video call. Supported SIP video legs can retain their video contract through
-hold and pickup when the peer accepts the required negotiation; a different
-pickup codec may require enabled transcoding. Calls made directly between
-devices, without passing through Home Assistant, are outside this parking service.
+video call. The SIP backend can retain a video contract through parking and
+slot retrieval when the participating peers accept its hold and media-update
+negotiation; a different pickup codec may require enabled transcoding. This is
+not a general video-handoff guarantee for ESP firmware or every SIP handset.
+Use the audio workflow above unless the specific video route has been verified.
+Calls made directly between devices, without passing through Home Assistant,
+are outside this parking service.

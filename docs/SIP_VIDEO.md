@@ -26,6 +26,11 @@ offers two independent capabilities:
 If video setup, decoding, camera permission or transcoding fails, the SIP
 dialog and browser audio remain active whenever audio negotiation succeeded.
 
+The S3 receive renderer and current managed account/directory paths belong to
+the coordinated preview. Stable camera-only firmware does not gain a receive
+display through a HACS update. Follow
+[preview source selection](DEPLOYMENT_GUIDE.md#development-preview-firmware).
+
 ## Start with one picture
 
 1. Make a working audio call between the two endpoints first.
@@ -36,6 +41,10 @@ dialog and browser audio remain active whenever audio negotiation succeeded.
    sending its own camera.
 4. During the call, turn either camera off to stop that direction. Turning your
    camera off does not prohibit receiving the other party's video.
+
+![SIP video call in the Home Assistant phone card](images/ha-sip-video-call.gif)
+
+_SIP video call in the Home Assistant phone card._
 
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
@@ -112,9 +121,9 @@ simultaneous camera web stream. A later [HA-to-S3 retest by @jayfan0](https://gi
 confirmed immediate S3 camera video after updating the HA integration. That
 reported call lasted 64 minutes before an unexplained disconnect without debug
 logs, so it is not evidence of unrestricted long-uptime behavior. Both reports
-concern the S3's outgoing camera stream, independently of which side dialed;
-they concern camera transmission. S3 receive display support is provided
-separately by the JPEG renderer described below.
+concern the S3's outgoing camera stream, independently of which side dialed.
+S3 receive display support is provided separately by the JPEG renderer
+described below.
 
 If a camera call remains without video, collect one HA-to-S3 SIP capture and the ESP diagnostic log:
 check the INVITE's `m=video` and direction, the answer's video port and direction,
@@ -127,6 +136,11 @@ The maintained S3 JPEG receive package connects the standalone
 existing VoIP video sink and LVGL call surface. It decodes complete JPEG images
 and returns the display to its ordinary UI after the video session ends.
 A board may configure a camera source independently if it has one.
+
+Spotpear FULL configures a 240x240 receive envelope; Box V2 FULL configures
+320x240. Their device packages currently request up to 10 FPS, while the generic
+receive package has its own conservative defaults. Display plus VoIP selects
+this receive path on those supported FULL boards; no camera is inferred.
 
 The selected dimensions and `framerate` bound resource use and admission; they
 do not guarantee an achieved panel frame rate. A camera-only S3 installation
@@ -148,6 +162,11 @@ The full profile also publishes the same JPEG source as a standard ESPHome
 camera entity. Home Assistant can render that entity through its normal camera
 platform, while negotiated calls use RTP/JPEG in both directions without a
 second capture pipeline.
+
+Maintained FULL profiles pause Micro Wake Word during negotiated video without
+changing its saved enable setting. The usual startup/readiness guards decide
+whether recognition resumes after video ends. Assist, music, TTS and calls keep
+their existing application and audio bindings.
 
 ### What the P4 sends and displays
 
@@ -189,9 +208,16 @@ required on `p4_video_renderer` when `codec: h264`; ESPHome rejects the YAML at
 validation time if it is missing. JPEG can present through the LVGL image path
 or an optional direct display. In either case, receiving RTP packets or
 decoding frames is not considered display success: the presentation counter or
-a framebuffer capture must also prove that frames reached the panel.
+a synchronized [screenshot](ESP_SCREENSHOT.md) must demonstrate presentation
+through that path. A driver framebuffer capture is not independent proof that
+the physical panel received every transfer.
 
-The profile supports:
+## Home Assistant video capabilities
+
+The following list describes HA browser and SIP bridge behavior, not additional
+P4 decoder codecs. P4 remains limited to its selected JPEG or H.264 profile.
+
+The HA profile supports:
 
 - incoming and outgoing calls owned by the Home Assistant softphone;
 - `sendrecv`, `sendonly`, `recvonly` and `inactive` SDP directions;
@@ -298,18 +324,20 @@ mode is enabled. The normal card does not cover the picture with diagnostics.
 The tune button beside Hangup selects the microphone, audio output and camera
 owned by the current browser or Companion App session. Camera replacement is
 atomic: the existing sender remains active until the replacement track and
-encoder are ready. The Hangup control keeps its responsive dimensions and
-pulses subtly from received audio only; it is not driven by the local
-microphone.
+encoder are ready. Hangup remains the explicit call-termination control;
+audio-reactive decoration is separate from whether that action works and is
+not a measurement of audible playback.
 
 Camera transmission has two gates. The integration-level option must first be
 enabled, then **Send Camera** must be enabled on that logical HA phone. The
 preference survives cache clearing and is shared by every card bound to the
 same phone; camera permission remains local to the browser that owns media.
 Permission denial stops only the outgoing camera track. Incoming video, audio
-and call controls continue independently. Reloading the dashboard during
-ringing or an established call transfers media ownership to the new card and
-releases the old WebSocket deterministically.
+and call controls continue independently. The page/window owns browser media
+and shares it across its cards, Dashboard and popup. Changing views does not
+create a second call; an ordinary reload can recover the same window's call.
+A new window or duplicated tab has its own media identity. Keep the receiving
+frontend running and respect mobile background-suspension limits.
 
 ## Direct and transcoded media paths
 
@@ -411,8 +439,8 @@ informational, not legal advice.
 
 This profile does not claim support for:
 
-- general hardware qualification of ESP32-S3 camera boards; the community
-  results and remaining reverse-direction check are described above;
+- general hardware qualification of ESP32-S3 camera/display boards; the
+  identified community results and their remaining limits are described above;
 - video through Assist, conference rooms or ring-group legs that traverse
   standard SIP/RTP endpoints (a local HA browser caller can retain direct
   browser video when another local browser phone wins the ring group);
@@ -422,8 +450,9 @@ This profile does not claim support for:
 - more than one browser owning the same active HA video stream;
 - SRTP, DTLS, ICE or TURN;
 - RTCP multiplexing, generic NACK retransmission or bandwidth adaptation;
-- call recording or a call-snapshot service. Qualified P4 profiles may expose
-  their camera separately through the normal ESPHome camera entity;
+- video recording or a generic call-snapshot service. [Audio recording](CALL_RECORDING.md)
+  is separate. Supported ESP profiles may expose their camera normally or use
+  the independent [screenshot diagnostic](ESP_SCREENSHOT.md);
 - arbitrary codec replacement on an established video stream. Compatible
   audio-to-video add/remove is negotiated transactionally through re-INVITE;
 - IPv6 RTP media.

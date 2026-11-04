@@ -32,7 +32,7 @@ BLF and MWI, retain their normal owners and interfaces.
   LVGL coordinate-tap diagnostics through the existing device action path.
 - Keep coordinated preview component references and the browser, HA and media
   regression witnesses in CI. Document the explicit
-  [preview firmware overrides](README.md#development-preview-firmware).
+  [preview firmware overrides](docs/DEPLOYMENT_GUIDE.md#development-preview-firmware).
 
 Physical checks cover the exercised S3 and P4 profiles and call routes,
 including P4 popup video and S3 audio parking/pickup. They do not establish

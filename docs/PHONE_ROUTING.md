@@ -5,6 +5,11 @@ card is closed, and the ESP mirror card edits the same backend settings as a
 softphone card. Direct SIP calls sent to an ESP's IP bypass the HA dial plan.
 Use its HA phonebook route when the backend must apply these rules.
 
+In the preview, an enabled browser phone remains logically available even
+without an open card. That does not supply browser media: use a no-answer rule
+when no receiving frontend answers, rather than treating card closure as an
+unavailable phone. See [browser-phone availability](USER_GUIDE.md#browser-phone-availability).
+
 Open the phone card's **Options > Call routing**, or choose the native action
 **VoIP Stack: Configure phone routing** and select the phone in the device picker.
 

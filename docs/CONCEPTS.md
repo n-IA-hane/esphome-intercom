@@ -5,6 +5,8 @@ Logical browser phones, standard SIP accounts, physical endpoints and trunks
 share its routing and call applications. You can start with two room or app
 phones and add external equipment later.
 
+![Illustration of Home Assistant as the local SIP and PBX hub](images/home-assistant-local-sip-pbx.png)
+
 These are the names you will see in the editor, and when they matter.
 
 ## The everyday terms
@@ -25,6 +27,18 @@ These are the names you will see in the editor, and when they matter.
 | Conference | Several callers share an audio conversation. | Everyone joins the same named room. |
 
 ![Controls choose a local phone and a destination through HA](images/phone-control-path.svg)
+
+## Doorbells, room phones and app phones
+
+A door station can call a room phone or a ring group. Room phones can call each
+other, and an Automation contact can supply a greeting or announcement. Add a
+provider trunk only for calls that need that external line. Each route uses the
+media capabilities of its participants; an audio conference stays audio-only.
+
+![Illustration of doorbell and room-to-room calling](images/voip-doorbell-room-to-room.png)
+
+For installation and the stable/preview requirements of each frontend, see the
+[user guide](USER_GUIDE.md).
 
 ## What do I actually select?
 

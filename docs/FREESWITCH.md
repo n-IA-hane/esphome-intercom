@@ -1,5 +1,8 @@
 # FreeSWITCH and FusionPBX audio/video interoperability
 
+Home Assistant already runs VoIP Stack's own PBX. This optional interoperability
+guide applies when an existing external PBX is part of the chosen route.
+
 VoIP Stack can call audio phones and video door stations through a
 FreeSWITCH-based PBX. The PBX negotiates separately with the calling phone
 (the A-leg) and the destination (the B-leg). Its media policy determines how
@@ -84,12 +87,13 @@ For another deployment, separately test upgrades initiated from either side,
 video removal, hold/resume, early media, transfers, queues, IVRs, conferences
 and recording. The report does not certify every combination or provider.
 
-## Two fixes in Home Assistant
+## Browser decoding and NAT
 
 The 2026.11.0 release also corrects H.264 delivery to the browser. Standalone
 SPS/PPS parameter blocks are cached for the next picture, rather than submitted
-to WebCodecs as empty pictures. This prevents a decoder failure when the PBX
-switches from an initial frame to the camera stream.
+to WebCodecs as empty pictures. This addresses that parameter-block failure mode when the PBX switches from
+an initial frame to the camera stream. It is not evidence that every reconnect
+or external PBX route has passed current physical qualification.
 
 NAT reachability is separate from codec negotiation. A remote PBX must have a
 reachable media address and RTP/RTCP ports from the beginning of the stream.

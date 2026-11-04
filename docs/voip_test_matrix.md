@@ -3,6 +3,9 @@
 This matrix is mandatory before claiming the VoIP refactor complete. A test
 passes only when protocol logs, backend state, card rendering and device state
 agree. Counters alone are not proof of audible bidirectional audio.
+Use the [test-suite guide](../tests/README.md) for executable suites and proof
+levels, and [testing/debug procedures](TESTING_AND_DEBUG.md) for evidence
+collection. This page lists scenarios, not a second execution procedure.
 
 ## Incremental recovery from 2026.11.0
 
@@ -46,11 +49,14 @@ regression. Do not change household phone registration to isolate this lab.
 
 - No ESP firmware compile or OTA before local implementation and host checks.
 - `voip-pcm/1` profile documented and kept in sync with code.
-- ESP audio remains RTP PCM L16/L24. Optional P4 video is compile-gated to one
-  encoded codec, JPEG or H.264, and is absent from audio-only firmware.
-- ESP endpoints use no Digest auth, send no `WWW-Authenticate`, and require no
-  `Authorization` or `REGISTER`. HA may authenticate its optional trunk and
-  local registrar accounts; neither mechanism gates all inbound INVITEs.
+- ESP audio follows the compiled PCM L16/L24 or explicitly selected Opus
+  profile. FULL/P4 PCM and S3 VoIP-only Opus remain distinct choices. Video is
+  compile-gated: P4 selects JPEG or H.264; S3 LCD RX uses its JPEG profile;
+  audio-only firmware excludes video.
+- Standalone NoReg ESP profiles need no account. Optional registered lines use
+  Digest and a valid binding; qualify their authentication separately from
+  direct-call admission. HA trunk and registrar authentication do not make
+  registration a universal inbound INVITE allowlist.
 - SIP signaling available on UDP and TCP; RTP audio remains UDP in the current
   phone profile.
 - `Via` and `Contact` include correct transport and host:port.
@@ -61,8 +67,10 @@ regression. Do not change household phone registration to isolate this lab.
 - Default payload limit rejects `48000:s16le:1:20`.
 - Native 48 kHz mono signed-16 PCM profiles use 10 ms frames, 960 payload
   bytes, and remain below the default 1200-byte RTP payload budget.
-- JSON roster entries are data-driven; direct ESP and softphone entries include
-  explicit SIP transport or route through HA without user-authored `kind`.
+- Directory entries are data-driven. Compatible managed ESPs refresh LDAP;
+  legacy/custom HA roster providers consume JSON. Direct ESP and softphone
+  entries include explicit SIP transport or route through HA without
+  user-authored `kind`.
 - ESP endpoint declarations never include a separate `sip` protocol column.
   SIP is implicit; the only transport choice is SIP/TCP or SIP/UDP signaling.
 - The phonebook is an outbound dial plan, not an inbound caller allowlist.
@@ -75,7 +83,8 @@ regression. Do not change household phone registration to isolate this lab.
 
 Run after implementation is complete:
 
-- `./.venv/bin/python -m pytest -q`
+- `./scripts/test_suite.sh software-full` and applicable HA/browser suites from
+  [the suite guide](../tests/README.md).
 - `./.venv/bin/python tools/voip_dev_check.py`
 - `./.venv/bin/python tests/support/qualification_matrix.py --validate --summary`
 - `./scripts/run_virtual_device_tests.sh --all`
@@ -143,15 +152,15 @@ state.
   response and terminal reason.
 - `voip_stack.hangup`: handles pending INVITE, active client, relay and
   server dialog idempotently.
-- `voip_stack.add_contact`: updates central JSON and pushes to
-  online ESPs.
-- `voip_stack.remove_contact`: removes one manual contact by
-  name and pushes the updated JSON.
-- `voip_stack.set_contacts`: rejects invalid JSON roster and
-  pushes valid JSON.
-- `voip_stack.clear_contacts`: clears manual contacts and pushes updated
-  JSON.
-- `voip_stack.push_phonebook`: logs every pushed/skipped ESP.
+- `voip_stack.add_contact` / `remove_contact`: update central contacts and
+  directory generation; remove only the selected manual contact.
+- `voip_stack.set_contacts`: rejects invalid input and replaces manual central
+  contacts without erasing discovered or managed identities.
+- `voip_stack.clear_contacts`: clears manual central contacts.
+- Managed LDAP: observe delivered account/configuration, an actual successful
+  query generation and atomic Native commit, with manual contacts preserved.
+- Legacy/custom JSON provider: observe valid roster push and each pushed/skipped
+  ESP in `voip_stack.push_phonebook` diagnostics. Do not count it as LDAP proof.
 - `voip_stack.set_dnd`: updates the HA softphone DND store, emits event,
   and causes inbound calls to receive `486 Busy Here` with DND reason.
 - `voip_stack.forward`: source leg, destination leg, busy destination and
@@ -205,14 +214,23 @@ snapshots.
   busy.
 - Second caller hits ESP while ESP is ringing: second caller gets busy.
 - Second caller hits ESP while ESP is in_call: second caller gets busy.
-- Codec-only softphone INVITE without L16/L24 receives `488`.
-- SIP softphone/proxy 401/407 challenge terminates with unsupported-auth reason.
+- An offer with no format compatible with the selected firmware receives `488`;
+  keep PCM-only and explicit Opus-profile cases separate.
+- A NoReg call or account without usable credentials receives a 401/407
+  challenge and terminates with the unsupported-auth reason.
+- A configured registered line completes its Digest challenge and places a
+  real call on that account; direct-call policy remains independently applied.
 - Unknown, unregistered SIP peer calls HA by name and extension; routing is not
   rejected merely because the source is absent from the phonebook.
-- Unknown, unregistered SIP peer calls WS3 and Spotpear directly with compatible
-  SDP; each endpoint rings or returns only its normal busy/DND response.
-- Established ESP calls receive a hold/codec re-INVITE: the ESP sends `488`,
-  the original RTP/dialog stays usable, and a later BYE cleans up.
+- With direct calls enabled, an unknown, unregistered SIP peer calls WS3 and
+  Spotpear with compatible SDP; each endpoint rings or returns its normal
+  busy/DND response. Test a disabled direct-call policy separately.
+- Established ESP calls reject incompatible audio-contract re-INVITEs with
+  `488`, retain usable RTP/dialog state and clean up on later BYE.
+- Compatible ESP video add/remove and direction changes commit through the
+  existing owner. Active endpoint retarget and incompatible codec/PT changes
+  reject; test the separately allowed inactive retarget. Follow the
+  [compatibility table](ARCHITECTURE.md#in-dialog-media-compatibility).
 - Established HA-owned calls receive compatible UPDATE and re-INVITE offers:
   hold/resume, direction, RTP endpoint and supported audio-format changes
   commit once; rejected or retransmitted offers do not duplicate the commit.
@@ -220,11 +238,13 @@ snapshots.
   ACK, reaches a real registered SIP peer through the normal route, survives
   source and destination hangup, and returns all call resources to baseline.
 - HA video hold/resume retains the directional H.264/VP8/JPEG contract and
-  camera authorization. Adding/removing video or changing its codec receives
-  `488` without damaging the current call.
+  camera authorization. Direct browser dialogs cover compatible add/remove;
+  bridge additions require a matching destination re-INVITE and usable direct
+  or transcoded relay. Incompatible established codec changes, rejected peer
+  offers and stale transactions preserve the current usable call.
 - HA/Baresip legs negotiate Opus at 48 kHz where offered and supported; a
-  separate L16 48 kHz case verifies high-rate PCM without implying that ESP
-  endpoints support compressed codecs.
+  separate L16 48 kHz case verifies high-rate PCM. Qualify an explicit S3 Opus
+  profile separately; do not infer its support from a PCM FULL/P4 case.
 - A FRITZBox-style PCMA call that advertises 16 ms but sends 10 ms RTP packets
   is reframed without decode drops and produces complete Assist input frames.
 - A caller with display name `Dio Cane` remains exactly `Dio Cane` on the
@@ -239,10 +259,15 @@ snapshots.
 - H.264-to-JPEG and JPEG-to-H.264 HA bridge fallback passes both media
   directions. Already compatible directions remain direct and hangup leaves no
   FFmpeg process, socket, owner or call resource.
-- An audio-only WS3 offer never starts a video session or inherits video from a
-  parallel P4/card call.
-- Direct P4-to-WS3 and WS3-to-P4 calls remain audio-only, bypass HA media and
-  cleanly return both endpoints to idle.
+- An audio-only Waveshare S3 Audio Board offer (`ws3` in the live runner)
+  never starts video or inherits video from a parallel P4/card call.
+- Direct P4-to-WS3 Audio and WS3 Audio-to-P4 calls remain audio-only, bypass HA
+  media and cleanly return both endpoints to idle.
+- A separate P4-to/from-S3 LCD JPEG case uses the receiver's compiled envelope
+  (320x240/2 FPS defaults), actual negotiated direction and independently
+  decoded remote pixels. Keep camera-only S3 TX separate. Package inclusion
+  alone qualifies neither a physical LCD nor every Spotpear board; S3 JPEG RX
+  does not imply H.264 RX.
 
 ## Real HA qualification runners
 

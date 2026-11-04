@@ -13,7 +13,9 @@ The current contract is:
 - Dialog identity: Call-ID, From tag, To tag, CSeq, Via branch/rport, Contact,
   and route target.
 - SDP offer/answer for media negotiation.
-- RTP/UDP PCM media.
+- RTP/UDP media using the configured audio codec and optional negotiated video.
 - Public state via `SipPhoneState`.
 
-Use `docs/reference.md` for configuration and service details.
+Use the [current profile](voip_profile.md), [SIP video guide](SIP_VIDEO.md) and
+[reference](reference.md) for the supported contracts. This tombstone does not
+freeze every firmware to the historical PCM-only feature set.

@@ -8,6 +8,17 @@ action on import. The plan CLI only writes `prepared`, with physical/acoustic
 Unsupported HIL scenarios still fail closed until their actual measured
 producers and validators exist. No host receipt becomes physical evidence.
 
+Prepare a plan without running a device session:
+
+```bash
+python tools/qualify_esp_session.py \
+  --head <exact-intercom-commit> --candidate-id <identified-candidate> \
+  --output evidence/final-session-plan.json
+```
+
+The output must be a new file. This command does not start a lab, create an
+account, place a call or authorize later physical execution.
+
 ## Final grouped matrix
 
 Use the same complete, identified P4 and S3 LCD FULL candidate, preserving
@@ -18,18 +29,20 @@ or codecs. Do not substitute Lite or add another build only for one scenario.
 
 | Route | Required media and identity |
 | --- | --- |
-| Home HA to/from ESP | Home managed `ha`, default line `ha`, Master0 preserved; independently decode HA TX48k/10 ms and ESP TX16k/10 ms with explicit D1 SDP. |
+| Managed HA to/from ESP | Preserve the existing managed account, default line and audio-output settings; independently decode both directions against the actual negotiated SDP. A profile using HA TX48k/10 ms and ESP TX16k/10 ms must prove those exact directional contracts. |
 | P4 to/from S3 | Actual peer dialogs, both terminal owners, watchdog window from the real configured contract, cleanup, immediate distinct redial. |
 | Manual VoIP Stack HA SIP account to/from physical ESP | User-created ordinary account, `GenericSipAccount` / `sip_account`, standard AoR and SDP, audio and video in both directions, both terminal owners and redial. No Provisioner or ESPHome integration in the test PBX. |
-| Asterisk QA to/from P4 and S3 FULL | Existing QA7101/7102 and peers7103/7104, trunk6002; L16/16k/20 ms plus supported10/16 ms alternatives, independent directional PCM and full teardown. |
+| Asterisk QA to/from P4 and S3 FULL | Bind the existing authorized QA accounts, peers and trunk to the plan; L16/16k/20 ms plus profile-supported 10/16 ms alternatives, independent directional PCM and full teardown. |
 | ESP1 to HA to registered Asterisk trunk to Asterisk-registered ESP2, and reverse | Duplex audio mandatory; correlate both PBX legs and actual per-leg SDP/RTP. If Asterisk delivers H.264, HA converts it to JPEG for S3. S3 never receives an H.264 decode contract. Preserve passthrough when formats match. |
 | Real Lovelace LAB Dashboard | Actual monitor/shared engine; ordinary tile call, answer, pickup, hangup, remount/reload; browser PCM plus independent SIP-peer PCM, both legs, EOF and cleanup. |
 
 The manual test account has user ownership and a separate Native line such as
-`manual_ha`; creation remains deferred until the user requests it. Home's `ha`
-account stays active and default. Asterisk remains an additional interoperability
-case. Credentials stay in private files, never command arguments, logs or plan
-JSON. Do not register household ESPs through LAB's ESPHome integration.
+`manual_ha`. Use an existing authorized account; creating an account needs its
+own authorization. Preserve the household managed account and default line.
+Asterisk is an additional interoperability case. Historical QA extension
+numbers and deferred-account decisions belong to their session evidence, not
+the reusable plan. Credentials stay in private files, never command arguments,
+logs or plan JSON. Do not register household ESPs through LAB's ESPHome integration.
 
 For both FULL ESPs on Asterisk, enable real MWI and BLF code in the final
 candidate, including `registration.message_waiting: true` and explicit QA
@@ -39,18 +52,18 @@ enter the real menu with RFC4733, measure playback, delete the QA message,
 observe QA waiting-no, then quiescence. No mailbox creation/deletion or PBX
 configuration action is performed by this preparation tool.
 
-An empty-account MWI getter may choose another waiting mailbox. Record Home's
+An empty-account MWI getter may choose another waiting mailbox. Record the household
 baseline and verify `get_message_waiting("qa")` and QA's Message-Account. A
-pre-existing Home waiting indicator cannot prove a QA transition. Preserve Home
-messages and settings. Master0 playback may prove decoded transport/native sink
+pre-existing household waiting indicator cannot prove a QA transition. Preserve
+household messages and settings. A silent output may prove decoded transport/native sink
 progress; it does not prove listening or audible output. Acoustic acceptance
 requires its separate authorized experiment.
 
 ## Existing owners and reusable collectors
 
-`tools/qualify_esp_session.py` selectively recovers Q's domain-keyed state and
-capture checks. It contains no automatic silence, provisioning, account removal,
-device/PBX restart, demo roster or IMAP path. Supply the existing actor's API
+`tools/qualify_esp_session.py` supplies domain-keyed state and capture checks
+to the existing session owner. It contains no automatic silence, provisioning,
+account removal, device/PBX restart, demo roster or IMAP path. Supply the existing actor's API
 client to `EspObserver`; exact MAC/build verification precedes its services.
 Its connection and subscriptions are closed even on identity failure.
 
@@ -101,7 +114,7 @@ Its required `request_ids` set must come from CDP socket URLs observed for this
 Call-ID. Samples from an earlier call cannot satisfy the current call's window.
 When a registrar rewrites Contact, pass both the expected request Contact and
 the explicitly observed accepted Contact to the registration capture oracle.
-Do not use Q's incompatible `capture_pcm=False` wrapper or replace getUserMedia,
+Do not use an incompatible `capture_pcm=False` wrapper or replace getUserMedia,
 play, render or capability discovery to make a test green. The passive snapshot
 reads published store data and DOM only. Its host test loads the actual shipped
 Dashboard model and rejects observer side effects. This function test is not
@@ -118,5 +131,5 @@ Keep one call-scoped PCAP per generation, capture PID/readiness/stop status,
 capinfos output, SDP, both decoded WAV directions, Native/HA snapshots and fresh
 screenshots. Hash inputs inside the existing evidence root and bind
 plan/head/candidate/run/Call-ID. Require both leg cleanup, owner/relay/socket/RTP
-reservation release and media EOF before redial. Root's G0 validates the actual
+reservation release and media EOF before redial. The G0 gate validates the actual
 measured artifacts. No `status: passed` string or packet counter replaces them.

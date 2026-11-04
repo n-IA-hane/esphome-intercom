@@ -24,7 +24,7 @@ audio faults. Use the SIP capture for signaling that passes through HA.
 
 Report the exact route, for example **HA card > trunk Work > door station**,
 and whether the fault is signaling, received audio, transmitted audio or video.
-Start with [HA integration diagnostics](../README.md#before-opening-an-issue).
+Start with the [issue evidence checklist](TESTING_AND_DEBUG.md#before-opening-an-issue).
 Use the ESP steps below only when an ESP is involved; use SIP capture for calls
 that pass through HA. The [developer test guide](TESTING_AND_DEBUG.md) is for
 maintainers reproducing a fault, not a requirement for opening a useful issue.
@@ -83,7 +83,7 @@ and [Audio Stack diagnostic button](https://github.com/n-IA-hane/esphome-audio-s
 For a Runtime Controller state problem, its detailed dump separately requires
 `debug: true`; see the [runtime diagnostic guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/main/README.md#diagnosing-a-stuck-state).
 
-Use the [report template](../README.md#before-opening-an-issue) when opening an
+Use the [report template](TESTING_AND_DEBUG.md#before-opening-an-issue) when opening an
 issue. A diagnostic snapshot is a starting point; a packet or audio recording
 may still be needed to establish why a fault occurs.
 
@@ -259,17 +259,26 @@ ESP. PCM and Opus are separate firmware choices.
 ## HA cannot route a name
 
 - Ensure `sensor.voip_phonebook` contains the target.
-- If an ESP has just rebooted or been reflashed, check
-  `sensor.<device>_voip_contacts`. If it is `unknown` or empty while the device
-  is otherwise online, wait for HA to see the ESPHome
-  `esphome.<slug>_set_roster_json` service or call `voip_stack.push_phonebook`
-  for diagnostics. Current builds automatically refresh when that service is
-  registered.
+- For an ESP, first identify the phonebook provider. With compatible managed
+  LDAP firmware, verify enrollment and the managed account, delivered directory
+  configuration, listener/network reachability, a successful refresh/query for
+  the current generation and the Native snapshot commit. Manual contacts must
+  survive refresh. An online API or JSON push alone proves none of those steps.
+- For legacy/custom firmware with the HA roster provider enabled, check
+  `sensor.<device>_voip_contacts` and discovery of
+  `esphome.<slug>_set_roster_json`. `voip_stack.push_phonebook` reports attempted
+  or skipped pushes; that path refreshes when the service is registered.
+  Managed LDAP disables this provider. Follow the
+  [phonebook guide](PHONEBOOK_PROTOCOL.md#standard-ldap-directory) for the
+  provider-specific contract.
 - For local ESP-only routing, declare the contact in
   `voip_stack.static_contacts`.
 - Use a direct SIP URI (`sip:name@host:5060`) when bypassing HA.
 - Use `ha_bridge: true` when HA must bridge a logical target.
-- For external numbers, confirm the optional trunk is configured and registered.
+- For external numbers, confirm the selected trunk is enabled and ready.
+  Registered trunks need a valid binding; static trunks need an active runtime
+  and configured trusted networks. Check [trunk selection](SIP_TRUNK.md), rather
+  than assuming REGISTER is required for every trunk.
 - Check whether the entry is disabled. Disabled entries reject instead of
   routing through HA.
 - Check `extension` aliases for local/internal targets. Numeric targets from
@@ -351,14 +360,20 @@ final response.
 
 ## Hold, UPDATE or re-INVITE
 
-ESP endpoints do not renegotiate established media. A hold or media-changing
-re-INVITE receives `488 Not Acceptable Here`; the original dialog and media
-remain active and a later BYE must still end the call normally.
+Compare the offer with the
+[in-dialog compatibility table](ARCHITECTURE.md#in-dialog-media-compatibility).
+ESP Native rejects established audio-contract changes, but compatible video
+add/remove and direction changes can use its existing media owner. Active
+video retargets and incompatible formats remain rejected. A rejected request
+must preserve the original dialog and media, including a later normal BYE.
 
 HA-owned dialogs accept compatible peer-initiated UPDATE or re-INVITE offers.
-If HA returns `488`, inspect whether the peer tried to add/remove video, change
-the established video codec, supplied an unsupported audio shape, sent an
-offerless re-INVITE, or requested video that the other bridge leg rejected.
+If HA returns `488`, inspect the exact incompatible format or direction,
+established video codec change, unavailable converter/resources, or rejection
+by the other bridge leg. Video add/remove is not inherently invalid. An
+offerless re-INVITE is a supported delayed offer: HA sends the offer in
+`200 OK` and requires a compatible answer in ACK. Diagnose an invalid/missing
+ACK answer separately from the absence of SDP in the request.
 For an audio-only SIP bridge, an accepted video addition produces a second
 re-INVITE toward the destination before HA answers the source. A rejected offer
 must not replace the previous audio media. For an accepted update, inspect

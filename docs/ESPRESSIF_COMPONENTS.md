@@ -32,8 +32,9 @@ runtime task or audio owner.
 
 The P4 `mipi_dsi` adaptation remains separate. It serializes LVGL/direct video
 submissions and exposes the immutable framebuffer to the narrow P4 renderer.
-Its provenance is recorded in its own `UPSTREAM.md`. `p4_framebuffer_capture`
-and `runtime_diag` remain explicit diagnostics, not production media owners.
+Its provenance is recorded in its own `UPSTREAM.md`. The standalone
+[ESP Screenshot component](ESP_SCREENSHOT.md), low-level `p4_framebuffer_capture`
+and `runtime_diag` remain optional diagnostics, not production media owners.
 The GMF dependency constraint used by AFE also remains separately documented
 below; retiring ESPHome audio providers does not remove that vendor pin.
 
@@ -110,6 +111,10 @@ a Voice Assistant, media-player, microphone/speaker, or custom callback build.
 The cross-component validation only runs when both `esp_audio_stack` and
 `voip_stack` appear in the same YAML, to prevent double ownership of AEC or
 DC-offset correction.
+
+![Shared music, TTS, wake word, Voice Assistant and VoIP audio pipeline](images/shared-audio-aec-pipeline.png)
+
+_Shared audio paths for music, TTS, wake word, Voice Assistant and VoIP._
 
 ## Naming and license boundaries
 
@@ -246,12 +251,13 @@ Do not treat all Espressif components the same:
   (`complexity` and `perf_type`), but no public "allocate in PSRAM" knob. Our
   wrapper controls the scratch buffers it owns and opens all converter handles
   before the first realtime frame.
-- The public dual-mic full-experience targets use a hybrid bridge-buffer
-  placement: keep the per-frame AFE feed scratch and fetch output ring internal,
-  move the larger AFE feed staging ring to PSRAM, and place ESPHome-owned audio
-  and VoIP frame buffers in PSRAM. DMA descriptors and I2S driver buffers
-  remain internal. This is the current WS3/P4 baseline for HTTPS media plus TTS
-  plus VoIP stress.
+- Placement is profile-specific. Current P4 FULL keeps AFE feed scratch and
+  staging ring internal; the headless Waveshare S3 AFE profile places both in
+  PSRAM. P4 FULL also keeps VoIP frame buffers internal, while the S3 profile
+  selects PSRAM for them. Other Audio Stack buffers and task stacks have their
+  own settings. DMA descriptors and I2S driver buffers remain internal. Read the
+  selected device/audio profile rather than applying one historical stress
+  configuration to every board.
 
 Runtime test interpretation: PSRAM use inside GMF/esp-sr is expected. If a test
 crashes or glitches, first capture the stack and memory snapshot; do not fork or
@@ -294,16 +300,14 @@ codec-private analog register scripts, and raw multi-channel microphone output
 as a standard ESPHome microphone. Those require separate backend/component work;
 exposing them as inert options would make custom builds harder to debug.
 
-## Future work
+## Stereo microphones and software reference
 
-- **Dual I2S microphones with software AEC reference**: Espressif AFE can
-  consume interleaved `MMR` frames (two microphone channels plus playback
-  reference). A future `esp_audio_stack` mode can build that frame explicitly
-  from a stereo INMP441-style microphone bus (`MM`) and the existing software
-  reference path (`R`, for example `aec_reference: previous_frame`). This is
-  separate from the current single-mic `MR` AEC path and should be implemented
-  only after release validation, because it changes the AFE feed layout and
-  needs hardware tests with a real two-mic board.
+The existing STD I2S path supports `rx_slot_mode: stereo` with
+`rx_mic_slots: [left, right]`. The BOX-3 AFE profile uses two microphone channels
+plus the software playback reference, with `mic_num: 2`. It does not use the
+ES8311 stereo DAC-reference mode or a hardware TDM reference slot. Its current
+configuration is documented in the [experimental BOX-3 guide](../yamls/experimental/esp32-s3-box-3/README.md);
+implementation support is not physical qualification of every stereo MEMS board.
 
 ## Practical rule
 

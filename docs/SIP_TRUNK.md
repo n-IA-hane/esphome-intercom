@@ -2,8 +2,10 @@
 
 Home Assistant can connect named SIP trunks to providers or PBXs, either with
 registration or as a static trunk authorized by source IP. ESP devices can keep
-using direct SIP through HA. Firmware can also compile independent registered
-accounts for another PBX; those accounts are separate from HA's trunk settings.
+using SIP through HA. Coordinated preview firmware can also configure
+independent registered accounts for another PBX; those accounts are separate
+from HA's trunk settings. See [ESP registration](ESP_REGISTRATION.md) for the
+required firmware channel. Static ESP peers do not require REGISTER.
 
 Each trunk has its own connection, credentials and incoming routing settings.
 Disabled trunks do not register or accept new external calls. Local calls work
@@ -323,9 +325,13 @@ tones are not decoded.
 
 ## Experimental automation override
 
-**Allow experimental automation routing overrides** is a separate switch and
-is disabled by default. Enabling it adds one bounded `route_requested` decision
-point:
+For a new rule, use the native **VoIP call destination requested** trigger. A matching
+native trigger opens the bounded decision window automatically; its
+**Select inbound call destination** action uses that execution's call.
+
+**Allow experimental automation routing overrides** is the separate opt-in for
+legacy Event Entity rules and is disabled by default. Both use the same bounded
+`route_requested` decision point:
 
 - Direct mode exposes it before the default target.
 - DTMF mode exposes it only after the digit window produced no digits.
@@ -359,7 +365,10 @@ send 10 ms PCMA/PCMU packets without hiding malformed or unaligned payloads.
 
 ## Observability
 
-The HA softphone snapshot exposes:
+Start with each named trunk's readiness entity. For detailed diagnostics,
+the HA softphone debug snapshot exposes `sip_trunks`, keyed by line identity,
+and the legacy `sip_trunk` snapshot for the default line. These details are not
+populated in the ordinary non-debug snapshot. Fields within each line include:
 
 - `sip_trunk.trunk_enabled`
 - `sip_trunk.trunk_registered`
@@ -368,6 +377,9 @@ The HA softphone snapshot exposes:
 - `sip_trunk.trunk_last_sip_event`
 - `sip_trunk.trunk_transport`
 - `sip_trunk.trunk_server`
+
+For another line, inspect these same fields under its `sip_trunks` entry rather
+than assuming the default line's status applies to all providers.
 
 INFO logs describe normal call progress. DEBUG logs should be used when tracing
 REGISTER, INVITE, DTMF routing and RTP relay behavior.

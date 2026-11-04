@@ -22,9 +22,14 @@ phones. For the difference between a phone, card, contact and trunk, see
 | React when a phone rings or its mailbox changes | [Native automation tools](#phone-state-in-automations) |
 
 The screenshots use Home Assistant's visual editors. Choose phones by their
-names; HA stores the identifiers for you. The new PBX actions described here
-are included in the current **2026.11.0** release. If an action is missing
-after redownloading the same version, restart HA and reload the browser.
+names; HA stores the identifiers for you.
+
+**Release scope:** stable **2026.11.0** includes compact phone cards, routing,
+groups, voicemail, recording, parking, pickup and SIP BLF/MWI. The Dashboard,
+global popups, persistent LDAP directory and managed ESP registration described
+here require **2026.11.1-dev.1** and matching preview firmware where applicable.
+Choose the intended release in HACS, restart HA and refresh its frontend after
+an update. The [changelog](../CHANGELOG.md) retains release history.
 
 ## Install Home Assistant VoIP Stack
 
@@ -58,8 +63,9 @@ that answers becomes the media owner.
 
 ### Choose a card view
 
-The visual card picker exposes **VoIP Stack Card** and **VoIP Dashboard**.
-The compact `custom:voip-stack-card` has three modes:
+The visual card picker exposes two public card types: **VoIP Stack Card** and,
+in the preview, **VoIP Dashboard**. Choose the existing phone by name in the
+visual editor. The compact `custom:voip-stack-card` has three modes:
 
 | Mode | Select | Media owner |
 | --- | --- | --- |
@@ -69,7 +75,16 @@ The compact `custom:voip-stack-card` has three modes:
 
 The `custom:voip-stack-dashboard-card` uses one selected `device_id`, with no
 mode field. It combines extension status, contacts and the selected HA or ESP
-phone's call controls. Its visual editor asks for **Calling phone**.
+phone's call controls. Its visual editor asks for **Calling phone**. Its saved
+YAML has this shape:
+
+```yaml
+type: custom:voip-stack-dashboard-card
+device_id: <phone_device_id>
+```
+
+Use the visual picker to supply that reference. A second view of the same
+phone uses its existing call and media owner.
 
 ![VoIP Dashboard with the selected phone idle and current extension status](images/voip-dashboard-current.png)
 
@@ -82,6 +97,12 @@ phone's call controls. Its visual editor asks for **Calling phone**.
 </figure>
 
 </details>
+
+![Compact phone cards and the shared phonebook on a Home Assistant dashboard](images/dashboard.gif)
+
+This earlier layout shows compact phone cards alongside the shared directory;
+it is not the preview operator Dashboard. Browser and ESP phones retain their
+own identities and call states.
 
 For the current dashboard and popup captures, see the
 [screenshot provenance](voip-ui-provenance.json).
@@ -112,7 +133,12 @@ or another phone to provision.
 4. Allow microphone access and enable browser audio when prompted. Allow
    camera access only if you want to transmit video.
 
-![Enable call popups for an existing Home Assistant phone](images/voip-popup-settings.png)
+<table>
+  <tr>
+    <td width="50%"><img src="images/voip-popup-settings.png" alt="Enable call popups for an existing Home Assistant phone"/></td>
+    <td width="50%"><img src="images/voip-popup-ringing.png" alt="Incoming call displayed over another Home Assistant view"/></td>
+  </tr>
+</table>
 
 The choice persists in this browser or Companion app. Repeat it on each
 receiving device. There is no HA user-to-phone mapping. Finish the current
@@ -127,6 +153,18 @@ card. The popup uses the same call controls and media as that phone's card.
 | Tap the small caller/timer bar | Reopen the same call. |
 | Decline while ringing | Reject the identified incoming call. |
 | Hang up while connected | End the call and release its media. |
+
+<img src="images/voip-popup-minimized.png" width="113" alt="Minimized call with caller, duration and explicit hangup control"/>
+
+<details>
+<summary>Video popup demonstration</summary>
+
+![Video in the global call popup](images/voip-popup-video-demo.png)
+
+Doorbell video-call demonstration in the global popup, using an illustrative
+gate-camera feed.
+
+</details>
 
 Keep the HA frontend running. Browser permissions and mobile background
 suspension still apply. In the Companion app this runs inside the existing
@@ -155,6 +193,21 @@ The same icons are used in audio and video mode.
 Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
 video. Disabling **Enable this phone's mailbox** deletes its messages and settings.
+
+For a browser phone, Options also selects the microphone, speaker and camera.
+These device selections are shared by the cards in that browser or Companion
+session. Leaving a selector unset keeps the current choice. During a call,
+the tune button beside Hang up opens these controls, so you can change a headset
+or camera without ending the call. Speaker routing depends on browser support;
+otherwise choose the output in the operating system.
+
+**Microphone anti-alias filter** is enabled by default and saved per browser and
+logical phone. A change takes effect when the next call opens its microphone.
+The filter adds processing only when the negotiated transmit sample rate is
+lower than the browser's capture rate. It is separate from the ESP's AEC/AFE
+configuration. DND, Auto Answer and default Send Camera belong to the phone in
+HA; browser device selection, ringtone and microphone filtering are local
+preferences.
 
 Occupied parking slots appear as a left-aligned bullet list. Other phones that
 are calling, ringing or busy appear on the right, with the bullets at the right
@@ -295,6 +348,12 @@ hangup_call
 An ESP mirror card selects the existing ESPHome Device. VoIP Stack does not
 create or own a duplicate Device.
 
+![An ESP phone calling a Home Assistant phone](images/call-from-esp-to-homeassistant.gif)
+
+The ESP owns its microphone and speaker; the receiving browser phone owns its
+browser media. See the [ESP deployment guide](DEPLOYMENT_GUIDE.md#esp-devices)
+for device profiles and the distinction between local Assist and SIP calling.
+
 ## Make local calls
 
 The destination may be a phonebook name, extension, group, SIP URI or public
@@ -366,9 +425,12 @@ explicit SIP addresses remain usable while you resolve the conflict.
    username and generated password.
 4. Use UDP or TCP according to the account and network configuration.
 
-The registered client appears in the central phonebook while at least one
-Contact binding is active. Account passwords are returned only by the account
-management action and are not placed in entity state.
+The account supplies a persistent phone identity in the preview directory.
+Its active REGISTER Contact binding supplies the current SIP destination;
+registration expiry makes that route unavailable without deleting the account,
+extension, mailbox or directory identity. See the [directory contract](PHONEBOOK_PROTOCOL.md).
+Generated account passwords are returned by the account-management action and
+are not placed in entity state.
 
 ## Configure groups
 
@@ -387,8 +449,17 @@ Open **VoIP Stack > Reconfigure**, enable **Include voice assistant**, choose a
 pipeline and assign an extension. Assist then becomes a normal phonebook
 destination.
 
-Hanging up terminates the Assist media leg and its active pipeline work. It
-does not leave a listening call session behind.
+By default, the call starts listening without an opening text message.
+Enabling **Provide advanced call details to the assistant** adds one initial
+user text turn, such as `Incoming SIP call from "Kitchen".`, with caller ID,
+phonebook match, source and called extension. These are untrusted call metadata,
+not authentication or instructions. VoIP Stack does not add a persistent
+personality prompt; put behavioral instructions in the conversation agent.
+
+Calling this extension uses the selected HA Assist pipeline. It does not start
+or replace the local Voice Assistant on a full-experience ESP. Hanging up
+terminates the Assist media leg and its active pipeline work; it does not leave
+a listening call session behind.
 
 ## Dahua door stations
 

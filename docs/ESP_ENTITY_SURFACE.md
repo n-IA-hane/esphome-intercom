@@ -42,15 +42,23 @@ Reason**, **VoIP Media Route** and **VoIP Contacts** entities. It also exposes
 extension, ring/conference groups and the conference-ring switch.
 
 The endpoint entity advertises the phone's SIP address and media capabilities.
-The HA integration discovers it through the ESPHome device and pushes the
-central phonebook using the native `set_roster_json` action. Call, answer,
-decline, hangup and manual contact actions use the same native API connection.
+The HA integration discovers it through the ESPHome device. Current managed
+profiles enable automatic enrollment: the existing private API provisions the
+phone's named HA account and, when selected, its LDAP directory configuration.
+LDAP then refreshes contacts. Standard SIP BLF/presence and MWI subscriptions
+provide live phone and message state independently of those records.
+
+The native `set_roster_json` action remains for compatibility with firmware
+without managed LDAP. A managed LDAP provider disables that old roster provider
+so the two deliveries do not compete. Call, answer, decline, hangup and manual
+contact actions keep using the existing native API connection.
 Entity names and action names remain compatible with the earlier packages.
 
 Each responsibility has one owner:
 
 - The ESP VoIP component owns calls and its local phonebook.
-- Home Assistant owns the central phonebook and delivers its updates.
+- Home Assistant owns the central directory and provisions its account/access
+  settings privately; the selected LDAP provider commits contact updates.
 - The native API adapter exposes the component's existing methods and states.
 - Optional packages compose the display, ringtone and Full-profile activities.
 
@@ -88,9 +96,20 @@ voip_stack:
   ha_integration: false
 ```
 
-Static contacts and direct SIP calling remain available. Disabling this
-interface does not disable SIP or RTP. Conversely, enabling it does not force
+Static contacts, direct SIP calling and manually configured registered
+accounts remain available when compiled. Disabling this interface does not
+disable SIP or RTP. Conversely, enabling it does not force
 calls through HA: `use_ha_as_first_contact` remains a separate routing choice.
+
+Current device packages select optional `directory`, `blf` and `mwi` features
+separately. They require VoIP, while the basic native control interface does
+not require all three. For manual account capacity, line selection and saved
+overrides, see [registered ESP accounts](ESP_REGISTRATION.md).
+
+For a standalone profile, also remove managed `directory`, `blf` and `mwi`
+features when their HA account is not wanted. To use equivalent services on a
+manual PBX account, configure their account/provider explicitly; disabling the
+HA adapter alone does not reconfigure independent LDAP or SIP subscriptions.
 
 ## Migrating an existing phone
 

@@ -49,6 +49,15 @@ cannot be switched reliably inside one process.
 
 ## Device diagnostics
 
+Use [`qualify_esp_session.py`](qualify_esp_session.py) and
+[`qualify_dashboard_session.py`](qualify_dashboard_session.py) with the
+[grouped-session procedure](../docs/FINAL_SESSION_HARNESS.md).
+The session collector follows the
+[ESP screenshot contract](../docs/ESP_SCREENSHOT.md); screenshots and host plans
+do not themselves qualify physical media. For identified profiling runs, use
+[`esp_profile.py`](esp_profile.py) and the
+[profiling procedure](../docs/TESTING_AND_DEBUG.md#esp32-s3-profiling-without-application-probes).
+
 `jtag_snapshots.py` captures bounded intrusive task snapshots.
 `analyze_jtag_snapshots.py` summarizes the resulting GDB logs. Neither tool is
 an audio-quality test because halting the target disturbs real-time media.
@@ -90,5 +99,15 @@ python scripts/check_test_results.py reference-results.xml
 ## Deployment helper
 
 `deploy_ha_voip_stack.sh` is only for an explicitly authorized development
-deployment. It creates a remote backup, installs the exact local component,
-restarts Home Assistant and waits for a terminal service state.
+deployment. It installs the exact local component with `rsync --delete`,
+restarts Home Assistant and waits for initialization. Backup is off by default
+(`HA_CREATE_BACKUP=0`); request it explicitly when needed:
+
+```bash
+HA_CREATE_BACKUP=1 tools/deploy_ha_voip_stack.sh
+```
+
+The default SSH target is `hass`, independently of any HA URL used by a test.
+Review target, paths, service and component-only backup/rollback limits in the
+[deployment procedure](../docs/TESTING_AND_DEBUG.md#candidate-qualification)
+and the helper's `--help` before running it.

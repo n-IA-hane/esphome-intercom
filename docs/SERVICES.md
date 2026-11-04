@@ -132,6 +132,10 @@ Optional:
 - `send_video`: offer the selected browser phone's camera when SIP video is
   enabled. Receiving video does not require this flag.
 - `ha_bridge`: force HA to anchor the route when that is valid.
+- `trunk_id`: select a named outgoing line. Per-call selection wins over the
+  phone preference, then the global default. An unavailable selected line fails
+  instead of silently using another provider. Choose the line through the
+  device picker; see [line selection](SIP_TRUNK.md#choose-an-outgoing-line).
 
 `voip_stack.call` supports Home Assistant's optional action response. When a
 caller requests a response, it receives the authoritative logical-phone
@@ -243,9 +247,11 @@ Enable or disable Auto Answer on the selected logical HA phone. The value is
 persisted in that phone's config subentry and exposed by its native **Auto
 answer** switch. Every card bound to the phone sees the same setting; clearing
 one browser's cache does not reset it. A browser still needs persistent
-microphone permission before it can answer automatically. The receiving card
-must also remain loaded in a running browser/app view. If opening its dashboard
-view loads the card, that can be the moment it answers the waiting call.
+microphone permission before it can answer automatically. Its receiving HA
+frontend must be active, with a card loaded or, in the preview, global call
+popups enabled for that phone. Opening a receiving view can therefore be the
+moment it answers a waiting call. The logical phone's availability alone does
+not supply audio. See [browser-phone availability](USER_GUIDE.md#browser-phone-availability).
 
 ### `voip_stack.set_send_video`
 
@@ -262,7 +268,10 @@ phone. Select the Phone in the HA action editor; it supplies `device_id`.
 
 - `forward_to`: always forward future calls to this contact, extension or SIP URI.
 - `busy_to`: forward when busy or Do not disturb is enabled.
-- `unavailable_to`: forward when offline, including a browser with no attached card.
+- `unavailable_to`: forward when the endpoint is unavailable or the SIP attempt
+  reports temporary unavailability. In the preview, closing a browser card does
+  not make its enabled logical phone unavailable; use a no-answer rule if no
+  receiving browser answers.
 - `ringing_timeout`: seconds before the no-answer action; zero disables the limit.
 - `no_answer_action`: `hangup`, `forward` or `voicemail`, required when enabling a new timeout.
 - `no_answer_to`: destination required for `forward`; for `voicemail`, an enabled phone mailbox, defaulting to this phone when empty.
@@ -291,8 +300,11 @@ redirect the attempt to another supported SIP or ESPHome phone. The `call`
 action still returns the same application call reference, so the following
 `tts_say` and `hangup` need no changes. Its `answer_timeout` covers all attempts
 together. Synthesis starts only after the selected phone answers; a failed
-replacement ends the action and releases both attempts. This development path
-does not yet resume a cancelled destination or support a mailbox replacement.
+replacement ends the action and releases both attempts. An explicit forward
+with `on_failure: resume` can start a fresh attempt to the previous destination,
+within that original answer deadline. A no-answer policy cannot replace this
+still-ringing announcement destination with a mailbox; handing an answered
+Automation call to voicemail is a separate action.
 
 ### `voip_stack.set_ha_softphone_settings`
 
@@ -717,8 +729,10 @@ deletion. An empty recording creates no message.
 `pin` accepts 4 to 10 digits, or an empty value to disable access from another
 mailbox. Only a salted PIN hash is persisted. The shared menu voice and language
 are configured once in the integration's native reconfiguration flow, not in
-each mailbox. Enabling the global voicemail feature requires an available TTS
-entity and a supported prompt language. Current prompt translations cover
+each mailbox. An available TTS entity and supported prompt language are needed
+for spoken mailbox access and navigation. Depositing a message with the recording
+tone or recorded greeting does not require TTS, and there is no global voicemail
+enable switch. Current prompt translations cover
 English, Italian, German and Portuguese, filtered against the selected engine's
 supported languages.
 

@@ -7,6 +7,24 @@ Manual SIP registration is independent of HA provisioning. Compatible managed
 firmware can also receive a named HA account while retaining additional PBX
 accounts. Endpoint, codec and network compatibility still apply to each line.
 
+## Managed HA account or manual PBX account
+
+This guide describes the current preview's optional registration support.
+Stable firmware without that support continues to use its direct SIP path.
+
+Maintained managed profiles enable `ha_integration.auto_register: true` through
+their device package. Add the device to HA through the normal ESPHome integration;
+VoIP Stack provisions its named `ha` account through that existing private API.
+The account slot is not a provider trunk. When `directory`, `blf` or `mwi` are
+selected, contacts, live phone state and message counts use their respective
+LDAP/SIP services. They do not come from a new media engine or public sensor.
+
+For a conventional PBX, configure a manual account as below. It does not require
+HA provisioning. With automatic HA enrollment enabled, leave one capacity slot
+for `ha` and use a different account ID for each manual line. The default capacity
+is two accounts, with a supported range of one through four. See
+[preview source selection](DEPLOYMENT_GUIDE.md#development-preview-firmware).
+
 ```yaml
 voip_stack:
   registration:
@@ -22,8 +40,7 @@ voip_stack:
 ```
 
 With neither `registration` nor HA auto-registration enabled, the account pool
-is compiled out. Capacity is 1 to 4,
-default 2. An empty `accounts: []` permits runtime provisioning. Manual account
+is compiled out. An empty `accounts: []` permits runtime provisioning. Manual account
 registration supports UDP or TCP, Digest MD5/SHA-256, renewal and registrar
 expiry negotiation. The account's successful binding is required to originate
 on that line. Failed OPTIONS discovery does not prevent an otherwise valid call.
@@ -48,10 +65,13 @@ The complete action fields, resource budgets and persistence failure contracts
 are documented in `esphome/components/voip_stack/REGISTRATION.md` in the selected
 VoIP component source. Keep that source pinned together with the firmware.
 
-The maintained P4 and WS3 LCD profiles preserve their preferred private
-48 kHz receive / 16 kHz transmit modes and also admit mono 16 kHz PCM at 20 ms
-for conventional PBXs. The 48 kHz mono 16-bit payload alone occupies 1920 bytes
-at 20 ms and 960 bytes at 10 ms; the smaller quantum avoids fragmentation on
+Maintained profiles declare independent transmit and receive capabilities;
+keep their actual fallback lists when connecting a conventional PBX. Box V2
+includes mono 16 kHz PCM at 20 ms, while the current P4 FULL list uses its
+declared 10/16/32 ms combinations. A rate or packet time supported by one board
+is not automatically admitted by another. The 48 kHz mono 16-bit payload alone
+occupies 1920 bytes at 20 ms and 960 bytes at 10 ms; the smaller quantum avoids
+fragmentation on
 ordinary Ethernet paths. This does not impose a global packet time on other
 codecs. L16 uses network byte order, separately from the local PCM buffer format
 ([RFC 3551, section 4.5.11](https://www.rfc-editor.org/rfc/rfc3551#section-4.5.11)).

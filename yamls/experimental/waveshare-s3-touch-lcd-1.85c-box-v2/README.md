@@ -1,4 +1,4 @@
-# Waveshare 1.85C-BOX V2 FULL AEC candidate
+# Waveshare 1.85C-BOX V2 AEC compatibility and historical checks
 
 For new configurations, use the [unified V2 FULL YAML](../../full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml).
 It selects AEC/AFE, separate/averaged microphones and SIP UDP/TCP through root
@@ -11,14 +11,18 @@ recorded builds. Current profiles use the official ESPHome audio providers and
 their scheduling options; see the
 [native-provider migration](../../../docs/BREAKING_CHANGES.md#development-firmware-native-audio-providers).
 
-This experimental profile offers standalone echo cancellation on the Waveshare
+The measurements below describe the identified October candidate, not the
+current unified profile's support status or DSP defaults. Its historical
+configuration offered standalone echo cancellation on the Waveshare
 ESP32-S3-Touch-LCD-1.85C-BOX V2 (SKU 30684). It keeps Assist, calling, music and
 the circular interface. Use the maintained FULL AFE profile when you need its
 dual-microphone processing. The AEC profile does not replace it.
 
 ## Processing changes
 
-Standalone `esp_aec` replaces `esp_afe`, using `fd_low_cost` by default.
+The recorded candidate used standalone `esp_aec` instead of `esp_afe`, with
+`fd_low_cost` as its then-current default. Current FULL presets use SR modes
+as described in the canonical processing guide.
 The processed input is the primary microphone plus the existing hardware
 playback reference. The board still has two microphones, but this profile
 does not provide the dual-microphone processing, noise suppression or VAD
@@ -70,7 +74,8 @@ timestamps, no clipped PCM samples, and the call and playback drained normally.
 The approximately 38.6 dB difference measures this music comparison; it is
 not calibrated ERLE, a subjective listening test or a near-end speech test.
 Separate loud SIP playback checks retained a low-frequency residual. Normal
-speech and double-talk still need validation; the profile remains experimental.
+speech and double-talk were not validated by that session; that candidate
+remained experimental at the time.
 
 The original AFE YAML assigns MWW, Audio Stack, AFE fetch and Wi-Fi to core 1,
 with AFE feed on core 0. This is a reason to investigate scheduling, not proof
@@ -151,7 +156,8 @@ Separate speaker-to-microphone recordings confirmed echo suppression with AEC
 enabled versus disabled on the same hardware. This was an echo-only stimulus,
 not a calibrated ERLE measurement or a near-end speech/double-talk test.
 
-Before promoting this profile from experimental, still measure:
+The dated session left these physical checks open; current support must not be
+inferred from those measurements alone:
 
 - Wake-word recognition during repeatable playback, with and without speech.
 - Near-end speech before and after AEC, reference alignment and gain.
