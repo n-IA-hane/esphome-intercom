@@ -80,7 +80,16 @@ HA_SIP_PCM_FORMATS = (
     AudioFormat(8000, PcmFormat.S16LE, 1, 10),
 )
 HA_SIP_PCM_TX_FORMATS = HA_SIP_PCM_FORMATS
-HA_SIP_PCM_RX_FORMATS = HA_SIP_PCM_FORMATS
+# Receive preferences are independent of the outgoing codec/packet time.
+# The 16 kHz PCM return prefers 20 ms, retaining every existing RX quantum.
+_HA_PREFERRED_PCM_RX_FORMATS = (
+    AudioFormat(16000, PcmFormat.S16LE, 1, 20),
+    AudioFormat(48000, PcmFormat.S16LE, 1, 10),
+)
+HA_SIP_PCM_RX_FORMATS = (
+    *_HA_PREFERRED_PCM_RX_FORMATS,
+    *(fmt for fmt in HA_SIP_PCM_FORMATS if fmt not in _HA_PREFERRED_PCM_RX_FORMATS),
+)
 HA_TRUNK_AUDIO_FORMATS = (
     AudioFormat(48000, PcmFormat.S16LE, 2, 20),
     AudioFormat(48000, PcmFormat.S16LE, 1, 20),

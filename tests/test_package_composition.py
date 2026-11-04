@@ -65,6 +65,39 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     return config
 
 
+@pytest.mark.parametrize('profile_path', [
+    'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml',
+    'yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
+])
+def test_optional_g722_comment_keeps_package_pcm_defaults(tmp_path: Path, profile_path: str) -> None:
+    """Validate the actual uncommented example through native package/schema merging."""
+    original = (ROOT / profile_path).read_text()
+    commented = original[original.index('# voip_stack:\n'):].split('\n#\n', 1)[0]
+    assert '#       - codec: g722' in commented
+    config = device_config(tmp_path, FULL, profile_path)
+    config.write_text(config.read_text() + '\n' + '\n'.join(
+        line[2:] for line in commented.splitlines() if line.startswith('# ')
+    ) + '\n')
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'config', str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Could not resolve substitution' not in result.stderr, result.stderr
+    expanded = tmp_path / 'expanded.yaml'
+    expanded.write_text(result.stdout)
+    codecs = yaml_util.load_yaml(expanded)['voip_stack']['audio']['codecs']
+    assert [item['codec'] for item in codecs] == ['pcm', 'g722']
+    pcm, g722 = codecs
+    def shape(formats):
+        return [(fmt['sample_rate'], fmt['frame_ms']) for fmt in formats]
+    assert shape(pcm['tx']) == [(16000, 20), (16000, 10)]
+    assert shape(pcm['rx']) == [(48000, 10), (16000, 20), (16000, 10)]
+    assert shape(g722['tx']) == shape(g722['rx']) == [(16000, 20), (16000, 10)]
+    assert all(fmt['pcm_format'] == 's16le' and fmt['channels'] == 1
+               for codec in codecs for direction in ('tx', 'rx') for fmt in codec[direction])
+
+
 def maintenance_begin_actions(document):
     ota = next(item for item in document['ota'] if item['platform'] == 'esphome')
     for event, resume in (('on_begin', False), ('on_abort', True), ('on_error', True)):

@@ -67,25 +67,26 @@ substitutions:
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
   assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
-  # One firmware advertises one codec. Opus is the maintained VoIP-only
-  # default and uses the mandatory RFC 7587 opus/48000/2 RTP mapping.
+  # Opus is the maintained VoIP-only base codec. Additional codecs can be
+  # declared with voip_stack.audio.codecs. RTP uses opus/48000/2.
   voip_audio_codec: opus
   # These are codec PCM boundary rates, independent from the RTP clock.
   # Opus accepts 8000/12000/16000/24000/48000 Hz. For 32000 Hz hardware,
   # expose a supported rate through the microphone/speaker resampler below.
-  # PCM additionally accepts 32000 and 44100 Hz. No codec fallback is used.
+  # PCM additionally accepts 32000 and 44100 Hz. Alternatives must be explicit.
   voip_tx_sample_rate: "16000"
   voip_rx_sample_rate: "48000"
-  voip_frame_ms: "20"
+  voip_tx_frame_ms: "20"
+  voip_rx_frame_ms: "20"
 
   # Prefer uncompressed PCM instead:
-  # 1. Comment the four Opus substitutions above.
-  # 2. Uncomment the four substitutions below.
-  # 3. Uncomment audio.rx_formats below for direct PCM calls with 16 kHz peers.
+  # 1. Comment the five Opus substitutions above.
+  # 2. Uncomment the five substitutions below.
   # voip_audio_codec: pcm
   # voip_tx_sample_rate: "16000"
   # voip_rx_sample_rate: "48000"
-  # voip_frame_ms: "10"
+  # voip_tx_frame_ms: "20"
+  # voip_rx_frame_ms: "10"  # PCM 48 kHz must fit the RTP payload budget.
 
   # ---------------------------------------------------------------------------
   # Pinout: shared ES7210/ES8311 TDM bus

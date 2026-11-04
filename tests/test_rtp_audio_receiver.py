@@ -202,3 +202,56 @@ def test_passthrough_new_payload_retires_old_without_codec_allocation():
     assert receiver.format_for(97) is None
     assert not receiver._decoders
     assert receiver._converter is None
+
+
+@pytest.mark.parametrize("packet_samples", [
+    (320, 320), (160, 160, 160, 160), (80, 240, 80, 240), (160, 320, 160),
+])
+def test_short_selected_packets_preserve_continuous_pcm_before_relay_resampling(packet_samples):
+    # SDP receiver preference20ms allows a sender's legal shorter packets.
+    # The relay's existing16->48k converter still consumes nominal20ms frames.
+    selected = fmt(96, "L16", 16000, frame_ms=20)
+    receiver = RtpAudioReceiver(selected)
+    converter_class = _load_intercom_module("core.audio_pcm").PcmFrameConverter
+    destination = _load_intercom_module("core.audio_format").AudioFormat(48000, frame_ms=10)
+    converter = converter_class(selected.audio_format, destination)
+    reference = converter_class(selected.audio_format, destination)
+    samples = np.asarray([2000 + index % 97 for index in range(640)], dtype="<i2")
+    actual = []
+    offset = 0
+    decoder = None
+    for count in packet_samples:
+        wire = samples[offset:offset + count].astype(">i2").tobytes()
+        offset += count
+        for frame in receiver.decode(96, wire, normalize_frames=True):
+            assert len(frame) == selected.audio_format.nominal_frame_bytes
+            actual.extend(converter.convert(frame))
+        if decoder is not None:
+            assert receiver._decoders[96] is decoder
+        decoder = receiver._decoders[96]
+        assert len(receiver._pending) < selected.audio_format.nominal_frame_bytes
+    expected = reference.convert(samples[:320].tobytes()) + reference.convert(samples[320:].tobytes())
+    assert actual == expected and len(actual) == 4
+    assert all(len(frame) == 960 for frame in actual)
+    assert np.max(np.frombuffer(actual[-1], dtype="<i2")) >= 1900
+    assert not receiver.has_pending_pcm and not converter.has_pending_pcm
+
+
+@pytest.mark.parametrize("source_ms,destination_ms,packets,expected_frames", [(20, 10, 1, 2), (10, 20, 2, 1)])
+def test_same_pcm_geometry_reframes_variable_receiver_output(source_ms, destination_ms, packets, expected_frames):
+    selected = fmt(96, "L16", 16000, frame_ms=source_ms)
+    receiver = RtpAudioReceiver(selected)
+    converter_class = _load_intercom_module("core.audio_pcm").PcmFrameConverter
+    destination = _load_intercom_module("core.audio_format").AudioFormat(16000, frame_ms=destination_ms)
+    converter = converter_class(selected.audio_format, destination)
+    assert converter._same_pcm_contract()
+    samples = np.asarray([2000 + index for index in range(320)], dtype="<i2")
+    result = []
+    count = 16000 * source_ms // 1000
+    for index in range(packets):
+        wire = samples[index * count:(index + 1) * count].astype(">i2").tobytes()
+        for frame in receiver.decode(96, wire, normalize_frames=not converter._same_pcm_contract()):
+            result.extend(converter.convert(frame))
+    assert len(result) == expected_frames
+    assert b"".join(result) == samples.tobytes()
+    assert not receiver.has_pending_pcm and not converter.has_pending_pcm

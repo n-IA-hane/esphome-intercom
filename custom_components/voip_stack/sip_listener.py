@@ -2332,7 +2332,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             # Capability descriptions use zero ports and never reserve media.
             body = sdp.build_offer_directional(self.local_ip, self.local_ip, 0,
                 self.supported_send_formats, self.supported_recv_formats,
-                include_common_codecs=True, allow_directional_payloads=True) if wants_sdp else ""
+                include_common_codecs=True, allow_directional_payloads=True,
+                independent_audio_ptime=True) if wants_sdp else ""
             body = sdp.rewrite_sdp_origin(body, secrets.randbits(63) or 1, 0).encode() if body else b""
             self._send_response(request, addr, 200, "OK", body=body,
                 extra_headers=(("Content-Type", "application/sdp"),) if body else ())

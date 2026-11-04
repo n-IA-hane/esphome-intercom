@@ -375,7 +375,8 @@ ESP phones can use multiple named SIP accounts and select the line for a call.
 The normal HA integration can manage its account through the existing ESPHome
 connection; manual registered accounts also let an ESP behave as an independent
 phone with a compatible PBX. See [ESP accounts and lines](docs/ESP_REGISTRATION.md)
-and [classic PBX compatibility](docs/CLASSIC_PBX.md).
+and [classic PBX compatibility](docs/CLASSIC_PBX.md). For PCM, G.722 and Opus
+configuration, see [ESP audio codecs](docs/ESP_AUDIO_CODECS.md).
 
 The classic-PBX guide includes Asterisk and FreeSWITCH examples for ESP
 firmware alongside the normal HA-managed setup.

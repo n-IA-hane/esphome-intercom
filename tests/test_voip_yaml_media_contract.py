@@ -131,12 +131,33 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
     for relative in (*PHYSICAL_AUDIO_STACK_PROFILES,
                      'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'):
         audio = profile(relative).get('voip_stack', {}).get('audio', {})
-        formats = audio.get('rx_formats', [])
+        formats = [fmt for codec in audio.get('codecs', [])
+                   if codec['codec'] == 'pcm' for fmt in codec.get('rx', [])]
         if formats:
             assert any((f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
                        == (16000, 's16le', 1, 10) for f in formats), relative
             checked += 1
     assert checked >= 3
+
+
+@pytest.mark.parametrize('relative', [
+    'full-experience/single-bus/waveshare-s3-full-afe.yaml',
+    'full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
+])
+def test_full_profiles_declare_independent_pcm_preferences(relative: str) -> None:
+    audio = profile(relative)['voip_stack']['audio']
+    assert not {'tx', 'rx', 'tx_formats', 'rx_formats'} & audio.keys()
+    assert len(audio['codecs']) == 1
+    pcm = audio['codecs'][0]
+    assert pcm['codec'] == 'pcm'
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['tx']] == [
+        (16000, 20), (16000, 10),
+    ]
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['rx']] == [
+        (48000, 10), (16000, 20), (16000, 10),
+    ]
 
 
 def test_physical_audio_stack_speakers_bound_silent_tx_lifecycle() -> None:

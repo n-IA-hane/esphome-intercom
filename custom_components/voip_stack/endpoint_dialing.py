@@ -22,6 +22,7 @@ from .endpoint_routing import (
     sip_target_rtp_audio_profile,
     sip_target_offer_common_audio,
     supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -308,6 +309,9 @@ class EndpointDialer:
                 outbound_proxy=policy.outbound_proxy,
                 include_common_codecs=include_common_audio,
                 allow_directional_audio_payloads=supports_directional_audio_payloads(
+                    peer_target, member_entry
+                ),
+                independent_audio_ptime=supports_independent_audio_ptime(
                     peer_target, member_entry
                 ),
                 peer_user_agent=(

@@ -49,6 +49,31 @@ def yaml_files():
     return managed_files(ROOT / "yamls")
 
 
+def standalone_examples():
+    """Keep the coordinated Native examples on the same source channel."""
+    repository = REPOS["voip_stack_components_source"][1]
+    if repository.parent.resolve() != ROOT.parent.resolve():
+        return []
+    base = repository / "examples"
+    if not base.is_dir():
+        return []
+    result = subprocess.run(
+        ["git", "ls-files", "--", "examples"], cwd=repository,
+        capture_output=True, text=True, check=False,
+    )
+    paths = (repository / name for name in result.stdout.splitlines()) if result.returncode == 0 else base.rglob("*.yaml")
+    return sorted(path for path in paths if path.suffix == ".yaml" and path.is_file()
+                  and path.name != "secrets.yaml" and not path.name.endswith("-local.yaml"))
+
+
+def public_yaml_files():
+    return yaml_files() + standalone_examples()
+
+
+def display_path(path):
+    return os.path.relpath(path, ROOT)
+
+
 def camera_files():
     return [path for path in yaml_files() + package_files()
             if re.search(r"(?m)^\s*components:\s*\[esp_video_camera\]\s*$", path.read_text())]
@@ -254,6 +279,12 @@ def mode(path):
     local |= bool(re.search(r"^\s+[A-Za-z_][A-Za-z0-9_]*:\s*!include\s+", text, re.MULTILINE))
     local |= bool(re.search(r'^\s*intercom_idf_root:\s*"[^"\s][^"]*"', text, re.MULTILINE))
     local |= bool(re.search(r'^\s*gmf_ai_audio_source:\s*"[^"\s][^"]*"', text, re.MULTILINE))
+    for url, root in URLS.items():
+        if url != CAMERA_URL:
+            remote |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(url) + r'@', text))
+        component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
+        source = relative(path.parent, root / component_dir)
+        local |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(source) + r'(?:[\'"\s]|$)', text))
     if remote and local:
         return "mixed"
     if remote:
@@ -265,16 +296,16 @@ def mode(path):
 
 def check(expect, only, ref=None):
     failed = False
-    for path in selected(yaml_files(), only):
+    for path in selected(public_yaml_files(), only):
         current = mode(path)
         bad = current in {"mixed", "unknown"}
         bad |= bool(expect and current != "fragment" and current != expect)
         if bad:
             detail = f", expected {expect}" if expect else ""
-            print(f"FAIL: {path.relative_to(ROOT)} ({current}{detail})", file=sys.stderr)
+            print(f"FAIL: {display_path(path)} ({current}{detail})", file=sys.stderr)
             failed = True
         if re.search(r"(?m)^\s*-\s*!include\s+", path.read_text()):
-            print(f"FAIL: {path.relative_to(ROOT)} (nested list !include is not portable outside the repo)", file=sys.stderr)
+            print(f"FAIL: {display_path(path)} (nested list !include is not portable outside the repo)", file=sys.stderr)
             failed = True
     # Includes inside a public package must travel with that repository. Checking
     # only the top-level URL misses undeclared sibling-checkout dependencies.
@@ -288,9 +319,9 @@ def check(expect, only, ref=None):
                     file=sys.stderr,
                 )
                 failed = True
-    for path in selected(yaml_files(), only) + ([] if only else package_files()):
+    for path in selected(public_yaml_files(), only) + ([] if only else package_files()):
         for error in source_errors(path, ref, expect == "remote"):
-            print(f"FAIL: {path.relative_to(ROOT)} ({error})", file=sys.stderr)
+            print(f"FAIL: {display_path(path)} ({error})", file=sys.stderr)
             failed = True
     if not failed:
         print("OK: all YAMLs consistent.", file=sys.stderr)
@@ -350,8 +381,8 @@ def parse_args():
 def main():
     args = parse_args()
     if args.command == "status":
-        for path in selected(yaml_files(), args.file):
-            print(f"{path.relative_to(ROOT)} {mode(path)}")
+        for path in selected(public_yaml_files(), args.file):
+            print(f"{display_path(path)} {mode(path)}")
         return 0
     if args.command == "check":
         return check(args.expect, args.file, args.ref)
@@ -362,11 +393,14 @@ def main():
     if not args.file:
         for path in package_files():
             rewrite_sources(path, args.command)
+    examples = selected(standalone_examples(), args.file)
+    for path in examples:
+        rewrite_sources(path, args.command)
     cameras = selected(camera_files(), args.file) if args.file else camera_files()
     for path in cameras:
         rewrite_camera(path, args.command)
-    for path in files:
-        print(f"  {path.relative_to(ROOT)}", file=sys.stderr)
+    for path in files + examples:
+        print(f"  {display_path(path)}", file=sys.stderr)
     return 0
 
 

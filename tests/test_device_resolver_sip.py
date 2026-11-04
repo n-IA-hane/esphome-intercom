@@ -178,6 +178,19 @@ class SipEndpointParseTest(unittest.TestCase):
         )
         self.assertEqual(parsed["sdp_features"], ["directional_audio_v1"])
 
+    def test_packet_time_upgrade_keeps_legacy_endpoint_feature(self) -> None:
+        base = "Phone | 192.0.2.2 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101"
+        for extras, expected in [
+            (" | sf=d1", ["directional_audio_v1"]),
+            (" | sf=d1 | ip=1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
+            (" | ip=1 | sf=d1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
+            (" | sf=d1 | ip=0", ["directional_audio_v1"]),
+        ]:
+            with self.subTest(extras=extras):
+                parsed = device_resolver.parse_voip_endpoint(base + extras)
+                self.assertIsNotNone(parsed)
+                self.assertEqual(parsed["sdp_features"], expected)
+
     def test_parses_transitional_pcm_and_compact_codec_endpoint(self) -> None:
         endpoint = (
             "Spotpear Ball v2 | 192.168.1.31 | 5060 | 40000 | full_duplex | "

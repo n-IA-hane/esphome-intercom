@@ -1211,7 +1211,13 @@ class SipRtpRelay:
                 decoder = self.left_decoder if side == "left" else self.right_decoder
                 if decoder is None:
                     raise RuntimeError("RTP decoder missing for transcoding path")
-                pcm_frames = decoder.decode(packet.payload_type, packet.payload)
+                converter = self.left_to_right if side == "left" else self.right_to_left
+                if converter is None:
+                    raise RuntimeError("PCM converter missing for transcoding path")
+                # Same-geometry reframers accept arbitrary sample-aligned input.
+                # Resamplers require nominal input quanta from this receiver.
+                pcm_frames = decoder.decode(packet.payload_type, packet.payload,
+                    normalize_frames=not converter._same_pcm_contract())
                 if not pcm_frames:
                     return
                 if source.rx_ssrc is None:
@@ -1222,9 +1228,6 @@ class SipRtpRelay:
                     # Symmetric RTP: follow a valid same-SSRC NAT tuple rebind.
                     source.host = str(addr[0])
                     source.port = int(addr[1])
-                converter = self.left_to_right if side == "left" else self.right_to_left
-                if converter is None:
-                    raise RuntimeError("PCM converter missing for transcoding path")
                 converted_frames = []
                 for pcm in pcm_frames:
                     self._capture_pcm(side, pcm)

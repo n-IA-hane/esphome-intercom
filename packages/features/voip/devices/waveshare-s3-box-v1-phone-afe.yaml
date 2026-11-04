@@ -7,16 +7,18 @@ voip_stack:
   speaker: voip_speaker_input
   buffers_in_psram: true
   audio:
-    tx:
-      sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
-    rx:
-      sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
+    codecs:
+      - codec: pcm
+        tx:
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+        rx:
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
 packages:
   voip_transport: !include '../../../voip/transport.yaml'
 external_components:

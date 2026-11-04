@@ -38,10 +38,18 @@ CAPS = ("v=0\r\no=- 3 3 IN IP4 127.0.0.1\r\ns=Independent capabilities\r\n"
     "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n").encode()
 
 
+INDEPENDENT_CAPS = (
+    b"a=x-voip-stack-independent-ptime:1\r\n"
+    b"a=x-voip-stack-audio-tx:L16/16000/1/20,L16/16000/1/10\r\n"
+    b"a=x-voip-stack-audio-rx:L16/48000/1/10,L16/16000/1/20,L16/16000/1/10\r\n"
+)
+
+
 class RegisteredPeer(WirePeer):
-    def __init__(self, outcome):
+    def __init__(self, outcome, *, independent=False):
         super().__init__()
         self.outcome = outcome
+        self.independent = independent
         self.options = asyncio.Queue()
         self.invites = asyncio.Queue()
 
@@ -67,7 +75,9 @@ class RegisteredPeer(WirePeer):
             elif self.outcome == "empty":
                 self.answer(request, address)
             else:
-                self.answer(request, address, body=CAPS + (b"a=ptime:10\r\n" if self.outcome == "known" else b""),
+                self.answer(request, address, body=(CAPS.replace(b"flow:96 send\r\n", b"flow:96 sendrecv\r\n")
+                    if self.independent else CAPS) + (INDEPENDENT_CAPS if self.independent else b"")
+                    + (b"a=ptime:10\r\n" if self.outcome == "known" else b""),
                     content_type="text/plain" if self.outcome == "wrong-type" else "application/sdp")
         elif request.method == "INVITE":
             self.invites.put_nowait(request)
@@ -112,6 +122,185 @@ async def register_peer(lab, peer, username="caps", *, call_id="registration", c
         username=username, password="fixture-only", method="REGISTER", uri=uri)
     response = await send(cseq + 1, authorization)
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("source", ["managed-capabilities", "registered-contact"])
+@pytest.mark.parametrize("independent", [False, True])
+async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime(
+    trunks, monkeypatch, source, independent, record_property,
+):
+    """Real public origination and answer parsing cannot downgrade48/10 to16/10."""
+    import re
+    import struct
+
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.roster import dump_roster_json
+    from custom_components.voip_stack.core import rtp
+    from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
+
+    lab = trunks
+    source_phone = PhoneEndpoint(endpoint_id="browser:pcm", name="Browser PCM",
+        device_id="browser-pcm-device", kind=EndpointKind.BROWSER, availability="available")
+    lab.runtime.endpoints.register(source_phone)
+    offers = []
+
+    def independent_answer(request, media_port):
+        offers.append(request.body.decode())
+        # The peer reads the actual offer's payload identities, but independently
+        # selects48k receive/10ms and16k transmit/20ms. No production SDP builder.
+        mappings = {int(rate): int(pt) for pt, rate in re.findall(
+            rb"a=rtpmap:(\d+) L16/(16000|48000)/1\r\n", request.body)}
+        wide, narrow = mappings[48000], mappings[16000]
+        return ("v=0\r\no=- 7 1 IN IP4 127.0.0.1\r\ns=Independent PCM answer\r\n"
+            "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+            f"m=audio {media_port} RTP/AVP {wide} {narrow}\r\n"
+            f"a=rtpmap:{wide} L16/48000/1\r\na=rtpmap:{narrow} L16/16000/1\r\n"
+            f"a=x-voip-stack-flow:{wide} recv\r\na=x-voip-stack-flow:{narrow} send\r\n"
+            + ("a=x-voip-stack-independent-ptime:1\r\n" if independent else "")
+            + "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n").encode()
+
+    transport = None
+    if source == "registered-contact":
+        registrar = lab.calls.component("registrar")
+        registrar.enabled = True
+        registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
+        transport, peer = await lab.hass.loop.create_datagram_endpoint(
+            lambda: RegisteredPeer("known", independent=independent), local_addr=("127.0.0.1", 0))
+        receive = peer.datagram_received
+
+        def datagram_received(raw, address):
+            request = sip.parse_message(raw)
+            if request.method == "INVITE":
+                peer.answer(request, address, body=independent_answer(request, 35000))
+            else:
+                receive(raw, address)
+
+        monkeypatch.setattr(peer, "datagram_received", datagram_received)
+        await register_peer(lab, peer)
+        await wait_until(lambda: registrar.registered_contacts("caps")[0].capabilities is not None)
+        lab.roster.extend(registrar.registered_roster_entries())
+        destination = "caps"
+    else:
+        phone = lab.phones[0]
+        lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+
+        def answer():
+            phone.respond(phone.last_request, phone.remote, 200,
+                independent_answer(phone.last_request, phone.rtp_socket.getsockname()[1]))
+
+        monkeypatch.setattr(phone, "answer", answer)
+        lab.roster[1] = replace(lab.roster[1], metadata={
+            **lab.roster[1].metadata, "endpoint_kind": "esphome",
+            "tx_formats": (["16000:s16le:1:20"] if independent else []) + ["16000:s16le:1:10"],
+            "rx_formats": ["48000:s16le:1:10", "16000:s16le:1:20", "16000:s16le:1:10"],
+            "sdp_features": ["directional_audio_v1"] + (["independent_audio_ptime_v1"] if independent else []),
+        })
+        destination = "bedroom0"
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+
+    def current_client():
+        active = lab.runtime.endpoints.require(source_phone.endpoint_id).active_call_id
+        return lab.calls.sip_client_for(active) if active else None
+
+    call_id = ""
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source_phone.device_id, "destination": destination,
+        }, blocking=True)
+        await wait_until(lambda: (client := current_client()) is not None and client.dialog is not None)
+        call_id = lab.runtime.endpoints.require(source_phone.endpoint_id).active_call_id
+        dialog = lab.calls.sip_client_for(call_id).dialog
+        record_property("wire_offer", offers[0])
+        assert (dialog.send_format.sample_rate, dialog.send_format.frame_ms) == (48000, 10)
+        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 20 if independent else 10)
+        receiver = RtpAudioReceiver(dialog.recv_format, dialog.recv_formats)
+        for count in ((160, 320) if independent else (160,)):
+            samples = [1000, -2000] * (count // 2)
+            assert b"".join(receiver.decode(dialog.recv_format.payload_type,
+                struct.pack(f">{count}h", *samples))) == struct.pack(f"<{count}h", *samples)
+        limit = rtp.audio_payload_size_limit(dialog.recv_format)
+        with pytest.raises(rtp.RtpError, match="too large"):
+            receiver.decode(dialog.recv_format.payload_type, b"\0" * (limit + 2))
+        assert f"a=ptime:{20 if independent else 10}\r\n" in offers[0]
+        mapping_order = re.findall(r"a=rtpmap:\d+ L16/(16000|48000)/1", offers[0])
+        assert mapping_order.index("48000") < mapping_order.index("16000")
+    finally:
+        call_id = call_id or lab.runtime.endpoints.require(source_phone.endpoint_id).active_call_id
+        if call_id:
+            await lab.hass.services.async_call("voip_stack", "hangup", {
+                "device_id": source_phone.device_id, "call_id": call_id,
+            }, blocking=True)
+        if transport is not None:
+            transport.close()
+    assert not lab.calls.sessions
+
+
+@pytest.mark.parametrize("independent", [False, True])
+async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_video(socket_enabled, independent):
+    from custom_components.voip_stack.core.audio_format import (
+        HA_SIP_PCM_FORMATS, HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
+    )
+    from custom_components.voip_stack.sip_listener import SipInviteResult
+
+    accepted = []
+
+    async def answer(invite):
+        accepted.append(invite)
+        body = sdp.build_answer_directional("127.0.0.1", "127.0.0.1", 35000,
+            invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp)
+        return SipInviteResult(200, "OK", answer_sdp=body)
+
+    endpoint = SipUdpEndpoint(local_ip="127.0.0.1", local_rtp_port=35000,
+        supported_formats=list(HA_SIP_PCM_FORMATS),
+        supported_send_formats=list(HA_SIP_PCM_TX_FORMATS),
+        supported_recv_formats=list(HA_SIP_PCM_RX_FORMATS), on_invite=answer)
+    loop = asyncio.get_running_loop()
+    server, _ = await loop.create_datagram_endpoint(lambda: endpoint, local_addr=("127.0.0.1", 0))
+    transport, peer = await loop.create_datagram_endpoint(WirePeer, local_addr=("127.0.0.1", 0))
+    listener = server.get_extra_info("sockname")
+    address = transport.get_extra_info("sockname")
+    endpoint.local_sip_port = listener[1]
+    uri = f"sip:ha@127.0.0.1:{listener[1]}"
+    offer = ("v=0\r\no=- 7 1 IN IP4 127.0.0.1\r\ns=Independent ESP-shaped offer\r\n"
+        "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 36000 RTP/AVP 96 97\r\n"
+        "a=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
+        "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
+        + ("a=x-voip-stack-independent-ptime:1\r\n" if independent else "")
+        + "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
+        "m=video 36002 RTP/AVP 102\r\na=rtpmap:102 H264/90000\r\na=sendrecv\r\n")
+
+    async def response(status):
+        async with asyncio.timeout(2):
+            while True:
+                message, _ = await peer.messages.get()
+                if message.status_code == status:
+                    return message
+
+    headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{address[1]};branch=z9hG4bK-ptime;rport"),
+        ("From", "<sip:independent@127.0.0.1>;tag=peer"), ("To", "<sip:ha@127.0.0.1>"),
+        ("Call-ID", "independent-receiver-ptime"), ("CSeq", "1 INVITE"),
+        ("Contact", f"<sip:independent@127.0.0.1:{address[1]}>"), ("Content-Type", "application/sdp")]
+    try:
+        transport.sendto(sip.build_request("INVITE", uri, headers, offer.encode()), listener)
+        answered = await response(200)
+        invite, = accepted
+        assert (invite.send_format.sample_rate, invite.send_format.frame_ms) == (48000, 10)
+        assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 20 if independent else 10)
+        assert f"a=ptime:{20 if independent else 10}\r\n" in answered.body.decode()
+        assert "m=video 0 RTP/AVP 102\r\n" in answered.body.decode()
+        dialog_headers = [(key, value) for key, value in headers if key not in {"To", "CSeq", "Content-Type"}]
+        dialog_headers.append(("To", answered.header("To")))
+        transport.sendto(sip.build_request("ACK", uri, [*dialog_headers, ("CSeq", "1 ACK")]), listener)
+        transport.sendto(sip.build_request("BYE", uri, [*dialog_headers, ("CSeq", "2 BYE")]), listener)
+        assert (await response(200)).header("CSeq") == "2 BYE"
+        assert not endpoint.pending_invites and not endpoint.active_dialogs
+    finally:
+        transport.close()
+        server.close()
 
 
 async def wait_until(predicate):
@@ -447,3 +636,53 @@ async def test_options_wire_describes_audio_without_allocating_a_call(socket_ena
             await writer.wait_closed()
             await server.stop()
         await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_capability_upgrade_replaces_previous_contact_generation(trunks, independent):
+    lab = trunks
+    registrar = lab.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
+    transport, peer = await lab.hass.loop.create_datagram_endpoint(
+        lambda: RegisteredPeer("no-ptime", independent=not independent), local_addr=("127.0.0.1", 0))
+    try:
+        await register_peer(lab, peer, call_id="firmware-before")
+        await wait_until(lambda: registrar.registered_contacts("caps")[0].capabilities is not None)
+        old = registrar.registered_contacts("caps")[0]
+        assert ("independent_audio_ptime_v1" in old.capabilities["sdp_features"]) == (not independent)
+        peer.independent = independent
+        await register_peer(lab, peer, call_id="firmware-after")
+        await wait_until(lambda: (current := registrar.registered_contacts("caps")[0]).capability_generation
+            != old.capability_generation and current.capabilities is not None)
+        current = registrar.registered_contacts("caps")[0]
+        assert current.call_id == "firmware-after"
+        assert ("independent_audio_ptime_v1" in current.capabilities["sdp_features"]) == independent
+        assert current.capabilities is not old.capabilities
+    finally:
+        await register_peer(lab, peer, call_id="firmware-after", cseq=3, expires=0)
+        transport.close()
+
+
+@pytest.mark.parametrize("independent", [False, True])
+def test_options_packet_quanta_override_stale_managed_peer(independent):
+    from custom_components.voip_stack.endpoint_routing import sip_target_rtp_audio_profile
+    from custom_components.voip_stack.peer import Peer
+
+    # Fresh authenticated Contact capabilities have a10ms receiver. Its
+    # transmitter preferences must come from its explicit TX list, not ptime.
+    body = (CAPS.replace(b"flow:96 send\r\n", b"flow:96 sendrecv\r\n")
+        if independent else CAPS) + (INDEPENDENT_CAPS if independent else b"") + b"a=ptime:10\r\n"
+    capabilities = sdp.options_capabilities(body)
+    stale = Peer(name="managed", host="192.0.2.2",
+        sip_audio_tx_formats=("L16/16000/1/10",),
+        sip_audio_rx_formats=("L16/48000/1/10",),
+        sdp_features=frozenset({"directional_audio_v1"}
+            | ({"independent_audio_ptime_v1"} if not independent else set())))
+    selected_contact = SimpleNamespace(metadata={**capabilities, "sip_capabilities_known": True})
+    profile = sip_target_rtp_audio_profile(stale, selected_contact)
+    assert profile is not None
+    assert ("independent_audio_ptime_v1" in profile.sdp_features) == independent
+    assert (profile.send_rtp_formats[0].sample_rate, profile.send_rtp_formats[0].frame_ms) == (48000, 10)
+    assert (profile.recv_rtp_formats[0].sample_rate, profile.recv_rtp_formats[0].frame_ms) == (16000, 20 if independent else 10)

@@ -174,3 +174,25 @@ substitutions:
 
 packages:
   device: github://n-IA-hane/esphome-intercom/packages/devices/spotpear-ball-v2-full-afe.yaml@dev
+
+# Optional SIP codec in addition to the package's PCM defaults.
+# Uncomment the outer keys and the codec you need. Codec modules are compiled
+# only when declared. See docs/ESP_AUDIO_CODECS.md for rates and packet times.
+# voip_stack:
+#   audio:
+#     codecs:
+#       - codec: g722
+#         tx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#           - {sample_rate: 16000, frame_ms: 10}
+#         rx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#           - {sample_rate: 16000, frame_ms: 10}
+#
+#       # Opus qualification is pending; the current validator rejects FULL/P4.
+#       # Keep this example commented until this exact profile is qualified.
+#       - codec: opus
+#         tx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#         rx:
+#           - {sample_rate: 48000, frame_ms: 20}

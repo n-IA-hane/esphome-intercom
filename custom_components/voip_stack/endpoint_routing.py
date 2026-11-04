@@ -44,6 +44,9 @@ def _rtp_capability_tokens(
     device: dict | None = None,
 ) -> list[str]:
     field = f"sip_audio_{direction}_formats"
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    if metadata.get("sip_capabilities_known"):
+        return [str(item) for item in metadata.get(field, ())]
     if peer is not None:
         direct = getattr(peer, field, ())
         if direct:
@@ -51,7 +54,6 @@ def _rtp_capability_tokens(
         device = peer.device or {}
         if device.get(field):
             return [str(item) for item in device[field]]
-    metadata = dict(getattr(entry, "metadata", None) or {})
     value = metadata.get(field) or (device or {}).get(field) or ()
     return [str(item) for item in value]
 
@@ -61,6 +63,10 @@ def _endpoint_sdp_features(
     entry,
     device: dict | None = None,
 ) -> frozenset[str]:
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    known = {"directional_audio_v1", "independent_audio_ptime_v1"}
+    if metadata.get("sip_capabilities_known"):
+        return frozenset(str(item).casefold() for item in metadata.get("sdp_features", ())) & known
     values: set[str] = set()
     if peer is not None:
         values.update(str(item).casefold() for item in peer.sdp_features)
@@ -78,7 +84,7 @@ def _endpoint_sdp_features(
         str(item).casefold()
         for item in (device or {}).get("sdp_features", ())
     )
-    return frozenset(values & {"directional_audio_v1"})
+    return frozenset(values & known)
 
 
 def _assign_capability_payloads(
@@ -247,11 +253,18 @@ def bridge_audio_profile(
 
     def prefer(formats, source):
         return tuple(sorted(formats, key=lambda fmt: (
-            fmt.encoding.upper(), fmt.sample_rate, fmt.channels, fmt.frame_ms
-        ) != (source.encoding.upper(), source.sample_rate, source.channels, source.frame_ms)))
+            (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
+            != (source.encoding.upper(), source.sample_rate, source.channels),
+            (fmt.encoding.upper(), fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            != (source.encoding.upper(), source.sample_rate, source.channels, source.frame_ms),
+        )))
 
     send = prefer(profile.send_rtp_formats, invite.recv_format)
-    recv = prefer(profile.recv_rtp_formats, invite.send_format)
+    # The target's declared transmitter preference owns our receive ptime.
+    # A passthrough fallback from the other leg must not override that hint.
+    recv = (profile.recv_rtp_formats
+            if "independent_audio_ptime_v1" in profile.sdp_features
+            else prefer(profile.recv_rtp_formats, invite.send_format))
     # SDP's advertised preference does not remove the decoder/encoder quanta
     # needed for a legal answer (for example G.722 with a 20 ms packet time).
     return replace(profile,
@@ -515,11 +528,11 @@ def sip_target_audio_profile(
     if not remote_tx and not remote_rx:
         return list(HA_SIP_PCM_TX_FORMATS), list(HA_SIP_PCM_RX_FORMATS)
     send_candidates = (
-        [fmt for fmt in HA_SIP_PCM_TX_FORMATS if fmt in set(remote_rx)]
+        [fmt for fmt in remote_rx if fmt in HA_SIP_PCM_TX_FORMATS]
         if remote_rx else list(HA_SIP_PCM_TX_FORMATS)
     )
     recv_candidates = (
-        [fmt for fmt in HA_SIP_PCM_RX_FORMATS if fmt in set(remote_tx)]
+        [fmt for fmt in remote_tx if fmt in HA_SIP_PCM_RX_FORMATS]
         if remote_tx else list(HA_SIP_PCM_RX_FORMATS)
     )
     if not send_candidates or not recv_candidates:
@@ -534,26 +547,9 @@ def sip_target_audio_profile(
         )
         return [], []
 
-    common_frame_ms = choose_common_frame_ms(send_candidates, recv_candidates)
-    if common_frame_ms is None:
-        _LOGGER.warning(
-            "No common SIP RTP packet time for %s (send=%s recv=%s)",
-            target,
-            [fmt.wire_token() for fmt in send_candidates],
-            [fmt.wire_token() for fmt in recv_candidates],
-        )
-        return [], []
-
-    send_candidates = [
-        fmt for fmt in send_candidates if fmt.frame_ms == common_frame_ms
-    ]
-    recv_candidates = [
-        fmt for fmt in recv_candidates if fmt.frame_ms == common_frame_ms
-    ]
     _LOGGER.debug(
-        "Directional SIP PCM profile for %s: ptime=%sms send=%s recv=%s",
+        "Directional SIP PCM profile for %s: send=%s recv=%s",
         target,
-        common_frame_ms,
         [fmt.wire_token() for fmt in send_candidates],
         [fmt.wire_token() for fmt in recv_candidates],
     )
@@ -563,6 +559,11 @@ def sip_target_audio_profile(
 def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
     """Return whether the destination implements the ESP directional SDP profile."""
     return "directional_audio_v1" in _endpoint_sdp_features(peer, entry)
+
+
+def supports_independent_audio_ptime(peer: Peer | None, entry) -> bool:
+    """Allow the D1 timing upgrade only for an explicitly capable target."""
+    return "independent_audio_ptime_v1" in _endpoint_sdp_features(peer, entry)
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:

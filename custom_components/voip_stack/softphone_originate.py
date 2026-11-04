@@ -46,6 +46,7 @@ from .endpoint_routing import (
     sip_target_offer_common_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
     supports_directional_audio_payloads as _supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
@@ -669,6 +670,9 @@ async def async_originate_browser_call(
             rtp_audio_profile is not None
             and "directional_audio_v1" in rtp_audio_profile.sdp_features
         ),
+        independent_audio_ptime=supports_independent_audio_ptime(None, route.entry)
+        or bool(rtp_audio_profile is not None
+            and "independent_audio_ptime_v1" in rtp_audio_profile.sdp_features),
         peer_user_agent=str(entry_metadata.get("user_agent") or ""),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),

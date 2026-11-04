@@ -455,6 +455,7 @@ class SipCallClient:
         include_common_codecs: bool = False,
         codec_policy=None,
         allow_directional_audio_payloads: bool = False,
+        independent_audio_ptime: bool = False,
         peer_user_agent: str = "",
         include_dahua_pcm: bool | None = None,
         match_received_codec: bool = False,
@@ -520,6 +521,7 @@ class SipCallClient:
         self.allow_directional_audio_payloads = bool(
             allow_directional_audio_payloads
         )
+        self.independent_audio_ptime = bool(independent_audio_ptime)
         self.match_received_codec = bool(match_received_codec)
         self.peer_user_agent = str(peer_user_agent or "").strip()
         self.include_dahua_pcm = (
@@ -2245,6 +2247,7 @@ class SipCallClient:
                 send_rtp_formats=self.supported_send_rtp_formats,
                 recv_rtp_formats=self.supported_recv_rtp_formats,
                 allow_directional_payloads=self.allow_directional_audio_payloads,
+                independent_audio_ptime=self.independent_audio_ptime,
                 codec_policy=self.codec_policy,
                 video_port=self.local_video_rtp_port,
                 video_format=self.video_format,

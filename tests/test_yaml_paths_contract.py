@@ -106,6 +106,34 @@ def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> N
     assert tool.selected([maintained, private], str(private)) == [private]
 
 
+def test_standalone_native_example_checks_exact_channel_and_roundtrips(tmp_path: Path) -> None:
+    tool = _load_yaml_paths()
+    example = tmp_path / 'native-phone.yaml'
+    example.write_text('esphome:\n  name: native-phone\nexternal_components:\n'
+                       '  - source: github://n-IA-hane/esphome-voip-stack@main\n'
+                       '    components: [voip_stack]\n')
+    assert tool.mode(example) == 'remote'
+    assert list(tool.source_errors(example, 'dev', True)) == ['source channel main, expected dev']
+    tool.rewrite_sources(example, 'dev')
+    assert '@dev' in example.read_text()
+    assert list(tool.source_errors(example, 'dev', True)) == []
+    tool.rewrite_sources(example, 'local')
+    assert tool.mode(example) == 'local'
+    assert '@dev' not in example.read_text()
+    tool.rewrite_sources(example, 'main')
+    assert tool.mode(example) == 'remote'
+    assert list(tool.source_errors(example, 'main', True)) == []
+
+
+def test_coordinated_sources_include_the_tracked_native_example() -> None:
+    tool = _load_yaml_paths()
+    repository = tool.REPOS['voip_stack_components_source'][1]
+    expected = repository / 'examples/native-full-duplex.yaml'
+    if not expected.is_file():
+        return  # An Intercom-only checkout has no sibling examples to update.
+    assert expected in tool.standalone_examples()
+
+
 def test_remote_check_follows_package_includes(tmp_path: Path) -> None:
     tool = _load_yaml_paths()
     tool.ROOT = tmp_path

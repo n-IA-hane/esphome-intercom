@@ -31,38 +31,33 @@ substitutions:
       task_stacks_in_psram: true
       buffers_in_psram: false
       audio:
-        tx:
-          sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        tx_formats:
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        rx:
-          sample_rate: 48000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        rx_formats:
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        - sample_rate: 32000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 32
+        codecs:
+          - codec: pcm
+            tx:
+              # 20 ms reduces RTP packet count; 10 ms remains an explicit alternative.
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+            rx:
+              # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
+              # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
+              - sample_rate: 48000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
       microphone: mic_afe
       speaker: voip_speaker_input
       delete_contact_missing_from:

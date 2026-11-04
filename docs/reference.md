@@ -34,8 +34,8 @@ schema. Use the pinned component source for all fields and resource limits.
 | `udp_max_payload` | RTP payload budget, default `1200` bytes. The accepted implementation range is `576..1488`; raise it only for a LAN whose MTU was verified. |
 | `microphone` / `microphone_source` | Optional TX audio source. Use only one. `microphone_source` adds channel/sample-width selection for a wider native microphone. |
 | `speaker` | Optional RX audio sink. Omitting the speaker produces a `mic_only` endpoint; omitting the microphone produces a `speaker_only` endpoint. |
-| `audio.tx` / `audio.rx` | Primary per-direction audio contract. Fields are `codec` (`pcm` by default, or profile-supported `opus`), `sample_rate`, `pcm_format`, `channels`, and `frame_ms`; `auto` derives the wired audio surface. Opus is an explicit firmware/profile choice, not automatic in FULL. See [media profiles](voip_profile.md#sdp-and-rtp). |
-| `audio.tx_formats` / `audio.rx_formats` | Up to seven extra explicit formats per direction. TX extras may only change `frame_ms` from `audio.tx`; RX extras may describe other formats the speaker path can accept. |
+| `audio.codecs` | Required ordered list of explicitly enabled codecs: `pcm`, `g722`, or profile-supported `opus`. Each codec has independent ordered `tx` and `rx` format lists. No codec is inserted implicitly. See [ESP codecs and migration](ESP_AUDIO_CODECS.md). |
+| `audio.codecs[].tx` / `.rx` | Up to eight formats per direction in total. Each format declares `sample_rate` and `frame_ms`; `pcm_format` defaults to `s16le` and `channels` to `1`. The PCM boundary rate and RTP clock are distinct for G.722 and Opus. |
 | `extension` | Optional internal dial-plan alias published to HA when the endpoint entity surface is exposed. |
 | `ring_groups` | Optional comma-separated PBX ring group memberships. |
 | `conference_groups` | Optional comma-separated conference group memberships. |

@@ -34,6 +34,7 @@ from .endpoint_routing import (
     sip_target_rtp_audio_profile,
     sip_target_has_unspecified_audio,
     supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .fsm import (
     CallState,
@@ -524,6 +525,9 @@ async def async_route_trunk_invite(
         ),
         include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
+        independent_audio_ptime=supports_independent_audio_ptime(
             peer_target, decision.entry
         ),
         signaling_transport=uri_transport(bridge_uri),

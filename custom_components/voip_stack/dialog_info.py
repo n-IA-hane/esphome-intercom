@@ -1,6 +1,7 @@
 """RFC 4235 full-state documents derived from the existing call registry."""
 
 from dataclasses import dataclass
+from hashlib import sha256
 import re
 from xml.etree import ElementTree
 
@@ -254,7 +255,7 @@ def document(entity, version, states):
         },
     )
     for item in states:
-        attributes = {"id": item.identity, "direction": item.direction}
+        attributes = {"id": sha256(item.identity.encode("utf-8")).hexdigest(), "direction": item.direction}
         for key, value in (
             ("call-id", item.call_id),
             ("local-tag", item.local_tag),

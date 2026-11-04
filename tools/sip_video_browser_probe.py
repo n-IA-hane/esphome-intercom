@@ -65,6 +65,30 @@ class _ProbeComplete(Exception):
     """Internal successful short-circuit for a pre-answer cancellation test."""
 
 
+def _require_send_only_video(active: dict) -> None:
+    """Require negotiated browser TX and independent backend RTP evidence."""
+    backend = active.get("backend_state") or {}
+    stats = active.get("engine_stats") or {}
+    video = stats.get("video") or {}
+    if (
+        active.get("card_state") != "in_call"
+        or active.get("video_direction") != "sendonly"
+        or not active.get("video_active")
+        or not active.get("engine_video_active")
+        or backend.get("state") != "in_call"
+        or backend.get("video_direction") != "sendonly"
+        or not backend.get("video_negotiated")
+        or not backend.get("video_active")
+    ):
+        raise RuntimeError("send-only video was not negotiated and attached to the active call")
+    if stats.get("sent", 0) <= 0 or stats.get("received", 0) <= 0:
+        raise RuntimeError("send-only video call did not retain duplex browser audio")
+    if video.get("sent", 0) <= 0:
+        raise RuntimeError("send-only video call produced no browser video frames")
+    if backend.get("video_rtp_tx_packets", 0) <= 0 or backend.get("video_access_units_tx", 0) <= 0:
+        raise RuntimeError("send-only video call produced no backend video RTP/access units")
+
+
 _SIGNED_QUERY_RE = re.compile(r"(?i)(authSig|access_token)=[^&'\"\s]+")
 
 
@@ -705,6 +729,14 @@ def main() -> int:
         help="require a working browser audio call with no active video path",
     )
     parser.add_argument(
+        "--expect-video-send-only",
+        action="store_true",
+        help=(
+            "require negotiated browser-to-peer video, browser frames/backend RTP "
+            "and duplex audio, without a received-video canvas"
+        ),
+    )
+    parser.add_argument(
         "--expect-native-camera",
         action="store_true",
         help=(
@@ -771,6 +803,8 @@ def main() -> int:
         parser.error("--fake-audio-file must be an existing PCM WAV file")
     if args.expect_audio_only and (args.send_camera or args.deny_camera):
         parser.error("--expect-audio-only cannot be combined with camera options")
+    if args.expect_video_send_only and (args.expect_audio_only or args.deny_camera or args.camera_send == "off"):
+        parser.error("--expect-video-send-only requires video transmission and cannot disable camera/audio-video")
     if args.expect_native_camera and not args.expect_audio_only:
         parser.error("--expect-native-camera requires --expect-audio-only")
     if args.expect_remote_hangup and args.no_hangup:
@@ -1354,10 +1388,11 @@ def main() -> int:
                     )
             else:
                 page.wait_for_function(
-                    f"() => {{ const x = ({LIGHT_CARD_STATE})(); const d = String(x?.video_direction || 'sendrecv'); const v = x?.engine_stats?.video || {{}}; const rx = !['recvonly','sendrecv'].includes(d) || (v.received > 0 && (v.rendered > 0 || x?.engine_video_visible)); const tx = {str(args.deny_camera).lower()} || !['sendonly','sendrecv'].includes(d) || v.sent > 0; return x?.engine_video_active && rx && tx; }}",
+                    f"() => {{ const x = ({LIGHT_CARD_STATE})(); const d = String(x?.video_direction || 'sendrecv'); const v = x?.engine_stats?.video || {{}}; const rx = !['recvonly','sendrecv'].includes(d) || (v.received > 0 && (v.rendered > 0 || x?.engine_video_visible)); const tx = {str(args.deny_camera).lower()} || !['sendonly','sendrecv'].includes(d) || v.sent > 0; return x?.engine_video_active && rx && tx && (!{str(args.expect_video_send_only).lower()} || d === 'sendonly'); }}",
                     timeout=int(args.video_timeout * 1000),
                     polling=100,
                 )
+            if not args.expect_audio_only and not args.expect_video_send_only:
                 page.wait_for_function(
                     f"""() => {{
                       const x = ({LIGHT_CARD_STATE})();
@@ -1401,6 +1436,8 @@ def main() -> int:
             )
             engine_stats = active.get("engine_stats") or {}
             video_stats = engine_stats.get("video") or {}
+            if args.expect_video_send_only:
+                _require_send_only_video(after_hold)
             if engine_stats.get("tx_dropped", 0) != 0:
                 raise RuntimeError(f"browser audio TX dropped frames: {active}")
             if engine_stats.get("frames_drop", 0) != 0:
@@ -1456,7 +1493,7 @@ def main() -> int:
                 and not (active.get("canvas") or {}).get("non_black")
             ):
                 raise RuntimeError(f"decoded canvas has no non-black sample: {active}")
-            if not args.expect_audio_only:
+            if not args.expect_audio_only and not args.expect_video_send_only:
                 layout = flowing.get("layout") or {}
                 surface = layout.get("surface") or {}
                 canvas_layout = layout.get("canvas") or {}

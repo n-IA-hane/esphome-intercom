@@ -176,21 +176,25 @@ def _sip_audio_formats(extras: list[str], direction: str) -> list[str]:
 def _sdp_features(extras: list[str]) -> list[str]:
     """Return explicitly advertised, versioned SDP extensions."""
 
+    features: set[str] = set()
     for token in extras:
         key, separator, value = token.partition("=")
         normalized_key = key.strip().casefold()
+        if separator and normalized_key == "ip" and value.strip() == "1":
+            features.add("independent_audio_ptime_v1")
         if not separator or normalized_key not in {"sdp_features", "sf"}:
             continue
         if normalized_key == "sf" and value.strip().casefold() == "d1":
-            return ["directional_audio_v1"]
-        return [
+            features.add("directional_audio_v1")
+            continue
+        features.update(
             feature
             for feature in (
                 item.strip().casefold() for item in value.split(";")
             )
-            if feature in {"directional_audio_v1"}
-        ]
-    return []
+            if feature in {"directional_audio_v1", "independent_audio_ptime_v1"}
+        )
+    return sorted(features)
 
 
 def parse_voip_endpoint(value: str | None) -> dict | None:

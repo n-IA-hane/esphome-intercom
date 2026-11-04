@@ -156,7 +156,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 audio_mode="full_duplex",
                 tx_formats=formats,
                 rx_formats=formats,
-                sdp_features=frozenset({"directional_audio_v1"}),
+                sdp_features=frozenset({"directional_audio_v1", "independent_audio_ptime_v1"}),
             )
         )
 
