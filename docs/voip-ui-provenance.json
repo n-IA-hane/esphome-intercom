@@ -23,16 +23,6 @@
   },
   "photos": [
     {
-      "file": "voip-dashboard-current.png",
-      "description": "Existing Home Assistant VoIP dashboard, header and Extensions section.",
-      "view_path": "/lovelace/test",
-      "state": "idle",
-      "width": 1150,
-      "height": 532,
-      "bytes": 175789,
-      "sha256": "9be609780ae0aac890c5cd88a1fd9ceec2744cd106a35f779b59adf3afb12a01"
-    },
-    {
       "file": "voip-popup-settings.png",
       "description": "Existing Call popups settings, Test phone enabled in the temporary capture browser.",
       "view_path": "/voip-stack-popup",
@@ -83,5 +73,88 @@
     "state": "Idle, empty SIP dial pad, local Voice Assistant inactive.",
     "sha256": "1dd2c3a4c196abaa312b35022dddca67ee0bf011eabf27a32b1438f42b973062",
     "cleanup": "Original contact view and scroll restored, measured master volume restored, no call or Assist session started."
+  },
+  "restored_phone_card_gallery": {
+    "source_commit": "22e91179f7a54c95e461c66ee11ce3ccb7365d18",
+    "theme": "Frosted Glass Dark",
+    "source": "Original themed phone-card screenshots, restored byte for byte from the published gallery commit.",
+    "presentation": "Demo contacts and illustrative call states. These screenshots document the UI, not a new real-call qualification.",
+    "files": [
+      {
+        "path": "docs/images/phone-cards/esp-mirror-keypad.png",
+        "bytes": 258164,
+        "sha256": "133382093ad8c8eb4498d512a439351374d82faf9bef139735e577534e7356d3"
+      },
+      {
+        "path": "docs/images/phone-cards/esp-mirror-options.png",
+        "bytes": 188338,
+        "sha256": "1e6f3a44d5def07d8dea5e65e72539a2e2e6c6d38396f9ea412629675eb42b27"
+      },
+      {
+        "path": "docs/images/phone-cards/esp-mirror.png",
+        "bytes": 183128,
+        "sha256": "a11dd28ad642a951d9833a99fc67908e6b8e960bf710c9ae133b77c7dcf9d339"
+      },
+      {
+        "path": "docs/images/phone-cards/phonebook.png",
+        "bytes": 235838,
+        "sha256": "9bce07e8b3e82991438ff3ba2973d6ba9e3f820cbcaa220bf5fa2de517fb0fe4"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-call.png",
+        "bytes": 162475,
+        "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-dtmf.png",
+        "bytes": 255921,
+        "sha256": "a1de3f9cfb031daeeb269a2bc2c3f85712443ce7208d4ee7dfb67af71ba4ea77"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-idle.png",
+        "bytes": 168261,
+        "sha256": "c304a3f85eae25272148010758fec443fdcd438fcea98cedeec85be1d561a3e8"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-options.png",
+        "bytes": 283130,
+        "sha256": "b2f93ee922d4429d9b352c33b4a737f5cc31728c99fe3f12044c3e77d12b5d33"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-parked.png",
+        "bytes": 172502,
+        "sha256": "8b9b4aa4990cf6bba3b6782901f663f1311b72b48ce800f9fd4fbab10ff31e4b"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-retrieve.png",
+        "bytes": 254201,
+        "sha256": "1b5765815bd8b80a73ad3271b7339a01309ac307c7e823a16ff02556d53b8c72"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-retrieved.png",
+        "bytes": 162475,
+        "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-ringing.png",
+        "bytes": 165257,
+        "sha256": "6802188e0939db0116652067d669be90e13a505e9696f2d5330352163f1e9b3b"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-routing.png",
+        "bytes": 410835,
+        "sha256": "728c89eccd4a90bce2c326e264901886684408535b3b7e0d46dc7e407ba45051"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-transfer.png",
+        "bytes": 172905,
+        "sha256": "f16a6361fe369e5a3121155cada9f70bd379ff812a462e15cf63d3ef1ac99bc1"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-voicemail.png",
+        "bytes": 265151,
+        "sha256": "b85aa0751ac29b06abdbb5bd06648c0016eb9975d15f546d5e4743d428f920c2"
+      }
+    ]
   }
 }

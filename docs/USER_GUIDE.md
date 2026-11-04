@@ -83,29 +83,13 @@ type: custom:voip-stack-dashboard-card
 device_id: <phone_device_id>
 ```
 
-Use the visual picker to supply that reference. A second view of the same
-phone uses its existing call and media owner.
+Choose the phone by name in the visual editor. See the
+[Dashboard demo at the top of the README](../README.md#voip-stack-for-home-assistant-and-esphome).
 
-![VoIP Dashboard with the selected phone idle and current extension status](images/voip-dashboard-current.png)
+The phonebook mode shows the shared contacts without creating another phone.
+Select a contact from a phone's card to use it as the destination.
 
-<details>
-<summary>Earlier dashboard directory view</summary>
-
-<figure>
-  <img src="images/voip-dashboard-phonebook.png" alt="Earlier Dashboard directory view"/>
-  <figcaption>Earlier Dashboard directory view.</figcaption>
-</figure>
-
-</details>
-
-![Compact phone cards and the shared phonebook on a Home Assistant dashboard](images/dashboard.gif)
-
-This earlier layout shows compact phone cards alongside the shared directory;
-it is not the preview operator Dashboard. Browser and ESP phones retain their
-own identities and call states.
-
-For the current dashboard and popup captures, see the
-[screenshot provenance](voip-ui-provenance.json).
+![Shared phonebook with demo room phones and a door station](images/phone-cards/phonebook.png)
 
 ### Browser-phone availability
 
@@ -175,9 +159,12 @@ another destination, choose a routing automation before terminating the call.
 
 ## Read the phone card
 
-The same icons are used in audio and video mode.
+The same icons are used in audio and video mode. The compact-card screenshots
+use the Frosted Glass Dark theme with demo contacts and illustrative call states.
 
-![Idle phone with keypad and options icons](images/pbx-phone-idle-green.png)
+![Idle phone with keypad and options icons](images/phone-cards/softphone-idle.png)
+
+![Incoming call with Answer and Decline controls](images/phone-cards/softphone-ringing.png)
 
 | Control | What it does |
 | --- | --- |
@@ -188,7 +175,7 @@ The same icons are used in audio and video mode.
 | Options (sliders) | Open this phone's answer, DND, mailbox, audio/video and routing settings. |
 | Call / Hang up | Start the selected call or end the current conversation. In video mode, use the handset icon in the translucent bottom bar. |
 
-![Phone options on the same green-themed dashboard](images/pbx-phone-options-green.png)
+![Phone options with audio, video and routing settings](images/phone-cards/softphone-options.png)
 
 Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
@@ -222,19 +209,19 @@ Empty lists occupy no space. They are hidden while
 the keypad, options or video view needs that space. Voicemail stays in its own
 button and is not duplicated in these lists.
 
-![An established audio call, with Parking available](images/pbx-phone-audio-call-green.png)
+![An established audio call, with Parking available](images/phone-cards/softphone-call.png)
 
 The keypad closes when you start or answer a call. Open it again if an IVR or
 door station needs DTMF. On short video cards it scrolls above the call bar.
 
 ![Live video received from a Mobotix door station](images/pbx-mobotix-video-green.png)
 
-This is a real call through a FreeSWITCH-based PBX with the local webcam off.
+A video call with a MOBOTIX door station in the VoIP Stack Home Assistant card.
 The image arrives from the door station. **P is disabled during video calls**:
 parking currently supports audio calls. Switching off Send Camera alone does
 not make a call audio-only when the peer is sending video.
 
-![DTMF keypad open during the same video call](images/pbx-mobotix-keypad-green.png)
+![DTMF keypad open during a call](images/phone-cards/softphone-dtmf.png)
 
 For parking and retrieval, follow the [parking walkthrough](CALL_PARKING.md).
 For forwarding, ringing timeouts, mailbox setup and line selection, see
@@ -348,7 +335,7 @@ hangup_call
 An ESP mirror card selects the existing ESPHome Device. VoIP Stack does not
 create or own a duplicate Device.
 
-![An ESP phone calling a Home Assistant phone](images/call-from-esp-to-homeassistant.gif)
+![ESP mirror card ready to call Home Assistant](images/phone-cards/esp-mirror.png)
 
 The ESP owns its microphone and speaker; the receiving browser phone owns its
 browser media. See the [ESP deployment guide](DEPLOYMENT_GUIDE.md#esp-devices)
@@ -514,7 +501,7 @@ Open the phone's card and choose **Options > Call routing**. These are the
 phone's settings in the backend: they still apply when its card is closed.
 The ESP mirror card exposes the same phone-routing policy.
 
-![Phone routing options, including an optional ringing timeout](images/pbx-phone-routing-green.png)
+![Phone routing options, including an optional ringing timeout](images/phone-cards/softphone-routing.png)
 
 For a phone that should ring for 20 seconds and then take a message:
 
@@ -554,7 +541,7 @@ examples](PHONE_ROUTING.md).
 4. On success, your phone becomes free. If the transfer fails, read the error
    and keep using the existing call; do not assume the destination answered.
 
-![Choose a destination in the card's transfer view](images/phone-transfer-dark.png)
+![Choose a destination in the card's transfer view](images/phone-cards/softphone-transfer.png)
 
 The card reuses the same contact and keypad view as normal dialing. Opening the
 transfer view does not send the call anywhere until you confirm.
@@ -627,6 +614,8 @@ to see the callers and recording dates. Select a message to listen; use its
 Delete control to delete that message. The softphone calls the same voicemail
 menu used by a SIP handset and sends the keypad commands. Its list remains open.
 
+![Mailbox messages with playback and Delete controls](images/phone-cards/softphone-voicemail.png)
+
 | From a phone connected to this PBX | What happens |
 | --- | --- |
 | Dial `*97`, or configure the handset's voicemail key to use it | Open that identified phone's own mailbox without a PIN |
@@ -682,13 +671,13 @@ Parking is available by default. During an audio call,
 press **P** on the card. The phone is released and the left-hand list shows the
 assigned slot, for example **701**.
 
-![The occupied slot shown after parking a call](images/pbx-phone-parked-green.png)
+![The occupied slot shown after parking a call](images/phone-cards/softphone-parked.png)
 
 On the phone where you want to continue, open the keypad, enter **701** and
 press **Call**. The original card can retrieve it too. The slot disappears when
 the conversation resumes.
 
-![Dial the assigned slot from the receiving phone](images/pbx-phone-pickup-green.png)
+![Dial the assigned slot from the receiving phone](images/phone-cards/softphone-retrieve.png)
 
 A SIP handset can park by transferring to **700** instead of pressing P.
 **These are two ways to park, not two steps.** Once parked, call the reported

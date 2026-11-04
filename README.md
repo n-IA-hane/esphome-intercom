@@ -86,8 +86,7 @@ same device.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/call-from-esp-to-homeassistant.gif" width="200" alt="A physical ESP phone calling Home Assistant"/><br/><b>ESP to Home Assistant</b></td>
-    <td align="center"><img src="docs/images/ha-sip-video-call.gif" width="200" alt="SIP video on a Home Assistant phone"/><br/><b>SIP video</b></td>
+    <td align="center"><img src="docs/images/esp32-s3-video-call-cropped.jpg" width="300" alt="Remote SIP video shown on a real ESP32-S3 display"/><br/><b>SIP video on an S3 display</b></td>
     <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="200" alt="Audio controls on an ESP screen"/><br/><b>On-device controls</b></td>
     <td align="center"><img src="docs/images/lvgl-hangup-reason.jpg" width="200" alt="Call result shown on the ESP display"/><br/><b>Call feedback</b></td>
   </tr>
@@ -155,10 +154,9 @@ The optional popup presents an existing HA phone over other HA views.
 | VoIP Dashboard | See extension activity, contacts and call controls for the selected HA or ESP phone. |
 | Global call popup | Receive and control calls on an existing HA phone while using another HA view. |
 
-The screenshots below show the project's phone views with a transparent Home
-Assistant theme. Some compact-card captures show earlier layouts; the
-[current user guide](docs/USER_GUIDE.md#choose-a-card-view) describes the controls
-and options available in the selected release.
+The compact-card screenshots use the Frosted Glass Dark theme with demo
+contacts and illustrative call states. The [card guide](docs/USER_GUIDE.md#choose-a-card-view)
+covers configuration and controls.
 
 ### A Home Assistant softphone
 
@@ -169,8 +167,8 @@ during a call. Give each independent room its own logical phone.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/pbx-phone-idle-green.png" alt="Compact Home Assistant phone ready to call, with the transparent theme"/><br/><b>Ready to call</b></td>
-    <td width="50%"><img src="docs/images/pbx-phone-audio-call-green.png" alt="Compact Home Assistant phone during an audio call"/><br/><b>In a call</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-idle.png" alt="Compact Home Assistant phone ready to call, with the transparent theme"/><br/><b>Ready to call</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-call.png" alt="Compact Home Assistant phone during an audio call"/><br/><b>In a call</b></td>
   </tr>
 </table>
 
@@ -180,7 +178,7 @@ Put an ESP mirror on a dashboard to select that device's destination, place or
 answer a call and hang up. The mirror is useful when you want the physical room
 station to handle the conversation while HA provides its controls.
 
-<img src="docs/images/esp-mirror-card.png" width="500" alt="ESP mirror card with contact navigation and call control"/>
+<img src="docs/images/phone-cards/esp-mirror.png" width="500" alt="ESP mirror card with contact navigation and call control"/>
 
 ### Keep the shared phonebook in view
 
@@ -188,16 +186,7 @@ A phonebook card lists destinations from the shared directory. Use it beside
 phone controls when you want a dedicated contact browser. It does not provision
 another phone or require another microphone.
 
-![Compact ESP phone controls alongside the shared phonebook](docs/images/voip-dashboard-phonebook.png)
-
-_Phonebook mode beside compact ESP controls, shown in an earlier dashboard layout._
-
-<details>
-<summary>Compact phone controls and phonebook in action</summary>
-
-![Compact phone cards and shared phonebook demonstration](docs/images/dashboard.gif)
-
-</details>
+<img src="docs/images/phone-cards/phonebook.png" width="500" alt="Shared phonebook with demo room phones, a door station and an outside contact"/>
 
 ### Use the VoIP dashboard
 
@@ -206,10 +195,8 @@ into one view. See who is ringing, busy, available or offline; inspect calls
 and use the eligible pickup and call controls. Its visual editor asks for the
 **Calling phone**, so the same view can serve a browser phone or an ESP.
 
-![VoIP Dashboard with its selected phone and extension status, using the transparent HA theme](docs/images/voip-dashboard-current.png)
-
-The multistate demonstration at the top shows ringing, connected and held calls
-together. The capture here shows the selected phone and its extension overview.
+See the [Dashboard demo at the top of this page](#voip-stack-for-home-assistant-and-esphome)
+for incoming, active and held calls, presence, voicemail and Do Not Disturb.
 The [card guide](docs/USER_GUIDE.md#choose-a-card-view) includes configuration
 examples for both card types.
 
@@ -279,7 +266,7 @@ consult the other person first and complete an attended transfer.
 
 "I'll put you through" is finally a feature, not just a threat.
 
-<img src="docs/images/phone-transfer-dark.png" width="500" alt="Choosing a transfer destination from the phone card"/>
+<img src="docs/images/phone-cards/softphone-transfer.png" width="500" alt="Choosing a transfer destination from the phone card"/>
 
 ### Park here, continue over there
 
@@ -293,8 +280,8 @@ upstairs.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/pbx-phone-parked-green.png" alt="Call parked with its assigned retrieval slot"/><br/><b>Leave the caller on a slot</b></td>
-    <td width="50%"><img src="docs/images/pbx-phone-retrieved-green.png" alt="Conversation resumed after retrieving a parked call"/><br/><b>Resume on another phone</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-parked.png" alt="Call parked with its assigned retrieval slot"/><br/><b>Leave the caller on a slot</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-retrieved.png" alt="Conversation resumed after retrieving a parked call"/><br/><b>Resume on another phone</b></td>
   </tr>
 </table>
 
@@ -337,7 +324,7 @@ and MWI to see whether that account has waiting messages.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/pbx-phone-options-green.png" alt="Phone options including mailbox settings"/><br/><b>Phone and mailbox settings</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-voicemail.png" alt="Listen to and manage messages from the phone card"/><br/><b>Your phone's messages</b></td>
     <td width="50%"><img src="docs/images/mailbox-action-dark.png" alt="Home Assistant action for phone mailbox settings"/><br/><b>Mailbox controls in HA</b></td>
   </tr>
 </table>

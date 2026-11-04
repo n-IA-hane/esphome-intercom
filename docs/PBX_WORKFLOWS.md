@@ -67,9 +67,9 @@ Open that phone's card, then **Options > Call routing**. The same settings are
 available through **VoIP Stack: Configure phone routing**, using HA's device
 picker. This includes ESP mirror cards: the policy is stored in HA.
 
-![Phone options and expanded call-routing settings](images/pbx-phone-routing-green.png)
+![Phone options and expanded call-routing settings](images/phone-cards/softphone-routing.png)
 
-The screenshot shows a 20-second voicemail rule being prepared before saving.
+The screenshot shows the available routing controls before a timeout is enabled.
 Enable **Ringing timeout** to choose how long this phone rings and what happens
 afterwards. The outgoing-line selector chooses a specific trunk or follows the
 integration default. The Save button becomes available when you edit the rule.

@@ -141,4 +141,6 @@ firmware or migrate a custom device YAML.
 
 The ESP mirror card uses the same call state and native controls.
 
-![ESP mirror card keypad and options](images/esp-mirror-card-keypad-options.png)
+![ESP mirror card keypad](images/phone-cards/esp-mirror-keypad.png)
+
+![ESP mirror card options](images/phone-cards/esp-mirror-options.png)

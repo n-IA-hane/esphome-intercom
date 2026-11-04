@@ -42,9 +42,9 @@ display through a HACS update. Follow
 4. During the call, turn either camera off to stop that direction. Turning your
    camera off does not prohibit receiving the other party's video.
 
-![SIP video call in the Home Assistant phone card](images/ha-sip-video-call.gif)
+![Doorbell video-call demonstration in the VoIP Dashboard](images/voip-dashboard-gate-demo.png)
 
-_SIP video call in the Home Assistant phone card._
+_Dashboard doorbell-call demonstration using an illustrative gate-camera feed._
 
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
