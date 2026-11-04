@@ -93,9 +93,10 @@ jobs:
       - name: Install dependencies for independent SIP and video peers
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev \
+          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev ldap-utils \
             sip-tester libavcodec-dev libavfilter-dev libavformat-dev \
             libswscale-dev libavdevice-dev libavutil-dev
+          command -v ldapsearch
       - name: Build pinned independent SIP test peer
         run: |
           scripts/build_sip_test_peer.sh "$RUNNER_TEMP/sip-peer"
