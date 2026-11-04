@@ -1,22 +1,20 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**An open-source SIP PBX integrated with Home Assistant.**
+**An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
 
-Make and receive audio and video calls from your Home Assistant dashboard.
-Connect SIP phones, ESP32 intercoms and a provider or PBX trunk. Use ordinary
-Home Assistant automations to decide which phones ring, play spoken messages,
+Receive audio and video calls from your SIP doorbell and answer in Home
+Assistant phone cards. Make and receive calls with standard SIP phones and
+softphones, and connect a provider trunk for external calls. Use ordinary Home
+Assistant automations to decide which phones ring, play spoken messages,
 handle keypad input and forward unanswered calls.
 
 - **Home Assistant:** browser phones, video calls, a shared phonebook, ring
   groups and conferences.
 - **Automations as dialplan:** build your own call handling with native
   triggers, conditions and actions.
-- **Optional ESPHome endpoints:** turn supported ESP32 devices into SIP phones,
-  intercoms or complete voice satellites.
 
-ESP hardware is optional. Start with two dashboard phones or your existing SIP
-phones, then add the features you need. The ESP firmware also works with
-[conventional PBXs](#use-esp-firmware-with-an-existing-pbx).
+Start with two dashboard phones or your existing SIP phones, then add the
+features you need.
 
 **[Start with the basic concepts](docs/CONCEPTS.md) · [Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
 
@@ -26,10 +24,9 @@ phones, then add the features you need. The ESP firmware also works with
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real door-station call through a FreeSWITCH-based PBX, with the local webcam
-off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
-[how to park and retrieve audio calls](docs/CALL_PARKING.md).
-[FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
+_A real video call with a Mobotix SIP door station in the Home Assistant phone
+card, with the local webcam off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card)
+and [how to park and retrieve audio calls](docs/CALL_PARKING.md)._
 
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
 Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
@@ -206,9 +203,9 @@ ESP devices become standards-based SIP phones, with audio on every maintained
 VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
 can be a SIP video softphone, call router, RTP bridge, local registrar,
 conference focus, callable Assist destination and optional trunk endpoint.
-Browser phones, wall tablets, ESP room stations, standard SIP clients and an
-external PBX can share one phonebook without requiring a separate Asterisk or
-FreeSWITCH server for the normal home use case.
+Browser phones, wall tablets, ESP room stations and standard SIP clients share
+one phonebook managed by Home Assistant. An external PBX can connect through
+an optional trunk.
 
 VoIP is only one part of the project. The optional full-experience ESP YAMLs
 also provide an independent on-device Voice Assistant, Micro Wake Word, media
@@ -309,6 +306,10 @@ physical microphone, speaker and camera pipeline.
 
 ESP media roles are derived from the configured components; they are not a
 separate user mode.
+
+Supported ESP32-P4 videophone profiles provide two-way SIP audio and video:
+they transmit the local camera and display the remote video on the device's
+screen.
 
 | Derived role | Media | Typical use |
 |---|---|---|
