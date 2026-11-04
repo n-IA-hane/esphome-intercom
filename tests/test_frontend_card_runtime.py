@@ -1325,6 +1325,78 @@ await pendingAnswer;
 assert.equal(serviceCalls.length, serviceCount);
 assert.equal(race._softphoneSnapshot.call_id, "race-B");
 
+// The phone's no-answer route may commit while microphone/worklet preflight
+// is still pending. The retired receiver must not send an Answer or Hangup.
+const forwardedPreflight = makeCard();
+forwardedPreflight.config.device_id = "device-casa";
+const ringingCasa = {{
+  endpoint_id: "browser:casa", device_id: "device-casa",
+  state: "ringing", direction: "incoming", call_id: "local-deadline",
+  caller: "Test", callee: "Casa", sequence: 10, revision: 3,
+}};
+forwardedPreflight._applySoftphoneSnapshot(ringingCasa);
+const preflightCommands = [];
+forwardedPreflight._hass.callService = async (...args) => preflightCommands.push(args);
+let enterPreflight, releasePreflight;
+const preflightEntered = new Promise(resolve => {{ enterPreflight = resolve; }});
+const previousPrepareAudioCall = engine.prepareAudioCall;
+engine.prepareAudioCall = async () => {{
+  audioPermissionChecks++;
+  enterPreflight();
+  await new Promise(resolve => {{ releasePreflight = resolve; }});
+  return true;
+}};
+const preparingAnswer = forwardedPreflight._answer();
+await preflightEntered;
+forwardedPreflight._onSoftphoneState({{
+  ...ringingCasa, state: "idle", terminal_reason: "forwarded",
+  last_sip_event: "ROUTE_FORWARD", sequence: 11, revision: 4,
+}});
+releasePreflight();
+await preparingAnswer;
+assert.equal(preflightCommands.length, 0);
+assert.equal(forwardedPreflight._softphoneSnapshot.state, "idle");
+assert.equal(forwardedPreflight._starting, false);
+assert.equal(engine.ownsSoftphoneSession("local-deadline", "browser:casa"), false);
+assert.equal(engine.mediaIntent, null);
+engine.prepareAudioCall = previousPrepareAudioCall;
+
+// The final local ringing check cannot reserve backend state. If voicemail
+// wins after the request is sent, the rejection releases only Casa's intent;
+// it must not compensate with Hangup or acquire the caller's application media.
+const forwardedRequest = makeCard();
+forwardedRequest.config.device_id = "device-casa";
+forwardedRequest._applySoftphoneSnapshot({{ ...ringingCasa, call_id: "local-in-flight" }});
+const requestCommands = [];
+let enterAnswerRequest, rejectAnswerRequest;
+const answerRequestEntered = new Promise(resolve => {{ enterAnswerRequest = resolve; }});
+forwardedRequest._hass.callService = async (...args) => {{
+  requestCommands.push(args);
+  assert.equal(args[1], "answer");
+  enterAnswerRequest();
+  await new Promise((_resolve, reject) => {{ rejectAnswerRequest = reject; }});
+}};
+const inFlightAnswer = forwardedRequest._answer();
+await answerRequestEntered;
+assert.equal(requestCommands.length, 1);
+assert.equal(requestCommands[0][2].device_id, "device-casa");
+assert.equal(requestCommands[0][2].call_id, "local-in-flight");
+forwardedRequest._onSoftphoneState({{
+  ...ringingCasa, call_id: "local-in-flight", state: "idle",
+  terminal_reason: "forwarded", last_sip_event: "ROUTE_FORWARD",
+  sequence: 12, revision: 5,
+}});
+const lateAnswerError = new Error("call_id local-in-flight belongs to another phone endpoint");
+rejectAnswerRequest(lateAnswerError);
+await inFlightAnswer;
+assert.equal(requestCommands.length, 1, "late Answer must not issue a compensating Hangup");
+assert.equal(forwardedRequest._softphoneSnapshot.state, "idle");
+assert.equal(forwardedRequest._starting, false);
+assert.equal(forwardedRequest._errorMsg, lateAnswerError.message);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:casa"), false);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:test"), false);
+assert.equal(engine.mediaIntent, null);
+
 // Home Assistant may recreate the Lovelace element while an Answer request is
 // in flight.  The page-level engine owns the media session, so the detached
 // element must not compensate with a late hangup: the replacement card will

@@ -2220,13 +2220,15 @@ class VoipStackCard extends HTMLElement {
       .filter(box => box.width && box.height);
     if (!buttons.length) return;
     const card = e.card.getBoundingClientRect();
+    const viewportLeft = card.left + e.card.clientLeft;
+    const viewportRight = viewportLeft + e.card.clientWidth;
     const top = Math.min(...buttons.map(box => box.top));
     const bottom = Math.max(...buttons.map(box => box.bottom));
     const left = Math.min(...buttons.map(box => box.left));
     const right = Math.max(...buttons.map(box => box.right));
     for (const [list, width] of [
-      [e.parkingNotice, left - card.left - 2 * gap],
-      [e.phoneActivity, card.right - right - 2 * gap],
+      [e.parkingNotice, left - viewportLeft - 2 * gap],
+      [e.phoneActivity, viewportRight - right - 2 * gap],
     ]) {
       if (!list || list.hidden) continue;
       list.style.top = `${top - card.top + e.card.scrollTop}px`;

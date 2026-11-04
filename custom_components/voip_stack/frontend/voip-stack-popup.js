@@ -15,9 +15,12 @@ class VoipStackPhoneDialog extends HTMLElement {
     this.attachShadow({ mode: "open" });
     const style = node("style");
     style.textContent = `dialog { box-sizing:border-box; width:min(560px,calc(100vw - 24px));
-      max-height:calc(100dvh - 24px); padding:12px; border:1px solid var(--divider-color);
+      max-height:calc(100dvh - 24px); padding:12px; border:var(--ha-card-border,1px solid var(--divider-color));
       border-radius:var(--ha-card-border-radius,12px); color:var(--primary-text-color);
-      background:var(--ha-card-background,var(--card-background-color,#fff)); }
+      background:var(--ha-card-background,var(--card-background-color,#fff));
+      box-shadow:var(--ha-card-box-shadow,none);
+      -webkit-backdrop-filter:var(--ha-card-backdrop-filter,none);
+      backdrop-filter:var(--ha-card-backdrop-filter,none); }
       dialog::backdrop { background:rgba(0,0,0,.32); }
       header { display:flex; align-items:center; gap:8px; } h2 { flex:1; font-size:1.1rem; }
       button { min-width:44px; min-height:44px; cursor:pointer; font:inherit; }
@@ -87,10 +90,12 @@ export class VoipStackPopup extends HTMLElement {
     this.attachShadow({ mode: "open" });
     const style = node("style");
     style.textContent = `:host { position:fixed; right:16px; bottom:max(16px,env(safe-area-inset-bottom)); z-index:5; }
-      section { display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--divider-color);
+      section { display:flex; align-items:center; gap:8px; padding:8px; border:var(--ha-card-border,1px solid var(--divider-color));
         box-sizing:border-box; max-width:calc(100vw - 32px);
         border-radius:var(--ha-card-border-radius,12px); color:var(--primary-text-color);
-        background:var(--ha-card-background,var(--card-background-color,#fff)); box-shadow:var(--ha-card-box-shadow); }
+        background:var(--ha-card-background,var(--card-background-color,#fff)); box-shadow:var(--ha-card-box-shadow);
+        -webkit-backdrop-filter:var(--ha-card-backdrop-filter,none);
+        backdrop-filter:var(--ha-card-backdrop-filter,none); }
       section[hidden] { display:none; } button { min-height:44px; min-width:44px; cursor:pointer; font:inherit; }
       .reopen { border:0; background:transparent; color:inherit; text-align:left; min-width:0; }
       .reopen span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

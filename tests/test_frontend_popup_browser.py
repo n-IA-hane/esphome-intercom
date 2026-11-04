@@ -102,6 +102,58 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+def test_popup_has_one_themed_glass_surface(popup_page):
+    """Theme blur covers the full dialog, without a second inner card layer."""
+    page = popup_page
+    page.evaluate("""() => {
+      document.documentElement.style.cssText=`--ha-card-background:transparent;
+        --ha-card-backdrop-filter:blur(10px) saturate(1.25);
+        --ha-card-border:0.5px solid rgba(234,235,238,.22);
+        --ha-card-box-shadow:0 14px 38px rgba(0,0,0,.34);
+        --ha-card-border-radius:18px;--primary-text-color:#eee`;
+      window.themeCard=card=>{
+        const style=document.createElement('style');
+        style.textContent=`ha-card::before{content:'';position:absolute;inset:0;
+          border-radius:inherit;backdrop-filter:var(--ha-card-backdrop-filter);
+          background:rgba(2,6,11,.12);pointer-events:none;z-index:-1}`;
+        card.shadowRoot.append(style);
+      };
+    }""")
+    enable(page)
+    incoming(page)
+    page.evaluate("themeCard(__voipStackPopup.dialog._phone)")
+    surfaces = page.evaluate("""() => {
+      const d=__voipStackPopup.dialog,c=d._phone._els.card;
+      const outer=getComputedStyle(d._dialog),inner=getComputedStyle(c);
+      return {outerBlur:outer.backdropFilter,outerShadow:outer.boxShadow,
+        innerBlur:inner.backdropFilter,innerFilter:inner.filter,
+        innerBackground:inner.backgroundColor,innerShadow:inner.boxShadow,
+        innerBorder:inner.borderTopWidth,pseudo:getComputedStyle(c,'::before').content};
+    }""")
+    assert surfaces["outerBlur"] == "blur(10px) saturate(1.25)"
+    assert surfaces["outerShadow"] != "none"
+    assert surfaces["innerBlur"] == surfaces["innerFilter"] == "none"
+    assert surfaces["innerBackground"] == "rgba(0, 0, 0, 0)"
+    assert surfaces["innerShadow"] == "none" and surfaces["innerBorder"] == "0px"
+    assert surfaces["pseudo"] == "none"
+
+    page.evaluate("""() => {
+      const ordinary=document.createElement('voip-stack-card');window.ordinary=ordinary;
+      ordinary.setConfig({mode:'ha_softphone',device_id:phone.device_id});ordinary.hass=hass;
+      root.shadowRoot.append(ordinary);themeCard(ordinary);
+    }""")
+    assert page.evaluate("getComputedStyle(ordinary._els.card,'::before').content") == '\"\"'
+    assert page.evaluate("getComputedStyle(ordinary._els.card,'::before').backdropFilter") == "blur(10px) saturate(1.25)"
+    page.keyboard.press("Escape")
+    mini = page.evaluate("""() => {
+      const style=getComputedStyle(__voipStackPopup._mini);
+      return {hidden:__voipStackPopup._mini.hidden,blur:style.backdropFilter,shadow:style.boxShadow};
+    }""")
+    assert not mini["hidden"] and mini["blur"] == surfaces["outerBlur"]
+    assert mini["shadow"] == surfaces["outerShadow"]
+    assert page.evaluate("services") == []
+
+
 def test_cold_without_card_persistence_and_shared_owner(popup_page):
     page = popup_page
     assert page.locator("voip-stack-card").count() == 0

@@ -18,7 +18,11 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "softphone_commands.py"
 
 
 class _ServiceValidationError(Exception):
-    pass
+    def __init__(self, *args, **translations):
+        super().__init__(*args)
+        self.translation_domain = translations.get("translation_domain")
+        self.translation_key = translations.get("translation_key")
+        self.translation_placeholders = translations.get("translation_placeholders")
 
 
 @pytest.fixture
@@ -126,11 +130,12 @@ def softphone_commands(monkeypatch):
     return module
 
 
-def _call(**data):
+def _call(service="answer", **data):
     return SimpleNamespace(
         hass=SimpleNamespace(data={}, config=SimpleNamespace(location_name="Casa")),
         data=data,
         context=object(),
+        service=service,
     )
 
 
@@ -175,6 +180,59 @@ def test_browser_command_rejects_foreign_call(softphone_commands) -> None:
         asyncio.run(
             softphone_commands.async_resolve_browser_call_command(call.hass, call)
         )
+
+
+@pytest.mark.parametrize("projection_id_field", ["call_id", "last_terminal_call_id"])
+def test_forwarded_answer_reports_state_without_reauthorizing_callee(
+    softphone_commands, projection_id_field,
+):
+    call = _call(call_id="forwarded-call")
+    registry = SimpleNamespace()
+    endpoint = SimpleNamespace(device_id="device-kitchen", name="Kitchen")
+    softphone_commands.call_registry = Mock(return_value=registry)
+    membership = softphone_commands.call_belongs_to_endpoint = Mock(return_value=False)
+    projection = softphone_commands._ha_softphone_store = Mock(return_value={
+        projection_id_field: "forwarded-call", "state": "idle", "terminal_reason": "forwarded",
+    })
+
+    with pytest.raises(_ServiceValidationError, match="no longer ringing") as failure:
+        asyncio.run(softphone_commands.async_resolve_browser_call_command(
+            call.hass, call, endpoint_id="kitchen", endpoint=endpoint,
+        ))
+
+    membership.assert_called_once_with(registry, "forwarded-call", "kitchen")
+    projection.assert_called_once_with(call.hass, "kitchen")
+    assert failure.value.translation_domain == "voip_stack"
+    assert failure.value.translation_key == "call_not_ringing"
+    assert failure.value.translation_placeholders == {"call_id": "forwarded-call"}
+
+
+@pytest.mark.parametrize("service,changes", [
+    ("answer", {"last_terminal_call_id": "another-call"}),
+    ("answer", {"state": "ringing"}),
+    ("answer", {"terminal_reason": "local_hangup"}),
+    ("hangup", {}),
+    ("decline", {}),
+])
+def test_foreign_guard_is_unchanged_outside_same_forwarded_answer(
+    softphone_commands, service, changes,
+):
+    call = _call(service=service, call_id="foreign-call")
+    endpoint = SimpleNamespace(device_id="device-kitchen", name="Kitchen")
+    softphone_commands.call_registry = Mock(return_value=SimpleNamespace())
+    softphone_commands.call_belongs_to_endpoint = Mock(return_value=False)
+    softphone_commands._ha_softphone_store = Mock(return_value={
+        "last_terminal_call_id": "foreign-call", "state": "idle",
+        "terminal_reason": "forwarded", **changes,
+    })
+
+    with pytest.raises(_ServiceValidationError, match="another phone endpoint") as failure:
+        asyncio.run(softphone_commands.async_resolve_browser_call_command(
+            call.hass, call, endpoint_id="kitchen", endpoint=endpoint,
+        ))
+    assert failure.value.translation_key is None
+    if service != "answer":
+        softphone_commands._ha_softphone_store.assert_not_called()
 
 
 def test_terminal_retry_requires_retired_owner_and_explicit_permission(softphone_commands):

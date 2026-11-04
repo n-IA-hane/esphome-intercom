@@ -236,6 +236,116 @@ def test_contacts_keypad_navigation_leaves_options(mode, initial_keypad, tmp_pat
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.parametrize("width", [415, 420])
+def test_unavailable_mirror_settles_with_classic_scrollbar(width, tmp_path):
+    """A scrollbar must not resize the empty call area into a perpetual loop."""
+    playwright = pytest.importorskip("playwright.sync_api")
+    source = {path.name: path.read_bytes() for path in FRONTEND.glob("*.js")}
+    with playwright.sync_playwright() as runner:
+        # Playwright otherwise hides scrollbars in headless mode, which removes
+        # the gutter and conceals this real desktop-browser regression.
+        browser = runner.chromium.launch(
+            executable_path=shutil.which("chromium"), headless=True,
+            ignore_default_args=["--hide-scrollbars"],
+        )
+        try:
+            page = browser.new_page(viewport={"width": 800, "height": 800})
+
+            def serve(route):
+                name = Path(urlsplit(route.request.url).path).name
+                if name in source:
+                    route.fulfill(content_type="text/javascript", body=source[name])
+                elif route.request.url == "http://card.test/":
+                    route.fulfill(content_type="text/html", body="<html><body></body></html>")
+                else:
+                    route.abort()
+
+            page.route("**/*", serve)
+            page.goto("http://card.test/")
+            page.evaluate(r"""async width => {
+              document.body.style.cssText='margin:0;font:14px/20px Arial';
+              customElements.define('ha-icon',class extends HTMLElement{
+                constructor(){super();this.attachShadow({mode:'open'}).innerHTML=
+                  '<style>:host{display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)}</style>';
+                }
+              });
+              await import('/voip-stack-card.js');
+              const host=document.createElement('div');window.layoutHost=host;
+              host.style.cssText=`width:${width}px;height:504px`;
+              document.body.append(host);
+              const card=document.createElement('voip-stack-card');window.card=card;
+              card.config={mode:'esp_mirror',device_id:'fixture-device',name:'ESP mirror'};
+              card._activeDeviceInfo={device_id:'fixture-device',name:'ESP mirror'};
+              card._voipStateEntityId='sensor.fixture_state';
+              card._startCallService='fixture_start_call';
+              card._hass={language:'en',config:{location_name:'Fixture',components:['voip_stack']},
+                states:{'sensor.fixture_state':{state:'unavailable'}},
+                connection:{subscribeEvents:async()=>()=>{},sendMessagePromise:async()=>({devices:[]})}};
+              window.measureCalls=0;
+              const measure=card._measureLayout;
+              card._measureLayout=function(){measureCalls++;return measure.call(this)};
+              host.append(card);card._render();
+              const style=document.createElement('style');
+              style.textContent='ha-card::-webkit-scrollbar{width:15px;height:15px}';
+              card.shadowRoot.append(style);
+              window.sampleFrames=async count=>{
+                const samples=[];
+                for(let frame=0;frame<count;frame++){
+                  await new Promise(requestAnimationFrame);
+                  const c=card._els.card,s=getComputedStyle(c),b=c.getBoundingClientRect();
+                  samples.push({width:b.width,height:b.height,clientWidth:c.clientWidth,
+                    clientHeight:c.clientHeight,scrollHeight:c.scrollHeight,
+                    gutter:c.offsetWidth-c.clientWidth-parseFloat(s.borderLeftWidth)-parseFloat(s.borderRightWidth),
+                    button:s.getPropertyValue('--voip-button-size'),fluid:s.getPropertyValue('--voip-fluid-space'),
+                    scrollbarGutter:s.scrollbarGutter,narrow:c.classList.contains('layout-narrow'),
+                    compact:c.classList.contains('layout-compact'),short:c.classList.contains('layout-short'),
+                    measures:measureCalls});
+                }
+                return samples;
+              };
+            }""", width)
+            offline = page.evaluate("sampleFrames(180)")
+            receipt = {"browser": browser.version, "width": width, "offline": offline,
+                       "source_sha256": {name: hashlib.sha256(source[name]).hexdigest()
+                                         for name in ("voip-stack-card.js", "voip-stack-card-view.js")}}
+            receipt_path = tmp_path / "classic-scrollbar-layout.json"
+            receipt_path.write_text(json.dumps(receipt, indent=2))
+            page.screenshot(path=str(tmp_path / "unavailable-mirror.png"))
+
+            def assert_settled(samples, expected_width, expected_height, gutter=True):
+                tail = samples[-30:]
+                geometry = [{key: value for key, value in row.items() if key != "measures"}
+                            for row in tail]
+                assert all(row == geometry[0] for row in geometry), geometry
+                assert tail[-1]["measures"] - tail[0]["measures"] <= 1
+                assert abs(tail[-1]["width"] - expected_width) < .1
+                assert abs(tail[-1]["height"] - expected_height) < .1
+                assert tail[-1]["gutter"] == (15 if gutter else 0)
+
+            assert_settled(offline, width, 504)
+            page.evaluate("card._hass.states['sensor.fixture_state']={state:'idle'};card._render()")
+            online = page.evaluate("sampleFrames(60)")
+            assert_settled(online, width, 504)
+            assert page.evaluate("!card._els.callBtn.hidden")
+            page.evaluate("layoutHost.style.width='352px';layoutHost.style.height='280px'")
+            resized = page.evaluate("sampleFrames(60)")
+            assert_settled(resized, 352, 280)
+            assert resized[-1]["narrow"] and resized[-1]["short"]
+
+            # CSS video geometry only, without opening a camera or call. The
+            # ordinary card's reserved gutter must not shrink this full surface.
+            page.evaluate("card._els.card.classList.add('video-active');card._measureLayout()")
+            video = page.evaluate("sampleFrames(60)")
+            assert_settled(video, 352, 280, gutter=False)
+            assert video[-1]["scrollbarGutter"] == "auto"
+            receipt.update(online=online, resized=resized, video=video)
+            receipt_path.write_text(json.dumps(receipt, indent=2))
+            page.evaluate("card.remove()")
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 @pytest.mark.parametrize("width", [280, 360, 600])
 @pytest.mark.parametrize("park_enabled", [False, True])
 @pytest.mark.parametrize("keypad_open", [False, True])

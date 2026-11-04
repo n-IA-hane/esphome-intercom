@@ -120,6 +120,7 @@ export function buildMainCardSkeleton(cardVersion) {
         position: relative;
         isolation: isolate;
       }
+      .card:not(.video-active) { scrollbar-gutter: stable; }
       /* :where() keeps this generic stacking rule below state-specific
        * positioning in the cascade. Chained :not(.class) selectors otherwise
        * contribute three class weights and can pin the video call bar back
@@ -285,6 +286,15 @@ export function buildMainCardSkeleton(cardVersion) {
         font-size: 1em; font-weight: bold; transition: all 0.2s ease;
         display: flex; align-items: center; justify-content: center;
       }
+      :host([data-receive-popup]) ha-card.card {
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        filter: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+      }
+      :host([data-receive-popup]) ha-card.card::before { content: none; }
       :host([data-receive-popup]) .destination-row,
       :host([data-receive-popup]) .runtime-controls,
       :host([data-receive-popup]) .keypad-panel,
