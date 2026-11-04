@@ -1,0 +1,76 @@
+{
+  "captured_on": "2026-11-04",
+  "source_head": "4f2e538fca39bdbc312ff0976c39c56a3f099d4e",
+  "source": "Real production Home Assistant frontend in Chromium, existing phones and public controls.",
+  "theme": "Existing Home Assistant theme, including its actual transparency and colours.",
+  "processing": "Rectangular browser screenshot crops and lossless PNG optimization only. No generated, redrawn or injected UI state.",
+  "illustrative_video": "The gate picture is an existing illustrative camera input carried through a real browser-to-browser call. It is not a private or physical gate-camera capture.",
+  "privacy_review": "Crops contain only VoIP UI and illustrative video. Private camera views, household avatars, weather, map/geolocation details, credentials and unrelated dashboard content are excluded.",
+  "presentation_observations": {
+    "answered_call": "Two existing browser phones, public Casa to Test call and a real pointer click on visible Answer.",
+    "minimize_reopen": "Same call ID and browser media client across minimize and reopen; received canvas rendered the illustrative video.",
+    "qualification_scope": "Presentation documentation only. No ESP, physical camera, acoustic, trunk or full historical WebSocket EOF qualification."
+  },
+  "cleanup": {
+    "verified_at_utc": "2026-11-04T01:38:04Z",
+    "both_phones": "idle",
+    "call_scoped_resource_counters": 21,
+    "all_call_scoped_resource_counters_zero": true,
+    "capture_browser_processes_remaining": 0,
+    "persisted_browser_popup_binding": "Original absent binding preserved; authenticated source storage was never saved by the capture contexts.",
+    "phone_preferences": "Existing auto-answer, send-video and DND values preserved.",
+    "websocket_observation": "Four later media WebSocket handles emitted Close. Two earlier caller handles lacked a Close event; document-generation attribution was not collected, so their historical EOF remains unqualified. Browser contexts were disposed; final runtime and process checks independently confirmed quiescence."
+  },
+  "photos": [
+    {
+      "file": "voip-dashboard-current.png",
+      "description": "Existing Home Assistant VoIP dashboard, header and Extensions section.",
+      "view_path": "/lovelace/test",
+      "state": "idle",
+      "width": 1150,
+      "height": 532,
+      "bytes": 175789,
+      "sha256": "9be609780ae0aac890c5cd88a1fd9ceec2744cd106a35f779b59adf3afb12a01"
+    },
+    {
+      "file": "voip-popup-settings.png",
+      "description": "Existing Call popups settings, Test phone enabled in the temporary capture browser.",
+      "view_path": "/voip-stack-popup",
+      "state": "browser-local opt-in",
+      "width": 588,
+      "height": 320,
+      "bytes": 17366,
+      "sha256": "959173c0a28e84a14a5f3253baceffc0fdb85b51a6b4f1cd5a8fcd2b40510323"
+    },
+    {
+      "file": "voip-popup-ringing.png",
+      "description": "Real incoming Casa to Test call shown over the Home Assistant History view without a phone card.",
+      "view_path": "/history",
+      "state": "ringing",
+      "width": 560,
+      "height": 207,
+      "bytes": 12519,
+      "sha256": "c496bc5020b5a61d2dbf44fd5dce76b30a676899c3e9f18eb3e2b08b5cb2f463"
+    },
+    {
+      "file": "voip-popup-minimized.png",
+      "description": "Actual minimized popup during the answered Casa to Test browser call.",
+      "view_path": "/history",
+      "state": "in_call",
+      "width": 113,
+      "height": 62,
+      "bytes": 2452,
+      "sha256": "3de25478c58bdecf9733fad628f93b36e841e3618ceb7a2d72d7ae9c858d3391"
+    },
+    {
+      "file": "voip-popup-video-demo.png",
+      "description": "Actual received video canvas in the answered browser call, using an illustrative gate through normal Chromium fake-camera input.",
+      "view_path": "/history",
+      "state": "in_call",
+      "width": 560,
+      "height": 364,
+      "bytes": 237371,
+      "sha256": "99fa57c8a9bb5a7cb421233251dea01faac9d08be60c79cdea890f8663645fe3"
+    }
+  ]
+}
