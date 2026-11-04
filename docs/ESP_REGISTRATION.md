@@ -66,12 +66,25 @@ are documented in `esphome/components/voip_stack/REGISTRATION.md` in the selecte
 VoIP component source. Keep that source pinned together with the firmware.
 
 Maintained profiles declare independent transmit and receive capabilities;
-keep their actual fallback lists when connecting a conventional PBX. Box V2
-includes mono 16 kHz PCM at 20 ms, while the current P4 FULL list uses its
-declared 10/16/32 ms combinations. A rate or packet time supported by one board
-is not automatically admitted by another. The 48 kHz mono 16-bit payload alone
+keep their actual fallback lists when connecting a conventional PBX. WS3 Audio
+FULL, Box V2 and P4 phone profiles include mono 16 kHz PCM at 20 ms alongside
+their preferred formats. This allows an ordinary `L16/16000` offer with
+`a=ptime:20`; adding 20 ms does not replace the preferred HA formats.
+A rate or packet time supported by one board is not automatically admitted
+by another. The 48 kHz mono 16-bit payload alone
 occupies 1920 bytes at 20 ms and 960 bytes at 10 ms; the smaller quantum avoids
 fragmentation on
 ordinary Ethernet paths. This does not impose a global packet time on other
 codecs. L16 uses network byte order, separately from the local PCM buffer format
 ([RFC 3551, section 4.5.11](https://www.rfc-editor.org/rfc/rfc3551#section-4.5.11)).
+
+The current FULL firmware uses linear PCM. A PBX must offer a common L16
+format; G.711 PCMU/PCMA is not currently implemented in ESP VoIP Stack, and
+optional Opus is restricted to supported S3 VoIP-only profiles. A successful
+REGISTER does not establish codec compatibility. Qualify the direct registered
+ESP-to-PBX route separately from a route where HA translates the media.
+
+The current ESP VoIP preview enables IPv4 reassembly in ESP-IDF so an incoming
+fragmented SIP request can reach the parser. Rebuild the firmware to apply
+that SDK option. This receive requirement is separate from the RTP payload
+budget: maintained media formats still keep their packets within the path MTU.

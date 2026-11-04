@@ -35,6 +35,8 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     substitutions['firmware_features'] = features
     substitutions['assets_base'] = str(ROOT) + '/'
     substitutions['intercom_idf_root'] = str(ROOT / 'idf_components')
+    # Use the public GMF dependency rather than a workstation-only checkout.
+    substitutions['gmf_ai_audio_source'] = ''
     for key, repository in (
         ('ext_components_source', ROOT),
         ('audio_stack_components_source', Path(os.environ.get('AUDIO_STACK_REPO', ROOT.parent / 'esphome-audio-stack'))),
@@ -51,7 +53,12 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         shutil.copy2(companion, directory / companion.name)
     (directory / 'secrets.yaml').write_text('wifi_ssid: fixture-network\nwifi_password: fixture-password\n')
     config = directory / 'device.yaml'
-    package_path = str(profile['packages']['device']).split('/packages/', 1)[1].rsplit('@', 1)[0]
+    reference = profile['packages']['device']
+    if isinstance(reference, yaml_util.IncludeFile):
+        resolved = (reference.parent_file.parent / reference.file).resolve()
+        package_path = resolved.relative_to(ROOT / 'packages')
+    else:
+        package_path = str(reference).split('/packages/', 1)[1].rsplit('@', 1)[0]
     config.write_text(yaml_util.dump({'substitutions': substitutions}) +
                       '\npackages:\n  device: !include ' +
                       str(ROOT / 'packages' / package_path) + '\n')

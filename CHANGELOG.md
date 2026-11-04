@@ -26,6 +26,9 @@ BLF and MWI, retain their normal owners and interfaces.
   capabilities and bound RTP socket ownership through routing and media
   changes. Keep optional browser camera intent separate from receiving video,
   and recover decoding when a video client reconnects.
+- Include the standard mono 16 kHz PCM, 20 ms alternative in both directions
+  of WS3 Audio FULL, preserving its preferred HA formats. Qualify this offer
+  against the resolved device profile, separately from calls translated by HA.
 - Integrate the maintained S3 JPEG receive profile, preserve source aspect and
   receiver geometry, and align P4 camera frame rate with the selected profile.
   P4 display rotation uses the upstream PPA geometry correction. Add optional
