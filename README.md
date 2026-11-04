@@ -33,9 +33,7 @@ optional.
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real video call with a MOBOTIX door station in the VoIP Stack Home Assistant
-card, with the local camera off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card)
-and [how to park and retrieve audio calls](docs/CALL_PARKING.md)._
+_A video call with a MOBOTIX door station in the VoIP Stack Home Assistant card._
 
 ![Doorbell video call demo in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
 
