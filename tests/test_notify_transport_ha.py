@@ -126,12 +126,18 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         initial, initial_transport, _ = await next_notify()
         assert initial_transport == "UDP"
         assert not ElementTree.fromstring(initial.body).findall("d:dialog", NS)
+        # Standard peer identity data keeps the document large even with compact dialog ids.
+        peer_display = ("Independent reception desk " * 16).strip()
         session = lab.calls.upsert("caller-" + "x" * 180 + "@independent.test", state="connecting",
-            owner="router", route_kind="sip", source_endpoint_id="sip:bedroom0")
+            owner="router", route_kind="sip", source_endpoint_id="sip:bedroom0",
+            dest_endpoint_id="sip:bedroom1", callee=peer_display)
         lab.calls.claim_endpoint(session.call_id, "sip:bedroom0", role="source")
         publish_bridge_projection(lab.hass, session)
         trying, trying_transport, trying_raw = await next_notify()
         assert ElementTree.fromstring(trying.body).find("d:dialog/d:state", NS).text == "proceeding"
+        trying_dialog = ElementTree.fromstring(trying.body).find("d:dialog", NS)
+        assert len(trying_dialog.attrib["id"]) == 64
+        assert trying_dialog.find("d:remote/d:identity", NS).attrib["display"] == peer_display
         assert len(trying_raw) > 1300
         assert trying_transport == "TCP"
         lab.calls.transition(session.call_id, state="in_call")
@@ -145,6 +151,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
             assert len(writers) == 2
         assert challenged_transport == confirmed_transport == "TCP"
         assert ElementTree.fromstring(confirmed.body).find("d:dialog/d:state", NS).text == "confirmed"
+        assert ElementTree.fromstring(confirmed.body).find("d:dialog", NS).attrib["id"] == trying_dialog.attrib["id"]
         assert confirmed.uri == challenged_request.uri
         assert sip.parse_cseq(confirmed.header("CSeq")).number > sip.parse_cseq(challenged_request.header("CSeq")).number
         assert confirmed.header("Authorization" if challenge == 401 else "Proxy-Authorization")
