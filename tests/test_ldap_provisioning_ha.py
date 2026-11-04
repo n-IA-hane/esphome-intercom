@@ -13,6 +13,9 @@ from .test_phone_services_ha import (
 from .test_managed_phones_ha import varint, read_varint
 from .test_phone_services_lifecycle_ha import start
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -20,6 +23,7 @@ async def test_public_reconfigure_ldap_panel_validates_and_persists_without_imap
     from custom_components.voip_stack.config_entry_runtime import entry_runtime_signature
     lab = phone_lab
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     reload = AsyncMock()
     monkeypatch.setattr(lab.hass.config_entries, "async_reload", reload)
     previous = entry_runtime_signature(lab.entry)

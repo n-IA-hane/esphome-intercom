@@ -23,6 +23,9 @@ from .test_automation_originate_ha import lab as lab, simple_sequence, tts_fixtu
 from .test_browser_phone_policy_ha import browser_lab as browser_lab, originate
 from .test_trunk_calls_ha import trunks as trunks
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -477,6 +480,7 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "user"},
     )
@@ -504,6 +508,7 @@ async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, cust
     }})
     child = next(item for item in entry.subentries.values() if item.data.get("endpoint_id") == "kitchen")
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "reconfigure", "subentry_id": child.subentry_id},
     )
@@ -818,6 +823,7 @@ async def test_global_voicemail_configuration_requires_tts_and_language(mailbox_
             data={"id": "feature-conflict", "name": conflict, "number": "12345"},
         ))
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     monkeypatch.setattr(config_module, "voice_engine", lambda *_args: None)
     form = await lab.hass.config_entries.flow.async_init(
         "voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id},
@@ -878,6 +884,7 @@ async def test_voicemail_voice_selection_uses_ha_catalog_and_persists(mailbox_la
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry, data={})
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     engine = SimpleNamespace(available=True, supported_languages=["it"], default_language="it",
         async_get_supported_voices=lambda language: [SimpleNamespace(voice_id="raffa_reference", name="Raffa")])
     monkeypatch.setattr(config_module, "voice_engine", lambda *_args: engine)
@@ -1294,6 +1301,7 @@ async def test_disabling_mailbox_deletes_only_its_messages_and_recreates_empty(
         entry = config_entry(lab.hass)
         child = next(item for item in entry.subentries.values() if item.data.get("endpoint_id") == "kitchen")
         lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+        prepare_frontend_dependency(lab.hass)
         form = await lab.hass.config_entries.subentries.async_init(
             (entry.entry_id, "phone"), context={"source": "reconfigure", "subentry_id": child.subentry_id},
         )

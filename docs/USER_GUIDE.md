@@ -71,6 +71,19 @@ The `custom:voip-stack-dashboard-card` uses one selected `device_id`, with no
 mode field. It combines extension status, contacts and the selected HA or ESP
 phone's call controls. Its visual editor asks for **Calling phone**.
 
+<details>
+<summary>Earlier dashboard directory view</summary>
+
+<figure>
+  <img src="images/voip-dashboard-phonebook.png" alt="Earlier Dashboard directory view"/>
+  <figcaption>Earlier Dashboard directory view.</figcaption>
+</figure>
+
+</details>
+
+For the current dashboard and popup captures, see the
+[screenshot provenance](voip-ui-provenance.json).
+
 ### Browser-phone availability
 
 An enabled Home Assistant phone keeps its extension available when its cards

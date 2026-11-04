@@ -79,9 +79,7 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
     # The Box has no status-LED ring; its amplifier already owns GPIO38.
     config = device_config(tmp_path, [item for item in FULL if item != "status_led"] + ["display"],
                            "yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml")
-    text = config.read_text().replace("packages:\n", "packages:\n  video_page: !include " +
-        str(ROOT / "packages/voip/s3_video_call_page.yaml") + "\n", 1)
-    config.write_text(text)
+    # The maintained device already includes its video_receive page.
     result = subprocess.run(
         [sys.executable, "-m", "esphome", "compile", "--only-generate", str(config)],
         capture_output=True, text=True, timeout=180,

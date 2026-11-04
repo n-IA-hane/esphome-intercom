@@ -12,6 +12,9 @@ from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from .test_voicemail_ha import custom_integrations as custom_integrations
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -300,6 +303,7 @@ async def test_parking_configuration_validates_public_routes(lab, custom_integra
     if conflict:
         lab.hass.config_entries.async_add_subentry(entry,ConfigSubentry(subentry_type='contact',title='701',unique_id='existing-slot',data={'id':'existing-slot','name':'701','number':'12345'}))
     lab.hass.config.components.update({'assist_pipeline','ffmpeg','http','lovelace','media_source','network'})
+    prepare_frontend_dependency(lab.hass)
     form=await lab.hass.config_entries.flow.async_init('voip_stack',context={'source':'reconfigure','entry_id':entry.entry_id})
     form=await lab.hass.config_entries.flow.async_configure(form['flow_id'],{'next_step_id':'parking'})
     assert form['step_id']=='parking'

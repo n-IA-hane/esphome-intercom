@@ -7,6 +7,9 @@ from homeassistant.exceptions import ServiceValidationError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -26,6 +29,7 @@ def entry(hass, monkeypatch):
 
     monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     config = MockConfigEntry(domain="voip_stack", data={}, version=6)
     config.add_to_hass(hass)
     return config

@@ -12,6 +12,30 @@ pytestmark = pytest.mark.ha
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("existing_manager", [False, True])
+def test_isolated_frontend_bootstrap_preserves_the_module_owner(hass, existing_manager):
+    from homeassistant.components import frontend
+
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    changed = Mock()
+    if existing_manager:
+        hass.data[frontend.DATA_EXTRA_MODULE_URL] = frontend.UrlManager(
+            changed, ["/unrelated.js"]
+        )
+    prepare_frontend_dependency(hass)
+    modules = hass.data[frontend.DATA_EXTRA_MODULE_URL]
+    modules.add("/retained.js")
+    prepare_frontend_dependency(hass)
+
+    assert hass.data[frontend.DATA_EXTRA_MODULE_URL] is modules
+    assert "/retained.js" in modules.urls
+    assert "frontend" in hass.config.components
+    if existing_manager:
+        assert "/unrelated.js" in modules.urls
+        changed.assert_called_once_with("added", "/retained.js")
+
+
 @pytest.mark.parametrize("previous_dependency_contract", [False, True])
 async def test_public_setup_initializes_frontend_before_popup_registration(
     hass, monkeypatch, tmp_path, enable_custom_integrations, caplog,

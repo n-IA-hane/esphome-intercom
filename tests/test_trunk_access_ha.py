@@ -9,10 +9,13 @@ from homeassistant.setup import async_setup_component
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .support.ha_frontend import prepare_frontend_dependency
+
 
 DOMAIN = "voip_stack"
 SERVICE = "set_external_call_access"
 BLOCKED = "external_call_blocked_endpoints"
+
 pytestmark = pytest.mark.ha
 
 
@@ -32,8 +35,6 @@ def _custom_integrations(enable_custom_integrations):
 @pytest.fixture
 async def phones(hass):
     """Load real service registration without opening SIP or media sockets."""
-    from homeassistant.components import frontend
-
     from custom_components.voip_stack.config import entry_transport_config
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
@@ -42,8 +43,8 @@ async def phones(hass):
 
     # Isolate the service boundary with the declared frontend owner ready.
     # Its actual dependency ordering is covered by test_popup_frontend_ha.
-    hass.config.components.update({"assist_pipeline", "frontend", "http", "lovelace", "network"})
-    hass.data[frontend.DATA_EXTRA_MODULE_URL] = frontend.UrlManager(lambda *_: None, [])
+    hass.config.components.update({"assist_pipeline", "http", "lovelace", "network"})
+    prepare_frontend_dependency(hass)
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
     assert await async_setup_component(hass, DOMAIN, {})

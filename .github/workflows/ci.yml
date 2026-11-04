@@ -45,15 +45,15 @@ jobs:
         run: python -m pip install -r requirements-test.txt -r requirements-firmware-test.txt
       - name: Verify Node frontend test dependency
         run: node --version
-      - name: Install independent capture-file validator
+      - name: Install independent capture-file tools
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common tshark
       - name: Check Python code and test fixtures
         run: python -m ruff check custom_components/voip_stack scripts tests tools/esp_profile.py
       - name: Run software suite
         env:
-          PYTEST_ADDOPTS: --junitxml=test-results/software.xml -ra
+          PYTEST_ADDOPTS: --junitxml=test-results/software.xml -ra -vv
           AUDIO_STACK_REPO: ${{ github.workspace }}/../esphome-audio-stack
           AUDIO_LIBS_REPO: ${{ github.workspace }}/.test-deps/esp-audio-libs
         run: PYTHON=python scripts/test_suite.sh software-full --keep-going

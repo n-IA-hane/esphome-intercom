@@ -351,7 +351,7 @@ Each room-to-room media endpoint needs a distinct browser or Companion session.
 Two cards in one browser tab can display two phones, but one tab still owns one
 physical microphone, speaker and camera pipeline.
 
-## Cards, Dashboard and global call popups
+## Cards, dashboard and global call popups
 
 There are two public Lovelace card types. Choose the calling phone by name in
 the visual editor; Home Assistant stores its `device_id` for you.
@@ -401,7 +401,7 @@ call. The popup shares the existing phone's audio, ringtone and Call-ID.
 
 _Real Home Assistant UI during a browser-to-browser call. The gate image is
 an illustrative video source, not a physical door-camera capture.
-[Screenshot provenance](docs/images/voip-ui-provenance.json)._
+[Screenshot provenance](docs/voip-ui-provenance.json)._
 
 </details>
 

@@ -15,6 +15,9 @@ from custom_components.voip_stack.voicemail_config import require_voicemail_conf
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from .test_voicemail_ha import custom_integrations as custom_integrations
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -46,6 +49,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
 
 async def test_installation_needs_neither_tts_nor_application_switches(hass, custom_integrations):
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.flow.async_init("voip_stack", context={"source": "user"})
     values = form["data_schema"]({})
     assert "parking_enabled" not in values and "voicemail_enabled" not in values
@@ -56,6 +60,7 @@ async def test_installation_needs_neither_tts_nor_application_switches(hass, cus
 
 async def test_reconfigure_has_separate_resource_panels(lab, custom_integrations):
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     entry = config_entry(lab.hass)
     menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id})
     assert menu["type"] == "menu"
@@ -129,6 +134,7 @@ async def test_parking_edit_preserves_current_call_and_transport(lab, custom_int
     session = lab.calls.upsert("parked-config", state="in_call", owner="parking")
     parked = lot.reserve(session, slot="701")
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     try:
         menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source":"reconfigure", "entry_id":entry.entry_id})
         form = await lab.hass.config_entries.flow.async_configure(menu["flow_id"], {"next_step_id":"parking"})
