@@ -1,6 +1,11 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**An independent, open-source SIP PBX inside Home Assistant, installable through HACS.**
+**An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
+
+![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
+
+_VoIP Dashboard [development preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev.1),
+shown with illustrative incoming, active and held call states._
 
 Answer your SIP video doorbell from a Home Assistant dashboard or Companion
 app, call between rooms, and use ordinary SIP desk phones or softphones.
