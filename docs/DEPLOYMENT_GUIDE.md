@@ -265,7 +265,7 @@ Add the flashed node through the normal ESPHome integration:
 For ESP32-P4 display targets, start from the maintained board profile and read
 its C6 firmware/resource notes before changing LVGL or audio features.
 
-![Waveshare P4 touch profile](images/p4-touch-overview.jpg)
+![Native screen capture of the Waveshare P4 touch profile](images/p4-touch-overview.jpg)
 
 ## Optional SIP trunks
 

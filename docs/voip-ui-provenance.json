@@ -72,5 +72,16 @@
       "bytes": 237371,
       "sha256": "99fa57c8a9bb5a7cb421233251dea01faac9d08be60c79cdea890f8663645fe3"
     }
-  ]
+  ],
+  "p4_native_capture": {
+    "file": "p4-touch-overview.jpg",
+    "captured_on": "2026-11-04",
+    "source": "Existing esp_screenshot component on the running Waveshare P4 FULL firmware, direct JPEG snapshot.",
+    "processing": "Original 1280x800 JPEG bytes, no crop, resizing, generated UI or retouching.",
+    "firmware_build": "2026-11-04 00:41:10 +0000",
+    "capture_id": "580e5576-00000002",
+    "state": "Idle, empty SIP dial pad, local Voice Assistant inactive.",
+    "sha256": "1dd2c3a4c196abaa312b35022dddca67ee0bf011eabf27a32b1438f42b973062",
+    "cleanup": "Original contact view and scroll restored, measured master volume restored, no call or Assist session started."
+  }
 }

@@ -71,6 +71,8 @@ The `custom:voip-stack-dashboard-card` uses one selected `device_id`, with no
 mode field. It combines extension status, contacts and the selected HA or ESP
 phone's call controls. Its visual editor asks for **Calling phone**.
 
+![VoIP Dashboard with the selected phone idle and current extension status](images/voip-dashboard-current.png)
+
 <details>
 <summary>Earlier dashboard directory view</summary>
 

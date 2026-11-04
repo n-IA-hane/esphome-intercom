@@ -36,7 +36,10 @@ and a running frontend.
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-![VoIP Dashboard showing the selected phone and current extension status](docs/images/voip-dashboard-current.png)
+![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
+
+_Dashboard demo showing incoming, active and held calls, presence, voicemail
+and Do Not Disturb._
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
@@ -48,15 +51,6 @@ and [how to park and retrieve audio calls](docs/CALL_PARKING.md)._
 
 _Demo of receiving a doorbell video call in the VoIP Dashboard, using an
 illustrative gate-camera feed._
-
-<details>
-<summary>Full Dashboard view and illustrative camera source</summary>
-
-![Complete Dashboard during the doorbell video call demo](docs/images/voip-dashboard-gate-desktop-demo.png)
-
-![Generated gate-camera illustration used as the demonstration source](docs/images/illustrative-gate-camera.png)
-
-</details>
 
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
 Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
@@ -481,7 +475,7 @@ AFE/BSS inputs or the new optional mono downmix before AEC/AFE.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/p4-touch-overview.jpg" width="640" style="max-width: 100%; height: auto;"/><br/><b>P4 weather, Voice Assistant and VoIP controls</b></td>
+    <td align="center"><img src="docs/images/p4-touch-overview.jpg" alt="Native P4 screen capture with weather, Voice Assistant and the SIP dial pad" width="640" style="max-width: 100%; height: auto;"/><br/><b>P4 native screen: weather, Voice Assistant and VoIP</b></td>
     <td align="center"><img src="docs/images/ducking-barge-in.gif" width="260"/><br/><b>Ducking and barge-in</b></td>
   </tr>
 </table>
