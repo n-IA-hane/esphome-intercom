@@ -54,7 +54,9 @@ script:
   - script.execute: draw_display
 - id: !extend 'ui_call_started'
   then:
+  - script.stop: ui_call_ended
   - lambda: |-
+      id(call_ended_active) = false;
       id(peer_name) = peer;
       id(voip_dialer_active) = false;
   - script.execute: backlight_timer
@@ -109,10 +111,18 @@ script:
         id(settings_active) = false;  // call interrupts settings view
         if (s != "in_call") id(voip_dialer_active) = false;
       }
-      // ui_call_ended owns the screen for ~4 s after a terminated
-      // call. Any redraw triggered in that window keeps the ended
-      // page so the user actually reads the reason.
-      if (id(call_ended_active)) {
+      // SIP controls stay usable independently of the ESPHome API connection.
+      if (in_call) {
+        if (s == "ringing") {
+          target = id(call_ringing_in_page)->obj;
+        } else if (s == "calling" || s == "remote_ringing") {
+          target = id(call_ringing_out_page)->obj;
+        } else if (s == "in_call" && id(voip_dialer_active)) {
+          target = id(call_dialer_page)->obj;
+        } else {
+          target = id(call_in_call_page)->obj;
+        }
+      } else if (id(call_ended_active)) {
         target = id(call_ended_page)->obj;
       }  else if (id(settings_active) && !id(g_settings_pages).empty()) {
         int idx = id(g_settings_index);
@@ -121,23 +131,8 @@ script:
         target = id(g_settings_pages)[idx];
       } else if (!wifi::global_wifi_component->is_connected()) {
         target = id(no_wifi_page)->obj;
-      } else if (!api::global_api_server->is_connected()) {
-        target = id(no_ha_page)->obj;
       } else {
-        const std::string s = id(phone).get_state_str();
-        if (s == "ringing") {
-          target = id(call_ringing_in_page)->obj;
-        } else if (s == "calling" || s == "remote_ringing") {
-          target = id(call_ringing_out_page)->obj;
-        } else if (s == "in_call" && id(voip_dialer_active)) {
-          target = id(call_dialer_page)->obj;
-        } else if (s == "in_call" || s == "connecting") {
-          target = id(call_in_call_page)->obj;
-        } else if (id(voip_dialer_active)) {
-          target = id(call_dialer_page)->obj;
-        } else {
-          target = id(call_idle_page)->obj;
-        }
+        target = id(voip_dialer_active) ? id(call_dialer_page)->obj : id(call_idle_page)->obj;
       }
       if (target == nullptr) return;
       // Match the full profile: the dialer owns the complete visible disk.

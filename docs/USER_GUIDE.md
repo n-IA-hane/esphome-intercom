@@ -560,6 +560,11 @@ it is not called a second time. On failure, use the handset's normal resume or
 hangup controls. SIP consultation calls can coexist; browser and ESP controls
 retain their single-call behavior.
 
+A SIP handset can hang up its original call before receiving the final transfer
+result. HA keeps the transfer notification active until that result is delivered,
+using the original SIP account or trusted trunk when authentication is requested.
+Revoking that account or registration still prevents further authenticated retries.
+
 In an HA automation, choose **VoIP Stack: Transfer call** and the destination.
 Native VoIP call triggers supply the current call. For a manually configured
 action, the participating **Phone** picker is under **Advanced options**.

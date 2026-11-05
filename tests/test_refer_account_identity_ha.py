@@ -28,6 +28,7 @@ import pytest
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+from custom_components.voip_stack.endpoint_session import TerminationIntent
 
 pytestmark = pytest.mark.ha
 PASSWORDS = {"Alice": "loopback-only-A", "Bob": "loopback-only-B"}
@@ -112,7 +113,7 @@ def summary(message, direction):
     }
 
 
-async def exercise(order, *, revoke=False, logical_leg=False):
+async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=False):
     result = {
         "registered_order": list(order),
         "authenticated_dialog_principal": "Alice",
@@ -160,6 +161,7 @@ async def exercise(order, *, revoke=False, logical_leg=False):
     application = SipApplicationMethods(hass, registrar)
     actions = []
     release = asyncio.Event()
+    terminated = asyncio.Event()
 
     async def accepted(invite):
         # The trusted principal is independently established by successful
@@ -192,7 +194,11 @@ async def exercise(order, *, revoke=False, logical_leg=False):
     async def referred(cid, target):
         await release.wait()
         actions.append(cid)
-        return 200
+        return 603 if end_before_final else 200
+
+    async def ended(call_id, _reason):
+        await calls.get_session(call_id).terminate(TerminationIntent("remote_hangup"))
+        terminated.set()
 
     endpoint = sip_listener.SipUdpEndpoint(
         local_ip="127.0.0.1",
@@ -202,6 +208,7 @@ async def exercise(order, *, revoke=False, logical_leg=False):
         on_invite=accepted,
         on_register=registrar.handle_register,
         on_refer=referred,
+        on_terminated=ended,
         request_router=application,
     )
     local, _ = await loop.create_datagram_endpoint(
@@ -376,6 +383,18 @@ async def exercise(order, *, revoke=False, logical_leg=False):
             peer.answer(retry, address, 200)
 
         await challenge_notify(first, address_first, 1)
+        if end_before_final:
+            send("BYE", uri, [
+                ("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_addr[1]};branch=z9hG4bKearlybye"),
+                *dialog_headers, ("CSeq", "3 BYE"),
+            ])
+            response, _ = await receive()
+            assert response.status_code == 200
+            await asyncio.wait_for(terminated.wait(), 2)
+            assert call_id not in endpoint.active_dialogs
+            assert call_id in endpoint._event_dialogs
+            assert calls.get_session(call_id) is None
+            result["BYE_before_terminal"] = True
         if revoke and credentials is not None:
             result["unregister_Alice"] = await registration(
                 "Alice", expires=0, first_cseq=3
@@ -412,19 +431,20 @@ async def exercise(order, *, revoke=False, logical_leg=False):
             revoked.username if revoked else None
         )
         result["remaining_Bob_binding"] = bool(registrar.registered_contacts("Bob"))
-        send(
-            "BYE",
-            uri,
-            [
-                ("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_addr[1]};branch=z9hG4bKbye"),
-                *dialog_headers,
-                ("CSeq", "3 BYE"),
-            ],
-        )
-        response, _ = await receive()
-        assert response.status_code == 200
-        result["BYE_200"] = True
-        assert call_id not in endpoint.active_dialogs
+        if not end_before_final:
+            send(
+                "BYE",
+                uri,
+                [
+                    ("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_addr[1]};branch=z9hG4bKbye"),
+                    *dialog_headers,
+                    ("CSeq", "3 BYE"),
+                ],
+            )
+            response, _ = await receive()
+            assert response.status_code == 200
+            result["BYE_200"] = True
+            assert call_id not in endpoint.active_dialogs
         return result
     finally:
         release.set()
@@ -626,6 +646,7 @@ def test_trunk_credentials_require_the_matching_owned_leg(
                 assert credentials.auth_username == "proxy-user"
             # A local principal never falls through to bridge trunk metadata.
             scene.leg.endpoint_id = "account:Alice"
+            scene.leg.trunk_id = ""
             scene.registrar.remove_registration("Alice")
             assert (
                 scene.app.dialog_credentials("wire-owned", scene.address, "UDP") is None
@@ -718,4 +739,38 @@ def test_gruu_consumer_resolves_original_owned_dialog_not_new_usage(revoked):
         finally:
             await close_scene(scene)
 
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("order", [("Alice",), ("Alice", "Bob"), ("Bob", "Alice")])
+@pytest.mark.parametrize("revoke", [False, True])
+def test_refer_terminal_digest_survives_bye_but_not_binding_revocation(order, revoke, socket_enabled):
+    result = asyncio.run(exercise(order, revoke=revoke, end_before_final=True))
+    assert result["BYE_before_terminal"]
+    assert result["terminal_authenticated"] is (not revoke)
+    assert len(result["authenticated_NOTIFIES"]) == (1 if revoke else 2)
+    if not revoke:
+        assert "603" in result["authenticated_NOTIFIES"][-1]["body"]
+
+
+def test_verified_trunk_ingress_ignores_a_local_directory_name_collision():
+    async def run():
+        scene = await state_scene()
+        try:
+            scene.session.update_metadata(ingress="trunk")
+            trunk = SimpleNamespace(ready=True, config=SimpleNamespace(
+                username="trunk-user", password="loopback-trunk-only", auth_username="proxy-user"))
+            scene.runtime.trunk_configs = {"T": {}}
+            scene.calls.attach_component("trunk:T", trunk)
+            # The identically named directory endpoint remains on the caller leg.
+            # Its account is registered elsewhere, just as on the audited route.
+            scene.address = ("127.0.0.2", 5060)
+            bound = scene.app.bind_dialog_credentials("wire-owned", scene.address, "UDP")
+            assert bound().username == "trunk-user"
+            await scene.session.terminate(TerminationIntent("remote_hangup"))
+            assert bound().username == "trunk-user"
+            trunk.ready = False
+            assert bound() is None
+        finally:
+            await close_scene(scene)
     asyncio.run(run())

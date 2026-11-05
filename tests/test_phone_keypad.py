@@ -276,3 +276,56 @@ def test_shared_presenter_epoch_follows_connected_and_idle_events_only():
     assert 'connected()' not in str(callbacks['on_peer_changed'])
     assert 'show_idle' in str(callbacks['on_idle'])
     assert 'display_visibility).is_visible' in str(binding['lvgl_visibility']['on_change'])
+
+
+def test_standalone_phone_routes_live_sip_controls_without_an_api_client(tmp_path):
+    config = yaml_util.load_yaml(ROOT / SPOT)
+    body = str(by_id(config['script'], 'draw_display')['then'][0]['lambda'])
+    routing = body[:body.index('if (target == nullptr)')]
+    run_cpp(tmp_path, r'''
+#include <cassert>
+#include <string>
+#include <vector>
+#define id(x) x
+struct lv_obj_t{int value;};struct Page{lv_obj_t* obj;};
+lv_obj_t objects[9];Page pages[9];
+Page *call_ringing_in_page=&pages[0],*call_ringing_out_page=&pages[1],
+ *call_in_call_page=&pages[2],*call_dialer_page=&pages[3],*call_idle_page=&pages[4],
+ *call_ended_page=&pages[5],*no_wifi_page=&pages[6];
+struct Phone{std::string state="idle";std::string get_state_str(){return state;}}phone;
+namespace wifi{struct WiFi{bool connected=true;bool is_connected(){return connected;}}instance;
+WiFi*global_wifi_component=&instance;}
+bool settings_active=false,voip_dialer_active=false,call_ended_active=false;
+std::vector<lv_obj_t*>g_settings_pages;int g_settings_index=0;
+lv_obj_t*route(){BODY return target;}
+int main(){
+ for(int i=0;i<9;++i)pages[i].obj=&objects[i];
+ // No API object exists in this harness: SIP presentation is independent.
+ for(const auto&state:std::vector<std::string>{"ringing","calling","remote_ringing","connecting","in_call"}){
+  phone.state=state;settings_active=true;call_ended_active=true;wifi::instance.connected=false;
+  auto*expected=state=="ringing"?&objects[0]:(state=="calling"||state=="remote_ringing")?&objects[1]:&objects[2];
+  assert(route()==expected&&!settings_active);
+ }
+ phone.state="in_call";voip_dialer_active=true;assert(route()==&objects[3]);
+ phone.state="idle";voip_dialer_active=false;call_ended_active=false;wifi::instance.connected=true;
+ assert(route()==&objects[4]);voip_dialer_active=true;assert(route()==&objects[3]);
+ call_ended_active=true;assert(route()==&objects[5]);
+ call_ended_active=false;voip_dialer_active=false;wifi::instance.connected=false;assert(route()==&objects[6]);
+}
+'''.replace('BODY', routing))
+
+
+def test_standalone_new_call_cancels_the_previous_ended_notice(tmp_path):
+    config = yaml_util.load_yaml(ROOT / SPOT)
+    actions = next(item['then'] for item in config['script']
+                   if getattr(item['id'], 'value', item['id']) == 'ui_call_started')
+    assert actions[0] == {'script.stop': 'ui_call_ended'}
+    body = str(actions[1]['lambda'])
+    run_cpp(tmp_path, r'''
+#include <cassert>
+#include <string>
+#define id(x) x
+bool call_ended_active=true,voip_dialer_active=true;std::string peer_name="old";
+void started(const std::string&peer){BODY}
+int main(){started("new caller");assert(!call_ended_active&&!voip_dialer_active&&peer_name=="new caller");}
+'''.replace('BODY', body))

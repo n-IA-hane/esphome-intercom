@@ -549,39 +549,79 @@ class SipApplicationMethods:
         )
 
     def dialog_credentials(self, call_id, address, transport):
-        """Resolve the existing wire leg's principal, never another flow user."""
+        return self.bind_dialog_credentials(call_id, address, transport)()
+
+    def bind_dialog_credentials(self, call_id, address, transport):
+        """Retain the verified principal for an event usage, rechecking revocation."""
         from .runtime_data import runtime_data, sip_trunks
         from .trunk_policy import identify_inbound_trunk
 
+        def denied():
+            return None
         runtime = runtime_data(self.hass)
         calls = runtime.sip if runtime is not None else None
         session = calls.get_session(calls.resolve_session_id(call_id)) if calls is not None else None
         if session is None or not session.live:
-            return None
+            return denied
         legs = [leg for leg in session.legs.values()
                 if (leg.sip_call_id or leg.leg_id) == call_id]
         if len(legs) != 1 or legs[0].closed:
-            return None
+            return denied
         leg = legs[0]
-        if leg.endpoint_id:
-            endpoint = runtime.endpoints.get(leg.endpoint_id)
+        # ingress is set by the routing owner after identifying the trunk.
+        # endpoint_id may instead be a caller-name directory match.
+        incoming_trunk = (session.metadata.get("inbound_trunk_id", "")
+                          if leg.role in {"caller", "trunk"} else "")
+        identity = leg.trunk_id or (incoming_trunk if session.metadata.get("ingress") == "trunk" else "")
+        if not identity and leg.endpoint_id:
+            endpoint_id = leg.endpoint_id
+            endpoint = runtime.endpoints.get(endpoint_id)
             if endpoint is None or not endpoint.username:
-                return None
-            account = self.registrar.account_for_source(address, transport, username=endpoint.username)
-            return SipDigestCredentials(account.username, account.password) if account is not None else None
+                return denied
+            username = endpoint.username
+            account = self.registrar.account_for_source(address, transport, username=username)
+            if account is None:
+                return denied
+            generation = self.registrar.authentication_generation(username)
+            bindings = frozenset((item.flow_key, item.capability_generation)
+                for item in self.registrar.registered_contacts(username)
+                if (item.source_host, item.source_port, item.transport.upper()) ==
+                   (*address, transport.upper()))
 
-        # A bridge may also carry trunk metadata. A failed local principal
-        # lookup above must never fall through to that unrelated identity.
-        identity = leg.trunk_id or (session.metadata.get("inbound_trunk_id", "")
-                                    if leg.role in {"caller", "trunk"} else "")
+            def account_credentials():
+                endpoint = runtime.endpoints.get(endpoint_id)
+                if (self.stopping or endpoint is None
+                        or endpoint.username.casefold() != username.casefold()
+                        or self.registrar.authentication_generation(username) != generation):
+                    return None
+                account = self.registrar.account_for_source(address, transport, username=username)
+                current = {(item.flow_key, item.capability_generation)
+                    for item in self.registrar.registered_contacts(username)
+                    if (item.source_host, item.source_port, item.transport.upper()) ==
+                       (*address, transport.upper())}
+                return (SipDigestCredentials(account.username, account.password)
+                        if account is not None and bindings.intersection(current) else None)
+
+            return account_credentials
+
+        identity = identity or incoming_trunk
         if not identity:
-            return None
-        try:
-            trusted = identify_inbound_trunk(sip_trunks(self.hass), *address, transport,
-                                             flow_trunk_id=identity)
-        except ValueError:
-            return None
-        return self._subscriber_credentials("trunk:" + identity) if trusted == identity else None
+            return denied
+        owned_trunk = sip_trunks(self.hass).get(identity)
+        if owned_trunk is None:
+            return denied
+
+        def trunk_credentials():
+            if self.stopping or sip_trunks(self.hass).get(identity) is not owned_trunk:
+                return None
+            try:
+                trusted = identify_inbound_trunk(sip_trunks(self.hass), *address, transport,
+                                                 flow_trunk_id=identity)
+            except ValueError:
+                return None
+            return self._subscriber_credentials("trunk:" + identity) if trusted == identity else None
+
+        return trunk_credentials
 
     def _subscriber_credentials(self, subscriber):
         if subscriber.startswith("trunk:"):

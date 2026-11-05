@@ -343,6 +343,7 @@ class _ActiveDialog(DialogSignalingState):
     local_video_reinvite_status: int = 0
     local_video_reinvite_reason: str = ""
     codec_policy: CodecPolicy = CodecPolicy()
+    event_credentials: Callable[[], SipDigestCredentials | None] | None = None
 
 
 @dataclass(slots=True)
@@ -1832,6 +1833,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog.local_offer_in_progress = False
         self.send_bye(call_id)
 
+    def _event_credentials(self, call_id, dialog):
+        if self.request_router is None:
+            return None
+        binder = getattr(self.request_router, "bind_dialog_credentials", None)
+        if binder is None:
+            return self.request_router.dialog_credentials(call_id, dialog.addr, dialog.transport)
+        if dialog.event_credentials is None:
+            dialog.event_credentials = binder(call_id, dialog.addr, dialog.transport)
+        return dialog.event_credentials()
+
     async def _handle_dialog_refer(
         self,
         call_id: str,
@@ -1860,12 +1871,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         usage.remote_target_uri = dialog.remote_target_uri or usage.remote_target_uri
         usage.route_set = dialog.route_set
         dialog.incoming_refer_count += 1
+        self._event_credentials(call_id, dialog)
 
         async def send(headers, body):
             async with dialog.update_lock:
                 usage.local_cseq = max(usage.local_cseq, dialog.local_cseq)
-                credentials = (self.request_router.dialog_credentials(call_id, dialog.addr, dialog.transport)
-                               if self.request_router is not None else None)
+                credentials = self._event_credentials(call_id, dialog)
                 try:
                     return await self._send_application_follow_up_unlocked(dialog.request, dialog.addr,
                         SipRequestResult(to_tag=dialog.to_tag, follow_up_dialog=usage,
@@ -3573,6 +3584,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return None
         if dialog.refer_subscription is not None:
             return sip_transfer.SipTransferResult(False, 0, "unavailable")
+        self._event_credentials(call_id, dialog)
         subscription = sip_transfer.ReferSubscription()
         dialog.refer_subscription = subscription
         subscription.dialog = SubscriptionDialog.from_request(dialog.request, dialog.to_tag)
@@ -3613,8 +3625,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 body=target.referral_body, content_type=target.referral_content_type)
             response = await self._send_application_follow_up_unlocked(dialog.request, dialog.addr,
                 SipRequestResult(to_tag=usage.key.local_tag, follow_up=follow_up, follow_up_dialog=usage,
-                    follow_up_credentials=(self.request_router.dialog_credentials(call_id, dialog.addr, dialog.transport)
-                                           if self.request_router is not None else None),
+                    follow_up_credentials=self._event_credentials(call_id, dialog),
                     follow_up_cseq_changed=lambda sequence: subscription.bind(sequence, first=True)))
         else:
             response = await self._send_dialog_request(
