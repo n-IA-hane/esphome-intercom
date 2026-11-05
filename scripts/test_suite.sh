@@ -100,6 +100,8 @@ ha_tests=(
   tests/test_phone_services_ha.py
   tests/test_phone_services_lifecycle_ha.py
   tests/test_trunk_config_flow.py
+  tests/test_trunk_media_config_ha.py
+  tests/test_media_nat_demux_ha.py
   tests/test_trunk_catalog_ha.py
   tests/test_trunk_calls_ha.py
   tests/test_trunk_codec_policy_ha.py

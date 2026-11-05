@@ -19,7 +19,8 @@
     "http",
     "lovelace",
     "media_source",
-    "network"
+    "network",
+    "web_rtc"
   ],
   "documentation": "https://github.com/n-IA-hane/esphome-intercom",
   "integration_type": "hub",

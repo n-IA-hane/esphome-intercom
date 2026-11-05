@@ -64,11 +64,13 @@ def _publish_intent_result(
     _fire_call_event(hass, dict(store, endpoint_id=endpoint_id), "session")
 
 
-async def _prepare_client_reinvite(client, *, port: int, formats: tuple, direction: str):
+async def _prepare_client_reinvite(client, *, port: int, formats: tuple, direction: str, media_sockets=None):
+    options = {"media_sockets": media_sockets} if media_sockets and getattr(client, "media_endpoints", None) else {}
     candidate = await client.async_prepare_video_reinvite(
         local_video_rtp_port=port,
         video_formats=formats,
         video_direction=direction,
+        **options,
     )
     if candidate is not None or int(getattr(client, "last_sip_status_code", 0)) != 491:
         return candidate
@@ -77,6 +79,7 @@ async def _prepare_client_reinvite(client, *, port: int, formats: tuple, directi
         local_video_rtp_port=port,
         video_formats=formats,
         video_direction=direction,
+        **options,
     )
 
 
@@ -183,6 +186,7 @@ async def async_apply_send_video_intent(
                 port=port,
                 formats=formats,
                 direction=direction,
+                media_sockets={"video": rtp_socket, "video_rtcp": rtcp_socket} if rtp_socket is not None else None,
             )
             current_store = _ha_softphone_store(hass, endpoint_id)
             if (

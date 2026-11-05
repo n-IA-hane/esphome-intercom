@@ -76,7 +76,8 @@
           "trunk_allowed_ips": "Povolené příchozí IP adresy",
           "trunk_audio_codecs": "Povolené zvukové kodeky",
           "trunk_video_codecs": "Povolené video kodeky",
-          "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory"
+          "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
+          "trunk_media_nat": "Media NAT traversal"
         },
         "data_description": {
           "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -96,7 +97,8 @@
           "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
           "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
           "trunk_video_codecs": "Video kodeky povolené na tomto trunku. Pro hovory pouze se zvukem seznam vyprázdněte. Výběr kodeku nezapíná video ani transkódování: musí je podporovat telefon i mediální cesta. Profily H.264 se vyjednávají automaticky. Pokud si nejste jisti, ponechte výchozí nastavení.",
-          "trunk_outbound_media_address": "Volitelné. Adresa Home Assistantu dostupná z této ústředny pro zvuk a video odchozích hovorů. Za NAT použijte svou veřejnou IPv4 adresu a zajistěte dostupnost portů RTP/RTCP bez změny čísel portů. Nezadávejte adresu poskytovatele. Prázdné pole zachová stávající adresu HA. Nemění hovory v LAN ani registraci SIP."
+          "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
         }
       },
       "trunk_mode": {
@@ -183,7 +185,8 @@
       "parking_slots_in_use": "Před změnou seznamu převezměte nebo ukončete hovory v odstraňovaných pozicích.",
       "phone_service_base_dn_invalid": "Zadejte platné základní DN pro LDAP.",
       "phone_service_certificate_required": "Pro TLS zadejte certifikát i soukromý klíč.",
-      "phone_service_configuration": "Neplatná konfigurace LDAP."
+      "phone_service_configuration": "Neplatná konfigurace LDAP.",
+      "trunk_media_nat_invalid": "Choose auto, direct or manual."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -350,7 +353,8 @@
             "trunk_allowed_ips": "Povolené příchozí IP adresy",
             "trunk_audio_codecs": "Povolené zvukové kodeky",
             "trunk_video_codecs": "Povolené video kodeky",
-            "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory"
+            "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
+            "trunk_media_nat": "Media NAT traversal"
           },
           "data_description": {
             "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -370,7 +374,8 @@
             "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
             "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
             "trunk_video_codecs": "Video kodeky povolené na tomto trunku. Pro hovory pouze se zvukem seznam vyprázdněte. Výběr kodeku nezapíná video ani transkódování: musí je podporovat telefon i mediální cesta. Profily H.264 se vyjednávají automaticky. Pokud si nejste jisti, ponechte výchozí nastavení.",
-            "trunk_outbound_media_address": "Volitelné. Adresa Home Assistantu dostupná z této ústředny pro zvuk a video odchozích hovorů. Za NAT použijte svou veřejnou IPv4 adresu a zajistěte dostupnost portů RTP/RTCP bez změny čísel portů. Nezadávejte adresu poskytovatele. Prázdné pole zachová stávající adresu HA. Nemění hovory v LAN ani registraci SIP."
+            "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
           }
         }
       },
@@ -387,7 +392,8 @@
         "trunk_validation_failed": "Zkontrolujte nastavení připojení a příchozí sítě. Statické trunky se stejným transportem nesmějí mít překrývající se zdrojové sítě.",
         "trunk_codecs_invalid": "Vyberte podporované kodeky a ponechte alespoň jeden zvukový kodek.",
         "trunk_target_required": "Vyberte přijímající telefon nebo zadejte cíl vytáčecího plánu.",
-        "trunk_media_address_invalid": "Zadejte dostupnou unicast IPv4 adresu, nebo ponechte pole prázdné."
+        "trunk_media_address_invalid": "Zadejte dostupnou unicast IPv4 adresu, nebo ponechte pole prázdné.",
+        "trunk_media_nat_invalid": "Choose auto, direct or manual."
       },
       "abort": {
         "reconfigure_successful": "Konfigurace trunku byla aktualizována."
@@ -475,6 +481,13 @@
         "ringing": "Vyzvání",
         "in_call": "V hovoru",
         "held": "Přidržený"
+      }
+    },
+    "trunk_media_nat": {
+      "options": {
+        "auto": "Automatic",
+        "direct": "Direct",
+        "manual": "Manual"
       }
     }
   },

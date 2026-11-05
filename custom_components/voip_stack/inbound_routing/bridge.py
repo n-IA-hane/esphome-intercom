@@ -361,6 +361,8 @@ async def route_sip_bridge(
         allow_video_transcoding=video_transcoding_enabled,
     )
     if bridge_to_trunk:
+        from ..trunk_media import borrow_pending_media
+        borrow_pending_media(client, bridge_ports, video_relay)
         selected_trunk_id = getattr(decision, "trunk_id", "")
         reuse_registered_trunk_flow(sip_trunk(hass, selected_trunk_id) if selected_trunk_id else sip_trunk(hass), client)
     else:

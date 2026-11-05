@@ -273,17 +273,30 @@ instance.
 
 ### External media address on a trunk
 
-The trunk's **Outbound media IPv4 address** (`trunk_outbound_media_address`)
-is an explicit override for the HA address advertised to that PBX on an outgoing
-call. Behind NAT it must match the actual public egress address, with the
-advertised RTP/RTCP port numbers reachable unchanged. It is the address of HA,
-not the provider. Leave it empty to use the existing HA media address.
+The trunk's **Media NAT mode** (`trunk_media_nat`) controls the media destinations
+advertised to that PBX on outgoing calls:
 
-If the public egress address changes, update this override in the trunk's
-reconfiguration form. Working audio through symmetric RTP does not establish
-that an independent receive-only video stream can reach the advertised address.
-The setting does not create port forwarding, discover a public address or
-change LAN calls.
+- **Automatic** (`auto`, the default for new trunks) uses Home Assistant's
+  configured STUN servers for a public IPv4 peer. It sends Binding requests on
+  the actual bound media sockets before their media readers
+  start, then advertises each validated address and port separately. Translated
+  RTP and RTCP ports need not be consecutive. Private LAN/VPN peers retain the
+  local media destinations without contacting an Internet STUN server.
+- **Direct** (`direct`) keeps the local media address and ports, without STUN.
+  Use it when the peer can already route to HA's advertised media sockets.
+- **Manual** (`manual`) requires **Outbound media IPv4 address**
+  (`trunk_outbound_media_address`). It must be HA's actual reachable address,
+  not the provider's address, and the advertised RTP/RTCP port numbers must be
+  reachable unchanged. Existing saved address overrides retain this manual
+  behavior. Update the override if the public egress address changes.
+
+Automatic discovery validates every required socket and does not substitute a
+guessed public address or port when discovery fails. STUN mapping discovery is
+not ICE connectivity negotiation or a TURN relay, and does not configure router
+port forwarding or guarantee reachability through every NAT/firewall. Working
+audio through symmetric RTP does not establish that an independent receive-only
+video stream can reach its advertised destination. These per-trunk settings do
+not change ordinary LAN calls.
 
 ### Dahua door-station interoperability
 

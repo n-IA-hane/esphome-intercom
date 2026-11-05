@@ -376,6 +376,8 @@ The named trunk configuration contains:
 | `trunk_password` | Digest auth password. |
 | `trunk_register_expires` | REGISTER expiration in seconds. |
 | `trunk_outbound_proxy` | Optional proxy host or `sip:host:port` used as signaling next hop. |
+| `trunk_media_nat` | Outgoing trunk media: `auto` (new default) discovers each actual RTP/RTCP socket's mapped IPv4 destination using HA's STUN servers for public IPv4 peers; `direct` keeps local destinations; `manual` uses the address override below with unchanged ports. Existing saved overrides retain manual behavior. STUN is not ICE or TURN. See [external media](SIP_VIDEO.md#external-media-address-on-a-trunk). |
+| `trunk_outbound_media_address` | Optional advertised IPv4 override, required in `manual` mode. HA must be reachable at this address with the advertised RTP/RTCP ports unchanged. Preserved for existing configurations; update it when the public egress address changes. |
 | `trunk_inbound_default_target` | Receiving phone or dial-plan destination selected by name. Used when no called phonebook destination matches, or as the DTMF no-digits fallback. |
 | `trunk_inbound_mode` | `direct` resolves the default target immediately; `dtmf` pre-answers and collects an explicit phonebook extension. |
 | `automation_routing_enabled` | Legacy event-based routing opt-in, disabled by default. Matching native routing triggers activate the decision window themselves. Explicit trunk extension digits are never overridden. |

@@ -150,6 +150,9 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     data.update(
         {
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
+            "trunk_media_nat": existing.get("trunk_media_nat") or (
+                "manual" if existing.get("trunk_outbound_media_address") else "auto"
+            ),
             "trunk_audio_codecs": list(codecs.audio),
             "trunk_video_codecs": list(codecs.video),
             CONF_TRUNK_ENABLED: False,
@@ -240,6 +243,11 @@ class TrunkFormMixin:
         }
         schema = vol.Schema(
             {
+                vol.Optional("trunk_media_nat", default=existing.get("trunk_media_nat") or (
+                    "manual" if existing.get("trunk_outbound_media_address") else "auto"
+                )): SelectSelector(SelectSelectorConfig(
+                    options=["auto", "direct", "manual"], translation_key="trunk_media_nat",
+                )),
                 vol.Optional(
                     "trunk_outbound_media_address",
                     default=existing.get("trunk_outbound_media_address", ""),
@@ -392,6 +400,14 @@ class TrunkFormMixin:
                 except ValueError:
                     errors["trunk_outbound_media_address"] = "trunk_media_address_invalid"
             user_input["trunk_outbound_media_address"] = media_address
+            media_mode = str(user_input.get("trunk_media_nat") or existing.get("trunk_media_nat") or (
+                "manual" if media_address else "auto"
+            ))
+            if media_mode not in {"auto", "direct", "manual"}:
+                errors["trunk_media_nat"] = "trunk_media_nat_invalid"
+            elif media_mode == "manual" and not media_address:
+                errors["trunk_outbound_media_address"] = "trunk_media_address_invalid"
+            user_input["trunk_media_nat"] = media_mode
             for key, allowed, empty in (("trunk_audio_codecs", AUDIO_CODECS, False),
                                         ("trunk_video_codecs", VIDEO_CODECS, True)):
                 try:

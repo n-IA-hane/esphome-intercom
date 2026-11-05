@@ -213,6 +213,8 @@ async def _prepare_bridge_video_contract_change(
             local_video_rtp_port=destination_video_port,
             video_formats=offered_video_formats,
             video_direction=destination_video_direction,
+            **({"media_sockets": staged_video_relay.pending_media_sockets("right")}
+               if staged_video_relay is not None and getattr(client, "media_endpoints", None) else {}),
         )
         if candidate is None:
             return SipInviteResult(488, "Not Acceptable Here")

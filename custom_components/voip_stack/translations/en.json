@@ -76,7 +76,8 @@
           "trunk_allowed_ips": "Allowed incoming IP addresses",
           "trunk_audio_codecs": "Allowed audio codecs",
           "trunk_video_codecs": "Allowed video codecs",
-          "trunk_outbound_media_address": "Outbound media IPv4 address"
+          "trunk_outbound_media_address": "Outbound media IPv4 address",
+          "trunk_media_nat": "Media NAT traversal"
         },
         "data_description": {
           "trunk_transport": "SIP transport used from HA to the provider.",
@@ -96,7 +97,8 @@
           "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
           "trunk_audio_codecs": "Audio codecs permitted for incoming and outgoing calls on this trunk. Keep the defaults unless your PBX/provider specifies a list. Select at least one codec. A call needs a common codec; DTMF is negotiated separately. This list does not change other trunks or local phones.",
           "trunk_video_codecs": "Video codecs permitted on this trunk. Clear the list for audio-only calls. Selecting a codec does not enable video or transcoding: the phone and media path must support it. H.264 profiles are negotiated automatically. Keep the defaults if unsure.",
-          "trunk_outbound_media_address": "Optional. Home Assistant address reachable by this PBX for audio and video on outgoing calls. Behind NAT, use your public IPv4 address and keep RTP/RTCP reachable with unchanged port numbers. Do not enter the provider address. Empty uses the existing HA address. Does not change LAN calls or SIP registration."
+          "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
         }
       },
       "trunk_mode": {
@@ -183,7 +185,8 @@
       "parking_slots_in_use": "Retrieve or end calls in the removed slots before changing the parking slot list.",
       "phone_service_configuration": "Invalid LDAP configuration.",
       "phone_service_base_dn_invalid": "Enter a valid LDAP base DN.",
-      "phone_service_certificate_required": "Provide both the certificate and private key for TLS."
+      "phone_service_certificate_required": "Provide both the certificate and private key for TLS.",
+      "trunk_media_nat_invalid": "Choose auto, direct or manual."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -350,7 +353,8 @@
             "trunk_allowed_ips": "Allowed incoming IP addresses",
             "trunk_audio_codecs": "Allowed audio codecs",
             "trunk_video_codecs": "Allowed video codecs",
-            "trunk_outbound_media_address": "Outbound media IPv4 address"
+            "trunk_outbound_media_address": "Outbound media IPv4 address",
+            "trunk_media_nat": "Media NAT traversal"
           },
           "data_description": {
             "trunk_transport": "SIP transport used from HA to the provider.",
@@ -370,7 +374,8 @@
             "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
             "trunk_audio_codecs": "Audio codecs permitted for incoming and outgoing calls on this trunk. Keep the defaults unless your PBX/provider specifies a list. Select at least one codec. A call needs a common codec; DTMF is negotiated separately. This list does not change other trunks or local phones.",
             "trunk_video_codecs": "Video codecs permitted on this trunk. Clear the list for audio-only calls. Selecting a codec does not enable video or transcoding: the phone and media path must support it. H.264 profiles are negotiated automatically. Keep the defaults if unsure.",
-            "trunk_outbound_media_address": "Optional. Home Assistant address reachable by this PBX for audio and video on outgoing calls. Behind NAT, use your public IPv4 address and keep RTP/RTCP reachable with unchanged port numbers. Do not enter the provider address. Empty uses the existing HA address. Does not change LAN calls or SIP registration."
+            "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
           }
         }
       },
@@ -387,7 +392,8 @@
         "trunk_validation_failed": "Check the connection settings and incoming networks. Static trunks on the same transport cannot have overlapping source networks.",
         "trunk_codecs_invalid": "Select supported codecs and keep at least one audio codec.",
         "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
-        "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty."
+        "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty.",
+        "trunk_media_nat_invalid": "Choose auto, direct or manual."
       },
       "abort": {
         "reconfigure_successful": "Trunk configuration updated."
@@ -475,6 +481,13 @@
         "ringing": "Ringing",
         "in_call": "In a call",
         "held": "On hold"
+      }
+    },
+    "trunk_media_nat": {
+      "options": {
+        "auto": "Automatic",
+        "direct": "Direct",
+        "manual": "Manual"
       }
     }
   },

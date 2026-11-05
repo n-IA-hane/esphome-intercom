@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 import wave
 
 from .core import rtp
+from .core.sip_stun import is_stun_message
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .debug_capture import (
@@ -1091,6 +1092,8 @@ class SipRtpRelay:
             )
 
     def handle_packet(self, side: str, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         source = self.left if side == "left" else self.right
         dest = self.right if side == "left" else self.left
         transport = self.right_transport if side == "left" else self.left_transport

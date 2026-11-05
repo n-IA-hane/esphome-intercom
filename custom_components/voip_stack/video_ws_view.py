@@ -20,6 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp, sdp
+from .core.sip_stun import is_stun_message
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING
 from .media_debug import merge_media_debug
@@ -340,6 +341,8 @@ class _RtpVideoProtocol(asyncio.DatagramProtocol):
         return counts
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         if not self.min_datagram_bytes <= len(data) <= self.max_datagram_bytes:
             self._record_drop("size")
             return

@@ -76,7 +76,8 @@
           "trunk_allowed_ips": "Indirizzi IP autorizzati in ingresso",
           "trunk_audio_codecs": "Codec audio consentiti",
           "trunk_video_codecs": "Codec video consentiti",
-          "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti"
+          "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti",
+          "trunk_media_nat": "Gestione NAT dei media"
         },
         "data_description": {
           "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -96,7 +97,8 @@
           "trunk_allowed_ips": "Inserisci separatamente ogni IP sorgente o rete CIDR autorizzati. Possono differire dal server in uscita. Obbligatori senza registrazione.",
           "trunk_audio_codecs": "Codec consentiti nelle chiamate in ingresso e in uscita su questo trunk. Mantieni i valori iniziali se il PBX/provider non indica una lista specifica. Seleziona almeno un codec. Serve un codec comune; i toni DTMF vengono negoziati separatamente. Non modifica gli altri trunk o i telefoni locali.",
           "trunk_video_codecs": "Codec video consentiti su questo trunk. Svuota la lista per avere solo audio. La selezione non abilita video o transcodifica: il telefono e il percorso multimediale devono supportarli. I profili H.264 vengono negoziati automaticamente. In caso di dubbio mantieni i valori iniziali.",
-          "trunk_outbound_media_address": "Opzionale. Indirizzo di Home Assistant raggiungibile da questo PBX per audio e video delle chiamate uscenti. Dietro NAT usa il tuo IP pubblico e mantieni le porte RTP/RTCP raggiungibili con gli stessi numeri di porta. Non inserire l'indirizzo del provider. Vuoto: usa l'indirizzo HA esistente. Non modifica le chiamate LAN o la registrazione SIP."
+          "trunk_outbound_media_address": "Usato solo in modalita manuale. Indirizzo IPv4 di HA raggiungibile dal PBX, con porte RTP/RTCP raggiungibili senza traduzione.",
+          "trunk_media_nat": "Automatico rileva indirizzo e porte RTP/RTCP usando i server STUN di Home Assistant. Diretto usa la rete instradata. Manuale usa l'override IPv4."
         }
       },
       "trunk_mode": {
@@ -183,7 +185,8 @@
       "parking_slots_in_use": "Recupera o termina le chiamate negli slot da rimuovere prima di modificare la lista.",
       "phone_service_configuration": "Configurazione LDAP non valida.",
       "phone_service_base_dn_invalid": "Inserisci un DN base LDAP valido.",
-      "phone_service_certificate_required": "Specifica sia il certificato sia la chiave privata per TLS."
+      "phone_service_certificate_required": "Specifica sia il certificato sia la chiave privata per TLS.",
+      "trunk_media_nat_invalid": "Scegli auto, direct o manual."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -350,7 +353,8 @@
             "trunk_allowed_ips": "Indirizzi IP autorizzati in ingresso",
             "trunk_audio_codecs": "Codec audio consentiti",
             "trunk_video_codecs": "Codec video consentiti",
-            "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti"
+            "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti",
+            "trunk_media_nat": "Gestione NAT dei media"
           },
           "data_description": {
             "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -370,7 +374,8 @@
             "trunk_allowed_ips": "Inserisci separatamente ogni IP sorgente o rete CIDR autorizzati. Possono differire dal server in uscita. Obbligatori senza registrazione.",
             "trunk_audio_codecs": "Codec consentiti nelle chiamate in ingresso e in uscita su questo trunk. Mantieni i valori iniziali se il PBX/provider non indica una lista specifica. Seleziona almeno un codec. Serve un codec comune; i toni DTMF vengono negoziati separatamente. Non modifica gli altri trunk o i telefoni locali.",
             "trunk_video_codecs": "Codec video consentiti su questo trunk. Svuota la lista per avere solo audio. La selezione non abilita video o transcodifica: il telefono e il percorso multimediale devono supportarli. I profili H.264 vengono negoziati automaticamente. In caso di dubbio mantieni i valori iniziali.",
-            "trunk_outbound_media_address": "Opzionale. Indirizzo di Home Assistant raggiungibile da questo PBX per audio e video delle chiamate uscenti. Dietro NAT usa il tuo IP pubblico e mantieni le porte RTP/RTCP raggiungibili con gli stessi numeri di porta. Non inserire l'indirizzo del provider. Vuoto: usa l'indirizzo HA esistente. Non modifica le chiamate LAN o la registrazione SIP."
+            "trunk_outbound_media_address": "Usato solo in modalita manuale. Indirizzo IPv4 di HA raggiungibile dal PBX, con porte RTP/RTCP raggiungibili senza traduzione.",
+            "trunk_media_nat": "Automatico rileva indirizzo e porte RTP/RTCP usando i server STUN di Home Assistant. Diretto usa la rete instradata. Manuale usa l'override IPv4."
           }
         }
       },
@@ -387,7 +392,8 @@
         "trunk_validation_failed": "Controlla la connessione e le reti ammesse in ingresso. I trunk statici con lo stesso trasporto devono avere reti sorgenti non sovrapposte.",
         "trunk_codecs_invalid": "Seleziona codec supportati e mantieni almeno un codec audio.",
         "trunk_target_required": "Seleziona un telefono destinatario o inserisci una destinazione del piano di chiamata.",
-        "trunk_media_address_invalid": "Inserisci un indirizzo IPv4 unicast raggiungibile, oppure lascia vuoto."
+        "trunk_media_address_invalid": "Inserisci un indirizzo IPv4 unicast raggiungibile, oppure lascia vuoto.",
+        "trunk_media_nat_invalid": "Scegli auto, direct o manual."
       },
       "abort": {
         "reconfigure_successful": "Configurazione del trunk aggiornata."
@@ -475,6 +481,13 @@
         "ringing": "Sta squillando",
         "in_call": "In conversazione",
         "held": "In attesa"
+      }
+    },
+    "trunk_media_nat": {
+      "options": {
+        "auto": "Automatico",
+        "direct": "Diretto",
+        "manual": "Manuale"
       }
     }
   },

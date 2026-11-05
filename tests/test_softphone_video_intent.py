@@ -417,6 +417,7 @@ def _metadata_context(intent, monkeypatch, *, outgoing, previous):
                     client._prepared_reinvite = (
                         client.dialog, candidate, (candidate.video_format,),
                         candidate.local_video_direction,
+                        client.media_endpoints,
                     )
                 return candidate
             client.async_prepare_video_reinvite = prepare

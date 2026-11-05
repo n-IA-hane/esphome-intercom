@@ -17,6 +17,13 @@ def reuse_registered_trunk_flow(
         from .core.codec_policy import CodecPolicy
         client.set_codec_policy(CodecPolicy(trunk.config.audio_codecs, trunk.config.video_codecs))
         client.media_ip = trunk.config.outbound_media_address or client.local_ip
+        from .trunk_media import discover_pending_media, prepare_trunk_media
+        client.prepare_media = lambda host: prepare_trunk_media(
+            client, trunk.config, host, getattr(trunk, "media_stun_urls", None)
+        )
+        client.discover_media_sockets = lambda sockets: discover_pending_media(
+            sockets, getattr(trunk, "media_stun_urls", None)
+        )
         # Standard From/To and Request-URI already carry these identities.
         # External PBXs do not need duplicate VoIP Stack routing headers.
         client.include_route_metadata = False

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import errno
 import logging
 import re
@@ -340,6 +340,9 @@ class SipDialog(DialogSignalingState):
     send_formats: tuple[sdp.RtpPcmFormat, ...] = ()
     match_received_codec: bool = False
     recv_payload_history: tuple[sdp.RtpPcmFormat, ...] = ()
+    # The previous dialog retains its already discovered destinations until
+    # its media owner finalizes or compensates a remotely accepted update.
+    _local_media_endpoints: dict | None = field(default=None, repr=False, compare=False)
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -473,6 +476,10 @@ class SipCallClient:
     ) -> None:
         self.local_ip = local_ip
         self.media_ip = local_ip
+        self.media_endpoints = {}
+        self.prepare_media: Callable[[str], Awaitable[None]] | None = None
+        self.media_socket_provider = None
+        self.discover_media_sockets = None
         self.local_name = local_name
         self.local_uri_user = str(local_uri_user or username or local_name).strip()
         self.local_identity_uri = str(local_identity_uri or "").strip()
@@ -637,6 +644,7 @@ class SipCallClient:
             SipDialog,
             tuple[sdp.RtpVideoFormat, ...],
             str,
+            dict,
         ] | None = None
         self._uas_invite_2xx = SipInvite2xxTransaction()
         self._uas_invite_ack_timeout = asyncio.Event()
@@ -705,6 +713,10 @@ class SipCallClient:
         # video sockets or an allocator reservation hostage.
         reservation = self.media_reservation
         self.media_reservation = None
+        self.prepare_media = None
+        self.media_socket_provider = None
+        self.discover_media_sockets = None
+        self.media_endpoints.clear()
         audio_socket = self.audio_rtp_socket
         self.audio_rtp_socket = None
         if audio_socket is not None:
@@ -1648,6 +1660,7 @@ class SipCallClient:
             )
             session_id = int(current.local_sdp_session_id or self._sdp_session_id)
             session_version = int(current.local_sdp_session_version)
+            answer = self._advertise_media(answer)
             answer = sdp.rewrite_sdp_origin(answer, session_id, session_version)
             if not local_offer_sdp and sdp.sdp_description_changed(
                 current.local_sdp_body, answer
@@ -2047,6 +2060,10 @@ class SipCallClient:
         self._reliable_rseq[sequence_key] = rseq
         return True
 
+    def _advertise_media(self, body: str, endpoints=None) -> str:
+        from .core.media_address import apply_media_endpoints
+        return apply_media_endpoints(body, self.media_endpoints if endpoints is None else endpoints)
+
     async def invite(
         self,
         *,
@@ -2233,6 +2250,25 @@ class SipCallClient:
         self._received_provisional = False
         self._reliable_rseq.clear()
         self._deferred_signaling.clear()
+        if self.prepare_media is not None:
+            prepare = asyncio.create_task(self.prepare_media(self._resolved_signaling_target[0]))
+            aborted = asyncio.create_task(self._invite_abort_event.wait())
+            try:
+                async with asyncio.timeout(3):
+                    done, _ = await asyncio.wait((prepare, aborted), return_when=asyncio.FIRST_COMPLETED)
+                    if aborted in done:
+                        self._invite_transaction_active = False
+                        return "cancelled"
+                    await prepare
+            except (OSError, ValueError) as err:
+                return self._transport_failure(err, target, remote_host, remote_sip_port)
+            finally:
+                prepare.cancel()
+                aborted.cancel()
+                await asyncio.gather(prepare, aborted, return_exceptions=True)
+            if self._cancel_requested or self._closing:
+                self._invite_transaction_active = False
+                return "cancelled"
         offer = ""
         if not delayed_offer:
             offer = sdp.build_offer_directional(
@@ -2254,6 +2290,7 @@ class SipCallClient:
                 video_formats=self.video_formats,
                 video_direction=self.video_direction,
             )
+            offer = self._advertise_media(offer)
             offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
         self._initial_delayed_offer = bool(delayed_offer)
         self._local_sdp_body = offer
@@ -2875,6 +2912,7 @@ class SipCallClient:
                                         audio_direction=updated.local_audio_direction,
                                         video_direction=updated.local_video_direction,
                                     )
+                                    answer = self._advertise_media(answer)
                                     answer = sdp.rewrite_sdp_origin(
                                         answer,
                                         updated.local_sdp_session_id,
@@ -2905,6 +2943,7 @@ class SipCallClient:
                                     audio_direction=updated.local_audio_direction,
                                     video_direction=updated.local_video_direction,
                                 )
+                                answer = self._advertise_media(answer)
                                 answer = sdp.rewrite_sdp_origin(
                                     answer,
                                     updated.local_sdp_session_id,
@@ -3948,6 +3987,8 @@ class SipCallClient:
         timeout: float = 8.0,
         offer_template: str | None = None,
         expected_dialog: SipDialog | None = None,
+        media_sockets: dict | None = None,
+        _restore_media_endpoints: dict | None = None,
     ) -> SipDialog | None:
         """Change video with one serialized in-dialog offer, without publishing it."""
 
@@ -3974,6 +4015,23 @@ class SipCallClient:
                 or (removing_video and current.video_format is None)
             ):
                 return None
+            if current._local_media_endpoints is None:
+                current._local_media_endpoints = dict(self.media_endpoints)
+            mapped_endpoints = (self.media_endpoints if _restore_media_endpoints is None
+                                else _restore_media_endpoints)
+            if mapped_endpoints and local_video_port > 0:
+                previous_endpoint = mapped_endpoints.get("video")
+                if previous_endpoint is None or previous_endpoint.local_port != local_video_port:
+                    if media_sockets is None or self.discover_media_sockets is None:
+                        return None
+                    if set(media_sockets) != {"video", "video_rtcp"} or media_sockets["video"].getsockname()[1] != local_video_port:
+                        return None
+                    try:
+                        async with asyncio.timeout(min(3, max(0, deadline - asyncio.get_running_loop().time()))):
+                            additional = await self.discover_media_sockets(media_sockets)
+                    except (OSError, ValueError):
+                        return None
+                    mapped_endpoints = {**mapped_endpoints, **additional}
             fallback_target = ""
             for imageattr_round in range(2):
                 try:
@@ -3987,6 +4045,7 @@ class SipCallClient:
                         video_formats=offered_video,
                         video_direction="inactive" if removing_video else video_direction,
                     )
+                    offer = self._advertise_media(offer, mapped_endpoints)
                     offer = sdp.rewrite_sdp_origin(
                         offer, session_id, session_version
                     )
@@ -4156,6 +4215,7 @@ class SipCallClient:
                                 if candidate.video_format is not None
                                 else "inactive"
                             ),
+                            mapped_endpoints,
                         )
                         return candidate
                     self._send_invite_error_ack(
@@ -4218,6 +4278,11 @@ class SipCallClient:
         self.video_direction = prepared[3]
         self.local_video_rtp_port = candidate.local_video_rtp_port
         self.generic_video_relay = candidate.video_format is not None
+        self.media_endpoints = prepared[4]
+        if candidate.video_format is None:
+            self.media_endpoints = {key: value for key, value in self.media_endpoints.items()
+                                    if key not in {"video", "video_rtcp"}}
+        candidate._local_media_endpoints = dict(self.media_endpoints)
         self._prepared_reinvite = None
         return True
 
@@ -4236,6 +4301,7 @@ class SipCallClient:
             video_direction=previous.local_video_direction or "inactive",
             offer_template=previous.local_sdp_body,
             expected_dialog=candidate,
+            _restore_media_endpoints=previous._local_media_endpoints,
         )
         if restored is not None and self.commit_prepared_reinvite(candidate, restored):
             return restored

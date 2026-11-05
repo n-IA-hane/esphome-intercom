@@ -20,6 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp
+from .core.sip_stun import is_stun_message
 from .audio_ws import decode_audio_frame, encode_audio_frame
 from .browser_playback import BrowserPlayback
 from .call_projection import publish_esp_media_route
@@ -158,6 +159,8 @@ class _RtpAudioProtocol(asyncio.DatagramProtocol):
         self.dropped_packets = 0
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         while self.queue.qsize() >= self.frame_limit:
             try:
                 self.queue.get_nowait()

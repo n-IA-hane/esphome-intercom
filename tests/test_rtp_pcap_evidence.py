@@ -139,7 +139,7 @@ def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, 
     interval = 0.063420327
 
     def capture_result(command, **kwargs):
-        if command[command.index("-Y") + 1] == "sdp":
+        if command[command.index("-T") + 1] == "pdml":
             return SimpleNamespace(stdout=sdp_pdml(("192.0.2.2", [
                 ("sdp.media", "audio 40002 RTP/AVP 96"),
                 ("sdp.media_attr", "rtpmap:96 opus/48000/2"),
@@ -241,7 +241,7 @@ def test_telephone_event_repeated_timestamp_is_not_an_audio_cadence(monkeypatch,
     events = [row(.005 + index * .02, 101 + index*2, 1000*8000//clock+40).replace("\t96\t", "\t120\t") for index in range(3)]
 
     def captured(command, **kwargs):
-        return SimpleNamespace(stdout=data if command[command.index("-Y") + 1] == "sdp" else "\n".join(sorted(voice + events,key=lambda x:float(x.split('\t')[0]))))
+        return SimpleNamespace(stdout=data if command[command.index("-T") + 1] == "pdml" else "\n".join(sorted(voice + events,key=lambda x:float(x.split('\t')[0]))))
 
     monkeypatch.setattr(MODULE.subprocess, "run", captured)
     streams = MODULE.analyze_pcap(tmp_path / "mixed.pcap")
@@ -265,7 +265,7 @@ def test_zero_advance_voice_timestamp_still_fails_closed(monkeypatch, tmp_path):
     data = sdp_pdml(("192.0.2.2", [("sdp.media", "audio 40002 RTP/AVP 96"),
         ("sdp.media_attr", "rtpmap:96 L16/16000/1")]))
     monkeypatch.setattr(MODULE.subprocess, "run", lambda command, **_kwargs:
-        SimpleNamespace(stdout=data if command[command.index("-Y") + 1] == "sdp" else "\n".join(
+        SimpleNamespace(stdout=data if command[command.index("-T") + 1] == "pdml" else "\n".join(
             row(index * .02, 100 + index, 1000) for index in range(3))))
     with pytest.raises(ValueError, match="Audio RTP timestamp does not advance"):
         MODULE.analyze_pcap(tmp_path / "broken-voice.pcap")

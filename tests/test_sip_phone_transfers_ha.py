@@ -709,7 +709,7 @@ async def test_replaces_accepts_the_media_commit_identity(registered_phones, tru
         result = await prepare_media(*args)
         async def commit():
             await result.commit()
-            client._prepared_reinvite = (before, candidate, (), "inactive")
+            client._prepared_reinvite = (before, candidate, (), "inactive", client.media_endpoints)
             assert client.commit_prepared_reinvite(before, candidate)
         return replace(result, commit=commit, dialog_identity=PreparedDialogIdentity(client, before, candidate))
     monkeypatch.setattr(media_renegotiation, "async_prepare_media_update", prepare)
