@@ -4,21 +4,25 @@ A normal SIP desk phone or softphone can call an ESP through a conventional
 PBX. The ESP can call back through the same PBX when the dialplan permits it.
 Baresip below is a reproducible test client, not a required part of the system.
 
+The current preview supports optional REGISTER with a PBX account and Digest
+authentication. PCM is the default; optional G.722 provides a common wideband
+format when declared on the ESP and permitted by the PBX. See
+[registered accounts](ESP_REGISTRATION.md) and
+[audio codecs](ESP_AUDIO_CODECS.md#add-g722-for-a-conventional-pbx).
+
+The worked examples below describe legacy static SIP peers with explicit
+L16 PCM. Their fixed contacts and PBX settings for PCM apply to those
+examples. Use the selected release's coordinated sources; each route requires
+compatible signaling and media settings.
+
 ```text
 SIP phone or softphone <--> Asterisk / FreeSWITCH <--> ESP extension 1001
       registered                 routing               fixed IP
 ```
 
-An ESP running `voip_stack` can be a local SIP phone for Asterisk or another PBX
-that supports static SIP peers. The PBX knows the ESP's address from its
-configuration. This static setup sends no REGISTER and needs no SIP credentials.
-Alternatively, firmware can compile optional REGISTER and multiple SIP accounts,
-with an independent selected line and Digest authentication. See the
-[registration configuration](ESP_REGISTRATION.md)
-for the current account API. Use the selected release's coordinated sources;
-the optional registration path is part of the current preview. Registration
-and actual media interoperability still require the chosen PBX and endpoint
-to support the negotiated contract.
+In the static setup, the PBX knows the ESP's address from its configuration.
+It sends no REGISTER and needs no SIP credentials. An active registered call
+retains its selected line.
 
 You can use this alongside the device's ESPHome and Assist features. The PBX
 handles telephone routing; Home Assistant can continue providing the device's

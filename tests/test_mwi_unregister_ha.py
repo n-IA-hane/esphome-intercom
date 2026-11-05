@@ -10,7 +10,7 @@ import pytest
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
-from custom_components.voip_stack.phone_endpoint import EndpointKind
+from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.sip_application import SipApplicationMethods
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint, SipTcpServer, _read_sip_stream_message
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
@@ -154,6 +154,120 @@ class MwiSession:
         else:
             self.local.close()
             await self.endpoint.wait_closed()
+
+
+def shared_flow_request(session, username, method, *, target=None, event="presence", call_id=None,
+                        cseq=1, authorization=""):
+    target = target or username
+    headers = [
+        ("Via", f"SIP/2.0/{session.transport} 127.0.0.1:{session.peer.port};branch=z9hG4bK-{method}-{username}-{cseq}"),
+        ("From", f"<sip:{username}@127.0.0.1>;tag={username}"),
+        ("To", f"<sip:{target}@127.0.0.1>"),
+        ("Contact", f"<sip:{username}@127.0.0.1:{session.peer.port};transport={session.transport.lower()}>"),
+        ("Call-ID", call_id or f"shared-{method}-{username}"),
+        ("CSeq", f"{cseq} {method}"), ("Expires", "300"),
+    ]
+    if method in {"SUBSCRIBE", "PUBLISH"}:
+        headers.append(("Event", event))
+    body = b""
+    if method == "MESSAGE":
+        headers.append(("Content-Type", "text/plain"))
+        body = b"shared flow identity"
+    elif method == "PUBLISH":
+        headers.append(("Content-Type", "application/pidf+xml"))
+        body = (f'<presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:{username}@127.0.0.1">'
+                '<tuple id="phone"><status><basic>open</basic></status></tuple></presence>').encode()
+    if authorization:
+        headers.append(("Authorization", authorization))
+    return sip.build_request(method, f"sip:{target}@127.0.0.1", headers, body)
+
+
+async def register_shared_flow_user(session, username):
+    first = await session.peer.exchange(shared_flow_request(session, username, "REGISTER"), session.target)
+    assert first.status_code == 401
+    authorization = build_digest_authorization(challenge_header=first.header("WWW-Authenticate"),
+        username=username, password="test-only", method="REGISTER", uri=f"sip:{username}@127.0.0.1")
+    accepted = await session.peer.exchange(shared_flow_request(session, username, "REGISTER", cseq=2,
+        authorization=authorization), session.target)
+    assert accepted.status_code == 200
+
+
+@pytest.mark.parametrize("transport", ["UDP", "TCP"])
+@pytest.mark.parametrize("order", [("kitchen", "bedroom"), ("bedroom", "kitchen")])
+@pytest.mark.parametrize("method", ["MESSAGE", "PUBLISH", "SUBSCRIBE"])
+async def test_authenticated_accounts_keep_identity_on_one_signaling_flow(mailbox_lab, transport, order, method):
+    from custom_components.voip_stack.const import EVENT_SIP_MESSAGE, EVENT_SIP_PRESENCE
+
+    session = MwiSession(mailbox_lab, transport)
+    session.registrar.accounts["bedroom"] = SipAccount("bedroom", "Bedroom", "test-only")
+    messages, presence = [], []
+    unsub_message = mailbox_lab.hass.bus.async_listen(EVENT_SIP_MESSAGE, messages.append)
+    unsub_presence = mailbox_lab.hass.bus.async_listen(EVENT_SIP_PRESENCE, presence.append)
+    await session.start()
+    try:
+        for username in order:
+            await register_shared_flow_user(session, username)
+        bindings = [session.registrar.registered_contacts(username) for username in order]
+        assert all(len(items) == 1 for items in bindings)
+        assert {(items[0].source_host, items[0].source_port, items[0].transport) for items in bindings} == {
+            (session.addr[0], session.addr[1], transport)}
+        for username in order:
+            result = await session.peer.exchange(shared_flow_request(session, username, method), session.target)
+            assert result.status_code == 200
+            if method == "SUBSCRIBE":
+                notification, source = await session.peer.receive()
+                assert notification.method == "NOTIFY"
+                assert sip.parse_sip_uri(notification.uri).user == username
+                subscription = next(item for item in session.methods.subscriptions.values()
+                    if item.subscriber == username)
+                session.peer.acknowledge(notification, source)
+                await asyncio.wait_for(subscription.notify_task, 2)
+        await mailbox_lab.hass.async_block_till_done()
+        if method == "MESSAGE":
+            assert [event.data["sender"] for event in messages] == list(order)
+        elif method == "PUBLISH":
+            assert [event.data["account"] for event in presence] == list(order)
+        else:
+            assert {item.subscriber for item in session.methods.subscriptions.values()} == set(order)
+    finally:
+        unsub_message()
+        unsub_presence()
+        await session.close()
+        assert not session.methods.subscriptions and not session.methods.tasks and not session.methods.notifiers
+
+
+@pytest.mark.parametrize("mwi_position", [0, 64, 128])
+async def test_sixty_four_blf_presence_watches_leave_room_for_mwi(mailbox_lab, mwi_position):
+    session = MwiSession(mailbox_lab)
+    await session.start()
+    try:
+        await session.register()
+        operations = []
+        for index in range(64):
+            username = f"watch{index}"
+            session.registrar.accounts[username] = SipAccount(username, f"Watch {index}", "test-only")
+            mailbox_lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=f"sip:{username}",
+                name=f"Watch {index}", kind=EndpointKind.SIP_ACCOUNT,
+                username=username, extension=str(8100 + index)))
+            operations.extend((event, username) for event in ("dialog", "presence"))
+        operations.insert(mwi_position, ("message-summary", "kitchen"))
+        for index, (event, target) in enumerate(operations):
+            result = await session.peer.exchange(shared_flow_request(session, "kitchen", "SUBSCRIBE",
+                target=target, event=event, call_id=f"budget-{index}"), session.target)
+            assert result.status_code == 200, (index, event, target)
+            notification, source = await session.peer.receive()
+            assert notification.method == "NOTIFY" and notification.header("Event") == event
+            subscription = next(item for item in session.methods.subscriptions.values()
+                if item.request.header("Call-ID") == f"budget-{index}")
+            session.peer.acknowledge(notification, source)
+            await asyncio.wait_for(subscription.notify_task, 2)
+        assert len(session.methods.subscriptions) == 129
+        assert sum(item.event == "dialog" for item in session.methods.subscriptions.values()) == 64
+        assert sum(item.event == "presence" for item in session.methods.subscriptions.values()) == 64
+        assert sum(item.event == "message-summary" for item in session.methods.subscriptions.values()) == 1
+    finally:
+        await session.close()
+        assert not session.methods.subscriptions and not session.methods.tasks and not session.methods.notifiers
 
 
 @pytest.fixture

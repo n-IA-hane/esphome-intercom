@@ -19,9 +19,10 @@ NATIVE = Path(os.environ.get('VOIP_STACK_REPO', ROOT.parent / 'esphome-voip-stac
 def ws3_sdp_binary(tmp_path_factory):
     resolved = native_profile.profile(PROFILE)
     audio = resolved['voip_stack']['audio']
-    assert audio['tx']['sample_rate'] == 16000
-    assert audio['rx']['sample_rate'] == 48000
-    assert audio['rx']['frame_ms'] == 10
+    assert [codec['codec'] for codec in audio['codecs']] == ['pcm']
+    pcm = audio['codecs'][0]
+    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['tx']] == [(16000, 20), (16000, 10)]
+    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['rx']] == [(48000, 10), (16000, 20), (16000, 10)]
 
     fixture_path = NATIVE / 'tests/test_sdp_receive_payloads.py'
     spec = importlib.util.spec_from_file_location('native_sdp_payload_fixture', fixture_path)
@@ -35,7 +36,7 @@ def ws3_sdp_binary(tmp_path_factory):
 
     initializers = []
     for direction in ('tx', 'rx'):
-        formats = [audio[direction], *audio.get(direction + '_formats', [])]
+        formats = pcm[direction]
         assert len(formats) <= 8
         initializers.append(f's.offer_{direction}_formats_.count=0;')
         for fmt in formats:

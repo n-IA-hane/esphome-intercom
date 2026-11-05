@@ -37,7 +37,7 @@ from ..endpoint_routing import (
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     supports_directional_audio_payloads,
     supports_independent_audio_ptime,
 )
@@ -227,7 +227,7 @@ async def route_sip_bridge(
     if not bridge_to_trunk and sip_send_formats and sip_recv_formats:
         rtp_audio_profile = bridge_audio_profile(
             invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
-            include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
+            include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
         )
         sip_send_formats = list(rtp_audio_profile.send_formats)
         sip_recv_formats = list(rtp_audio_profile.recv_formats)
@@ -330,7 +330,7 @@ async def route_sip_bridge(
         else "",
         include_common_codecs=(
             bridge_to_trunk
-            or sip_target_has_unspecified_audio(peer_target, decision.entry)
+            or sip_target_offer_common_audio(peer_target, decision.entry)
         ),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
             peer_target, decision.entry

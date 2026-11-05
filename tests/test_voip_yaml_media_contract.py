@@ -1107,7 +1107,8 @@ def test_native_full_and_audio_stack_full_have_reciprocal_pcm_formats() -> None:
     def formats(path, direction):
         audio = profile(path)['voip_stack']['audio']
         return {(f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
-                for f in [audio[direction], *audio.get(direction + '_formats', [])]}
+                for codec in audio['codecs'] if codec['codec'] == 'pcm'
+                for f in codec.get(direction, [])}
     native = 'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'
     other = 'full-experience/single-bus/waveshare-s3-full-afe.yaml'
     assert formats(native, 'tx') & formats(other, 'rx')

@@ -32,7 +32,7 @@ from .endpoint_routing import (
     roster_from_peers,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     supports_directional_audio_payloads,
     supports_independent_audio_ptime,
 )
@@ -65,6 +65,7 @@ from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_for
 from .sip_client import SipCallClient
 from .sip_runtime import (
     enable_reused_tcp_connection,
+    select_registered_outbound_flow,
     send_final_response,
     uri_transport,
 )
@@ -523,7 +524,7 @@ async def async_route_trunk_invite(
             if rtp_audio_profile is not None
             else None
         ),
-        include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
+        include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
             peer_target, decision.entry
         ),
@@ -570,6 +571,9 @@ async def async_route_trunk_invite(
         bridge_uri,
         target=destination,
         default_sip_port=int(cfg["sip_port"]),
+        selected_flow=select_registered_outbound_flow(
+            hass, bridge_uri, entry=decision.entry, peer=peer_target
+        ),
     )
     result = await client.invite(
         target=bridge_uri.user,

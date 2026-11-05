@@ -59,13 +59,18 @@ def test_explicit_maxptime_still_rejects_an_oversized_l16_packet():
     ("L16", 48000), ("L16", 32000), ("L16", 16000), ("L16", 8000),
     ("OPUS", 48000), ("G722", 8000), ("PCMA", 8000), ("PCMU", 8000),
 ])
-def test_generic_offer_quantum_and_maxptime_are_receivable_for_every_codec(monkeypatch, tmp_path, encoding, rate):
+@pytest.mark.parametrize("receive_preference_ms", [10, 20])
+def test_generic_offer_quantum_and_maxptime_are_receivable_for_every_codec(
+    monkeypatch, tmp_path, encoding, rate, receive_preference_ms,
+):
     monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
     formats = list(audio_format.HA_SIP_PCM_FORMATS)
+    receive_formats = sorted(formats, key=lambda fmt: fmt.frame_ms != receive_preference_ms)
     offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,
-        formats, formats, include_common_codecs=True)
+        formats, receive_formats, include_common_codecs=True)
     parsed = sdp.parse_sdp(offer)
-    assert parsed["ptime"] == 10 and parsed["maxptime"] == 20
+    assert parsed["ptime"] == receive_preference_ms
+    assert parsed["ptime"] <= parsed["maxptime"] <= 20
     fmt = next(fmt for fmt in sdp.offered_pcm_formats(offer)
         if fmt.encoding == encoding and fmt.sample_rate == rate)
     records = []

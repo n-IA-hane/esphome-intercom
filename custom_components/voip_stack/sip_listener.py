@@ -102,6 +102,7 @@ class SipInvite:
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
     local_recv_capabilities: tuple[AudioFormat, ...] = ()
+    local_send_capabilities: tuple[AudioFormat, ...] = ()
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -3903,6 +3904,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 send_format=selected.send,
                 recv_format=selected.recv,
                 local_recv_capabilities=tuple(self.supported_recv_formats),
+                local_send_capabilities=tuple(self.supported_send_formats),
                 remote_rtp_host=remote["connection_ip"],
                 remote_rtp_port=remote["media_port"],
                 remote_audio_direction=str(remote["direction"]),

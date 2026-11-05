@@ -721,26 +721,19 @@ class SipRegistrar:
         self,
         addr: tuple[str, int],
         transport: str,
+        *,
+        username: str | None = None,
     ) -> SipAccount | None:
-        """Resolve an authenticated live registration by signaling flow."""
+        """Resolve an unambiguous enabled identity registered on this flow."""
 
         self.expire()
-        wanted_transport = str(transport or "").upper()
-        registration = next(
-            (
-                item
-                for item in self.registrations.values()
-                if item.source_host == str(addr[0])
-                and item.source_port == int(addr[1])
-                and item.transport.upper() == wanted_transport
-            ),
-            None,
-        )
-        return (
-            self.accounts.get(registration.username.lower())
-            if registration is not None
-            else None
-        )
+        candidates = [
+            account for account in self.accounts.values()
+            if account.enabled
+            and (username is None or account.username.casefold() == username.casefold())
+            and self.registration_matches_source(account.username, addr[0], addr[1], transport)
+        ]
+        return candidates[0] if len(candidates) == 1 else None
 
     async def handle_register(self, request: sip.SipMessage, addr: tuple[str, int], transport: str) -> SipRegisterResult:
         self.last_sip_event = "REGISTER"

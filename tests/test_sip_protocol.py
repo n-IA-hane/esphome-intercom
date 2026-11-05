@@ -3451,7 +3451,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_remote_reinvite_2xx_retransmits_over_tcp_until_ack(self) -> None:
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
-        negotiated = sdp.audio_format_to_rtp(pcm, 96)
+        # Establish the same receive bounds as a real initial negotiation.
+        negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm])
+        assert negotiated is not None
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",
             local_name="HA",
@@ -3480,8 +3483,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             call_id=client.dialog_ids.call_id,
             local_uri="sip:HA@127.0.0.1:5060",
             remote_uri="sip:ESP@127.0.0.2:5060",
-            send_format=negotiated,
-            recv_format=negotiated,
+            send_format=negotiated.send,
+            recv_format=negotiated.recv,
             remote_target_uri="sip:ESP@127.0.0.2:5060",
         )
 
@@ -3550,7 +3553,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 return
 
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
-        negotiated = sdp.audio_format_to_rtp(pcm, 96)
+        negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm])
+        assert negotiated is not None
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",
             local_name="HA",
@@ -3571,8 +3576,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             call_id=client.dialog_ids.call_id,
             local_uri="sip:HA@127.0.0.1:5060",
             remote_uri="sip:ESP@127.0.0.2:5060",
-            send_format=negotiated,
-            recv_format=negotiated,
+            send_format=negotiated.send,
+            recv_format=negotiated.recv,
             remote_target_uri="sip:ESP@127.0.0.2:5060",
         )
         offer = sdp.build_offer_directional(

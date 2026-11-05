@@ -6,6 +6,11 @@ compiled only when they are declared in `voip_stack.audio.codecs`.
 
 ## The FULL PCM defaults
 
+The FULL package already supplies this block. It documents the defaults; adding
+a second `codec: pcm` entry to that package is rejected. When composing a custom
+package, edit its existing PCM declaration. The G.722 example below adds a new
+codec alongside the supplied PCM declaration.
+
 ```yaml
 voip_stack:
   audio:
@@ -35,11 +40,24 @@ per second. It does not require changing the microphone, AFE or mixer cadence.
 
 TX and RX packet times are independent. SDP `ptime` describes the duration the
 sender of that SDP prefers to receive; it does not impose an identical duration
-in both directions. See [RFC 3264, section 6.1](https://www.rfc-editor.org/rfc/rfc3264.html#section-6.1).
+in both directions. A remote `ptime` guides ESP transmission among its declared
+formats; a remote `maxptime` limits the ESP's transmit packet duration.
+Advertised capabilities stay within the configured RTP payload budget, which
+defaults to 1200 bytes. The advertised `maxptime` respects every receive mapping
+on the audio m-line, including alternatives.
+See [RFC 3264, section 6.1](https://www.rfc-editor.org/rfc/rfc3264.html#section-6.1).
+
+One audio m-line has one shared `maxptime`. When it advertises both 48 kHz PCM
+at 10 ms and another receive codec, that codec also needs a declared receive
+duration within the shared limit. The G.722 example includes its 10 ms RX
+alternative for this reason. TX can still use 20 ms when the peer accepts it.
+An unrepresentable receive set is rejected with an SDP diagnostic.
 
 ## Add G.722 for a conventional PBX
 
-If the package already supplies PCM, this adds G.722 alongside it:
+PCM remains the default. For a PBX that permits G.722, this adds it alongside
+the package's PCM formats and can be used with an optional
+[registered account](ESP_REGISTRATION.md):
 
 ```yaml
 voip_stack:

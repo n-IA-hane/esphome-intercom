@@ -25,6 +25,11 @@ from .sip_registrar import SipRegistrar
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sixty-four dialog/presence pairs plus four account MWI usages.
+# Retiring notifiers retain their slot until their transaction is released.
+MAX_EVENT_USAGES_PER_SUBSCRIBER = 132
+MAX_EVENT_USAGES = 512
+
 
 @dataclass(slots=True)
 class SipApplicationMethods:
@@ -72,7 +77,15 @@ class SipApplicationMethods:
         follow_up_sender: "SipFollowUpSender | None" = None,
         *, flow_trunk_id: str = "",
     ) -> SipRequestResult:
-        account = self.registrar.account_for_source(addr, transport)
+        try:
+            subscriber = sip.parse_sip_uri(_uri_from_header(request.header("From"))).user
+        except (ValueError, sip.SipError):
+            subscriber = ""
+        account = self.registrar.account_for_source(addr, transport, username=subscriber)
+        if account is None and request.method == "MESSAGE":
+            # A single authenticated identity can supply an untrusted display
+            # From; a shared flow must identify one of its registered accounts.
+            account = self.registrar.account_for_source(addr, transport)
         if request.method == "REFER":
             return self._refer(request, addr, transport, account, follow_up_sender, flow_trunk_id)
         if request.method == "SUBSCRIBE" and request.header("Event").partition(";")[0].strip().casefold() == "refer":
@@ -244,7 +257,8 @@ class SipApplicationMethods:
             subscriber = account.username if account is not None else f"trunk:{trusted_trunk}"
             owned = {id(item): item for item in self.subscriptions.values()}
             owned.update(self.notifiers)
-            if len(owned) >= 256 or sum(item.subscriber == subscriber for item in owned.values()) >= 64:
+            if (len(owned) >= MAX_EVENT_USAGES
+                    or sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
                 self.rejected_subscriptions += 1
                 return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
             tag = secrets.token_hex(8)
@@ -425,8 +439,8 @@ class SipApplicationMethods:
             return SipRequestResult(481, "Call/Transaction Does Not Exist")
         owned = {id(item): item for item in subscriptions.values()}
         owned.update(self.notifiers)
-        if current is None and (len(owned) >= 256 or
-                sum(item.subscriber == subscriber for item in owned.values()) >= 64):
+        if current is None and (len(owned) >= MAX_EVENT_USAGES or
+                sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
             self.rejected_subscriptions += 1
             return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
         to_tag = current.to_tag if current is not None else secrets.token_hex(8)

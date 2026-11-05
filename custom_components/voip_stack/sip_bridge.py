@@ -26,9 +26,20 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
     """Resolve the still-unanswered caller against the accepted destination."""
     if invite.initial_response_sent:
         return invite
+    preferred = destination.recv_format.audio_format
+    send_formats = [preferred, invite.send_format.audio_format]
+    if invite.local_send_capabilities:
+        # Repacketize a common PCM geometry before changing its sample rate.
+        # Durations must come from this listener's actual transmit policy.
+        shape = (preferred.sample_rate, preferred.pcm_format, preferred.channels)
+        send_formats = [fmt for fmt in dict.fromkeys((preferred, *invite.local_send_capabilities))
+            if fmt in invite.local_send_capabilities
+            and (fmt.sample_rate, fmt.pcm_format, fmt.channels) == shape]
+        if invite.send_format.audio_format in invite.local_send_capabilities:
+            send_formats.append(invite.send_format.audio_format)
     selected = sdp.negotiate_directional(
         invite.remote_sdp,
-        list(dict.fromkeys((destination.recv_format.audio_format, invite.send_format.audio_format))),
+        list(dict.fromkeys(send_formats)),
         list(dict.fromkeys((destination.send_format.audio_format, invite.recv_format.audio_format))),
         allow_dahua_pcm=invite.peer_profile == "dahua",
         codec_policy=invite.codec_policy,

@@ -151,6 +151,7 @@ def softphone_originate(monkeypatch):
             "sip_target_rtp_audio_profile": Mock(return_value=None),
             "sip_target_offer_common_audio": Mock(return_value=False),
             "supports_directional_audio_payloads": Mock(return_value=False),
+            "supports_independent_audio_ptime": Mock(return_value=False),
         },
         "esphome_actions": {
             "async_call_action": AsyncMock(),

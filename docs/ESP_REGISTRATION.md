@@ -72,15 +72,18 @@ their preferred formats. This allows an ordinary `L16/16000` offer with
 `a=ptime:20`; adding 20 ms does not replace the preferred HA formats.
 A rate or packet time supported by one board is not automatically admitted
 by another. The 48 kHz mono 16-bit payload alone
-occupies 1920 bytes at 20 ms and 960 bytes at 10 ms; the smaller quantum avoids
-fragmentation on
-ordinary Ethernet paths. This does not impose a global packet time on other
-codecs. L16 uses network byte order, separately from the local PCM buffer format
+occupies 1920 bytes at 20 ms and 960 bytes at 10 ms; only the latter fits the
+default 1200-byte RTP payload budget. Advertised capabilities respect that
+configured budget. SDP `ptime` is a receive preference; the peer's `maxptime`
+bounds ESP transmission among declared formats. TX and RX durations remain
+independent. L16 uses network byte order, separately from the local PCM buffer format
 ([RFC 3551, section 4.5.11](https://www.rfc-editor.org/rfc/rfc3551#section-4.5.11)).
 
-The current FULL firmware uses linear PCM. A PBX must offer a common L16
-format; G.711 PCMU/PCMA is not currently implemented in ESP VoIP Stack, and
-optional Opus is restricted to supported S3 VoIP-only profiles. A successful
+FULL profiles use linear PCM by default. Optional G.722 can be declared alongside
+PCM for a PBX that supports it; see the [codec configuration](ESP_AUDIO_CODECS.md#add-g722-for-a-conventional-pbx).
+The ESP and PBX need a common declared codec. G.711 PCMU/PCMA is not currently
+implemented in ESP VoIP Stack, and optional Opus remains restricted to supported
+S3 VoIP-only profiles; FULL/P4 configurations are rejected. A successful
 REGISTER does not establish codec compatibility. Qualify the direct registered
 ESP-to-PBX route separately from a route where HA translates the media.
 

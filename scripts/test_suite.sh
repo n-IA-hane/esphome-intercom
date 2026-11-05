@@ -149,6 +149,9 @@ ha_tests=(
   tests/test_browser_logical_availability_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_bridge_independent_ptime_ha.py
+  tests/test_bridge_repacketize_ha.py
+  tests/test_bridge_local_tx_capabilities_ha.py
+  tests/test_inbound_factory_flow_audio_ha.py
   tests/test_sip_capabilities_ha.py
   tests/test_browser_contact_audio_ha.py
   tests/test_udp_outbound_flow_ha.py
