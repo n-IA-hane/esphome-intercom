@@ -745,7 +745,11 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         async def prepare_media():
             video_update = (await application.prepare_video_pickup(invite)
                             if getattr(application.media, "video_relay", None) is not None else None)
-            return await LocalMediaBridge.prepare(application.media, invite,
+            media_invite = invite
+            if application.media.invite.video_format is None and application.media.video_relay is None:
+                media_invite = replace(invite, video_format=None, local_video_format=None, video_answer_format=None,
+                    remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
+            return await LocalMediaBridge.prepare(application.media, media_invite,
                 **({"video_update": video_update} if video_update is not None else {}))
         prepared = await session.create_task(prepare_media(), name="parking-pickup-media")
         session.add_resource(prepared_name, prepared, lambda _reason: prepared.rollback(), stage=CleanupStage.MEDIA)

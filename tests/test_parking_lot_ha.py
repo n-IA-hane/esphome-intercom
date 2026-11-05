@@ -1023,3 +1023,147 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("picker_video", [False, True])
+async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypatch, picker_video):
+    """A new JPEG offer must not reject an otherwise identical audio pickup."""
+    import socket
+    import struct
+    from custom_components.voip_stack.core import rtp, sdp, sip
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries
+    from custom_components.voip_stack.parking import get_parking_lot
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.runtime_data import sip_endpoint_manager
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.trunk_runtime import async_stop_sip_trunk
+    from .test_udp_outbound_flow_ha import register_phone, PASSWORD
+
+    runtime = trunks
+    entry = config_entry(runtime.hass)
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    await async_stop_sip_trunk(runtime.hass)
+    runtime.runtime.trunk_configs = {}
+    runtime.runtime.trunk_config = {}
+    runtime.runtime.default_trunk_id = ""
+    manager = sip_endpoint_manager(runtime.hass)
+    manager.enable_video = True
+    for listener in manager._dialog_endpoints():
+        listener.enable_video = True
+    runtime.runtime.transport_config["experimental_sip_video"] = True
+    registrar = runtime.calls.component("registrar")
+    registrar.enabled = True
+    names = ("audio-parking-source", "audio-parking-picker")
+    registrar.update_accounts([SipAccount(name, name, PASSWORD) for name in names])
+    for name in names:
+        runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id=name, name=name,
+            username=name, kind=EndpointKind.SIP_ACCOUNT))
+    peers, sockets, watchers, answers = [], [], [], []
+    async def wait_for(predicate):
+        async with asyncio.timeout(5):
+            while not predicate():
+                await asyncio.sleep(.01)
+    try:
+        port = runtime.runtime.transport_config["sip_port"]
+        for index, name in enumerate(names):
+            audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            audio.bind(("127.0.0.1", 0))
+            audio.setblocking(False)
+            video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            video.bind(("127.0.0.1", 0))
+            sockets.extend((audio, video))
+            tx = [AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)]
+            rx = [AudioFormat(48000, frame_ms=10), *tx]
+            peer = SipCallClient(local_ip="127.0.0.1", local_name=name, local_uri_user=name,
+                local_sip_port=0, local_rtp_port=audio.getsockname()[1], username=name,
+                auth_username=name, password=PASSWORD, supported_send_formats=tx, supported_recv_formats=rx,
+                allow_directional_audio_payloads=True, independent_audio_ptime=True,
+                local_video_rtp_port=video.getsockname()[1] if index == 1 and picker_video else 0,
+                video_format=sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"))
+            peers.append(peer)
+            await peer.start()
+            async def receive(_method=None, *, status=None, peer=peer):
+                async with asyncio.timeout(2):
+                    while True:
+                        raw, address = await peer.queue.get()
+                        message = sip.parse_message(raw)
+                        if message.method == "OPTIONS":
+                            peer._send_response_to_request(message, *address, 200, "OK")
+                        elif status is None or message.status_code == status:
+                            return message, address
+            phone = SimpleNamespace(address=("127.0.0.1", peer.local_sip_port), transport=peer.transport, receive=receive)
+            await register_phone(SimpleNamespace(a=phone, registrar=registrar, lab=runtime,
+                listener=("127.0.0.1", port)), username=name, outbound=False, discover=False)
+        runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
+        source, picker = peers
+        read_response = picker._read_response
+        async def observe_answer(*args, **kwargs):
+            result = await read_response(*args, **kwargs)
+            if result is not None and result[0].header("CSeq").endswith(" INVITE"):
+                answers.append(result[0])
+            return result
+        monkeypatch.setattr(picker, "_read_response", observe_answer)
+        source_result = await source.invite(target="700", remote_host="127.0.0.1", remote_sip_port=port, timeout=3)
+        if source_result == "ringing":
+            source_result = await source.wait_for_final(timeout=3)
+        assert source_result == "in_call"
+        watchers.append(asyncio.create_task(source.wait_for_dialog_termination()))
+        lot = get_parking_lot(runtime.hass)
+        session = lot.calls["701"].session
+        original = runtime.calls.resource_for(session.call_id, "relay")
+        source_transport = original.transport
+        assert original.invite.video_format is None and original.video_relay is None
+        assert source.dialog.send_format.audio_format == AudioFormat(16000, frame_ms=20)
+        assert source.dialog.recv_format.audio_format == AudioFormat(48000, frame_ms=10)
+        result = await picker.invite(target="701", remote_host="127.0.0.1", remote_sip_port=port, timeout=3)
+        if result == "ringing":
+            result = await picker.wait_for_final(timeout=3)
+        assert result == "in_call", [(message.status_code, message.reason) for message in answers]
+        if picker_video:
+            assert b"m=video 0 " in answers[-1].body
+            received = manager.invite_for_call(picker.dialog.call_id)
+            assert received.video_format.encoding == "JPEG"
+            assert received.remote_video_rtp_port == sockets[3].getsockname()[1]
+        assert picker.dialog.video_format is None and picker.dialog.local_video_rtp_port == 0
+        watchers.append(asyncio.create_task(picker.wait_for_dialog_termination()))
+        await wait_for(lambda: not lot.calls)
+        relay = runtime.calls.resource_for(session.call_id, "relay")
+        assert relay.left_transport is source_transport and relay.video_relay is None
+        assert len(runtime.calls.sessions) == 1
+        assert runtime.runtime.rtp_port_pool["used"] == {relay.left_port, relay.right_port}
+        for index in range(25):
+            for peer, sock, sample in ((source, sockets[0], 5000), (picker, sockets[2], 7000)):
+                fmt = peer.dialog.send_format
+                count = fmt.audio_format.nominal_frame_samples
+                payload = struct.pack("!h", sample) * count
+                raw = rtp.build_packet(rtp.RtpPacket(fmt.payload_type, index, index * count, sample, payload))
+                await runtime.hass.loop.sock_sendto(sock, raw, (peer.dialog.remote_rtp_host, peer.dialog.remote_rtp_port))
+            await asyncio.sleep(.02)
+        await wait_for(lambda: relay.left_tx_packets >= 10 and relay.right_tx_packets >= 10)
+        for peer, sock, expected in ((source, sockets[0], 7000), (picker, sockets[2], 5000)):
+            async with asyncio.timeout(2):
+                while True:
+                    packet = rtp.parse_packet(await runtime.hass.loop.sock_recv(sock, 4096))
+                    assert packet.payload_type == peer.dialog.recv_format.payload_type
+                    samples = struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)
+                    if samples and max(samples) > 0:
+                        # The existing FIR starts with zero history. Check the
+                        # settled DC tail, beyond its 24 input-sample history.
+                        settled = samples[len(samples)//2:]
+                        assert all(expected - 20 <= value <= expected + 20 for value in settled)
+                        break
+        await picker.terminate()
+        await wait_for(lambda: not runtime.calls.sessions)
+        assert not runtime.runtime.rtp_port_pool["used"]
+    finally:
+        await asyncio.gather(*(peer.close() for peer in peers))
+        for watcher in watchers:
+            if not watcher.done():
+                watcher.cancel()
+        await asyncio.gather(*watchers, return_exceptions=True)
+        for sock in sockets:
+            sock.close()
