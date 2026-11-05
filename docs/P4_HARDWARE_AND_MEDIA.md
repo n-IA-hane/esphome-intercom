@@ -15,6 +15,19 @@ Without an explicit framework version, the installed ESPHome release selects
 its default SDK. Updating the P4 SDK does not by itself prove that C6 firmware
 must be replaced; check the applicable ESP-Hosted MCU compatibility contract.
 
+## ESP-IDF 5.5.6 restart compatibility
+
+The maintained P4 package includes a build-local backport of Espressif's
+[SDMMC reset-order correction](https://github.com/espressif/esp-hosted-mcu/issues/240#issuecomment-6451429332).
+It resets SDMMC DMA before the other peripheral resets, preventing the documented
+SDIO state from surviving a software restart. The watchdog settings stay unchanged.
+
+The backport replaces one source file inside the existing `esp_system` build
+target, preserving its IRAM placement, compiler options and dependencies. It
+does not modify the shared SDK installation. It applies only to the recognized
+ESP-IDF 5.5.6 source; an unexpected source hash stops that build. Other SDK
+versions are reported explicitly and left unchanged.
+
 ## Camera and display
 
 Set `esp_video_camera.resolution`, `jpeg_quality` and `max_framerate` in the
@@ -80,11 +93,13 @@ missing controls even though the current DMA framebuffer was correct.
 
 ## Audio and controls
 
-P4 remains PCM. Its speaker bus runs at 48 kHz and AFE microphone output at
+P4 uses PCM by default. Its speaker bus runs at 48 kHz and AFE microphone output at
 16 kHz. The existing speaker resampler accepts compatible incoming PCM rates,
 including 16 kHz for direct ESP-to-ESP calls; 48 kHz speaker output does not
-require every peer to transmit 48 kHz RTP. Prefer 10 ms packetization when both
-endpoints support it.
+require every peer to transmit 48 kHz RTP. The FULL defaults prefer TX16k/20 ms
+and RX48k/10 ms, with declared alternatives. Transmit and receive durations are
+independent. Optional G.722 provides a wideband PBX codec alongside PCM; see
+[codec configuration](ESP_AUDIO_CODECS.md).
 
 Send Video controls the next-call camera preference while idle and requests a
 SIP direction update during an established video call. Incoming video remains

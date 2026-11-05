@@ -16,6 +16,14 @@
 packages:
   ota_idf_backend: !include ../ota/idf_backend.yaml
 
+external_components:
+  - source: ${ext_components_source}
+    components: [p4_sdmmc_reset]
+
+# Build-local backport for the SDK 5.5.6 warm-restart SDMMC DMA reset order.
+# Other SDK versions are reported explicitly and left unchanged.
+p4_sdmmc_reset:
+
 defaults:
   intercom_idf_root: '${ intercom_idf_root | default("") }'
   intercom_idf_ref: '${ intercom_idf_ref | default("dev") }'

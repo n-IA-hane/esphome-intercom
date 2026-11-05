@@ -1,0 +1,4 @@
+Upstream: https://github.com/espressif/esp-idf/blob/v5.5.6/components/esp_system/port/soc/esp32p4/system_internal.c
+Version: ESP-IDF v5.5.6
+SHA256: 7bd2af3da2a9c1592c8d9ff6f65ad7fe320690b2e480076685df068f231e40cc
+License: Apache-2.0, SPDX copyright header preserved in the source fixture.
