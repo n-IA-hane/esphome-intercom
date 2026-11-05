@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from tools.rtp_pcap_evidence import sequence_statistics
 
 from .registry import EXECUTOR_JOBS, SCENARIOS
 
@@ -392,7 +393,7 @@ def validate_hil_measurement(
                 duration = stream["duration_seconds"]
                 if (duration > times[2] - times[1]
                         or (number == 0 and duration < MIN_TRANSPORT_WINDOW_SECONDS)
-                        or type(stream.get("lost_packets")) is not int or stream["lost_packets"] != 0
+                        or sequence_statistics(stream, report["streams"])["lost_packets"] != 0
                         or type(stream.get("timestamp_step")) is not int
                         or stream.get("timestamp_step") != stream["clock_rate"] * selection["ptime_ms"] / 1000
                         or duration * 1000 / (stream["packets"] - 1) / selection["ptime_ms"] > 1.25):

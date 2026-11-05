@@ -112,6 +112,7 @@ ha_tests=(
   tests/test_call_ivr_ha.py
   tests/test_voicemail_baresip_ha.py
   tests/test_sip_phone_transfers_ha.py
+  tests/test_refer_account_identity_ha.py
   tests/test_registered_trunk_remote_bye_ha.py
   tests/test_trunk_receive_budget_ha.py
   tests/test_audio_splice_ha.py

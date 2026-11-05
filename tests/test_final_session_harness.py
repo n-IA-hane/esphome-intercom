@@ -75,6 +75,37 @@ def test_pcm_oracle_rejects_false_media_success(tmp_path, fault):
     assert not (tmp_path / "bad.wav").exists()
 
 
+@pytest.mark.parametrize("fault",[None,"missing_event","different_ssrc","different_pcm"])
+def test_shared_pcm_sequence_requires_the_actual_complete_source_packets(tmp_path, fault):
+    payload=struct.pack(">160h",*range(160))
+    voice=[struct.pack("!BBHII",0x80,97,1+n*2,n*160,1)+payload for n in range(3)]
+    events=[struct.pack("!BBHII",0x80,120,2+n*2,40,1)+struct.pack("!BBH",1,0x8a,160*(n+1)) for n in range(2)]
+    source=[voice[0],events[0],voice[1],events[1],voice[2]]
+    if fault=="missing_event":
+        source.pop(1)
+    elif fault=="different_ssrc":
+        source[1]=source[1][:8]+struct.pack("!I",2)+source[1][12:]
+    elif fault=="different_pcm":
+        source[0]=source[0][:-1]+bytes([source[0][-1]^1])
+    def decode():
+        return decode_l16_rtp(voice,AudioWireFormat(16000,10,97),tmp_path/"shared.wav",
+                              minimum_seconds=.03,sequence_packets=source)
+    if fault:
+        with pytest.raises(ValueError):
+            decode()
+        assert not (tmp_path/"shared.wav").exists()
+    else:
+        assert decode()["shared_ssrc_sequence_verified"] is True
+
+
+def test_raw_pcm_decoder_never_accepts_a_declared_zero_loss_dictionary(tmp_path):
+    payload=struct.pack(">160h",*range(160))
+    voice=[struct.pack("!BBHII",0x80,97,1+n*2,n*160,1)+payload for n in range(3)]
+    with pytest.raises(TypeError,match="shared_sequence_ledger"):
+        decode_l16_rtp(voice,AudioWireFormat(16000,10,97),tmp_path/"invented.wav",minimum_seconds=.03,
+                        shared_sequence_ledger={"lost_packets":0,"duplicate_packets":0,"payload_types":[97,120],"packets":5})
+
+
 def snapshot(**changes):
     return {"state": "idle", "call_scoped_quiescent": True, "active_dialogs": 0,
             "resource_counts": {"calls": 0, "legs": 0, "rtp": 0}, **changes}

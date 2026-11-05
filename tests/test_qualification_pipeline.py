@@ -227,6 +227,7 @@ def write_measured_hil_fixture(root: Path, **identity) -> dict:
         return {"path": str(path.relative_to(root)), "bytes": len(raw),
                 "sha256": hashlib.sha256(raw).hexdigest()}
 
+    shared_payload = identity.pop("shared_payload", False)
     receipt = {"schema_version": 1, "plan_id": "plan", "head": "head",
                "candidate_id": "candidate", "scenario": "esp-to-ha-answer-hangup",
                "run_id": "run", **identity, "sessions": []}
@@ -241,7 +242,9 @@ def write_measured_hil_fixture(root: Path, **identity) -> dict:
         )):
             ssrc = 100 + number * 2 + direction
             for packet in range(2001):
-                rtp = struct.pack("!BBHII", 0x80, 96, packet, packet * 160, ssrc) + bytes(320)
+                payload_type = 120 if shared_payload and packet == 1000 else 96
+                payload = struct.pack("!BBH",1,0x8a,160) if payload_type==120 else bytes(320)
+                rtp = struct.pack("!BBHII", 0x80, payload_type|(0x80 if payload_type==120 else 0), packet, packet * 160, ssrc) + payload
                 udp = struct.pack("!HHHH", sport, dport, 8 + len(rtp), 0) + rtp
                 ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0, src, dst)
                 frame = bytes(12) + b"\x08\x00" + ip + udp
@@ -249,10 +252,10 @@ def write_measured_hil_fixture(root: Path, **identity) -> dict:
                     (packet % 100) * 10000, len(frame), len(frame)) + frame)
                 rows.append("\t".join((str(number * 23 + 1 + packet * .01),
                     ".".join(map(str, src)), str(sport), ".".join(map(str, dst)), str(dport),
-                    hex(ssrc), "96", str(packet), str(packet * 160))))
+                    hex(ssrc), str(payload_type), str(packet), str(packet * 160))))
         streams = analyze_rows(rows)
         for stream in streams:
-            stream.update(media_type="audio", clock_rate=16000, expected_delta_ms=10.0)
+            stream.update(media_type="telephone-event" if stream["payload_type"]==120 else "audio", clock_rate=16000, expected_delta_ms=10.0)
         capture_ref = reference(root / f"{receipt['run_id']}-{call_id}.pcap", capture)
         report = {"status": "passed", "failures": [], "pcap_sha256": capture_ref["sha256"],
                   "call_id": call_id, "run_id": receipt["run_id"], "streams": streams}
@@ -263,7 +266,7 @@ def write_measured_hil_fixture(root: Path, **identity) -> dict:
             "capture": capture_ref, "rtp_report": report_ref,
             **{direction: {**{key: stream[key] for key in ("source", "destination", "ssrc", "payload_type")},
                            "clock_rate": 16000, "ptime_ms": 10.0}
-               for direction, stream in zip(("tx", "rx"), streams, strict=True)}})
+               for direction, stream in zip(("tx", "rx"), [s for s in streams if s["media_type"]=="audio"], strict=True)}})
         for key in ("started_at", "connected_at", "ended_at", "quiescent_at"):
             receipt["sessions"][-1][key] += time_origin
     return receipt
@@ -293,6 +296,35 @@ def test_bound_transport_and_new_call_receipt_can_attest_hil(tmp_path: Path) -> 
         [artifact], candidate_id="candidate")
     assert claims[0]["oracles"] == ("esp-state", "rtp-duplex")
     assert "immediate-redial" in claims[0]["postconditions"]
+
+
+@pytest.mark.parametrize("fault",[None,"shared_loss","missing_ledger","unscoped_none"])
+def test_hil_shared_payload_loss_cannot_be_coerced_or_ignored(tmp_path: Path, fault):
+    receipt=write_measured_hil_fixture(tmp_path,shared_payload=True)
+    if fault:
+        reference=receipt["sessions"][0]["rtp_report"]
+        path=tmp_path/reference["path"]
+        report=json.loads(path.read_bytes())
+        first=report["streams"][0]
+        assert first["lost_packets"] is None
+        if fault=="shared_loss":
+            first["sequence_ledger"]["lost_packets"]=1
+        elif fault=="missing_ledger":
+            first.pop("sequence_ledger")
+        else:
+            first.pop("loss_scope")
+        raw=json.dumps(report).encode()
+        path.write_bytes(raw)
+        reference.update(bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+    artifact=_measured_hil_artifact(tmp_path,receipt)
+    def derive():
+        return derive_scenario_evidence("hil-s3",{"plan_id":"plan","head":"head","scenarios":[{"id":"esp-to-ha-answer-hangup"}]},
+                                       [artifact],candidate_id="candidate")
+    if fault:
+        with pytest.raises(EvidenceError,match="did not prove planned scenario"):
+            derive()
+    else:
+        assert "rtp-duplex" in derive()[0]["oracles"]
 
 
 @pytest.mark.parametrize("fault", [None, "changed_lifetime", "active_relay", "negative", "boolean"])

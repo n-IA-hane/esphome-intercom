@@ -139,7 +139,7 @@ def _rtp_payload(packet: bytes) -> tuple[int, int, int, int, bytes]:
 
 
 def decode_l16_rtp(packets: list[bytes], fmt: AudioWireFormat, output: Path,
-                   *, minimum_seconds: float = 20) -> dict[str, object]:
+                   *, minimum_seconds: float = 20, sequence_packets: list[bytes] | None = None) -> dict[str, object]:
     """Independent RFC3551 big-endian PCM decoder, never acoustic proof.
 
     Format comes from this direction's real SDP, not a generic PT cache. Both
@@ -150,6 +150,27 @@ def decode_l16_rtp(packets: list[bytes], fmt: AudioWireFormat, output: Path,
             or not math.isfinite(minimum_seconds) or minimum_seconds <= 0):
         raise ValueError("Unsupported measured L16 format")
     samples_per_packet = fmt.rate * fmt.ptime_ms // 1000
+    shared_sequence_ledger = None
+    if sequence_packets is not None:
+        # Metadata is insufficient: derive the ledger from the complete captured
+        # RTP bytes and prove the selected PCM packets are its exact PT subset.
+        from tools.rtp_pcap_evidence import analyze_rows, sequence_statistics
+        rows, selected, ssrcs = [], [], set()
+        for index, raw in enumerate(sequence_packets):
+            pt, seq, timestamp, ssrc, _payload = _rtp_payload(raw)
+            ssrcs.add(ssrc)
+            rows.append(f"{index}\traw\t1\traw\t2\t{hex(ssrc)}\t{pt}\t{seq}\t{timestamp}")
+            if pt == fmt.payload_type:
+                selected.append(raw)
+        if len(ssrcs) != 1 or selected != packets:
+            raise ValueError("Shared sequence bytes differ from the selected PCM source")
+        sources = analyze_rows(rows)
+        owner = next((item for item in sources if item["payload_type"] == fmt.payload_type), None)
+        if owner is None or owner["loss_scope"] != "shared_sequence_space":
+            raise ValueError("Missing complete shared RTP sequence packet evidence")
+        shared_sequence_ledger = sequence_statistics(owner, sources)
+        if shared_sequence_ledger["lost_packets"] or shared_sequence_ledger["duplicate_packets"]:
+            raise ValueError("Shared RTP source has loss or duplicate packets")
     expected_bytes = samples_per_packet * fmt.channels * 2
     decoded = bytearray()
     energy, sample_count = 0, 0
@@ -163,7 +184,9 @@ def decode_l16_rtp(packets: list[bytes], fmt: AudioWireFormat, output: Path,
         if stream_ssrc is not None and ssrc != stream_ssrc:
             raise ValueError("Multiple SSRCs in one decoded direction")
         stream_ssrc = ssrc
-        if previous is not None and ((seq - previous[0]) & 65535 != 1
+        if shared_sequence_ledger is not None and int(shared_sequence_ledger["ssrc"],0) != ssrc:
+            raise ValueError("Shared sequence ledger belongs to another SSRC")
+        if previous is not None and ((shared_sequence_ledger is None and (seq - previous[0]) & 65535 != 1)
                 or (timestamp - previous[1]) & 0xFFFFFFFF != samples_per_packet):
             raise ValueError("RTP loss, duplicate, reordering or sampling-clock gap")
         previous = seq, timestamp
@@ -186,7 +209,8 @@ def decode_l16_rtp(packets: list[bytes], fmt: AudioWireFormat, output: Path,
             "channels": fmt.channels, "packets": len(packets), "ssrc": stream_ssrc,
             "samples_per_channel": sample_count // fmt.channels, "duration_seconds": duration,
             "rms": math.sqrt(energy / sample_count), "pcm_sha256": hashlib.sha256(decoded).hexdigest(),
-            "wav_sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+            "wav_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+            "shared_ssrc_sequence_verified": shared_sequence_ledger is not None}
 
 
 def decode_pcap_l16(pcap: Path, selection: dict, fmt: AudioWireFormat, output: Path,
@@ -196,14 +220,15 @@ def decode_pcap_l16(pcap: Path, selection: dict, fmt: AudioWireFormat, output: P
     The caller binds this capture to the run/Call-ID through evidence.py. This
     helper alone only reports software decoding of the selected PCAP bytes.
     """
-    from tools.rtp_pcap_evidence import analyze_pcap
+    from tools.rtp_pcap_evidence import analyze_pcap, sequence_statistics
     checked = subprocess.run(["capinfos", str(pcap)], capture_output=True, check=True)
     streams = analyze_pcap(pcap, sip_ports=tuple(sip_ports))
     selected = [stream for stream in streams if all(stream.get(key) == selection.get(key)
                 for key in ("source", "destination", "ssrc", "payload_type"))]
     if (len(selected) != 1 or selected[0].get("media_type") != "audio"
             or selected[0].get("clock_rate") != fmt.rate or selected[0].get("payload_type") != fmt.payload_type
-            or selected[0].get("lost_packets") != 0 or selected[0].get("duplicate_packets") != 0):
+            or sequence_statistics(selected[0], streams)["lost_packets"] != 0
+            or sequence_statistics(selected[0], streams)["duplicate_packets"] != 0):
         raise ValueError("PCAP has no unique lossless SDP-bound audio direction")
     source, sport = selection["source"].rsplit(":", 1)
     destination, dport = selection["destination"].rsplit(":", 1)
@@ -212,11 +237,13 @@ def decode_pcap_l16(pcap: Path, selection: dict, fmt: AudioWireFormat, output: P
     if not 0 < sport < 65536 or not 0 < dport < 65536 or not 0 <= ssrc <= 0xFFFFFFFF:
         raise ValueError("Invalid selected RTP tuple")
     display_filter = (f"rtp && ip.src == {source} && ip.dst == {destination} && udp.srcport == {sport} "
-                      f"&& udp.dstport == {dport} && rtp.ssrc == {ssrc} && rtp.p_type == {fmt.payload_type}")
+                      f"&& udp.dstport == {dport} && rtp.ssrc == {ssrc}")
     decoded = subprocess.run(["tshark", "-r", str(pcap), "-d", f"udp.port=={sport},rtp",
         "-Y", display_filter, "-T", "fields", "-e", "udp.payload"], capture_output=True, text=True, check=True)
-    packets = [bytes.fromhex(line.replace(":", "")) for line in decoded.stdout.splitlines() if line]
-    result = decode_l16_rtp(packets, fmt, output, minimum_seconds=minimum_seconds)
+    source_packets = [bytes.fromhex(line.replace(":", "")) for line in decoded.stdout.splitlines() if line]
+    packets = [raw for raw in source_packets if _rtp_payload(raw)[0] == fmt.payload_type]
+    shared = source_packets if selected[0].get("loss_scope") == "shared_sequence_space" else None
+    result = decode_l16_rtp(packets, fmt, output, minimum_seconds=minimum_seconds, sequence_packets=shared)
     return {**result, "pcap_sha256": hashlib.sha256(pcap.read_bytes()).hexdigest(),
             "capinfos_stdout_sha256": hashlib.sha256(checked.stdout).hexdigest(), "selection": dict(selection)}
 
