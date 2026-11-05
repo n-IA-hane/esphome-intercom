@@ -298,7 +298,7 @@ def wire_capture(tmp_path, name, packets, *, signal_source="192.0.2.10",
                 body += f"c=IN IP4 {media_ip}\r\n"
             body += "a=rtpmap:102 H264/90000\r\n"
         first = "SIP/2.0 200 OK" if response else "INVITE sip:b@192.0.2.20 SIP/2.0"
-        sip = (first+"\r\nVia: SIP/2.0/UDP "+signal_source+";branch=z9hG4bK-audit7\r\n"
+        sip = (first+"\r\nVia: SIP/2.0/UDP "+signal_source+";branch=z9hG4bK-shared-source\r\n"
                "From: <sip:a@example.invalid>;tag=a\r\nTo: <sip:b@example.invalid>\r\n"
                "Call-ID: "+name+"@offline.invalid\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n"
                f"Content-Length: {len(body)}\r\n\r\n"+body).encode()

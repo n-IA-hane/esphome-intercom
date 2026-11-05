@@ -7,9 +7,10 @@ import re
 import time
 from types import SimpleNamespace
 
-# Use the installed HA types, then the maintained pure protocol test loaders.
+# Load real HA and integration packages before the pure protocol helper loaders.
 import homeassistant.config_entries  # noqa: F401
 import homeassistant.core  # noqa: F401
+import custom_components.voip_stack  # noqa: F401
 
 from .voip_phase1_support import (
     audio_format,
@@ -247,7 +248,7 @@ async def exercise(order, *, revoke=False, logical_leg=False):
                             PASSWORDS[user],
                             "REGISTER",
                             uri,
-                            "audit7-" + user + str(cseq),
+                            "refer-dialog-" + user + str(cseq),
                         ),
                     )
                 )
@@ -435,7 +436,9 @@ async def exercise(order, *, revoke=False, logical_leg=False):
 
 
 @pytest.mark.parametrize("order", [("Alice",), ("Alice", "Bob"), ("Bob", "Alice")])
-def test_refer_notify_authenticates_original_principal_on_shared_flow(order):
+def test_refer_notify_authenticates_original_principal_on_shared_flow(
+    order, socket_enabled
+):
     result = asyncio.run(exercise(order, logical_leg=len(order) > 1))
     assert result["dialog_credentials_username"] == "Alice"
     assert result["terminal_authenticated"]
@@ -444,7 +447,9 @@ def test_refer_notify_authenticates_original_principal_on_shared_flow(order):
 
 
 @pytest.mark.parametrize("order", [("Alice", "Bob"), ("Bob", "Alice")])
-def test_revoked_binding_cannot_authenticate_final_notify_as_remaining_account(order):
+def test_revoked_binding_cannot_authenticate_final_notify_as_remaining_account(
+    order, socket_enabled
+):
     result = asyncio.run(exercise(order, revoke=True))
     assert not result["terminal_authenticated"]
     assert len(result["authenticated_NOTIFIES"]) == 1
