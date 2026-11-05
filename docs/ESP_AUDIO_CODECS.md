@@ -77,6 +77,11 @@ Enable G.722 on the PBX account too. G.722 provides wideband mono audio from
 The supported RTP profile uses 64 kbit/s. See
 [RFC 3551, section 4.5.2](https://www.rfc-editor.org/rfc/rfc3551.html#section-4.5.2).
 
+With PCM first in the RX list, compatible decoded G.722 uses that PCM rate
+for local playback, such as the FULL mixer's 48 kHz. This conversion does not
+change G.722 on the network: it still carries 16 kHz audio with its negotiated
+packet time. A G.722-only profile keeps local playback at 16 kHz.
+
 The ESP backend uses Espressif `esp_audio_codec` 2.5.0 through its direct G.722
 APIs. This version supports early P4 profiles. Do not raise a board's minimum
 chip revision merely to satisfy a newer codec package.

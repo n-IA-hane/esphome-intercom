@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -723,3 +724,24 @@ def test_ws3_uses_official_resampler_scheduling_configuration(tmp_path: Path, fe
     for speaker in resamplers:
         assert 'task_core' not in speaker, speaker['id']
         assert 'task_priority' not in speaker, speaker['id']
+
+
+def test_ws3_jpeg_worker_does_not_preempt_its_audio_resampler(tmp_path: Path) -> None:
+    profile_path = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml'
+    profile = yaml_util.load_yaml(ROOT / profile_path)
+    config = device_config(tmp_path, profile['substitutions']['firmware_features'], profile_path)
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    generated = list(tmp_path.rglob('src/main.cpp'))
+    assert len(generated) == 1
+    source = generated[0].read_text()
+    audio = generated[0].parent / 'esphome/components/resampler/speaker/resampler_speaker.cpp'
+    consumer = re.search(r'\bRESAMPLER_TASK_PRIORITY\s*=\s*(\d+)', audio.read_text())
+    renderer = re.search(r'\bs3_video->set_task_priority\((\d+)\)', source)
+    assert consumer and renderer, 'The real schema/codegen must keep both scheduler owners visible'
+    assert int(renderer[1]) <= int(consumer[1]), (
+        'Best-effort JPEG must not preempt the downstream audio resampler', renderer[1], consumer[1]
+    )
