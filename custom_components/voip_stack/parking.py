@@ -411,6 +411,13 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
             trunk_id=str(session.metadata.get("inbound_trunk_id") or ""), allow_video=True)
     if source is None:
         raise ParkingError("The remote SIP dialog is no longer available")
+    if (client is None and descriptor.get("local_video_rtp_port") == 0
+            and video is None and video_owner is None):
+        # The UAS invite retains the remote offer. The committed answer can
+        # reject its video stream (RFC 3264 section 6); keep that decision
+        # in the application's contract without changing the received offer.
+        source = replace(source, video_format=None, local_video_format=None, video_answer_format=None,
+            remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
     local_ip = str(client.local_ip if client is not None else server.local_ip)
     lot = get_parking_lot(hass)
     settings = parking_settings(hass)

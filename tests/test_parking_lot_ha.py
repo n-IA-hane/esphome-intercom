@@ -718,7 +718,8 @@ async def test_local_browser_parking_keeps_other_phone_for_sip_pickup(registered
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypatch):
+@pytest.mark.parametrize("reject_offered_video", [False, True])
+async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypatch, reject_offered_video):
     """An external caller remains parked while its original browser rejoins."""
     import socket
     import struct
@@ -727,7 +728,7 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
     from custom_components.voip_stack import audio_ws, audio_ws_view, softphone_originate
     from custom_components.voip_stack.config import normalized_trunk_config
     from custom_components.voip_stack.core.audio_format import AudioFormat
-    from custom_components.voip_stack.core import rtp
+    from custom_components.voip_stack.core import rtp, sdp
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
     from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
@@ -738,7 +739,7 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
     phone = PhoneEndpoint(endpoint_id="desk", name="Desk", device_id="desk-device",
-                          kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf"}))
+                          kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf", "video"}))
     lab.runtime.endpoints.register(phone)
     lab.runtime.preferred_phone_device_id = phone.device_id
     lab.roster.append(RosterEntry("Desk", metadata={"local_ha": True, "endpoint_id": phone.endpoint_id}))
@@ -751,6 +752,13 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
     await async_stop_sip_trunk(lab.hass)
     lab.runtime.trunk_configs = {"home": lab.runtime.trunk_configs["home"]}
     lab.runtime.trunk_config = lab.runtime.trunk_configs["home"]
+    if reject_offered_video:
+        from custom_components.voip_stack.runtime_data import sip_endpoint_manager
+        manager = sip_endpoint_manager(lab.hass)
+        manager.enable_video = True
+        for listener in manager._dialog_endpoints():
+            listener.enable_video = True
+        lab.runtime.transport_config["experimental_sip_video"] = True
     await async_start_sip_trunk(lab.hass, local_ip="127.0.0.1")
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -778,12 +786,27 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.3", 0))
     audio.setblocking(False)
+    video_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    video_socket.bind(("127.0.0.3", 0))
     client = SipCallClient(local_ip="127.0.0.3", local_name="External", local_sip_port=0,
-                           local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, "s16le", 1, 20)])
+                           local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, "s16le", 1, 20)],
+                           local_video_rtp_port=video_socket.getsockname()[1] if reject_offered_video else 0,
+                           video_format=sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"),
+                           video_direction="recvonly")
     from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
     client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
         lambda: SipDatagramQueueProtocol(client.queue), local_addr=("127.0.0.3", 0))
     client.local_sip_port = client.transport.get_extra_info("sockname")[1]
+    answers = []
+    read_response = client._read_response
+    async def observe_answer(*args, **kwargs):
+        result = await read_response(*args, **kwargs)
+        if result is not None:
+            message, _address = result
+            if message.status_code == 200 and message.header("CSeq").endswith(" INVITE"):
+                answers.append(message.body)
+        return result
+    monkeypatch.setattr(client, "_read_response", observe_answer)
     workers = []
     signaling = None
     try:
@@ -791,8 +814,18 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
         assert await client.invite(target="Desk", remote_host="127.0.0.1", remote_sip_port=port,
                                    request_uri=f"sip:Desk@127.0.0.1:{port}", timeout=2) == "ringing"
         call_id = client.dialog_ids.call_id
-        await lab.hass.services.async_call("voip_stack", "answer", {"device_id": phone.device_id, "call_id": call_id}, blocking=True)
+        await lab.hass.services.async_call("voip_stack", "answer", {"device_id": phone.device_id, "call_id": call_id,
+            "accept_video": not reject_offered_video}, blocking=True)
         await wait_for(lambda: client.dialog is not None and lab.runtime.endpoints.get(phone.endpoint_id).active_call_id == call_id)
+        if reject_offered_video:
+            descriptor = lab.calls.resource_for(call_id, "softphone_media")
+            offered_invite = descriptor["invite"]
+            assert offered_invite.video_format.encoding == "JPEG"
+            assert offered_invite.remote_video_rtp_port == video_socket.getsockname()[1]
+            assert descriptor["local_video_rtp_port"] == 0
+            assert client.dialog.video_format is None
+            assert b"m=video 0 " in answers[0]
+            assert not lab.runtime.media.sessions_for("video")
         signaling = asyncio.create_task(client.wait_for_dialog_termination(timeout=15))
         owner = lab.calls.get_session(call_id)
         assert owner.metadata["inbound_trunk_id"] == "home"
@@ -836,6 +869,12 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
             assert not lab.runtime.endpoints.get(phone.endpoint_id).active_call_id
             assert phone.endpoint_id not in owner.endpoint_claims
             assert lot.calls["701"].session is owner
+            if reject_offered_video:
+                application = lab.calls.resource_for(call_id, "parking")
+                assert application.media.video_relay is None
+                assert application.invite.video_format is None
+                # The original received offer remains signaling evidence.
+                assert offered_invite.video_format.encoding == "JPEG"
             await lab.hass.services.async_call("voip_stack", "call", {"device_id": phone.device_id, "destination": "701"}, blocking=True)
             assert not lot.calls
             assert lab.calls.get_session(call_id) is owner
@@ -854,6 +893,7 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
                 worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
         audio.close()
+        video_socket.close()
 
 
 @pytest.mark.parametrize("active_video", [False, True])
