@@ -63,6 +63,31 @@ Component Manager. They are not vendored here; their upstream licenses apply.
 Firmware using Espressif-restricted components is intended for Espressif
 products/SoCs.
 
+## Opus audio
+
+The optional SIP Opus codec uses unmodified `esphome-libs/micro-opus` at
+`93bf9c10196e368405ee1501bfd72f0be2518741`. That component includes Opus
+`22244de5a79bd1d6d623c32e72bf1954b56235be` and microOggDemuxer
+`865ad9d831e7dc76bb9c142607bae33fc75648e7` as upstream submodules.
+ESPHome media paths can also use micro-opus independently of SIP codec selection.
+
+| Component | License and original notices |
+|---|---|
+| micro-opus wrapper | Apache-2.0: [license](licenses/MICRO-OPUS-LICENSE.txt) and [NOTICE](licenses/MICRO-OPUS-NOTICE.txt). |
+| Opus encoder and decoder | BSD-3-Clause: [copyright, conditions, disclaimer and patent-license references](licenses/OPUS-COPYING.txt). |
+| microOggDemuxer | Apache-2.0: [license and copyright](licenses/MICRO-OGG-DEMUXER-LICENSE.txt). |
+
+These files reproduce the upstream texts without modification. Paths inside the
+original NOTICE refer to the upstream layout; the table maps them to our copies.
+Both source and binary redistributions must retain the applicable notices. When
+redistributing firmware containing these components, include these texts in the
+documentation or other materials provided with the binary. A bare firmware
+binary does not carry this accompanying documentation. The firmware candidate
+bundler copies the repository license, this notice and the `licenses/` texts
+into its bundle. Keep the Opus royalty-free patent-license references and do
+not imply upstream endorsement. These materials cover the Opus dependency;
+they do not replace other firmware dependency licenses or source requirements.
+
 ## Documentation assets
 
 Images and videos under `docs/images/` are project documentation assets unless

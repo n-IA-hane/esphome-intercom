@@ -19,6 +19,33 @@ sys.path.insert(0, str(ROOT))
 from qualification.registry import FIRMWARE_PROFILES  # noqa: E402
 
 
+REQUIRED_DISTRIBUTION_NOTICES = (
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses/ESPHOME-LICENSE.txt",
+    "licenses/MICRO-OPUS-LICENSE.txt",
+    "licenses/MICRO-OPUS-NOTICE.txt",
+    "licenses/OPUS-COPYING.txt",
+    "licenses/MICRO-OGG-DEMUXER-LICENSE.txt",
+)
+
+
+def stage_distribution_notices(bundle: Path) -> None:
+    """Keep repository notices with firmware, including externally indexed builds."""
+
+    sources = {ROOT / name for name in REQUIRED_DISTRIBUTION_NOTICES}
+    sources.update((ROOT / "licenses").glob("*.txt"))
+    for source in sorted(sources):
+        if not source.is_file():
+            raise RuntimeError(
+                f"firmware redistribution notice is missing: {source.relative_to(ROOT)}"
+            )
+    for source in sorted(sources):
+        target = bundle / source.relative_to(ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -157,6 +184,7 @@ def bind_candidate(
     profiles = [profile for profile in FIRMWARE_PROFILES if profile.id in selected]
     if selected != {profile.id for profile in profiles}:
         raise RuntimeError("qualification plan contains an unknown firmware profile")
+    stage_distribution_notices(bundle)
     firmware: list[dict[str, object]] = []
     for profile in profiles:
         record = by_profile.get(profile.id)

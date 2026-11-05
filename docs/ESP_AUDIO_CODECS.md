@@ -114,6 +114,18 @@ Qualification for those profiles is pending. The commented FULL examples show
 the proposed schema; they cannot currently be enabled. A VoIP-only success does
 not establish safe coexistence with Assist, wake words, music and video.
 
+### Opus licenses and firmware redistribution
+
+The SIP Opus backend uses the official micro-opus component, which combines an
+Apache-2.0 wrapper with the BSD-3-Clause Opus codec. The licenses permit use and
+redistribution, including commercial use, subject to their conditions.
+When distributing a compiled firmware, provide the copyright, license,
+disclaimer and NOTICE texts with it. The exact upstream texts and their source
+revisions are listed in [Third-party notices](../THIRD_PARTY_NOTICES.md#opus-audio).
+The firmware candidate bundler includes these materials; if sharing a binary
+directly from another build tool, provide the notice and license files alongside
+it. These texts do not need to be stored in the ESP's runtime memory.
+
 ## Configuration and familiar PBX names
 
 Each codec has its own ordered `tx` and `rx` lists. `sample_rate` and `frame_ms`

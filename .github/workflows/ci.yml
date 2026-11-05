@@ -368,9 +368,11 @@ jobs:
           from pathlib import Path
           import shutil
           import subprocess
+          from scripts.firmware_manifest import stage_distribution_notices
           project = Path(os.environ['RUNNER_TEMP']) / 'ws3-public-project'
           output = Path('test-results/ws3-public')
           output.mkdir(parents=True, exist_ok=True)
+          stage_distribution_notices(output / 'firmware')
           clones = []
           for domain in ('packages', 'external_components'):
               cache = project / '.esphome' / domain
