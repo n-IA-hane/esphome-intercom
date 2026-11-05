@@ -126,18 +126,27 @@ def analyze_pcap(path: Path, *, sip_ports: tuple[int, ...] = ()) -> list[dict[st
         text=True,
     )
     streams = analyze_rows(result.stdout.splitlines())
-    clock_rates = _sdp_audio_clock_rates(tshark, path, sip_ports=sip_ports)
+    mappings = _sdp_rtp_mappings(tshark, path, sip_ports=sip_ports)
     for stream in streams:
         source_host, source_port = stream["source"].rsplit(":", 1)
-        clock_rate = clock_rates.get(
+        mapping = mappings.get(
             (source_host, int(source_port), stream["payload_type"])
         )
-        if clock_rate is None:
+        if mapping is None or mapping[0] != "audio":
             stream["media_type"] = "video"
             continue
-        stream["media_type"] = "audio"
-        expected_delta = 1000 * stream["timestamp_step"] / clock_rate
+        _, encoding, clock_rate, _ = mapping
         stream["clock_rate"] = clock_rate
+        if encoding == "TELEPHONE-EVENT":
+            # RFC4733: packets for one event retain its start timestamp.
+            # Their cadence is not a voice sample clock. Digit/End semantics
+            # require their own event oracle, not an audio-cadence verdict.
+            stream["media_type"] = "telephone-event"
+            continue
+        stream["media_type"] = "audio"
+        if stream["timestamp_step"] <= 0:
+            raise ValueError("Audio RTP timestamp does not advance")
+        expected_delta = 1000 * stream["timestamp_step"] / clock_rate
         stream["expected_delta_ms"] = round(expected_delta, 6)
         stream["cadence_ratio"] = round(
             stream["mean_delta_ms"] / expected_delta, 6
@@ -156,9 +165,10 @@ def evaluate_streams(
     """Evaluate strict audio and optional video continuity contracts."""
 
     failures = []
-    if len(streams) < require_streams:
+    media_streams = [stream for stream in streams if stream.get("media_type") != "telephone-event"]
+    if len(media_streams) < require_streams:
         failures.append(f"expected at least {require_streams} RTP streams")
-    for stream in streams:
+    for stream in media_streams:
         media_type = stream.get("media_type", "video")
         loss_limit = max_audio_loss if media_type == "audio" else max_video_loss
         if loss_limit is not None and stream["lost_packets"] > loss_limit:
@@ -175,18 +185,17 @@ def evaluate_streams(
     return failures
 
 
-def _sdp_audio_clock_rates(
+def _sdp_rtp_mappings(
     tshark: str,
     path: Path,
     *,
     sip_ports: tuple[int, ...] = (),
-) -> dict[tuple[str, int, int], int]:
+) -> dict[tuple[str, int, int], tuple[str, str, int, int]]:
     result = subprocess.run(
         [tshark, *_sip_decode_arguments(sip_ports), "-r", str(path),
          "-Y", "sdp", "-T", "pdml"],
         check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
-    rates: dict[tuple[str, int, int], int] = {}
     mappings: dict[tuple[str, int, int], tuple[str, str, int, int]] = {}
     media_types: dict[tuple[str, int, int], str] = {}
     static = {0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1)}
@@ -196,8 +205,6 @@ def _sdp_audio_clock_rates(
         if key in mappings and mappings[key] != mapping:
             raise ValueError(f"Ambiguous SDP RTP mapping for {key}")
         mappings[key] = mapping
-        if media == "audio":
-            rates[key] = clock
 
     for packet in ElementTree.fromstring(result.stdout).findall("packet"):
         source_field = packet.find(".//field[@name='ip.src']")
@@ -239,7 +246,19 @@ def _sdp_audio_clock_rates(
                     media, port, payloads = current
                     if pt in payloads:
                         record((source, port, pt), media, encoding, clock, channels)
-    return rates
+    return mappings
+
+
+def _sdp_audio_clock_rates(
+    tshark: str,
+    path: Path,
+    *,
+    sip_ports: tuple[int, ...] = (),
+) -> dict[tuple[str, int, int], int]:
+    """Compatibility projection of the one authoritative SDP mapping parser."""
+    return {key: mapping[2]
+            for key, mapping in _sdp_rtp_mappings(tshark, path, sip_ports=sip_ports).items()
+            if mapping[0] == "audio"}
 
 
 def _sha256(path: Path) -> str:

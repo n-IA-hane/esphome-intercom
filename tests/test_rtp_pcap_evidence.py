@@ -218,3 +218,48 @@ def test_consistent_repeated_sdp_and_static_audio_clocks_remain_usable(monkeypat
         ("192.0.2.1", 40000, 0): 8000, ("192.0.2.1", 40000, 8): 8000,
         ("192.0.2.1", 40000, 9): 8000, ("192.0.2.1", 40000, 96): 16000,
     }
+
+
+@pytest.mark.parametrize("encoding,clock,step", [("L16", 16000, 320), ("G722", 8000, 160), ("opus", 48000, 960)])
+def test_telephone_event_repeated_timestamp_is_not_an_audio_cadence(monkeypatch, tmp_path, encoding, clock, step):
+    """RFC4733 retains the event-start timestamp across multiple packets."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _: "tshark")
+    data = sdp_pdml(("192.0.2.1", [
+        ("sdp.media", "audio 40000 RTP/AVP 96 120"),
+        ("sdp.media_attr", f"rtpmap:96 {encoding}/{clock}/1"),
+        ("sdp.media_attr", "rtpmap:120 telephone-event/8000"),
+    ]))
+    voice = [row(index * .02, 100 + index, 1000 + index * step) for index in range(3)]
+    events = [row(.005 + index * .01, 500 + index, 8000).replace("\t96\t", "\t120\t") for index in range(3)]
+
+    def captured(command, **kwargs):
+        return SimpleNamespace(stdout=data if command[command.index("-Y") + 1] == "sdp" else "\n".join(voice + events))
+
+    monkeypatch.setattr(MODULE.subprocess, "run", captured)
+    streams = MODULE.analyze_pcap(tmp_path / "mixed.pcap")
+    audio = next(stream for stream in streams if stream["payload_type"] == 96)
+    event = next(stream for stream in streams if stream["payload_type"] == 120)
+    assert audio["media_type"] == "audio" and audio["expected_delta_ms"] == 20
+    assert audio["cadence_ratio"] == 1
+    assert event["media_type"] == "telephone-event"
+    assert event["clock_rate"] == 8000 and event["timestamp_step"] == 0
+    assert "cadence_ratio" not in event
+    assert not MODULE.evaluate_streams(streams, require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.25)
+    assert MODULE.evaluate_streams([event], require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.25) == ["expected at least 1 RTP streams"]
+
+
+def test_zero_advance_voice_timestamp_still_fails_closed(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _: "tshark")
+    data = sdp_pdml(("192.0.2.1", [("sdp.media", "audio 40000 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1")]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda command, **_kwargs:
+        SimpleNamespace(stdout=data if command[command.index("-Y") + 1] == "sdp" else "\n".join(
+            row(index * .02, 100 + index, 1000) for index in range(3))))
+    with pytest.raises(ValueError, match="Audio RTP timestamp does not advance"):
+        MODULE.analyze_pcap(tmp_path / "broken-voice.pcap")
