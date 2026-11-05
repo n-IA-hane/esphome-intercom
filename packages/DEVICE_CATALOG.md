@@ -40,6 +40,7 @@ firmware remains the owner of its audio and assistant.
 | [waveshare-p4-touch-videophone-h264](../yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml) | [`devices/waveshare-p4-phone-h264.yaml`](devices/waveshare-p4-phone-h264.yaml) | `voip, directory, blf, mwi, display, video` |
 | [waveshare-p4-touch-videophone-jpeg](../yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml) | [`devices/waveshare-p4-phone-jpeg.yaml`](devices/waveshare-p4-phone-jpeg.yaml) | `voip, directory, blf, mwi, display, video` |
 | [waveshare-s3-voip](../yamls/voip-only/single-bus/waveshare-s3-voip.yaml) | [`devices/waveshare-s3-phone.yaml`](devices/waveshare-s3-phone.yaml) | `voip, directory, blf, mwi, status_led, diagnostics` |
+| [waveshare-s3-touch-lcd-1.85c-box-v2-voip](../yamls/voip-only/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-voip.yaml) | [`devices/waveshare-s3-box-v2-phone.yaml`](devices/waveshare-s3-box-v2-phone.yaml) | `voip, directory, blf, mwi, display, diagnostics` |
 
 `esp32-s3-box-3-additions.yaml` remains a compatibility overlay for existing
 BOX-3 configurations; it is not a separate firmware entrypoint. New BOX-3 device

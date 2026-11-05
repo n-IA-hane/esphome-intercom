@@ -1,0 +1,64 @@
+# Waveshare ESP32-S3-Touch-LCD-1.85C-BOX V2 (SKU 30684), standalone phone.
+# Uses the shared V2 board/display wiring and calibrated mono AEC audio path.
+# Rich phone UI, contacts, BLF and MWI; no Assist, MWW, music or Sendspin.
+# Opus PCM boundary: TX 16 kHz / 20 ms, RX 48 kHz / 20 ms, mono s16le.
+# RTP uses opus/48000/2. Neither PCM nor G722 is implicitly enabled.
+# Keep secrets.yaml beside this file, with wifi_ssid and wifi_password.
+# Status: maintained; bidirectional SIP/Opus media and redial tested on BOX V2.
+
+substitutions:
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  gmf_ai_audio_source: ""
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+  name: waveshare-s3-touch-lcd-185c-v2
+  friendly_name: Waveshare S3 Touch LCD 1.85C V2
+  firmware_features: [voip, directory, blf, mwi, display, diagnostics]
+  audio_processor: aec
+  mic_mix: average
+  mic_id: mic_main
+  voip_transport: udp
+
+  # Shared V2 hardware parameters, consumed by the maintained board packages.
+  codec_i2c_sda_pin: GPIO11
+  codec_i2c_scl_pin: GPIO10
+  i2s_mclk_pin: GPIO2
+  i2s_bclk_pin: GPIO48
+  i2s_lrclk_pin: GPIO38
+  i2s_din_pin: GPIO39
+  i2s_dout_pin: GPIO47
+  battery_adc_pin: GPIO8
+  main_button_pin: GPIO0
+  speaker_enable_pin: GPIO15
+  display_backlight_pin: GPIO5
+  touch_interrupt_pin: GPIO4
+  display_width: "360"
+  display_height: "360"
+
+  # Existing standalone round UI proportions, adapted to the 360-pixel panel.
+  call_btn_size: "25%"
+  call_btn_offset: "2%"
+  call_btn_below_center: "19%"
+  call_contacts_y: "31%"
+  call_peer_width: "336"
+  call_ringing_in_peer_width: "208"
+  call_title_width: "174"
+  call_ended_text_width: "280"
+  call_ended_reason_text_width: "265"
+  settings_row_width: "255"
+  settings_wide_width: "285"
+  settings_mid_width: "255"
+  settings_narrow_width: "225"
+  settings_dropdown_width: "255"
+  settings_slider_height: "18"
+  settings_switch_width: "75"
+  settings_switch_height: "39"
+  settings_label_font: font_info
+  settings_pad_row: "9"
+
+packages:
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2-phone.yaml@dev

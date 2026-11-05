@@ -106,6 +106,22 @@ def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> N
     assert tool.selected([maintained, private], str(private)) == [private]
 
 
+def test_managed_files_include_new_public_yaml_and_exclude_gitignored_work(tmp_path: Path) -> None:
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("yamls/private.yaml\npackages/private.yaml\n")
+    for folder in ("yamls", "packages"):
+        directory = tmp_path / folder
+        directory.mkdir()
+        for name in ("tracked.yaml", "new-phone.yaml", "private.yaml", "phone-local.yaml", "secrets.yaml"):
+            (directory / name).write_text("substitutions: {}\n")
+        subprocess.run(["git", "add", f"{folder}/tracked.yaml"], cwd=tmp_path, check=True)
+        assert tool.managed_files(directory) == sorted([
+            directory / "new-phone.yaml", directory / "tracked.yaml"
+        ])
+
+
 def test_standalone_native_example_checks_exact_channel_and_roundtrips(tmp_path: Path) -> None:
     tool = _load_yaml_paths()
     example = tmp_path / 'native-phone.yaml'

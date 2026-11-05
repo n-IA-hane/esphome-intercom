@@ -34,6 +34,13 @@ there to choose AEC/AFE, separate/averaged microphones and SIP UDP/TCP without
 copying hardware or application wiring. Read the [choice table](../packages/README.md#choose-processing-and-sip-on-waveshare-box-v2)
 before changing processing; V1 is a different board.
 
+For a dedicated telephone on the same BOX V2 hardware, use the
+[VoIP-only YAML](voip-only/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-voip.yaml).
+It includes the touch phone interface, shared directory, BLF and voicemail
+indicators, with Opus enabled. Its mono AEC receives the averaged microphones.
+The FULL profile keeps PCM and optional G.722 for calls alongside Assist, wake
+words and media playback. Choose the profile for the job you need.
+
 ## How to use
 
 1. Download the YAML for your device and any companion files explicitly required

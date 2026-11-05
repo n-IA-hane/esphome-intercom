@@ -83,8 +83,14 @@ chip revision merely to satisfy a newer codec package.
 
 ## Opus
 
-Maintained S3 VoIP-only profiles already use Opus. The following describes an
-asymmetric local PCM boundary with 20 ms packets:
+Maintained S3 VoIP-only profiles already use Opus.
+
+The [WS3 LCD BOX V2 telephone profile](../yamls/voip-only/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-voip.yaml)
+supplies this configuration together with the phone interface, directory, BLF
+and MWI. The headless S3 Audio board has its own
+[VoIP-only profile](../yamls/voip-only/single-bus/waveshare-s3-voip.yaml).
+
+The following describes an asymmetric local PCM boundary with 20 ms packets:
 
 ```yaml
 voip_stack:

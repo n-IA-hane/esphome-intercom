@@ -29,9 +29,9 @@ OWNED_URLS = tuple(url for url in URLS if url != CAMERA_URL)
 
 
 def managed_files(base):
-    """Only versioned public YAMLs, with a filesystem fallback for fixtures."""
+    """Public YAMLs, including new nonignored files before their first staging."""
     result = subprocess.run(
-        ["git", "ls-files", "--", base.relative_to(ROOT).as_posix()],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", base.relative_to(ROOT).as_posix()],
         cwd=ROOT, capture_output=True, text=True, check=False,
     )
     paths = (ROOT / name for name in result.stdout.splitlines()) if result.returncode == 0 else base.rglob("*.yaml")
