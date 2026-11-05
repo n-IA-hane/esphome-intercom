@@ -410,6 +410,8 @@ async def async_answer_browser_call(
         )
         if claimed is None:
             return False
+        from .inbound_answer import confirm_existing_caller_leg
+        confirm_existing_caller_leg(registry, claimed, invite.call_id)
         registry.take_pending_invite(call_id)
         return True
 

@@ -398,6 +398,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
         {"roster_json": dump_roster_json(runtime.roster)},
     )
     caller, original, picker = registered_phones
+    runtime.runtime.endpoints.update("transfer_a", device_id="pickup-source-device")
 
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -451,6 +452,13 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
         relay = runtime.calls.resource_for(session.call_id, "relay")
         await wait_for(lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20)
     assert caller.read().count("Call established") == 1
+    caller_state = await runtime.hass.services.async_call("voip_stack", "get_phone_state", {
+        "device_id": "pickup-source-device",
+    }, blocking=True, return_response=True)
+    assert caller_state["state"] == "in_call", caller_state
+    assert len(caller_state["calls"]) == 1
+    assert caller_state["calls"][0]["call_id"] == session.call_id
+    assert caller_state["calls"][0]["state"] == "confirmed"
     await asyncio.to_thread(caller.hangup)
     await wait_for(lambda: not runtime.calls.sessions)
     assert not runtime.runtime.rtp_port_pool.get("used")

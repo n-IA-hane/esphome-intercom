@@ -221,7 +221,10 @@ class AnswerStateRollbackTest(unittest.IsolatedAsyncioTestCase):
         for raises in (False, True):
             with self.subTest(raises=raises):
                 runtime = runtime_type(allow_dark_sessions=True)
-                session = runtime.upsert('claim-failure', state='ringing', owner='router', callee='Original')
+                session = runtime.upsert('claim-failure', state='ringing', owner='router', callee='Original', source_endpoint_id='source')
+                runtime.observe_leg(session.call_id, session.call_id, role='caller', state='connecting',
+                    sip_call_id=session.call_id, endpoint_id='source', generation=session.generation)
+                source_leg = session.legs[session.call_id]
                 invite = object()
                 runtime.set_pending_invite(session.call_id, invite)
                 seen = []
@@ -231,6 +234,8 @@ class AnswerStateRollbackTest(unittest.IsolatedAsyncioTestCase):
                 transaction.add_resource('prepared', object(), lambda reason: closed.append(reason))
                 def claim():
                     runtime.transition(session.call_id, state='in_call', owner='bridge', callee='Candidate')
+                    inbound_answer.confirm_existing_caller_leg(runtime, session, session.call_id)
+                    self.assertEqual(source_leg.phase, endpoint_session.LegPhase.ANSWERED)
                     runtime.take_pending_invite(session.call_id)
                     if raises:
                         raise RuntimeError('injected claim failure')
@@ -240,7 +245,49 @@ class AnswerStateRollbackTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(session.live)
                 self.assertEqual((session.state, session.owner, session.callee), ('ringing', 'router', 'Original'))
                 self.assertFalse(session.answer_committed)
+                self.assertEqual((source_leg.state, source_leg.phase), ('connecting', endpoint_session.LegPhase.INVITING))
                 self.assertEqual(seen, [])
                 self.assertIs(runtime.artifact_for(session.call_id, 'pending_invite'), invite)
                 self.assertEqual(len(closed), 1)
                 await session.terminate(endpoint_session.TerminationIntent('test_done'))
+
+
+    async def test_failed_final_response_publishes_no_confirmed_caller(self):
+        runtime = _load_module('pbx_runtime').SipEndpointRuntime(allow_dark_sessions=True)
+        session = runtime.upsert('failed-source-answer', state='ringing', owner='router', source_endpoint_id='source')
+        runtime.observe_leg(session.call_id, session.call_id, role='caller', state='connecting',
+            sip_call_id=session.call_id, endpoint_id='source', generation=session.generation)
+        seen = []
+        runtime.subscribe_state(seen.append)
+        result = await inbound_answer.async_commit_runtime_answer(runtime, session.call_id, 'answer',
+            send_final_response=lambda *_args: False, response_context=object(), owner='bridge')
+        self.assertFalse(result.committed)
+        self.assertEqual(result.reason, 'final_response_failed')
+        self.assertFalse(session.live)
+        self.assertTrue(all(item.state != 'in_call' for item in seen))
+        self.assertEqual(session.legs[session.call_id].phase, endpoint_session.LegPhase.CLOSED)
+
+    async def test_existing_caller_confirmation_preserves_held_closed_and_other_legs(self):
+        runtime = _load_module('pbx_runtime').SipEndpointRuntime(allow_dark_sessions=True)
+        session = runtime.upsert('source-guard', state='ringing', owner='router', source_endpoint_id='source')
+        runtime.observe_leg(session.call_id, 'sibling', role='callee', state='ringing',
+            sip_call_id='sibling', endpoint_id='destination', generation=session.generation)
+        before = dict(session.legs)
+        inbound_answer.confirm_existing_caller_leg(runtime, session, session.call_id)
+        self.assertEqual(session.legs, before)
+        runtime.observe_leg(session.call_id, session.call_id, role='caller', state='connecting',
+            sip_call_id=session.call_id, endpoint_id='source', generation=session.generation)
+        source = session.legs[session.call_id]
+        for phase in (endpoint_session.LegPhase.HELD, endpoint_session.LegPhase.CLOSING, endpoint_session.LegPhase.CLOSED):
+            with self.subTest(phase=phase):
+                source.phase, source.state = phase, phase.value
+                inbound_answer.confirm_existing_caller_leg(runtime, session, session.call_id)
+                self.assertEqual((source.phase, source.state), (phase, phase.value))
+                self.assertEqual(session.legs['sibling'].state, 'ringing')
+        source.phase, source.state, source.sip_call_id = endpoint_session.LegPhase.INVITING, 'connecting', 'another-wire'
+        inbound_answer.confirm_existing_caller_leg(runtime, session, session.call_id)
+        self.assertEqual(source.state, 'connecting')
+        source.sip_call_id, source.endpoint_id = session.call_id, 'another-endpoint'
+        inbound_answer.confirm_existing_caller_leg(runtime, session, session.call_id)
+        self.assertEqual(source.state, 'connecting')
+        await session.terminate(endpoint_session.TerminationIntent('test_done'))
