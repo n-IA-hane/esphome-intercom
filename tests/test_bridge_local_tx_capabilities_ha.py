@@ -69,3 +69,20 @@ def test_answered_source_retains_the_existing_media_contract():
         send_format=sdp.RtpPcmFormat(101, "L16", 48000, 1, 10),
     )
     assert bridge_source_audio(invite, destination) is invite
+
+
+def test_receive_geometry_comparison_does_not_construct_a_fractional_frame():
+    invite = parse_with_send_formats([AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)])
+    source_receive = AudioFormat(16000, frame_ms=16)
+    destination_send = AudioFormat(44100, frame_ms=20)
+    invite = replace(invite,
+        recv_format=sdp.RtpPcmFormat(96, "L16", source_receive.sample_rate, 1, source_receive.frame_ms),
+        local_recv_capabilities=(source_receive,),
+        remote_sdp=invite.remote_sdp.replace(b"a=ptime:10", b"a=ptime:16").replace(b"a=maxptime:10", b"a=maxptime:32"),
+    )
+    destination = SimpleNamespace(
+        recv_format=sdp.RtpPcmFormat(100, "L16", 48000, 1, 10),
+        send_format=sdp.RtpPcmFormat(101, "L16", destination_send.sample_rate, 1, destination_send.frame_ms),
+    )
+    selected = bridge_source_audio(invite, destination)
+    assert selected.recv_format.audio_format == source_receive

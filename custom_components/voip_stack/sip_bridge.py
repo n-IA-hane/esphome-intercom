@@ -37,10 +37,16 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
             and (fmt.sample_rate, fmt.pcm_format, fmt.channels) == shape]
         if invite.send_format.audio_format in invite.local_send_capabilities:
             send_formats.append(invite.send_format.audio_format)
+    recv_formats = (destination.send_format.audio_format, invite.recv_format.audio_format)
+    # Preserve our receive preference when only outgoing packet time differs.
+    if (recv_formats[0].sample_rate, recv_formats[0].pcm_format, recv_formats[0].channels) == (
+        recv_formats[1].sample_rate, recv_formats[1].pcm_format, recv_formats[1].channels,
+    ):
+        recv_formats = recv_formats[::-1]
     selected = sdp.negotiate_directional(
         invite.remote_sdp,
         list(dict.fromkeys(send_formats)),
-        list(dict.fromkeys((destination.send_format.audio_format, invite.recv_format.audio_format))),
+        list(dict.fromkeys(recv_formats)),
         allow_dahua_pcm=invite.peer_profile == "dahua",
         codec_policy=invite.codec_policy,
         local_recv_capabilities=invite.local_recv_capabilities or None,

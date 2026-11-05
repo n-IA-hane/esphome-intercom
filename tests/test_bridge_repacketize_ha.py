@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp
+from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.inbound_routing import bridge
@@ -22,9 +22,11 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("source_rate", [16000, 48000], ids=["peer16k20", "browser48k10"])
+@pytest.mark.parametrize(("source_rate", "destination_rate"), [
+    (16000, 48000), (48000, 48000), (16000, 16000),
+], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx"])
 async def test_bridge_repacketizes_source_return_without_changing_destination(
-    trunks, monkeypatch, source_rate,
+    trunks, monkeypatch, source_rate, destination_rate,
 ):
     lab = trunks
     target = lab.phones[0]
@@ -49,18 +51,21 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     def answer():
         request = target.last_request
         offered = [fmt for fmt in sdp.offered_pcm_formats(request.body) if fmt.encoding == "L16"]
-        receive = next(fmt for fmt in offered if fmt.sample_rate == 48000)
+        receive = next(fmt for fmt in offered if fmt.sample_rate == destination_rate)
         send = next(fmt for fmt in offered if fmt.sample_rate == 16000)
-        # Match the physical Native answer: only 48k RX and only 16k TX.
-        # This source-leg regression must not change that destination contract.
+        payloads = list(dict.fromkeys([receive.payload_type, send.payload_type]))
+        mappings = f"a=rtpmap:{receive.payload_type} L16/{destination_rate}/1\r\n"
+        flows = f"a=x-voip-stack-flow:{receive.payload_type} sendrecv\r\n"
+        if receive.payload_type != send.payload_type:
+            mappings += f"a=rtpmap:{send.payload_type} L16/16000/1\r\n"
+            flows = (f"a=x-voip-stack-flow:{receive.payload_type} recv\r\n"
+                     f"a=x-voip-stack-flow:{send.payload_type} send\r\n")
+        # Preserve either accepted destination geometry, independently of RX time.
         body = (
             "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Fixed microphone peer\r\n"
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-            f"m=audio {target.rtp_socket.getsockname()[1]} RTP/AVP {receive.payload_type} {send.payload_type}\r\n"
-            f"a=rtpmap:{receive.payload_type} L16/48000/1\r\n"
-            f"a=rtpmap:{send.payload_type} L16/16000/1\r\n"
-            f"a=x-voip-stack-flow:{receive.payload_type} recv\r\n"
-            f"a=x-voip-stack-flow:{send.payload_type} send\r\n"
+            f"m=audio {target.rtp_socket.getsockname()[1]} RTP/AVP {' '.join(map(str, payloads))}\r\n"
+            f"{mappings}{flows}"
             "a=x-voip-stack-independent-ptime:1\r\n"
             "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
         ).encode()
@@ -76,13 +81,21 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     caller = SipCallClient(
         local_ip="127.0.0.2", local_name="Independent source", local_sip_port=0,
         local_rtp_port=audio.getsockname()[1],
-        supported_send_formats=[AudioFormat(source_rate, frame_ms=source_ms)],
+        supported_send_formats=[AudioFormat(source_rate, frame_ms=source_ms)]
+            + ([AudioFormat(16000, frame_ms=10)] if source_rate == 16000 else []),
         supported_recv_formats=[AudioFormat(48000, frame_ms=10),
                                 AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)],
         allow_directional_audio_payloads=True, independent_audio_ptime=True,
     )
+    class SourceProtocol(SipDatagramQueueProtocol):
+        def datagram_received(self, data, addr):
+            message = sip.parse_message(data)
+            if message.status_code == 200 and message.header("CSeq").endswith(" INVITE"):
+                observed["source_answer"] = message.body
+            super().datagram_received(data, addr)
+
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0),
+        lambda: SourceProtocol(caller.queue), local_addr=("127.0.0.2", 0),
     )
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
     original_build = caller._build_pending_invite
@@ -103,6 +116,10 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
         if result == "ringing":
             result = await caller.wait_for_final(timeout=3)
         assert result == "in_call"
+        if destination_rate == 16000:
+            # Observe the real UDP answer, not only the selection helper.
+            assert sdp.parse_sdp(observed["source_answer"])["ptime"] == 20
+            assert caller.dialog.send_format.frame_ms == 20
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
         samples = source_rate * source_ms // 1000
@@ -120,10 +137,12 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
         async with asyncio.timeout(2):
             returned = [rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096)) for _ in range(2)]
         assert (caller.dialog.send_format.sample_rate, caller.dialog.send_format.frame_ms) == (source_rate, source_ms)
-        # HA must retain the already accepted 48k destination receiver.
-        assert (relay.right.outbound_rtp_format.sample_rate, relay.right.outbound_rtp_format.frame_ms) == (48000, 10)
-        assert all(len(packet.payload) == 960 for packet in forwarded)
-        if source_rate == 48000:
+        # HA must retain the already accepted destination receiver.
+        assert (relay.right.outbound_rtp_format.sample_rate, relay.right.outbound_rtp_format.frame_ms) == (destination_rate, 10)
+        assert all(len(packet.payload) == destination_rate * 10 // 1000 * 2 for packet in forwarded)
+        if source_rate == destination_rate:
+            assert b"".join(packet.payload for packet in forwarded) == forward
+        if source_rate == destination_rate == 48000:
             assert forwarded[0].payload == forward
         assert (relay.left.outbound_rtp_format.sample_rate, relay.left.outbound_rtp_format.frame_ms) == (16000, 10)
         assert [len(packet.payload) for packet in returned] == [320, 320]
