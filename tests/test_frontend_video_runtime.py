@@ -1325,6 +1325,161 @@ assert.equal(wire.length, sentBeforeStaleCallback);
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_hardware_camera_encoder_over_bitrate_falls_back_to_software() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
+const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
+const warnings = [];
+const context = vm.createContext({{
+  EventTarget,
+  performance,
+  console: {{ ...console, warn: (message) => warnings.push(String(message)) }},
+  Blob,
+  URL,
+  setTimeout,
+  clearTimeout,
+  CustomEvent: class CustomEvent extends Event {{
+    constructor(type, init) {{ super(type); this.detail = init?.detail; }}
+  }},
+  WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
+}});
+const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async () => modelModule,
+}});
+await module.link((specifier) => {{
+  throw new Error(`unexpected static import: ${{specifier}}`);
+}});
+await module.evaluate();
+const Video = module.namespace.VoipStackVideo;
+
+const track = {{
+  getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
+  stop() {{}},
+}};
+context.navigator = {{
+  mediaDevices: {{
+    async getUserMedia() {{
+      return {{ getVideoTracks: () => [track], getTracks: () => [track] }};
+    }},
+  }},
+}};
+context.MediaStreamTrackProcessor = class {{
+  constructor() {{
+    // The camera never delivers a frame; the test drives encoder output.
+    this.readable = {{ getReader: () => ({{
+      read: () => new Promise(() => {{}}),
+      cancel: async () => {{}},
+    }}) }};
+  }}
+}};
+const encoders = [];
+let softwareSupported = true;
+context.VideoEncoder = class {{
+  static async isConfigSupported(config) {{
+    const supported = config.hardwareAcceleration !== "prefer-software" || softwareSupported;
+    return {{ supported, config }};
+  }}
+  constructor(init) {{
+    this.init = init;
+    this.state = "unconfigured";
+    this.encodeQueueSize = 0;
+    this.configs = [];
+    encoders.push(this);
+  }}
+  configure(config) {{ this.configs.push(config); this.state = "configured"; }}
+  close() {{ this.state = "closed"; }}
+}};
+
+async function startSender() {{
+  const sender = new Video();
+  sender._generation = 3;
+  sender._cameraAllowed = true;
+  sender._cameraEnabled = true;
+  sender._negotiated = {{
+    can_send: true,
+    can_receive: false,
+    send: {{ codec: "vp8", encoding: "VP8", clock_rate: 90000, payload_type: 104 }},
+  }};
+  sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
+  await sender._replaceSender("vp8", 3, "", false);
+  return [sender, encoders.at(-1)];
+}}
+// Emit 15 fps output with the given frame size for a little over 2 s.
+function emit(encoder, bytes) {{
+  for (let i = 0; i <= 31; i++) {{
+    encoder.init.output({{
+      type: i === 0 ? "key" : "delta",
+      byteLength: bytes,
+      timestamp: Math.round(i * 1000000 / 15),
+      copyTo(target) {{ target.fill(0); }},
+    }});
+  }}
+}}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// A hardware encoder at ~16 Mbit/s against a 600 kbit/s target is switched to
+// software once, and the next frame is a key frame.
+const [overshooting, hardware] = await startSender();
+assert.equal(hardware.configs[0].hardwareAcceleration, "prefer-hardware");
+overshooting._forceCameraKeyFrame = false;
+emit(hardware, 135000);
+await settle();
+assert.equal(hardware.configs.length, 2);
+assert.equal(hardware.configs[1].hardwareAcceleration, "prefer-software");
+assert.equal(hardware.configs[1].bitrate, 600000);
+assert.equal(overshooting._forceCameraKeyFrame, true);
+assert.match(warnings.at(-1), /switching to software encoding/);
+emit(hardware, 135000);
+await settle();
+assert.equal(hardware.configs.length, 2);
+
+// An encoder near its target is left alone, including a large first key frame.
+const [, onTarget] = await startSender();
+onTarget.init.output({{
+  type: "key", byteLength: 60000, timestamp: 0, copyTo(target) {{ target.fill(0); }},
+}});
+emit(onTarget, 5000);
+await settle();
+assert.equal(onTarget.configs.length, 1);
+
+// Without a software encoder, keep the hardware one rather than lose video.
+softwareSupported = false;
+const [, noSoftware] = await startSender();
+emit(noSoftware, 135000);
+await settle();
+assert.equal(noSoftware.configs.length, 1);
+assert.equal(noSoftware.state, "configured");
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--experimental-vm-modules",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_jpeg_worker_uses_offscreen_canvas_and_transfers_complete_frame() -> None:
     script = f"""
 import fs from "fs";
