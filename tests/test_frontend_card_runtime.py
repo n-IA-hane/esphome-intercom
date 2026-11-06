@@ -166,6 +166,22 @@ const engine = {{
   async resumeSession() {{ return true; }},
   async prepareVideoCameraPermission() {{ cameraPermissionChecks++; return false; }},
   async prepareAudioCall() {{ audioPermissionChecks++; return true; }},
+  // Mirrors the engine's page-wide cache. A pending promise in autoAnswerMedia
+  // stands for a permission prompt that is still open.
+  autoAnswerMedia: {{ audio: {{ ready: true }}, video: {{ ready: true }} }},
+  autoAnswerMediaChecks: [],
+  autoAnswerMediaSettled: new Map(),
+  async checkAutoAnswerMedia(kind) {{
+    this.autoAnswerMediaChecks.push(kind);
+    if (this.autoAnswerMediaSettled.has(kind)) return this.autoAnswerMediaSettled.get(kind);
+    const result = await this.autoAnswerMedia[kind];
+    this.autoAnswerMediaSettled.set(kind, result);
+    return result;
+  }},
+  autoAnswerMediaResult(kind) {{ return this.autoAnswerMediaSettled.get(kind) || null; }},
+  recordAutoAnswerMedia(kind, ready) {{
+    this.autoAnswerMediaSettled.set(kind, {{ ready }});
+  }},
   async startHaSoftphone() {{ throw new Error("not configured"); }},
 }};
 
@@ -708,10 +724,13 @@ autoAnswerCard._rosterEntries = [{{
 autoAnswerCard._softphoneTargetDeviceId = "device-test";
 let automaticAnswer = null;
 autoAnswerCard._answer = async (options) => {{ automaticAnswer = options; }};
+// The toggle saves its microphone success for the page-wide check, which the
+// ringing call below reuses.
+engine.autoAnswerMediaSettled.delete("audio");
 await autoAnswerCard._toggleAutoAnswer();
 assert.equal(microphonePermissionRequests, 1);
 assert.equal(autoAnswerCard._autoAnswer, true);
-assert.equal(autoAnswerCard._autoAnswerMicReady, true);
+assert.deepEqual(engine.autoAnswerMediaResult("audio"), {{ ready: true }});
 assert.equal(serviceCalls.at(-1)[0], "voip_stack");
 assert.equal(serviceCalls.at(-1)[1], "set_auto_answer");
 assert.equal(serviceCalls.at(-1)[2].device_id, "device-casa");
@@ -727,8 +746,8 @@ autoAnswerCard._applySoftphoneSnapshot({{
   audio_direction: "sendrecv",
   sequence: 1,
 }});
-await Promise.resolve();
-await Promise.resolve();
+// _tryAutoAnswer now awaits the page media check before answering.
+await settle();
 assert.equal(automaticAnswer?.callId, "auto-answer-A");
 
 // A denied permission cannot leave a checked preference that will silently
@@ -741,13 +760,142 @@ deniedAutoAnswerCard.config = {{
 }};
 microphonePermissionError = new Error("permission denied");
 const deniedServiceCount = serviceCalls.length;
+// A failed toggle leaves Auto Answer off, so it saves nothing for the check.
+engine.autoAnswerMediaSettled.delete("audio");
 await deniedAutoAnswerCard._toggleAutoAnswer();
 microphonePermissionError = null;
 assert.equal(deniedAutoAnswerCard._autoAnswer, false);
-assert.equal(deniedAutoAnswerCard._autoAnswerMicReady, false);
+assert.equal(engine.autoAnswerMediaResult("audio"), null);
 assert.equal(storage.has("voip_auto_answer_device-denied"), false);
 assert.equal(serviceCalls.length, deniedServiceCount);
 assert.match(deniedAutoAnswerCard._errorMsg, /was not enabled.*permission denied/i);
+
+// A WebView reports "prompt" forever, so after a reload or a view change the
+// card can't rely on the permission state. The page-wide media check settles
+// the microphone and camera as soon as the phone has a controller, and the
+// ringing call then answers with video. The card itself doesn't consult the
+// Permissions API, so a "prompt" state here must not stop the answer.
+microphonePermissionState = "prompt";
+function ringingWebviewCard() {{
+  const webview = makeCard();
+  webview.config = {{ mode: "ha_softphone", device_id: "device-webview" }};
+  const answers = [];
+  webview._answer = async (options) => {{ answers.push(options); }};
+  return {{ webview, answers }};
+}}
+const webviewIdle = {{
+  endpoint_id: "default",
+  device_id: "device-webview",
+  auto_answer: true,
+  state: "idle",
+  capabilities: ["audio", "video"],
+  video_camera_send_enabled: true,
+  send_video: true,
+  sequence: 1,
+}};
+const webviewRinging = {{
+  ...webviewIdle,
+  state: "ringing",
+  direction: "incoming",
+  call_id: "webview-call",
+  audio_direction: "sendrecv",
+  video_offered: true,
+  sequence: 2,
+}};
+// Enough microtask turns for the media check, the answer guards and _answer.
+async function settle() {{
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+}}
+engine.autoAnswerMediaChecks.length = 0;
+const recreated = ringingWebviewCard();
+recreated.webview._applySoftphoneSnapshot(webviewIdle);
+assert.deepEqual(engine.autoAnswerMediaChecks, ["audio", "video"]);
+recreated.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(recreated.answers.length, 1);
+assert.equal(recreated.answers[0].callId, "webview-call");
+assert.equal(recreated.answers[0].videoPermission, true);
+assert.equal(recreated.webview._autoAnswerMediaWarning(), "");
+
+// A permission prompt still open keeps the call ringing. Granting permission
+// while the call is ringing answers the call; granting it after the call stops
+// ringing does not answer the ended call.
+let allowMicrophone;
+engine.autoAnswerMediaSettled.clear();
+engine.autoAnswerMedia.audio = new Promise((resolve) => {{ allowMicrophone = resolve; }});
+const prompted = ringingWebviewCard();
+prompted.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(prompted.answers.length, 0);
+// This call ends before the prompt is answered.
+const ended = ringingWebviewCard();
+ended.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+ended.webview._applySoftphoneSnapshot({{
+  ...webviewRinging, state: "idle", terminal_reason: "cancelled", sequence: 3,
+}});
+allowMicrophone({{ ready: true }});
+await settle();
+assert.equal(prompted.answers.length, 1);
+assert.equal(ended.answers.length, 0);
+
+// Phones without Auto Answer never open media unattended.
+engine.autoAnswerMediaChecks.length = 0;
+const disarmed = ringingWebviewCard();
+disarmed.webview._applySoftphoneSnapshot({{ ...webviewIdle, auto_answer: false }});
+assert.equal(engine.autoAnswerMediaChecks.length, 0);
+assert.equal(disarmed.webview._autoAnswerMediaWarning(), "");
+
+// An unavailable camera answers receive-only; an unavailable microphone leaves
+// the call ringing for a manual answer. Both explain themselves on the card
+// instead of in a dialog.
+engine.autoAnswerMedia = {{
+  audio: {{ ready: true }},
+  video: {{ ready: false }},
+}};
+engine.autoAnswerMediaSettled.clear();
+const noCamera = ringingWebviewCard();
+noCamera.webview._applySoftphoneSnapshot(webviewIdle);
+noCamera.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(noCamera.answers.length, 1);
+assert.equal(noCamera.answers[0].videoPermission, false);
+assert.match(noCamera.webview._autoAnswerMediaWarning(), /camera/);
+assert.equal(noCamera.webview._errorMsg, "");
+engine.autoAnswerMedia = {{
+  audio: {{ ready: false }},
+  video: {{ ready: true }},
+}};
+engine.autoAnswerMediaSettled.clear();
+const noMicrophone = ringingWebviewCard();
+noMicrophone.webview._applySoftphoneSnapshot(webviewIdle);
+noMicrophone.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(noMicrophone.answers.length, 0);
+assert.match(noMicrophone.webview._autoAnswerMediaWarning(), /microphone could not be opened/);
+
+// Enabling Auto Answer by hand proves the microphone with a user gesture,
+// which replaces the remembered failure.
+noMicrophone.webview._autoAnswer = false;
+await noMicrophone.webview._toggleAutoAnswer();
+assert.deepEqual(engine.autoAnswerMediaResult("audio"), {{ ready: true }});
+assert.equal(noMicrophone.webview._autoAnswerMediaWarning(), "");
+// The fake engine is shared, so restore working media for the tests below.
+engine.autoAnswerMedia = {{
+  audio: {{ ready: true }},
+  video: {{ ready: true }},
+}};
+engine.autoAnswerMediaSettled.clear();
+
+// ESP mirror cards answer by pressing the ESP's Call button, so the browser's
+// microphone permission must not stop them auto-answering.
+microphonePermissionState = "prompt";
+const espAutoAnswer = makeCard();
+espAutoAnswer.config = {{ mode: "esp_mirror", device_id: "device-esp" }};
+let espAnswers = 0;
+espAutoAnswer._answer = async () => {{ espAnswers++; }};
+await espAutoAnswer._tryAutoAnswer();
+assert.equal(espAnswers, 1);
 
 // Cache-local state cannot override the logical phone. Two cards project the
 // same backend preference even with an empty browser storage.

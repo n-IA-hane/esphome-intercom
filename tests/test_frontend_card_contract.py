@@ -503,7 +503,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._sessionCallId() !== callId", auto_answer)
         self.assertIn("await this._answer({ callId, videoPermission })", auto_answer)
 
-    def test_video_answer_preflights_camera_and_auto_answer_never_prompts(self) -> None:
+    def test_video_answer_preflights_camera_and_auto_answer_uses_page_check(self) -> None:
         answer = _method_body(self.source, "async _answer")
         start = _method_body(self.source, "async _startHaSoftphoneCall")
         auto_answer = _method_body(self.source, "async _tryAutoAnswer")
@@ -511,6 +511,7 @@ class FrontendCardContractTest(unittest.TestCase):
             ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-engine.js"
         ).read_text()
         permission = _method_body(engine, "async prepareVideoCameraPermission")
+        probe = _method_body(engine, "async _probeAutoAnswerMedia")
 
         self.assertIn("this._softphoneSnapshot?.send_video", answer)
         wants_video = answer.split("const wantsVideo = Boolean(", 1)[1].split(
@@ -521,12 +522,12 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._targetSupportsVideo(target)", start)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", start)
-        self.assertIn("persistentOnly: true", auto_answer)
+        self.assertIn('voipStackEngine.checkAutoAnswerMedia("video")', auto_answer)
         self.assertIn("this._softphoneSnapshot?.send_video", auto_answer)
-        self.assertIn("endpointId: this._getSoftphoneEndpointId()", auto_answer)
-        self.assertIn("navigator.permissions?.query", permission)
-        self.assertIn('permission.state === "granted"', permission)
-        self.assertIn("if (persistentOnly)", permission)
+        # The Permissions API query moved from the camera preflight into the
+        # page-wide Auto Answer probe, which then falls back to the preflight.
+        self.assertIn("navigator.permissions?.query", probe)
+        self.assertIn("this.prepareVideoCameraPermission()", probe)
         self.assertIn("navigator.mediaDevices.getUserMedia", permission)
         self.assertIn("track.stop()", permission)
 
@@ -642,8 +643,12 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._softphoneSnapshot?.call_id", incoming)
         self.assertNotIn("!this._autoAnswer", ringtone)
         self.assertIn('["sendonly", "sendrecv"].includes(audioDirection)', autoanswer)
-        self.assertIn("requirePersistentPermission &&", autoanswer)
-        self.assertIn("needsMicrophone &&", autoanswer)
+        # Receive-only audio skips the microphone check, and ESP mirror cards
+        # skip it too because they answer on the ESP.
+        self.assertIn(
+            "softphoneAction && requirePersistentPermission && needsMicrophone",
+            autoanswer,
+        )
 
     def test_frontend_has_no_esp_call_control_ws_commands(self) -> None:
         engine = (ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-engine.js").read_text()

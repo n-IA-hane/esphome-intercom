@@ -210,6 +210,11 @@ class VoipStackEngine extends EventTarget {
     this._mediaClientId = mediaClientInstanceId();
     this._mediaIntent = null;
     this._mediaRecoveryAttempts = new Set();
+    // Auto Answer media results are cached in the engine so they survive HA
+    // recreating the card, e.g. on a dashboard view change or during a call;
+    // see checkAutoAnswerMedia().
+    this._autoAnswerMedia = new Map();
+    this._watchedMediaPermissions = new Set();
     // Media ownership belongs to the page-level engine, not to one Lovelace
     // element. Home Assistant may recreate a card while an outbound call is
     // ringing; the replacement must still be able to attach that call's media.
@@ -1241,26 +1246,89 @@ class VoipStackEngine extends EventTarget {
     return this._video ? this._video.close() : Promise.resolve();
   }
 
-  async prepareVideoCameraPermission({
-    persistentOnly = false,
-  } = {}) {
-    if (!navigator.mediaDevices?.getUserMedia) return false;
-    if (persistentOnly) {
-      if (!navigator.permissions?.query) return false;
-      try {
-        const permission = await navigator.permissions.query({ name: "camera" });
-        if (permission.state === "granted") return true;
-        return false;
-      } catch (_) {
-        return false;
-      }
+  // Check if the microphone or camera is available to auto-answer a call. We
+  // can't reliably do that without potentially prompting the user for
+  // permission, so we should do it in advance, at a time when a user is likely
+  // to be present to interact with the prompt, rather than waiting until a
+  // call arrives, which could prompt the user with no context.
+  // Each media kind has one result for the whole page, not per card, so
+  // recreating a card on a view change never checks again, and concurrent
+  // callers share one check. A user gesture (recordAutoAnswerMedia) or a
+  // permission change (resetAutoAnswerMedia) replaces it.
+  checkAutoAnswerMedia(kind) {
+    const media = kind === "video" ? "video" : "audio";
+    let entry = this._autoAnswerMedia.get(media);
+    if (!entry) {
+      entry = { result: null, promise: null };
+      this._autoAnswerMedia.set(media, entry);
+      entry.promise = this._probeAutoAnswerMedia(media).then((result) => {
+        // A reset or a user gesture may have replaced this entry while the
+        // probe was running; a stale result must not overwrite it.
+        if (this._autoAnswerMedia.get(media) === entry) {
+          entry.result = result;
+          this._emit();
+        }
+        return result;
+      });
     }
-    // A manual call is allowed to request camera permission.  In particular,
-    // Android/iOS companion WebViews may report `denied` or an unsupported
-    // state through the Permissions API while getUserMedia() can still open
-    // the camera through the native application permission.  The real media
-    // acquisition is authoritative here, as it was before multi-phone
-    // per-endpoint camera preferences were introduced.
+    return entry.promise;
+  }
+
+  autoAnswerMediaResult(kind) {
+    return this._autoAnswerMedia.get(kind === "video" ? "video" : "audio")?.result || null;
+  }
+
+  // The card's Auto Answer and Send Camera UI toggles open the device when
+  // tapped; save that result to avoid trying to open it again.
+  recordAutoAnswerMedia(kind, ready) {
+    const result = { ready: Boolean(ready) };
+    this._autoAnswerMedia.set(kind === "video" ? "video" : "audio", {
+      result,
+      promise: Promise.resolve(result),
+    });
+    this._emit();
+  }
+
+  resetAutoAnswerMedia(kind = "") {
+    if (kind) this._autoAnswerMedia.delete(kind === "video" ? "video" : "audio");
+    else this._autoAnswerMedia.clear();
+    this._emit();
+  }
+
+  // The check behind checkAutoAnswerMedia. If the Permissions API returns
+  // `granted` we can trust it; however, Android/iOS WebViews grant through
+  // the native app while reporting `prompt` or `denied`, so any other state
+  // is checked by attempting to open the device, which may show a permission
+  // prompt (the browser's, or Android's in an app).
+  async _probeAutoAnswerMedia(media) {
+    try {
+      const status = await navigator.permissions?.query?.({
+        name: media === "video" ? "camera" : "microphone",
+      });
+      if (status) this._watchMediaPermission(media, status);
+      if (status?.state === "granted") return { ready: true };
+    } catch (_) {
+      // Unsupported permission names fall through to a real acquisition.
+    }
+    const ready = media === "video"
+      ? await this.prepareVideoCameraPermission()
+      : await this.prepareMicrophonePermission();
+    return { ready };
+  }
+
+  // Desktop browsers fire `change` when site settings change, so a saved
+  // failure can recover without a reload. Android WebViews never fire it.
+  _watchMediaPermission(media, status) {
+    if (this._watchedMediaPermissions.has(media)) return;
+    if (typeof status.addEventListener !== "function") return;
+    this._watchedMediaPermissions.add(media);
+    status.addEventListener("change", () => this.resetAutoAnswerMedia(media));
+  }
+
+  // Check if access to the camera is available, by attempting to open it then
+  // releasing it. This may prompt for permission.
+  async prepareVideoCameraPermission() {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
     let stream = null;
     try {
       const base = {
@@ -1281,6 +1349,25 @@ class VoipStackEngine extends EventTarget {
       return Boolean(stream?.getVideoTracks?.()[0]);
     } catch (err) {
       console.warn("voip-stack-engine: camera permission unavailable; continuing receive-only", err);
+      return false;
+    } finally {
+      for (const track of stream?.getTracks?.() || []) track.stop();
+    }
+  }
+
+  // The microphone counterpart of prepareVideoCameraPermission. Unlike
+  // prepareAudioCall, it releases the microphone straight away instead of
+  // keeping it open for the next call.
+  async prepareMicrophonePermission() {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    let stream = null;
+    try {
+      stream = await this._openAudioInput(
+        this._mediaDevices.preference("audioinput"), { processing: false },
+      );
+      return Boolean(stream?.getAudioTracks?.()[0]);
+    } catch (err) {
+      console.warn("voip-stack-engine: microphone permission unavailable", err);
       return false;
     } finally {
       for (const track of stream?.getTracks?.() || []) track.stop();
