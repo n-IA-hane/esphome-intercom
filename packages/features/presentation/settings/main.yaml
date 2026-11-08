@@ -7,6 +7,7 @@ substitutions:
   _settings_afe: ${ _settings_afe | default(true) }
   _settings_single_mic: ${ _settings_single_mic | default(true) }
   _settings_video: ${ _settings_video | default(false) }
+  _settings_camera_jpeg_quality: ${ _settings_camera_jpeg_quality | default(false) }
   _settings_page_id: ${ _settings_page_id | default('settings_continuous_page') }
   _settings_modes: ${firmware_processing_modes}
   _settings_font: ${ ('montserrat_14' if (display_width | int) <= 240 else 'montserrat_20') if _settings_round else settings_label_font }

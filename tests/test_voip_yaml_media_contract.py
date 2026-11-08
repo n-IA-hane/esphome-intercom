@@ -153,7 +153,7 @@ def test_full_profiles_declare_independent_pcm_preferences(relative: str) -> Non
     pcm = audio['codecs'][0]
     assert pcm['codec'] == 'pcm'
     assert [(f['sample_rate'], f['frame_ms']) for f in pcm['tx']] == [
-        (16000, 20), (16000, 10),
+        (16000, 10), (16000, 20),
     ]
     assert [(f['sample_rate'], f['frame_ms']) for f in pcm['rx']] == [
         (48000, 10), (16000, 20), (16000, 10),

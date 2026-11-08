@@ -1394,6 +1394,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     from .phone_config import esphome_phone_policy
     from .repairs import async_sync_esphome_action_issue
     from .store import config_entry
+    from .peer_snapshot import device_is_phonebook_available
 
     devices = await get_resolver(hass).list_devices()
     registry = _endpoint_registry(hass)
@@ -1428,7 +1429,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
                 if isinstance(value, str) and "." in value
             ),
             availability=(EndpointAvailability.AVAILABLE
-                          if not device.get("managed") or device.get("registered")
+                          if device_is_phonebook_available(hass, device)
                           else EndpointAvailability.OFFLINE),
             capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),

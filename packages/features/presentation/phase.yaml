@@ -23,6 +23,13 @@ script:
           id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};
           break;
         case ${ui_state_va_replying}:
+          // Intent progress can precede TTS text. The shared replying view
+          // must not expose an album cover left by the previous media owner.
+          if (id(runtime_visual_source) == 4) {
+            lv_img_set_src(id(mood_bg), id(mood_neutral));
+            lv_obj_invalidate(id(mood_bg));
+            id(runtime_visual_source) = 1;
+          }
           id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
           break;
         case ${ui_state_va_error}:

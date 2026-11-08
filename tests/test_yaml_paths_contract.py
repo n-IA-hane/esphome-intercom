@@ -279,3 +279,17 @@ def test_global_ref_gate_checks_package_defaults(tmp_path):
     assert tool.check('remote', None, 'dev') == 1
     tool.rewrite_sources(package, 'dev')
     assert tool.check('remote', None, 'dev') == 0
+
+
+def test_absent_local_gmf_keeps_registry_dependency(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path / "intercom"
+    tool.ROOT.mkdir()
+    config = tool.ROOT / "device.yaml"
+    config.write_text("substitutions: {}\npackages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-afe.yaml@dev\n")
+    tool.rewrite_yaml(config, "local")
+    assert 'gmf_ai_audio_source: ""' in config.read_text()
+    local_gmf = tmp_path / "esp-gmf/elements/gmf_ai_audio"
+    local_gmf.mkdir(parents=True)
+    tool.rewrite_yaml(config, "local")
+    assert f'gmf_ai_audio_source: "{local_gmf}"' in config.read_text()

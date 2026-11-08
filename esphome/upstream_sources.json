@@ -55,6 +55,53 @@
         "media_source.py": "33ed90d0ce6cc5c4819a0ed42f98eef067e0012f9f275d5a9b4a70586c7e100d",
         "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
+    },
+    "micro_wake_word": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "esphome_baseline": "2026.10.0",
+      "adaptations": [
+        "Reset the input stride phase and pending probability after successful creation of a new interpreter",
+        "Preserve the current stream when resetting only detection probabilities",
+        "Borrow legacy vector or current AudioCapture PCM and select owner fill/error APIs without copies or runtime version checks"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "__init__.py": "e10914e16c4d4d356b7f1dce3d216f98176d5225866679643b7fe52cbe20a612",
+        "core_compat.h": "7abd3f635ade65ae182923d22353fd1eb17a1abdd997987d3726d4e761194628",
+        "micro_wake_word.cpp": "9242d9eff12f3b64d26b51fd85dd4200c02f9d40371f54945f00e275c5db80be",
+        "micro_wake_word.h": "d8f35206bb56722ce69809653f59998290a9794f9b404fbfe2f4a9a857a83409",
+        "model_data.cpp": "39e5b641eb8576a32397a102a1b1ae7704da0983b8eb5be96b41d419a36a57ca",
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "preprocessor_settings.h": "683b3ecca1a10bd778f883a2465b4cd073e6674afddfc7ba66cd8c16acabf6eb",
+        "streaming_model.cpp": "4dd2ac9ee59cb4eb61002c2bc6f51b6e26c3d72a8f4e9061a3adb5b910c97c2b",
+        "streaming_model.h": "97d31ca2ca763406ed117fe4f7599d6f992b974a57f455036f1efd41bcdf4ae1"
+      },
+      "upstream_source_sha256": {
+        "__init__.py": "e10914e16c4d4d356b7f1dce3d216f98176d5225866679643b7fe52cbe20a612",
+        "micro_wake_word.cpp": "d042c89920d2877dec565349063a5c8e86476ed22abebea21f5fb12ac22c4893",
+        "micro_wake_word.h": "d8f35206bb56722ce69809653f59998290a9794f9b404fbfe2f4a9a857a83409",
+        "model_data.cpp": "39e5b641eb8576a32397a102a1b1ae7704da0983b8eb5be96b41d419a36a57ca",
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "preprocessor_settings.h": "683b3ecca1a10bd778f883a2465b4cd073e6674afddfc7ba66cd8c16acabf6eb",
+        "streaming_model.cpp": "aa2dc589f1f97fb02f8340e74793f88e3e152380643bb61a9e056a4d8b9ae915",
+        "streaming_model.h": "97d31ca2ca763406ed117fe4f7599d6f992b974a57f455036f1efd41bcdf4ae1"
+      },
+      "compatibility": {
+        "schema_baseline": "2026.10.0",
+        "tested_core_interfaces": [
+          "ESPHome 2026.10.0 installed",
+          "ESPHome official106 (2026.11.0-dev)"
+        ],
+        "schema_options_not_imported": [
+          "task_core",
+          "ring_buffer_duration",
+          "prefer_internal_ram"
+        ],
+        "adapter_allocations": 0,
+        "observer_included": false,
+        "new_bss_selector": false
+      }
     }
   },
   "dependencies": {
@@ -79,7 +126,6 @@
     "audio_file",
     "media_source",
     "microphone",
-    "micro_wake_word",
     "mixer",
     "ota",
     "resampler",
@@ -89,11 +135,10 @@
   "native_provider_baseline": {
     "distribution": "esphome",
     "version": "2026.10.0",
-    "source_policy": "Use installed official ESPHome providers except the three explicitly recorded lifecycle fixes loaded through ext_components_source."
+    "source_policy": "Use installed official ESPHome providers except the four explicitly recorded lifecycle fixes loaded through ext_components_source."
   },
   "retired_local_providers": [
     "audio",
-    "micro_wake_word",
     "mixer",
     "ota",
     "resampler"

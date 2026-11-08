@@ -1,6 +1,9 @@
 # Audio, processing and voice controls retain their existing owners.
 # Only user events write owners; programmatic updates use separate LVGL events.
 substitutions:
+  settings_microphone_gain_id: mic_gain
+  settings_microphone_gain_label: Microphone gain
+  _settings_has_mic_gain: ${ settings_microphone_gain_id != "mic_gain" or firmware_audio_backend == "native" or not _fw_voice }
   _settings_speaker_widgets:
     - label:
         width: ${_settings_control_width}
@@ -109,7 +112,7 @@ substitutions:
         width: ${_settings_control_width}
         text: !lambda |-
           char text[64];
-          snprintf(text, sizeof(text), "Microphone gain: %.0f dB", static_cast<double>(id(mic_gain).state));
+          snprintf(text, sizeof(text), "${settings_microphone_gain_label}: %.0f dB", static_cast<double>(id(${settings_microphone_gain_id}).state));
           return std::string(text);
         text_align: LEFT
         text_color: 16777215
@@ -127,7 +130,7 @@ substitutions:
         adv_hittest: true
         on_release:
           - number.set:
-              id: mic_gain
+              id: ${settings_microphone_gain_id}
               value: !lambda |-
                 return x;
           - script.execute: settings_sync_mic
@@ -144,13 +147,13 @@ substitutions:
                     id: ui_mic_value_label
                     text: !lambda |-
                       char text[64];
-                      snprintf(text, sizeof(text), "Microphone gain: %.0f dB", static_cast<double>(id(mic_gain).state));
+                      snprintf(text, sizeof(text), "${settings_microphone_gain_label}: %.0f dB", static_cast<double>(id(${settings_microphone_gain_id}).state));
                       return std::string(text);
                 - lvgl.slider.update:
                     id: ui_mic_vol_slider
                     value: !lambda |-
-                      return id(mic_gain).state;
-  _settings_mic_callback: id(mic_gain).add_on_state_callback([](float) { id(settings_sync_mic).execute();
+                      return id(${settings_microphone_gain_id}).state;
+  _settings_mic_callback: id(${settings_microphone_gain_id}).add_on_state_callback([](float) { id(settings_sync_mic).execute();
     });
   _settings_speaker_mute_widgets:
     - obj:
@@ -597,6 +600,56 @@ substitutions:
                       return code.empty() ? std::string("No pairing code") : std::string("Pairing code: ") + code;
   _settings_sendspin_callback: id(sendspin_pairing_code).add_on_state_callback([](const
     std::string &) { id(settings_sync_sendspin).execute(); });
+  _settings_camera_quality_widgets:
+    - label:
+        id: ui_camera_jpeg_quality_label
+        width: ${_settings_control_width}
+        text: !lambda |-
+          char text[48];
+          snprintf(text, sizeof(text), "Camera JPEG quality: %.0f",
+                   static_cast<double>(id(p4_camera_jpeg_quality).state));
+          return std::string(text);
+        text_align: LEFT
+        text_color: 16777215
+        text_font: ${_settings_font}
+        long_mode: WRAP
+    - slider:
+        id: ui_camera_jpeg_quality_slider
+        width: ${_settings_control_width}
+        height: ${settings_slider_height}
+        ext_click_area: ${_settings_slider_touch_pad}
+        margin_bottom: ${_settings_slider_touch_pad}
+        min_value: 1
+        max_value: 63
+        adv_hittest: true
+        on_release:
+          - number.set:
+              id: p4_camera_jpeg_quality
+              value: !lambda return x;
+          - script.execute: settings_sync_camera_quality
+  _settings_camera_quality_package:
+    script:
+      - id: settings_sync_camera_quality
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_has_state(id(ui_camera_jpeg_quality_slider), LV_STATE_PRESSED);
+              then:
+                - lvgl.label.update:
+                    id: ui_camera_jpeg_quality_label
+                    text: !lambda |-
+                      char text[48];
+                      snprintf(text, sizeof(text), "Camera JPEG quality: %.0f",
+                               static_cast<double>(id(p4_camera_jpeg_quality).state));
+                      return std::string(text);
+                - lvgl.slider.update:
+                    id: ui_camera_jpeg_quality_slider
+                    value: !lambda return id(p4_camera_jpeg_quality).state;
+  _settings_camera_quality_callback: id(p4_camera_jpeg_quality).add_on_state_callback([](float) { id(settings_sync_camera_quality).execute(); });
+  _settings_refresh_camera_quality:
+    - script.execute: settings_sync_camera_quality
   _settings_audio_widgets:
     - obj:
         width: ${_settings_control_width}
@@ -640,8 +693,9 @@ substitutions:
         text_font: ${_settings_font}
         long_mode: WRAP
   _settings_left_widgets: ${ _settings_audio_widgets + _settings_speaker_widgets
-    + (_settings_playback_widgets if _fw_playback else []) + _settings_mic_widgets
-    + _settings_speaker_mute_widgets + _settings_mic_mute_widgets }
+    + (_settings_playback_widgets if _fw_playback else []) + (_settings_mic_widgets if _settings_has_mic_gain else [])
+    + _settings_speaker_mute_widgets + _settings_mic_mute_widgets
+    + (_settings_camera_quality_widgets if _settings_camera_jpeg_quality else []) }
   _settings_right_widgets: ${ _settings_processing_widgets + _settings_aec_widgets + _settings_mode_widgets
     + (_settings_ns_widgets + _settings_agc_widgets if _settings_afe and _settings_single_mic
     else []) + (_settings_vad_widgets if _settings_afe else []) + (_settings_voice_heading
@@ -649,7 +703,7 @@ substitutions:
     + (_settings_sendspin_widgets if _fw_sendspin else []) }
   _settings_audio_callbacks: !lambda |-
     ${ _settings_speaker_callback }
-    ${ _settings_mic_callback }
+    ${ _settings_mic_callback if _settings_has_mic_gain else '' }
     ${ _settings_speaker_mute_callback }
     ${ _settings_mic_mute_callback }
     ${ _settings_aec_callback }
@@ -659,13 +713,15 @@ substitutions:
     ${ _settings_wake_word_callback if _fw_wake_word else '' }
     ${ _settings_playback_callback if _fw_playback else '' }
     ${ _settings_sendspin_callback if _fw_sendspin else '' }
+    ${ _settings_camera_quality_callback if _settings_camera_jpeg_quality else '' }
   _settings_audio_sync:
     - script.execute: settings_sync_speaker
-    - script.execute: settings_sync_mic
     - script.execute: settings_sync_speaker_mute
     - script.execute: settings_sync_mic_mute
     - script.execute: settings_sync_aec
     - script.execute: settings_sync_mode
+  _settings_refresh_mic:
+    - script.execute: settings_sync_mic
   _settings_refresh_ns:
     - script.execute: settings_sync_ns
   _settings_refresh_agc:
@@ -678,14 +734,15 @@ substitutions:
     - script.execute: settings_sync_playback
   _settings_refresh_sendspin:
     - script.execute: settings_sync_sendspin
-  _settings_refresh_audio: ${ _settings_audio_sync + (_settings_refresh_ns + _settings_refresh_agc
+  _settings_refresh_audio: ${ _settings_audio_sync + (_settings_refresh_mic if _settings_has_mic_gain else []) + (_settings_refresh_ns + _settings_refresh_agc
     if _settings_afe and _settings_single_mic else []) + (_settings_refresh_vad if
     _settings_afe else []) + (_settings_refresh_wake_word if _fw_wake_word else [])
     + (_settings_refresh_playback if _fw_playback else []) + (_settings_refresh_sendspin
-    if _fw_sendspin else []) }
+    if _fw_sendspin else []) + (_settings_refresh_camera_quality if _settings_camera_jpeg_quality else []) }
 packages:
+  camera_quality: ${ _settings_camera_quality_package if _settings_camera_jpeg_quality else {} }
   speaker: ${ _settings_speaker_package }
-  mic: ${ _settings_mic_package }
+  mic: ${ _settings_mic_package if _settings_has_mic_gain else {} }
   speaker_mute: ${ _settings_speaker_mute_package }
   mic_mute: ${ _settings_mic_mute_package }
   aec: ${ _settings_aec_package }

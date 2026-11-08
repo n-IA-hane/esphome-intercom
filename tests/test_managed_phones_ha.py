@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from aioesphomeapi import DeviceInfo, UserService, UserServiceArg, UserServiceArgType
 from homeassistant.components.esphome.entry_data import RuntimeEntryData
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 import pytest
 
@@ -83,6 +83,10 @@ async def phone_lab(hass):
         device_info=DeviceInfo(name="phone_node", friendly_name="Ingresso", mac_address="84:C7:BB:00:00:01"),
         services=native_services(), available=True)
     native.runtime_data.first_connect_done.set()
+    state_entity = er.async_get(hass).async_get_or_create(
+        "sensor", "esphome", "84c7bb000001-voip_state", config_entry=native,
+        device_id=device.id, suggested_object_id="phone_node_voip_state")
+    hass.states.async_set(state_entity.entity_id, "idle")
     unsub = hass.bus.async_listen("call_service", lambda event: events.append(dict(event.data)))
     lab = SimpleNamespace(hass=hass, entry=entry, native=native, device=device,
         registrar=registrar, runtime=entry.runtime_data, sent=sent, events=events, gate=gate)

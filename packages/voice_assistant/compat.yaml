@@ -1,4 +1,10 @@
-# Noncontinuous completion uses the same on_idle API as the native provider.
-external_components:
-- source: ${ext_components_source}
-  components: [voice_assistant]
+# ESPHome 2026.10 compatibility. Official 106 or later core uses an explicit
+# esphome_legacy_audio_providers: [] override, after validating that core.
+esphome:
+  min_version: 2026.10.0
+defaults:
+  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
+  _legacy_voice_provider:
+    source: ${ext_components_source}
+    components: [voice_assistant]
+external_components: ${ [_legacy_voice_provider] if "voice_assistant" in esphome_legacy_audio_providers else [] }

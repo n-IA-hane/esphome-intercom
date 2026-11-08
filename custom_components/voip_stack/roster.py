@@ -173,7 +173,11 @@ def merge_roster_overrides(entries: list[RosterEntry], overrides: list[RosterEnt
         for pos, entry in enumerate(merged):
             entry_keys = {norm(entry.id), norm(entry.name)}
             entry_keys.discard("")
-            if override_keys & entry_keys:
+            same_device = (override.metadata.get("device_id") and
+                           override.metadata["device_id"] == entry.metadata.get("device_id"))
+            same_endpoint = (override.metadata.get("endpoint_id") and
+                             override.metadata["endpoint_id"] == entry.metadata.get("endpoint_id"))
+            if override_keys & entry_keys or same_device or same_endpoint:
                 index = pos
                 break
         if index < 0:

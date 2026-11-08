@@ -221,7 +221,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
 
 async def restore_managed_caller(lab, caller, discovery):
     """Recreate a persisted managed owner, then learn its real REGISTER/OPTIONS."""
-    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
     from pytest_homeassistant_custom_component.common import MockConfigEntry
     from custom_components.voip_stack import peer_snapshot
     from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
@@ -233,6 +233,9 @@ async def restore_managed_caller(lab, caller, discovery):
     device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=origin.entry_id,
         identifiers={("esphome", "84c7bb000001")},
         connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:01")}, name="Managed caller")
+    state_entity = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "managed_caller_voip_state",
+        device_id=device.id, config_entry=origin)
+    lab.hass.states.async_set(state_entity.entity_id, "idle")
     phone = ManagedPhone(device.id, origin.entry_id, "84c7bb000001", "fixture-only",
         username="managed_caller", display_name="Managed caller", api_host="127.0.0.2", extension="430")
     entry = config_entry(lab.hass)

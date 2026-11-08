@@ -269,6 +269,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
 @pytest.mark.parametrize('policy,direction', [
     ('unknown', 'sendrecv'), ('unknown', 'sendonly'), ('unknown', 'recvonly'),
     ('observed_audio_only', 'sendrecv'), ('observed_jpeg', 'sendrecv'),
+    ('options_native_jpeg', 'sendrecv'), ('options_native_audio_only', 'sendrecv'),
     ('answer_audio_only', 'sendrecv'),
 ])
 async def test_registered_managed_target_negotiates_video_after_audio_only_discovery(lab, monkeypatch, policy, direction):
@@ -329,6 +330,15 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     class SinkWire(RegisteredPeer):
         def datagram_received(self, raw, address):
             request = sip.parse_message(raw)
+            if request.method == 'OPTIONS' and policy.startswith('options_native_'):
+                from pathlib import Path
+                body = (Path(__file__).parent / 'fixtures/sdp/native_options_capabilities.sdp').read_bytes()
+                body = body.replace(b'192.0.2.192', b'127.0.0.3')
+                if policy == 'options_native_audio_only':
+                    body = body.split(b'm=video', 1)[0]
+                self.options.put_nowait((request, address))
+                self.answer(request, address, body=body)
+                return
             if request.method != 'INVITE':
                 super().datagram_received(raw, address)
                 return
@@ -365,6 +375,9 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
         'managed_esphome_phones': {device.id: record.record()}})
     restored = managed_records(entry)[device.id]
+    state_entity = er.async_get(lab.hass).async_get_or_create('sensor', 'esphome', 'managed_sink_voip_state',
+        device_id=device.id, config_entry=origin)
+    lab.hass.states.async_set(state_entity.entity_id, 'idle')
     entity = er.async_get(lab.hass).async_get_or_create('sensor', 'esphome', 'managed_sink_voip_endpoint',
         device_id=device.id, config_entry=origin)
     state = ('Managed sink | 127.0.0.3 | ' + str(transport.get_extra_info('sockname')[1]) +
@@ -384,14 +397,23 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         await register_peer(lab, source, 'caller', contact=f'sip:opaque-caller@127.0.0.2:{caller.local_sip_port}')
         await wait_until(lambda: all(registrar.registered_contacts(name)[0].capabilities is not None
                                     for name in ['managed_sink', 'caller']))
+        assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get('used')
         peers = await async_build_peer_snapshot(lab.hass)
         rows = roster_from_peers(lab.hass, peers, registrar.registered_roster_entries())
         row = next(row for row in rows if row.id == restored.username)
         assert row.metadata['sip_capabilities_known'] is True
+        known_jpeg = policy in {'observed_jpeg', 'options_native_jpeg'}
         assert row.metadata['capabilities'] == (['audio', 'dtmf', 'video']
-                                              if policy == 'observed_jpeg' else ['audio', 'dtmf'])
-        assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == []
-        expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if policy == 'observed_jpeg' else None)
+                                              if known_jpeg else ['audio', 'dtmf'])
+        if policy.startswith('options_native_'):
+            assert row.metadata['sip_audio_tx_formats'] == [
+                'L16/16000/1/10', 'L16/16000/1/20', 'G722/8000/1/20', 'G722/8000/1/10']
+            assert row.metadata['sip_audio_rx_formats'] == [
+                'L16/48000/1/10', 'L16/16000/1/20', 'L16/16000/1/10',
+                'G722/8000/1/20', 'G722/8000/1/10']
+        else:
+            assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == []
+        expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if known_jpeg else None)
         assert row.metadata['sip_video_codec'] == expected_contract
         assert peer_video_codec(None, row) == expected_contract
         while not caller.queue.empty():

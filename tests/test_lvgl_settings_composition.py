@@ -100,8 +100,9 @@ def test_round_bootstrap_preserves_settings_registry_and_owner_callbacks(scene, 
     assert any(entry["priority"] == -100 for entry in boot)
     registrations = [entry for entry in boot if entry["priority"] == -200]
     assert len(registrations) == 1
-    for marker in ("master_volume", "mic_gain", "LV_EVENT_SCREEN_LOADED", "settings_sync_widgets"):
+    for marker in ("master_volume", "LV_EVENT_SCREEN_LOADED", "settings_sync_widgets"):
         assert marker in text(registrations[0])
+    assert "id(mic_gain)" not in text(registrations[0])
 
 
 @pytest.mark.parametrize("scene", SCENES)

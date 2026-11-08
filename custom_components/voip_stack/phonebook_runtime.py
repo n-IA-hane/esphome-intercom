@@ -29,7 +29,7 @@ def format_entry_unified(peer: Peer) -> str:
     sip_transport_token = "sip_tcp" if sip_transport == "tcp" else "sip_udp"
     return (
         f"{name}|{peer_ip}|{peer.sip_port or 5060}|"
-        f"{peer.rtp_port or 40000}|{peer.audio_mode}|{tx}|{rx}|{sip_transport_token}"
+        f"{peer.rtp_port or 40000}|{peer.audio_mode or ''}|{tx}|{rx}|{sip_transport_token}"
     )
 
 

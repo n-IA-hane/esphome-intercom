@@ -35,7 +35,7 @@ def restore_esp_identities(hass, runtime):
         native_entities = [entity for entity in er.async_entries_for_device(entities, device.id)
                            if entity.platform == "esphome"]
         roles = {entity_role(entity): entity for entity in native_entities}
-        if phone is None and "voip_endpoint" not in roles:
+        if "voip_state" not in roles:
             continue
         fields = {}
         for role, field in (("voip_extension", "extension"), ("voip_ring_groups", "ring_group"),

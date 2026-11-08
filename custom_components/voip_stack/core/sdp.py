@@ -1956,7 +1956,9 @@ def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     }
 
 
-def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
+def _parse_media_sections(
+    sdp_body: str | bytes, *, capabilities: bool = False,
+) -> tuple[str, str, list[dict]]:
     """Parse enough SDP structure to negotiate independent media sections."""
 
     if isinstance(sdp_body, bytes):
@@ -2040,7 +2042,11 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 if len(parts) not in {1, 4}:
                     raise SdpError(f"bad SDP RTCP attribute: {line}")
                 rtcp_port = int(parts[0])
-                if not 1 <= rtcp_port <= 65535:
+                # RFC 3264 section 9 uses zero media ports for capabilities,
+                # not transport endpoints. Accept the matching RTCP placeholder
+                # only in that context; offer/answer validation stays strict.
+                capability_placeholder = capabilities and current["port"] == 0
+                if not (1 <= rtcp_port <= 65535 or (rtcp_port == 0 and capability_placeholder)):
                     raise SdpError(f"bad SDP RTCP port: {rtcp_port}")
                 current["rtcp_port"] = rtcp_port
                 if len(parts) == 4:
@@ -2301,10 +2307,12 @@ def validate_sdp_answer(
             )
 
 
-def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
+def parse_video_sdp(sdp_body: str | bytes, *, capabilities: bool = False) -> dict | None:
     """Return the first video media section when it matches this profile."""
 
-    _session_connection, _session_direction, sections = _parse_media_sections(sdp_body)
+    _session_connection, _session_direction, sections = _parse_media_sections(
+        sdp_body, capabilities=capabilities,
+    )
     for section in sections:
         if section["media"] != "video":
             continue
@@ -2312,7 +2320,7 @@ def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
         # an unsupported first m=video and accidentally answer a later format
         # in the first section's position.
         if (
-            section["port"] == 0
+            (section["port"] == 0 and not capabilities)
             or section["transport"] not in {"RTP/AVP", "RTP/AVPF"}
             or not section["connection_supported"]
             or not section["rtcp_address_supported"]
@@ -2376,10 +2384,10 @@ _VIDEO_ENCODING_ALIASES = {
 }
 
 
-def offered_video_formats(sdp_body: str | bytes) -> list[RtpVideoFormat]:
+def offered_video_formats(sdp_body: str | bytes, *, capabilities: bool = False) -> list[RtpVideoFormat]:
     """List normalized formats from the first active AVP/AVPF video section."""
 
-    parsed = parse_video_sdp(sdp_body)
+    parsed = parse_video_sdp(sdp_body, capabilities=capabilities)
     if parsed is None:
         return []
     out: list[RtpVideoFormat] = []
@@ -3212,8 +3220,23 @@ def options_capabilities(body: str | bytes) -> dict:
     features = ["directional_audio_v1"] if d1 else []
     if independent:
         features.append("independent_audio_ptime_v1")
-    return {"sip_audio_tx_formats": tokens(True), "sip_audio_rx_formats": tokens(False),
+    result = {"sip_audio_tx_formats": tokens(True), "sip_audio_rx_formats": tokens(False),
         "sdp_features": features}
+    sends = any(permits(fmt, True) for fmt in formats)
+    receives = any(permits(fmt, False) for fmt in formats)
+    if sends or receives:
+        result["audio_mode"] = "full_duplex" if sends and receives else "mic_only" if sends else "speaker_only"
+    # OPTIONS uses port zero for capabilities. Ordinary offer/answer parsing
+    # continues to reject zero-port video; discovery reuses its codec checks.
+    try:
+        video = next((fmt for fmt in offered_video_formats(body, capabilities=True)
+                      if fmt.encoding in {"JPEG", "H264"}), None)
+    except SdpError:
+        # An unusable optional video section must not discard valid audio.
+        video = None
+    if video is not None:
+        result["sip_video_codec"] = video.encoding.lower()
+    return result
 
 
 def _dtmf_events_from_fmtp(value: str) -> frozenset[int]:

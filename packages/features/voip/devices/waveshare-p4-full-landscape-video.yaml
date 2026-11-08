@@ -9,11 +9,12 @@ esp_video_camera:
   i2c_id: internal_i2c
   device: jpeg
   resolution: 800x800
-  jpeg_quality: 10
+  jpeg_quality: ${p4_jpeg_quality}
   buffer_count: 2
   max_framerate: ${p4_sip_jpeg_fps}
   rotation: 270
 packages:
+  camera_quality: !include '../../../camera/p4_jpeg_quality.yaml'
   video: !include '../../../voip/p4_full_video_jpeg.yaml'
 
 defaults:

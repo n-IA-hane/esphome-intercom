@@ -1212,14 +1212,6 @@ class VoipStackCard extends HTMLElement {
       return state === "unknown" || state === "unavailable";
     }
 
-    const endpointEntityId = configuredDevice?.entities?.voip_endpoint;
-    if (endpointEntityId) {
-      const entity = this._hass.states[endpointEntityId];
-      if (!entity) return true;
-      const state = String(entity.state || "").toLowerCase();
-      return state === "unknown" || state === "unavailable";
-    }
-
     // Only fall back to endpoint discovery when no stable HA entity binding is
     // available. A bound state entity always wins so reconnects render on the
     // next hass update without waiting for list_devices to refresh.

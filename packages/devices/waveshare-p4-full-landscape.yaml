@@ -12,7 +12,9 @@ substitutions:
   firmware_voice_binding:
     voice_assistant:
       id: va
-      microphone: mic_afe
+      microphone:
+        microphone: mic_afe
+        gain_factor: 1
       media_player: speaker_media_player
       noise_suppression_level: 0
       auto_gain: 0dBFS
@@ -20,7 +22,9 @@ substitutions:
   firmware_wake_word_binding:
     micro_wake_word:
       id: mww
-      microphone: mic_afe
+      microphone:
+        microphone: mic_afe
+        gain_factor: 1
       stop_after_detection: false
       models:
       - model: alexa
@@ -35,15 +39,15 @@ substitutions:
         codecs:
           - codec: pcm
             tx:
-              # 20 ms reduces RTP packet count; 10 ms remains an explicit alternative.
-              - sample_rate: 16000
-                pcm_format: s16le
-                channels: 1
-                frame_ms: 20
+              # Prefer 16 kHz / 10 ms to HA; retain 20 ms for compatible peers.
               - sample_rate: 16000
                 pcm_format: s16le
                 channels: 1
                 frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
             rx:
               # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
               # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.

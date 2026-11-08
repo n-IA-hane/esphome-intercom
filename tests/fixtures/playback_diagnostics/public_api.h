@@ -12,6 +12,9 @@
 #include <utility>
 #include <vector>
 
+inline int64_t test_esp_time_us = 100000;
+inline int64_t esp_timer_get_time() { return test_esp_time_us; }
+
 namespace esphome {
 inline uint32_t test_now = 100;
 inline bool test_output_callback = false;

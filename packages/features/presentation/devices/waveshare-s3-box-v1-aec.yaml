@@ -1346,7 +1346,7 @@ defaults:
         if (lv_obj_get_scroll_y(id(settings_continuous_page)->obj) < -28) {
           id(settings_close).execute();
         }
-    widgets: ${ _v1_setting_0 + _v1_setting_1 + _v1_setting_2 + _v1_setting_3 + _v1_setting_4 + _v1_setting_5 +
+    widgets: ${ _v1_setting_0 + _v1_setting_1 + _v1_setting_2 + (_v1_setting_3 + _v1_setting_4 if not _fw_voice else []) + _v1_setting_5 +
       _v1_setting_6 + _v1_setting_7 + (_v1_setting_8 if _fw_voip else []) + (_v1_setting_9 if _fw_voip else [])
       + _v1_setting_10 + _v1_setting_11 + _v1_setting_12 + _v1_setting_13 + (_v1_setting_14 if _fw_wake_word else
       []) + _v1_setting_15 }

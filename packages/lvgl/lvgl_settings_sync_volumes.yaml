@@ -2,16 +2,19 @@
 # LVGL settings runtime sync: volume controls.
 # =============================================================================
 
+defaults:
+  _settings_volume_speaker:
+    - lvgl.slider.update:
+        id: ui_speaker_vol_slider
+        value: !lambda 'return id(master_volume).state;'
+  _settings_volume_microphone:
+    - lvgl.slider.update:
+        id: ui_mic_vol_slider
+        value: !lambda 'return id(mic_gain).state;'
 script:
   - id: settings_sync_volumes_widgets
     mode: restart
-    then:
-      - lvgl.slider.update:
-          id: ui_speaker_vol_slider
-          value: !lambda 'return id(master_volume).state;'
-      - lvgl.slider.update:
-          id: ui_mic_vol_slider
-          value: !lambda 'return id(mic_gain).state;'
+    then: ${ _settings_volume_speaker + (_settings_volume_microphone if "voice" not in firmware_features else []) }
 
 interval:
   - interval: 1s

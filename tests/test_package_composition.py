@@ -66,6 +66,73 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     return config
 
 
+@pytest.mark.parametrize('profile_path,features,attenuation', [
+    ('yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml', FULL, None),
+    ('yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml', FULL, 20),
+    ('yamls/voip-only/single-bus/waveshare-s3-voip.yaml', ['voip'], 20),
+])
+def test_announcement_attenuation_keeps_existing_volume_owners(
+    tmp_path: Path, profile_path: str, features: list[str], attenuation: int | None,
+) -> None:
+    """Resolve the baseline on each writer through the actual package/schema pipeline."""
+    import esphome.config_validation as cv
+    from tests.native_profile import nodes
+
+    config = device_config(tmp_path, features, profile_path)
+    data = yaml_util.load_yaml(config)
+    if attenuation is not None:
+        data['substitutions']['announcement_input_attenuation_db'] = str(attenuation)
+    config.write_text(yaml_util.dump(data))
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Could not resolve substitution' not in result.stderr, result.stderr
+    expanded = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    path = tmp_path / 'expanded.yaml'
+    path.write_text(expanded.stdout)
+    document = yaml_util.load_yaml(path)
+    expected = attenuation or 0
+    if features == ['voip']:
+        # This standalone phone owns a separate ringtone input, with no TTS lane.
+        assert not any(node.get('id') == 'tts_mixer_input' for node in nodes(document['speaker']))
+        assert not any(node.get('mixer_speaker.apply_ducking', {}).get('id') == 'tts_mixer_input'
+                       for node in nodes(document))
+        return
+    boot = next(node['if'] for node in nodes(document['esphome']['on_boot'])
+                if 'if' in node and any('mixer_speaker.apply_ducking' in action
+                                       for action in node['if'].get('then', [])))
+    assert str(boot['condition']['lambda']).strip() == f'return {expected} > 0;'
+    boot_action = boot['then'][0]['mixer_speaker.apply_ducking']
+    assert boot_action['id'] == 'tts_mixer_input'
+    assert cv.int_range(min=0, max=255)(boot_action['decibel_reduction']) == expected
+    assert boot_action['duration'] == '0ms'
+    for script_id in ('voip_ringing_loop', 'voip_stop_ringtone'):
+        script = next(item for item in document['script'] if item['id'] == script_id)
+        actions = [node['mixer_speaker.apply_ducking'] for node in nodes(script)
+                   if 'mixer_speaker.apply_ducking' in node]
+        assert len(actions) == 1
+        assert actions[0]['id'] == 'tts_mixer_input'
+        assert cv.int_range(min=0, max=255)(actions[0]['decibel_reduction']) == expected
+    if document['substitutions']['firmware_audio_backend'] == 'native':
+        volume = next(item for item in document['number'] if item['id'] == 'master_volume')
+        actions = [node['mixer_speaker.apply_ducking'] for node in nodes(volume)
+                   if 'mixer_speaker.apply_ducking' in node]
+        tts = next(action for action in actions if action['id'] == 'tts_mixer_input')
+        reduction = str(tts['decibel_reduction'])
+        assert f'static_cast<unsigned>({expected})' in reduction
+        assert 'dynamic_reduction +' in reduction
+        assert 'std::min(255u,' in reduction
+        assert {action['id'] for action in actions} == {
+            'media_mixer_input', 'tts_mixer_input', 'voip_mixer_input',
+        }
+
+
 @pytest.mark.parametrize('profile_path', [
     'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml',
     'yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
@@ -92,7 +159,7 @@ def test_optional_g722_comment_keeps_package_pcm_defaults(tmp_path: Path, profil
     pcm, g722 = codecs
     def shape(formats):
         return [(fmt['sample_rate'], fmt['frame_ms']) for fmt in formats]
-    assert shape(pcm['tx']) == [(16000, 20), (16000, 10)]
+    assert shape(pcm['tx']) == [(16000, 10), (16000, 20)]
     assert shape(pcm['rx']) == [(48000, 10), (16000, 20), (16000, 10)]
     assert shape(g722['tx']) == shape(g722['rx']) == [(16000, 20), (16000, 10)]
     assert all(fmt['pcm_format'] == 's16le' and fmt['channels'] == 1

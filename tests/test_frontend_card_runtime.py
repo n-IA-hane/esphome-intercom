@@ -281,6 +281,24 @@ await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Card = module.namespace.VoipStackCard;
 
+// A stale legacy endpoint sensor must not hide a phone discovered by state.
+const stateOnly = new Card();
+stateOnly.config = {{ mode: "esp_mirror", device_id: "state-phone" }};
+stateOnly._availableDevices = [{{ device_id: "state-phone", entities: {{
+  voip_state: "sensor.phone_state", voip_endpoint: "sensor.old_endpoint",
+}} }}];
+stateOnly._hass = {{ states: {{
+  "sensor.phone_state": {{ state: "idle" }},
+  "sensor.old_endpoint": {{ state: "unavailable" }},
+}} }};
+assert.equal(stateOnly._isEspUnavailable(), false);
+stateOnly._hass.states["sensor.phone_state"].state = "unavailable";
+stateOnly._hass.states["sensor.old_endpoint"].state = "legacy route";
+assert.equal(stateOnly._isEspUnavailable(), true);
+stateOnly._hass.states["sensor.phone_state"].state = "idle";
+delete stateOnly._hass.states["sensor.old_endpoint"];
+assert.equal(stateOnly._isEspUnavailable(), false);
+
 // The compact card alone observes authoritative phone state. A roster can
 // retain an enabled ESP while list_devices omits it and the monitor is offline.
 const offlineEntry = {{id:"ws3-route",name:"WS3 LCD",enabled:true,

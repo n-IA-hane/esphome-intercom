@@ -145,7 +145,7 @@ def rewrite_yaml(path, ref):
         remote_ref = "main" if key == "camera_components_source" else ref
         overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else f"{url}@{remote_ref}"
     if device_entrypoint:
-        overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" else ""
+        overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" and (ROOT.parent / "esp-gmf/elements/gmf_ai_audio").is_dir() else ""
     if p4:
         overrides["intercom_idf_root"] = str(ROOT / "idf_components") if ref == "local" else ""
         overrides["intercom_idf_ref"] = "main" if ref == "local" else ref

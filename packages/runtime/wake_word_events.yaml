@@ -1,4 +1,8 @@
 # Official MWW trigger; user automations coexist through normal package merging.
+external_components:
+- source: ${ext_components_source}
+  components: [micro_wake_word]
+
 packages:
   mww_start: !include mww_safe_start.yaml
 

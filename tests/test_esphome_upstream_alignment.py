@@ -1,4 +1,4 @@
-"""Compile native providers and the three recorded lifecycle adaptations."""
+"""Compile native providers and the four recorded lifecycle adaptations."""
 from pathlib import Path
 import base64
 import hashlib
@@ -19,15 +19,16 @@ from tests.test_package_composition import FULL, device_config
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ROOT / "esphome/components"
 OFFICIAL = (
-    "audio", "micro_wake_word", "mixer",
+    "audio", "mixer",
     "ota", "resampler", "speaker", "sendspin", "audio_file",
     "media_source", "microphone",
 )
 RETIRED = (
-    "audio", "micro_wake_word", "mixer",
+    "audio", "mixer",
     "ota", "audio_http_compat", "sendspin_compat", "audio_dsp_iram", "speaker",
 )
-LIFECYCLE = ("audio_http", "speaker_source", "voice_assistant")
+# HTTP retirement, player lifecycle, Assist idle and MWW model reload.
+LIFECYCLE = ("audio_http", "speaker_source", "voice_assistant", "micro_wake_word")
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(240)]
 
 
@@ -76,6 +77,36 @@ def test_real_parser_selects_only_recorded_lifecycle_overrides(native_full_build
     generated = (source / "main.cpp").read_text()
     for class_name in ("ESPAudioStack", "EspAfe", "VoipStack", "RuntimeController"):
         assert class_name in generated
+
+
+def test_real_voip_only_configuration_does_not_load_or_generate_mww(tmp_path: Path) -> None:
+    config = device_config(tmp_path, features=["voip"])
+    expanded = subprocess.run(
+        [sys.executable, "-m", "esphome", "config", str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    assert "Could not resolve substitution" not in expanded.stderr
+    document_path = tmp_path / "expanded.yaml"
+    document_path.write_text(expanded.stdout)
+    document = yaml_util.load_yaml(document_path)
+    providers = {
+        component for provider in document.get("external_components", [])
+        for component in provider.get("components", [])
+    }
+    assert "voip_stack" in document
+    assert "micro_wake_word" not in document
+    assert "micro_wake_word" not in providers
+
+    generated = subprocess.run(
+        [sys.executable, "-m", "esphome", "compile", "--only-generate", str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    assert "Could not resolve substitution" not in generated.stderr
+    source = next(tmp_path.rglob("src/main.cpp")).parent
+    assert not (source / "esphome/components/micro_wake_word").exists()
+    assert "micro_wake_word::MicroWakeWord" not in (source / "main.cpp").read_text()
 
 
 @pytest.mark.parametrize("component", OFFICIAL)

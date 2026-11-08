@@ -7,7 +7,7 @@
 #
 # Exposes the stable user-facing controls:
 #   - Master Volume: speaker-backed software volume for non-codec boards
-#   - Mic Gain: post-processor gain for level trim after AEC/AFE
+#   - Mic Gain: retained only for standalone phones without Assist
 # =============================================================================
 
 substitutions:
@@ -20,12 +20,6 @@ number:
       id: master_volume
       name: Master Volume
       speaker_id: hw_speaker
-    mic_gain:
-      id: mic_gain
-      name: Mic Gain
-      min_value: ${mic_gain_min}
-      max_value: ${mic_gain_max}
-      initial_value: ${ mic_gain_initial | default(0) }
 
 button:
   - platform: template
@@ -34,3 +28,17 @@ button:
     icon: mdi:clipboard-text-search
     on_press:
       - esp_audio_stack.dump_diagnostics:
+
+# FULL microphone consumers use unity gain after their processor.
+defaults:
+  _stack_phone_mic_control:
+    number:
+      - platform: esp_audio_stack
+        mic_gain:
+          id: mic_gain
+          name: Mic Gain
+          min_value: ${mic_gain_min}
+          max_value: ${mic_gain_max}
+          initial_value: ${ mic_gain_initial | default(0) }
+packages:
+  phone_mic_gain: ${ _stack_phone_mic_control if "voice" not in firmware_features else {} }

@@ -22,11 +22,12 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize(("source_rate", "destination_rate"), [
-    (16000, 48000), (48000, 48000), (16000, 16000),
-], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx"])
+@pytest.mark.parametrize(("source_rate", "destination_rate", "offer_tx10"), [
+    (16000, 48000, False), (48000, 48000, False), (16000, 16000, False),
+    (16000, 48000, True),
+], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx", "peer16k20-or10-prefers10"])
 async def test_bridge_repacketizes_source_return_without_changing_destination(
-    trunks, monkeypatch, source_rate, destination_rate,
+    trunks, monkeypatch, source_rate, destination_rate, offer_tx10,
 ):
     lab = trunks
     target = lab.phones[0]
@@ -44,6 +45,8 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     def select(invite, destination):
         selected = real_select(invite, destination)
         observed["source"] = selected
+        observed["original_source"] = invite
+        observed["destination"] = destination
         return selected
 
     monkeypatch.setattr(bridge, "bridge_source_audio", select)
@@ -77,12 +80,15 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    source_ms = 20 if source_rate == 16000 else 10
+    # Fixed20 cases exercise the 20->10 bridge regardless of HA preference.
+    # The alternative case keeps20 first in the catalog but permits HA's10ms RX.
+    offered_ms = 20 if source_rate == 16000 else 10
+    source_ms = 10 if offer_tx10 else offered_ms
     caller = SipCallClient(
         local_ip="127.0.0.2", local_name="Independent source", local_sip_port=0,
         local_rtp_port=audio.getsockname()[1],
-        supported_send_formats=[AudioFormat(source_rate, frame_ms=source_ms)]
-            + ([AudioFormat(16000, frame_ms=10)] if source_rate == 16000 else []),
+        supported_send_formats=[AudioFormat(source_rate, frame_ms=offered_ms)]
+            + ([AudioFormat(16000, frame_ms=10)] if offer_tx10 else []),
         supported_recv_formats=[AudioFormat(48000, frame_ms=10),
                                 AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)],
         allow_directional_audio_payloads=True, independent_audio_ptime=True,
@@ -103,6 +109,9 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     def bounded_offer():
         body = re.sub(rb"a=maxptime:[^\r\n]+\r\n", b"", caller._pending_invite_body)
         body = body.replace(b"a=ptime:10\r\n", b"a=ptime:10\r\na=maxptime:10\r\n")
+        # This offer constrains the source's receiver to10ms. It does not
+        # prescribe its transmitter; the caller's local encoder supports20ms.
+        assert b"a=ptime:10\r\n" in body and b"a=maxptime:10\r\n" in body
         caller._pending_invite_body = body
         caller._local_sdp_body = body.decode()
         return original_build()
@@ -117,9 +126,27 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
             result = await caller.wait_for_final(timeout=3)
         assert result == "in_call"
         if destination_rate == 16000:
-            # Observe the real UDP answer, not only the selection helper.
-            assert sdp.parse_sdp(observed["source_answer"])["ptime"] == 20
+            # ptime is HA's receive preference, while maxptime describes
+            # its actual budget. A caller with only20ms TX may retain20ms.
+            answer_format = sdp.parse_sdp(observed["source_answer"])
+            assert answer_format["ptime"] == 10
+            assert answer_format["maxptime"] >= source_ms == 20
             assert caller.dialog.send_format.frame_ms == 20
+            assert caller.dialog.recv_format.frame_ms == 10
+            assert observed["source"].recv_format.frame_ms == 10
+            assert observed["source"].recv_format.max_frame_ms >= 20
+            # The same shared bridge preserves the former20ms receive
+            # preference too. Only the listener's preference changed.
+            previous_source = replace(observed["original_source"], recv_format=replace(
+                observed["original_source"].recv_format, frame_ms=20))
+            previous = real_select(previous_source, observed["destination"])
+            assert previous.send_format.frame_ms == 10
+            assert previous.recv_format.frame_ms == 20
+            previous_answer = sdp.build_answer_directional(
+                "127.0.0.1", "127.0.0.1", 40000, previous.send_format,
+                previous.recv_format, remote_sdp=previous.remote_sdp)
+            assert sdp.parse_sdp(previous_answer)["ptime"] == 20
+            assert sdp.parse_sdp(previous_answer)["maxptime"] >= 20
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
         samples = source_rate * source_ms // 1000
@@ -140,6 +167,9 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
         # HA must retain the already accepted destination receiver.
         assert (relay.right.outbound_rtp_format.sample_rate, relay.right.outbound_rtp_format.frame_ms) == (destination_rate, 10)
         assert all(len(packet.payload) == destination_rate * 10 // 1000 * 2 for packet in forwarded)
+        for first, second in zip(forwarded, forwarded[1:]):
+            assert (second.sequence - first.sequence) & 65535 == 1
+            assert (second.timestamp - first.timestamp) & 0xFFFFFFFF == destination_rate // 100
         if source_rate == destination_rate:
             assert b"".join(packet.payload for packet in forwarded) == forward
         if source_rate == destination_rate == 48000:

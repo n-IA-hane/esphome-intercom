@@ -105,7 +105,7 @@ class EspHomeProvisioner:
     def _state_changed(self, event):
         entity = er.async_get(self.hass).async_get(str(event.data.get("entity_id") or ""))
         if entity is not None and entity.platform == "esphome" and entity_role(entity) in {
-                *_ROLES, "voip_state", "voip_endpoint"}:
+                *_ROLES, "voip_state"}:
             old, new = event.data.get("old_state"), event.data.get("new_state")
             if old is None or new is None or old.state != new.state:
                 self.schedule()

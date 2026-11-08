@@ -5,6 +5,18 @@ substitutions:
   firmware_primary_button_id: main_button
   afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
+  # ES8311 set_input_gain controls ADC_SCALE before AFE, not its analog PGA.
+  # Keep the codec profile's24dB default; no Number initial_value overrides NVS.
+  settings_microphone_gain_id: ${ "microphone_pga" if "voice" in firmware_features else "mic_gain" }
+  settings_microphone_gain_label: ${ "Mic gain (pre-AFE)" if "voice" in firmware_features else "Microphone gain" }
+  mic_gain_min: ${ 0 if "voice" in firmware_features else -20 }
+  mic_gain_max: ${ 36 if "voice" in firmware_features else 30 }
+  _spotpear_input_gain_control:
+    number:
+      - platform: esp_audio_stack
+        input_pga:
+          id: microphone_pga
+          name: Microphone Gain (pre-processing)
   firmware_music_binding:
     media_source:
     - id: !extend 'media_http_source'
@@ -20,7 +32,9 @@ substitutions:
   firmware_voice_binding:
     voice_assistant:
       id: va
-      microphone: mic_afe
+      microphone:
+        microphone: mic_afe
+        gain_factor: 1
       media_player: speaker_media_player
       noise_suppression_level: 0
       auto_gain: 0dBFS
@@ -28,7 +42,9 @@ substitutions:
   firmware_wake_word_binding:
     micro_wake_word:
       id: mww
-      microphone: mic_afe
+      microphone:
+        microphone: mic_afe
+        gain_factor: 1
       stop_after_detection: false
       models:
       - model: alexa
@@ -50,15 +66,15 @@ substitutions:
         codecs:
           - codec: pcm
             tx:
-              # 20 ms reduces RTP packet count; 10 ms remains an explicit alternative.
-              - sample_rate: 16000
-                pcm_format: s16le
-                channels: 1
-                frame_ms: 20
+              # Prefer 16 kHz / 10 ms to HA; retain 20 ms for compatible peers.
               - sample_rate: 16000
                 pcm_format: s16le
                 channels: 1
                 frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
             rx:
               # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
               # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
@@ -95,6 +111,7 @@ runtime_controller:
   id: runtime
   storage_in_psram: true
 packages:
+  input_gain_control: ${ _spotpear_input_gain_control if "voice" in firmware_features else {} }
   feature_validation: !include ../profiles/feature_validation.yaml
   hardware: !include '../board/spotpear_ball_v2.yaml'
   display_hardware: !include '${ ''../board/spotpear_display.yaml'' if ''display'' in firmware_features else ''../features/shared/absent.yaml''

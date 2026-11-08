@@ -545,20 +545,20 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     entry.add_to_hass(hass)
     entry.runtime_data = runtime
 
-    endpoint_entity = "text_sensor.s3_voip_endpoint"
+    state_entity = "text_sensor.s3_voip_state"
     extension_entity = "text.s3_voip_extension"
     groups_entity = "text.s3_voip_ring_groups"
     conference_entity = "text.s3_voip_conference_groups"
     conference_ring_entity = "switch.s3_voip_conference_ring"
     entities = {
-        "voip_endpoint": endpoint_entity,
+        "voip_state": state_entity,
         "voip_extension": extension_entity,
         "voip_ring_groups": groups_entity,
         "voip_conference_groups": conference_entity,
         "voip_conference_ring": conference_ring_entity,
     }
     for entity_id, value in (
-        (endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex"),
+        (state_entity, "idle"),
         (extension_entity, "669"),
         (groups_entity, "home"),
         (conference_entity, "all"),
@@ -589,7 +589,7 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     assert sensor._stable_phonebook_peers([]) == []
     assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
 
-    hass.states.async_set(endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex")
+    hass.states.async_set(state_entity, "idle")
     restoring = Peer(
         name="S3",
         host="192.0.2.11",

@@ -1,7 +1,11 @@
 # Waveshare V2 physical codec, reference and amplifier calibration.
 # These properties belong to the board, independently of the selected DSP.
 substitutions:
+  # Retained for standalone phones; FULL does not instantiate digital Mic Gain.
   mic_gain_initial: "24"
+  # Initial NS4150B calibration above typical startup with 1 uF bypass.
+  # This is not a guaranteed maximum or an acoustic qualification.
+  speaker_amplifier_settle_ms: "250"
 esp_audio_stack:
   audio_task_stack_in_psram: true
   buffers_in_psram: true
@@ -27,7 +31,7 @@ esp_audio_stack:
       address: 64
       mic_selected: 15
       # The close speaker overloads the microphone ADC at 24 dB. Keep capture
-      # headroom and apply the default voice gain after echo cancellation.
+      # headroom; native processor gain can be calibrated in the device entry.
       gain_db: 0.0
       # Physical MIC3 carries the attenuated DAC reference (TDM slot 1).
       ref_channel: 2
@@ -54,6 +58,11 @@ speaker:
   sample_rate: 48000
   bits_per_sample: 16
   timeout: 1s
+  # Evaluated before amplifier_required stops the existing warm-idle timer.
+  # The mute paths below keep that timer stopped whenever PA power is off.
+  amplifier_settle_time: !lambda |-
+    return id(audio_stack_speaker_idle_powerdown).is_running()
+               ? 0 : ${speaker_amplifier_settle_ms};
 switch:
 - platform: template
   name: Speaker Mute
@@ -67,25 +76,50 @@ switch:
       level: INFO
       tag: mute
       format: 'Speaker mute ON: DAC muted, amplifier off'
-  - speaker.mute_on: hw_speaker
-  - delay: 50ms
-  - output.turn_off: speaker_enable
+  - script.execute: audio_stack_speaker_mute_transition
   on_turn_off:
   - logger.log:
       level: INFO
       tag: mute
       format: 'Speaker mute OFF: amplifier on, DAC unmuted'
+  - script.execute: audio_stack_speaker_mute_transition
+script:
+- id: audio_stack_speaker_mute_transition
+  mode: restart
+  then:
+  # A new intention cancels the preceding branch and all of its delays.
+  - script.stop: audio_stack_speaker_idle_powerdown
   - if:
       condition:
-        speaker.is_playing: hw_speaker
+        switch.is_on: speaker_mute
       then:
-      - output.turn_on: speaker_enable
-      - delay: 50ms
-  - speaker.mute_off: hw_speaker
+      - speaker.mute_on: hw_speaker
+      - delay: ${speaker_amplifier_settle_ms}ms
+      - if:
+          condition:
+            switch.is_on: speaker_mute
+          then:
+          - output.turn_off: speaker_enable
+      else:
+      - if:
+          condition:
+            # Parent intent includes the facade's settling STARTING state.
+            lambda: return id(hw_speaker).get_parent()->is_speaker_running();
+          then:
+          - output.turn_on: speaker_enable
+          - delay: ${speaker_amplifier_settle_ms}ms
+          - if:
+              condition:
+                switch.is_off: speaker_mute
+              then:
+              - speaker.mute_off: hw_speaker
+          else:
+          - speaker.mute_off: hw_speaker
 external_components:
 - source: ${audio_stack_components_source}
   components: [esp_audio_stack]
 packages:
   mute: !include '../../features/shared/microphone_mute.yaml'
   controls: !include '../../esp_audio_stack/controls.yaml'
+  hardware_gain: !include '../../esp_audio_stack/hardware_gain_controls.yaml'
   amplifier: !include '../../esp_audio_stack/speaker_power_output.yaml'

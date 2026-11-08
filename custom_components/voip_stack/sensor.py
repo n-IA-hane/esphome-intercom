@@ -533,7 +533,7 @@ class VoipPhonebookSensor(SensorEntity):
                 or str(state.state or "").strip().lower()
                 in {"unknown", "unavailable"}
                 for role in (
-                    "voip_endpoint",
+                    "voip_state",
                     "voip_extension",
                     "voip_ring_groups",
                     "voip_conference_groups",
@@ -557,10 +557,10 @@ class VoipPhonebookSensor(SensorEntity):
         self._online_esp_services = online_services
 
         for key, peer in tuple(self._known_esp_peers.items()):
-            endpoint_entity = str(
-                (((peer.device or {}).get("entities") or {}).get("voip_endpoint")) or ""
+            state_entity = str(
+                (((peer.device or {}).get("entities") or {}).get("voip_state")) or ""
             )
-            if endpoint_entity and endpoint_entity not in self._tracked_entities:
+            if state_entity and state_entity not in self._tracked_entities:
                 self._known_esp_peers.pop(key, None)
 
         return [
