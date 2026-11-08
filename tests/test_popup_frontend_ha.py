@@ -148,3 +148,84 @@ async def test_popup_global_registration_without_lovelace(monkeypatch):
     assert panel.config["_panel_custom"]["name"] == "voip-stack-popup-settings"
     assert panel.config["_panel_custom"]["module_url"] == popup_urls[0]
     assert panel.config["_panel_custom"]["embed_iframe"] is False
+
+
+async def test_shared_setup_reload_refreshes_assets_without_recreating_services(hass, monkeypatch):
+    """Exercise the real initialized branch and registrar, isolating non-frontend I/O."""
+    from homeassistant.components import frontend
+    from homeassistant.core import CoreState
+    import custom_components
+
+    monkeypatch.setattr(custom_components, "__path__", [
+        *custom_components.__path__, str(ROOT / "custom_components"),
+    ])
+    from custom_components import voip_stack as integration
+    from custom_components.voip_stack import audio_ws_view, mailbox_api, sip_capture_service
+    from custom_components.voip_stack import frontend as assets
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    prepare_frontend_dependency(hass)
+    hass.set_state(CoreState.running)
+    hass.http = MagicMock()
+    hass.http.async_register_static_paths = AsyncMock()
+    items = [{"id": "unrelated", "url": "/unrelated-card.js"}]
+
+    async def create_item(data):
+        item = {"id": "voip-card", **data}
+        items.append(item)
+        return item
+
+    async def update_item(item_id, data):
+        item = next(item for item in items if item["id"] == item_id)
+        item.update(data)
+        return item
+
+    resources = types.SimpleNamespace(async_get_info=AsyncMock(), async_items=lambda: items,
+        async_create_item=AsyncMock(side_effect=create_item), async_update_item=AsyncMock(side_effect=update_item))
+    hass.data["lovelace"] = types.SimpleNamespace(resource_mode="storage", resources=resources)
+    services, websocket, bridge, phonebook = AsyncMock(), Mock(), Mock(), Mock()
+    monkeypatch.setattr(integration, "_async_register_services", services)
+    monkeypatch.setattr(integration, "async_register_websocket_api", websocket)
+    monkeypatch.setattr(integration, "_register_esp_state_event_bridge", bridge)
+    monkeypatch.setattr(integration, "_register_phonebook_service_event_sync", phonebook)
+    monkeypatch.setattr(integration, "_get_transport_config", lambda _: {})
+    monkeypatch.setattr(audio_ws_view, "async_register_audio_ws_view", Mock())
+    monkeypatch.setattr(mailbox_api, "async_register_mailbox_api", Mock())
+    capture = AsyncMock()
+    monkeypatch.setattr(sip_capture_service, "async_register_sip_capture", capture)
+    stamp = [100]
+    monkeypatch.setattr(assets, "_frontend_asset_stamp", lambda: stamp[0])
+    observed = AsyncMock()
+    original_register = assets.JSModuleRegistration.async_register
+
+    async def register(registration):
+        await observed(stamp[0])
+        await original_register(registration)
+
+    monkeypatch.setattr(assets.JSModuleRegistration, "async_register", register)
+    await integration._async_setup_shared(hass)
+    observed.assert_awaited_once_with(100)
+    registration = integration.registration_data(hass)
+    modules = hass.data[frontend.DATA_EXTRA_MODULE_URL]
+    modules.add("/unrelated.js")
+    stamp[0] = 200
+    await integration._async_setup_shared(hass)
+
+    assert observed.await_count == 2
+    observed.assert_awaited_with(200)
+    assert integration.registration_data(hass) is registration and registration.initialized
+    services.assert_awaited_once()
+    websocket.assert_called_once()
+    capture.assert_awaited_once()
+    assert bridge.call_count == phonebook.call_count == 2
+    assert hass.data[frontend.DATA_EXTRA_MODULE_URL] is modules
+    urls = [url for url in modules.urls if url.split("?")[0].endswith("/voip-stack-popup.js")]
+    assert len(urls) == 1 and urls[0].endswith("-200")
+    assert "/unrelated.js" in modules.urls
+    panel = hass.data[frontend.DATA_PANELS]["voip-stack-popup"]
+    assert panel.config["_panel_custom"]["module_url"] == urls[0]
+    cards = [item for item in items if item["url"].split("?")[0].endswith("/voip-stack-card.js")]
+    assert len(cards) == 1 and cards[0]["url"].endswith("-200")
+    assert items[0] == {"id": "unrelated", "url": "/unrelated-card.js"}
+    resources.async_create_item.assert_awaited_once()
+    resources.async_update_item.assert_awaited_once()

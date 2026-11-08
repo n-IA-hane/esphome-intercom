@@ -345,3 +345,46 @@ def test_automatic_updates_coalesce_in_the_real_component_loop(tmp_path):
     (tmp_path / "run.log").write_text(run.stdout + run.stderr)
     assert run.returncode == 0, run.stdout + run.stderr
     assert "COALESCED_RENDER burst=20 redraws=1 explicit=immediate" in run.stdout
+
+
+def test_non_scrolling_drag_then_cancelled_call_allows_fresh_tap(tmp_path):
+    """A drag inside one row is not a call, even when content cannot scroll."""
+    build = Path(os.environ.get("PHONE_LIST_HOST_BUILD", str(tmp_path / "host"))).resolve()
+    build.mkdir(parents=True, exist_ok=True)
+    config = list_config(360, build, tmp_path)
+    config["phone_list_view"][0]["row_count"] = Lambda("return 3;")
+    config["globals"].append({"id": "call_idle", "type": "bool", "initial_value": "true"})
+    config["phone_list_view"][0]["on_select"] = {"then": [{"lambda": Lambda(
+        'if(!id(call_idle))return; id(selected_count)++;id(selected_id)=row_id;id(call_idle)=false;')}]}
+    check = r'''
+        lv_screen_load(id(list_page)->obj);id(list_view).refresh();lv_refr_now(nullptr);
+        esphome::ui_fixture::PointerProbe input(lv_display_get_default());
+        lv_area_t row;lv_obj_get_coords(lv_obj_get_child(id(rows),1),&row);
+        const int x=(row.x1+row.x2)/2,y=row.y1+8;
+        input.press(x,y);input.move(x,y+25,100);input.release();
+        printf("NON_SCROLLING_DRAG selected=%u\n",id(selected_count));
+        if(id(selected_count)!=0)::exit(52);
+        input.tap(x,y);
+        if(id(selected_count)!=1||id(call_idle))::exit(53);
+        input.tap(x,y);if(id(selected_count)!=1)::exit(54);
+        // The telephone owner reports terminal completion. No UI reset follows.
+        id(call_idle)=true;
+        input.press(x,y);id(epoch)++;id(list_view).refresh();input.release();
+        if(id(selected_count)!=1)::exit(55);
+        input.tap(x,y);
+        if(id(selected_count)!=2||id(selected_id)!="1000")::exit(56);
+        printf("DRAG_CANCEL_REDIAL drag=ignored busy=ignored recycled=ignored fresh_tap=accepted\n");
+        ::exit(0);
+    '''
+    config["esphome"]["on_boot"][0]["then"] = [{"lambda": Lambda(check)}]
+    source = build / "host.yaml"
+    source.write_text(yaml_util.dump(config))
+    result = subprocess.run([sys.executable, "-m", "esphome", "compile", str(source)],
+                            capture_output=True, text=True, timeout=360)
+    (tmp_path / "compile.log").write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, (result.stdout + result.stderr)[-5000:]
+    result = subprocess.run([str(build / "build/.pioenvs/phone-list-proof/program")],
+                            capture_output=True, text=True, timeout=20, cwd=tmp_path)
+    (tmp_path / "run.log").write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DRAG_CANCEL_REDIAL" in result.stdout

@@ -4,6 +4,7 @@ defaults:
   reference_pga_name: '${ reference_pga_name | default("AEC Reference Gain") }'
 number:
   - platform: esp_audio_stack
+    hardware_gain_diagnostics: ${ audio_hardware_gain_diagnostics | default(false) }
     input_pga:
       id: microphone_pga
       name: ${microphone_pga_name}

@@ -1,0 +1,14 @@
+# Call-only gain, after the processed microphone fan-out. Does not change AEC,
+# its reference, Assist or microWakeWord. VoIP owns processing and persistence.
+number:
+  - platform: voip_stack
+    voip_stack_id: phone
+    mic_gain:
+      id: voip_tx_gain
+      name: VoIP TX Gain
+      icon: mdi:microphone-plus
+      entity_category: config
+      unit_of_measurement: dB
+      min_value: -20
+      max_value: 20
+      step: 1

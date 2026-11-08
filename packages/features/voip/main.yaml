@@ -1,6 +1,8 @@
 api:
   custom_services: true
 defaults:
+  voip_tx_gain_enabled: ${ voip_tx_gain_enabled | default('voice' in firmware_features) }
+  _fw_voip_tx_gain: !include '../../voip/tx_gain.yaml'
   _fw_mixed_voip_input: !include '../../audio/mixer_voip_input.yaml'
   _fw_direct_voip_input: !include
     file: ../shared/direct_input.yaml
@@ -8,6 +10,7 @@ defaults:
       input_id: voip_speaker_input
       input_buffer_duration: 128ms
 packages:
+  transmit_gain: ${ _fw_voip_tx_gain if (voip_tx_gain_enabled | string | lower) == 'true' else {} }
   input: ${ _fw_mixed_voip_input if _fw_mixed else _fw_direct_voip_input }
   buttons: !include '../../voip/call_buttons.yaml'
   settings: !include '../../voip/call_settings.yaml'

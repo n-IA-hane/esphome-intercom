@@ -63,7 +63,8 @@ def popup_page():
     assert shutil.which("chromium"), "The maintained Chromium browser is required"
     with sync_playwright() as runner:
         browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        page = browser.new_page(viewport={"width": 420, "height": 800})
+        context = browser.new_context(viewport={"width": 420, "height": 800})
+        page = context.new_page()
         page.set_default_timeout(2000)
 
         def serve(route):
@@ -163,7 +164,7 @@ def test_cold_without_card_persistence_and_shared_owner(popup_page):
     assert page.evaluate("mics") == 0
     assert page.evaluate("contexts") == 1  # Existing engine ringtone, unlocked by opt-in.
     assert page.evaluate("JSON.parse(localStorage.voip_stack_popup_phone)") == {
-        "device_id": "desk-device", "endpoint_id": "browser:desk"
+        "device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True
     }
     incoming(page)
     page.evaluate("""() => {
@@ -185,7 +186,7 @@ def test_cold_without_card_persistence_and_shared_owner(popup_page):
       for(const consumer of root.consumers)consumer.hass=hass;
     }""")
     assert page.evaluate("__voipStackPopup.binding.endpoint_id") == "browser:desk"
-    assert page.evaluate("Object.keys(JSON.parse(localStorage.voip_stack_popup_phone)).sort()") == ["device_id", "endpoint_id"]
+    assert page.evaluate("Object.keys(JSON.parse(localStorage.voip_stack_popup_phone)).sort()") == ["device_id", "enabled", "endpoint_id"]
     assert page.evaluate("services") == []
 
 
@@ -226,10 +227,107 @@ def test_saved_phone_bootstraps_after_reopen_without_a_card(popup_page):
     page.wait_for_function("streams.some(s=>s.active&&s.request.type==='voip_stack/subscribe_ha_softphone_state')")
     assert page.locator("voip-stack-card").count() == 0
     assert page.locator("voip-stack-popup button:visible").count() == 0
-    assert page.evaluate("__voipStackPopup.binding") == {"device_id": "desk-device", "endpoint_id": "browser:desk"}
+    assert page.evaluate("__voipStackPopup.binding") == {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True}
     incoming(page, "incoming-after-reopen")
     assert page.evaluate("__voipStackPopup.state.call_id") == "incoming-after-reopen"
     assert page.evaluate("mics") == 0
+
+
+def test_optout_keeps_phone_and_survives_restart_pageshow_and_reload(popup_page):
+    page = popup_page
+    enable(page)
+    page.evaluate("__voipStackPopup.bindPhone(phone,false)")
+    expected = {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": False}
+    assert page.evaluate("JSON.parse(localStorage.voip_stack_popup_phone)") == expected
+    page.evaluate("hass.connection.dispatchEvent(new Event('ready'));window.dispatchEvent(new PageTransitionEvent('pageshow'))")
+    page.wait_for_timeout(40)
+    page.evaluate("push({state:'ringing',direction:'incoming',call_id:'disabled-call'})")
+    assert page.evaluate("!__voipStackPopup.dialog?._dialog.open")
+    assert page.evaluate("!__voipStackPopup._unsubscribe")
+    assert page.evaluate("services") == []
+    page.reload()
+    page.evaluate(BOOTSTRAP)
+    page.wait_for_function("!!globalThis.__voipStackPopup")
+    assert page.evaluate("__voipStackPopup.binding") == expected
+    assert page.evaluate("streams.length") == 0
+    page.evaluate("""() => {
+      const settings=document.createElement('voip-stack-popup-settings');
+      root.shadowRoot.append(settings);settings.hass=hass;window.settings=settings;
+    }""")
+    page.wait_for_function("settings._select.options.length===2")
+    assert page.evaluate("settings._select.value") == "desk-device"
+    assert page.evaluate("settings._enabled.checked") is False
+
+
+def test_other_tab_optout_wins_over_pending_reconnect_resolution(popup_page):
+    page = popup_page
+    enable(page)
+    other = page.context.new_page()
+    def serve(route):
+        name = route.request.url.split('/')[-1].split('?')[0]
+        path = FRONT / name
+        route.fulfill(content_type='text/javascript' if path.is_file() else 'text/html',
+                      body=path.read_text() if path.is_file() else '<html><body></body></html>')
+    other.route('http://phone.test/**', serve)
+    other.goto('http://phone.test/')
+    other.evaluate(BOOTSTRAP)
+    other.wait_for_function("!!__voipStackPopup._unsubscribe")
+    page.evaluate("""() => {
+      window.oldPreference=localStorage.voip_stack_popup_phone;
+      const original=hass.callWS;window.lateResolves=[];
+      hass.callWS=request=>request.type==='voip_stack/list_devices'
+        ? new Promise(resolve=>{lateResolves.push(resolve);}) : original(request);
+      hass.connection.dispatchEvent(new Event('ready'));
+    }""")
+    page.wait_for_function("lateResolves.length>0")
+    other.evaluate("__voipStackPopup.bindPhone(phone,false)")
+    page.wait_for_function("__voipStackPopup.binding?.enabled===false")
+    page.evaluate("""() => {
+      for(const resolve of lateResolves.splice(0))resolve({devices:[phone]});
+      window.dispatchEvent(new StorageEvent('storage', {key:'voip_stack_popup_phone',
+        newValue:oldPreference,storageArea:localStorage}));
+      push({state:'ringing',direction:'incoming',call_id:'late-ring'});
+      window.dispatchEvent(new PageTransitionEvent('pageshow'));
+    }""")
+    page.wait_for_timeout(50)
+    assert page.evaluate("__voipStackPopup.binding.enabled") is False
+    assert page.evaluate("!__voipStackPopup._unsubscribe && !__voipStackPopup.dialog?._dialog.open")
+    assert page.evaluate("services") == []
+    other.close()
+
+
+def test_disabled_popup_does_not_block_scoped_notification_on_mounted_card(popup_page):
+    page = popup_page
+    page.evaluate("""async () => {
+      await import('/voip-stack-card.js');
+      __voipStackPopup.bindPhone(phone,false);
+      const card=document.createElement('voip-stack-card');
+      card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+      root.shadowRoot.append(card);window.visibleCard=card;
+      window.prepares=0;
+      __voipStackEngine.prepareAudioCall=()=>{prepares++;return new Promise(resolve=>{window.allow=resolve;});};
+      window.link=id=>{history.pushState({},'', '/?voip_answer=1&voip_endpoint=browser%3Adesk&voip_call_id='+id);
+        window.dispatchEvent(new CustomEvent('location-changed'));};
+    }""")
+    page.wait_for_function("visibleCard._softphoneSnapshot?.endpoint_id===phone.endpoint_id")
+    page.evaluate("push({state:'ringing',direction:'incoming',call_id:'mounted-A'});link('stale-A')")
+    assert page.evaluate("prepares") == 0
+    page.evaluate("link('mounted-A')")
+    page.wait_for_function("prepares===1 && !!allow")
+    assert page.evaluate("services") == []  # No backend answer before media preparation.
+    page.evaluate("allow()")
+    page.wait_for_function("services.some(s=>s.service==='answer')")
+    assert page.evaluate("services.filter(s=>s.service==='answer')[0].data.call_id") == "mounted-A"
+    page.evaluate("push({state:'idle',call_id:'mounted-A'});link('mounted-A')")
+    assert page.evaluate("services.filter(s=>s.service==='answer').length") == 1
+    page.wait_for_function("!__voipStackEngine.mediaIntent && !__voipStackEngine.mediaCleanupPending")
+    page.evaluate("""() => {
+      __voipStackEngine.prepareAudioCall=async()=>{prepares++;};
+      push({state:'ringing',direction:'incoming',call_id:'mounted-B'});link('mounted-B');
+    }""")
+    page.wait_for_function("services.filter(s=>s.service==='answer').length===2")
+    assert page.evaluate("services.filter(s=>s.service==='answer')[1].data.call_id") == "mounted-B"
+    assert page.evaluate("__voipStackPopup.binding.enabled") is False
 
 
 def test_rx_animation_has_fixed_hitbox_and_rejects_stale_call(popup_page):

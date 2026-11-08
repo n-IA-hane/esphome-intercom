@@ -50,7 +50,11 @@ class VoipStackPhoneDialog extends HTMLElement {
     const generation = this._generation = (this._generation || 0) + 1;
     this._presenter = presenter;
     presenter.dialog = this;
-    const current = () => generation === this._generation && presenter.state?.call_id === callId && activeCall(presenter.state);
+    const current = () => {
+      presenter.syncPreference();
+      return generation === this._generation && presenter.receivingPopups &&
+        presenter.state?.call_id === callId && activeCall(presenter.state);
+    };
     if (!current()) return;
     this._title.textContent = presenter.phone.name;
     this._error.textContent = "";
@@ -119,19 +123,54 @@ export class VoipStackPopup extends HTMLElement {
     this._hangup.onclick = () => this.terminate();
     this._mini.append(this._reopen, this._hangup);
     this.shadowRoot.append(style, this._mini);
-    this._ready = () => { if (this.binding) void this.resolveBinding(); };
+    this._ready = () => this.syncPreference(true);
     this._modalClosed = () => this.restoreMiniHost();
     this._answerLink = () => {
+      this.syncPreference();
+      if (!this.receivingPopups) return;
       const params = new URLSearchParams(location.search);
       if (["1", "true", "yes"].includes((params.get("voip_answer") || "").toLowerCase()) &&
           params.get("voip_endpoint") === this.binding?.endpoint_id &&
           params.get("voip_call_id") === this.state?.call_id &&
           this.state?.direction === "incoming" && ["ringing", "incoming"].includes(this.state.state)) this.open();
     };
+    this._pageShown = () => { this.syncPreference(true); this._answerLink(); };
+    this._storageChanged = event => {
+      // Read current storage, not newValue: an older queued event can follow a
+      // newer choice in this tab. No remote event may write the preference back.
+      if (event.key === PREFERENCE || event.key === null) this.syncPreference(true);
+    };
     window.addEventListener("location-changed", this._answerLink);
-    window.addEventListener("pageshow", this._answerLink);
-    try { this.binding = JSON.parse(localStorage.getItem(PREFERENCE) || "null"); } catch (_) { this.binding = null; }
-    if (!this.binding?.device_id || !this.binding?.endpoint_id) this.binding = null;
+    window.addEventListener("pageshow", this._pageShown);
+    window.addEventListener("storage", this._storageChanged);
+    this.binding = this.readPreference();
+  }
+  get receivingPopups() {
+    return this.binding?.enabled === true && !!this.binding.device_id && !!this.binding.endpoint_id;
+  }
+  readPreference() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREFERENCE) || "null");
+      if (!saved || typeof saved !== "object") return null;
+      const device_id = typeof saved.device_id === "string" ? saved.device_id : "";
+      const endpoint_id = typeof saved.endpoint_id === "string" ? saved.endpoint_id : "";
+      // The old identity-only record was an explicit opt-in. Missing, corrupt
+      // or explicitly disabled records never inherit a cached enabled value.
+      const enabled = Object.hasOwn(saved, "enabled") ? saved.enabled === true : !!device_id && !!endpoint_id;
+      return { device_id, endpoint_id, enabled };
+    } catch (_) { return null; }
+  }
+  syncPreference(resolve = false) {
+    const saved = this.readPreference();
+    if (JSON.stringify(saved) !== JSON.stringify(this.binding)) {
+      this.binding = saved;
+      this.release(); // Presentation only; the existing page engine keeps owned media.
+      window.dispatchEvent(new CustomEvent("voip-stack-popup-preference-changed"));
+    }
+    if (resolve && this.receivingPopups && this._connection) {
+      engine.configure(this._hass);
+      void this.resolveBinding();
+    }
   }
   set hass(hass) {
     this._hass = hass;
@@ -140,21 +179,24 @@ export class VoipStackPopup extends HTMLElement {
     this._hangup.setAttribute("aria-label", translate(hass, "Hang up call"));
     if (this.minimized && !this.isConnected) this.positionMini();
     if (this.dialog) this.dialog.hass = hass;
-    if (this._connection === hass?.connection) { if (this.binding) engine.configure(hass); return; }
+    if (this._connection === hass?.connection) { if (this.receivingPopups) engine.configure(hass); return; }
     this._connection?.removeEventListener?.("ready", this._ready);
     this._connection = hass?.connection;
     this._connection?.addEventListener?.("ready", this._ready);
-    if (this.binding && this._connection) { engine.configure(hass); void this.resolveBinding(); }
+    this.syncPreference(true);
   }
   async listPhones() {
     const result = await this._hass.callWS({ type: "voip_stack/list_devices" });
     return (result?.devices || []).filter(phone => phone.softphone === true && phone.device_id && phone.endpoint_id);
   }
   async resolveBinding() {
+    this.syncPreference();
+    if (!this.receivingPopups || !this._connection) return;
     const binding = this.binding;
     const connection = this._connection;
     try {
       const phones = await this.listPhones();
+      this.syncPreference();
       if (binding !== this.binding || connection !== this._connection) return;
       const phone = phones.find(item => item.device_id === binding?.device_id && item.endpoint_id === binding?.endpoint_id);
       if (!phone) { this.release(); this.error = "The selected Home Assistant phone is unavailable."; return; }
@@ -165,19 +207,22 @@ export class VoipStackPopup extends HTMLElement {
     } catch (error) { this.error = error?.message || String(error); }
   }
   bindPhone(phone, enabled) {
-    const next = enabled ? { device_id: phone.device_id, endpoint_id: phone.endpoint_id } : null;
+    this.syncPreference();
+    const selected = phone || this.binding;
+    const next = { device_id: selected?.device_id || "", endpoint_id: selected?.endpoint_id || "", enabled: !!enabled };
+    if (enabled && (!next.device_id || !next.endpoint_id)) throw new Error("Select an existing Home Assistant phone.");
     if ((next?.endpoint_id !== this.binding?.endpoint_id) && activeCall(this.state)) {
       throw new Error("End the current call before changing the browser phone.");
     }
-    // Persist only the existing phone identity, never an HA user/account relation.
-    if (next) localStorage.setItem(PREFERENCE, JSON.stringify(next));
-    else localStorage.removeItem(PREFERENCE);
-    if (next?.endpoint_id === this.binding?.endpoint_id) { if (next) engine.unlockRingtone(); return; }
-    this.release();
-    this.binding = next;
-    if (next) { this.phone = phone; engine.unlockRingtone(); void this.resolveBinding(); }
+    // Keep the selected phone even when disabled. Only an explicit user Save
+    // changes this browser preference; HA reconnect never creates an opt-in.
+    localStorage.setItem(PREFERENCE, JSON.stringify(next));
+    if (enabled) engine.unlockRingtone();
+    this.syncPreference(true);
   }
   onState(state) {
+    this.syncPreference();
+    if (!this.receivingPopups) return;
     if (state.endpoint_id !== this.phone?.endpoint_id || state.device_id !== this.phone?.device_id) return;
     if (this.state && !softphoneSnapshotSupersedes(this.state, state)) return;
     this.state = state;
@@ -191,6 +236,8 @@ export class VoipStackPopup extends HTMLElement {
     this.renderMini();
   }
   open() {
+    this.syncPreference();
+    if (!this.receivingPopups) return;
     if (!activeCall(this.state)) return;
     this._root.dispatchEvent(new CustomEvent("show-dialog", { detail: {
       dialogTag: DIALOG, dialogImport: () => Promise.resolve(),
@@ -288,6 +335,13 @@ export class VoipStackPopupSettings extends HTMLElement {
         this._message.className = ""; this._message.textContent = translate(this._hass, "Saved");
       } catch (error) { this._message.className = "error"; this._message.textContent = translate(this._hass, error?.message || String(error)); }
     };
+    this._preferenceChanged = () => { if (this._hass) void this.load(); };
+  }
+  connectedCallback() {
+    window.addEventListener("voip-stack-popup-preference-changed", this._preferenceChanged);
+  }
+  disconnectedCallback() {
+    window.removeEventListener("voip-stack-popup-preference-changed", this._preferenceChanged);
   }
   set hass(value) {
     this._hass = value;
@@ -306,12 +360,13 @@ export class VoipStackPopupSettings extends HTMLElement {
       const presenter = await presenterReady;
       presenter.hass = this._hass;
       this._phones = await presenter.listPhones();
+      presenter.syncPreference();
       const endpoint = new URL(location.href).searchParams.get("endpoint_id");
       const selected = this._phones.find(item => item.endpoint_id === endpoint) ||
         this._phones.find(item => item.device_id === presenter.binding?.device_id);
       this._select.replaceChildren(new Option(translate(this._hass, "-- Select phone --"), ""), ...this._phones.map(phone => new Option(phone.name, phone.device_id)));
       this._select.value = selected?.device_id || "";
-      this._enabled.checked = !!selected && presenter.binding?.device_id === selected.device_id;
+      this._enabled.checked = presenter.receivingPopups && !!selected && presenter.binding?.device_id === selected.device_id;
     } catch (error) { this._message.className = "error"; this._message.textContent = translate(this._hass, error?.message || String(error)); }
   }
 }

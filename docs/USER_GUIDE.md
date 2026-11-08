@@ -128,6 +128,13 @@ The choice persists in this browser or Companion app. Repeat it on each
 receiving device. There is no HA user-to-phone mapping. Finish the current
 call before choosing a different popup phone.
 
+To turn popups off, clear **Receive call popups on this device** and save.
+The selected phone is remembered together with the disabled preference.
+Reloading a view, reconnecting to HA or restarting HA does not enable it again.
+Other tabs at the same HA address follow the saved choice. This controls popup
+presentation only; it does not change the phone's DND/Auto Answer settings or
+hang up media already owned by a phone card.
+
 Incoming calls now open over other HA views, including views without a phone
 card. The popup uses the same call controls and media as that phone's card.
 
@@ -156,6 +163,14 @@ WebView, without a native operating-system call channel. Use the
 [notification recipe](AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
 to open and answer a particular ringing call. To send callers to Assist or
 another destination, choose a routing automation before terminating the call.
+
+For a OnePlus phone, the Companion notification's **Answer** action can open
+an existing dashboard view containing the **Casa** HA phone card. Global
+popups may remain disabled. Allow the Companion microphone permission; if
+the WebView still requests a tap to activate audio, use **Answer** on that
+card. The browser prepares its media before sending Answer to HA. A successful
+notification delivery alone does not mean that a background microphone or
+an Android call service is running.
 
 ## Read the phone card
 

@@ -625,6 +625,13 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
             from .video_ws_view import async_register_video_ws_view
 
             async_register_video_ws_view(hass)
+        if hass.state == CoreState.running:
+            # Assets can change while process-wide services remain registered.
+            # The existing registrar replaces stale URLs/panel and updates the
+            # same Lovelace resource instead of creating a second frontend owner.
+            from .frontend import JSModuleRegistration
+
+            await JSModuleRegistration(hass).async_register()
         return
 
     registration.initialized = True

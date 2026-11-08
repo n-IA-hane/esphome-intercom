@@ -39,6 +39,8 @@ void PhoneListView::setup() {
     lv_obj_set_style_pad_all(slot.button, 7, 0);
     lv_obj_remove_flag(slot.button, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS));
     lv_obj_add_event_cb(slot.button, row_event_, LV_EVENT_PRESSED, &slot);
+    lv_obj_add_event_cb(slot.button, row_event_, LV_EVENT_PRESSING, &slot);
+    lv_obj_add_event_cb(slot.button, row_event_, LV_EVENT_PRESS_LOST, &slot);
     lv_obj_add_event_cb(slot.button, row_event_, LV_EVENT_SHORT_CLICKED, &slot);
     slot.leading = lv_label_create(slot.button);
     slot.name = lv_label_create(slot.button);
@@ -247,9 +249,30 @@ void PhoneListView::blink_(void *object, int32_t value) { lv_obj_set_style_opa(s
 
 void PhoneListView::row_event_(lv_event_t *event) {
   auto &slot = *static_cast<Slot *>(lv_event_get_user_data(event));
-  if (lv_event_get_code(event) == LV_EVENT_PRESSED) slot.pressed_generation = slot.generation;
-  else if (slot.row.enabled && slot.row.id[0] && slot.pressed_generation == slot.generation)
-    slot.owner->selected_.trigger(slot.row.id.data(), slot.row.action);
+  const auto code = lv_event_get_code(event);
+  auto *input = lv_event_get_indev(event);
+  if (code == LV_EVENT_PRESSED) {
+    slot.pressed_generation = slot.generation;
+    slot.press_armed = true;
+    if (input != nullptr) lv_indev_get_point(input, &slot.pressed_point);
+  } else if (code == LV_EVENT_PRESSING && input != nullptr && lv_indev_get_type(input) == LV_INDEV_TYPE_POINTER) {
+    lv_point_t point;
+    lv_indev_get_point(input, &point);
+    // LVGL 9.5 exposes a setter but no getter for its scroll limit. Use the
+    // same 10px default as its pointer driver, without accessing private state.
+    constexpr int32_t limit = 10;
+    // SHORT_CLICKED only excludes actual scrolling. A drag at a boundary or
+    // across a short list can still produce it, even though no tap occurred.
+    if (std::abs(point.x - slot.pressed_point.x) > limit || std::abs(point.y - slot.pressed_point.y) > limit)
+      slot.press_armed = false;
+  } else if (code == LV_EVENT_PRESS_LOST) {
+    slot.press_armed = false;
+  } else if (code == LV_EVENT_SHORT_CLICKED) {
+    const bool select = slot.press_armed && slot.row.enabled && slot.row.id[0] &&
+                        slot.pressed_generation == slot.generation;
+    slot.press_armed = false;
+    if (select) slot.owner->selected_.trigger(slot.row.id.data(), slot.row.action);
+  }
 }
 
 void PhoneListView::parent_event_(lv_event_t *event) {

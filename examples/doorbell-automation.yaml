@@ -1,4 +1,8 @@
-# Customize the notification service, phone, caller and dashboard path.
+# Customize the notification service, receiving Casa Device ID, caller and view.
+# /lovelace/phones must contain the existing Casa HA softphone card. Popups are
+# optional. Answer opens that view; the card prepares media before answering.
+# Keep both endpoint and Call-ID in the URI. Do not replace URI with a backend
+# answer action: a notification alone does not own the microphone/audio path.
 alias: VoIP - Actionable doorbell notification
 mode: parallel
 triggers:
@@ -16,15 +20,15 @@ actions:
     message: Front Door is calling Casa
     data:
       tag: '{{ notification_tag }}'
-      channel: doorbell
+      channel: doorbell  # Notification category, not an Android phone-call service.
       importance: high
       ttl: 0
       priority: high
       actions:
       - action: URI
         title: Answer
-        uri: /lovelace/phones?voip_answer=1&voip_endpoint={{ trigger.call.endpoint_id | urlencode
-          }}&voip_call_id={{ trigger.call.call_id | urlencode }}
+        uri: >-
+          /lovelace/phones?voip_answer=1&voip_endpoint={{ trigger.call.endpoint_id | urlencode }}&voip_call_id={{ trigger.call.call_id | urlencode }}
       - action: '{{ decline_action }}'
         title: Decline
 - wait_for_trigger:

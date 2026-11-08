@@ -176,6 +176,8 @@ class VoipStackCard extends HTMLElement {
     this._mediaDeviceStatus = "";
     this._ringtoneRequestKey = `voip-stack-card-${Math.random().toString(36).slice(2)}`;
     this._deepLinkAnswerConsumed = false;
+    this._deepLinkAnswerCallKey = "";
+    this._answerLinkListener = () => this.consumePhoneAnswerLink();
 
     // ESP mirror cards keep a short local display copy of the ESP terminal
     // reason text sensor. HA softphone cards render terminal data directly
@@ -241,6 +243,8 @@ class VoipStackCard extends HTMLElement {
 
   connectedCallback() {
     this._lifecycleGeneration++;
+    window.addEventListener("location-changed", this._answerLinkListener);
+    window.addEventListener("pageshow", this._answerLinkListener);
     voipStackEngine.addEventListener("state", this._engineListener);
     voipStackEngine.addEventListener("error", this._engineErrorListener);
     voipStackEngine.addEventListener("video-error", this._engineErrorListener);
@@ -260,6 +264,8 @@ class VoipStackCard extends HTMLElement {
 
   disconnectedCallback() {
     this._lifecycleGeneration++;
+    window.removeEventListener("location-changed", this._answerLinkListener);
+    window.removeEventListener("pageshow", this._answerLinkListener);
     this._resizeObserver.disconnect();
     this._unsubDestinationStates?.();
     this._unsubDestinationStates = null;
@@ -997,7 +1003,6 @@ class VoipStackCard extends HTMLElement {
   }
 
   _shouldAnswerFromUrl() {
-    if (this._deepLinkAnswerConsumed) return false;
     try {
       const params = new URLSearchParams(window.location.search || "");
       const value = (params.get("voip_answer") || "").toLowerCase();
@@ -1012,6 +1017,10 @@ class VoipStackCard extends HTMLElement {
       if (!endpointId && currentEndpoint !== "default") return false;
       if (endpointId && endpointId !== currentEndpoint) return false;
       if (callId && callId !== String(this._softphoneSnapshot?.call_id || "")) return false;
+      // A legacy unscoped link remains one-shot. A new notification for a
+      // different exact call may be consumed by the same mounted phone card.
+      if (this._deepLinkAnswerConsumed && (!callId ||
+          this._deepLinkAnswerCallKey === JSON.stringify([currentEndpoint, callId]))) return false;
       return true;
     } catch (_) {
       return false;
@@ -1042,6 +1051,7 @@ class VoipStackCard extends HTMLElement {
     if (!snap.call_id) return;
 
     this._deepLinkAnswerConsumed = true;
+    this._deepLinkAnswerCallKey = JSON.stringify([this._getSoftphoneEndpointId(), String(snap.call_id)]);
     this._clearAnswerUrlParam();
     this._autoAnswering = true;
     this._tryAutoAnswer({

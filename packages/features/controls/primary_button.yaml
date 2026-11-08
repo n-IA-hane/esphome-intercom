@@ -16,8 +16,28 @@ defaults:
           voip_stack.is_idle: {}
       then: ${ _fw_primary_phone }
       else: ${ _fw_primary_voice }
-  _fw_primary_normal: ${ _fw_primary_voice_phone if _fw_voice and _fw_voip else _fw_primary_voice if _fw_voice else
+  _fw_primary_without_voice_owner: ${ _fw_primary_voice_phone if _fw_voice and _fw_voip else _fw_primary_voice if _fw_voice else
     _fw_primary_phone if _fw_voip else [] }
+  _fw_primary_with_voice_owner:
+  - if:
+      condition:
+        # An explicit press cancels Assist before handling the underlying call.
+        # Keep the configured idle start event separate from this cancellation.
+        lambda: |-
+          return id(va).is_running() ||
+                 id(runtime).is_activity_active("va_start_requested") ||
+                 id(runtime).is_activity_active("va_starting") ||
+                 id(runtime).is_activity_active("va_listening") ||
+                 id(runtime).is_activity_active("va_thinking") ||
+                 id(runtime).is_activity_active("va_responding") ||
+                 id(runtime).is_activity_active("va_barging") ||
+                 id(runtime).is_activity_active("va_stopping");
+      then:
+      - runtime_controller.event:
+          id: runtime
+          event: manual_voice_toggle
+      else: ${ _fw_primary_without_voice_owner }
+  _fw_primary_normal: ${ _fw_primary_with_voice_owner if _fw_voice else _fw_primary_without_voice_owner }
   _fw_primary_with_timer:
   - if:
       condition:

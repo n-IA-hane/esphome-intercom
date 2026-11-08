@@ -1858,20 +1858,20 @@ defaults:
   _display_voice_action_0:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_1:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_2:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_3:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_4:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle

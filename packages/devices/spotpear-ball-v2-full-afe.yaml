@@ -14,6 +14,7 @@ substitutions:
   _spotpear_input_gain_control:
     number:
       - platform: esp_audio_stack
+        hardware_gain_diagnostics: ${ audio_hardware_gain_diagnostics | default(false) }
         input_pga:
           id: microphone_pga
           name: Microphone Gain (pre-processing)

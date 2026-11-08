@@ -921,6 +921,15 @@ for that phone in this Companion app. Answer opens its existing WebView;
 the app does not become a native operating-system SIP phone. Keep microphone
 permission enabled and allow for the mobile system suspending background apps.
 
+For example, on OnePlus select the existing **Casa** HA phone in a VoIP Stack
+card on `/lovelace/phones`, then use that view in the URI below. The same setup
+works with global popups disabled. **Answer** opens the Companion WebView and
+lets the mounted card prepare microphone/audio ownership before it answers
+the exact ringing call. If Android or the WebView requires another user
+gesture, tap **Answer** on the card. Do not add a separate `voip_stack.answer`
+automation before the view is ready. The notification channel below is only
+an Android notification category, not a native telephone-call channel.
+
 The variables below identify this notification, so an old button cannot act on
 a newer call. Copy them unchanged; you do not enter a Call-ID yourself. Replace
 the notification service, phone device, phonebook names and dashboard path.
@@ -976,13 +985,19 @@ actions:
       tag: '{{ notification_tag }}'
 ```
 
-The Answer link selects both the phone and the original call. A stale link
+The Answer link selects both the phone and the original call. Keep both
+selectors in the URI, even if that dashboard contains only Casa. A stale link
 cannot answer a different call with another Call-ID. Decline waits only for the
 unique action sent in this notification and passes the original `call_id` with
 the receiving phone's `device_id`. If the call has already ended, the
 call guard rejects Decline; `continue_on_error` lets the automation remove its
 old notification afterwards. A separate notification tag prevents that cleanup
 from clearing a newer notification.
+
+A call that ended or was routed elsewhere while media permission was pending
+must not be answered from the old link. The card rechecks the same call before
+the backend Answer request. The popup preference is independent of this
+explicit notification action and remains disabled after reconnect/reload.
 
 Decline terminates the call. To have Assist answer instead, use a routing or
 forwarding automation while the call is still active, such as the

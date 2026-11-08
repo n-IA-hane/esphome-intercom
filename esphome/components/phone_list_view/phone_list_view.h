@@ -97,6 +97,8 @@ class PhoneListView : public Component {
     lv_obj_t *button{nullptr}, *leading{nullptr}, *name{nullptr}, *detail{nullptr}, *trailing{nullptr};
     RowData row{};
     uint32_t generation{0}, pressed_generation{0};
+    lv_point_t pressed_point{};
+    bool press_armed{false};
   };
   static void row_event_(lv_event_t *event);
   static void parent_event_(lv_event_t *event);

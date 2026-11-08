@@ -272,6 +272,8 @@ const context = vm.createContext({{
   window: {{
     customCards: [],
     innerHeight: 800,
+    addEventListener() {{}},
+    removeEventListener() {{}},
     location: {{ href: "https://ha.example/", protocol: "https:", host: "ha.example" }},
     scrollBy() {{}},
   }},
