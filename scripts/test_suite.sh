@@ -93,6 +93,9 @@ ha_tests=(
   tests/test_phone_state_ha.py
   tests/test_phone_monitor_ha.py
   tests/test_popup_frontend_ha.py
+  tests/test_camera_preference_directory_ha.py
+  tests/test_esphome_state_discovery_ha.py
+  tests/test_local_browser_pickup_video_ha.py
   tests/test_esp_screenshot_homeassistant.py
   tests/test_ldap_directory_ha.py
   tests/test_ldap_provisioning_ha.py
@@ -229,6 +232,7 @@ PY
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
       tests/test_frontend_popup_browser.py
+      tests/test_frontend_cold_start.py
       tests/test_video_decoder_recovery_browser.py
       tests/test_browser_audio_startup.py
       tests/test_browser_call_lifecycle.py
