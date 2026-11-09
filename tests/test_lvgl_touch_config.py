@@ -60,6 +60,8 @@ lvgl:
         assert '"touch"' in code and '"x"' in code and '"y"' in code
         # The standard API maps YAML int variables to signed 32bit arguments.
         assert "lvgl_touch_diagnostic::TapAction<int32_t, int32_t>" in code
+        assert '"swipe"' in code and '"duration_ms"' in code
+        assert "lvgl_touch_diagnostic::SwipeAction<int32_t, int32_t, int32_t, int32_t, int32_t>" in code
         assert "diagnostic_touch->set_lvgl(" in code
         assert "lvgl_touch_diagnostic::LvglTouchDiagnostic" in code
     else:
@@ -92,11 +94,19 @@ def test_touch_action_instantiates_against_real_esphome_headers(tmp_path):
     component = ROOT / "esphome/components/lvgl_touch_diagnostic/lvgl_touch_diagnostic.h"
     source.write_text(f'''#include "{component}"
 esphome::lvgl_touch_diagnostic::TapAction<int32_t, int32_t> actual_action;
+esphome::lvgl_touch_diagnostic::SwipeAction<int32_t, int32_t, int32_t, int32_t, int32_t> actual_swipe;
 void consumer(esphome::lvgl_touch_diagnostic::LvglTouchDiagnostic *parent, int32_t x, int32_t y) {{
   actual_action.set_parent(parent);
   actual_action.set_x([](int32_t a, int32_t) -> int32_t {{ return a; }});
   actual_action.set_y([](int32_t, int32_t b) -> int32_t {{ return b; }});
   actual_action.play_complex(x, y);
+  actual_swipe.set_parent(parent);
+  actual_swipe.set_x1([](int32_t a, int32_t, int32_t, int32_t, int32_t) -> int32_t {{ return a; }});
+  actual_swipe.set_y1([](int32_t, int32_t b, int32_t, int32_t, int32_t) -> int32_t {{ return b; }});
+  actual_swipe.set_x2([](int32_t, int32_t, int32_t c, int32_t, int32_t) -> int32_t {{ return c; }});
+  actual_swipe.set_y2([](int32_t, int32_t, int32_t, int32_t d, int32_t) -> int32_t {{ return d; }});
+  actual_swipe.set_duration_ms([](int32_t, int32_t, int32_t, int32_t, int32_t t) -> int32_t {{ return t; }});
+  actual_swipe.play_complex(x, y, x, y, 320);
 }}
 ''')
     result = subprocess.run(command + ["-fsyntax-only", str(source)], cwd=entry["directory"],

@@ -153,6 +153,53 @@ int main(int argc, char **argv) {
     for (auto rotation:{LV_DISPLAY_ROTATION_0,LV_DISPLAY_ROTATION_90,LV_DISPLAY_ROTATION_180,LV_DISPLAY_ROTATION_270}) {
       Scene s(360,240); lv_display_set_rotation(s.display,rotation); s.pump(40); s.tap_button();
     }
+  } else if (mode=="swipe") {
+    Scene s(360,360);
+    struct Gestures { unsigned count{}; lv_dir_t direction{}; lv_indev_t *input{}; } gestures;
+    lv_obj_add_event_cb(lv_display_get_screen_active(s.display), [](lv_event_t *e) {
+      auto *g=static_cast<Gestures *>(lv_event_get_user_data(e));
+      ++g->count; g->input=lv_indev_active(); g->direction=lv_indev_get_gesture_dir(g->input);
+      lv_indev_wait_release(g->input); // Same ownership rule as round_navigate.
+    }, LV_EVENT_GESTURE, &gestures);
+    assert(s.input.swipe(300,300,300,60,320)==TapInput::Result::ACCEPTED);
+    assert(s.input.tap(80,80)==TapInput::Result::BUSY);
+    s.pump(380);
+    assert(gestures.count==1 && gestures.direction==LV_DIR_TOP && !s.input.busy());
+    assert(lv_timer_get_paused(lv_indev_get_read_timer(gestures.input)));
+    // The same pointer must still hit and release the next hangup-like button.
+    s.tap_button();
+    assert(s.input.swipe(300,60,300,300,320)==TapInput::Result::ACCEPTED);
+    s.pump(380);
+    assert(gestures.count==2 && gestures.direction==LV_DIR_BOTTOM && !s.input.busy());
+  } else if (mode=="swipe_scroll") {
+    Scene s(360,360);
+    auto *list=lv_obj_create(lv_display_get_screen_active(s.display));
+    lv_obj_set_pos(list,150,20); lv_obj_set_size(list,180,280);
+    lv_obj_set_scroll_dir(list,LV_DIR_VER); lv_obj_remove_flag(list,LV_OBJ_FLAG_SCROLL_ELASTIC);
+    auto *content=lv_obj_create(list); lv_obj_set_size(content,120,800);
+    lv_obj_set_pos(content,0,0); lv_obj_update_layout(list); s.pump(40);
+    assert(lv_obj_get_scroll_y(list)==0);
+    assert(s.input.swipe(230,250,230,70,320)==TapInput::Result::ACCEPTED);
+    s.pump(1000);
+    const auto scroll=lv_obj_get_scroll_y(list);
+    assert(scroll>0 && !s.input.busy());
+    s.pump(1000); assert(lv_obj_get_scroll_y(list)==scroll);
+    // A real short click after a scroll remains usable.
+    s.tap_button();
+  } else if (mode=="swipe_cancel") {
+    Scene s(360,360);
+    for (int duration:{-1,0,79,2001})
+      assert(s.input.swipe(300,300,300,60,duration)==TapInput::Result::INVALID_DURATION);
+    assert(s.input.swipe(300,300,360,60,320)==TapInput::Result::OUT_OF_BOUNDS);
+    assert(s.input.swipe(-1,300,300,60,320)==TapInput::Result::OUT_OF_BOUNDS);
+    assert(s.input.swipe(300,300,300,60,320)==TapInput::Result::ACCEPTED);
+    s.physical_read(true); s.pump(40); assert(!s.input.busy());
+    s.physical_read(false);
+    assert(s.input.swipe(300,300,300,60,320)==TapInput::Result::ACCEPTED);
+    auto *next=lv_obj_create(nullptr); lv_screen_load(next); s.pump(40);
+    assert(!s.input.busy());
+    s.input.detach();
+    assert(s.input.swipe(300,300,300,60,320)==TapInput::Result::UNAVAILABLE);
   } else if (mode=="allocation") {
     size_t virtual_count, virtual_bytes, reference_count, reference_bytes;
     {

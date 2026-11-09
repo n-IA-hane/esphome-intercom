@@ -34,6 +34,7 @@ capture when memory is insufficient, preserving the last successful image.
 Use the canonical resource formulas for the actual screen size rather than
 copying a small S3 buffer budget to an 800x1280 P4.
 
-The optional [coordinate tap](../esphome/components/lvgl_touch_diagnostic/README.md)
-is a separate native `touch(x, y)` action that uses normal LVGL hit testing.
-It neither captures pixels nor directly invokes a phone's hangup implementation.
+The optional [coordinate touch and swipe](../esphome/components/lvgl_touch_diagnostic/README.md)
+provide separate native `touch(x, y)` and `swipe(x1, y1, x2, y2, duration_ms)`
+actions that use normal LVGL hit testing and cooperative input processing.
+They neither capture pixels nor directly invoke a phone's hangup implementation.

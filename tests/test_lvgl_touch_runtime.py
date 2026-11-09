@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ("hit", "s3", "bounds_busy", "cancel", "rotation", "allocation")
+CASES = ("hit", "s3", "bounds_busy", "cancel", "rotation", "allocation", "swipe", "swipe_scroll", "swipe_cancel")
 pytestmark = [pytest.mark.diagnostic_reference, pytest.mark.integration, pytest.mark.timeout(180)]
 
 
