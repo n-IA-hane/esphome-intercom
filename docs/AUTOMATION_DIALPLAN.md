@@ -925,7 +925,10 @@ For example, on OnePlus select the existing **Casa** HA phone in a VoIP Stack
 card on `/lovelace/phones`, then use that view in the URI below. The same setup
 works with global popups disabled. **Answer** opens the Companion WebView and
 lets the mounted card prepare microphone/audio ownership before it answers
-the exact ringing call. If Android or the WebView requires another user
+the exact ringing call. The phone's no-answer timer keeps running while the
+app opens and prepares its microphone. Leave enough ringing time for that
+startup before forwarding to voicemail or Assist; a short timeout can expire
+before a cold Companion view is ready. If Android or the WebView requires another user
 gesture, tap **Answer** on the card. Do not add a separate `voip_stack.answer`
 automation before the view is ready. The notification channel below is only
 an Android notification category, not a native telephone-call channel.
