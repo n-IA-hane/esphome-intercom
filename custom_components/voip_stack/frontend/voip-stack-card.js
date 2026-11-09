@@ -20,31 +20,38 @@ const VOIP_STACK_MODULE_VERSION = (() => {
     return "dev";
   }
 })();
-const { VoipEntityIds } = await import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const VOIP_STACK_CARD_VERSION = VOIP_STACK_MODULE_VERSION.replace(/-\d+$/, "") || "dev";
-const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-await import(`./voip-phonebook-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const { voipStackEngine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const {
-  audioModeLabel,
-  formatListFromMetadata,
-  formatCallDuration,
-  formatEndReason,
-  formatKnownReason,
-  formatVideoFailureReason,
-  normaliseAudioMode,
-  normaliseCardConfig,
-  normaliseTransport,
-  mirroredEndpointPeerLabel,
-  reasonKey,
-  softphoneSnapshotSupersedes,
-  targetFromRosterEntry,
-  terminalPeerLabel,
-} = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const {
-  buildMainCardSkeleton,
-  buildUnconfiguredCardSkeleton,
-} = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+// Start independent dependencies together, but define the card only when all
+// required modules, including the phonebook custom element, are ready.
+const [
+  { VoipEntityIds },
+  { voipStackTranslate },
+  { voipStackEngine },
+  {
+    audioModeLabel,
+    formatListFromMetadata,
+    formatCallDuration,
+    formatEndReason,
+    formatKnownReason,
+    formatVideoFailureReason,
+    normaliseAudioMode,
+    normaliseCardConfig,
+    normaliseTransport,
+    mirroredEndpointPeerLabel,
+    reasonKey,
+    softphoneSnapshotSupersedes,
+    targetFromRosterEntry,
+    terminalPeerLabel,
+  },
+  { buildMainCardSkeleton, buildUnconfiguredCardSkeleton },
+] = await Promise.all([
+  import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-engine.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-phonebook-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+]);
 const HANGUP_SERVICE_TIMEOUT_MS = 3000;
 
 function settleServiceWithin(promise, timeoutMs, timeoutMessage) {

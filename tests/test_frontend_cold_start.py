@@ -26,7 +26,7 @@ def cold_page():
         browser.close()
 
 
-def prepare(page, held_name=None, failed_name=None):
+def prepare(page, held_name=None, failed_name=None, entry_name='voip-stack-card.js'):
     held, requests, errors = [], [], []
     page.on('pageerror', lambda error: errors.append(str(error)))
 
@@ -52,11 +52,63 @@ def prepare(page, held_name=None, failed_name=None):
     # Reuse only the existing controlled HA/media I/O. Do not pre-import the
     # popup or engine: this must be the real cold production module graph.
     page.evaluate(BOOTSTRAP.replace("await import('/voip-stack-popup.js');", ''))
-    page.evaluate("""version=>{
+    page.evaluate("""({version,entry})=>{
       window.moduleLoaded=false;window.moduleError='';
-      import('/voip-stack-card.js?v='+version).then(()=>{moduleLoaded=true;}).catch(error=>{moduleError=String(error);});
-    }""", VERSION)
+      import('/'+entry+'?v='+version).then(()=>{moduleLoaded=true;}).catch(error=>{moduleError=String(error);});
+    }""", {'version': VERSION, 'entry': entry_name})
     return held, requests, errors, fulfill
+
+
+@pytest.mark.parametrize(('entry_name', 'held_name', 'siblings'), [
+    ('voip-stack-card.js', 'voip-stack-entity-ids.js', [
+        'voip-stack-i18n.js', 'voip-phonebook-card.js', 'voip-stack-engine.js',
+        'voip-stack-card-model.js', 'voip-stack-card-view.js',
+    ]),
+    ('voip-stack-engine.js', 'ringtone.js', [
+        'voip-stack-media-model.js', 'voip-stack-session-model.js',
+        'voip-stack-media-devices.js',
+    ]),
+    ('voip-stack-popup.js', 'voip-stack-engine.js', [
+        'voip-stack-card-model.js', 'voip-stack-i18n.js',
+    ]),
+])
+def test_required_imports_start_together_but_keep_readiness_barrier(
+    cold_page, entry_name, held_name, siblings,
+):
+    page = cold_page
+    held, requests, errors, fulfill = prepare(
+        page, held_name=held_name, entry_name=entry_name,
+    )
+    # This is an ordering barrier, not a wall-clock performance threshold:
+    # independent responses must complete while the first response stays held.
+    page.wait_for_function("""names=>names.every(name=>
+      performance.getEntriesByType('resource').some(item=>
+        new URL(item.name).pathname==='/'+name))""", arg=siblings)
+    assert held
+    assert not page.evaluate('moduleLoaded')
+    assert page.evaluate("!customElements.get('voip-stack-card')")
+    assert page.evaluate("!globalThis.__voipStackPopup")
+    for route in held:
+        fulfill(route)
+    page.wait_for_function('moduleLoaded')
+    assert page.evaluate('moduleError') == ''
+    # Both entrypoints must share the already created engine and the same
+    # versioned modules. Phonebook must be ready with the required card API.
+    page.evaluate("""async version=>{
+      window.firstEngine=__voipStackEngine;
+      await Promise.all([
+        import('/voip-stack-card.js?v='+version),
+        import('/voip-stack-popup.js?v='+version),
+      ]);
+    }""", VERSION)
+    assert page.evaluate('__voipStackEngine===firstEngine')
+    assert page.evaluate("!!customElements.get('voip-stack-card') && !!customElements.get('voip-stack-phonebook-view')")
+    assert page.evaluate('mics===0 && contexts===0 && services.length===0')
+    assert all(version == [VERSION] for _, version in requests)
+    names = [name for name, _ in requests]
+    for name in [entry_name, held_name, *siblings]:
+        assert names.count(name) == 1, name
+    assert errors == []
 
 
 @pytest.mark.parametrize('held_name', ['voip-stack-card-editor.js', 'voip-stack-dashboard-card-editor.js'])

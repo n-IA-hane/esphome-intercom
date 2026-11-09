@@ -75,22 +75,17 @@ const sessionModel = await import(pathToFileURL({json.dumps(str(SESSION_MODEL))}
 
 let source = fs.readFileSync({json.dumps(str(ENGINE))}, "utf8");
 source = source.replace(
-  /const \{{ RINGTONE_REPEAT_MS, playVoipRingtone \}} =\s*await import\([^;]+;/,
-  "const RINGTONE_REPEAT_MS = 4000; const playVoipRingtone = () => {{}};",
+  /import\(`\.\/ringtone\.js[^`]+`\)/,
+  "Promise.resolve({{ RINGTONE_REPEAT_MS: 4000, playVoipRingtone: () => {{}} }})",
 ).replace(
-  /const \{{\s*desiredAudioPaths[\s\S]*?\}} = await import\(`\.\/voip-stack-media-model\.js[^;]+;/,
-  `const {{
-    desiredAudioPaths, normaliseAudioDirection, normaliseAudioMode,
-    parsePcmFormat, resolveSessionFormats, sameAudioFormat,
-  }} = globalThis.__mediaModel;`,
+  /import\(`\.\/voip-stack-media-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__mediaModel)",
 ).replace(
-  /const \{{\s*normaliseSoftphoneSelector[\s\S]*?\}} = await import\(`\.\/voip-stack-session-model\.js[^;]+;/,
-  `const {{
-      normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches,
-    }} = globalThis.__sessionModel;`,
+  /import\(`\.\/voip-stack-session-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__sessionModel)",
 ).replace(
-  /const \{{ BrowserMediaDevices, exactDeviceConstraint \}} = await import\([\s\S]*?\);/,
-  "const {{ BrowserMediaDevices, exactDeviceConstraint }} = globalThis.__deviceModel;",
+  /import\(`\.\/voip-stack-media-devices\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__deviceModel)",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();

@@ -40,29 +40,24 @@ const entityIds = await import(pathToFileURL({json.dumps(str(CARD.with_name("voi
 
 let source = fs.readFileSync({json.dumps(str(CARD))}, "utf8");
 source = source
-  .replace(/const \{{ VoipEntityIds \}} = await import\(`\.\/voip-stack-entity-ids\.js[^;]+;/, "const {{ VoipEntityIds }} = globalThis.__entityIds;")
+  .replace(/import\(`\.\/voip-stack-entity-ids\.js[^`]+`\)/, "Promise.resolve(globalThis.__entityIds)")
   .replace(
-    /const \{{ voipStackTranslate \}} = await import\(`\.\/voip-stack-i18n\.js[^;]+;/,
-    "const {{ voipStackTranslate }} = globalThis.__i18n;",
+    /import\(`\.\/voip-stack-i18n\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__i18n)",
   )
-  .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
+  .replace(/import\(`\.\/voip-phonebook-card\.js[^`]+`\)/, "Promise.resolve({{}})")
   .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
-    /const \{{\s*buildMainCardSkeleton[\s\S]*?\}} = await import\(`\.\/voip-stack-card-view\.js[^;]+;/,
-    "const {{ buildMainCardSkeleton, buildUnconfiguredCardSkeleton }} = globalThis.__cardView;",
+    /import\(`\.\/voip-stack-card-view\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardView)",
   )
   .replace(
-    /const \{{ voipStackEngine \}} = await import\(`\.\/voip-stack-engine\.js[^;]+;/,
-    "const {{ voipStackEngine }} = globalThis.__engine;",
+    /import\(`\.\/voip-stack-engine\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__engine)",
   )
   .replace(
-    /const \{{\s*audioModeLabel[\s\S]*?\}} = await import\(`\.\/voip-stack-card-model\.js[^;]+;/,
-    `const {{
-      audioModeLabel, formatCallDuration, formatEndReason,
-      formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
-      mirroredEndpointPeerLabel, normaliseAudioMode, normaliseTransport, reasonKey,
-      softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
-    }} = globalThis.__cardModel;`,
+    /import\(`\.\/voip-stack-card-model\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardModel)",
   )
   .replace(/await import[^;]*voip-stack-dashboard-card[^;]*;/, "")
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");

@@ -1,8 +1,14 @@
 /** Browser-local presentation of an existing HA phone, independent of cards. */
 const VERSION = new URL(import.meta.url).searchParams.get("v") || "dev";
-const { voipStackEngine: engine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(VERSION)}`);
-const { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
-const { voipStackTranslate: translate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VERSION)}`);
+const [
+  { voipStackEngine: engine },
+  { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration },
+  { voipStackTranslate: translate },
+] = await Promise.all([
+  import(`./voip-stack-engine.js?v=${encodeURIComponent(VERSION)}`),
+  import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`),
+  import(`./voip-stack-i18n.js?v=${encodeURIComponent(VERSION)}`),
+]);
 const DIALOG = "voip-stack-phone-dialog";
 const PREFERENCE = "voip_stack_popup_phone";
 const ACTIVE = new Set(["ringing", "incoming", "calling", "in_call"]);

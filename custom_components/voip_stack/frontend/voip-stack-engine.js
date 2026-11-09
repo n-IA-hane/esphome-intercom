@@ -9,23 +9,23 @@ const MODULE_VERSION = (() => {
     return "dev";
   }
 })();
-const { RINGTONE_REPEAT_MS, playVoipRingtone } =
-  await import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const {
-  desiredAudioPaths,
-  normaliseAudioDirection,
-  normaliseAudioMode,
-  resolveSessionFormats,
-  sameAudioFormat,
-} = await import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const {
-  normaliseSoftphoneSelector,
-  softphoneScopeKey,
-  softphoneStateMatches,
-} = await import(`./voip-stack-session-model.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const { BrowserMediaDevices, exactDeviceConstraint } = await import(
-  `./voip-stack-media-devices.js?v=${encodeURIComponent(MODULE_VERSION)}`
-);
+const [
+  { RINGTONE_REPEAT_MS, playVoipRingtone },
+  {
+    desiredAudioPaths,
+    normaliseAudioDirection,
+    normaliseAudioMode,
+    resolveSessionFormats,
+    sameAudioFormat,
+  },
+  { normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches },
+  { BrowserMediaDevices, exactDeviceConstraint },
+] = await Promise.all([
+  import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-session-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-media-devices.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+]);
 const CONTROL_ACK_TIMEOUT_MS = 3000;
 const AUDIO_NEGOTIATION_TIMEOUT_MS = 3000;
 const BUS_SUBSCRIBE_RETRY_MS = 2000;
