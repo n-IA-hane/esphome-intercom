@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from tests.native_profile import profile as native_profile, action_id
-from tests.runtime_observer_fixture import source_event_body
+from tests.runtime_observer_fixture import runtime_root, source_event_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +78,8 @@ def regression_binary(tmp_path_factory):
         for key, value in substitutions.items()
         if key.startswith("ui_state_") or key.startswith("voice_assist_")
     )
-    source = r"""
+    source = '#include "' + str(runtime_root() / "tests/fixtures/api/api_server.h") + '"\n'
+    source += r"""
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -87,6 +88,8 @@ def regression_binary(tmp_path_factory):
 #include <vector>
 #define USE_RUNTIME_CONTROLLER_API
 #define id(name) name
+namespace api=esphome::api;
+api::APIServer api_server;
 int ui_state=0, voice_assistant_phase=0, current_mode=0, previous_mode=0;
 int runtime_visual_source=0;
 bool runtime_response_text_ready=false, runtime_ui_call_session_active=false;
@@ -129,6 +132,9 @@ void lv_obj_invalidate(int *) {}
     source += "void call_end() {\n" + end + "\n}\n"
     source += (
         'void update_ha(std::string client_info, bool connected) { '
+        'if (connected) { api_server.accept(client_info)->authenticated=true; } '
+        'else { for (const auto &client : api_server.active_clients()) { '
+        'if (client->name_==client_info) { api_server.remove(client.get()); break; } } } '
         'observer.source_event(connected ? "api_connected" : "api_disconnected", client_info); }\n'
     )
     for callback, guard in terminal_guards.items():
@@ -141,6 +147,7 @@ void expire_ha_grace() {
 }
 int main(int argc, char **argv) {
   assert(argc==2);
+  api::global_api_server=&api_server;
   const std::string test=argv[1];
   if (test=="projection") {
     // Completion and reconnect project their current snapshot, even when the

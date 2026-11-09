@@ -192,6 +192,13 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         lvgl = next(item for item in lvgl if any(str(p.get("id")) == page_id for p in item.get("pages", [])))
     page = copy.deepcopy(next(p for p in lvgl["pages"] if str(p.get("id")) == page_id))
     page_hash = hashlib.sha256(yaml_util.dump(page).encode()).hexdigest()
+    microphone = next((node for node in nodes(page) if str(node.get("id", "")) == "ui_mic_vol_slider"), None)
+    microphone_owner = None
+    if microphone is not None:
+        owners = [name for name in references(microphone) if find_id(config, "number", name)]
+        if len(owners) != 1:
+            raise ValueError("The production microphone slider must have one declared number owner")
+        microphone_owner = owners[0]
     phone_pages = [copy.deepcopy(p) for p in lvgl["pages"] if str(p.get("id", "")).startswith("call_")] if pointer else []
     if pointer and not any(p["id"] == "call_dialer_page" for p in phone_pages):
         raise ValueError("Pointer witness requires the real production dialer")
@@ -582,10 +589,10 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           printf("UI_POINTER in_call_gesture=pass hangup_suppressed=pass positive_hangup_tap=pass\n");
           enter_view(3);
           lv_screen_load(id(SETTINGS_PAGE)->obj); input.pump(80);
-          id(master_volume).publish_state(50.0f); id(mic_gain).publish_state(5.0f);
+          id(master_volume).publish_state(50.0f); MICROPHONE_MIDPOINT
           PLAYER_MIDPOINT
-          const char *names[]={"master","playback","mic"};
-          lv_obj_t *sliders[]={id(ui_speaker_vol_slider),PLAYBACK_SLIDER id(ui_mic_vol_slider)};
+          const char *names[]={"master",PLAYBACK_NAME MICROPHONE_NAME};
+          lv_obj_t *sliders[]={id(ui_speaker_vol_slider),PLAYBACK_SLIDER MICROPHONE_SLIDER};
           int previous_center=-100000;
           for(auto *slider:sliders) {
             lv_area_t area; lv_obj_get_coords(slider,&area);
@@ -623,6 +630,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             if(input.count(pressed)!=before) ::exit(68);
             printf("UI_POINTER slider=%s knob=pass extension=pass track_rejected=pass pad=%d\n",names[index++],pad);
           }
+          MICROPHONE_PROBE_START
           for(int requested:{24,lv_slider_get_max_value(id(ui_mic_vol_slider))}) {
             id(mic_gain).publish_state(static_cast<float>(requested));input.pump(40);
             lv_obj_update_layout(id(SETTINGS_PAGE)->obj);
@@ -647,6 +655,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             if(input.count(pressed)!=before+1 || id(speaker_mute).state!=mute_before) ::exit(76);
             printf("UI_POINTER mic_value=%d knob=pass extended_topmost=pass no_switch_overlap=pass extent=%d\n",requested,bottom-area.y2);
           }
+          MICROPHONE_PROBE_END
           lv_area_t toggle,viewport;lv_obj_get_coords(id(ui_speaker_mute_sw),&toggle);lv_obj_get_coords(id(settings_page_wrapper),&viewport);
           int offset=(toggle.y1+toggle.y2-viewport.y1-viewport.y2)/2;
           lv_obj_scroll_to_y(id(settings_page_wrapper),lv_obj_get_scroll_y(id(settings_page_wrapper))+offset,LV_ANIM_OFF);input.pump(40);
@@ -658,6 +667,18 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           MODE_DROPDOWN
           for(unsigned i=0;i<3;i++)lv_obj_remove_event_dsc(trace_objects[i],trace_descriptors[i]);
         '''.replace("SETTINGS_PAGE", page_id).replace("APPLY_OVERLAY_POLICY", policy or "(void)target;")
+        pointer_code = re.sub(r"MICROPHONE_PROBE_START(.*?)MICROPHONE_PROBE_END",
+            lambda match: match[1].replace("id(mic_gain)", f"id({microphone_owner})") if microphone_owner
+                else 'printf("UI_POINTER microphone_control=absent\\n");', pointer_code, flags=re.S)
+        pointer_code = pointer_code.replace("MICROPHONE_MIDPOINT",
+            f'id({microphone_owner}).publish_state((lv_slider_get_min_value(id(ui_mic_vol_slider)) + '
+            'lv_slider_get_max_value(id(ui_mic_vol_slider))) / 2.0f); '
+            f'printf("UI_POINTER microphone_owner={microphone_owner} '
+            f'minimum={int(microphone["min_value"])} maximum={int(microphone["max_value"])}\\n");'
+            if microphone_owner else "")
+        pointer_code = pointer_code.replace("MICROPHONE_NAME", '"mic",' if microphone_owner else "")
+        pointer_code = pointer_code.replace("MICROPHONE_SLIDER", "id(ui_mic_vol_slider)," if microphone_owner else "")
+        pointer_code = pointer_code.replace("PLAYBACK_NAME", '"playback",' if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYER_MIDPOINT", "id(speaker_media_player).volume=0.5f;id(speaker_media_player).publish_state();" if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYBACK_SLIDER", "id(ui_playback_vol_slider)," if host.get("media_player") else "")
         pointer_code = pointer_code.replace("EXPECTED_HIT_SIZE", "40" if width <= 240 else "48")

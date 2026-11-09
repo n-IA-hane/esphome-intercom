@@ -418,7 +418,7 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"video": ("transfer_a", "transfer_b", "transfer_c"),
-                                                "h264_profile_level_id": "42801f"}], indirect=True)
+                                                "h264_profile_level_id": "42c01f"}], indirect=True)
 @pytest.mark.parametrize("camera_enabled", [False, True])
 @pytest.mark.parametrize("pickup_target", ["sip", "browser"])
 @pytest.mark.parametrize("source_role", ["uac", "uas"])
@@ -859,7 +859,7 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     registered_phones, trunks, unavailable,
 ):
     from custom_components.voip_stack.const import CONF_SIP_VIDEO
-    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries
+    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, peer_video_codec
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.store import config_entry
     runtime = trunks
@@ -886,10 +886,20 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     ports = set(runtime.runtime.rtp_port_pool["used"])
     fds = {key: transport.get_extra_info("socket").fileno() for key, transport in video._transports.items()}
     runtime.runtime.endpoints.update("transfer_c", device_id="negative-video-picker")
+    picker_capabilities = []
     if unavailable == "known_audio_only":
         runtime.runtime.endpoints.update("transfer_c", capabilities=frozenset({"audio", "dtmf"}))
         registrar = runtime.calls.component("registrar")
+        # OPTIONS now supplies the explicit codec contract. The negative peer
+        # must decline video in that contract as well as the fallback names.
+        picker_capabilities = [(binding, binding.capabilities)
+            for binding in registrar.registered_contacts("transfer_c")]
+        assert picker_capabilities
+        for binding, capabilities in picker_capabilities:
+            binding.capabilities = {**(capabilities or {}), "sip_video_codec": ""}
         runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
+        picker_entry = next(entry for entry in runtime.roster if entry.metadata.get("endpoint_id") == "transfer_c")
+        assert peer_video_codec(None, picker_entry) == ""
     else:
         runtime.runtime.transport_config[CONF_SIP_VIDEO] = False
     with pytest.raises(ParkingError, match="did not answer"):
@@ -905,6 +915,8 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     assert not runtime.runtime.endpoints.get("transfer_c").active_call_id
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
     runtime.runtime.endpoints.update("transfer_c", capabilities=frozenset())
+    for binding, capabilities in picker_capabilities:
+        binding.capabilities = capabilities
     registrar = runtime.calls.component("registrar")
     runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
     await runtime.hass.services.async_call("voip_stack", "pickup", {

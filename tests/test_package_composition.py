@@ -120,7 +120,7 @@ def test_announcement_attenuation_keeps_existing_volume_owners(
         assert actions[0]['id'] == 'tts_mixer_input'
         assert cv.int_range(min=0, max=255)(actions[0]['decibel_reduction']) == expected
     if document['substitutions']['firmware_audio_backend'] == 'native':
-        volume = next(item for item in document['number'] if item['id'] == 'master_volume')
+        volume = next(item for item in document['number'] if item.get('id') == 'master_volume')
         actions = [node['mixer_speaker.apply_ducking'] for node in nodes(volume)
                    if 'mixer_speaker.apply_ducking' in node]
         tts = next(action for action in actions if action['id'] == 'tts_mixer_input')
@@ -793,6 +793,7 @@ def test_ws3_uses_official_resampler_scheduling_configuration(tmp_path: Path, fe
         assert 'task_priority' not in speaker, speaker['id']
 
 
+@pytest.mark.timeout(190)  # FULL codegen can exceed 30 s; retain its own 180-second subprocess limit.
 def test_ws3_jpeg_worker_does_not_preempt_its_audio_resampler(tmp_path: Path) -> None:
     profile_path = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml'
     profile = yaml_util.load_yaml(ROOT / profile_path)

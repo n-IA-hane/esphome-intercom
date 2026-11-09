@@ -268,8 +268,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         local_branch = call_service[local_start:local_return]
         self.assertIn("caller_owner_id=str(", local_branch)
         self.assertIn('call.data.get("media_client_id")', local_branch)
-        self.assertIn("request_video=bool(", local_branch)
-        self.assertIn('browser_endpoint.supports("video")', local_branch)
+        self.assertIn("request_video=_local_video_capable(browser_endpoint)", local_branch)
         self.assertIn("enable_caller_video_send=bool(", local_branch)
         self.assertIn('call.data.get("send_video", False)', local_branch)
 

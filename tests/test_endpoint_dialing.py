@@ -331,9 +331,14 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
 
 
 @pytest.mark.parametrize("kind,tx,expected", [
-    ("esphome", None, False),
+    # An ESP without advertised formats must negotiate them through SIP,
+    # rather than acquire an implicit PCM policy from its device kind.
+    ("esphome", None, True),
+    ("esphome", ["16000:s16le:1:10"], False),
     ("sip_account", None, True),
     ("sip_account", ["16000:s16le:1:10"], False),
+    ("browser", None, False),
+    ("assist", None, False),
 ])
 def test_unknown_codec_policy_preserves_declared_endpoint_constraints(kind, tx, expected):
     peer = Peer(name="Phone", host="192.0.2.61", endpoint_kind=kind, tx_formats=tx)

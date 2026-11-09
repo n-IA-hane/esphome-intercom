@@ -165,11 +165,18 @@ def test_recorded_lifecycle_provider_reaches_generated_cpp(native_full_build, co
     assert files, f"The FULL composition did not load {component}"
     distribution = metadata.distribution("esphome")
     records = {str(path): path for path in distribution.files}
+    local_only = set(entry["source_sha256"]) - set(
+        entry.get("upstream_source_sha256", entry["source_sha256"])
+    )
     for path in files:
         relative = path.relative_to(generated)
         assert path.read_bytes() == (local / relative).read_bytes()
         # A local adaptation must not mutate the installed ESPHome provider.
         installed = NATIVE_COMPONENTS / component / relative
+        if relative.as_posix() in local_only:
+            # Recorded local helpers have no file in the official distribution.
+            assert not installed.exists(), installed
+            continue
         record = records[str(Path("esphome/components") / component / relative)]
         assert record.hash.mode == "sha256"
         digest = base64.urlsafe_b64encode(hashlib.sha256(installed.read_bytes()).digest()).rstrip(b"=").decode()

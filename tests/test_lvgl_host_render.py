@@ -61,11 +61,16 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     assert "UI_POINTER ordered_navigation=pass bounded_ends=pass real_registry=pass" in log
     assert "UI_POINTER options_body_scroll=pass navigation_suppressed=pass" in log
     assert "UI_POINTER in_call_gesture=pass hangup_suppressed=pass positive_hangup_tap=pass" in log
-    for name in ("master", "playback", "mic"):
+    for name in ("master", "playback", *(["mic"] if scene == "spot240" else [])):
         assert f"UI_POINTER slider={name} knob=pass extension=pass track_rejected=pass" in log
     assert "UI_POINTER passive_row_child_switch=pass writes=1" in log
-    assert "UI_POINTER mic_value=24 knob=pass extended_topmost=pass no_switch_overlap=pass" in log
-    assert "UI_POINTER mic_value=30 knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+    if scene == "spot240":
+        assert "UI_POINTER microphone_owner=microphone_pga minimum=0 maximum=36" in log
+        for value in (24, 36):
+            assert f"UI_POINTER mic_value={value} knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+    else:
+        assert "UI_POINTER microphone_control=absent" in log
+        assert "UI_POINTER slider=mic " not in log
     assert report["production_overlay_policy_sha256"]
     assert report["production_page_selector_sha256"]
     assert report["production_settings_registry_boot_sha256"]
