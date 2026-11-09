@@ -34,6 +34,16 @@ except ModuleNotFoundError:  # Direct execution adds tools/, not the repo root.
 LOCAL_SECRET_ROOT = Path.home() / ".secrets/esphome-intercom"
 
 
+def _audio_capture_max_bytes(value: str) -> int:
+    try:
+        budget = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("audio capture budget must be an integer byte count") from error
+    if not 1024 * 1024 <= budget <= 64 * 1024 * 1024:
+        raise argparse.ArgumentTypeError("audio capture budget must be between 1 and 64 MiB")
+    return budget
+
+
 def _local_default(environment_name: str, filename: str) -> str:
     configured = os.environ.get(environment_name, "")
     if configured:
@@ -642,6 +652,35 @@ async (destination) => {
 """
 
 
+def _camera_phase_plan(send_camera: bool, camera_send: str | None, implicit_source: bool) -> dict:
+    if send_camera and camera_send == "on":
+        raise ValueError("--send-camera is late enable; --camera-send on is an ambiguous initial state")
+    return {"late": bool(send_camera),
+            "configure_initial": bool(send_camera or camera_send is not None or implicit_source),
+            "initial": False if send_camera else camera_send != "off"}
+
+
+def _enable_camera_after_audio(page, sample, timeout: float) -> None:
+    page.wait_for_function(
+        f"() => {{ const x = ({LIGHT_CARD_STATE})(); const s = x?.engine_stats || {{}}; const p = globalThis.__voipStackProbeFindCard?.(); return x?.card_state === 'in_call' && s.sent > 0 && s.received > 0 && p?._softphoneSnapshot?.send_video === false && Number(s.video?.sent || 0) === 0; }}",
+        timeout=int(timeout * 1000), polling=100,
+    )
+    before = sample("audio_before_camera_toggle")
+    page.wait_for_timeout(3000)
+    stable = sample("audio_before_camera_toggle_after_3s")
+    old, new = before.get("engine_stats") or {}, stable.get("engine_stats") or {}
+    if (stable.get("card_state") != "in_call" or (stable.get("backend_state") or {}).get("send_video") is not False or (new.get("video") or {}).get("sent", 0) != 0
+            or new.get("sent", 0) <= old.get("sent", 0) or new.get("received", 0) <= old.get("received", 0)):
+        raise RuntimeError("Audio/TX-off state did not remain valid for3s before late camera enable")
+    if not page.evaluate(CLICK_CAMERA_SEND, True):
+        raise RuntimeError("Send Camera control did not enable video after audio establishment")
+    page.wait_for_function(
+        f"() => (({DEEP_CARD})()?._softphoneSnapshot?.send_video) === true",
+        timeout=10_000, polling=100,
+    )
+    sample("camera_enabled_after_audio")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -793,17 +832,26 @@ def main() -> int:
     )
     parser.add_argument("--fake-audio-file", type=Path)
     parser.add_argument("--audio-capture-dir", type=Path)
+    parser.add_argument("--audio-capture-max-bytes", type=_audio_capture_max_bytes,
+                        default=10 * 1024 * 1024,
+                        help="Bounded host PCM observation budget in bytes (1..64 MiB; default10 MiB)")
     parser.add_argument("--camera-send", choices=("on", "off"))
     parser.add_argument("--verify-keypad", action="store_true")
     parser.add_argument("--dtmf-digit", choices=tuple("0123456789*#ABCD"))
     args = parser.parse_args()
+    try:
+        camera_plan = _camera_phase_plan(args.send_camera, args.camera_send, bool(args.fake_video_file or args.deny_camera))
+    except ValueError as error:
+        parser.error(str(error))
+    if camera_plan["late"]:
+        args.expect_video_reinvite = True
     if args.dtmf_digit:
         args.verify_keypad = True
     if args.fake_audio_file is not None and not args.fake_audio_file.is_file():
         parser.error("--fake-audio-file must be an existing PCM WAV file")
     if args.expect_audio_only and (args.send_camera or args.deny_camera):
         parser.error("--expect-audio-only cannot be combined with camera options")
-    if args.expect_video_send_only and (args.expect_audio_only or args.deny_camera or args.camera_send == "off"):
+    if args.expect_video_send_only and (args.expect_audio_only or args.deny_camera or (args.camera_send == "off" and not camera_plan["late"])):
         parser.error("--expect-video-send-only requires video transmission and cannot disable camera/audio-video")
     if args.expect_native_camera and not args.expect_audio_only:
         parser.error("--expect-native-camera requires --expect-audio-only")
@@ -811,15 +859,12 @@ def main() -> int:
         parser.error("--expect-remote-hangup cannot be combined with --no-hangup")
     if args.cancel_during_ring and not args.outbound:
         parser.error("--cancel-during-ring requires --outbound")
-    if args.deny_camera:
-        args.send_camera = True
     if args.fake_video_file:
         args.fake_video_file = args.fake_video_file.expanduser()
         if not args.fake_video_file.is_file():
             parser.error(f"fake video file does not exist: {args.fake_video_file}")
         if args.fake_video_file.suffix.lower() != ".y4m":
             parser.error("--fake-video-file requires a Y4M input")
-        args.send_camera = True
     storage_state = (
         Path(args.storage_state).expanduser() if args.storage_state else None
     )
@@ -881,7 +926,7 @@ def main() -> int:
     }
     failure: BaseException | None = None
     from ha_voip_lab.browser_audio_capture import BrowserAudioCapture
-    audio_capture = BrowserAudioCapture() if args.audio_capture_dir else None
+    audio_capture = BrowserAudioCapture(max_bytes=args.audio_capture_max_bytes) if args.audio_capture_dir else None
     with sync_playwright() as playwright:
         launch_options = {
             "headless": True,
@@ -1220,13 +1265,13 @@ def main() -> int:
 
         try:
             reload_rendered = 0
-            if args.send_camera or args.camera_send is not None:
+            if camera_plan["configure_initial"]:
                 page.wait_for_function(
                     f"() => Boolean(({DEEP_CARD})()?._softphoneSnapshot?.video_camera_send_enabled)",
                     timeout=10_000,
                     polling=100,
                 )
-                desired_camera = args.camera_send != "off"
+                desired_camera = camera_plan["initial"]
                 if not page.evaluate(CLICK_CAMERA_SEND, desired_camera):
                     raise RuntimeError("Send Camera option was not available before the video call")
                 page.wait_for_function(
@@ -1320,6 +1365,8 @@ def main() -> int:
                     f"reason={connected.get('terminal_reason')!r} "
                     f"error={connected.get('card_error')!r}"
                 )
+            if camera_plan["late"]:
+                _enable_camera_after_audio(page, sample, args.video_timeout)
             if args.verify_keypad:
                 result["keypad"] = page.evaluate("""async (digit) => {
                   const card = globalThis.__voipStackProbeFindCard?.();
@@ -1560,7 +1607,8 @@ def main() -> int:
                 )
             if audio_capture is not None:
                 audio_report = audio_capture.save(args.audio_capture_dir)
-                result["audio_capture"] = {"errors": audio_report["errors"], "streams": len(audio_report["streams"])}
+                result["audio_capture"] = {"errors": audio_report["errors"], "streams": len(audio_report["streams"]),
+                                           "max_bytes": audio_capture.max_bytes, "total_bytes": audio_capture.total_bytes}
                 if audio_report['errors']:
                     failure = failure or RuntimeError('Browser audio capture failed')
                     result['ok'] = False
