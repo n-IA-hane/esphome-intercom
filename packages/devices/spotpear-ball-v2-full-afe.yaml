@@ -108,6 +108,12 @@ substitutions:
   s3_sip_jpeg_width: '240'
   s3_sip_jpeg_height: '240'
   s3_sip_jpeg_fps: '10'
+esp32:
+  framework:
+    sdkconfig_options:
+      # Prefer PSRAM for medium generic allocations. DMA-only requests keep
+      # internal RAM for TLS/AES while music, VoIP and TTS run together.
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "512"
 runtime_controller:
   id: runtime
   storage_in_psram: true
