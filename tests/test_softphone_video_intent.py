@@ -34,7 +34,14 @@ class _Socket:
 class _Registry:
     def __init__(self, client) -> None:
         self.client = client
-        self.session = SimpleNamespace(generation=7)
+        self.session = SimpleNamespace(generation=7, video_intent_lock=asyncio.Lock())
+        if client is not None and (
+            isinstance(client, SimpleNamespace)
+            or isinstance(client.async_prepare_video_reinvite, AsyncMock)
+        ):
+            client.prepared_reinvite_identity = lambda candidate: SimpleNamespace(
+                previous=client.dialog, candidate=candidate,
+            )
 
     def get_session(self, _call_id):
         return self.session
@@ -157,7 +164,10 @@ async def test_enabling_video_keeps_audio_reservation_owned_until_client_cleanup
     client.commit_prepared_reinvite = Mock(return_value=True)
     registry = _Registry(client)
     if outcome == "superseded":
-        registry.is_generation_current = lambda *_args: False
+        async def supersede(**_kwargs):
+            registry.is_generation_current = lambda *_args: False
+            return candidate
+        client.async_prepare_video_reinvite.side_effect = supersede
     monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
     monkeypatch.setattr(module, "reserve_sip_video_media", lambda _hass: (staged, new_rtp, new_rtcp))
 

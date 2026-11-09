@@ -118,6 +118,32 @@ async def async_apply_send_video_intent(
 
     store = _ha_softphone_store(hass, endpoint_id)
     call_id = str(store.get("call_id") or "").strip()
+    registry = call_registry(hass)
+    session = registry.get_session(call_id) if call_id else None
+    if session is None or str(store.get("state") or "") not in _ACTIVE_STATES:
+        return False
+    generation = session.generation
+    async with session.video_intent_lock:
+        current = _ha_softphone_store(hass, endpoint_id)
+        if (
+            registry.get_session(call_id) is not session
+            or not registry.is_generation_current(call_id, generation)
+            or str(current.get("call_id") or "") != call_id
+            or str(current.get("state") or "") not in _ACTIVE_STATES
+        ):
+            return False
+        return await _async_apply_send_video_intent(hass, endpoint_id, enabled)
+
+
+async def _async_apply_send_video_intent(
+    hass: HomeAssistant,
+    endpoint_id: str,
+    enabled: bool,
+) -> bool:
+    """Prepare and publish one camera choice while its call owner is locked."""
+
+    store = _ha_softphone_store(hass, endpoint_id)
+    call_id = str(store.get("call_id") or "").strip()
     if not call_id or str(store.get("state") or "") not in _ACTIVE_STATES:
         return False
     cfg = transport_config(hass)
@@ -188,6 +214,11 @@ async def async_apply_send_video_intent(
                 direction=direction,
                 media_sockets={"video": rtp_socket, "video_rtcp": rtcp_socket} if rtp_socket is not None else None,
             )
+            if candidate is not None:
+                identity = client.prepared_reinvite_identity(candidate)
+                if identity is None:
+                    return False
+                previous = identity.previous
             current_store = _ha_softphone_store(hass, endpoint_id)
             if (
                 not registry.is_generation_current(call_id, generation)
