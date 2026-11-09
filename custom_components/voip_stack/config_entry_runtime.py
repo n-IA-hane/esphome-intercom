@@ -15,9 +15,12 @@ from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
 from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     CONF_ESPHOME_PHONE_POLICIES,
+    CONF_PHONE_KIND,
+    CONF_PHONE_SEND_VIDEO,
     phone_subentries,
     sync_registry_from_entry,
 )
+from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import runtime_data, sip_registrar
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
@@ -102,6 +105,27 @@ def entry_phone_signature(entry: ConfigEntry) -> tuple:
             phone_subentries(entry), key=lambda item: item.subentry_id
         )
     )
+
+
+def _only_browser_camera_send_changed(previous: tuple, current: tuple) -> bool:
+    """Camera transmission intent does not change the public directory."""
+    if len(previous) != len(current):
+        return False
+    changed = False
+    for (old_id, old_title, old), (new_id, new_title, new) in zip(previous, current):
+        if (old_id, old_title) != (new_id, new_title):
+            return False
+        if old == new:
+            continue
+        if old.get(CONF_PHONE_KIND) != EndpointKind.BROWSER.value:
+            return False
+        if (
+            {key: value for key, value in old.items() if key != CONF_PHONE_SEND_VIDEO}
+            != {key: value for key, value in new.items() if key != CONF_PHONE_SEND_VIDEO}
+        ):
+            return False
+        changed = True
+    return changed
 
 
 async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -195,7 +219,10 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (
             manual_roster_entries(hass)
         )
-    if phones_changed or contacts_changed:
+    directory_phones_changed = phones_changed and not _only_browser_camera_send_changed(
+        previous_phones, phone_signature
+    )
+    if directory_phones_changed or contacts_changed:
         await async_refresh_and_push_phonebook(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)
