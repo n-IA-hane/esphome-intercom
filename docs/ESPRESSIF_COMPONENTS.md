@@ -264,6 +264,18 @@ Runtime test interpretation: PSRAM use inside GMF/esp-sr is expected. If a test
 crashes or glitches, first capture the stack and memory snapshot; do not fork or
 override Espressif allocation policy without evidence.
 
+Spotpear Ball V2 FULL sets the standard IDF
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` threshold to `512`. Eligible generic
+allocations above that size prefer PSRAM, leaving more internal memory available
+for allocations that require it, including TLS/AES DMA buffers. Explicit DMA
+requirements and the internal-memory reserve remain unchanged. With Sendspin
+radio, a VoIP call and an Assist HTTPS reply running together, the measured
+largest free DMA block after TTS increased from 7,424 to 21,504 bytes compared
+with the previous `4096` threshold; a warm repeat retained 21,504 bytes. Both
+policies completed TTS in that comparison, so this demonstrates additional
+headroom rather than a guarantee against every allocation failure. See IDF's
+[allocation policy](https://github.com/espressif/esp-idf/blob/v5.5.6/components/heap/heap_caps.c).
+
 ## Migration matrix
 
 The current direction is to use Espressif code where it cleanly owns a problem,

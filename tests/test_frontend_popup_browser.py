@@ -103,6 +103,226 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+def test_shared_phone_terminal_resyncs_passive_browser_without_reload(popup_page):
+    """Real cards/engines, two page contexts, backend ACK-only endpoint stream."""
+    first = popup_page
+    second = first.context.new_page()
+
+    def serve(route):
+        path = FRONT / route.request.url.split('/')[-1].split('?')[0]
+        route.fulfill(content_type='text/javascript' if path.is_file() else 'text/html',
+                      body=path.read_text() if path.is_file() else '<html><body></body></html>')
+
+    second.route('http://phone.test/**', serve)
+    second.goto('http://phone.test/')
+    second.evaluate(BOOTSTRAP)
+    for page in (first, second):
+        page.evaluate("""async()=>{
+          const connection=hass.connection;
+          // This is the actual server contract: the subscription acknowledges
+          // registration, and a separate query supplies the initial snapshot.
+          connection.subscribeMessage=async(callback,request)=>{
+            const item={callback,request,active:true};streams.push(item);
+            if(request.type==='voip_stack/subscribe_phone_states')queueMicrotask(()=>callback({kind:'snapshot',revision:1,phones:[]}));
+            return()=>{item.active=false;};
+          };
+          const query=connection.sendMessagePromise;
+          connection.sendMessagePromise=async request=>{
+            if(request.type==='voip_stack/ha_softphone_state'&&request.media_client_id)
+              return {...current,media_owner:'other'};
+            return query(request);
+          };
+          await import('/voip-stack-card.js');
+          const card=window.card=document.createElement('voip-stack-card');
+          card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+          root.shadowRoot.append(card);
+        }""")
+        page.wait_for_function("card._softphoneSnapshot?.state==='idle'")
+        page.evaluate("push({state:'in_call',call_id:'shared-A',send_video:true,video_active:true})")
+        page.wait_for_function("card._softphoneSnapshot.state==='in_call'")
+    second.evaluate("hass.connection.dispatchEvent(new Event('disconnected'))")
+    first.evaluate("push({state:'idle',call_id:'shared-A',terminal_reason:'local_hangup'})")
+    first.wait_for_function("card._softphoneSnapshot.state==='idle'")
+    second.evaluate("current={...current,state:'idle',call_id:'shared-A',terminal_reason:'local_hangup',revision:99}")
+    assert second.evaluate("card._softphoneSnapshot.state") == 'in_call'
+    second.evaluate("hass.connection.dispatchEvent(new Event('ready'))")
+    second.wait_for_function("card._softphoneSnapshot.state==='idle'")
+    assert 'In Call' not in second.evaluate("card._els.statusText.textContent")
+    # HA restart may lose last-terminal history while retaining device identity.
+    second.evaluate("push({state:'in_call',call_id:'shared-B'});hass.connection.dispatchEvent(new Event('disconnected'));current={...current,state:'idle',call_id:'',sequence:0,revision:0};hass.connection.dispatchEvent(new Event('ready'))")
+    second.wait_for_function("card._softphoneSnapshot.state==='idle'&&card._softphoneSnapshot.call_id===''")
+    for page in (first, second):
+        assert page.evaluate('mics') == 0
+        assert page.evaluate('services') == []
+    second.close()
+
+
+@pytest.mark.parametrize('answer_path', ['card-button', 'popup-button', 'url', 'automatic'])
+def test_explicit_answer_camera_uses_real_acquisition_when_permission_query_unsupported(popup_page, answer_path):
+    """Companion may support GUM but reject Permissions.query(camera)."""
+    page = popup_page
+    page.evaluate("""()=>{
+      window.cameraRequests=0;window.cameraQueries=0;window.audioPreparations=0;
+      Object.defineProperty(navigator.permissions,'query',{configurable:true,value:async({name})=>{
+        if(name==='camera'){cameraQueries++;throw new TypeError('camera permission query unsupported');}
+        return {state:'granted'};
+      }});
+      navigator.mediaDevices.getUserMedia=async options=>{
+        if(!options.video||options.audio!==false)throw Error('Unexpected capture request');
+        cameraRequests++;const track={stop(){},kind:'video'};
+        return {getVideoTracks:()=>[track],getTracks:()=>[track]};
+      };
+      // The audio preparation contract is covered separately; keep this
+      // camera decision test independent from real audio devices/HA services.
+      __voipStackEngine.prepareAudioCall=async()=>{audioPreparations++;return true;};
+    }""")
+    if answer_path == 'popup-button':
+        enable(page)
+    else:
+        page.evaluate("""async()=>{
+          await import('/voip-stack-card.js');
+          const card=window.cameraCard=document.createElement('voip-stack-card');
+          card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+          root.shadowRoot.append(card);
+        }""")
+    page.evaluate("""automatic=>push({state:'ringing',direction:'incoming',call_id:'camera-A',
+      caller:'Dashboard',send_video:true,video_camera_send_enabled:true,video_offered:true,
+      auto_answer:automatic})""", answer_path == 'automatic')
+    if answer_path in ('card-button', 'popup-button'):
+        # The production Answer pulse keeps changing its bounds. A human
+        # clicks its stable centre; do the same with a trusted pointer event,
+        # without disabling animation or forcing browser permission policy.
+        button = page.get_by_role('button', name='Answer', exact=True)
+        button.wait_for(state='visible')
+        bounds = button.bounding_box()
+        page.mouse.click(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2)
+    elif answer_path == 'url':
+        page.evaluate("""()=>{
+          history.pushState({},'', '/?'+new URLSearchParams({voip_answer:'1',voip_endpoint:phone.endpoint_id,voip_call_id:'camera-A'}));
+          dispatchEvent(new Event('location-changed'));
+        }""")
+    page.wait_for_function("services.some(x=>x.service==='answer')")
+    assert page.evaluate("services.find(x=>x.service==='answer').data.send_video") is (answer_path != 'automatic')
+    assert page.evaluate('cameraRequests') == (0 if answer_path == 'automatic' else 1)
+    assert page.evaluate('cameraQueries') == (1 if answer_path == 'automatic' else 0)
+    assert page.evaluate('audioPreparations') == 1
+
+
+def setup_mailbox(page, outcome='success'):
+    """Real card/engine and DTMF path; only HA/archive/media I/O are fixtures."""
+    page.evaluate("""async outcome=>{
+      await import('/voip-stack-card.js');
+      window.savedMessages=[{id:'saved-1',caller:'Fixture',created_at:1,read:false}];
+      window.digits=[];window.originations=[];window.cameraRequests=0;window.operationListener=null;
+      const engine=__voipStackEngine;
+      engine.prepareAudioCall=async()=>true;
+      navigator.mediaDevices.getUserMedia=async options=>{
+        if(!options.video||options.audio!==false)throw Error('Unexpected capture');
+        cameraRequests++;const track={stop(){},kind:'video'};
+        return {getVideoTracks:()=>[track],getTracks:()=>[track]};
+      };
+      current={...current,send_video:true,video_camera_send_enabled:true,
+        voicemail:{enabled:true,available:true,new:1,old:0,total:1}};
+      const originalQuery=hass.connection.sendMessagePromise;
+      hass.connection.sendMessagePromise=async request=>{
+        if(request.type==='call_service'&&request.service==='call'){
+          originations.push(request.service_data);
+          current={...current,state:'in_call',call_id:'mailbox-A',video_active:false};
+          return {...current};
+        }
+        if(request.type==='voip_stack/voicemail/list')return {
+          unread:savedMessages.length,total:savedMessages.length,messages:[...savedMessages],selections:{'saved-1':'01#'}};
+        return originalQuery(request);
+      };
+      hass.connection.subscribeEvents=async callback=>{operationListener=callback;return()=>{operationListener=null;};};
+      hass.callService=async(domain,service,data)=>{
+        services.push({domain,service,data});
+        if(service==='hangup')push({state:'idle',call_id:'mailbox-A'});
+      };
+      // Preserve the actual engine's sendDtmf/control/termination methods.
+      engine.resumeSession=async(_info,device,payload)=>{
+        engine._deviceId=device;engine._endpointId=phone.endpoint_id;engine._callId=payload.call_id;
+        engine._state='IN_CALL';engine._ws={readyState:WebSocket.OPEN,close(){this.readyState=WebSocket.CLOSED;},send(text){
+          const data=JSON.parse(text);if(data.type!=='dtmf')throw Error('Unexpected media control');
+          digits.push(data.digit);
+          if(digits.join('')==='01#2'&&outcome==='success'){
+            savedMessages=[];
+            // Actual backend order: archive committed, MWI snapshot, operation ACK.
+            push({voicemail:{enabled:true,available:true,new:0,old:0,total:0}});
+            operationListener?.({data:{call_id:'mailbox-A',mailbox_id:phone.endpoint_id,message_id:'saved-1',operation:'deleted'}});
+          }
+        }};
+        return true;
+      };
+      const card=window.mailboxCard=document.createElement('voip-stack-card');
+      card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;root.shadowRoot.append(card);
+    }""", outcome)
+    page.wait_for_function("mailboxCard._softphoneSnapshot?.voicemail?.total===1")
+    page.get_by_role('button', name='Voicemail', exact=True).click()
+    page.get_by_role('button', name='Delete', exact=True).wait_for(state='visible')
+
+
+def test_mailbox_last_delete_hides_message_indicator_from_authoritative_zero(popup_page):
+    page = popup_page
+    setup_mailbox(page)
+    page.get_by_role('button', name='Delete', exact=True).click()
+    page.wait_for_function("!mailboxCard._mailboxBusy&&mailboxCard._softphoneSnapshot.state==='idle'")
+    assert page.evaluate('digits.join("")') == '01#2'
+    assert page.evaluate('mailboxCard._softphoneSnapshot.voicemail.total') == 0
+    assert page.evaluate('mailboxCard._els.voicemailBtn.hidden') is True
+    assert page.evaluate('mailboxCard._els.voicemailPanel.hidden') is True
+
+
+def test_mailbox_dtmf_call_never_requests_camera_with_global_send_camera_enabled(popup_page):
+    page = popup_page
+    setup_mailbox(page)
+    page.get_by_role('button', name='Delete', exact=True).click()
+    page.wait_for_function("!mailboxCard._mailboxBusy&&mailboxCard._softphoneSnapshot.state==='idle'")
+    assert page.evaluate('cameraRequests') == 0
+    assert page.evaluate('originations[0].send_video') is False
+    assert page.evaluate('mailboxCard._softphoneSnapshot.send_video') is True
+
+
+def test_mailbox_audio_only_intent_leaves_regular_call_camera_preference(popup_page):
+    page = popup_page
+    setup_mailbox(page)
+    page.evaluate("mailboxCard._startCall('Ordinary peer')")
+    assert page.evaluate('originations[0].destination') == 'Ordinary peer'
+    assert page.evaluate('originations[0].send_video') is True
+    assert page.evaluate('cameraRequests') == 1
+    assert page.evaluate('mailboxCard._softphoneSnapshot.send_video') is True
+
+
+def test_mailbox_failed_delete_keeps_authoritative_message_count(popup_page):
+    page = popup_page
+    page.clock.install()
+    setup_mailbox(page, 'failed')
+    page.get_by_role('button', name='Delete', exact=True).click()
+    page.wait_for_function("digits.join('')==='01#2'")
+    page.clock.fast_forward(10001)
+    page.wait_for_function('!mailboxCard._mailboxBusy')
+    assert page.evaluate('mailboxCard._softphoneSnapshot.voicemail.total') == 1
+    assert page.evaluate('mailboxCard._els.voicemailBtn.hidden') is False
+    assert 'not confirmed' in page.evaluate('mailboxCard._errorMsg')
+
+
+def test_mailbox_late_list_cannot_revive_deleted_messages(popup_page):
+    page = popup_page
+    setup_mailbox(page)
+    page.evaluate("""()=>{
+      const query=hass.callWS;
+      hass.callWS=request=>request.type==='voip_stack/voicemail/list'
+        ? new Promise(resolve=>{window.oldMailboxResult=resolve;}) : query(request);
+      mailboxCard._mailboxBusy=true;
+      window.oldMailboxRead=mailboxCard._loadMailbox();
+      push({voicemail:{enabled:true,available:true,new:0,old:0,total:0}});
+    }""")
+    page.evaluate("""async()=>{oldMailboxResult({total:1,unread:1,messages:[{id:'old'}]});await oldMailboxRead;}""")
+    assert page.evaluate('mailboxCard._mailboxMessages.length') == 0
+    assert page.evaluate('mailboxCard._mailboxTotal') == 0
+    assert page.evaluate('mailboxCard._mailboxOpen') is False
+
+
 def test_popup_has_one_themed_glass_surface(popup_page):
     """Theme blur covers the full dialog, without a second inner card layer."""
     page = popup_page

@@ -97,6 +97,11 @@ from .websocket_api import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _local_video_capable(endpoint) -> bool:
+    # Receive negotiation is independent from permission to transmit a camera.
+    return bool(endpoint is not None and endpoint.supports("video"))
+
+
 async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> None:
     """Drop a stale registrar Contact while keeping the account in the roster."""
 
@@ -270,12 +275,7 @@ async def async_originate_browser_call(
                 hass,
                 endpoint_id,
                 browser_destination.endpoint_id,
-                request_video=bool(
-                    browser_endpoint is not None
-                    and browser_endpoint.supports("video")
-                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
-                    and call.data.get("send_video", False)
-                ),
+                request_video=_local_video_capable(browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)
@@ -373,12 +373,7 @@ async def async_originate_browser_call(
                 context=getattr(call, "context", None),
                 endpoint_id=endpoint_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
-                request_video=bool(
-                    browser_endpoint is not None
-                    and browser_endpoint.supports("video")
-                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
-                    and call.data.get("send_video", False)
-                ),
+                request_video=_local_video_capable(browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)

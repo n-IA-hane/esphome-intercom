@@ -120,6 +120,11 @@ The caller keeps the same call. The original destination stops ringing and the
 phone performing pickup becomes the other participant. A simultaneous answer on
 the original phone wins if it is already accepted before pickup commits.
 Cancelling a pending pickup leaves the original ringing call available.
+If a browser caller offers its camera while the destination is still ringing,
+pickup carries that video to a compatible answering phone. For example, an ESP
+display with JPEG reception can receive the browser's camera alongside call
+audio. The answering phone does not need its own camera. This does not extend
+pickup to video calls that have already been answered.
 Pickup also works while a parked caller is ringing its return destination: the
 caller keeps its established dialog and the existing RTP socket is handed to
 the replacement media owner.

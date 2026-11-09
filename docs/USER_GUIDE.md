@@ -194,7 +194,9 @@ use the Frosted Glass Dark theme with demo contacts and illustrative call states
 
 Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
-video. Disabling **Enable this phone's mailbox** deletes its messages and settings.
+video. For example, a dashboard phone with Send Camera off can call a Companion
+phone and receive its camera when that phone answers with Send Camera on.
+Disabling **Enable this phone's mailbox** deletes its messages and settings.
 
 For a browser phone, Options also selects the microphone, speaker and camera.
 These device selections are shared by the cards in that browser or Companion

@@ -1258,6 +1258,21 @@ assert.equal(card._applySoftphoneSnapshot({{
   ...base, state: "idle", call_id: base.call_id, sequence: 0, revision: 0,
 }}), true);
 
+// After HA restarts, a fresh endpoint query may legitimately have no terminal
+// Call-ID history. Only an explicitly reconciled read of this card's old call
+// may clear it; delayed pushes and reads for a different/new call stay blocked.
+const resetView=makeCard();
+resetView._applySoftphoneSnapshot({{...base,state:"in_call",sequence:50}});
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:"another-call"}}),false);
+resetView._starting=true;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),false);
+resetView._starting=false;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),true);
+assert.equal(resetView._softphoneSnapshot.state,"idle");
+
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
 const incoming = makeCard();

@@ -189,12 +189,15 @@ class VoipStackEngine extends EventTarget {
     this._phoneStateEpoch = 0;
     this._phoneStateFailed = false;
     this._phoneStateRevoked = false;
-    this._phoneStateReady = () => {
+    this._phoneStateReady = (force = false) => {
       if (this._phoneStateRevoked) return;
       this._resetPhoneStateSubscription("runtime_ready");
       this._ensurePhoneStateSubscription();
+      this._resetSoftphoneScopeSubscriptions(force !== true);
+      this._ensureBusSubscriptions(this._busConnection);
     };
     this._phoneStateDisconnected = () => {
+      this._resetSoftphoneScopeSubscriptions();
       this._phoneStates.clear();
       this._phoneStateRevision = null;
       for (const listener of this._phoneStateSubscribers) {
@@ -278,12 +281,7 @@ class VoipStackEngine extends EventTarget {
       if (this._busUnsub) this._busUnsub();
       this._busUnsub = null;
       this._busSubscribePending = false;
-      for (const record of this._softphoneScopeSubscriptions.values()) {
-        try { record.unsub?.(); } catch (_) {}
-        record.unsub = null;
-        record.pending = false;
-        record.invalid = false;
-      }
+      this._resetSoftphoneScopeSubscriptions();
       if (this._busSubscribeRetryTimer) clearTimeout(this._busSubscribeRetryTimer);
       this._busSubscribeRetryTimer = null;
       this._busConnection = conn;
@@ -447,20 +445,30 @@ class VoipStackEngine extends EventTarget {
 
   _ensureSoftphoneScopeSubscription(conn, record) {
     if (!record || record.unsub || record.pending || record.invalid || this._busConnection !== conn) return;
+    const generation = record.generation || 0;
+    const current = () => this._busConnection === conn &&
+      this._softphoneScopeSubscriptions.get(record.key) === record &&
+      (record.generation || 0) === generation;
     record.pending = true;
     const request = { type: WS_SUBSCRIBE_HA_SOFTPHONE };
     if (record.selector.endpoint_id) request.endpoint_id = record.selector.endpoint_id;
     if (record.selector.device_id) request.device_id = record.selector.device_id;
     conn.subscribeMessage(
-      (event) => this._onSoftphoneState(event, record.selector),
+      (event) => {
+        if (!current()) return;
+        record.stateEpoch = (record.stateEpoch || 0) + 1;
+        this._onSoftphoneState(event, record.selector);
+      },
       request,
-    ).then((unsub) => {
-      if (this._busConnection === conn && this._softphoneScopeSubscriptions.get(record.key) === record) {
+    ).then(async (unsub) => {
+      if (current()) {
         record.unsub = unsub;
+        await this._refreshSoftphoneScope(record, current);
       } else {
         unsub();
       }
     }).catch((err) => {
+      if (!current()) return;
       if (this._isUnknownEndpointError(err)) {
         record.invalid = true;
         this._onSoftphoneState({
@@ -477,8 +485,42 @@ class VoipStackEngine extends EventTarget {
       console.warn("voip-stack-engine: HA softphone subscription failed", err);
       this._scheduleBusSubscriptionRetry(conn);
     }).finally(() => {
-      record.pending = false;
+      if (current()) record.pending = false;
     });
+  }
+
+  _resetSoftphoneScopeSubscriptions(skipPending = false) {
+    for (const record of this._softphoneScopeSubscriptions.values()) {
+      if (skipPending && record.pending) continue;
+      record.generation = (record.generation || 0) + 1;
+      try { record.unsub?.(); } catch (_) {}
+      record.unsub = null;
+      record.pending = false;
+      record.invalid = false;
+    }
+  }
+
+  async _refreshSoftphoneScope(record, current) {
+    if (!this._hass?.callWS) return;
+    // The endpoint subscription has no initial snapshot. Read only after its
+    // ACK, so a hangup missed while disconnected cannot leave a passive view
+    // stuck in-call. A subsequent event or generation supersedes this read.
+    const epoch = record.stateEpoch || 0;
+    const previous = [...this._lastSoftphoneStates.values()].find(
+      state => softphoneStateMatches(state, record.selector),
+    );
+    try {
+      const state = await this._hass.callWS({
+        type: "voip_stack/ha_softphone_state", ...record.selector,
+      });
+      if (!current() || (record.stateEpoch || 0) !== epoch ||
+          !softphoneStateMatches(state, record.selector)) return;
+      this._onSoftphoneState(state, record.selector, {
+        authoritative: true, previousCallId: String(previous?.call_id || ""),
+      });
+    } catch (error) {
+      if (current()) console.warn("voip-stack-engine: call-state resync failed", error);
+    }
   }
 
   get active() {
@@ -1348,7 +1390,7 @@ class VoipStackEngine extends EventTarget {
 
   _onBusEvent(event) {
     if (event?.event_type === "voip_stack.runtime_ready") {
-      this._phoneStateReady();
+      this._phoneStateReady(true);
       return;
     }
     if (event?.event_type === "voip_stack.activity") {
@@ -1425,7 +1467,7 @@ class VoipStackEngine extends EventTarget {
     return true;
   }
 
-  _onSoftphoneState(state, subscriptionSelector = null) {
+  _onSoftphoneState(state, subscriptionSelector = null, context = null) {
     if (!this.rememberSoftphoneState(state)) return;
     this._syncUnmountedSoftphoneState(state);
     for (const cb of this._softphoneSubscribers) {
@@ -1437,7 +1479,7 @@ class VoipStackEngine extends EventTarget {
         softphoneScopeKey(selector) !== softphoneScopeKey(subscriptionSelector)
       ) continue;
       if (!softphoneStateMatches(state, selector)) continue;
-      try { cb(state); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
+      try { cb(state, context); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
   }
 

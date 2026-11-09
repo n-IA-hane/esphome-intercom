@@ -138,3 +138,78 @@ async def test_public_sip_browser_answer_declares_atomic_video_choice_on_udp(lab
         await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
         source.close()
     assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
+
+
+@pytest.mark.parametrize(
+    "caller_send,callee_send,caller_video,callee_video,allow_camera,directions,negotiated",
+    [
+        (False, True, True, True, True, ("recvonly", "sendonly"), True),
+        (True, False, True, True, True, ("sendonly", "recvonly"), True),
+        (False, False, True, True, True, ("inactive", "inactive"), True),
+        (False, True, False, True, True, ("inactive", "inactive"), False),
+        (True, True, True, False, True, ("inactive", "inactive"), False),
+        (True, True, True, True, False, ("inactive", "inactive"), True),
+    ],
+)
+async def test_dashboard_camera_off_receives_casa_camera_on_after_public_answer(
+    lab, caller_send, callee_send, caller_video, callee_video, allow_camera, directions, negotiated,
+):
+    """Real HA service path must separate receive negotiation from caller camera intent."""
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
+    from custom_components.voip_stack.roster import dump_roster_json
+    from custom_components.voip_stack.local_softphone_runtime import async_setup_local_softphone_bridge
+    from custom_components.voip_stack.local_softphone_bridge import LocalMediaNotNegotiatedError
+
+    lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: allow_camera})
+    caller = PhoneEndpoint(endpoint_id="browser:dashboard-rx", device_id="dashboard-rx",
+        name="Dashboard receive video", kind=EndpointKind.BROWSER,
+        capabilities=frozenset({"audio", "dtmf"} | ({"video"} if caller_video else set())))
+    callee = PhoneEndpoint(endpoint_id="browser:casa-tx", device_id="casa-tx",
+        name="Casa camera sender", kind=EndpointKind.BROWSER,
+        capabilities=frozenset({"audio", "dtmf"} | ({"video"} if callee_video else set())))
+    for phone in (caller, callee):
+        lab.runtime.endpoints.register(phone)
+    directory = await async_refresh_directory(lab.hass)
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(directory)})
+    async_setup_local_softphone_bridge(lab.hass)
+    call_id = ""
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": caller.device_id, "destination": callee.name,
+            "media_client_id": "dashboard-media-owner", "send_video": caller_send}, blocking=True)
+        call_id = _ha_softphone_store(lab.hass, caller.endpoint_id)["call_id"]
+        bridge = local_softphone_bridge(lab.hass)
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": callee.device_id, "call_id": call_id,
+            "media_client_id": "casa-media-owner", "send_video": callee_send, "accept_video": True}, blocking=True)
+        snapshot = bridge.get_call(call_id)
+        caller_lease = bridge.acquire_media(call_id, caller.endpoint_id, "dashboard-media-owner")
+        callee_lease = bridge.acquire_media(call_id, callee.endpoint_id, "casa-media-owner")
+        bridge.send_audio(call_id, caller.endpoint_id, caller_lease.token, b"caller-audio")
+        assert bridge.receive_audio_nowait(call_id, callee.endpoint_id, callee_lease.token) == b"caller-audio"
+        assert snapshot.video_enabled is negotiated
+        assert snapshot.video_direction_for(caller.endpoint_id) == directions[0]
+        assert snapshot.video_direction_for(callee.endpoint_id) == directions[1]
+        assert _ha_softphone_store(lab.hass, caller.endpoint_id)["video_direction"] == directions[0]
+        for sender, receiver, direction, payload in (
+            (caller_lease, callee_lease, directions[0], b"dashboard-camera-frame"),
+            (callee_lease, caller_lease, directions[1], b"casa-camera-frame"),
+        ):
+            if direction in ("sendonly", "sendrecv"):
+                bridge.send_video(call_id, sender.endpoint_id, sender.token, payload)
+                assert bridge.receive_video_nowait(call_id, receiver.endpoint_id, receiver.token) == payload
+            else:
+                with pytest.raises(LocalMediaNotNegotiatedError):
+                    bridge.send_video(call_id, sender.endpoint_id, sender.token, payload)
+        if negotiated and allow_camera and not caller_send and not callee_send:
+            from custom_components.voip_stack.softphone_video_intent import async_apply_send_video_intent
+            assert await async_apply_send_video_intent(lab.hass, callee.endpoint_id, True)
+            updated = bridge.get_call(call_id)
+            assert updated.call_id == call_id
+            assert updated.video_direction_for(caller.endpoint_id) == "recvonly"
+            assert updated.video_direction_for(callee.endpoint_id) == "sendonly"
+            assert await async_apply_send_video_intent(lab.hass, callee.endpoint_id, False)
+            assert bridge.get_call(call_id).video_direction_for(caller.endpoint_id) == "inactive"
+    finally:
+        if call_id and lab.calls.get_session(call_id) is not None:
+            await lab.calls.request_termination(call_id, TerminationIntent("test_done"))

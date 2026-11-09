@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass, replace
-import secrets
 
 from homeassistant.exceptions import ServiceValidationError
 
@@ -148,6 +147,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             bridge.get_call(session.call_id),
             local_ip,
             int(runtime.transport_config["sip_port"]),
+            video_peer_format=incoming.send_video_format,
         )
         source = local_source.invite
     elif (
@@ -173,6 +173,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
     relay = None
     media_handoff = None
     source_video_answer = picker_video_answer = None
+    local_media_descriptor = None
+    local_media_adopted = False
     acquired = False
     committed = False
     rollback_task = None
@@ -249,9 +251,14 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             if relay is not None:
                 await relay.stop()
         finally:
+            if local_media_descriptor is not None and not local_media_adopted:
+                from .media_reservation import release_video_media_reservation
+                release_video_media_reservation(local_media_descriptor)
             if reservation is not None:
                 reservation.release()
             if session.live:
+                if local_source is not None:
+                    local_source.preserve_answered_local_claims()
                 registry.release_resource(session.call_id, resource_name, value=claim)
                 if acquired:
                     registry.release_endpoint_claim(session.call_id, picker)
@@ -304,6 +311,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
         from .const import CONF_VIDEO_TRANSCODING
         relay.video_relay, source_video_answer, picker_video_answer = await async_prepare_invite_pair_video(
             hass, source, incoming, enable_transcoding=bool(runtime.transport_config.get(CONF_VIDEO_TRANSCODING, False)))
+        if local_source is not None:
+            local_media_descriptor = local_source.prepare_bridge_media(relay, source_video_answer)
         if source_ports is not None:
             sock = relay._rtp_socket(relay.right_port)
             try:
@@ -358,7 +367,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
         raise
 
     async def commit():
-        nonlocal committed, changed
+        nonlocal committed, changed, local_media_adopted
         validate()
         claim.claimed = True
         registry.transition(
@@ -457,18 +466,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             registry.own_resource(
                 session.call_id, f"browser_source:{session.call_id}", local_source, None
             )
-            registry.attach_media(
-                session.call_id,
-                {
-                    "rtp_loopback": True,
-                    "remote_rtp_host": "127.0.0.1",
-                    "remote_rtp_port": relay.left_port,
-                    "send_format": source.recv_format,
-                    "recv_format": source.send_format,
-                    "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
-                    "endpoint_id": local_source.call.caller_endpoint_id,
-                },
-            )
+            registry.attach_media(session.call_id, local_media_descriptor)
+            local_media_adopted = True
         source_answer = (
             build_answer_directional(
                 local_ip,

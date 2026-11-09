@@ -482,6 +482,84 @@ assert.deepEqual(kitchenStates, ["K"]);
 assert.deepEqual(kitchenDeviceStates, ["K"]);
 assert.deepEqual(defaultStates, []);
 
+// Two browsers observe the same phone. The passive PC misses hangup while
+// disconnected; HA's endpoint subscription resumes without an initial event
+// (websocket_subscribe_ha_softphone_state only sends its subscription ACK).
+// A ready event must reconcile that observer from the authoritative query.
+{{
+  const observers = [new Engine(), new Engine()];
+  const state = {{endpoint_id:"browser:casa",device_id:"device-casa",call_id:"user-call-A",
+    state:"in_call",sequence:10,revision:12,send_video:true}};
+  const seen = [[], []];
+  const connections = observers.map((observer,index) => {{
+    const listeners = new Map();
+    const connection = {{
+      requests:0,activeSubscriptions:0,
+      addEventListener(name, callback) {{ listeners.set(name,callback); }},
+      removeEventListener(name) {{ listeners.delete(name); }},
+      subscribeMessage: async (callback, _request) => {{
+        connection.requests++; connection.activeSubscriptions++;
+        connection.softphoneCallback=callback;
+        return () => {{connection.activeSubscriptions--;}};
+      }},
+    }};
+    observer.configure({{connection,callWS:async request => {{
+      assert.equal(request.type,"voip_stack/ha_softphone_state");
+      assert.equal(request.device_id,"device-casa");
+      return {{...state}};
+    }}}});
+    const release=observer.subscribeSoftphoneState(value => seen[index].push(value),{{device_id:"device-casa"}});
+    return {{connection,listeners,release}};
+  }});
+  await new Promise(resolve => setImmediate(resolve));
+  for (const observer of observers) observer._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
+  connections[1].listeners.get("disconnected")();
+  Object.assign(state,{{state:"idle",sequence:11,revision:13,terminal_reason:"local_hangup"}});
+  observers[0]._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
+  assert.equal(seen[0].at(-1).state,"idle");
+  assert.equal(seen[1].at(-1).state,"in_call");
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(seen[1].at(-1).state,"idle","reconnected passive PC must not need F5 after another browser hangs up");
+  assert.equal(seen[1].at(-1).call_id,"user-call-A");
+
+  // Duplicate ready while the fresh query waits must share the subscription.
+  let resolveOld;
+  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  const requests=connections[1].connection.requests;
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(connections[1].connection.requests,requests);
+  assert.equal(connections[1].connection.activeSubscriptions,1);
+  connections[1].connection.softphoneCallback({{...state,state:"in_call",call_id:"new-call-B",sequence:1,revision:1}});
+  resolveOld({{...state,state:"idle"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].at(-1).call_id,"new-call-B","late read cannot replace a newer pushed call");
+
+  // Unmount cancels a pending read; neither it nor an old callback may reach
+  // a newly selected phone after the old endpoint subscription is released.
+  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  const oldCallback=connections[1].connection.softphoneCallback;
+  connections[1].release();
+  const seenCount=seen[1].length;
+  const otherSeen=[];
+  observers[1]._hass.callWS=async()=>({{endpoint_id:"browser:other",device_id:"other-device",state:"idle",call_id:""}});
+  const releaseOther=observers[1].subscribeSoftphoneState(value=>otherSeen.push(value),{{device_id:"other-device"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  resolveOld({{...state,state:"in_call"}});
+  oldCallback({{...state,state:"in_call"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].length,seenCount);
+  assert.equal(otherSeen.length,1);
+  assert.equal(otherSeen[0].device_id,"other-device");
+  releaseOther();connections[0].release();
+  assert.equal(connections[1].connection.activeSubscriptions,0);
+}}
+
 // Browser media claims and UI controllers are endpoint-local. Two logical
 // phones can therefore coexist without one endpoint releasing the other.
 isolated.claimSoftphoneSession("call-default", "default");
@@ -703,6 +781,31 @@ assert.equal(
 assert.equal(spectatorConnects, 0);
 assert.deepEqual(spectatorErrors, []);
 assert.equal(spectator.ownsSoftphoneSession("spectator-call", "test"), false);
+
+// A global Send Camera preference does not turn a passive shared-phone view
+// into a camera owner. Exercise the full resume path before the video boundary.
+const savedCameraInput=context.navigator.mediaDevices.getUserMedia;
+let sharedCameraRequests=0, sharedVideoLoads=0;
+context.navigator.mediaDevices.getUserMedia=async options=>{{
+  assert.equal(options.video,true);sharedCameraRequests++;
+  return {{getTracks:()=>[{{stop(){{}}}}]}};
+}};
+const sharedVideo=()=>({{active:false,callId:"",async start(payload){{
+  if(payload.send_video)await context.navigator.mediaDevices.getUserMedia({{video:true,audio:false}});
+}},async close(){{}}}});
+spectator._loadVideo=async()=>{{sharedVideoLoads++;return sharedVideo();}};
+await spectator.resumeSession({{endpoint_id:"test"}},"test-device",{{
+  endpoint_id:"test",call_id:"spectator-call",state:"in_call",video_active:true,send_video:true,
+}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(sharedVideoLoads,0);
+assert.equal(sharedCameraRequests,0,"passive PC must not request camera for another browser's call");
+const actualVideoOwner=new Engine();
+actualVideoOwner._callId="spectator-call";actualVideoOwner._endpointId="test";
+actualVideoOwner._loadVideo=async()=>sharedVideo();
+await actualVideoOwner._ensureVideo({{endpoint_id:"test",call_id:"spectator-call",video_active:true,send_video:true}});
+assert.equal(sharedCameraRequests,1,"the established owner alone starts its video source");
+context.navigator.mediaDevices.getUserMedia=savedCameraInput;
 
 // A media attach racing the terminal state is also expected: after BYE there
 // is no call left to attach and therefore no user-facing media error.

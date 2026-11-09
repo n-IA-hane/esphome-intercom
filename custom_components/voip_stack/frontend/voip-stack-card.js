@@ -318,7 +318,7 @@ class VoipStackCard extends HTMLElement {
       }
       if (!this._unsubSoftphoneState) {
         this._unsubSoftphoneState = voipStackEngine.subscribeSoftphoneState(
-          (state) => this._onSoftphoneState(state),
+          (state, context) => this._onSoftphoneState(state, context),
           this._softphoneSelector(),
         );
       }
@@ -378,11 +378,11 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  _onSoftphoneState(state) {
+  _onSoftphoneState(state, context = null) {
     if (!this._isHaSoftphoneMode() || !state) return;
     if (!this._softphoneSnapshotMatches(state)) return;
     this._softphoneStateEpoch++;
-    if (!this._applySoftphoneSnapshot(state)) return;
+    if (!this._applySoftphoneSnapshot(state, context)) return;
     this._ensureHaSoftphoneAudioPath(state);
     this._render();
   }
@@ -566,14 +566,26 @@ class VoipStackCard extends HTMLElement {
     };
   }
 
-  _applySoftphoneSnapshot(payload = {}) {
+  _applySoftphoneSnapshot(payload = {}, context = null) {
     const snapshot = this._normaliseSoftphoneSnapshot(payload);
     const current = this._softphoneSnapshot;
-    if (!softphoneSnapshotSupersedes(current, snapshot)) return false;
+    const reconciledIdle = context?.authoritative === true && !this._starting &&
+      ["idle", "unavailable"].includes(snapshot.state) &&
+      String(context.previousCallId || "") === String(current?.call_id || "");
+    if (!reconciledIdle && !softphoneSnapshotSupersedes(current, snapshot)) return false;
     this._softphoneSnapshot = snapshot;
-    if (this._mailboxOpen && !this._mailboxBusy &&
-        (current?.voicemail?.new !== snapshot.voicemail?.new ||
-         current?.voicemail?.old !== snapshot.voicemail?.old)) void this._loadMailbox();
+    const mailboxChanged = ["new", "old", "total"].some(
+      key => current?.voicemail?.[key] !== snapshot.voicemail?.[key],
+    );
+    if (mailboxChanged) this._mailboxRequest++; // Retire lists read before the MWI update.
+    if (snapshot.voicemail?.total === 0) {
+      this._mailboxOpen = false;
+      this._mailboxMessages = [];
+      this._mailboxOffset = this._mailboxTotal = 0;
+      this._renderMailbox();
+    } else if (this._mailboxOpen && !this._mailboxBusy && mailboxChanged) {
+      void this._loadMailbox();
+    }
     this._softphoneDnd = !!snapshot.dnd;
     this._autoAnswer = !!snapshot.auto_answer;
     this._softphoneExtension = snapshot.extension;
@@ -2051,7 +2063,7 @@ class VoipStackCard extends HTMLElement {
     if (els.voicemailBtn) {
       els.voicemailBtn.hidden = !softphoneMode || !showCall || this._starting || this._stopping ||
         !this._softphoneSnapshot?.voicemail?.enabled ||
-        !(this._softphoneSnapshot.voicemail.total > 0 || this._mailboxOpen);
+        !(this._softphoneSnapshot.voicemail.total > 0);
       els.voicemailBtn.setAttribute("aria-expanded", String(this._mailboxOpen));
       els.voicemailPanel.hidden = !this._mailboxOpen || !this._softphoneSnapshot?.voicemail?.enabled;
     }
@@ -2524,7 +2536,7 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  async _startCall(destination = "") {
+  async _startCall(destination = "", options = {}) {
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
     const mediaIntentToken = softphoneAction ? {} : null;
@@ -2552,7 +2564,7 @@ class VoipStackCard extends HTMLElement {
       const deviceInfo = await this._getDeviceInfo();
       if (operationId !== this._callOperationId) return;
       if (softphoneAction) {
-        return await this._startHaSoftphoneCall(deviceInfo, operationId, destination);
+        return await this._startHaSoftphoneCall(deviceInfo, operationId, destination, options);
       }
       if (deviceInfo?.softphone) {
         throw new Error("Set card mode to Home Assistant softphone to call from HA");
@@ -2589,7 +2601,7 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  async _startHaSoftphoneCall(softphoneInfo, operationId, destination = "") {
+  async _startHaSoftphoneCall(softphoneInfo, operationId, destination = "", options = {}) {
     const manualTarget = destination || (this._softphoneKeypadOpen ? this._softphoneManualTarget.trim() : "");
     const target = manualTarget
       ? {
@@ -2623,7 +2635,7 @@ class VoipStackCard extends HTMLElement {
       this._softphoneSupportsVideo() &&
       this._targetSupportsVideo(target) &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
-      this._softphoneSnapshot?.send_video
+      (typeof options.sendVideo === "boolean" ? options.sendVideo : this._softphoneSnapshot?.send_video)
     );
     if (sendVideo) {
       sendVideo = await voipStackEngine.prepareVideoCameraPermission({
@@ -2720,7 +2732,9 @@ class VoipStackCard extends HTMLElement {
     let timer = null;
     try {
       if (!callId) {
-        const reply = await this._startCall("*97");
+        // Mailbox playback and DTMF are an audio application. Override this
+        // call's intent before camera permission/preparation, never the phone preference.
+        const reply = await this._startCall("*97", { sendVideo: false });
         callId = reply?.call_id || "";
         if (!callId || reply?.superseded) throw new Error("The voicemail call could not start.");
         this._mailboxCallId = callId;
@@ -2753,8 +2767,15 @@ class VoipStackCard extends HTMLElement {
       }
     } catch (err) {
       if (this._getSoftphoneEndpointId() === endpointId) {
-        this._showError(err.message || String(err));
-        if (callId && this._sessionCallId() === callId && this._mailboxCallId === callId) await this._hangup();
+        const failure = err.message || String(err);
+        let cleanupFailure = "";
+        if (callId && this._sessionCallId() === callId && this._mailboxCallId === callId) {
+          await this._hangup();
+          cleanupFailure = this._errorMsg;
+        }
+        if (this._getSoftphoneEndpointId() === endpointId) {
+          this._showError(cleanupFailure && cleanupFailure !== failure ? `${failure} ${cleanupFailure}` : failure);
+        }
       }
     } finally {
       if (timer) clearTimeout(timer);
@@ -3041,7 +3062,7 @@ class VoipStackCard extends HTMLElement {
         this._softphoneSnapshot?.send_video
       ) {
         videoPermission = await voipStackEngine.prepareVideoCameraPermission({
-          persistentOnly: true,
+          persistentOnly: requirePersistentPermission,
           endpointId: this._getSoftphoneEndpointId(),
         });
         if (lifecycleGeneration !== this._lifecycleGeneration) return;
