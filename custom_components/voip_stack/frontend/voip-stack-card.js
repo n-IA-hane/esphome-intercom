@@ -45,8 +45,6 @@ const {
   buildMainCardSkeleton,
   buildUnconfiguredCardSkeleton,
 } = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-await import(`./voip-stack-dashboard-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const HANGUP_SERVICE_TIMEOUT_MS = 3000;
 
 function settleServiceWithin(promise, timeoutMs, timeoutMessage) {
@@ -3892,7 +3890,8 @@ class VoipStackCard extends HTMLElement {
 
   getCardSize() { return 7; }
 
-  static getConfigElement() {
+  static async getConfigElement() {
+    await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
     return document.createElement("voip-stack-card-editor");
   }
 
@@ -3906,6 +3905,12 @@ if (!customElements.get("voip-stack-card")) {
   customElements.define("voip-stack-card", VoipStackCard);
   console.info(`VOIP STACK CARD ${VOIP_STACK_CARD_VERSION} (build ${VOIP_STACK_MODULE_VERSION})`);
 }
+
+// The dashboard remains available from this resource, but its optional editor
+// must not hold an incoming-call card behind another network/module chain.
+(async () => {
+  await import(`./voip-stack-dashboard-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+})().catch((error) => _voip_log.error("VoIP Stack dashboard card could not load", error));
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some(card => card.type === "voip-stack-card")) {

@@ -159,7 +159,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._onMirroredBridgeStateEvent(event)", call_event)
         self.assertNotIn('scope === "session"', call_event)
         softphone = _method_body(self.source, "_onSoftphoneState")
-        self.assertIn("this._applySoftphoneSnapshot(state)", softphone)
+        self.assertIn("if (!this._applySoftphoneSnapshot(state, context)) return;", softphone)
         self.assertNotIn("_eventConcernsThisCard", softphone)
         self.assertNotIn("_onSipStateEvent", self.source)
 
@@ -461,7 +461,7 @@ class FrontendCardContractTest(unittest.TestCase):
 
     def test_ha_softphone_in_call_state_attaches_browser_audio(self) -> None:
         body = _method_body(self.source, "_onSoftphoneState")
-        self.assertIn("this._applySoftphoneSnapshot(state)", body)
+        self.assertIn("if (!this._applySoftphoneSnapshot(state, context)) return;", body)
         self.assertIn("this._ensureHaSoftphoneAudioPath(state)", body)
 
     def test_terminal_ha_softphone_event_always_closes_engine(self) -> None:
@@ -521,7 +521,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._targetSupportsVideo(target)", start)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", start)
-        self.assertIn("persistentOnly: true", auto_answer)
+        self.assertIn("const requirePersistentPermission = options.requirePersistentPermission !== false;", auto_answer)
+        self.assertIn("persistentOnly: requirePersistentPermission", auto_answer)
         self.assertIn("this._softphoneSnapshot?.send_video", auto_answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", auto_answer)
         self.assertIn("navigator.permissions?.query", permission)
