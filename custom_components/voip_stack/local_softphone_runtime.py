@@ -38,6 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 LOCAL_ROUTE_KIND = "local"
 LOCAL_VIDEO_FORMAT = "VP8/90000"
 LOCAL_AUDIO_FORMAT = HA_SIP_PCM_FORMATS[0]
+LOCAL_RTP_HOST = "127.0.0.1"
 
 
 def local_softphone_bridge(hass: HomeAssistant) -> LocalSoftphoneBridge | None:
@@ -516,6 +517,16 @@ class PendingLocalSource:
             remote_video_rtp_host=local_ip if self.video_requested else "",
         )
 
+    def video_rtp_peer(self):
+        """Describe this owner's local browser adapter, not its advertised SIP host."""
+        if self.invite.video_format is None:
+            return None
+        from .sip_bridge import invite_video_rtp_peer
+
+        return replace(invite_video_rtp_peer(self.invite), host=LOCAL_RTP_HOST,
+                       advertised_host=LOCAL_RTP_HOST, signaling_host=LOCAL_RTP_HOST,
+                       rtcp_host=LOCAL_RTP_HOST)
+
     def prepare_bridge_media(self, relay, video_answer=None) -> dict:
         """Reserve the existing browser RTP adapter for the negotiated handoff."""
         from .core import sdp
@@ -523,7 +534,7 @@ class PendingLocalSource:
         from .media_reservation import release_video_media_reservation
 
         descriptor = {
-            "rtp_loopback": True, "remote_rtp_host": "127.0.0.1",
+            "rtp_loopback": True, "remote_rtp_host": LOCAL_RTP_HOST,
             "remote_rtp_port": relay.left_port, "send_format": self.invite.recv_format,
             "recv_format": self.invite.send_format,
             "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
@@ -538,9 +549,12 @@ class PendingLocalSource:
                           video_rtp_socket=rtp_socket, video_rtcp_socket=rtcp_socket)
         try:
             video = relay.video_relay
+            # The same reservation owns the browser socket and its relay peer.
+            video.left.port = reservation.ports[1]
+            video.left.rtcp_port = reservation.ports[1] + 1
             descriptor.update(
-                invite=replace(self.invite, remote_video_rtp_host="127.0.0.1",
-                    remote_video_rtp_port=video.left_port, remote_video_rtcp_host="127.0.0.1",
+                invite=replace(self.invite, remote_video_rtp_host=LOCAL_RTP_HOST,
+                    remote_video_rtp_port=video.left_port, remote_video_rtcp_host=LOCAL_RTP_HOST,
                     remote_video_rtcp_port=video.left_port + 1),
                 local_video_rtp_port=reservation.ports[1],
                 video_direction=sdp.local_direction_for_remote(video_answer.direction),

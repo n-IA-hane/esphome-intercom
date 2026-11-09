@@ -180,7 +180,8 @@ def _video_pair_passthrough_compatible(left_recv, right_send, right_recv, left_s
     )
 
 
-async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, enable_transcoding=False):
+async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, enable_transcoding=False,
+                                          left_peer: VideoRtpPeer | None = None):
     """Negotiate relay media for two offers using the common video contracts."""
     from .media_ports import reserve_sip_video_relay_media
 
@@ -195,7 +196,8 @@ async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, en
     reservation, sockets = reserve_sip_video_relay_media(hass)
     relay = None
     try:
-        relay = SipVideoRtpRelay(left=invite_video_rtp_peer(left_invite), right=invite_video_rtp_peer(right_invite),
+        relay = SipVideoRtpRelay(left=left_peer if left_peer is not None else invite_video_rtp_peer(left_invite),
+            right=invite_video_rtp_peer(right_invite),
             left_port=reservation.ports[0], right_port=reservation.ports[1],
             left_socket=sockets[0], left_rtcp_socket=sockets[1], right_socket=sockets[2], right_rtcp_socket=sockets[3],
             on_release=lambda _ports: reservation.release())

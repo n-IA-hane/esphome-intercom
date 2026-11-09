@@ -310,7 +310,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
         from .sip_bridge import async_prepare_invite_pair_video
         from .const import CONF_VIDEO_TRANSCODING
         relay.video_relay, source_video_answer, picker_video_answer = await async_prepare_invite_pair_video(
-            hass, source, incoming, enable_transcoding=bool(runtime.transport_config.get(CONF_VIDEO_TRANSCODING, False)))
+            hass, source, incoming, enable_transcoding=bool(runtime.transport_config.get(CONF_VIDEO_TRANSCODING, False)),
+            left_peer=local_source.video_rtp_peer() if local_source is not None else None)
         if local_source is not None:
             local_media_descriptor = local_source.prepare_bridge_media(relay, source_video_answer)
         if source_ports is not None:

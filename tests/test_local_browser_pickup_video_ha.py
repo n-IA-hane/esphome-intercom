@@ -23,10 +23,11 @@ from tests.test_automation_originate_ha import lab as lab
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize('advertised_host', ['127.0.0.1', '127.0.0.3'])
 @pytest.mark.parametrize('caller_video,picker_video,answer_race', [
     (True, True, False), (False, True, False), (True, False, False), (True, True, True)])
 async def test_ringing_local_browser_camera_reaches_jpeg_picker(
-    lab, monkeypatch, tmp_path, caller_video, picker_video, answer_race,
+    lab, monkeypatch, tmp_path, caller_video, picker_video, answer_race, advertised_host,
 ):
     from aiohttp import WSMsgType
     from custom_components.voip_stack.directory_runtime import async_refresh_directory
@@ -60,7 +61,7 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
     lab.roster.append(RosterEntry('ws3-jpeg-picker', name='ws3-jpeg-picker', address='127.0.0.1',
         metadata={'endpoint_id': picker_endpoint.endpoint_id, 'endpoint_kind': 'esphome', 'sip_video_codec': 'JPEG'}))
     lab.hass.states.async_set('sensor.voip_phonebook', 'ready', {'roster_json': dump_roster_json(lab.roster)})
-    monkeypatch.setattr(peer_snapshot, 'async_advertise_host', AsyncMock(return_value='127.0.0.1'))
+    monkeypatch.setattr(peer_snapshot, 'async_advertise_host', AsyncMock(return_value=advertised_host))
     monkeypatch.setattr(peer_snapshot, 'async_build_peer_snapshot', AsyncMock(return_value=[]))
     monkeypatch.setattr(endpoint_runtime, '_roster_from_peers', lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, '_roster_from_peers', lambda *_args: lab.roster)
@@ -183,6 +184,14 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
         assert picker.dialog.local_video_direction == 'recvonly'
         video = video_ws_view._active_video_session(lab.hass, casa.endpoint_id)
         assert video is not None and video.can_send and not video.can_receive
+        relay=lab.calls.relays_snapshot()[call_id].video_relay
+        assert relay.left.host == relay.left.signaling_host == relay.left.advertised_host == '127.0.0.1'
+        assert relay.left.port == video.local_rtp_port and relay.left.rtcp_port == video.local_rtp_port + 1
+        assert relay.left.accepts_rtp_source_host('127.0.0.1')
+        assert not relay.left.accepts_rtp_source_host('127.0.0.2')
+        if advertised_host != '127.0.0.1':
+            assert not relay.left.accepts_rtp_source_host(advertised_host)
+        assert not relay.right.accepts_rtp_source_host('127.0.0.3')
         assert video.send_video_format.max_framerate == 10
         limits = video.send_video_format.image_attributes.recv.sets[0]
         assert limits.x.maximum == 320 and limits.y.maximum == 240
@@ -223,6 +232,8 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
         rgb, error = await asyncio.wait_for(decoder.communicate(picture.data), 5)
         assert decoder.returncode == 0 and len(rgb) == 160 * 120 * 3, error.decode()
         assert sum(rgb[0::3]) > 10 * max(1, sum(rgb[2::3])), 'Decoded picker JPEG must contain the newly sent red image'
+        assert relay.forwarded > 0 and relay.left_rx_packets > 0
+        assert 'unexpected RTP source host' not in relay.rtp_drop_reasons
         (tmp_path / 'picker-new-frame.jpg').write_bytes(picture.data)
     finally:
         await picker.close()
