@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
+import hashlib
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from urllib.request import urlopen
 
 from esphome import yaml_util
 import pytest
@@ -14,6 +17,37 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FULL = ['voice', 'wake_word', 'voip', 'music', 'sendspin', 'timers', 'status_led', 'diagnostics']
+
+# Pinned real UI/schema-test dependency, identical to the official Alexa model
+# on 2026-11-10. Public YAML model selection and production caches stay intact.
+_UI_MODEL_BASE = "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/"
+_UI_MODEL_FILES = (
+    ("manifest.json", "alexa.json", "1d999798b35b1fe2606465b75ab840be51c1811d2909d5e620cefb6e96f8abd0"),
+    ("alexa.tflite", "alexa.tflite", "9011a8155b04de858c48038529235cbc0e42e9fca05a55bf588cb80a653a723b"),
+)
+
+
+def _verify_model_bytes(data: bytes, expected_sha256: str) -> bytes:
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("Pinned ESPHome test model SHA256 mismatch")
+    return data
+
+
+@lru_cache(maxsize=1)
+def _ui_model_files() -> tuple[tuple[str, bytes], ...]:
+    files = []
+    for cache_name, filename, digest in _UI_MODEL_FILES:
+        with urlopen(_UI_MODEL_BASE + filename, timeout=30) as response:
+            files.append((cache_name, _verify_model_bytes(response.read(128 * 1024), digest)))
+    return tuple(files)
+
+
+def seed_ui_schema_model_cache(data_directory: Path) -> None:
+    # ESPHome keys the cache by the original public manifest URL, unchanged.
+    target = data_directory / "micro_wake_word" / "a5f625a9"
+    target.mkdir(parents=True, exist_ok=True)
+    for filename, data in _ui_model_files():
+        (target / filename).write_bytes(data)
 
 
 def test_full_lite_shipped_defaults_keep_sendspin_optional() -> None:
@@ -50,6 +84,8 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         component_path = 'components' if key == 'camera_components_source' else 'esphome/components'
         substitutions[key] = str(repository / component_path)
     directory.mkdir(parents=True, exist_ok=True)
+    if 'wake_word' in features:
+        seed_ui_schema_model_cache(directory / '.esphome')
     for companion in (ROOT / profile_path).parent.glob('*.csv'):
         shutil.copy2(companion, directory / companion.name)
     (directory / 'secrets.yaml').write_text('wifi_ssid: fixture-network\nwifi_password: fixture-password\n')

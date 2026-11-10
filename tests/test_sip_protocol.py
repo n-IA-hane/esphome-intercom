@@ -3453,7 +3453,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
         # Establish the same receive bounds as a real initial negotiation.
         negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
-            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm])
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm],
+            local_capabilities=sip_client.HA_AUDIO_CAPABILITIES)
         assert negotiated is not None
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",
@@ -3554,7 +3555,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
         negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
-            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm])
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm],
+            local_capabilities=sip_client.HA_AUDIO_CAPABILITIES)
         assert negotiated is not None
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",

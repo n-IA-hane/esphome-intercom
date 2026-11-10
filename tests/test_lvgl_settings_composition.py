@@ -11,7 +11,7 @@ from esphome import yaml_util
 import pytest
 
 from tests.native_profile import action_id, nodes, text
-from tests.test_package_composition import device_config
+from tests.test_package_composition import device_config, seed_ui_schema_model_cache
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -257,6 +257,7 @@ def test_round_bootstrap_is_present_in_generated_cpp(tmp_path, scene):
     document["esphome"] = {"build_path": str(tmp_path / "build")}
     unique = tmp_path / ("navigation-" + scene + ".yaml")
     unique.write_text(yaml_util.dump(document))
+    seed_ui_schema_model_cache(tmp_path / "data")
     environment = {**os.environ, "ESPHOME_DATA_DIR": str(tmp_path / "data")}
     result = subprocess.run([sys.executable, "-m", "esphome", "compile", str(unique), "--only-generate"],
                             env=environment, capture_output=True, text=True, timeout=180)

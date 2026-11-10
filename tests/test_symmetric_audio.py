@@ -49,7 +49,8 @@ def test_clock_change_starts_new_source_and_same_clock_keeps_state():
 def test_failed_encoder_change_leaves_active_contract_intact(monkeypatch):
     opus = sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20)
     encoder = sip_client.RtpPayloadEncoder(PCMU, send_formats=(PCMU, opus), match_received_codec=True)
-    def unavailable(*_args):
+    def unavailable(*_args, fmtp):
+        assert fmtp == opus.fmtp
         raise RuntimeError("codec allocation failed")
     monkeypatch.setattr(sip_client, "OpusEncoder", unavailable)
     with pytest.raises(RuntimeError):
