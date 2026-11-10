@@ -678,18 +678,22 @@ defaults:
       auto set_quick_button = [&](lv_obj_t *btn, lv_obj_t *label, bool active,
                                   uint32_t on_color, uint32_t off_color,
                                   const char *on_text, const char *off_text) {
-        const auto background = lv_color_hex(active ? on_color : off_color);
-        if (!lv_color_eq(lv_obj_get_style_bg_color(btn, LV_PART_MAIN), background))
-          lv_obj_set_style_bg_color(btn, background, LV_PART_MAIN);
+        // Preserve explicit local ownership even when a theme currently has
+        // the same value. A later theme update must not change this control.
+        auto set_color = [](lv_obj_t *object, lv_style_prop_t property, lv_color_t value, auto setter) {
+          lv_style_value_t current;
+          if (lv_obj_get_local_style_prop(object, property, &current, LV_PART_MAIN) != LV_STYLE_RES_FOUND ||
+              !lv_color_eq(current.color, value))
+            setter(object, value, LV_PART_MAIN);
+        };
+        set_color(btn, LV_STYLE_BG_COLOR, lv_color_hex(active ? on_color : off_color), lv_obj_set_style_bg_color);
         const int32_t border_width = active ? 2 : 0;
-        if (lv_obj_get_style_border_width(btn, LV_PART_MAIN) != border_width)
+        lv_style_value_t current;
+        if (lv_obj_get_local_style_prop(btn, LV_STYLE_BORDER_WIDTH, &current, LV_PART_MAIN) != LV_STYLE_RES_FOUND ||
+            current.num != border_width)
           lv_obj_set_style_border_width(btn, border_width, LV_PART_MAIN);
-        const auto border = lv_color_hex(active ? 0xFFFFFF : off_color);
-        if (!lv_color_eq(lv_obj_get_style_border_color(btn, LV_PART_MAIN), border))
-          lv_obj_set_style_border_color(btn, border, LV_PART_MAIN);
-        const auto foreground = lv_color_hex(0xFFFFFF);
-        if (!lv_color_eq(lv_obj_get_style_text_color(label, LV_PART_MAIN), foreground))
-          lv_obj_set_style_text_color(label, foreground, LV_PART_MAIN);
+        set_color(btn, LV_STYLE_BORDER_COLOR, lv_color_hex(active ? 0xFFFFFF : off_color), lv_obj_set_style_border_color);
+        set_color(label, LV_STYLE_TEXT_COLOR, lv_color_hex(0xFFFFFF), lv_obj_set_style_text_color);
         set_label(label, active ? on_text : off_text);
       };
 

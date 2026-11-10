@@ -315,6 +315,7 @@ jobs:
           subprocess.run([sys.executable, '-m', 'pytest', '-q',
               'tests/test_lvgl_round_text_runtime.py',
               'tests/test_lvgl_round_text_caller_runtime.py',
+              'tests/test_p4_ui_updates_runtime.py',
               '--basetemp=' + str(host / 'text-pytest'),
               '--junitxml=test-results/' + prefix + '-round-text.xml'], env=env, check=True)
           # Reuse the same plain library and configuration rather than building
