@@ -849,10 +849,19 @@ await settle();
 ended.webview._applySoftphoneSnapshot({{
   ...webviewRinging, state: "idle", terminal_reason: "cancelled", sequence: 3,
 }});
+// Disarming Auto Answer while the same permission prompt is open must also
+// invalidate the automatic attempt, even if the call keeps ringing.
+const disarmedPending = ringingWebviewCard();
+disarmedPending.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+disarmedPending.webview._applySoftphoneSnapshot({{
+  ...webviewRinging, auto_answer: false, sequence: 3,
+}});
 allowMicrophone({{ ready: true }});
 await settle();
 assert.equal(prompted.answers.length, 1);
 assert.equal(ended.answers.length, 0);
+assert.equal(disarmedPending.answers.length, 0);
 
 // Phones without Auto Answer never open media unattended.
 engine.autoAnswerMediaChecks.length = 0;

@@ -3129,7 +3129,8 @@ class VoipStackCard extends HTMLElement {
       if (softphoneAction) {
         if (
           lifecycleGeneration !== this._lifecycleGeneration ||
-          !this._isSoftphoneController()
+          !this._isSoftphoneController() ||
+          (requirePersistentPermission && !this._autoAnswer)
         ) return;
         const state = String(this._softphoneSnapshot?.state || "").toLowerCase();
         if (
