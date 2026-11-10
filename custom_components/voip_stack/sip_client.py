@@ -4248,10 +4248,14 @@ class SipCallClient:
             return False
 
     def prepared_reinvite_identity(self, candidate: SipDialog) -> PreparedDialogIdentity | None:
-        """Expose the exact baseline selected after offer serialization."""
+        """Expose the exact baseline, including while its owner is closing.
+
+        Commit independently rejects closing owners. Keeping their identity
+        available lets callers retire an accepted offer instead of orphaning it.
+        """
         prepared = self._prepared_reinvite
         if (prepared is None or prepared[1] is not candidate
-                or self.dialog is not prepared[0] or self._closing or self._closed):
+                or self.dialog is not prepared[0]):
             return None
         return PreparedDialogIdentity(self, prepared[0], candidate)
 

@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from tests.test_softphone_video_intent import _Registry, intent
-from tests.test_source_video_updates_ha import source_uac
+from tests.test_softphone_video_intent import _Registry, intent as intent
+from tests.test_source_video_updates_ha import source_uac as source_uac
 
 
 pytestmark = pytest.mark.ha
@@ -118,3 +118,31 @@ async def test_queued_camera_choice_cannot_mutate_a_stale_or_cancelled_owner(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_accepted_camera_choice_is_retired_when_client_starts_closing(
+    intent, source_uac, monkeypatch,
+):
+    from custom_components.voip_stack.endpoint_session import EndpointCallSession
+
+    module, store = intent
+    client, peer = source_uac
+    call_id = client.dialog_ids.call_id
+    store.update(call_id=call_id)
+    registry = _Registry(client)
+    registry.session = EndpointCallSession(call_id, 7)
+    monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
+    original_prepare = client.async_prepare_video_reinvite
+
+    async def prepare(**kwargs):
+        candidate = await original_prepare(**kwargs)
+        # Reproduce close() admission at the completed offer boundary. The
+        # existing SIP owner must retire its accepted candidate, never publish.
+        client._closing = True
+        return candidate
+
+    monkeypatch.setattr(client, "async_prepare_video_reinvite", prepare)
+    assert not await module.async_apply_send_video_intent(object(), "phone", False)
+    assert client._prepared_reinvite is None
+    assert client.dialog is None
+    assert sum(message.method == "INVITE" for message in peer.requests) == 2
