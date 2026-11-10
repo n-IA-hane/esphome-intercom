@@ -102,6 +102,9 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     return config
 
 
+# Two 120-second ESPHome commands, two initial 30-second model downloads and
+# setup must finish before pytest interrupts their own bounded cleanup.
+@pytest.mark.timeout(310)
 @pytest.mark.parametrize('profile_path,features,attenuation', [
     ('yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml', FULL, None),
     ('yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml', FULL, 20),
