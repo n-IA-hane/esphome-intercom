@@ -309,6 +309,7 @@ jobs:
           sources = list(project.rglob('managed_components/lvgl__lvgl/.component_hash'))
           assert len(sources) == 1, sources
           host = Path(os.environ['RUNNER_TEMP']) / 'lvgl-round-text'
+          host.mkdir(parents=True, exist_ok=True)
           env = dict(os.environ, LVGL_HOST_SOURCE=str(sources[0].parent),
                      LVGL_HOST_BUILD_ROOT=str(host))
           prefix = os.environ['RESULT_PREFIX']
