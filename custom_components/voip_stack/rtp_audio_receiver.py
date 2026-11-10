@@ -83,6 +83,10 @@ class RtpAudioReceiver:
             self._active_format = None
 
     @property
+    def has_pending_pcm(self) -> bool:
+        return bool(self._pending) or (self._converter is not None and self._converter.has_pending_pcm)
+
+    @property
     def has_pcm_observers(self):
         return bool(self._pcm_observers)
 
@@ -92,7 +96,7 @@ class RtpAudioReceiver:
         observers[observer] = None
         return lambda: observers.pop(observer, None)
 
-    def decode(self, payload_type: int, payload: bytes) -> list[bytes]:
+    def decode(self, payload_type: int, payload: bytes, *, normalize_frames: bool = False) -> list[bytes]:
         fmt = self.format_for(payload_type)
         if fmt is None:
             raise ValueError(f"unnegotiated RTP audio payload type {payload_type}")
@@ -121,7 +125,9 @@ class RtpAudioReceiver:
                 else None
             )
             self._active_format = fmt
-        if self._converter is None:
+        if (self._converter is None and not self._pending
+                and len(pcm) <= source.nominal_frame_bytes
+                and (not normalize_frames or len(pcm) == source.nominal_frame_bytes)):
             return [pcm]
 
         # A valid RTP packet can be shorter than nominal ptime. The converter's
@@ -133,5 +139,8 @@ class RtpAudioReceiver:
         while len(self._pending) >= frame_bytes:
             frame = bytes(self._pending[:frame_bytes])
             del self._pending[:frame_bytes]
-            output.extend(self._converter.convert(frame))
+            if self._converter is None:
+                output.append(frame)
+            else:
+                output.extend(self._converter.convert(frame))
         return output

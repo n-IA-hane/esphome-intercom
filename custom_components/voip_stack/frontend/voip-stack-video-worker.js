@@ -4,6 +4,8 @@
 // stream or canvas encode must not prevent the user from pressing Hang up.
 
 let decoder = null;
+let decoderConfig = null;
+let decoderOperation = 0;
 let generation = 0;
 let workerRole = "";
 let jpegCanvas = null;
@@ -63,10 +65,46 @@ function jpegDimensions(payload) {
 }
 
 function closeDecoder() {
+  decoderOperation++;
   if (decoder && decoder.state !== "closed") {
     try { decoder.close(); } catch (_) {}
   }
   decoder = null;
+  decoderConfig = null;
+}
+
+function configureDecoder(config, ownedGeneration) {
+  let ownedDecoder;
+  ownedDecoder = new VideoDecoder({
+    output(frame) {
+      if (generation !== ownedGeneration || decoder !== ownedDecoder) {
+        frame.close();
+        return;
+      }
+      self.postMessage({ type: "frame", generation: ownedGeneration, frame }, [frame]);
+    },
+    error(error) {
+      if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
+      self.postMessage({
+        type: "decoder_error", generation: ownedGeneration,
+        error: error?.message || String(error || "decoder failure"),
+      });
+    },
+  });
+  ownedDecoder.addEventListener("dequeue", () => {
+    if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
+    self.postMessage({
+      type: "decode_queue", generation: ownedGeneration, size: ownedDecoder.decodeQueueSize,
+    });
+  });
+  try {
+    ownedDecoder.configure(config);
+  } catch (error) {
+    if (ownedDecoder.state !== "closed") ownedDecoder.close();
+    throw error;
+  }
+  decoder = ownedDecoder;
+  decoderConfig = config;
 }
 
 function closeJpegEncoder() {
@@ -195,17 +233,37 @@ self.onmessage = async (event) => {
     jpegBusy = true;
     let frameClosed = false;
     try {
-      const width = Math.max(
+      const sourceWidth = Math.max(
         1,
         Number(frame.displayWidth || frame.codedWidth || jpegCanvas.width),
       );
-      const height = Math.max(
+      const sourceHeight = Math.max(
         1,
         Number(frame.displayHeight || frame.codedHeight || jpegCanvas.height),
       );
+      const plan = message.imagePlan;
+      const width = plan ? Number(plan.width) : sourceWidth;
+      const height = plan ? Number(plan.height) : sourceHeight;
+      if (plan && (!Number.isInteger(width) || !Number.isInteger(height) ||
+          width < 8 || height < 8 || width % 8 || height % 8 ||
+          width > 1280 || height > 1280 || width * height > 1280 * 800 ||
+          !(plan.contentWidth > 0 && plan.contentWidth <= width &&
+            plan.contentHeight > 0 && plan.contentHeight <= height &&
+            plan.offsetX >= 0 && plan.offsetY >= 0 &&
+            plan.offsetX + plan.contentWidth <= width && plan.offsetY + plan.contentHeight <= height))) {
+        throw new Error("JPEG image preference produced invalid dimensions");
+      }
       if (jpegCanvas.width !== width) jpegCanvas.width = width;
       if (jpegCanvas.height !== height) jpegCanvas.height = height;
-      jpegContext.drawImage(frame, 0, 0, width, height);
+      if (plan) {
+        if (plan.contentWidth !== width || plan.contentHeight !== height) {
+          jpegContext.fillStyle = "#000000";
+          jpegContext.fillRect(0, 0, width, height);
+        }
+        jpegContext.drawImage(frame, plan.offsetX, plan.offsetY, plan.contentWidth, plan.contentHeight);
+      } else {
+        jpegContext.drawImage(frame, 0, 0, width, height);
+      }
       frame.close();
       frameClosed = true;
       const blob = await jpegCanvas.convertToBlob({
@@ -320,64 +378,45 @@ self.onmessage = async (event) => {
   if (message.type === "configure_decoder") {
     const requestId = Number(message.requestId || 0);
     const nextGeneration = Number(message.generation || 0);
+    let operation;
     try {
       closeDecoder();
+      operation = decoderOperation;
       closeJpegEncoder();
       closeJpegDecoder();
       if (typeof VideoDecoder === "undefined") {
         throw new Error("WebCodecs VideoDecoder is unavailable in worker");
       }
       const support = await VideoDecoder.isConfigSupported(message.config || {});
+      if (operation !== decoderOperation) {
+        reply(requestId, false, { error: "decoder configuration superseded" });
+        return;
+      }
       if (!support?.supported) {
         throw new Error(`browser cannot decode ${message.config?.codec || "SIP video"}`);
       }
       generation = nextGeneration;
-      const ownedGeneration = generation;
-      let ownedDecoder;
-      ownedDecoder = new VideoDecoder({
-        output(frame) {
-          if (generation !== ownedGeneration || decoder !== ownedDecoder) {
-            frame.close();
-            return;
-          }
-          self.postMessage(
-            { type: "frame", generation: ownedGeneration, frame },
-            [frame],
-          );
-        },
-        error(error) {
-          if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
-          self.postMessage({
-            type: "decoder_error",
-            generation: ownedGeneration,
-            error: error?.message || String(error || "decoder failure"),
-          });
-        },
-      });
-      ownedDecoder.addEventListener("dequeue", () => {
-        if (generation !== ownedGeneration || decoder !== ownedDecoder) return;
-        self.postMessage({
-          type: "decode_queue",
-          generation: ownedGeneration,
-          size: ownedDecoder.decodeQueueSize,
-        });
-      });
-      ownedDecoder.configure(support.config || message.config);
-      decoder = ownedDecoder;
+      configureDecoder(support.config || message.config, generation);
       workerRole = "decoder";
       reply(requestId, true, { config: support.config || message.config });
     } catch (error) {
-      closeDecoder();
+      if (operation === decoderOperation) closeDecoder();
       reply(requestId, false, { error: error?.message || String(error) });
     }
     return;
   }
   if (message.type !== "decode" || !decoder ||
-      decoder.state !== "configured" ||
       Number(message.generation || 0) !== generation) {
     return;
   }
   try {
+    // WebCodecs closes the decoder before reporting an asynchronous error.
+    // A key frame can recover within this worker using the validated config;
+    // deltas must wait and may never resurrect a retired generation.
+    if (decoder.state === "closed" && message.keyFrame && decoderConfig) {
+      configureDecoder(decoderConfig, generation);
+    }
+    if (decoder.state !== "configured") return;
     decoder.decode(new EncodedVideoChunk({
       type: message.keyFrame ? "key" : "delta",
       timestamp: Number(message.timestamp || 0),

@@ -22,6 +22,13 @@ globals:
     restore_value: false
     initial_value: "false"
 
+media_player:
+  - id: !extend speaker_media_player
+    # Music and direct announcements share the media display policy, so its
+    # on_change alone cannot hide/restore artwork when playback is interrupted.
+    on_state:
+      - script.execute: apply_media_artwork
+
 image:
   - platform: sendspin
     id: sendspin_artwork_slot
@@ -34,18 +41,7 @@ image:
       id: sendspin_cover_art
     on_image_display:
       - lambda: id(sendspin_artwork_available) = true;
-      # The guard mixes LVGL mode, VA state, media_player state and
-      # runtime_controller activity. There is no single native ESPHome condition
-      # for this combined UI predicate.
-      - if:
-          condition:
-            lambda: |-
-              return id(current_mode) == 0 &&
-                     id(voice_assistant_phase) == ${voice_assist_replying_phase_id} &&
-                     id(speaker_media_player).state == media_player::MediaPlayerState::MEDIA_PLAYER_STATE_PLAYING &&
-                     !id(runtime).is_activity_active("announcement");
-          then:
-            - script.execute: apply_media_artwork
+      - script.execute: apply_media_artwork
     on_image_clear:
       - lambda: id(sendspin_artwork_available) = false;
       - script.execute: apply_media_artwork
@@ -54,14 +50,26 @@ image:
       - script.execute: apply_media_artwork
 
 script:
+  - id: !extend ui_va_end
+    then:
+      # The response-inactive hook clears the text-ready flag. Reconcile here
+      # too when the display policy changed before that content cleanup ran.
+      - script.execute: apply_media_artwork
   - id: !extend apply_media_artwork
     then:
       - lambda: |-
-          if (id(sendspin_artwork_available)) {
-            lv_img_set_src(id(mood_bg), id(sendspin_cover_art));
-            id(runtime_visual_source) = 4;
-          } else {
-            lv_img_set_src(id(mood_bg), id(mood_neutral));
-            id(runtime_visual_source) = 1;
+          // The legacy replying phase is shared by music and Assist. Only the
+          // committed media owner may project album art. TTS content arrives
+          // before its deferred runtime observation and already owns the image.
+          if (id(ui_state) != ${ui_state_media} || id(runtime_response_text_ready)) {
+            return;
           }
+          // Read the native state: ANNOUNCING is never music, even before the
+          // runtime observer has reconciled its announcement activity.
+          const bool show_cover = id(sendspin_artwork_available) &&
+              id(speaker_media_player).state == media_player::MediaPlayerState::MEDIA_PLAYER_STATE_PLAYING;
+          esphome::image::Image *image = show_cover ? id(sendspin_cover_art) : id(mood_neutral);
+          lv_img_set_src(id(mood_bg), image);
+          // The Sendspin image object is stable while its decoded pixels change.
           lv_obj_invalidate(id(mood_bg));
+          id(runtime_visual_source) = show_cover ? 4 : 1;

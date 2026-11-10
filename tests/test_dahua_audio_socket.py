@@ -43,6 +43,71 @@ class _Browser:
         return message
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frame_ms", [2.5, 15, 32, 40])
+async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(monkeypatch, frame_ms):
+    """Run the real media owner with a deterministic timer and no UDP I/O."""
+    view = _load_audio_ws_runtime_module()
+    browser = _Browser()
+    clock = [10.0]
+    delays = []
+    packets = []
+    sessions = {}
+    transport = SimpleNamespace(sendto=lambda packet, _addr: packets.append(packet), close=lambda: None)
+
+    class Loop:
+        def time(self):
+            return clock[0]
+
+        async def create_datagram_endpoint(self, factory, **_kwargs):
+            return transport, factory()
+
+    class AsyncioProxy:
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        def get_running_loop(self):
+            return Loop()
+
+        async def sleep(self, delay):
+            delays.append(delay)
+            clock[0] += delay
+            if len(delays) == 4:
+                browser.messages.put_nowait(None)
+            await asyncio.sleep(0)
+
+    hass = SimpleNamespace(store={"call_id": "generic-quantum"})
+    monkeypatch.setattr(view, "asyncio", AsyncioProxy())
+    monkeypatch.setattr(view, "media_capture_enabled", lambda _: False)
+    monkeypatch.setattr(view, "debug_mode", lambda _: False)
+    monkeypatch.setattr(view, "_ha_softphone_store", lambda *_args: hass.store)
+    monkeypatch.setattr(view, "_publish_ha_softphone_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(view, "publish_esp_media_route", lambda *_args: None)
+    monkeypatch.setattr(view, "_listen_for_call_end", lambda *_args: (asyncio.Event(), lambda: None))
+    monkeypatch.setattr(view, "require_runtime_data", lambda _: SimpleNamespace(
+        sip=None, media=SimpleNamespace(sessions_for=lambda _: sessions),
+    ))
+    fmt = sdp.RtpPcmFormat(96, "L16", 8000, 1, frame_ms)
+    session = view._SoftphoneMediaSession(
+        call_id="generic-quantum", local_rtp_port=0,
+        remote_rtp_host="192.0.2.1", remote_rtp_port=40000,
+        send_format=fmt, recv_format=fmt,
+    )
+
+    await asyncio.wait_for(view._run_audio_session(
+        hass, browser, session, endpoint_id="default",
+    ), 1)
+
+    assert delays[:4] == pytest.approx([frame_ms / 1000] * 4)
+    assert browser.json[0]["selected_tx_format"] == fmt.audio_format.wire_token()
+    assert len(packets) >= 4
+    parsed = [rtp.parse_packet(packet) for packet in packets[:4]]
+    assert all(len(packet.payload) == fmt.audio_format.nominal_frame_bytes for packet in parsed)
+    assert [(right.timestamp - left.timestamp) & 0xFFFFFFFF for left, right in zip(parsed, parsed[1:])] == [fmt.rtp_timestamp_step] * 3
+    assert not sessions
+    assert session.handoff_transport is None
+
+
 async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_tx_pt=97, delayed_playback=False):
     """Independent SDP and PCM bytes reproduce the reporter's PT97/0 mismatch."""
     view = _load_audio_ws_runtime_module()

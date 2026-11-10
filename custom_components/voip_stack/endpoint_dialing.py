@@ -13,14 +13,16 @@ from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
     EndpointRouteResolver,
+    bridge_audio_profile,
     peer_audio_formats,
     peer_for_target,
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -177,6 +179,7 @@ class EndpointDialer:
         ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None
         try:
+            ports.bind_audio_sockets(ports=(ports.ports[local_rtp_port_index],))
             remote_tx_formats = peer_audio_formats(
                 peer_target,
                 "tx_formats",
@@ -203,11 +206,22 @@ class EndpointDialer:
                 member_entry.metadata if member_entry is not None else None,
                 user_agent_override=peer_user_agent_override or None,
             )
-            if bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
+            include_common_audio = (
+                policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
+                or sip_target_offer_common_audio(peer_target, member_entry)
+            )
+            if policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 rtp_audio_profile = None
             elif rtp_audio_profile is not None:
+                sip_send_formats = list(rtp_audio_profile.send_formats)
+                sip_recv_formats = list(rtp_audio_profile.recv_formats)
+            if invite is not None and sip_send_formats and sip_recv_formats:
+                rtp_audio_profile = bridge_audio_profile(
+                    invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
+                    include_common_codecs=include_common_audio,
+                )
                 sip_send_formats = list(rtp_audio_profile.send_formats)
                 sip_recv_formats = list(rtp_audio_profile.recv_formats)
             target_endpoint = self.route_resolver.logical_endpoint(
@@ -293,11 +307,11 @@ class EndpointDialer:
                 username=policy.username,
                 password=policy.password,
                 outbound_proxy=policy.outbound_proxy,
-                include_common_codecs=(
-                    bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
-                    or sip_target_has_unspecified_audio(peer_target, member_entry)
-                ),
+                include_common_codecs=include_common_audio,
                 allow_directional_audio_payloads=supports_directional_audio_payloads(
+                    peer_target, member_entry
+                ),
+                independent_audio_ptime=supports_independent_audio_ptime(
                     peer_target, member_entry
                 ),
                 peer_user_agent=(
@@ -343,14 +357,19 @@ class EndpointDialer:
                 from .sip_runtime import configure_local_contact
                 configure_local_contact(self.hass, client)
             if policy.use_trunk_flow:
+                from .trunk_media import borrow_pending_media
+                borrow_pending_media(client, ports, video_relay)
                 reuse_registered_trunk_flow(sip_trunk(self.hass, policy.trunk_id) if policy.trunk_id else sip_trunk(self.hass), client)
             elif policy.reuse_registered_flow:
+                from .sip_runtime import select_registered_outbound_flow
                 self.enable_reused_tcp_connection(
                     self.hass,
                     client,
                     uri,
                     target=member,
                     default_sip_port=int(self.config["sip_port"]),
+                    selected_flow=select_registered_outbound_flow(self.hass, uri,
+                        entry=member_entry, peer=peer_target),
                 )
             return OutboundLeg(
                 member=member,

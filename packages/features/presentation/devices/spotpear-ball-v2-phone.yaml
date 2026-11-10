@@ -1,4 +1,8 @@
 # Phone-only screen, including all callbacks and widgets that use it.
+phone_list_view:
+- id: !extend contacts_list_view
+  row_height: 36
+  visible_rows: 5
 wifi:
   on_connect:
   - globals.set:
@@ -19,13 +23,25 @@ touchscreen:
   - script.execute: backlight_timer
 voip_stack:
   on_phonebook_update:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
+  - lambda: if (id(phone).is_idle()) id(update_call_idle_labels).execute();
   on_destination_changed:
-  - lambda: id(peer_name) = destination;
-  - script.execute: update_call_idle_labels
-  - script.execute: draw_display
+  - lambda: |-
+      if (!id(phone).is_idle()) return;
+      id(update_call_idle_labels).execute();
+      id(draw_display).execute();
 packages:
+  phone_presentation: !include
+    file: ../phone.yaml
+    vars:
+      _adaptive_phone_contacts: true
+      _voicemail_y: 70%
+      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj
+      _keypad_idle_reset: id(voip_dial_length) = 0; id(voip_dial_buffer)[0] = 0;
+      _keypad_idle_text: 'id(voip_dial_length) == 0 ? "Number / extension" : id(voip_dial_buffer).data()'
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
   call_media_route: !include '../../../lvgl/spotpear_call_media_route.yaml'
   lvgl_settings_nav: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   lvgl_settings_sync_volumes: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'
@@ -38,24 +54,18 @@ script:
   - script.execute: draw_display
 - id: !extend 'ui_call_started'
   then:
-  - lambda: id(peer_name) = peer;
+  - script.stop: ui_call_ended
+  - lambda: |-
+      id(call_ended_active) = false;
+      id(peer_name) = peer;
+      id(voip_dialer_active) = false;
   - script.execute: backlight_timer
-  - lvgl.label.update:
-      id: call_ringing_out_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_ringing_in_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_in_call_peer_label
-      text: !lambda |-
-        return id(peer_name);
+  - script.execute: update_call_idle_labels
   - script.execute: draw_display
 - id: !extend 'ui_call_ended'
   mode: restart
   then:
+  - lambda: id(voip_dialer_active) = false;
   - globals.set:
       id: call_ended_active
       value: 'true'
@@ -99,35 +109,30 @@ script:
                       s == "in_call");
       if (in_call) {
         id(settings_active) = false;  // call interrupts settings view
-        id(voip_dialer_active) = false;
+        if (s != "in_call") id(voip_dialer_active) = false;
       }
-      // ui_call_ended owns the screen for ~4 s after a terminated
-      // call. Any redraw triggered in that window keeps the ended
-      // page so the user actually reads the reason.
-      if (id(call_ended_active)) {
+      // SIP controls stay usable independently of the ESPHome API connection.
+      if (in_call) {
+        if (s == "ringing") {
+          target = id(call_ringing_in_page)->obj;
+        } else if (s == "calling" || s == "remote_ringing") {
+          target = id(call_ringing_out_page)->obj;
+        } else if (s == "in_call" && id(voip_dialer_active)) {
+          target = id(call_dialer_page)->obj;
+        } else {
+          target = id(call_in_call_page)->obj;
+        }
+      } else if (id(call_ended_active)) {
         target = id(call_ended_page)->obj;
-      } else if (id(settings_active) && !id(g_settings_pages).empty()) {
+      }  else if (id(settings_active) && !id(g_settings_pages).empty()) {
         int idx = id(g_settings_index);
         int n = (int) id(g_settings_pages).size();
         if (idx < 0 || idx >= n) idx = 0;
         target = id(g_settings_pages)[idx];
       } else if (!wifi::global_wifi_component->is_connected()) {
         target = id(no_wifi_page)->obj;
-      } else if (!api::global_api_server->is_connected()) {
-        target = id(no_ha_page)->obj;
       } else {
-        const std::string s = id(phone).get_state_str();
-        if (s == "ringing") {
-          target = id(call_ringing_in_page)->obj;
-        } else if (s == "calling" || s == "remote_ringing") {
-          target = id(call_ringing_out_page)->obj;
-        } else if (s == "in_call" || s == "connecting") {
-          target = id(call_in_call_page)->obj;
-        } else if (id(voip_dialer_active)) {
-          target = id(call_dialer_page)->obj;
-        } else {
-          target = id(call_idle_page)->obj;
-        }
+        target = id(voip_dialer_active) ? id(call_dialer_page)->obj : id(call_idle_page)->obj;
       }
       if (target == nullptr) return;
       // Match the full profile: the dialer owns the complete visible disk.
@@ -143,6 +148,7 @@ script:
         lv_disp_load_scr(target);
         lv_obj_invalidate(lv_disp_get_scr_act(nullptr));
       }
+      ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
   - if:
       condition:
         voip_stack.is_idle: null
@@ -151,19 +157,11 @@ script:
       - script.execute: update_idle_labels
 - id: update_call_idle_labels
   then:
-  - lambda: id(peer_name) = id(phone).get_current_destination();
-  - lvgl.label.update:
-      id: call_idle_peer_label
-      text: !lambda |-
-        return id(peer_name);
-  - lvgl.label.update:
-      id: call_idle_contacts_label
-      text: !lambda |-
-        auto csv = id(phone).get_contacts_csv();
-        int count = csv.empty() ? 0 : std::count(csv.begin(), csv.end(), ',') + 1;
-        char buf[16];
-        snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
-        return std::string(buf);
+  - lambda: |-
+      id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+      if (!id(phone).is_active()) return;
+      for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+        if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
 - id: layout_call_dialer
   then:
   - lambda: |-
@@ -194,21 +192,33 @@ script:
         lv_obj_align(obj, LV_ALIGN_TOP_MID, 0, y);
       };
 
-      const int number_y = h * 16 / 240;
-      const int number_h = std::max(24, h * 26 / 240);
-      const int row_h = std::max(29, h * 31 / 240);
-      const int call_y = h * 187 / 240;
-      const int call_h = std::max(40, h * 43 / 240);
+      const bool connected_keypad = id(phone).is_in_call();
+      const int number_y = h * (connected_keypad ? 12 : 16) / 240;
+      const int number_h = connected_keypad ? lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_value_label), LV_PART_MAIN)) : std::max(24, h * 26 / 240);
+      const int duration_y = h * 36 / 240;
+      const int duration_h = lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN));
+      const int gap = std::max(3, h * 3 / 240);
+      const int call_h = std::max(34, h * 34 / 240);
+      const int call_y = h - std::max(8, h * 8 / 240) - call_h;
+      const int keys_y = std::max(h * 54 / 240, connected_keypad ? duration_y + duration_h + gap : 0);
+      const int row_h = std::max(29, (call_y - keys_y - 4 * gap) / 4);
       fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
-      fit_centered_band(id(call_dial_row_123)->obj, h * 46 / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_456)->obj, h * 81 / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_789)->obj, h * 116 / 240, row_h, 6);
-      fit_centered_band(id(call_dial_row_del0hash)->obj, h * 151 / 240, row_h, 6);
-      fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
+      fit_centered_band(id(call_dial_duration_label), duration_y, duration_h, 6);
+      fit_centered_band(id(call_dial_row_123)->obj, keys_y, row_h, 6);
+      fit_centered_band(id(call_dial_row_456)->obj, keys_y + row_h + gap, row_h, 6);
+      fit_centered_band(id(call_dial_row_789)->obj, keys_y + 2 * (row_h + gap), row_h, 6);
+      fit_centered_band(id(call_dial_row_del0hash)->obj, keys_y + 3 * (row_h + gap), row_h, 6);
+      lv_obj_set_size(id(call_dial_call_btn), std::min(width_for_band(call_y, call_h, 2), w * 58 / 240), call_h);
+      lv_obj_align(id(call_dial_call_btn), LV_ALIGN_TOP_MID, 0, call_y);
 - id: voip_dial_refresh
   then:
   - lambda: |-
-      if (id(voip_dial_length) == 0) {
+      const bool in_call = id(phone).is_in_call();
+      lv_label_set_text(id(call_dial_action_label), in_call ? "\U000F03F5" : "\U000F03F2");
+      lv_obj_set_style_bg_color(id(call_dial_call_btn), lv_color_hex(in_call ? 0xEF4444 : 0x22C55E), LV_PART_MAIN);
+      if (in_call) {
+        id(call_keypad_ui).sync(id(display_visibility).is_visible(id(call_dial_value_label)), id(peer_name).c_str());
+      } else if (id(voip_dial_length) == 0) {
         lv_label_set_text(id(call_dial_value_label), "Number / extension");
       } else {
         lv_label_set_text(id(call_dial_value_label), id(voip_dial_buffer).data());
@@ -218,7 +228,11 @@ script:
     dial_char: int
   then:
   - lambda: |-
-      if (dial_char == 0 || id(voip_dial_length) >= 32) return;
+      if (id(phone).is_in_call()) {
+        id(phone).send_dtmf(static_cast<char>(dial_char));
+        return;
+      }
+      if (!id(phone).is_idle() || dial_char == 0 || id(voip_dial_length) >= 32) return;
       auto &buffer = id(voip_dial_buffer);
       auto &length = id(voip_dial_length);
       buffer[length++] = static_cast<char>(dial_char);
@@ -227,6 +241,7 @@ script:
 - id: voip_dial_backspace
   then:
   - lambda: |-
+      if (!id(phone).is_idle()) return;
       auto &length = id(voip_dial_length);
       if (length > 0) length--;
       id(voip_dial_buffer)[length] = '\0';
@@ -234,6 +249,7 @@ script:
 - id: voip_dial_clear
   then:
   - lambda: |-
+      if (!id(phone).is_idle()) return;
       id(voip_dial_length) = 0;
       id(voip_dial_buffer)[0] = '\0';
       id(voip_dial_refresh).execute();
@@ -241,23 +257,30 @@ script:
   then:
   - if:
       condition:
-        lambda: return id(phone).is_idle() && id(voip_dial_length) > 0;
+        lambda: return id(phone).is_in_call();
       then:
-      - voip_stack.call:
-          target: !lambda |-
-            return std::string(
-                id(voip_dial_buffer).data(),
-                id(voip_dial_length)
-            );
+      - voip_stack.call_toggle: null
+      else:
+      - if:
+          condition:
+            lambda: return id(phone).is_idle() && id(voip_dial_length) > 0;
+          then:
+          - voip_stack.call:
+              target: !lambda |-
+                return std::string(
+                    id(voip_dial_buffer).data(),
+                    id(voip_dial_length)
+                );
 - id: call_to_dialer
   then:
   - if:
       condition:
-        voip_stack.is_idle: null
+        lambda: return id(phone).is_idle() || id(phone).can_send_dtmf();
       then:
       - lambda: |-
           id(settings_active) = false;
           id(voip_dialer_active) = true;
+      - script.execute: layout_call_dialer
       - script.execute: voip_dial_refresh
       - script.execute: draw_display
 - id: dialer_to_contacts
@@ -282,7 +305,7 @@ script:
           text: !lambda |-
             bool charging = id(usb_connected).state;
             float bat = id(battery_percentage).state;
-            float wifi = id(wifi_pct).state;
+            float wifi = ${ 'id(wifi_pct).state' if 'diagnostics' in firmware_features else 'std::max(0.0f, std::min(100.0f, 2.0f * (wifi::global_wifi_component->wifi_rssi() + 100.0f)))' };
             std::string ret;
             if (bat < 10) ret = charging ? "\U000F089F" : "\U000F008E";
             else if (bat < 20) ret = charging ? "\U000F089C" : "\U000F007A";
@@ -304,7 +327,9 @@ script:
       else:
       - lvgl.label.update:
           id: top_battery_label
-          text: ''
+          text: !lambda |-
+            std::string ret;
+            return ret;
 - id: backlight_timer
   mode: restart
   then:
@@ -397,6 +422,7 @@ font:
     - 󰢾
     - 󰟐
     - 󱗐
+    - "\U000F01EE"
 - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
   id: call_icons
   size: 42
@@ -418,6 +444,7 @@ font:
     glyphs:
     - 󰁮
     - 󰛋
+    - "\U000F061C"
 - file:
     type: gfonts
     family: Figtree
@@ -475,13 +502,8 @@ lvgl:
         text_font: font_state
         text_align: CENTER
   - id: call_idle_page
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
+    scrollable: false
+    bg_color: 0x10151F
     on_swipe_up:
     - script.execute: call_to_dialer
     on_swipe_down:
@@ -490,89 +512,20 @@ lvgl:
     - label:
         align: TOP_MID
         y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
+        text: "\U000F06CB"
+        text_color: 0xFFFFFF
         text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
+    - obj:
+        id: phone_contacts_container
         align: TOP_MID
-        y: 17%
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: TOP_MID
-        y: ${call_contacts_y}
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        width: ${call_peer_width}
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
-        x: -60
-        y: -34
-        width: 60
-        height: 60
+        y: 21%
+        width: 80%
+        height: 144
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        x: 60
-        y: -34
-        width: 60
-        height: 60
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        floating: true
-        align: CENTER
-        y: ${call_btn_below_center}
-        width: ${call_btn_size}
-        height: ${call_btn_size}
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   - id: call_ringing_in_page
     bg_color: 16711680
     widgets:
@@ -680,15 +633,24 @@ lvgl:
   - id: call_in_call_page
     bg_color: 34816
     widgets:
-    - label:
+    - button:
+        id: call_keypad_btn
         align: TOP_MID
-        y: 8%
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        width: ${call_title_width}
-        long_mode: SCROLL
+        y: 2%
+        width: 20%
+        height: 16%
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        shadow_opa: TRANSP
+        on_short_click:
+        - script.execute: call_to_dialer
+        widgets:
+        - label:
+            align: CENTER
+            text: "\U000F061C"
+            text_color: 16777215
+            text_font: font_title
     - label:
         align: TOP_MID
         y: 17%
@@ -795,6 +757,20 @@ lvgl:
         - script.execute: voip_dial_backspace
         on_long_press:
         - script.execute: voip_dial_clear
+    - label:
+        id: call_dial_duration_label
+        scrollable: false
+        gesture_bubble: true
+        align: TOP_MID
+        y: 32
+        width: 100
+        height: 24
+        text: '00:00'
+        text_font: montserrat_14
+        text_color: 16777215
+        text_align: CENTER
+        long_mode: CLIP
+        hidden: true
     - buttonmatrix:
         id: call_dial_row_123
         align: TOP_MID
@@ -803,6 +779,7 @@ lvgl:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         gesture_bubble: true
@@ -830,6 +807,7 @@ lvgl:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         gesture_bubble: true
@@ -857,6 +835,7 @@ lvgl:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         gesture_bubble: true
@@ -884,6 +863,7 @@ lvgl:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         gesture_bubble: true
@@ -894,19 +874,21 @@ lvgl:
           radius: 16
         rows:
         - buttons:
-          - text: 󰁮
+          - text: '*'
           - text: '0'
           - text: '#'
+          - text: 󰁮
         on_click:
         - if:
             condition:
-              lambda: return x == 0;
+              lambda: return x == 3;
             then:
             - script.execute: voip_dial_backspace
             else:
             - script.execute:
                 id: voip_dial_append
                 dial_char: !lambda |-
+                  if (x == 0) return '*';
                   if (x == 1) return '0';
                   if (x == 2) return '#';
                   return 0;
@@ -925,6 +907,7 @@ lvgl:
         - script.execute: voip_dial_call
         widgets:
         - label:
+            id: call_dial_action_label
             align: CENTER
             text: 󰏲
             text_color: 16777215
@@ -1202,6 +1185,6 @@ interval:
       - script.execute: draw_display
 esphome:
   on_boot:
-    priority: 600
+  - priority: 600
     then: ${ _phone_boot_start + (_phone_boot_led_off if 'status_led' in firmware_features else []) + _phone_boot_rest
       }

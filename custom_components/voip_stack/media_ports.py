@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
+from dataclasses import dataclass, field
 import socket
 from typing import TYPE_CHECKING
 
@@ -19,15 +20,18 @@ from .media_reservation import (
 )
 
 RTP_RELAY_POOL_WIDTH = 400
+_RTP_IP_TOS = 0xB8
+_VIDEO_RTP_IP_TOS = 0x88
 
 
 @dataclass(slots=True)
 class RtpPortReservation:
-    """Owned RTP relay port pair that must be released or detached."""
+    """Owned RTP relay ports and optional pre-bound audio sockets."""
 
     hass: HomeAssistant
     ports: tuple[int, int]
     released: bool = False
+    _audio_sockets: tuple[socket.socket, ...] | None = field(default=None, repr=False)
 
     @classmethod
     def allocate(cls, hass: HomeAssistant) -> "RtpPortReservation":
@@ -45,27 +49,101 @@ class RtpPortReservation:
         return cls(hass=hass, ports=retained)
 
     @classmethod
-    def adopt_bound_source(cls, hass: HomeAssistant, source_port: int) -> "RtpPortReservation":
-        """Reserve a spare leg beside a browser's existing, unpooled RTP socket."""
+    def adopt_bound_source(
+        cls, hass: HomeAssistant, source_port: int, *,
+        reservation: "RtpPortReservation | None" = None, retained_port: int | None = None,
+    ) -> "RtpPortReservation":
+        """Retain an existing bound source beside a staged or newly reserved leg."""
         used = require_runtime_data(hass).rtp_port_pool.get("used", set())
         if source_port in used:
             raise RuntimeError("The source RTP port already belongs to another reservation")
-        temporary = cls.allocate(hass)
+        if reservation is None and retained_port is not None:
+            raise ValueError("A retained port needs its existing reservation")
+        if reservation is not None and (
+            reservation.hass is not hass or reservation.released
+            or retained_port not in reservation.ports or not set(reservation.ports) <= used
+        ):
+            raise RuntimeError("The staged RTP reservation changed before source adoption")
+        temporary = reservation if reservation is not None else cls.allocate(hass)
+        keep = temporary.ports[0] if retained_port is None else int(retained_port)
+        retained_socket = temporary.take_audio_socket(keep)
         used = require_runtime_data(hass).rtp_port_pool["used"]
         used.add(source_port)
-        used.remove(temporary.ports[1])
+        used.difference_update(set(temporary.ports) - {keep})
         temporary.detach()
-        return cls(hass, (source_port, temporary.ports[0]))
+        return cls(hass, (source_port, keep), _audio_sockets=(retained_socket,) if retained_socket else None)
 
     def detach(self) -> tuple[int, int]:
+        self._close_audio_sockets()
         self.released = True
         return self.ports
 
     def release(self) -> None:
+        self._close_audio_sockets()
         if self.released:
             return
         release_sip_rtp_port_pair(self.hass, self.ports)
         self.released = True
+
+    def bind_audio_sockets(self, *, ports: tuple[int, ...] | None = None) -> None:
+        """Own the advertised ports before signaling, without starting media."""
+        if self.released:
+            raise RuntimeError("RTP reservation has already been released")
+        requested = self.ports if ports is None else ports
+        if not set(requested) <= set(self.ports):
+            raise ValueError("RTP socket is outside the reservation")
+        if self._audio_sockets is not None and all(
+                any(sock.getsockname()[1] == port for sock in self._audio_sockets) for port in requested):
+            return
+        sockets = list(self._audio_sockets or ())
+        try:
+            for port in requested:
+                if any(sock.getsockname()[1] == port for sock in sockets):
+                    continue
+                sock = bind_sip_audio_socket(port)
+                sockets.append(sock)
+        except BaseException:
+            for sock in sockets:
+                with contextlib.suppress(OSError):
+                    sock.close()
+            self.release()
+            raise
+        self._audio_sockets = tuple(sockets)
+
+    def audio_socket(self, port: int) -> socket.socket | None:
+        """Borrow a reserved fd; the borrower must remove its reader first."""
+        return next((sock for sock in self._audio_sockets or () if sock.getsockname()[1] == port), None)
+
+    def take_audio_socket(self, port: int) -> socket.socket | None:
+        """Move one exact socket to an existing receiver without rebinding."""
+        sock = self.audio_socket(port)
+        if sock is not None:
+            self._audio_sockets = tuple(item for item in self._audio_sockets if item is not sock) or None
+        return sock
+
+    def transfer_audio_sockets(self, relay, *, ports: tuple[int, ...] | None = None) -> None:
+        """Move matching sockets only after synchronous relay validation."""
+        sockets = self._audio_sockets if ports is None else tuple(
+            sock for sock in self._audio_sockets or () if sock.getsockname()[1] in ports)
+        if not sockets:
+            return
+        relay.adopt_audio_sockets(sockets)
+        self._audio_sockets = tuple(sock for sock in self._audio_sockets if sock not in sockets) or None
+
+    def transfer(self) -> "RtpPortReservation":
+        """Reassign this reservation and its fds together, without a gap."""
+        if self.released:
+            raise RuntimeError("RTP reservation has already been released")
+        successor = RtpPortReservation(self.hass, self.ports, _audio_sockets=self._audio_sockets)
+        self._audio_sockets = None
+        self.released = True
+        return successor
+
+    def _close_audio_sockets(self) -> None:
+        sockets, self._audio_sockets = self._audio_sockets, None
+        for sock in sockets or ():
+            with contextlib.suppress(OSError):
+                sock.close()
 
 
 def reserve_delayed_offer_ports(
@@ -81,6 +159,7 @@ def reserve_delayed_offer_ports(
     if artifacts.delayed_offer_ports is not None:
         raise RuntimeError("SIP delayed offer already owns media ports")
     reservation = RtpPortReservation.allocate(hass)
+    reservation.bind_audio_sockets()
     artifacts.delayed_offer_ports = reservation
     return reservation
 
@@ -112,12 +191,27 @@ def rtp_port_available(port: int) -> bool:
         sock.close()
 
 
-def bind_sip_rtp_socket(port: int) -> socket.socket:
-    """Bind RTP before signaling so immediate media packets are retained."""
+def bind_sip_audio_socket(port: int) -> socket.socket:
+    """Bind the relay's existing audio socket policy before or after signaling."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setblocking(False)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
+        sock.bind(("0.0.0.0", int(port)))
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def bind_sip_rtp_socket(port: int, *, ip_tos: int = _RTP_IP_TOS) -> socket.socket:
+    """Pre-bind RTP with audio EF by default and an explicit video policy."""
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, ip_tos)
         sock.setblocking(False)
         sock.bind(("0.0.0.0", int(port)))
         return sock
@@ -131,9 +225,9 @@ def bind_sip_video_sockets(rtp_port: int) -> tuple[socket.socket, socket.socket]
 
     if not 1 <= int(rtp_port) < 65535:
         raise OSError("invalid video RTP/RTCP port pair")
-    rtp_socket = bind_sip_rtp_socket(int(rtp_port))
+    rtp_socket = bind_sip_rtp_socket(int(rtp_port), ip_tos=_VIDEO_RTP_IP_TOS)
     try:
-        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1)
+        rtcp_socket = bind_sip_rtp_socket(int(rtp_port) + 1, ip_tos=_VIDEO_RTP_IP_TOS)
     except BaseException:
         rtp_socket.close()
         raise

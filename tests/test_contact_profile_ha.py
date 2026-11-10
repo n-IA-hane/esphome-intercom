@@ -7,6 +7,9 @@ from homeassistant.exceptions import ServiceValidationError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -26,6 +29,7 @@ def entry(hass, monkeypatch):
 
     monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     config = MockConfigEntry(domain="voip_stack", data={}, version=6)
     config.add_to_hass(hass)
     return config
@@ -130,7 +134,6 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
     """Persist public settings, resolve each destination and inspect wire SDP."""
     import asyncio
     import json
-    from types import SimpleNamespace
     from unittest.mock import Mock
 
     from homeassistant.config_entries import ConfigSubentry
@@ -139,6 +142,7 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
     from custom_components.voip_stack.core import sdp, sip
     from custom_components.voip_stack.endpoint_dialing import EndpointDialer, OutboundLegPolicy
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.media_ports import RtpPortReservation
     from custom_components.voip_stack.endpoint_routing import EndpointRouteResolver
     from custom_components.voip_stack.roster import parse_roster_json
     from custom_components.voip_stack.router import RouteAction, resolve_ha_router
@@ -201,7 +205,7 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
                 member=target, peers=[], roster_entries=contacts, local_name="Browser",
                 local_rtp_port_index=0, uri_override=route.sip_uri or uri,
                 roster_entry_override=route.entry,
-                port_reservation=SimpleNamespace(ports=(40000, 40002)),
+                port_reservation=RtpPortReservation.allocate(hass),
                 policy=OutboundLegPolicy(force_common_audio=action is RouteAction.TRUNK, reuse_registered_flow=False),
             )
             assert attempt is not None
@@ -215,6 +219,8 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
                 assert attempt.client.peer_user_agent == ""
             finally:
                 await attempt.client.close()
+                attempt.ports.release()
         assert len(captured) == 4
+        assert not entry.runtime_data.rtp_port_pool.get("used")
     finally:
         transport.close()

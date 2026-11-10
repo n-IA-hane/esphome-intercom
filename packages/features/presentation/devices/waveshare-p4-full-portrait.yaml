@@ -30,6 +30,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
+  extras: ${ _voicemail_font_extra if _fw_voip and 'mwi' in firmware_features else [] }
 - file:
     type: gfonts
     family: Noto Sans
@@ -84,6 +85,7 @@ font:
   id: font_weather_icon_sm
   size: 48
   glyphs:
+  - "\U000F061C"
   - 󰖐
   - 󰖑
   - 󰖒
@@ -396,6 +398,28 @@ touchscreen:
       level: 100%
   - script.execute: backlight_timer
 packages:
+  in_call_keypad: !include
+    file: ${ '../in_call_keypad.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _sip_keypad_font: font_state
+      _sip_keypad_duration_font: font_body
+      _sip_keypad_name_width: 78%
+      _sip_keypad_return_page: main_page
+  phone_presentation: !include
+    file: ${ '../phone.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _keypad_name_label: sip_keypad_peer_label
+      _keypad_duration_label: sip_keypad_duration_label
+      _voicemail_y: 6
+      _voicemail_font_id: font_body
+      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(main_page)->obj${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' } && !id(call_ended_active)
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: false
+      _visibility_idle_widget_id: idle_animation
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip and 'mwi' in firmware_features else '' }
   phase: !include '../phase.yaml'
   cleanup: !include '../../../lvgl/p4_va_cleanup.yaml'
   ppa: !include '../../../lvgl/p4_ppa.yaml'
@@ -456,16 +480,15 @@ defaults:
   _p4_phone_hooks:
     voip_stack:
       on_phonebook_update:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: draw_display
-      - delay: 2s
-      - script.execute: update_call_idle_labels
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_call_idle_labels).execute();
+          id(draw_display).execute();
       on_destination_changed:
-      - lambda: !lambda |-
-          id(peer_name) = destination;
-      - script.execute: update_call_idle_labels
-      - script.execute: draw_display
+      - lambda: |-
+          if (!id(phone).is_idle()) return;
+          id(update_call_idle_labels).execute();
+          id(draw_display).execute();
   _p4_render_0:
   - script.execute: runtime_project_ui_phase
   _p4_render_1:
@@ -502,39 +525,34 @@ defaults:
   _p4_call_drawing: |-
     const std::string call_state = id(phone).get_state_str();
 
-    set_hidden(id(call_idle_group), true);
-    set_hidden(id(call_ringing_in_group), true);
-    set_hidden(id(call_ringing_out_group), true);
-    set_hidden(id(call_in_call_group), true);
-    set_hidden(id(call_ended_group), true);
+    const bool contacts_were_hidden = lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *visible_call_group = id(call_idle_group);
 
     if (id(call_ended_active) && !id(phone).is_active()) {
       // ui_call_ended owns the tile for ~4 s after a terminated
       // call so the user reads the reason regardless of the runtime state
       // state already returning to IDLE.
-      set_hidden(id(call_ended_group), false);
+      visible_call_group = id(call_ended_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "ringing") {
       set_label(id(call_ringing_in_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_in_group), false);
+      visible_call_group = id(call_ringing_in_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "calling" || call_state == "remote_ringing") {
       set_label(id(call_ringing_out_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_out_group), false);
+      visible_call_group = id(call_ringing_out_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "in_call" || call_state == "connecting") {
       set_label(id(call_in_call_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_in_call_group), false);
+      visible_call_group = id(call_in_call_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else {
-      set_label(id(call_idle_peer_label), id(peer_name).c_str());
-      auto csv = id(phone).get_contacts_csv();
-      int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Contacts: %d", count);
-      set_label(id(call_idle_contacts_label), buf);
-      set_hidden(id(call_idle_group), false);
+      visible_call_group = id(call_idle_group);
     }
+    lv_obj_t *call_groups[] = {id(call_idle_group), id(call_ringing_in_group), id(call_ringing_out_group), id(call_in_call_group), id(call_ended_group)};
+    for (auto *group : call_groups) set_hidden(group, group != visible_call_group);
+    if (contacts_were_hidden && !lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN))
+      id(contacts_list_view).refresh();
   _p4_draw_actions:
   - lambda: !lambda |-
       lv_obj_t* active_scr = lv_disp_get_scr_act(nullptr);
@@ -543,7 +561,7 @@ defaults:
       // draw_display callers (VoIP state, idle phase, animations,
       // weather refresh, ...) snap the screen back to main_page while
       // the user is interacting with the settings carousel.
-      if (active_scr == id(settings_p4_page)->obj) return;
+      if (active_scr == id(settings_p4_page)->obj && !${ 'id(phone).is_active()' if _fw_voip else 'false' }) return;
 
       auto set_hidden = [](lv_obj_t *obj, bool hidden) {
         const bool is_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -593,6 +611,9 @@ defaults:
       // alarm sound is played through media_player and may update the phase.
       ${ _p4_timer_drawing if _fw_timers else '' }
 
+
+      ${ 'if (id(phone).is_in_call() && active_scr == id(sip_in_call_keypad_page)->obj) return;' if _fw_voip else '' }
+
       // Normal: show main split-screen page
       if (active_scr != id(main_page)->obj) {
         lv_disp_load_scr(id(main_page)->obj);
@@ -634,7 +655,8 @@ defaults:
       condition:
         lambda: !lambda |-
           std::string call_state = ${ 'id(phone).get_state_str()' if _fw_voip else 'std::string()' };
-          return id(current_mode) == 0 &&
+          return id(display_visibility).is_visible(id(idle_animation)) &&
+                 id(current_mode) == 0 &&
                  id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
                  !id(init_in_progress) &&
                  (call_state == "idle" || call_state.empty());
@@ -722,7 +744,7 @@ defaults:
     - script.execute: draw_display
   - id: draw_display
     mode: restart
-    then: ${ _p4_draw_actions + (_p4_draw_timer if _fw_timers else []) }
+    then: ${ _p4_draw_actions + (_p4_draw_timer if _fw_timers else []) + (_voicemail_draw if _fw_voip and 'mwi' in firmware_features else []) }
   - id: ai_animation_loop
     mode: single
     then:
@@ -734,7 +756,7 @@ defaults:
     - while:
         condition:
           lambda: !lambda |-
-            return true;
+            return id(display_visibility).is_visible(id(idle_animation));
         then:
         - lvgl.animimg.start: idle_animation
         - delay: 25s
@@ -905,7 +927,7 @@ defaults:
     then:
     - script.execute: runtime_ui_call_begin
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_status_label
         text: CALLING
@@ -914,7 +936,7 @@ defaults:
   - id: !extend 'ui_call_dest_ringing'
     then:
     - lambda: !lambda |-
-        id(peer_name) = peer;
+        id(peer_name) = id(phone).get_active_peer_name();
     - lvgl.label.update:
         id: call_ringing_out_peer_label
         text: !lambda |-
@@ -964,20 +986,16 @@ defaults:
   - id: update_call_idle_labels
     then:
     - lambda: !lambda |-
-        id(peer_name) = id(phone).get_current_destination();
-    - lvgl.label.update:
-        id: call_idle_peer_label
-        text: !lambda |-
-          return id(peer_name);
-    - lvgl.label.update:
-        id: call_idle_contacts_label
-        text: !lambda |-
-          auto csv = id(phone).get_contacts_csv();
-          int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
-          char buf[32];
-          snprintf(buf, sizeof(buf), "Contacts: %d", count);
-          return std::string(buf);
+        id(peer_name) = id(phone).is_active() ? id(phone).get_active_peer_name() : id(phone).get_current_destination();
+        if (!id(phone).is_active()) return;
+        for (auto *label : {id(call_ringing_out_peer_label), id(call_ringing_in_peer_label), id(call_in_call_peer_label)})
+          if (strcmp(lv_label_get_text(label), id(peer_name).c_str()) != 0) lv_label_set_text(label, id(peer_name).c_str());
   _p4_phone_lifecycle:
+    phone_list_view:
+    - id: !extend contacts_list_view
+      text_font: font_body
+      row_height: 72
+      visible_rows: 9
     packages:
       lifecycle: !include '../../voip/presentation/lifecycle.yaml'
   _p4_widgets_2:
@@ -1361,93 +1379,17 @@ defaults:
             text: VOIP
             text_color: 4415982
             text_font: font_title
-        - label:
+        - obj:
+            id: phone_contacts_container
             align: TOP_MID
             y: 100
-            text: 'Destination:'
-            text_color: 8947848
-            text_font: font_small
-        - label:
-            id: call_idle_peer_label
-            align: TOP_MID
-            y: 130
-            width: 700
-            text: '-'
-            text_color: 16777215
-            text_font: font_state
-            text_align: CENTER
-            long_mode: DOT
-        - label:
-            id: call_idle_contacts_label
-            align: TOP_MID
-            y: 200
-            text: 'Contacts: 0'
-            text_color: 8947848
-            text_font: font_small
-        - obj:
-            id: call_idle_swipe_area
-            align: TOP_MID
-            y: 90
             width: 720
-            height: 230
+            height: 500
             bg_opa: TRANSP
             border_width: 0
-            scrollable: false
-            clickable: true
-            gesture_bubble: false
-            on_swipe_left:
-            - voip_stack.next_contact: null
-            - script.execute: update_call_idle_labels
-            on_swipe_right:
-            - voip_stack.prev_contact: null
-            - script.execute: update_call_idle_labels
-        - button:
-            align: BOTTOM_LEFT
-            x: 80
-            y: -60
-            width: 160
-            height: 70
-            bg_color: 2960708
-            radius: 10
-            on_click:
-            - voip_stack.prev_contact: null
-            widgets:
-            - label:
-                align: CENTER
-                text: < Prev
-                text_color: 15658734
-                text_font: font_button
-        - button:
-            align: BOTTOM_MID
-            y: -50
-            width: 280
-            height: 90
-            bg_color: 3066993
-            radius: 15
-            on_click:
-            - voip_stack.call_toggle: null
-            widgets:
-            - label:
-                align: CENTER
-                text: CALL
-                text_color: 16777215
-                text_font: font_state
-        - button:
-            align: BOTTOM_RIGHT
-            x: -80
-            y: -60
-            width: 160
-            height: 70
-            bg_color: 2960708
-            radius: 10
-            on_click:
-            - voip_stack.next_contact: null
-            widgets:
-            - label:
-                align: CENTER
-                text: Next >
-                text_color: 15658734
-                text_font: font_button
+            pad_all: 0
+            scroll_dir: VER
+            scrollbar_mode: AUTO
     - obj:
         id: call_ringing_in_group
         width: 780
@@ -1575,13 +1517,13 @@ defaults:
         widgets:
         - label:
             align: TOP_MID
-            y: 40
+            y: 90
             text: IN CALL
             text_color: 3066993
             text_font: font_title
         - label:
             align: TOP_MID
-            y: 100
+            y: 145
             text: 'Connected to:'
             text_color: 13421772
             text_font: font_body
@@ -1610,6 +1552,22 @@ defaults:
                 text: HANG UP
                 text_color: 16777215
                 text_font: font_button
+        - button:
+            align: TOP_MID
+            y: 12
+            width: 100
+            height: 64
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            on_click:
+            - script.execute: open_sip_in_call_keypad
+            widgets:
+            - label:
+                align: CENTER
+                text: "\U000F061C"
+                text_color: 16777215
+                text_font: font_weather_icon_sm
     - obj:
         id: call_ended_group
         width: 780
@@ -1898,20 +1856,20 @@ defaults:
   _display_voice_action_0:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_1:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_2:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_3:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle
   _display_voice_action_4:
   - runtime_controller.event:
       id: runtime
-      event: wake_word
+      event: manual_voice_toggle

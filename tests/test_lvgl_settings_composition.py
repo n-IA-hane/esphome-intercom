@@ -11,7 +11,7 @@ from esphome import yaml_util
 import pytest
 
 from tests.native_profile import action_id, nodes, text
-from tests.test_package_composition import device_config
+from tests.test_package_composition import device_config, seed_ui_schema_model_cache
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,8 +100,9 @@ def test_round_bootstrap_preserves_settings_registry_and_owner_callbacks(scene, 
     assert any(entry["priority"] == -100 for entry in boot)
     registrations = [entry for entry in boot if entry["priority"] == -200]
     assert len(registrations) == 1
-    for marker in ("master_volume", "mic_gain", "LV_EVENT_SCREEN_LOADED", "settings_sync_widgets"):
+    for marker in ("master_volume", "LV_EVENT_SCREEN_LOADED", "settings_sync_widgets"):
         assert marker in text(registrations[0])
+    assert "id(mic_gain)" not in text(registrations[0])
 
 
 @pytest.mark.parametrize("scene", SCENES)
@@ -118,7 +119,7 @@ def test_settings_match_compiled_capabilities(scene, variant):
     owners = {
         "ui_auto_answer_sw": (has_voip, "auto_answer_switch"),
         "ui_dnd_sw": (has_voip, "dnd_switch"),
-        "ui_conference_ring_sw": (has_voip, "voip_conference_ring"),
+        "ui_conference_ring_sw": (has_voip, "phone"),
         "ui_playback_vol_slider": (has_player, "speaker_media_player"),
         "ui_wake_word_sw": (has_wake, "wake_word_switch"),
         "ui_ns_sw": (mono_afe, "ns_switch"),
@@ -149,8 +150,8 @@ def test_settings_match_compiled_capabilities(scene, variant):
     assert len(header["widgets"]) == 1
     assert header["widgets"][0]["label"]["text"] == "Options"
     assert "on_scroll" not in page
-    if not scene.startswith("p4"):
-        assert wrapper["gesture_bubble"] is False
+    assert wrapper["gesture_bubble"] is True
+    assert wrapper["scroll_elastic"] is False
     assert "settings_close" not in text(wrapper)
 
     settings_scripts = [script for script in config.get("script", [])
@@ -256,6 +257,7 @@ def test_round_bootstrap_is_present_in_generated_cpp(tmp_path, scene):
     document["esphome"] = {"build_path": str(tmp_path / "build")}
     unique = tmp_path / ("navigation-" + scene + ".yaml")
     unique.write_text(yaml_util.dump(document))
+    seed_ui_schema_model_cache(tmp_path / "data")
     environment = {**os.environ, "ESPHOME_DATA_DIR": str(tmp_path / "data")}
     result = subprocess.run([sys.executable, "-m", "esphome", "compile", str(unique), "--only-generate"],
                             env=environment, capture_output=True, text=True, timeout=180)
@@ -296,3 +298,21 @@ def test_round_boot_events_execute_against_the_real_runtime_profile(tmp_path):
     assert compiled.returncode == 0, compiled.stderr
     executed = subprocess.run([str(binary)], capture_output=True, text=True)
     assert executed.returncode == 0, executed.stderr
+
+
+@pytest.mark.parametrize("scene", ["spot240", "box360-aec", "p4-landscape", "p4-portrait"])
+def test_options_title_is_part_of_the_full_height_scroll_content(scene):
+    config = expanded_scene(scene, "full")
+    page, controls = page_and_controls(config)
+    wrapper = controls["settings_page_wrapper"]
+    header = controls["settings_page_header"]
+    assert page["widgets"] == [{"obj": wrapper}]
+    assert wrapper["widgets"][0] == {"obj": header}
+    assert wrapper["y"] == 0 and wrapper["height"] == 1.0
+    assert str(wrapper["scrollbar_mode"]).removeprefix("LV_SCROLLBAR_MODE_") == "AUTO"
+    assert header["height"] == "LV_SIZE_CONTENT"
+    assert wrapper["pad_top"] <= (240 if scene == "spot240" else 360 if scene.startswith("box") else 800) // 12
+    if not scene.startswith("p4"):
+        assert header["scroll_chain_ver"] is False
+        assert header["gesture_bubble"] is False
+        assert "round_navigate" in text(header["on_swipe_down"])

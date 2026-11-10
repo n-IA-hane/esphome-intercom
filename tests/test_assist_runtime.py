@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 import importlib.util
 from pathlib import Path
+import socket
 import sys
 import types
 from unittest import mock
@@ -70,10 +71,19 @@ assist_runtime = _load("assist_runtime")
 
 
 class _Reservation:
-    def __init__(self) -> None:
+    """Own optional prebound sockets until the media transport takes them."""
+
+    def __init__(self, *sockets: socket.socket) -> None:
         self.released = False
+        self.sockets = {sock.getsockname()[1]: sock for sock in sockets}
+
+    def take_audio_socket(self, port: int) -> socket.socket | None:
+        return self.sockets.pop(port, None)
 
     def release(self) -> None:
+        for sock in self.sockets.values():
+            sock.close()
+        self.sockets.clear()
         self.released = True
 
 
@@ -444,6 +454,42 @@ def test_concurrent_start_creates_one_transport_and_task_pair() -> None:
         assert session._tx_task is not None
         assert session._consumer_task is not None
         await session.stop()
+
+    asyncio.run(run())
+
+
+def test_prebound_reservation_transfers_socket_once_and_closes_owned_fds() -> None:
+    async def run() -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as bound, socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM
+        ) as unused:
+            bound.bind(("127.0.0.1", 0))
+            unused.bind(("127.0.0.1", 0))
+            bound.setblocking(False)
+            port, fd = bound.getsockname()[1], bound.fileno()
+            session = _session()
+            session.local_rtp_port = port
+            session.reservation = _Reservation(bound, unused)
+
+            async def idle() -> None:
+                await session.closed.wait()
+
+            session._send_loop = idle
+            session.conversation._pipeline_loop = idle
+            try:
+                await session.start()
+                assert session.transport.get_extra_info("socket").fileno() == fd
+                assert session.reservation.take_audio_socket(port) is None
+                assert unused.fileno() != -1
+            finally:
+                await session.stop()
+                await asyncio.sleep(0)
+
+            assert session.reservation.released is True
+            assert bound.fileno() == -1
+            assert unused.fileno() == -1
+            assert session.transport is None
+            assert session._cleanup_done.is_set()
 
     asyncio.run(run())
 

@@ -38,6 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 LOCAL_ROUTE_KIND = "local"
 LOCAL_VIDEO_FORMAT = "VP8/90000"
 LOCAL_AUDIO_FORMAT = HA_SIP_PCM_FORMATS[0]
+LOCAL_RTP_HOST = "127.0.0.1"
 
 
 def local_softphone_bridge(hass: HomeAssistant) -> LocalSoftphoneBridge | None:
@@ -425,6 +426,7 @@ class PendingLocalSource:
     def __init__(
         self, hass: HomeAssistant, snapshot: LocalCallSnapshot | None,
         local_ip: str, sip_port: int, *, call_id: str = "", retained_endpoint_id: str = "",
+        video_peer_format=None,
     ) -> None:
         from .core import sdp, sip
         from .sip_listener import SipInvite
@@ -491,6 +493,16 @@ class PendingLocalSource:
             fmt for fmt in HA_SIP_PCM_FORMATS
             if fmt.channels == 1 and fmt.nominal_frame_bytes <= 1200
         )
+        local_video_offer = None
+        if (video_peer_format is not None and not self.outgoing and not self.established
+                and snapshot.video_enabled and self.video_requested):
+            # A ringing browser has not committed its local VP8 encoder yet.
+            # Prefer the new peer's browser-sendable format (e.g. JPEG RX on
+            # a native display); otherwise the existing relay may transcode VP8.
+            preferred = (video_peer_format if sdp.browser_video_send_supported(video_peer_format)
+                         else sdp.RtpVideoFormat(payload_type=103, encoding="VP8"))
+            local_video_offer = replace(preferred,
+                direction="sendrecv" if self.caller_video_send else "recvonly")
         self.invite = SipInvite(
             source_host=local_ip, source_port=sip_port,
             request_uri=sip.SipUri(callee.sip_uri_user if callee else session.callee, local_ip, sip_port),
@@ -501,9 +513,57 @@ class PendingLocalSource:
             recv_format=sdp.audio_format_to_rtp(rtp_format, 96),
             remote_rtp_host=local_ip, remote_rtp_port=0,
             video_format=(replace(self.previous_client.video_format, direction=self.previous_client.video_direction)
-                          if self.outgoing and self.previous_client.video_format is not None else None),
+                          if self.outgoing and self.previous_client.video_format is not None else local_video_offer),
             remote_video_rtp_host=local_ip if self.video_requested else "",
         )
+
+    def video_rtp_peer(self):
+        """Describe this owner's local browser adapter, not its advertised SIP host."""
+        if self.invite.video_format is None:
+            return None
+        from .sip_bridge import invite_video_rtp_peer
+
+        return replace(invite_video_rtp_peer(self.invite), host=LOCAL_RTP_HOST,
+                       advertised_host=LOCAL_RTP_HOST, signaling_host=LOCAL_RTP_HOST,
+                       rtcp_host=LOCAL_RTP_HOST)
+
+    def prepare_bridge_media(self, relay, video_answer=None) -> dict:
+        """Reserve the existing browser RTP adapter for the negotiated handoff."""
+        from .core import sdp
+        from .media_ports import reserve_sip_video_media
+        from .media_reservation import release_video_media_reservation
+
+        descriptor = {
+            "rtp_loopback": True, "remote_rtp_host": LOCAL_RTP_HOST,
+            "remote_rtp_port": relay.left_port, "send_format": self.invite.recv_format,
+            "recv_format": self.invite.send_format,
+            "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
+            "endpoint_id": self.call.caller_endpoint_id,
+            "media_client_id": self.call.caller_media_owner_id,
+            "video_direction": "inactive",
+        }
+        if video_answer is None or relay.video_relay is None:
+            return descriptor
+        reservation, rtp_socket, rtcp_socket = reserve_sip_video_media(self.hass)
+        descriptor.update(video_rtp_reservation=reservation,
+                          video_rtp_socket=rtp_socket, video_rtcp_socket=rtcp_socket)
+        try:
+            video = relay.video_relay
+            # The same reservation owns the browser socket and its relay peer.
+            video.left.port = reservation.ports[1]
+            video.left.rtcp_port = reservation.ports[1] + 1
+            descriptor.update(
+                invite=replace(self.invite, remote_video_rtp_host=LOCAL_RTP_HOST,
+                    remote_video_rtp_port=video.left_port, remote_video_rtcp_host=LOCAL_RTP_HOST,
+                    remote_video_rtcp_port=video.left_port + 1),
+                local_video_rtp_port=reservation.ports[1],
+                video_direction=sdp.local_direction_for_remote(video_answer.direction),
+                camera_send_authorized=self.caller_video_send,
+            )
+        except BaseException:
+            release_video_media_reservation(descriptor)
+            raise
+        return descriptor
 
     def pause(self) -> None:
         if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
@@ -514,6 +574,28 @@ class PendingLocalSource:
             return
         self._publish_retired_phone(session)
         self.paused = True
+
+    def preserve_answered_local_claims(self) -> None:
+        """A losing pickup cannot retire the authoritative local answer winner."""
+        if self.outgoing or self.committed:
+            return
+        session = self.registry.get_session(self.token.call_id, generation=self.token.generation)
+        current = self.bridge.get_call(self.token.call_id)
+        if (session is None or not session.live or session.owner != "local_bridge"
+                or session.state != "in_call" or current is None
+                or current.caller_state is not LocalCallState.IN_CALL
+                or current.callee_state is not LocalCallState.IN_CALL):
+            return
+        participants = ((current.caller_endpoint_id, "source"), (current.callee_endpoint_id, "destination"))
+        if any((_endpoint(self.hass, endpoint) is None
+                or _endpoint(self.hass, endpoint).active_call_id != session.call_id)
+               for endpoint, _role in participants):
+            return
+        # These claims already belong to the same call in LocalSoftphoneBridge.
+        # Adopt them into the canonical session before its losing picker claim
+        # publishes a change; never manufacture a phone-state correction.
+        for endpoint, role in participants:
+            self.registry.claim_endpoint(session.call_id, endpoint, role=role)
 
     def _publish_retired_phone(self, session) -> None:
         retired = self.call.callee_endpoint_id
@@ -571,14 +653,15 @@ class PendingLocalSource:
             ).encode(),
         )
 
-    def connect_browser(self, endpoint_id: str, media_owner_id: str, *, send_video: bool) -> None:
+    def connect_browser(self, endpoint_id: str, media_owner_id: str, *, send_video: bool,
+                        accept_video: bool = True) -> None:
         """Adopt a selected browser winner without replacing the caller media."""
         if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
             raise RuntimeError("local source ended during forwarding")
         if self.outgoing:
             self.redirect_browser(endpoint_id, request_video=send_video)
             self.bridge.answer(self.token.call_id, endpoint_id, media_owner_id,
-                               enable_video_send=send_video)
+                               enable_video_send=send_video, accept_video=accept_video)
             return
         current = self.bridge.require_call(self.token.call_id)
         if current.callee_state is not LocalCallState.RINGING:
@@ -588,7 +671,7 @@ class PendingLocalSource:
         self.bridge.redirect_ringing(self.token.call_id, endpoint_id)
         self.committed = True
         self.bridge.answer(self.token.call_id, endpoint_id, media_owner_id,
-                           enable_video_send=send_video)
+                           enable_video_send=send_video, accept_video=accept_video)
 
     def redirect_browser(self, endpoint_id: str, *, request_video: bool | None = None) -> None:
         """Continue the actual browser caller through the existing local bridge."""
@@ -722,6 +805,17 @@ class PendingLocalSource:
         peer_id = str(session.metadata.get("dest_endpoint_id") or "")
         peer = _endpoint(self.hass, peer_id)
         source = _endpoint(self.hass, self.call.caller_endpoint_id)
+        media = self.registry.resource_for(self.token.call_id, "softphone_media") or {}
+        video = getattr(media.get("invite"), "video_format", None)
+        video_direction = str(media.get("video_direction") or "inactive")
+        video_fields = {
+            "video_offered": video is not None,
+            "video_active": video is not None and video_direction != "inactive",
+            "video_format": video.wire_token() if video is not None else "",
+            "video_send_format": video.wire_token() if video is not None else "",
+            "video_receive_format": video.wire_token() if video is not None else "",
+            "video_direction": video_direction,
+        } if "video_direction" in media else {}
         session.update_metadata(target_endpoint_id=peer_id, target_device_id=_device_id(peer),
                                 source_device_id=_device_id(source), dest_device_id=_device_id(peer))
         observe_phone_leg_projection(
@@ -734,5 +828,6 @@ class PendingLocalSource:
             selected_tx_rtp_format=self.invite.recv_format.wire_token(),
             selected_rx_rtp_format=self.invite.send_format.wire_token(),
             audio_mode="full_duplex", route_kind=route_kind,
+            **video_fields,
             sip_status_code=200, last_sip_event="ROUTE_FORWARD",
         )

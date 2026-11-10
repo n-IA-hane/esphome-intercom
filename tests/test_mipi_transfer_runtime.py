@@ -46,6 +46,7 @@ struct MipiDsi {
  Semaphore *io_lock_=&completion,*submit_mutex_=&owner;bool failed=false;
  bool is_failed(){return failed;}void smark_failed(const char*,int){failed=true;}
  bool submit_bitmap_(int,int,int,int,const uint8_t*);
+ bool submit_bitmap_locked_(int,int,int,int,const uint8_t*);
 };
 ''' + method + r'''
 int main(){

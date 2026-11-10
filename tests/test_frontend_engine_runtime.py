@@ -75,22 +75,17 @@ const sessionModel = await import(pathToFileURL({json.dumps(str(SESSION_MODEL))}
 
 let source = fs.readFileSync({json.dumps(str(ENGINE))}, "utf8");
 source = source.replace(
-  /const \{{ RINGTONE_REPEAT_MS, playVoipRingtone \}} =\s*await import\([^;]+;/,
-  "const RINGTONE_REPEAT_MS = 4000; const playVoipRingtone = () => {{}};",
+  /import\(`\.\/ringtone\.js[^`]+`\)/,
+  "Promise.resolve({{ RINGTONE_REPEAT_MS: 4000, playVoipRingtone: () => {{}} }})",
 ).replace(
-  /const \{{\s*desiredAudioPaths[\s\S]*?\}} = await import\(`\.\/voip-stack-media-model\.js[^;]+;/,
-  `const {{
-    desiredAudioPaths, normaliseAudioDirection, normaliseAudioMode,
-    parsePcmFormat, resolveSessionFormats, sameAudioFormat,
-  }} = globalThis.__mediaModel;`,
+  /import\(`\.\/voip-stack-media-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__mediaModel)",
 ).replace(
-  /const \{{\s*normaliseSoftphoneSelector[\s\S]*?\}} = await import\(`\.\/voip-stack-session-model\.js[^;]+;/,
-  `const {{
-      normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches,
-    }} = globalThis.__sessionModel;`,
+  /import\(`\.\/voip-stack-session-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__sessionModel)",
 ).replace(
-  /const \{{ BrowserMediaDevices, exactDeviceConstraint \}} = await import\([\s\S]*?\);/,
-  "const {{ BrowserMediaDevices, exactDeviceConstraint }} = globalThis.__deviceModel;",
+  /import\(`\.\/voip-stack-media-devices\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__deviceModel)",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();
@@ -431,7 +426,8 @@ const signedPaths = [];
 const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
-session.set("voip_stack_media_client_id", "copied-session-token-1234");
+context.performance = {{ getEntriesByType: () => [{{type:"reload"}}] }};
+session.set("voip_stack_media_client_id", "media2-copied-session-token-1234");
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
@@ -442,7 +438,7 @@ signedB.configure(signingHass);
 await signedB._wsUrl("device", "signed-call", "phone");
 assert.ok(signedA._mediaClientId.length >= 16);
 assert.equal(signedA._mediaClientId, signedB._mediaClientId);
-assert.equal(signedA._mediaClientId, "copied-session-token-1234");
+assert.equal(signedA._mediaClientId, "media2-copied-session-token-1234");
 assert.equal(
   new URL(`https://ha.example${{signedPaths[0]}}`).searchParams.get("client_id"),
   signedA._mediaClientId,
@@ -480,6 +476,84 @@ isolated._onSoftphoneState({{ call_id: "D", state: "ringing" }}, {{ endpoint_id:
 assert.deepEqual(kitchenStates, ["K"]);
 assert.deepEqual(kitchenDeviceStates, ["K"]);
 assert.deepEqual(defaultStates, []);
+
+// Two browsers observe the same phone. The passive PC misses hangup while
+// disconnected; HA's endpoint subscription resumes without an initial event
+// (websocket_subscribe_ha_softphone_state only sends its subscription ACK).
+// A ready event must reconcile that observer from the authoritative query.
+{{
+  const observers = [new Engine(), new Engine()];
+  const state = {{endpoint_id:"browser:casa",device_id:"device-casa",call_id:"user-call-A",
+    state:"in_call",sequence:10,revision:12,send_video:true}};
+  const seen = [[], []];
+  const connections = observers.map((observer,index) => {{
+    const listeners = new Map();
+    const connection = {{
+      requests:0,activeSubscriptions:0,
+      addEventListener(name, callback) {{ listeners.set(name,callback); }},
+      removeEventListener(name) {{ listeners.delete(name); }},
+      subscribeMessage: async (callback, _request) => {{
+        connection.requests++; connection.activeSubscriptions++;
+        connection.softphoneCallback=callback;
+        return () => {{connection.activeSubscriptions--;}};
+      }},
+    }};
+    observer.configure({{connection,callWS:async request => {{
+      assert.equal(request.type,"voip_stack/ha_softphone_state");
+      assert.equal(request.device_id,"device-casa");
+      return {{...state}};
+    }}}});
+    const release=observer.subscribeSoftphoneState(value => seen[index].push(value),{{device_id:"device-casa"}});
+    return {{connection,listeners,release}};
+  }});
+  await new Promise(resolve => setImmediate(resolve));
+  for (const observer of observers) observer._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
+  connections[1].listeners.get("disconnected")();
+  Object.assign(state,{{state:"idle",sequence:11,revision:13,terminal_reason:"local_hangup"}});
+  observers[0]._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
+  assert.equal(seen[0].at(-1).state,"idle");
+  assert.equal(seen[1].at(-1).state,"in_call");
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(seen[1].at(-1).state,"idle","reconnected passive PC must not need F5 after another browser hangs up");
+  assert.equal(seen[1].at(-1).call_id,"user-call-A");
+
+  // Duplicate ready while the fresh query waits must share the subscription.
+  let resolveOld;
+  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  const requests=connections[1].connection.requests;
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(connections[1].connection.requests,requests);
+  assert.equal(connections[1].connection.activeSubscriptions,1);
+  connections[1].connection.softphoneCallback({{...state,state:"in_call",call_id:"new-call-B",sequence:1,revision:1}});
+  resolveOld({{...state,state:"idle"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].at(-1).call_id,"new-call-B","late read cannot replace a newer pushed call");
+
+  // Unmount cancels a pending read; neither it nor an old callback may reach
+  // a newly selected phone after the old endpoint subscription is released.
+  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  const oldCallback=connections[1].connection.softphoneCallback;
+  connections[1].release();
+  const seenCount=seen[1].length;
+  const otherSeen=[];
+  observers[1]._hass.callWS=async()=>({{endpoint_id:"browser:other",device_id:"other-device",state:"idle",call_id:""}});
+  const releaseOther=observers[1].subscribeSoftphoneState(value=>otherSeen.push(value),{{device_id:"other-device"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  resolveOld({{...state,state:"in_call"}});
+  oldCallback({{...state,state:"in_call"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].length,seenCount);
+  assert.equal(otherSeen.length,1);
+  assert.equal(otherSeen[0].device_id,"other-device");
+  releaseOther();connections[0].release();
+  assert.equal(connections[1].connection.activeSubscriptions,0);
+}}
 
 // Browser media claims and UI controllers are endpoint-local. Two logical
 // phones can therefore coexist without one endpoint releasing the other.
@@ -701,20 +775,29 @@ const services = [];
 const ownershipErrors = [];
 ownership._hass = {{ callService: async (...args) => services.push(args) }};
 ownership._connect = async () => {{ throw new Error("HTTP 409 owner conflict"); }};
-ownership.close = async () => {{}};
+let releaseOwnershipClose, enteredOwnershipClose;
+const ownershipCloseEntered = new Promise(resolve => {{ enteredOwnershipClose = resolve; }});
+ownership.close = () => {{
+  enteredOwnershipClose();
+  return new Promise(resolve => {{ releaseOwnershipClose = resolve; }});
+}};
 ownership._setState = () => {{}};
 ownership.addEventListener("error", (event) => ownershipErrors.push(event.detail));
 ownership.claimSoftphoneSession("call-A", "default");
-assert.equal(
-      await ownership._setupAudioOrAbort(
+let ownershipSetupFinished = false;
+const ownershipSetup = ownership._setupAudioOrAbort(
         "phone-device",
         {{ device_id: "phone-device" }},
         {{ call_id: "call-A" }},
         "",
         "default",
-  ),
-  false,
-);
+  ).then(result => {{ ownershipSetupFinished = true; return result; }});
+await ownershipCloseEntered;
+await Promise.resolve();
+assert.equal(ownershipSetupFinished, false, "Setup must await its media cleanup barrier");
+releaseOwnershipClose();
+assert.equal(await ownershipSetup, false);
+ownership.close = async () => {{}};
 assert.deepEqual(services, []);
 assert.equal(ownership.ownsSoftphoneSession("call-A", "default"), false);
 assert.equal(ownership._state, "IDLE");
@@ -760,6 +843,31 @@ assert.equal(
 assert.equal(spectatorConnects, 0);
 assert.deepEqual(spectatorErrors, []);
 assert.equal(spectator.ownsSoftphoneSession("spectator-call", "test"), false);
+
+// A global Send Camera preference does not turn a passive shared-phone view
+// into a camera owner. Exercise the full resume path before the video boundary.
+const savedCameraInput=context.navigator.mediaDevices.getUserMedia;
+let sharedCameraRequests=0, sharedVideoLoads=0;
+context.navigator.mediaDevices.getUserMedia=async options=>{{
+  assert.equal(options.video,true);sharedCameraRequests++;
+  return {{getTracks:()=>[{{stop(){{}}}}]}};
+}};
+const sharedVideo=()=>({{active:false,callId:"",async start(payload){{
+  if(payload.send_video)await context.navigator.mediaDevices.getUserMedia({{video:true,audio:false}});
+}},async close(){{}}}});
+spectator._loadVideo=async()=>{{sharedVideoLoads++;return sharedVideo();}};
+await spectator.resumeSession({{endpoint_id:"test"}},"test-device",{{
+  endpoint_id:"test",call_id:"spectator-call",state:"in_call",video_active:true,send_video:true,
+}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(sharedVideoLoads,0);
+assert.equal(sharedCameraRequests,0,"passive PC must not request camera for another browser's call");
+const actualVideoOwner=new Engine();
+actualVideoOwner._callId="spectator-call";actualVideoOwner._endpointId="test";
+actualVideoOwner._loadVideo=async()=>sharedVideo();
+await actualVideoOwner._ensureVideo({{endpoint_id:"test",call_id:"spectator-call",video_active:true,send_video:true}});
+assert.equal(sharedCameraRequests,1,"the established owner alone starts its video source");
+context.navigator.mediaDevices.getUserMedia=savedCameraInput;
 
 // A media attach racing the terminal state is also expected: after BYE there
 // is no call left to attach and therefore no user-facing media error.
@@ -1336,6 +1444,305 @@ assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20
 assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
 assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
 await asymmetric.close("test-complete");
+// A Dashboard query can return a cached idle before the new INVITE commits.
+// Only a terminal observation of the exact owned dialog may release its media.
+const cleanupSessionBackup = new Map(session);
+const dashboardCleanup = new Engine();
+const cleanupOwner = {{device_id:"cleanup-device",endpoint_id:"cleanup",softphone:true}};
+dashboardCleanup.claimSoftphoneSession("new-dialog","cleanup");
+const dashboardReleases=[];
+dashboardCleanup._releaseTerminalMedia=async(callId,endpointId)=>dashboardReleases.push([callId,endpointId]);
+for(const snapshot of [
+ {{endpoint_id:"cleanup",state:"idle",call_id:""}},
+ {{endpoint_id:"cleanup",state:"ended",call_id:"old-dialog"}},
+ {{endpoint_id:"other",state:"ended",call_id:"new-dialog"}},
+ {{endpoint_id:"cleanup",state:"unexpected",call_id:"new-dialog"}},
+]) await dashboardCleanup.dashboardSyncOwner(cleanupOwner,snapshot);
+assert.equal(dashboardReleases.length,0);
+await dashboardCleanup.dashboardSyncOwner(cleanupOwner,{{endpoint_id:"cleanup",state:"ended",call_id:"new-dialog"}});
+assert.deepEqual(dashboardReleases,[["new-dialog","cleanup"]]);
+dashboardCleanup.releaseSoftphoneSession("new-dialog","cleanup");
+session.clear();for(const [key,value] of cleanupSessionBackup)session.set(key,value);
+
+// An operator view is passive and shares one subscription between cards.
+const dashboard = new Engine();
+const observers = [];
+let monitorUnsubscribed = 0;
+let monitorBusRequests=0, monitorBusStops=0;
+const monitorConnection = {{
+  subscribeMessage: async (listener, request) => {{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      monitorBusRequests++;
+      assert.equal(request.include_runtime_ready,true);
+      return()=>{{monitorBusStops++;}};
+    }}
+    observers.push({{listener, request}});
+    return () => {{monitorUnsubscribed++;}};
+  }},
+}};
+dashboard.configure({{connection: monitorConnection}});
+const firstMonitorEvents = [], secondMonitorEvents = [];
+const releaseMonitor = dashboard.subscribePhoneStates(event => firstMonitorEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length, 1);
+assert.equal(observers[0].request.type, "voip_stack/subscribe_phone_states");
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",device_id:"desk-device",state:"idle",availability:"available"}}]}});
+assert.equal(dashboard.phoneStateFor("desk").availability,"available");
+assert.equal(dashboard.phoneStateFor("","desk-device").state,"idle");
+assert.equal(dashboard.phoneStateFor("absent","absent"),null);
+const releaseSecondMonitor = dashboard.subscribePhoneStates(event => secondMonitorEvents.push(event));
+assert.equal(secondMonitorEvents[0].phones[0].state,"idle");
+assert.equal(observers.length,1);
+assert.equal(monitorBusRequests,1);
+observers[0].listener({{kind:"delta",revision:1,phones:[{{endpoint_id:"desk",state:"ringing"}}],removed:[]}});
+observers[0].listener({{kind:"delta",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}],removed:[]}});
+assert.equal(secondMonitorEvents.at(-1).phones[0].state,"ringing");
+// A server reconnect starts a new revision stream, even on the same HA socket object.
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",state:"in_call"}}]}});
+assert.equal(dashboard._phoneStates.get("desk").state,"in_call");
+observers[0].listener({{kind:"delta",revision:1,phones:[],removed:["desk"]}});
+assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard.phoneStateFor("desk","desk-device"),null);
+releaseMonitor();
+assert.equal(monitorUnsubscribed,0);
+releaseSecondMonitor();
+assert.equal(monitorUnsubscribed,1);
+assert.equal(monitorBusStops,1);
+assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard._softphoneScopeSubscriptions.size,0);
+
+// Losing a delta requires a new full snapshot; the old callback cannot revive state.
+const reconnectEvents=[];
+const releaseReconnecting=dashboard.subscribePhoneStates(event=>reconnectEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+observers[1].listener({{kind:"snapshot",revision:0,phones:[]}});
+observers[1].listener({{kind:"delta",revision:2,phones:[{{endpoint_id:"stale"}}]}});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length,3);
+assert.equal(reconnectEvents.at(-1).kind,"reset");
+observers[1].listener({{kind:"snapshot",revision:9,phones:[{{endpoint_id:"stale"}}]}});
+assert.equal(dashboard._phoneStates.size,0);
+observers[2].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"fresh",state:"idle"}}]}});
+assert.equal(dashboard._phoneStates.has("fresh"),true);
+releaseReconnecting();
+
+// Runtime unload does not close HA's socket. One shared, nonsensitive HA
+// lifecycle listener must recover all cards with a new revision stream.
+const {{DashboardPhoneStore,dashboardCanCall,ownerDeviceInfo}} = await import(
+  pathToFileURL({json.dumps(str(ROOT / 'custom_components/voip_stack/frontend/voip-stack-dashboard-model.js'))})
+);
+const runtimeDashboard=new Engine();
+const runtimeObservers=[], lifecycleObservers=[];
+let lifecycleReleased=0, runtimeReleased=0;
+const runtimeConnection={{
+  subscribeEvents:()=>{{throw new Error("Generic custom events require HA admin");}},
+  subscribeMessage:async(listener,request)=>{{
+    if(request.type==="voip_stack/subscribe_call_events"){{
+      lifecycleObservers.push({{listener,request}});
+      return()=>{{lifecycleReleased++;}};
+    }}
+    runtimeObservers.push({{listener,request}});
+    return()=>{{runtimeReleased++;}};
+  }},
+}};
+runtimeDashboard.configure({{connection:runtimeConnection}});
+const firstStore=new DashboardPhoneStore(), secondStore=new DashboardPhoneStore();
+const selectedDevice="desk-device";
+const releaseRuntimeOne=runtimeDashboard.subscribePhoneStates(event=>firstStore.apply(event));
+const releaseRuntimeTwo=runtimeDashboard.subscribePhoneStates(event=>secondStore.apply(event));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,1);
+assert.equal(lifecycleObservers.length,1);
+assert.equal(lifecycleObservers[0].request.include_runtime_ready,true);
+const freshPhone={{endpoint_id:"desk",device_id:selectedDevice,kind:"browser",state:"idle",availability:"available"}};
+runtimeObservers[0].listener({{kind:"snapshot",revision:12,phones:[freshPhone]}});
+runtimeObservers[0].listener({{kind:"closed",reason:"runtime_unloaded"}});
+assert.equal(firstStore.ready,false);
+assert.equal(secondStore.phones.size,0);
+assert.equal(runtimeDashboard._phoneStateUnsub,null);
+assert.equal(runtimeReleased,1);
+runtimeObservers[0].listener({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(firstStore.phones.size,0);
+// Readiness must refresh even when the old subscription never rejected.
+runtimeDashboard._phoneStateFailed=false;
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2);
+runtimeObservers[1].listener({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(firstStore.ready,true);
+assert.equal(secondStore.revision,1);
+const owner=ownerDeviceInfo([freshPhone],firstStore.phones,selectedDevice);
+assert.equal(owner.device_id,selectedDevice);
+assert.equal(dashboardCanCall(owner,{{kind:"contact",name:"Support",state:"unknown"}},firstStore.ready),true);
+assert.equal(runtimeDashboard._softphoneScopeSubscriptions.size,0);
+runtimeObservers[1].listener({{kind:"closed",reason:"permissions_revoked"}});
+assert.equal(firstStore.phones.size,0);
+assert.equal(secondStore.ready,false);
+assert.equal(lifecycleReleased,1);
+runtimeDashboard.configure({{connection:runtimeConnection}});
+lifecycleObservers[0].listener({{event_type:"voip_stack.runtime_ready",data:{{}}}});
+runtimeDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(runtimeObservers.length,2,"revoked access must not enter a retry loop");
+releaseRuntimeOne();releaseRuntimeTwo();
+assert.equal(lifecycleReleased,1);
+
+// A late bus rejection must not schedule retries after access was revoked.
+const revokedPending=new Engine();
+let rejectRevokedBus, revokedPhoneListener;
+revokedPending.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return new Promise((_resolve,reject)=>{{rejectRevokedBus=reject;}});
+  revokedPhoneListener=listener;
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releaseRevokedPending=revokedPending.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+revokedPhoneListener({{kind:"closed",reason:"permissions_revoked"}});
+rejectRevokedBus(new Error("access revoked before subscription acknowledgement"));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(revokedPending._busSubscribeRetryTimer,null);
+releaseRevokedPending();
+
+// A subscription acknowledgement arriving after unload must be retired,
+// without clearing or replacing the new generation's pending request.
+const pendingDashboard=new Engine(), pendingObservers=[];
+let acknowledgeOld, oldReleased=0;
+pendingDashboard.configure({{connection:{{subscribeMessage:(listener,request)=>{{
+  if(request.type==="voip_stack/subscribe_call_events")return Promise.resolve(()=>{{}});
+  pendingObservers.push(listener);
+  if(pendingObservers.length===1)return new Promise(resolve=>{{acknowledgeOld=resolve;}});
+  return Promise.resolve(()=>{{}});
+}}}}}});
+const releasePendingDashboard=pendingDashboard.subscribePhoneStates(()=>{{}});
+await new Promise(resolve=>setImmediate(resolve));
+pendingObservers[0]({{kind:"closed",reason:"runtime_unloaded"}});
+pendingDashboard._phoneStateReady();
+await new Promise(resolve=>setImmediate(resolve));
+acknowledgeOld(()=>{{oldReleased++;}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(oldReleased,1);
+assert.equal(pendingObservers.length,2);
+pendingObservers[0]({{kind:"snapshot",revision:99,phones:[{{endpoint_id:"retired"}}]}});
+assert.equal(pendingDashboard._phoneStates.size,0);
+pendingObservers[1]({{kind:"snapshot",revision:1,phones:[freshPhone]}});
+assert.equal(pendingDashboard._phoneStates.has("desk"),true);
+releasePendingDashboard();
+
+// Removing the final card must preserve the presence lease of its active call.
+const ownedView = new Engine();
+let viewUnsubscribe=0;
+ownedView._busConnection={{subscribeMessage:async()=>()=>{{viewUnsubscribe++;}}}};
+const releaseView=ownedView.subscribeSoftphoneState(()=>{{}},{{endpoint_id:"desk"}});
+await new Promise(resolve => setImmediate(resolve));
+ownedView.claimSoftphoneSession("view-call","desk");
+releaseView();
+assert.equal(viewUnsubscribe,0);
+assert.equal(ownedView.softphoneCallIdFor("desk"),"view-call");
+ownedView.releaseSoftphoneSession("view-call","desk");
+assert.equal(viewUnsubscribe,1);
+assert.equal(ownedView._softphoneScopeSubscriptions.size,0);
+
+// Permission preflight may take time: never answer the next caller by accident.
+const guarded = new Engine();
+const guardedOwner={{device_id:"desk-device",endpoint_id:"desk",softphone:true}};
+let guardedState={{endpoint_id:"desk",call_id:"incoming-A",state:"ringing"}};
+let guardedCommands=0;
+guarded._hass={{callWS:async()=>guardedState,callService:async()=>{{guardedCommands++;}}}};
+guarded.prepareAudioCall=async()=>{{guardedState={{endpoint_id:"desk",call_id:"incoming-B",state:"ringing"}};}};
+await assert.rejects(guarded.dashboardAnswer(guardedOwner,{{call_id:"incoming-A"}}),/no longer ringing/);
+assert.equal(guardedCommands,0);
+assert.equal(guarded.softphoneCallIdFor("desk"),"");
+assert.equal(guarded._dashboardOperations.size,0);
+assert.equal(guarded._mediaIntent,null);
+
+// A callee can answer before the originate service returns to the browser.
+const immediate = new Engine();
+const immediateOwner={{device_id:"fast-device",endpoint_id:"fast",softphone:true}};
+let immediateResumes=0;
+immediate._hass={{callWS:async()=>({{endpoint_id:"fast",device_id:"fast-device",state:"idle"}})}};
+immediate.prepareAudioCall=async()=>{{}};
+immediate.resumeSession=async()=>{{immediateResumes++;}};
+immediate.startHaSoftphone=async()=>{{
+  immediate.claimSoftphoneSession("fast-call","fast");
+  immediate._onSoftphoneState({{endpoint_id:"fast",device_id:"fast-device",state:"in_call",call_id:"fast-call"}});
+  return {{state:"calling",call_id:"fast-call"}};
+}};
+await immediate.dashboardStartCall(immediateOwner,{{extension:"101"}});
+assert.equal(immediateResumes,1,"A committed answer must attach media after the command gate releases");
+
+// ShadowNameVsExtension: named tiles always reach the central PBX resolver by name.
+// Exercise the real dashboard and originate methods, including their wire payload.
+const namedSessionBackup=new Map(session);
+for (const browser of [false,true]) {{
+  for (const [target,expected] of [
+    [{{name:" Shadow destination ",extension:"101",number:"202"}},"Shadow destination"],
+    [{{name:"Saved contact",number:"+12025550123"}},"Saved contact"],
+    [{{name:"101",extension:"202"}},"101"],
+    [{{name:"  ",extension:"101"}},"101"],
+    [{{extension:" ",number:"202"}},"202"],
+  ]) {{
+    session.clear();
+    const named=new Engine();const sent=[];
+    const who={{device_id:"named-device",endpoint_id:"named",softphone:browser}};
+    named._phoneStates.set("named",{{state:"idle",calls:[]}});
+    named.prepareAudioCall=async()=>{{}};
+    named._hass={{callWS:async request=>{{
+      if(request.type==="call_service")sent.push(request.service_data);
+      return {{endpoint_id:"named",device_id:"named-device",state:"idle"}};
+    }},callService:async(domain,service,data)=>{{sent.push(data);return {{}};}}}};
+    await named.dashboardStartCall(who,target);
+    assert.equal(sent.length,1);
+    assert.equal(sent[0].destination,expected,`ShadowNameVsExtension browser=${{browser}}`);
+    assert.equal(sent[0].device_id,"named-device");
+  }}
+}}
+session.clear();
+const manualDial=new Engine();let manualRequest;
+manualDial._hass={{callWS:async request=>{{manualRequest=request;return {{state:"idle",device_id:"manual-device",endpoint_id:"manual"}};}}}};
+await manualDial.startHaSoftphone({{name:"101",manual:true}},{{device_id:"manual-device",endpoint_id:"manual"}},{{callee:"101"}});
+assert.equal(manualRequest.service_data.destination,"101","Explicit keypad numbers retain their own meaning");
+session.clear();for(const [key,value] of namedSessionBackup)session.set(key,value);
+
+// A retained backend scope must also consume an answer after the last view
+// unmounts. Keeping browser presence alone does not attach the call's audio.
+const unmounted = new Engine();
+let unmountedResumes = 0;
+const releaseUnmounted = unmounted.subscribeSoftphoneState(() => {{}}, {{device_id:"unmounted-device"}});
+unmounted._lastSoftphoneStates.set("endpoint:unmounted-desk", {{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"calling",call_id:"unmounted-call",
+}});
+unmounted.claimSoftphoneSession("unmounted-call","unmounted-desk");
+unmounted.resumeSession = async (owner, deviceId, state) => {{
+  assert.equal(owner.endpoint_id,"unmounted-desk");
+  assert.equal(deviceId,"unmounted-device");
+  assert.equal(state.call_id,"unmounted-call");
+  unmountedResumes++;
+}};
+releaseUnmounted();
+assert.equal(unmounted._softphoneSubscribers.size,0);
+assert.equal(unmounted._softphoneScopeSubscriptions.size,1);
+unmounted._onSoftphoneState({{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"in_call",call_id:"unmounted-call",
+}}, {{device_id:"unmounted-device"}});
+await new Promise(resolve => setTimeout(resolve,0));
+assert.equal(unmountedResumes,1,"An answer after dashboard unmount must attach media exactly once");
+
+// A live phone card remains first to supply its microphone filtering choice.
+const preferred = new Engine();
+preferred.claimSoftphoneSession("preferred-call","preferred-desk");
+const preferredAttachments=[];
+preferred.resumeSession=async(owner)=>{{preferredAttachments.push(owner.microphone_anti_alias);}};
+const releasePreferred=preferred.subscribeSoftphoneState((snapshot)=>{{
+  void preferred.resumeSession({{microphone_anti_alias:false}},"preferred-device",snapshot);
+}},{{device_id:"preferred-device"}});
+storage.set("voip_microphone_anti_alias_preferred-device","false");
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false]);
+releasePreferred();
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false,false],"An unmounted phone keeps its saved filtering preference");
 """
     completed = subprocess.run(
         [
@@ -1364,6 +1771,15 @@ const model = await import(pathToFileURL({json.dumps(str(MEDIA_MODEL))}));
 assert.deepEqual(model.parsePcmFormat("48000:s16le:2:20"), {{
   sampleRate: 48000, pcmFormat: "s16le", channels: 2, frameMs: 20,
 }});
+for (const frameMs of [2.5, 15, 32, 40]) {{
+  assert.deepEqual(model.parsePcmFormat(`48000:s16le:1:${{frameMs}}`), {{
+    sampleRate: 48000, pcmFormat: "s16le", channels: 1, frameMs,
+  }});
+}}
+assert.equal(model.parsePcmFormat("22050:s24le:2:20").sampleRate, 22050);
+for (const token of ["192001:s16le:1:20", "0:s16le:1:20", "16000.5:s16le:1:20", "48000:s16le:1:1001", "48000:s16le:1:0", "48000:s16le:1:NaN"]) {{
+  assert.throws(() => model.parsePcmFormat(token));
+}}
 assert.throws(() => model.parsePcmFormat("48000:f32le:2:20"), /unsupported PCM/);
 assert.throws(() => model.parsePcmFormat("44100:s16le:2:16"), /whole PCM frames/);
 assert.deepEqual(model.resolveSessionFormats({{

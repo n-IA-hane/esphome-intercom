@@ -1,5 +1,7 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
-const FRAME_MS = Object.freeze([10, 16, 20, 32]);
+const MAX_SAMPLE_RATE = 192000;
+const MAX_FRAME_MS = 1000;
+const MAX_PCM_FRAME_BYTES = MAX_SAMPLE_RATE * 2 * 4;
 const BUFFER_CAPACITY_SECONDS = 1.28;
 const MIN_START_LATENCY_MS = 80;
 const MAX_START_LATENCY_MS = 320;
@@ -17,17 +19,20 @@ function normaliseFormat(value) {
     throw new Error("playback worklet PCM format has invalid numeric fields");
   }
   if (!PCM_FORMATS.includes(pcmFormat)) throw new Error(`playback worklet unsupported PCM format ${pcmFormat}`);
+  if (!Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > MAX_SAMPLE_RATE) throw new Error(`playback worklet unsupported sample_rate ${sampleRate}`);
   if (![1, 2].includes(channels)) throw new Error(`playback worklet unsupported channel count ${channels}`);
-  if (!FRAME_MS.includes(frameMs)) throw new Error(`playback worklet unsupported frame_ms ${frameMs}`);
-  if ((sampleRate * frameMs) % 1000 !== 0) throw new Error("playback worklet PCM format does not form whole frames");
+  if (frameMs <= 0 || frameMs > MAX_FRAME_MS) throw new Error(`playback worklet unsupported frame_ms ${frameMs}`);
+  const frameSamples = sampleRate * frameMs / 1000;
+  if (!Number.isSafeInteger(frameSamples) || frameSamples < 1) throw new Error("playback worklet PCM format does not form whole frames");
   const bytesPerSample = pcmFormat === "s16le" ? 2 : pcmFormat === "s24le" ? 3 : 4;
+  if (frameSamples * channels * bytesPerSample > MAX_PCM_FRAME_BYTES) throw new Error("playback worklet PCM frame exceeds local byte budget");
   return {
     sampleRate,
     frameMs,
     channels,
     pcmFormat,
     bytesPerSample,
-    frameSamples: Math.floor((sampleRate * frameMs) / 1000),
+    frameSamples,
   };
 }
 
@@ -36,11 +41,13 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     super();
     this._format = normaliseFormat(options?.processorOptions?.format);
     this._contextFrameSamples = Math.max(1, Math.round(this._format.frameSamples * sampleRate / this._format.sampleRate));
+    this._resamplePosition = 0;
     this._capacityFrames = Math.max(8, Math.ceil((BUFFER_CAPACITY_SECONDS * 1000) / this._format.frameMs));
     this._minStartFrames = Math.max(2, Math.ceil(MIN_START_LATENCY_MS / this._format.frameMs));
     this._maxStartFrames = Math.max(this._minStartFrames, Math.ceil(MAX_START_LATENCY_MS / this._format.frameMs));
     this._dropFrames = this._maxStartFrames + 1;
-    this._ring = new Float32Array(this._contextFrameSamples * this._format.channels * this._capacityFrames);
+    const maximumContextSamples = Math.ceil(this._format.frameSamples * sampleRate / this._format.sampleRate);
+    this._ring = new Float32Array(maximumContextSamples * this._format.channels * this._capacityFrames);
     this._read = 0;
     this._write = 0;
     this._available = 0;
@@ -104,6 +111,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     if (this._remoteSilenceResume) {
       this._lastArrivalTime = 0;
       this._hasPreviousInput = false;
+      this._resamplePosition = 0;
       this._historyFrames = 0;
       this._scaleOffset = 0;
     }
@@ -133,8 +141,16 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       }
       this._hasPreviousInput = true;
     }
-    for (let i = 0; i < this._contextFrameSamples; i++) {
-      const srcPos = i * this._format.frameSamples / this._contextFrameSamples;
+    // Retain the next source position in integer AudioContext clock units.
+    // The remainder stays below the wire rate, including fractional output
+    // counts such as 661/662 samples for 24 kHz/15 ms at 44.1 kHz.
+    const frameNumerator = this._format.frameSamples * sampleRate;
+    const integral = frameNumerator % this._format.sampleRate === 0;
+    const outputSamples = Math.ceil((frameNumerator - this._resamplePosition) / this._format.sampleRate);
+    for (let i = 0; i < outputSamples; i++) {
+      const srcPos = integral
+        ? i * this._format.frameSamples / this._contextFrameSamples
+        : (this._resamplePosition + i * this._format.sampleRate) / sampleRate;
       const base = Math.floor(srcPos);
       const frac = srcPos - base;
       for (let ch = 0; ch < this._format.channels; ch++) {
@@ -152,7 +168,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         (this._format.frameSamples - 1) * this._format.channels + ch,
       );
     }
-    this._available += this._contextFrameSamples * this._format.channels;
+    this._resamplePosition += outputSamples * this._format.sampleRate - frameNumerator;
+    this._available += outputSamples * this._format.channels;
     this._framesIn++;
     // Recovery needs enough samples for the existing time-scale operation,
     // not a second wait for the full adaptive startup target.

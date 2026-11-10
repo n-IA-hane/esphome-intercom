@@ -85,6 +85,7 @@ class SipTrunkConfig:
     audio_codecs: tuple[str, ...] | None = None
     video_codecs: tuple[str, ...] | None = None
     outbound_media_address: str = ""
+    media_nat_mode: str = ""
 
 
 class SipTrunkClient:

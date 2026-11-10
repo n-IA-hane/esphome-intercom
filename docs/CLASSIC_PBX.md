@@ -4,14 +4,25 @@ A normal SIP desk phone or softphone can call an ESP through a conventional
 PBX. The ESP can call back through the same PBX when the dialplan permits it.
 Baresip below is a reproducible test client, not a required part of the system.
 
+The current preview supports optional REGISTER with a PBX account and Digest
+authentication. PCM is the default; optional G.722 provides a common wideband
+format when declared on the ESP and permitted by the PBX. See
+[registered accounts](ESP_REGISTRATION.md) and
+[audio codecs](ESP_AUDIO_CODECS.md#add-g722-for-a-conventional-pbx).
+
+The worked examples below describe legacy static SIP peers with explicit
+L16 PCM. Their fixed contacts and PBX settings for PCM apply to those
+examples. Use the selected release's coordinated sources; each route requires
+compatible signaling and media settings.
+
 ```text
 SIP phone or softphone <--> Asterisk / FreeSWITCH <--> ESP extension 1001
       registered                 routing               fixed IP
 ```
 
-An ESP running `voip_stack` can be a local SIP phone for Asterisk or another PBX
-that supports static SIP peers. The PBX knows the ESP's address from its
-configuration; the ESP does not send REGISTER or need a SIP username/password.
+In the static setup, the PBX knows the ESP's address from its configuration.
+It sends no REGISTER and needs no SIP credentials. An active registered call
+retains its selected line.
 
 You can use this alongside the device's ESPHome and Assist features. The PBX
 handles telephone routing; Home Assistant can continue providing the device's
@@ -67,7 +78,8 @@ match=192.168.1.60/32
 The AOR supplies the ESP's static destination. `identify` matches incoming
 requests from that ESP to the endpoint and its dialplan context. There is no
 `auth`, `outbound_auth` or `registration` section for this peer. A password
-challenge would fail because the ESP component does not implement SIP Digest.
+challenge has no configured credentials in this static example. Configure a
+registered account when the PBX requires Digest authentication.
 
 `direct_media=no` keeps Asterisk in the audio path, allowing it to bridge or
 transcode to other phones without moving the ESP's media with a re-INVITE.
@@ -222,8 +234,11 @@ These are **ESPHome actions**, not HA service YAML. Merge them into an existing
 `use_ha_as_first_contact: false` only changes the initial contact selection; it
 does not disable the HA-managed phonebook.
 
-For an ESP whose telephone contacts are configured entirely in firmware, add
-`ha_integration: false` to `voip_stack:`. The ordinary ESPHome API and Assist
+For an ESP whose telephone contacts are configured entirely in firmware,
+remove the managed `directory` feature from the current profile's feature list.
+Remove `blf`/`mwi` too if their HA account is not needed; manual-account services
+can instead be configured explicitly. Add `ha_integration: false` to
+`voip_stack:` to omit the native HA phone adapter. The ordinary ESPHome API and Assist
 can still be used independently. This disables VoIP Stack's automatic HA phone
 entities and roster reception, so adapt any board UI that explicitly depends
 on those entities before choosing this mode.
@@ -233,8 +248,10 @@ leave its HA integration enabled and put the PBX destinations in HA's managed
 phonebook as direct SIP contacts. Set the contact ID to the PBX destination
 (for example `6002`), Address to `192.168.1.20`, SIP port to `5060`, Transport to
 UDP, and leave **Bridge via HA** disabled. You may give it a friendly name such
-as Office. A SIP URI alone does not supply the direct address to the ESP's
-phonebook. This avoids competing firmware and HA definitions for one contact.
+as Office. These explicit fields describe the legacy JSON/direct-address setup. The
+current LDAP provider can also map a standard labeled SIP URI to its user,
+host, port and transport; use the actual directory record and selected line
+when deciding whether the call is direct or HA-routed. This avoids competing firmware and HA definitions for one contact.
 Choose an ID that does not collide with an HA phone or reserved feature code;
 `700`, for example, may already be the HA parking access code.
 
@@ -317,8 +334,10 @@ If HA supplies the phonebook, use these contact fields:
 
 Select Office on the ESP and press Call. Do not add a competing static contact
 to firmware in this mode. HA supplies the contact; the ESP sends the SIP call
-to the PBX. Supplying only a SIP URI leaves this contact routed through HA;
-that is a different call path.
+to the PBX. In the legacy JSON path, a URI without direct-address metadata can resolve
+through HA instead. Current LDAP/SIP URI records have a different mapping;
+check the selected provider and line rather than applying that legacy rule
+to every registered phone.
 
 The PBX must also permit the destination in the ESP's incoming context:
 
@@ -338,13 +357,11 @@ calls the PBX, and the PBX handles provider authentication and codec conversion.
 Current firmware also supports standard SDP with 16 kHz PCM sent
 by the ESP and 48 kHz PCM received by it. Keep the maintained full profile's
 existing audio capabilities; its AFE microphone remains at 16 kHz. For this
-pre-release, select the component's development branch in the maintained YAML's
-existing substitutions:
-
-```yaml
-substitutions:
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
-```
+configuration, use the component and package revisions matching the installed
+release. The current preview's complete
+[source overrides](DEPLOYMENT_GUIDE.md#development-preview-firmware) belong in
+the maintained YAML's existing substitutions; selecting only one new component
+can mix incompatible generations.
 
 Rebuild and upload the ESP. On the Asterisk endpoint, replace the single-codec
 `allow` line with:

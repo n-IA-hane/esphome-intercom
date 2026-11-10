@@ -6,6 +6,19 @@ from collections.abc import Collection
 from typing import Any
 
 
+def committed_video_format_state(negotiated: Any) -> dict[str, str]:
+    """Project the committed directional formats into the softphone state."""
+
+    return {
+        key: video_format.wire_token() if video_format is not None else ""
+        for key, video_format in (
+            ("video_format", negotiated.video_format),
+            ("video_send_format", negotiated.send_video_format),
+            ("video_receive_format", negotiated.recv_video_format),
+        )
+    }
+
+
 def commit_audio_session_update(
     session: Any,
     negotiated: Any,

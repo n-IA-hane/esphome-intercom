@@ -22,6 +22,9 @@ voip_stack:
 
 ### ESP component options
 
+This is an index of commonly used contracts, not a copy of the complete Native
+schema. Use the pinned component source for all fields and resource limits.
+
 | Option | Meaning |
 | --- | --- |
 | `id` | Component ID. Required when an action or entity cannot infer the only `voip_stack` instance. |
@@ -31,15 +34,17 @@ voip_stack:
 | `udp_max_payload` | RTP payload budget, default `1200` bytes. The accepted implementation range is `576..1488`; raise it only for a LAN whose MTU was verified. |
 | `microphone` / `microphone_source` | Optional TX audio source. Use only one. `microphone_source` adds channel/sample-width selection for a wider native microphone. |
 | `speaker` | Optional RX audio sink. Omitting the speaker produces a `mic_only` endpoint; omitting the microphone produces a `speaker_only` endpoint. |
-| `audio.tx` / `audio.rx` | Primary per-direction PCM contract. Fields are `sample_rate`, `pcm_format`, `channels`, and `frame_ms`; `auto` derives the wired audio surface. |
-| `audio.tx_formats` / `audio.rx_formats` | Up to seven extra explicit formats per direction. TX extras may only change `frame_ms` from `audio.tx`; RX extras may describe other formats the speaker path can accept. |
+| `audio.codecs` | Required ordered list of explicitly enabled codecs: `pcm`, `g722`, or profile-supported `opus`. Each codec has independent ordered `tx` and `rx` format lists. No codec is inserted implicitly. See [ESP codecs and migration](ESP_AUDIO_CODECS.md). |
+| `audio.codecs[].tx` / `.rx` | Up to eight formats per direction in total. Each format declares `sample_rate` and `frame_ms`; `pcm_format` defaults to `s16le` and `channels` to `1`. The PCM boundary rate and RTP clock are distinct for G.722 and Opus. |
 | `extension` | Optional internal dial-plan alias published to HA when the endpoint entity surface is exposed. |
 | `ring_groups` | Optional comma-separated PBX ring group memberships. |
 | `conference_groups` | Optional comma-separated conference group memberships. |
 | `conference_ring` | Ring this ESP when another participant starts one of its conference groups. Requires `conference_groups`. |
-| `static_contacts` | Optional local contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. HA-managed `sensor.voip_phonebook` is recommended for normal installs. |
+| `registration` / `registration.accounts` | Optional registered accounts, capacity, default line, MWI and direct-call policy. Manual PBX accounts and an HA-managed line are distinct; see [ESP registration and lines](ESP_REGISTRATION.md). |
+| `blf` | Optional SIP presence/dialog subscriptions for account-bound contacts. See the selected Native registration/BLF guide and [phonebook identities](PHONEBOOK_PROTOCOL.md#standard-ldap-directory). |
+| `static_contacts` | Optional manual contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. Compatible managed firmware uses the [LDAP directory](PHONEBOOK_PROTOCOL.md#standard-ldap-directory) for shared contacts and preserves manual entries. |
 | `use_ha_as_first_contact` | Select the HA peer after the first roster population. |
-| `ha_phonebook_text_sensor_id` | Optional legacy sensor binding; normal HA sync uses the native JSON action. |
+| `ha_phonebook_text_sensor_id` | Optional legacy sensor binding for the HA roster provider. Managed LDAP is a separate provider and disables that JSON roster path. |
 | `delete_contact_missing_from` | Optional stale-contact pruning policy with `updates_number: 1..10`. |
 | `ringing_timeout` / `calling_timeout` | Optional local guard timers, disabled when omitted. Maintained profiles leave these unset so the PBX can control ringing. SIP transaction timers remain active. |
 | `dc_offset_removal` | Remove DC bias from TX microphone samples. |
@@ -71,6 +76,13 @@ The maintained ESP32-P4 profiles wire four components. They are excluded when
 The source and renderer codec must match `voip_stack.video.codec`. The shipped
 P4 packages are the reference wiring; custom YAMLs should copy one complete
 JPEG or H.264 package instead of mixing parts from both profiles.
+
+S3 LCD profiles use a separate `esp_video_renderer` JPEG sink wired by
+[`s3_video_jpeg.yaml`](../packages/voip/s3_video_jpeg.yaml). Its defaults are
+320x240 at 2 FPS; the profile supplies an LVGL video container and the call page
+switches on a remote frame. This is distinct from an S3 with only camera TX and
+from the display-less Waveshare S3 Audio Board. It does not imply S3 H.264 RX
+or physical-panel qualification for every board that includes the package.
 
 ### ESP triggers
 
@@ -106,6 +118,10 @@ JPEG or H.264 package instead of mixing parts from both profiles.
 - Audio/diagnostics: `voip_stack.set_volume` (`volume`),
   `voip_stack.set_mic_gain_db` (`gain_db`), and
   `voip_stack.publish_entity_states`.
+- Accounts/lines: `voip_stack.start_call_on_line`, `select_line`,
+  `set_account`, `remove_account` and `reset_account`; see
+  [ESP registration](ESP_REGISTRATION.md) for exact action prefixes, arguments
+  and persistence semantics.
 
 With ESPHome 2026.10.0 or newer and `api: custom_services: true`, `voip_stack`
 automatically supplies its HA discovery and native call-control interface.
@@ -120,7 +136,9 @@ ESPHome native API actions generated by the component include
 `esphome.<slug>_update_contacts`, `esphome.<slug>_set_roster_json`,
 `esphome.<slug>_start_call`, `esphome.<slug>_answer_call`,
 `esphome.<slug>_decline_call` and `esphome.<slug>_hangup_call`.
-The contact actions mutate only that ESP's local mirror. Use HA
+The contact actions mutate only that ESP's local contacts or legacy roster.
+Managed LDAP exposes directory configuration/refresh actions instead of using
+JSON as its shared-directory owner. Use HA
 `voip_stack.add_contact` / `remove_contact` / `set_contacts` for the central
 phonebook.
 
@@ -128,7 +146,9 @@ ESP static contacts and the structured `add_contact` action intentionally use a
 small local contract: `name`, optional `ip`, `port`, `rtp_port`, and
 `transport: udp|tcp`. The richer central HA roster additionally supports
 `address`, `sip_uri`, `extension`, `number`, groups, and media metadata. HA
-shapes that central data into the compact roster pushed to each ESP.
+publishes that central data through LDAP for compatible managed firmware or
+through a compact JSON roster for an enabled legacy/custom roster provider.
+See the [phonebook contract](PHONEBOOK_PROTOCOL.md).
 
 `name` remains the only user-facing identity needed by a static contact. On
 the wire SIP keeps two separate standard fields: a stable URI user for routing
@@ -196,6 +216,9 @@ permission are independent.
 
 ## HA services
 
+The groups below index common actions. [SERVICES.md](SERVICES.md) is canonical
+for the complete action schemas, selectors, responses and preconditions.
+
 - `voip_stack.capture_sip`: start, stop, inspect or clear a bounded SIP trace;
   returns a temporary PCAP download URL. See [SIP diagnostics](SERVICES.md#sip-diagnostics).
 
@@ -229,6 +252,13 @@ permission are independent.
 - `voip_stack.enable_account`
 - `voip_stack.disable_account`
 - `voip_stack.list_accounts`
+
+Playback and waiting: `voip_stack.play_media`, `tts_say`, `wait_unanswered`
+and `wait_for_dtmf`. Mailboxes: `set_voicemail_settings`, `send_to_voicemail`,
+`transcribe_voicemail` and `get_voicemail`.
+Recording: `start_recording`, `stop_recording`, `get_recording` and
+`delete_recording`. Parking: `park` and `pickup`. All names in these groups
+use the `voip_stack.` domain; follow the service guide for required fields.
 
 `call` accepts one required `destination`. The destination can be a
 phonebook name, extension, ring group, conference group, SIP URI, direct
@@ -268,7 +298,9 @@ originate a new call.
 `address`, `sip_uri`, `extension`, `number`, `ha_bridge`, `transport`, `port`,
 `rtp_port`, `tx_rate`, `rx_rate`, `tx_formats`, `rx_formats`, and
 `max_payload_bytes`, `ring_group`, `conference_group` and `conference_ring`.
-HA updates `sensor.voip_phonebook` and pushes the roster to online ESP devices.
+HA updates `sensor.voip_phonebook` and the shared directory. Compatible managed
+ESPs refresh LDAP by generation; enabled legacy roster providers receive JSON
+pushes. A JSON push is not a managed LDAP refresh receipt.
 
 `remove_contact` exposes one `name` input whose value may match a manual
 contact's name, stable ID, extension or number.
@@ -311,7 +343,7 @@ through **Add SIP trunk** on its integration page:
 | `assist_advanced_call_context` | Disabled by default: Assist starts listening without an initial text message. When enabled, sends `Incoming SIP call from ...` with caller name, caller ID, phonebook match, source and called extension once at connection. These values are untrusted metadata; a phonebook match is not authentication. |
 | `debug_mode` | Opt-in detailed SIP/RTP/media logs and metrics. It never records call audio. |
 | `media_capture` | Explicit opt-in for private WAV/JSON call captures under `~/.cache/voip_stack_debug`: up to 15 s per HA-softphone direction and 8 s per relay leg, retained at most 24 files / 64 MiB with directory mode `0700`. Leave disabled for normal operation. |
-| `experimental_sip_video` | Enables the supported SIP video profile for HA browser phones. Direct H.264, VP8 and JPEG require a secure context and compatible browser. Standard ESP profiles remain audio-only; qualified ESP32-P4 videophone profiles can negotiate their compile-time JPEG or H.264 codec. The persisted option key retains its original name so existing configured entries do not need migration. |
+| `experimental_sip_video` | Enables the supported SIP video profile for HA browser phones. Direct H.264, VP8 and JPEG require a secure context and compatible browser. ESP support follows its compiled profile: P4 can select JPEG or H.264, S3 LCD receivers use JPEG, and audio-only or camera-only profiles retain their own limits. The persisted option key retains its original name so existing configured entries do not need migration. |
 | `video_transcoding_enabled` | Shown only after SIP video is enabled. Direct compatible media remains preferred. Home Assistant's FFmpeg binary may convert legacy receive codecs to browser VP8 and may convert incompatible HA-owned SIP bridge directions to the H.264 or JPEG contract negotiated by the receiver. This also applies when a peer adds video to an established audio-only bridge through re-INVITE. Browser JPEG send may use one bounded RFC 2435 normalizer. Only one transcode call owns the bounded process slot. |
 | `video_camera_send_enabled` | Shown only after SIP video is enabled. Exposes the logical HA phone's persistent **Send Camera** switch for negotiated H.264, VP8 or JPEG transmit media. Browser camera permission remains local; receiving video never needs it. |
 | `sip_registrar_enabled` | Allow standard SIP endpoints to register to HA with accounts created through the account services. This does not gate inbound calls by phonebook membership. |
@@ -344,6 +376,8 @@ The named trunk configuration contains:
 | `trunk_password` | Digest auth password. |
 | `trunk_register_expires` | REGISTER expiration in seconds. |
 | `trunk_outbound_proxy` | Optional proxy host or `sip:host:port` used as signaling next hop. |
+| `trunk_media_nat` | Outgoing trunk media: `auto` (new default) discovers each actual RTP/RTCP socket's mapped IPv4 destination using HA's STUN servers for public IPv4 peers; `direct` keeps local destinations; `manual` uses the address override below with unchanged ports. Existing saved overrides retain manual behavior. STUN is not ICE or TURN. See [external media](SIP_VIDEO.md#external-media-address-on-a-trunk). |
+| `trunk_outbound_media_address` | Optional advertised IPv4 override, required in `manual` mode. HA must be reachable at this address with the advertised RTP/RTCP ports unchanged. Preserved for existing configurations; update it when the public egress address changes. |
 | `trunk_inbound_default_target` | Receiving phone or dial-plan destination selected by name. Used when no called phonebook destination matches, or as the DTMF no-digits fallback. |
 | `trunk_inbound_mode` | `direct` resolves the default target immediately; `dtmf` pre-answers and collects an explicit phonebook extension. |
 | `automation_routing_enabled` | Legacy event-based routing opt-in, disabled by default. Matching native routing triggers activate the decision window themselves. Explicit trunk extension digits are never overridden. |
@@ -477,7 +511,7 @@ transmission finishes; the next action decides whether to hang up or continue.
 See [service fields](SERVICES.md#voip_stackplay_media) and the
 [complete example](AUTOMATION_DIALPLAN.md#play-a-recorded-announcement).
 
-### Mailbox actions on the PBX development branch
+### Mailbox actions
 
 - `voip_stack.set_voicemail_settings`: select a phone with `device_id`, then
   configure `enabled`, `max_seconds`, a Media-picker `greeting_media` (or

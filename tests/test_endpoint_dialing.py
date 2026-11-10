@@ -15,6 +15,7 @@ ha_exceptions.ConfigEntryError = getattr(
 from custom_components.voip_stack import endpoint_dialing  # noqa: E402
 from custom_components.voip_stack import endpoint_routing  # noqa: E402
 from custom_components.voip_stack.peer import Peer  # noqa: E402
+from custom_components.voip_stack.core.sdp import RtpPcmFormat  # noqa: E402
 
 
 pytestmark = pytest.mark.ha
@@ -35,9 +36,9 @@ def test_directional_rtp_profile_never_reuses_payload_for_different_formats() ->
     profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
     assert profile is not None
     formats = (*profile.send_rtp_formats, *profile.recv_rtp_formats)
-    by_payload: dict[int, tuple[str, int, int, int]] = {}
+    by_payload: dict[int, tuple[str, int, int]] = {}
     for item in formats:
-        wire = (item.encoding, item.sample_rate, item.channels, item.frame_ms)
+        wire = (item.encoding, item.sample_rate, item.channels)
         assert by_payload.setdefault(item.payload_type, wire) == wire
 
 
@@ -61,16 +62,64 @@ def test_esphome_opus_profile_prefers_20ms_and_keeps_10ms_fallback() -> None:
     profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
 
     assert profile is not None
-    assert [fmt.wire_token() for fmt in profile.send_rtp_formats] == [
-        "pt=98:OPUS/48000/2/20ms",
-        "pt=96:OPUS/48000/2/10ms",
-        "pt=99:L16/48000/1/10ms",
+    assert [(fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            for fmt in profile.send_rtp_formats[:3]] == [
+        ("OPUS", 48000, 2, 20),
+        ("OPUS", 48000, 2, 10),
+        ("L16", 48000, 1, 10),
     ]
-    assert [fmt.wire_token() for fmt in profile.recv_rtp_formats] == [
-        "pt=98:OPUS/48000/2/20ms",
-        "pt=96:OPUS/48000/2/10ms",
-        "pt=97:L16/16000/1/10ms",
+    assert [(fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            for fmt in profile.recv_rtp_formats[:3]] == [
+        ("OPUS", 48000, 2, 20),
+        ("OPUS", 48000, 2, 10),
+        ("L16", 16000, 1, 10),
     ]
+    # Discovery ranks codecs and packet times while SDP keeps local alternatives.
+    assert any(fmt.encoding == "PCMA" for fmt in profile.send_rtp_formats)
+    assert any(fmt.encoding == "PCMU" for fmt in profile.recv_rtp_formats)
+
+
+@pytest.mark.parametrize("known", [False, True])
+def test_rtp_discovery_hints_cannot_remove_local_codec_alternatives(known):
+    metadata = {
+        "sip_capabilities_known": known,
+        "sip_audio_tx_formats": ["L16/16000/1/32"],
+        "sip_audio_rx_formats": ["L16/48000/1/10"],
+    }
+    profile = endpoint_routing.sip_target_rtp_audio_profile(
+        None, SimpleNamespace(metadata=metadata)
+    )
+    assert profile is not None
+    for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
+        assert any(fmt.encoding == "PCMA" for fmt in formats)
+        assert any(fmt.encoding == "PCMU" for fmt in formats)
+    assert profile.send_rtp_formats[0].wire_token().endswith("L16/48000/1/10ms")
+    assert profile.recv_rtp_formats[0].wire_token().endswith("L16/16000/1/32ms")
+    assert profile.send_formats[0].wire_token() == "48000:s16le:1:10"
+    assert profile.recv_formats[0].wire_token() == "16000:s16le:1:10"
+    assert endpoint_routing.sip_target_offer_common_audio(None, SimpleNamespace(metadata=metadata))
+
+
+def test_invalid_backend_shape_is_not_promoted_from_discovery():
+    profile = endpoint_routing.sip_target_rtp_audio_profile(None, SimpleNamespace(metadata={
+        "sip_audio_tx_formats": ["PCMA/48000/2/10"],
+        "sip_audio_rx_formats": ["PCMU/48000/2/10"],
+    }))
+    assert profile is not None
+    for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
+        assert all((fmt.sample_rate, fmt.channels) == (8000, 1)
+                   for fmt in formats if fmt.encoding in {"PCMA", "PCMU"})
+
+
+def test_empty_discovery_keeps_local_directional_preferences():
+    profile = endpoint_routing.sip_target_rtp_audio_profile(None, None)
+    assert profile is not None
+    assert (profile.send_rtp_formats[0].encoding, profile.send_rtp_formats[0].sample_rate,
+            profile.send_rtp_formats[0].channels, profile.send_rtp_formats[0].frame_ms) == (
+                "L16", 48000, 1, 10)
+    assert (profile.recv_rtp_formats[0].encoding, profile.recv_rtp_formats[0].sample_rate,
+            profile.recv_rtp_formats[0].channels, profile.recv_rtp_formats[0].frame_ms) == (
+                "L16", 16000, 1, 10)
 
 
 def test_esphome_extension_is_the_authoritative_request_uri_user(
@@ -179,7 +228,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
     bind_trunk = Mock(return_value=True)
     monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _hass: trunk)
     monkeypatch.setattr(endpoint_dialing, "reuse_registered_trunk_flow", bind_trunk)
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
     policy = endpoint_dialing.OutboundLegPolicy(
         local_uri_user="426",
         auth_username="auth-426",
@@ -199,13 +248,16 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
         local_name="Caller",
         local_rtp_port_index=1,
         uri_override="sip:100@example.test;transport=tcp",
-        invite=SimpleNamespace(routing_caller="source", video_format=None),
+        invite=SimpleNamespace(routing_caller="source", video_format=None,
+            send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
+            recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
         port_reservation=reservation,
         policy=policy,
     )
 
     assert leg is not None
     assert leg.ports is reservation
+    reservation.bind_audio_sockets.assert_called_once_with(ports=(12002,))
     bind_trunk.assert_called_once_with(trunk, leg.client)
     assert created["local_rtp_port"] == 12002
     assert created["local_uri_user"] == "426"
@@ -232,8 +284,10 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
     leg = dialer.prepare_outbound_leg(
         member="100", peers=[], roster_entries=[], local_name="Caller",
         local_rtp_port_index=1, uri_override="sip:100@example.test",
-        invite=SimpleNamespace(routing_caller="source", video_format=object()),
-        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock()),
+        invite=SimpleNamespace(routing_caller="source", video_format=object(),
+            send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
+            recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
+        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),
         policy=endpoint_dialing.OutboundLegPolicy(use_trunk_flow=True),
     )
     assert leg is not None
@@ -252,7 +306,7 @@ def test_directional_audio_extension_is_limited_to_esphome_peers(
     expected: bool,
 ) -> None:
     dialer, created, _reused = _dialer(monkeypatch)
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
     peer = Peer(
         name="Phone",
         host="192.0.2.20",
@@ -283,7 +337,7 @@ def test_failed_external_leg_keeps_caller_owned_reservation(
         monkeypatch,
         client_error=RuntimeError("client construction failed"),
     )
-    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
 
     with pytest.raises(RuntimeError, match="client construction failed"):
         dialer.prepare_outbound_leg(
@@ -309,7 +363,7 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
     leg = dialer.prepare_outbound_leg(
         member=peer.name, peers=[peer], roster_entries=[], local_name="Caller",
         local_rtp_port_index=0,
-        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock()),
+        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),
     )
     assert leg is not None
     assert created["include_common_codecs"] is True
@@ -325,9 +379,14 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
 
 
 @pytest.mark.parametrize("kind,tx,expected", [
-    ("esphome", None, False),
+    # An ESP without advertised formats must negotiate them through SIP,
+    # rather than acquire an implicit PCM policy from its device kind.
+    ("esphome", None, True),
+    ("esphome", ["16000:s16le:1:10"], False),
     ("sip_account", None, True),
     ("sip_account", ["16000:s16le:1:10"], False),
+    ("browser", None, False),
+    ("assist", None, False),
 ])
 def test_unknown_codec_policy_preserves_declared_endpoint_constraints(kind, tx, expected):
     peer = Peer(name="Phone", host="192.0.2.61", endpoint_kind=kind, tx_formats=tx)

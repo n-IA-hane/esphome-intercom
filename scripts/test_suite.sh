@@ -91,7 +91,20 @@ ha_tests=(
   tests/test_phone_settings_ha.py
   tests/test_phone_policy_runtime_ha.py
   tests/test_phone_state_ha.py
+  tests/test_phone_monitor_ha.py
+  tests/test_popup_frontend_ha.py
+  tests/test_camera_preference_directory_ha.py
+  tests/test_esphome_state_discovery_ha.py
+  tests/test_local_browser_pickup_video_ha.py
+  tests/test_esp_screenshot_homeassistant.py
+  tests/test_ldap_directory_ha.py
+  tests/test_ldap_provisioning_ha.py
+  tests/test_ldap_standard_extensions_ha.py
+  tests/test_phone_services_ha.py
+  tests/test_phone_services_lifecycle_ha.py
   tests/test_trunk_config_flow.py
+  tests/test_trunk_media_config_ha.py
+  tests/test_media_nat_demux_ha.py
   tests/test_trunk_catalog_ha.py
   tests/test_trunk_calls_ha.py
   tests/test_trunk_codec_policy_ha.py
@@ -100,19 +113,31 @@ ha_tests=(
   tests/test_trunk_transfer_access.py
   tests/test_automation_call.py
   tests/test_voicemail_ha.py
+  tests/test_mwi_unregister_ha.py
   tests/test_call_ivr_ha.py
   tests/test_voicemail_baresip_ha.py
   tests/test_sip_phone_transfers_ha.py
+  tests/test_refer_account_identity_ha.py
+  tests/test_registered_trunk_remote_bye_ha.py
+  tests/test_trunk_receive_budget_ha.py
   tests/test_audio_splice_ha.py
   tests/test_media_call_lifetime_ha.py
   tests/test_pbx_defaults_ha.py
   tests/test_parking_lot_ha.py
+  tests/test_source_video_updates_ha.py
+  tests/test_atomic_bridge_media_ha.py
+  tests/test_parking_video_lifecycle_ha.py
+  tests/test_parking_video_transcode_ha.py
+  tests/test_video_originate_unknown_ha.py
+  tests/test_logical_transfer_wire_ha.py
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
   tests/test_sip_phone_policy_ha.py
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py
   tests/test_dialog_info_ha.py
+  tests/test_presence_endpoints_ha.py
+  tests/test_notify_transport_ha.py
   tests/test_automation_originate_ha.py
   tests/test_announcement_media_ha.py
   tests/test_call_trigger.py
@@ -126,6 +151,25 @@ ha_tests=(
   tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
+  tests/test_browser_answer_noanswer_race_ha.py
+  tests/test_browser_logical_availability_ha.py
+  tests/test_bridge_audio_common_wire_ha.py
+  tests/test_bridge_independent_ptime_ha.py
+  tests/test_bridge_repacketize_ha.py
+  tests/test_bridge_local_tx_capabilities_ha.py
+  tests/test_inbound_factory_flow_audio_ha.py
+  tests/test_sip_capabilities_ha.py
+  tests/test_sip_negotiation_capabilities_runtime.py
+  tests/test_ha_generic_negotiation_ha.py
+  tests/test_browser_contact_audio_ha.py
+  tests/test_udp_outbound_flow_ha.py
+  tests/test_contact_audio_routing_ha.py
+  tests/test_rtp_offer_reservation_ha.py
+  tests/test_delayed_rtp_reservation_ha.py
+  tests/test_prebound_media_consumers_ha.py
+  tests/test_managed_phones_ha.py
+  tests/test_phone_directory_ha.py
+  tests/test_esphome_provisioning_optional_ha.py
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py
@@ -137,8 +181,18 @@ ha_tests=(
   tests/test_ring_group_orchestrator_behavior.py
   tests/test_trunk_inbound_router_behavior.py
   tests/test_softphone_video_intent.py
+  tests/test_softphone_video_intent_concurrency_ha.py
   tests/test_video_keepalive_runtime.py
+  tests/test_video_socket_gap.py
   tests/test_video_transcoder.py
+  tests/test_sip_video_relay.py
+  tests/test_accept_video_service_ha.py
+  tests/test_bridge_video_framerate_wire_ha.py
+  tests/test_camera_intent_wire_ha.py
+  tests/test_camera_standard_intent_wire_ha.py
+  tests/test_imageattr_ws.py
+  tests/test_video_transcoder_cadence.py
+  tests/test_video_direction_generation_ha.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do
@@ -159,11 +213,11 @@ export YAML_PATH_MODE=$path_mode
 case "$MODE" in
   fast)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow")
+    pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow and not diagnostic_reference")
     ;;
   software-full)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m "not live and not mutation and not browser_real")
+    pytest_args+=(-m "not live and not mutation and not browser_real and not diagnostic_reference")
     ;;
   browser)
     "$PYTHON" - <<'PY'
@@ -180,8 +234,14 @@ PY
     pytest_args=(
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
+      tests/test_frontend_popup_browser.py
+      tests/test_frontend_cold_start.py
+      tests/test_video_decoder_recovery_browser.py
       tests/test_browser_audio_startup.py
+      tests/test_browser_call_lifecycle.py
       tests/test_frontend_media_devices_runtime.py
+      tests/test_dashboard_card_runtime.py
+      tests/test_imageattr_browser.py
       -q --tb=short -m browser_real
     )
     ;;

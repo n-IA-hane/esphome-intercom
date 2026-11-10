@@ -1,4 +1,5 @@
 packages:
+  compatibility: !include '../../voice_assistant/compat.yaml'
   runtime: !include 'runtime.yaml'
   globals: !include '../../runtime/voice_globals.yaml'
   events: !include '../../voice_assistant/runtime_events.yaml'

@@ -278,14 +278,14 @@ async def test_activity_projection_tracks_dialogs_and_occupied_slots(lab, blf):
     assert activity_snapshot(lab.runtime) == {"parked": [], "phones": []}
 
 
-async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch):
+async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch, hass_admin_user):
     from types import SimpleNamespace
     from custom_components.voip_stack import websocket_api
     from custom_components.voip_stack.parking import PARKING_CHANGED
     from custom_components.voip_stack.parking_lot import ParkingLot
 
     events = []
-    connection = SimpleNamespace(subscriptions={}, send_result=lambda *args: None,
+    connection = SimpleNamespace(user=hass_admin_user, subscriptions={}, send_result=lambda *args: None,
                                  send_event=lambda identity, value: events.append(value))
     monkeypatch.setattr(websocket_api, "require_websocket_read", lambda *args: None)
     monkeypatch.setattr(websocket_api, "require_websocket_endpoint_read", lambda *args: None)
@@ -332,6 +332,25 @@ async def test_browser_dialog_tags_use_the_observed_local_phone_perspective(lab)
     lab.calls.observe_leg(session.call_id,session.call_id,role='ha_softphone',state='in_call',endpoint_id=phone.endpoint_id,dialog=client)
     observed=snapshot(lab.runtime,phone.endpoint_id)[0]
     assert (observed.local_tag,observed.remote_tag)==(client.dialog_ids.local_tag,'peer-tag')
+    assert observed.peer_endpoint_id == ""
+
+
+async def test_connected_destination_precedes_requested_target_in_peer_projection(lab):
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from custom_components.voip_stack.dialog_info import snapshot
+    from .test_ha_call_transfer import _established
+
+    phone = PhoneEndpoint(endpoint_id="projection-browser", name="Browser", kind="browser")
+    lab.runtime.endpoints.register(phone)
+    client = _established("projection-priority", "peer-tag", "desk")
+    session = lab.calls.upsert(
+        "projection-priority", state="in_call", owner="ha_softphone",
+        source_endpoint_id=phone.endpoint_id, target_endpoint_id="old-requested-target",
+        dest_endpoint_id="sip:bedroom0",
+    )
+    lab.calls.observe_leg(session.call_id, session.call_id, role="ha_softphone",
+        state="in_call", endpoint_id=phone.endpoint_id, dialog=client)
+    assert snapshot(lab.runtime, phone.endpoint_id)[0].peer_endpoint_id == "sip:bedroom0"
 
 
 async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_names(lab):

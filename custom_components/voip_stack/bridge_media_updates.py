@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,100 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+async def prepare_source_video_update(hass, call_id, *, source_client=None, **kwargs):
+    """Use the retained dialog's existing offer/commit/compensation owner."""
+    if source_client is None:
+        endpoint = sip_endpoint_manager(hass)
+        return (
+            await endpoint.async_prepare_video_reinvite(call_id, **kwargs)
+            if endpoint is not None else None
+        )
+    from .sip_endpoint import PreparedEndpointVideoReinvite
+
+    previous = source_client.dialog
+    if previous is None or previous.call_id != source_client.dialog_ids.call_id:
+        return None
+    candidate = await source_client.async_prepare_video_reinvite(expected_dialog=previous, **kwargs)
+    if candidate is None:
+        return None
+    return PreparedEndpointVideoReinvite(source_client, None, previous, candidate)
+
+
+async def prepare_owned_video_generation(registry, session, video, *, left, right, compensate_committed=False):
+    """A lost converter rollback is fatal only to its still-current SIP owner."""
+    from .endpoint_session import TerminationIntent
+    from .sip_video_relay import VideoTranscodeRestoreError
+
+    owner = registry.resource_for(session.call_id, "relay")
+    generation = session.generation
+    previous_left, previous_right = (video.left, video.right) if compensate_committed else (None, None)
+
+    def owns_video():
+        return (registry.is_generation_current(session.call_id, generation)
+            and registry.resource_for(session.call_id, "relay") is owner
+            and getattr(owner, "video_relay", None) is video)
+
+    def owns_candidate():
+        return owns_video() and video.left is left and video.right is right
+
+    def terminate_restore_failure():
+        if owns_video():
+            registry.request_termination(session.call_id,
+                TerminationIntent("video_converter_restore_failed"), generation=generation)
+
+    async def apply(operation):
+        try:
+            return await operation
+        except VideoTranscodeRestoreError:
+            terminate_restore_failure()
+            raise
+
+    commit, rollback = await apply(video.async_prepare_peer_generation(left=left, right=right))
+
+    committed = False
+
+    async def commit_owned():
+        nonlocal committed
+        try:
+            await apply(commit())
+        finally:
+            committed = bool(compensate_committed and video.left is left and video.right is right)
+
+    async def rollback_owned():
+        nonlocal committed
+        await apply(rollback())
+        if not committed or not owns_candidate() or video._staged_peers:
+            return
+        committed = False
+        undos, stages = [], {}
+        restore_rollback = None
+        try:
+            for side, peer in (("left", previous_left), ("right", previous_right)):
+                _, undo = video.stage_peer_reconfiguration(side, peer)
+                undos.append(undo)
+                stages[side] = video._staged_peers[side]
+            restore_commit, restore_rollback = await video.async_prepare_peer_generation(
+                left=previous_left, right=previous_right)
+            if not owns_candidate() or any(video._staged_peers.get(side) is not stage
+                    for side, stage in stages.items()):
+                await restore_rollback()
+                return
+            await restore_commit()
+        except BaseException as error:
+            if restore_rollback is not None:
+                await restore_rollback()
+            if (not isinstance(error, asyncio.CancelledError) and owns_candidate()
+                    and all(stages.get(side) is stage for side, stage in video._staged_peers.items())):
+                terminate_restore_failure()
+                raise VideoTranscodeRestoreError("Previous video generation could not be restored") from error
+            raise
+        finally:
+            for undo in reversed(undos):
+                undo()
+
+    return commit_owned, rollback_owned
+
+
 @dataclass(slots=True)
 class BridgeMediaUpdateBinder:
     """Bind outbound dialog re-offers to the current relay generation."""
@@ -37,13 +132,18 @@ class BridgeMediaUpdateBinder:
     hass: HomeAssistant
 
     def attach_audio_side(self, client, relay, *, source_call_id: str, side: str) -> None:
-        """Use the same staged RTP update for an outbound caller-side dialog."""
+        """Stage a retained caller's audio and existing video in one generation."""
         if side not in {"left", "right"}:
             raise ValueError("invalid relay side")
+
         async def prepare(previous, updated, _method):
             registry = call_registry(self.hass)
             session = registry.get_session(source_call_id)
-            if session is None or not session.live or previous.video_format is not None or updated.video_format is not None:
+            if session is None or not session.live or client.dialog is not previous:
+                return None
+            # This retained-leg adapter changes an existing video contract.
+            # Addition/removal still belongs to the full bridge offer owner.
+            if (previous.video_format is None) != (updated.video_format is None):
                 return None
             try:
                 previous_peer = getattr(relay, side)
@@ -51,12 +151,61 @@ class BridgeMediaUpdateBinder:
             except (TypeError, ValueError):
                 return None
             generation = session.generation
-            async def commit():
+            video = getattr(relay, "video_relay", None)
+            previous_video_left = video.left if video is not None else None
+            previous_video_right = video.right if video is not None else None
+            commit_video = rollback_video = None
+            if updated.video_format is not None:
+                if video is None:
+                    return None
+                undo_stages = []
+                try:
+                    next_peer = dialog_video_rtp_peer(updated)
+                    left = next_peer if side == "left" else video.left
+                    right = next_peer if side == "right" else video.right
+                    other = right if side == "left" else left
+                    directions = video.transcode_directions_for(left, right)
+                    decision = validate_bridged_video_reoffer(
+                        previous.video_format, updated.video_format, updated.recv_video_format,
+                        peer_send=other.send_format, peer_recv=other.recv_format,
+                        peer_direction=other.video_format, peer_held=other.connection_held,
+                        updated_held=updated.remote_video_connection_held,
+                        caller_to_peer_transcoding=side in directions,
+                        peer_to_caller_transcoding=("right" if side == "left" else "left") in directions,
+                    )
+                    if not decision.accepted or updated.remote_video_rtp_port <= 0:
+                        return None
+                    # The existing generation owner requires a staged right
+                    # peer, including when only the left caller changes.
+                    for staged_side, peer in (("left", left), ("right", right)):
+                        _, undo = video.stage_peer_reconfiguration(staged_side, peer)
+                        undo_stages.append(undo)
+                    commit_video, rollback_video = await prepare_owned_video_generation(
+                        registry, session, video, left=left, right=right, compensate_committed=True,
+                    )
+                except BaseException:
+                    for undo in reversed(undo_stages):
+                        undo()
+                    raise
+
+            def require_current(*, video_committed=False):
                 if (not registry.is_generation_current(source_call_id, generation)
                         or registry.resource_for(source_call_id, "relay") is not relay
-                        or getattr(relay, side) is not previous_peer):
-                    raise RuntimeError("audio bridge ownership changed before commit")
+                        or client.on_media_update is not prepare or client.dialog is not previous
+                        or getattr(relay, side) is not previous_peer
+                        or getattr(relay, "video_relay", None) is not video
+                        or (video is not None and (
+                            video.left is not (left if video_committed else previous_video_left)
+                            or video.right is not (right if video_committed else previous_video_right)))):
+                    raise RuntimeError("bridge media ownership changed before commit")
+
+            async def commit():
+                require_current()
+                if commit_video is not None:
+                    await commit_video()
+                    require_current(video_committed=True)
                 commit_peer()
+
             def published(actual):
                 if (registry.is_generation_current(source_call_id, generation)
                         and client.on_media_update is prepare and client.dialog is actual
@@ -64,7 +213,13 @@ class BridgeMediaUpdateBinder:
                     session.state_changed()
                     from .call_projection import publish_bridge_projection
                     publish_bridge_projection(self.hass, session, event_type="state_changed")
-            return PreparedDialogMediaUpdate(commit, on_committed=published)
+            return PreparedDialogMediaUpdate(
+                commit, rollback_video, on_committed=published,
+                answer_video_rtp_port=(
+                    int(video.left_port if side == "left" else video.right_port)
+                    if updated.video_format is not None else None
+                ),
+            )
         client.on_media_update = prepare
 
     def attach(
@@ -73,6 +228,7 @@ class BridgeMediaUpdateBinder:
         relay: Any,
         *,
         source_call_id: str,
+        source_client: SipCallClient | None = None,
         source_video_send_format: sdp.RtpVideoFormat | None = None,
         source_video_receive_format: sdp.RtpVideoFormat | None = None,
     ) -> None:
@@ -107,8 +263,11 @@ class BridgeMediaUpdateBinder:
             answer_video_format = None
             source_video_formats = ()
             if updated_video is not None:
-                endpoint = sip_endpoint_manager(self.hass)
-                if endpoint is None:
+                if source_client is None and sip_endpoint_manager(self.hass) is None:
+                    return None
+                if adding_video and source_client is not None:
+                    # UAC handoff retains an already negotiated video resource;
+                    # creating a new topology remains with the full offer owner.
                     return None
                 if adding_video:
                     from .config import transport_config
@@ -130,8 +289,8 @@ class BridgeMediaUpdateBinder:
                                 cfg.get(CONF_VIDEO_TRANSCODING, False)
                             ),
                         )
-                        source_reinvite = await endpoint.async_prepare_video_reinvite(
-                            source_call_id,
+                        source_reinvite = await prepare_source_video_update(
+                            self.hass, source_call_id, source_client=source_client,
                             local_video_rtp_port=int(reservation.ports[0]),
                             video_formats=source_video_formats,
                             video_direction=updated_video.direction,
@@ -216,8 +375,8 @@ class BridgeMediaUpdateBinder:
                 if not adding_video and ((caller_sends and not source_receives) or (
                     caller_receives and not source_sends
                 )):
-                    source_reinvite = await endpoint.async_prepare_video_reinvite(
-                        source_call_id,
+                    source_reinvite = await prepare_source_video_update(
+                        self.hass, source_call_id, source_client=source_client,
                         local_video_rtp_port=int(video_relay.left_port),
                         video_formats=source_video_formats,
                         video_direction=updated_video.direction,
@@ -232,8 +391,10 @@ class BridgeMediaUpdateBinder:
                             updated_video.direction,
                         )
                         return None
-                    source_video_peer = invite_video_rtp_peer(
-                        source_reinvite.candidate
+                    source_video_peer = (
+                        dialog_video_rtp_peer(source_reinvite.candidate)
+                        if source_client is not None
+                        else invite_video_rtp_peer(source_reinvite.candidate)
                     )
                     if source_video_peer is not video_relay.left:
                         _, rollback_left_video = (
@@ -354,13 +515,13 @@ class BridgeMediaUpdateBinder:
                 (
                     commit_video_generation,
                     rollback_video_generation,
-                ) = await video_relay.async_prepare_peer_generation(
+                ) = await prepare_owned_video_generation(registry, session, video_relay,
                     left=source_video_peer,
                     right=next_video_peer,
+                    compensate_committed=True,
                 )
             elif removing_video:
-                endpoint = sip_endpoint_manager(self.hass)
-                if endpoint is None or video_relay is None:
+                if video_relay is None:
                     return None
                 source_video_formats = tuple(
                     dict.fromkeys(
@@ -370,8 +531,8 @@ class BridgeMediaUpdateBinder:
                         )
                     )
                 )
-                source_reinvite = await endpoint.async_prepare_video_reinvite(
-                    source_call_id,
+                source_reinvite = await prepare_source_video_update(
+                    self.hass, source_call_id, source_client=source_client,
                     local_video_rtp_port=0,
                     video_formats=source_video_formats,
                     video_direction="inactive",
@@ -398,7 +559,7 @@ class BridgeMediaUpdateBinder:
                     await staged_video_relay.stop()
                 return None
 
-            async def commit() -> None:
+            def require_current(*, video_committed=False) -> None:
                 if not registry.is_generation_current(
                     source_call_id,
                     call_generation,
@@ -406,16 +567,24 @@ class BridgeMediaUpdateBinder:
                     raise RuntimeError(
                         "SIP bridge media update belongs to a terminated call"
                     )
-                if registry.resource_for(source_call_id, "relay") is not relay or relay.right is not previous_audio_peer or (
+                if (registry.resource_for(source_call_id, "relay") is not relay
+                        or client.dialog is not previous or client.on_media_update is not prepare
+                        or relay.right is not previous_audio_peer
+                        or getattr(relay, "video_relay", None) is not (None if adding_video else video_relay)
+                        or (
                     previous_video_peer is not None
-                    and video_relay.right is not previous_video_peer
-                ):
+                    and video_relay.right is not (next_video_peer if video_committed else previous_video_peer)
+                )):
                     raise RuntimeError("SIP bridge media owner changed before commit")
+
+            async def commit() -> None:
+                require_current()
+                if commit_video_generation is not None:
+                    await commit_video_generation()
+                    require_current(video_committed=True)
                 commit_audio()
                 if adding_video:
                     relay.attach_video_relay(video_relay)
-                if commit_video_generation is not None:
-                    await commit_video_generation()
                 if removing_video:
                     relay.video_relay = None
                     await video_relay.stop()

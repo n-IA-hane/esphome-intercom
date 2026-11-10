@@ -30,14 +30,16 @@ from ..endpoint_session import (
     TerminationIntent,
 )
 from ..endpoint_routing import (
+    bridge_audio_profile,
     peer_audio_formats,
     peer_for_target,
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from ..fsm import (
     CallState,
@@ -61,6 +63,7 @@ from ..runtime_data import call_runtime_artifacts, sip_trunk
 from ..trunk_signaling import reuse_registered_trunk_flow
 from ..core.sip import parse_sip_uri, sip_default_port, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
+    bridge_source_audio,
     build_pending_invite_video_relay,
     video_bridge_offer_formats,
 )
@@ -189,7 +192,8 @@ async def route_sip_bridge(
         bridge_ports = take_delayed_offer_ports(
             registry, invite.call_id
         ) or RtpPortReservation.allocate(hass)
-    except RuntimeError as err:
+        bridge_ports.bind_audio_sockets()
+    except (OSError, RuntimeError) as err:
         _LOGGER.warning("SIP RTP bridge port allocation failed: %s", err)
         return SipInviteResult(503, "Service Unavailable", to_tag="")
     source_relay_port, dest_relay_port = bridge_ports.ports
@@ -213,11 +217,18 @@ async def route_sip_bridge(
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
-    if bridge_to_trunk or bridge_to_softphone:
+    if bridge_to_trunk:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
     elif rtp_audio_profile is not None:
+        sip_send_formats = list(rtp_audio_profile.send_formats)
+        sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    if not bridge_to_trunk and sip_send_formats and sip_recv_formats:
+        rtp_audio_profile = bridge_audio_profile(
+            invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
+            include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
+        )
         sip_send_formats = list(rtp_audio_profile.send_formats)
         sip_recv_formats = list(rtp_audio_profile.recv_formats)
 
@@ -318,10 +329,13 @@ async def route_sip_bridge(
         if bridge_to_trunk
         else "",
         include_common_codecs=(
-            bridge_to_trunk or bridge_to_softphone
-            or sip_target_has_unspecified_audio(peer_target, decision.entry)
+            bridge_to_trunk
+            or sip_target_offer_common_audio(peer_target, decision.entry)
         ),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
+        independent_audio_ptime=supports_independent_audio_ptime(
             peer_target, decision.entry
         ),
         peer_user_agent=(
@@ -347,10 +361,12 @@ async def route_sip_bridge(
         allow_video_transcoding=video_transcoding_enabled,
     )
     if bridge_to_trunk:
+        from ..trunk_media import borrow_pending_media
+        borrow_pending_media(client, bridge_ports, video_relay)
         selected_trunk_id = getattr(decision, "trunk_id", "")
         reuse_registered_trunk_flow(sip_trunk(hass, selected_trunk_id) if selected_trunk_id else sip_trunk(hass), client)
     else:
-        from ..sip_runtime import configure_local_contact
+        from ..sip_runtime import configure_local_contact, select_registered_outbound_flow
         configure_local_contact(hass, client)
         runtime.enable_reused_sip_tcp_connection(
             hass,
@@ -358,6 +374,8 @@ async def route_sip_bridge(
             decision_uri,
             target=decision.target or invite.target,
             default_sip_port=int(cfg["sip_port"]),
+            selected_flow=select_registered_outbound_flow(hass, decision_uri,
+                entry=decision.entry, peer=peer_target),
         )
 
     logical_source_endpoint = (
@@ -421,6 +439,15 @@ async def route_sip_bridge(
                 decline_reason=TerminalReason.BUSY.value,
             )
 
+    call_generation = registry.current_generation(invite.call_id)
+    if call_generation is None:
+        await async_close_client_and_release(client, bridge_ports)
+        if video_relay is not None:
+            await video_relay.stop()
+        return SipInviteResult(487, "Request Terminated", to_tag="")
+    registry.attach_sip_client(invite.call_id, client.dialog_ids.call_id, client,
+        state=CallState.CALLING.value,
+        trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
     try:
         result = await client.invite(
             target=decision_uri.user,
@@ -499,7 +526,7 @@ async def route_sip_bridge(
         )
 
     async def finish_bridge(initial_result: str) -> None:
-        nonlocal video_failure_reason, video_relay
+        nonlocal video_failure_reason, video_relay, invite
         final = initial_result
         if final == "ringing":
             final = await client.wait_for_final()
@@ -532,6 +559,9 @@ async def route_sip_bridge(
             if video_relay is not None:
                 await video_relay.stop()
             return
+        if not bridge_to_trunk:
+            invite = bridge_source_audio(invite, client.dialog)
+            session.artifacts.caller_invite = invite
         winner = OutboundLeg(
             member=resolved_callee,
             uri=decision_uri,
@@ -647,6 +677,7 @@ async def route_sip_bridge(
         origin="trunk" if trunk_invite else "extension",
         source_state=CallState.CONNECTING.value,
         dest_state=result,
+        expected_generation=call_generation,
     )
     if session is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")

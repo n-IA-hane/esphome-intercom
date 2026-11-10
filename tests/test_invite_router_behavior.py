@@ -119,6 +119,26 @@ async def test_route_retransmit_keeps_pending_decision(
 
 
 @pytest.mark.asyncio
+async def test_discovery_does_not_reselect_listener_authoritative_audio(monkeypatch):
+    from custom_components.voip_stack.peer import Peer
+
+    _patch_route_prefix(monkeypatch, pending_routes={"call-1": object()})
+    known = Peer(name="Alice", host="192.0.2.10",
+        sip_audio_tx_formats=("L16/16000/1/10",),
+        sip_audio_rx_formats=("L16/48000/1/10",))
+    monkeypatch.setattr(invite_router, "_peer_for_target", lambda *_: known)
+    authoritative = _invite()
+    reject_reselection = Mock(side_effect=AssertionError("routing cannot renegotiate audio"))
+    monkeypatch.setattr(invite_router.sip_sdp, "negotiate_directional", reject_reselection)
+
+    result = await invite_router.route_invite(_runtime(), authoritative)
+
+    assert result.status == 100
+    reject_reselection.assert_not_called()
+    assert authoritative.send_format.encoding == authoritative.recv_format.encoding == "PCMA"
+
+
+@pytest.mark.asyncio
 async def test_route_retransmit_keeps_existing_ringing_invite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

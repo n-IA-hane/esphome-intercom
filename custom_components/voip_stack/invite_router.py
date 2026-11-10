@@ -32,9 +32,7 @@ from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_routing import (
     peer_for_target as _peer_for_target,
     roster_from_peers as _roster_from_peers,
-    sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
 )
-from .fsm import TerminalReason
 from .inbound_routing.automation import (
     automation_rejection,
     request_route_override,
@@ -116,32 +114,8 @@ async def route_invite(
     caller_peer = _peer_for_target(caller_identity, peers)
     if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
         caller_peer = None
-    if caller_peer is not None:
-        caller_profile = _sip_target_rtp_audio_profile(caller_peer, None)
-        send_candidates = (
-            list(caller_profile.send_formats) if caller_profile is not None else []
-        )
-        recv_candidates = (
-            list(caller_profile.recv_formats) if caller_profile is not None else []
-        )
-        selected = sip_sdp.negotiate_directional(
-            invite.remote_sdp,
-            send_candidates,
-            recv_candidates,
-            allow_dahua_pcm=invite.peer_profile == "dahua",
-        )
-        if selected is None:
-            _LOGGER.info(
-                "SIP INVITE from %s rejected: roster directional PCM profile is incompatible",
-                invite.caller or invite.source_host,
-            )
-            return SipInviteResult(
-                488,
-                "Not Acceptable Here",
-                to_tag="",
-                decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
-        invite = replace(invite, send_format=selected.send, recv_format=selected.recv)
+    # The listener selected audio from this INVITE and the local backend.
+    # Discovery identifies the caller here; it cannot renegotiate that audio.
     application = _call_registry(hass).component("sip_application")
     gruu = dict(invite.request_uri.params).get("gr")
     local_instance = application is not None and gruu and gruu == application.gruu_id

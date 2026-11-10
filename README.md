@@ -1,954 +1,488 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**An open-source SIP PBX integrated with Home Assistant.**
+**An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
 
-Make and receive audio and video calls from your Home Assistant dashboard.
-Connect SIP phones, ESP32 intercoms and a provider or PBX trunk. Use ordinary
-Home Assistant automations to decide which phones ring, play spoken messages,
-handle keypad input and forward unanswered calls.
+![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
 
-- **Home Assistant:** browser phones, video calls, a shared phonebook, ring
-  groups and conferences.
-- **Automations as dialplan:** build your own call handling with native
-  triggers, conditions and actions.
-- **Optional ESPHome endpoints:** turn supported ESP32 devices into SIP phones,
-  intercoms or complete voice satellites.
+_Dashboard demo showing incoming, active and held calls, presence, voicemail and Do Not Disturb._
 
-ESP hardware is optional. Start with two dashboard phones or your existing SIP
-phones, then add the features you need. The ESP firmware also works with
-[conventional PBXs](#use-esp-firmware-with-an-existing-pbx).
+Receive audio and video calls from your SIP doorbell and answer from Home
+Assistant cards, the Companion app or supported ESP32 videophones. Make and
+receive calls between rooms, SIP phones and softphones through your own Home
+Assistant PBX.
 
-**[Start with the basic concepts](docs/CONCEPTS.md) · [Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
+Give the kitchen tablet, office browser and wall phone their own names and
+extensions. Bring existing SIP equipment into the same phone system, turn an
+ESP32 into a real phone, and decide what happens when somebody calls. Answer,
+transfer, ring several rooms, take a message or let Assist deal with the visitor.
 
-*Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
+**[The PBX](#one-home-every-phone) · [Doorbells and video](#answer-your-door-and-call-another-room) · [ESP phones and FULL experience](#esp-phones-and-full-voice-devices) · [Cards and popups](#cards-dashboard-and-call-popups) · [LDAP and BLF](#shared-contacts-and-live-phone-status-ldap-and-blf) · [Install](#installation)**
 
-![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
+## One home, every phone
 
-![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
+![Home Assistant as a local SIP and PBX hub, with the project's metal characters](docs/images/home-assistant-local-sip-pbx.png)
 
-_A real door-station call through a FreeSWITCH-based PBX, with the local webcam
-off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
-[how to park and retrieve audio calls](docs/CALL_PARKING.md).
-[FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
+Home Assistant runs the telephone system. You can use browser phones in rooms,
+SIP desk phones, desktop softphones, ATAs and compatible door stations together.
+Create independent phone identities for tablets and Companion sessions, then
+call by contact name or extension. ESP hardware and an external PBX are optional.
 
-Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
-Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
-requires ESPHome **2026.10.0 or newer**.
+This is also where the ordinary PBX jobs live: forwarding, unanswered-call
+rules, voicemail, transfers, parking, pickup, ring groups and audio conferences.
+Connect a provider trunk when you want an outside line. Add native HA automations
+when calls should follow presence, office hours, doorbell events or keypad input.
 
-The 2026.11.0 firmware profiles use ESP VoIP Stack **2026.11.0**, Runtime Controller
-**2026.11.0**, and Audio Stack **2026.11.0** from their `main` branches. HA and ESP
-firmware do not need matching version numbers. Rebuilding ESP firmware is
-recommended to receive the updated AFE delivery and playback fixes; it is separate
-from updating HA through HACS.
+The house can transfer callers, take messages and keep someone waiting while
+you move to another room. **A decent improvement over shouting "IT'S FOR YOU"
+through three walls.**
 
-The profiles below use coordinated `main` sources. See the
-[2026.11.0 changes](CHANGELOG.md), and follow the
-[current device-package migration](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
-when updating existing firmware.
+The sections below show the system in use. The [user guide](docs/USER_GUIDE.md)
+provides the complete controls and setup steps; the [release choices](#installation)
+identify stable and preview features.
 
-[![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.10.0%2B-18bcf2.svg)](https://esphome.io)
+## Answer your door and call another room
 
-![Dashboard demo](docs/images/dashboard.gif)
+![Doorbell and room-to-room calling, illustrated with the project's original characters](docs/images/voip-doorbell-room-to-room.png)
 
-_One dashboard can control a browser phone, an ESP endpoint and the shared
-phonebook. Each room phone still has its own identity and call state._
+See the visitor and speak through the door station from a tablet, the Companion
+app, a compatible SIP handset or a supported ESP videophone. Use the in-call
+keypad for a configured door release. You can also make ordinary private audio
+or video calls between rooms, instead of broadcasting every conversation through
+the entire house.
+
+A doorbell can ring one phone or a group. Answer in the kitchen, at a desk or
+on a wall panel; no-answer rules decide where the call goes next. Video follows
+the capabilities of the devices and route you choose. Audio conferences are
+audio-only, and not every mixed SIP ring-group route preserves video.
+
+![Doorbell video-call demonstration in the VoIP Dashboard](docs/images/voip-dashboard-gate-demo.png)
+
+_Dashboard doorbell-call demonstration using an illustrative gate-camera feed._
+
+See the [recorded MOBOTIX door-station call](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/pbx-mobotix-video-green.png)
+for a real door-station example. Its capture uses the earlier card theme.
+
+Start with the [SIP video guide](docs/SIP_VIDEO.md) for compatible cameras,
+codecs and receive/transmit directions. The [doorbell automation recipes](docs/AUTOMATION_DIALPLAN.md)
+cover ringing, notifications, forwarding and what to do when nobody answers.
+
+## ESP phones and full voice devices
+
+Supported ESP32 boards become real SIP phones. Add the appropriate camera and
+display paths and you have a videophone: send the local camera, see the remote
+party and talk in both directions. Call Home Assistant, another ESP or standard
+SIP equipment. A headless microphone/speaker board can instead be a room phone,
+paging speaker or audio endpoint.
+
+VoIP-only profiles provide the telephone. **FULL profiles are complete ESPHome
+voice devices**, combining calls with local Assist, Micro Wake Word, music,
+TTS, announcements, timers and optional Sendspin. On supported display boards,
+contacts, dialing, settings, call feedback and an animated assistant share the
+same device.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/call-from-esp-to-homeassistant.gif" width="180"/><br/><b>ESP to HA</b></td>
-    <td align="center"><img src="docs/images/ha-sip-video-call.gif" width="180"/><br/><b>SIP video</b></td>
-    <td align="center"><img src="docs/images/assistant-animated.gif" width="180"/><br/><b>ESP Voice Assistant</b></td>
-    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="180"/><br/><b>ESP TTS response</b></td>
-    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="180"/><br/><b>Runtime audio controls</b></td>
+    <td align="center"><img src="docs/images/esp32-s3-video-call-cropped.jpg" width="300" alt="Remote SIP video shown on a real ESP32-S3 display"/><br/><b>SIP video on an S3 display</b></td>
+    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="200" alt="Audio controls on an ESP screen"/><br/><b>On-device controls</b></td>
+    <td align="center"><img src="docs/images/lvgl-hangup-reason.jpg" width="200" alt="Call result shown on the ESP display"/><br/><b>Call feedback</b></td>
   </tr>
 </table>
 
-Maintained ESP firmware profiles require **ESPHome 2026.10.0 or newer**.
-See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
-when updating copied YAMLs. This does not force an immediate firmware update
-when installing the Home Assistant integration alone.
+![Calls, Assist, music, wake word and TTS on one ESP, with the original metal artwork](docs/images/shared-audio-aec-pipeline.png)
 
-## PBX additions in 2026.11.0
+That means practical combinations: play music, lower it for a spoken reply,
+interrupt the reply, take a call and return to the previous activity. AEC/AFE
+and the selected audio profile support the shared microphone and speaker;
+the available combination depends on the board, firmware and resources.
+During negotiated video, maintained FULL profiles pause Micro Wake Word and
+resume it afterward when enabled and ready.
 
-The [2026.11.0 release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0)
-adds **multiple named SIP trunks, phone forwarding rules, call transfers,
-voicemail, call parking, directed pickup and conversation recording**. These additions are available in
-this release; 2026.10.1 did not include them.
+![P4 FULL interface with a shared contact list and BLF call states](docs/images/p4-contacts-blf-demo.png)
 
-Start with the [illustrated PBX walkthrough](docs/PBX_WORKFLOWS.md). It explains
-which controls to use, what callers experience and how automations interact
-with phone settings. Each phone keeps its own card; routing and messages belong
-to the backend.
+_P4 FULL interface demo: shared contacts, available, ringing, in call and on hold._
 
-**Configuration change:** trunks are now separate named entries. Open the
-integration's **three-dot menu > Add SIP trunk**, then configure each line
-independently. Existing enabled single-trunk settings are migrated automatically.
-Read the [migration instructions](docs/BREAKING_CHANGES.md#pbx-development-branch-separate-sip-trunk-entries)
-before upgrading.
+### An assistant with a face, and sometimes an attitude
 
-![Add SIP trunk in the VoIP Stack integration menu](docs/images/pbx-add-trunk-menu-dark.png)
-
-- **[Phone routing defaults](docs/PHONE_ROUTING.md):** optional forwarding, busy/unavailable destinations
-  and a ringing timeout. An accepted automation action can override the default
-  for its own call. Settings belong to the phone, not to an open card.
-- **[Voicemail](docs/VOICEMAIL.md):** an ordinary SIP access menu, interruptible
-  spoken prompts, message indicators and a message list in the phone card.
-  Home Assistant Media exposes the original recordings; automations can
-  transcribe or deliver them through installed services.
-- **[Named trunks](docs/SIP_TRUNK.md):** independent provider connections, with
-  an explicit line choice per action, a phone preference and a default line.
-- **[Parking and pickup](docs/CALL_PARKING.md):** leave a caller on a parking
-  slot and retrieve the call elsewhere, or answer a phone that is still ringing.
-- **[Call transfers](docs/USER_GUIDE.md#forward-or-transfer-a-call):** send an
-  answered call to another contact from the card, or consult the destination
-  first using an attended-transfer-capable SIP handset. The card's Transfer
-  button performs a blind transfer.
-- **[Conversation recording](docs/CALL_RECORDING.md):** optional recording from
-  the existing audio path, controlled by HA actions or a card shortcut.
-
-## What can you build?
-
-![Video doorbell and room-to-room calls through Home Assistant](docs/images/voip-doorbell-room-to-room.png)
-
-| Goal | What VoIP Stack provides | Start here |
-|---|---|---|
-| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Standard ESP profiles remain audio-only; qualified ESP32-P4 profiles can also send and receive SIP video. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
-| Room-to-room calls | Create a logical HA phone and dedicated dashboard view for each kiosk or tablet. Calls may be private audio or video. | [Logical phones](#logical-home-assistant-phones) |
-| ESP room phones | Flash one maintained VoIP YAML per room. ESPs can call names and extensions from the shared phonebook. | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
-| Full ESP voice device | Flash a maintained full-experience YAML to combine a local Voice Assistant, Micro Wake Word, media, TTS, optional Sendspin and VoIP on one device. | [Full ESP experience](#full-esp-voice-experience) |
-| Existing SIP equipment | Register Zoiper, Linphone, baresip, an IP phone or an ATA directly to HA. | [Local accounts](docs/SERVICES.md#local-sip-endpoint-account-services) |
-| Ring groups | Ring several eligible endpoints; the first answer wins and the losing branches are cancelled. | [Groups](docs/GROUPS.md#ring-group) |
-| Audio conferences | Host a local audio conference in HA and optionally ring its members. | [Groups](docs/GROUPS.md#conference-group) |
-| Callable Assist | Give a native Assist pipeline an extension and talk to it from ESP, SIP or trunk callers. | [Assist calls](#assist-as-a-phone-extension) |
-| External calls | Connect an optional provider/PBX trunk using registration or source-IP authorization. | [SIP trunk](docs/SIP_TRUNK.md) |
-| Contextual routing | Use native HA entities, conditions and services for presence, schedules, no-answer forwarding and in-call DTMF. | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
-
-## Fastest start
-
-1. Install **VoIP Stack** from HACS and restart Home Assistant.
-2. Add **VoIP Stack** from **Settings → Devices & services**.
-3. Keep SIP `5060` and RTP base `40000` unless they conflict with your network.
-4. Use the Home Assistant phone created during setup and add a second browser
-   phone from the integration's phone configuration.
-5. Add a VoIP Stack card for each phone. Select its Phone in the visual editor;
-   you do not need to copy an internal device ID into YAML.
-6. Open the phones in separate browser tabs or devices, allow microphone access,
-   and call the other phone from the shared phonebook. Use HTTPS for browser audio.
-
-That first call requires Home Assistant and the cards. To connect a desk phone,
-softphone or ATA, [create a local SIP account](docs/SERVICES.md#local-sip-endpoint-account-services).
-Groups, Assist, automations and a provider trunk can be added independently.
-
-### Grow your setup one step at a time
-
-Start with the smallest setup that solves your problem. These steps build on a
-working call; you can stop at any of them. An existing SIP door station can join
-at step 2 without an ESP or a local Voice Assistant.
-
-| Step | Practical example | Add next | What to check |
-| --- | --- | --- | --- |
-| 1. Two phones | Call the kitchen dashboard from the study | Two browser phones and their cards, as above | Answer, speak in both directions, hang up and call again |
-| 2. A physical endpoint | Answer a door station or an ESP room phone | [A local SIP account](docs/USER_GUIDE.md) or [a maintained ESP YAML](yamls/README.md#how-to-use) | Call to and from that endpoint; video needs a video-capable endpoint and route |
-| 3. A voice and music device | Use the same ESP for Assist, music and calls | [A FULL profile and its feature selection](packages/README.md#work-through-a-full-profile) | Try each feature alone, then a call during playback and recovery after hangup |
-| 4. Several rooms | Ring the kitchen and study for the doorbell | [A ring group](docs/GROUPS.md#ring-group) | Either room can answer; the other stops ringing |
-| 5. Call handling | Forward an unanswered call, use voicemail, transfer or park a call | [The PBX walkthrough](docs/PBX_WORKFLOWS.md) | Test both the answer and no-answer paths; check which features your installed release includes |
-| 6. Automation and external lines | Route by presence, play an announcement or call through another PBX | [Native HA actions and triggers](docs/AUTOMATION_DIALPLAN.md), then [a trunk](docs/SIP_TRUNK.md) if needed | Verify the selected destination and line, then the busy/unavailable outcome |
-
-Firmware configuration follows its own short progression: use the board's YAML,
-edit its feature list, then customize individual settings. Board wiring and
-runtime policies are advanced topics, not prerequisites for the first call.
-
-### Add an ESP phone when you need one
-
-1. Choose the YAML for your exact board from the
-   [device guide](yamls/README.md). Keep its supplied wiring; change GPIOs only
-   when your physical wiring differs or you use a generic profile.
-2. Add the flashed device through the normal ESPHome integration.
-3. Call its phonebook name from another endpoint. An optional ESP mirror card
-   controls that physical phone.
-
-The full ESP experience is a separate firmware choice that adds local voice
-and media features to an ESP endpoint.
-
-| Device goal | Maintained starting point |
-|---|---|
-| ESP VoIP only | [`yamls/voip-only/`](yamls/voip-only/) |
-| Local Voice Assistant + MWW + media + TTS + optional Sendspin + VoIP | [`yamls/full-experience/`](yamls/full-experience/) |
-| Native ESPHome mic/speaker paths | [`yamls/voip-only/esphome-native/`](yamls/voip-only/esphome-native/) |
-| New or unqualified hardware | [`yamls/experimental/`](yamls/experimental/) |
-
-The reorganized firmware profiles select one device package and one
-`firmware_features` list. Follow the [progressive package examples](packages/README.md#work-through-a-full-profile)
-to remove Sendspin, build a voice-only device, or combine voice, calls and music.
-This layout is included in 2026.11.0; use its coordinated `main`
-package and component sources. The current preview uses the official ESPHome
-audio, mixer, resampler, player, Voice Assistant, wake-word and OTA providers,
-with our Audio Stack/AEC/AFE, VoIP Stack and Runtime Controller. Follow the
-[native provider migration](docs/BREAKING_CHANGES.md#development-firmware-native-audio-providers)
-when carrying over old external-component lists. For an older copied configuration, follow the
-[firmware migration](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
-instead of stacking new packages on top of the old preset.
-
-The [user guide](docs/USER_GUIDE.md) continues from installation through cards,
-calls, SIP accounts, groups, Assist, trunks and diagnostics. The
-[deployment guide](docs/DEPLOYMENT_GUIDE.md) explains how to choose between
-single-bus, dual-bus, lightweight AEC and full AFE profiles.
-
-## How it works
-
-Home Assistant runs the PBX: phone identities, SIP registration, call routing,
-media bridges, groups, conferences and automation services. Dashboard phones
-and standard SIP equipment connect to that backend.
-
-ESP devices become standards-based SIP phones, with audio on every maintained
-VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
-can be a SIP video softphone, call router, RTP bridge, local registrar,
-conference focus, callable Assist destination and optional trunk endpoint.
-Browser phones, wall tablets, ESP room stations, standard SIP clients and an
-external PBX can share one phonebook without requiring a separate Asterisk or
-FreeSWITCH server for the normal home use case.
-
-VoIP is only one part of the project. The optional full-experience ESP YAMLs
-also provide an independent on-device Voice Assistant, Micro Wake Word, media
-playback, TTS, Sendspin support, runtime audio controls and touch interfaces.
-That local assistant is not created or controlled by calling Assist over SIP.
-
-The project therefore has three cooperating, independently useful surfaces:
-
-| Surface | Runs on | Purpose |
-|---|---|---|
-| Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
-| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone for VoIP Stack or a conventional PBX, with audio and optional qualified P4 video. |
-| Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
-
-Install only the surfaces you need. A VoIP-only ESP does not require the local
-Voice Assistant, and a full-experience ESP keeps its local assistant even when
-no SIP Assist extension is configured.
-
-![Home Assistant as a local SIP and PBX hub](docs/images/home-assistant-local-sip-pbx.png)
-
-The system has one call model and four main surfaces:
-
-- **ESP endpoint:** A lightweight SIP/SDP/RTP phone with a microphone,
-  speaker or both.
-- **Home Assistant runtime:** Logical browser phones, routing, media bridges,
-  groups, local registration, Assist and the optional trunk.
-- **Central phonebook:** Names, extensions, groups, registered clients,
-  routable SIP endpoints and external numbers.
-- **Lovelace card:** A UI bound to one phone Device; it projects backend state
-  and invokes normal HA services instead of running a second call controller.
-
-SIP dialogs, transactions and transports have separate lifecycles. Logical
-phones share the listener and RTP pool, so creating another room phone does not
-open another SIP server. Browser and ESP phones handle one active call at a
-time. Registered SIP phones can also hold a call and start a consultation for
-an attended transfer. Their occupied state remains set until all their calls
-end; calls to different phones remain independent.
-
-The detailed ownership and media model is in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Complete peer-to-peer and
-HA-bridged sequences are in [`docs/CALL_FLOWS.md`](docs/CALL_FLOWS.md).
-
-## Logical Home Assistant phones
-
-The integration creates one ordinary Home Assistant browser phone on first
-setup, named from Home Assistant's location. Add or remove phones
-from:
-
-**Settings → Devices & services → VoIP Stack → Add phone → Home Assistant
-browser phone**
-
-Give every real place its own name and optional extension: `Kitchen`,
-`Reception`, `Garage`, `201`, and so on. Each logical phone is represented by a
-native HA Device with entities for call state, connectivity, DND, extension,
-groups, auto answer, camera transmission settings and call events.
-
-Bind the card to that Device:
-
-```yaml
-type: custom:voip-stack-card
-mode: ha_softphone
-device_id: <phone_device_id>
-```
-
-`device_id` answers "which local phone owns this card or action?".
-`destination` answers "who should this phone call?". The central phonebook
-resolves the destination, so a normal call does not require the destination's
-Device ID:
-
-```yaml
-action: voip_stack.call
-data:
-  device_id: <kitchen_phone_device_id>
-  destination: Garage
-```
-
-Omit `device_id` only when a preferred phone is configured or exactly one
-compatible phone exists. Otherwise the action asks you to select the local
-phone explicitly.
-
-The card's idle `Options` panel includes a `Microphone anti-alias filter`.
-It is enabled by default and stored per browser and logical phone. The setting
-takes effect when the next call opens the microphone and only adds processing
-when the negotiated transmit rate is lower than the browser capture rate.
-
-The same panel selects the browser microphone, speaker and camera. These
-preferences belong to the browser or Companion App session, are shared by all
-VoIP Stack cards in that session and remain unchanged when no device is
-selected. During a call, the tune button beside Hangup opens the same controls,
-so a headset or camera can be changed without ending the call. Unsupported
-speaker routing remains under operating-system control.
-
-Each room-to-room media endpoint needs a distinct browser or Companion session.
-Two cards in one browser tab can display two phones, but one tab still owns one
-physical microphone, speaker and camera pipeline.
-
-## ESP endpoints and media roles
-
-ESP media roles are derived from the configured components; they are not a
-separate user mode.
-
-| Derived role | Media | Typical use |
-|---|---|---|
-| `full_duplex` | microphone TX + speaker RX | Room phone, door station, wall panel |
-| `mic_only` | microphone TX | Monitor or capture endpoint |
-| `speaker_only` | speaker RX | Paging or announcement target |
-
-An endpoint must have at least one real media direction. ESP VoIP intentionally
-uses uncompressed PCM for audio. Standard profiles are audio-only; qualified
-ESP32-P4 videophone profiles compile exactly one video codec, JPEG or H.264.
-HA performs format conversion when a standard SIP peer negotiates another
-supported audio codec; ESP firmware is not downgraded to a telephone codec for
-that purpose.
-
-Audio component details live in the companion projects:
-
-- [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack)
-- [`esp_aec`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_aec)
-- [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_afe)
-- [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack)
-- [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller)
-
-## Full ESP voice experience
-
-The [`yamls/full-experience/`](yamls/full-experience/) profiles are complete
-ESPHome voice devices, not merely larger SIP configurations. They combine the
-VoIP endpoint with an independent local Voice Assistant stack and coordinate
-all realtime consumers through one audio and runtime ownership model.
-
-The underlying audio stack is also reusable without VoIP. Custom ESPHome voice
-devices can use it to share codec or I2S ownership, speaker reference, AEC/AFE
-processing and a cleaned microphone stream between their own consumers.
-
-The [illustrated microphone wiring guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#microphone-wiring-and-delivery-illustrated)
-shows single-mic, stereo L/R, TDM and codec layouts, with YAML for independent
-AFE/BSS inputs or the new optional mono downmix before AEC/AFE.
+Display profiles can use animated avatars and separate listening, thinking,
+speaking, error, timer and mood artwork. Select an avatar for your device and
+configure its conversation agent's personality. The interface can have character
+without making every phone in the house look like an office desk terminal.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/assistant-animated.gif" width="220"/><br/><b>Animated assistant</b></td>
-    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="220"/><br/><b>Assistant response</b></td>
-    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="220"/><br/><b>Runtime audio controls</b></td>
-    <td align="center"><img src="docs/images/lvgl-hangup-reason.jpg" width="220"/><br/><b>Call end reason</b></td>
+    <td align="center"><img src="docs/images/assistant-animated.gif" width="200" alt="Animated assistant on an ESP display"/><br/><b>Animated assistant</b></td>
+    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="200" alt="Assistant reply on a round ESP display"/><br/><b>Spoken replies</b></td>
+    <td align="center"><img src="docs/images/ducking-barge-in.gif" width="240" alt="Music ducking and interruption of an assistant reply"/><br/><b>Ducking and barge-in</b></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/assistant-happy.jpg" width="220"/><br/><b>Positive mood</b></td>
-    <td align="center"><img src="docs/images/assistant-neutral.jpg" width="220"/><br/><b>Neutral mood</b></td>
-    <td align="center"><img src="docs/images/assistant-angry.jpg" width="220"/><br/><b>Negative mood</b></td>
-    <td align="center"><img src="docs/images/afe-controls.png" width="220"/><br/><b>AFE controls in HA</b></td>
+    <td align="center"><img src="docs/images/assistant-happy.jpg" width="200" alt="Positive assistant mood"/><br/><b>Happy</b></td>
+    <td align="center"><img src="docs/images/assistant-neutral.jpg" width="200" alt="Neutral assistant mood"/><br/><b>Neutral</b></td>
+    <td align="center"><img src="docs/images/assistant-angry.jpg" width="200" alt="Impatient assistant mood"/><br/><b>Apparently, not today.</b></td>
   </tr>
 </table>
+
+P4 videophone profiles provide camera and receive-display paths. S3 camera
+transmission and JPEG receive display are separate capabilities: reception
+requires the matching display/renderer package, and S3 does not decode H.264.
+HA can convert a supported upstream video format when the selected route needs it.
+
+Use the [device guide](yamls/README.md), [feature selection](packages/README.md)
+and [supported hardware](#supported-hardware) to choose the exact board and
+applications. The [FULL display guide](docs/DEPLOYMENT_GUIDE.md#full-display-examples)
+and [audio guide](docs/ESPRESSIF_COMPONENTS.md) cover presentation and audio choices.
+
+## Cards, dashboard and call popups
+
+The phone is the identity you call; the card is how you control it. Choose the
+phone by name in the visual editor. A browser phone uses that browser's
+microphone, speaker and camera. An ESP mirror controls the physical phone,
+which keeps using its own audio hardware.
+
+There are **two Lovelace card types**. The compact card has three modes, while
+the Dashboard combines the selected phone with the shared extension overview.
+The optional popup presents an existing HA phone over other HA views.
+
+| View | What it is for |
+| --- | --- |
+| Compact card, `ha_softphone` | Talk from a browser, tablet or Companion app using an existing HA phone. |
+| Compact card, `esp_mirror` | Call, answer, hang up and select contacts on a physical ESP phone. |
+| Compact card, `phonebook` | Browse shared contacts without adding another phone. |
+| VoIP Dashboard | See extension activity, contacts and call controls for the selected HA or ESP phone. |
+| Global call popup | Receive and control calls on an existing HA phone while using another HA view. |
+
+The compact-card screenshots use the Frosted Glass Dark theme with demo
+contacts and illustrative call states. The [card guide](docs/USER_GUIDE.md#choose-a-card-view)
+covers configuration and controls.
+
+### A Home Assistant softphone
+
+A compact card gives one room or app session a dialer, contacts, answer/decline,
+DTMF, call settings and the available in-call controls. Select microphone,
+speaker and camera from its options; compatible browsers can change devices
+during a call. Give each independent room its own logical phone.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/p4-touch-overview.jpg" width="640" style="max-width: 100%; height: auto;"/><br/><b>P4 weather, Voice Assistant and VoIP controls</b></td>
-    <td align="center"><img src="docs/images/ducking-barge-in.gif" width="260"/><br/><b>Ducking and barge-in</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-idle.png" alt="Compact Home Assistant phone ready to call, with the transparent theme"/><br/><b>Ready to call</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-call.png" alt="Compact Home Assistant phone during an audio call"/><br/><b>In a call</b></td>
   </tr>
 </table>
 
-The full profiles provide:
-
-- continuous Micro Wake Word on the cleaned post-AEC microphone stream;
-- a native ESPHome Voice Assistant started by wake word or touch;
-- media playback, announcements, TTS, ringtones and optional Sendspin through
-  one shared speaker path;
-- ducking and barge-in, including interruption of a current assistant reply;
-- VoIP calls that coexist with the assistant instead of creating a second
-  microphone or speaker owner;
-- AEC or AFE processing, with runtime controls and diagnostics where supported;
-- coordinated LEDs, display pages, timers, call state and media activity
-  through `runtime_controller`;
-- headless operation on audio boards, plus full LVGL interfaces on supported
-  displays;
-- optional animated and mood-aware assistant artwork on display profiles.
-
-The shared pipeline matters because Micro Wake Word, Voice Assistant and VoIP
-all need the same cleaned user speech while music, TTS or a ringtone may still
-be playing. Speaker output also supplies the phase-coherent reference used by
-AEC instead of letting each feature open its own audio path.
-
-![Shared music, TTS, wake word, Voice Assistant and VoIP audio pipeline](docs/images/shared-audio-aec-pipeline.png)
-
-### Assistant artwork and avatars
-
-Display profiles can select an assistant avatar with the `ai_avatar`
-substitution. Each avatar directory may provide idle animation frames plus
-listening, thinking, loading, error, timer and mood images. The selected assets
-are resized for the target display during the build.
-
-```yaml
-substitutions:
-  ai_avatar: my_assistant
-```
-
-An optional community theme is also included: **`starfleet`**, contributed by
-[rvdv01](https://github.com/rvdv01) in
-[discussion #110](https://github.com/n-IA-hane/esphome-intercom/discussions/110).
-Set `ai_avatar: starfleet` in your own configuration to use it. Maintained YAMLs
-keep their current default. See the [theme preview and optional ringtone](assets/images/assistant/starfleet/README.md).
-
-This artwork represents the ESP device's own Voice Assistant state. It is
-unrelated to the optional HA Assist pipeline that SIP callers can dial as an
-extension.
-
-See the [deployment guide](docs/DEPLOYMENT_GUIDE.md) for profile selection and
-the companion [audio stack documentation](https://github.com/n-IA-hane/esphome-audio-stack)
-for AEC, AFE, I2S and codec topology details.
-
-## Home Assistant as a SIP video phone
-
-Video is available to compatible browser phones in current browsers and the
-Home Assistant Companion app. Standard SIP video door stations, video phones,
-softphones and PBX/trunk legs can negotiate H.264, VP8 or RTP/JPEG. An optional
-bounded FFmpeg path can receive selected legacy codecs and bridge incompatible
-H.264/JPEG SIP legs when direct encoded relay is impossible.
-
-Receiving video does not require camera permission. Sending the browser camera
-is a separate persisted phone setting and still requires browser permission.
-Audio remains usable when video is unavailable or deliberately disabled.
-
-Audio-only ESP endpoints and audio conferences remain audio-only. Qualified
-ESP32-P4 videophone profiles can negotiate RTP/JPEG or H.264 directly, while
-the full P4 profile supports bidirectional RTP/JPEG. These are complete display
-endpoints, not camera-only devices: the P4 can transmit its camera, receive the
-remote RTP video stream, decode it through the selected JPEG or H.264 path and
-present the other party on its own MIPI DSI panel while bidirectional audio
-remains active. After video is removed or the call ends, the normal LVGL
-interface is restored.
-
-Video compatibility depends on the actual offer/answer, packetization and
-decoder contract, not only on a codec name printed on a product page. See the
-video guide for the separate outgoing camera path, incoming decode and panel
-presentation path, initial-video and audio-first re-INVITE behavior, and the
-JPEG/H.264 compile-time profiles.
-
-See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
-
-## Phonebook and routing
-
-Home Assistant publishes the shared roster through
-`sensor.voip_phonebook`. It combines:
-
-- online ESPHome VoIP endpoints;
-- logical Home Assistant phones;
-- registered local SIP accounts;
-- manual contacts;
-- Assist destinations;
-- dynamic ring/conference groups;
-- optional trunk-routed numbers.
-
-A name is the contact identity. An `extension` is an internal alias for that
-same destination; a `number` is normally routed through the trunk. The resolver
-can also handle canonical SIP URIs.
-
-Phonebook names must be unique across phones, contacts and Assist pipelines,
-even when their extensions differ. Duplicate names produce an error log and
-a persistent Home Assistant notification identifying the conflicting entries.
-Rename one destination; the notification clears when the phonebook updates.
-
-SIP routing identity and presentation identity remain separate. ESPHome node
-names and account usernames provide stable URI users, while friendly names are
-sent as standard SIP display names with spaces preserved. Incoming caller text
-comes from the peer's `From` header, and the answering endpoint can publish its
-resolved name through RFC 4916 connected identity.
+### Control an ESP phone
 
-Use the card, voice intents or `voip_stack.call` with a phonebook name or
-extension. Do not copy endpoint addresses into automations unless you
-deliberately need a raw SIP route.
+Put an ESP mirror on a dashboard to select that device's destination, place or
+answer a call and hang up. The mirror is useful when you want the physical room
+station to handle the conversation while HA provides its controls.
 
-- [Resolver rules](docs/DIALPLAN_RESOLVER.md)
-- [Phonebook protocol](docs/PHONEBOOK_PROTOCOL.md)
-- [Services](docs/SERVICES.md)
-- [ESP discovery/entity surface](docs/ESP_ENTITY_SURFACE.md)
+<img src="docs/images/phone-cards/esp-mirror.png" width="500" alt="ESP mirror card with contact navigation and call control"/>
 
-![Central phonebook and endpoint resolution](docs/images/phonebook-endpoint.png)
+### Keep the shared phonebook in view
 
-## Groups
-
-![Ring groups and conference groups](docs/images/ring-group-conference-group.png)
+A phonebook card lists destinations from the shared directory. Use it beside
+phone controls when you want a dedicated contact browser. It does not provision
+another phone or require another microphone.
 
-A **ring group** forks one call to all eligible members. DND, disabled and busy
-members are excluded; the caller is excluded if it belongs to the target
-group. The first successful answer wins and every losing leg is cancelled.
+<img src="docs/images/phone-cards/phonebook.png" width="500" alt="Shared phonebook with demo room phones, a door station and an outside contact"/>
 
-An **audio conference group** joins answered members to one HA-hosted mixer.
-`conference_ring` optionally rings the declared members when somebody joins.
-Auto answer is a per-phone policy: enabling it on several group members means
-several endpoints may join or compete immediately, which is the configured
-behavior.
+### Use the VoIP dashboard
 
-Membership declared by a phone becomes visible in HA dynamically. A group
-disappears when no current endpoint declares it. See
-[`docs/GROUPS.md`](docs/GROUPS.md) for declaration and collision rules.
+The Dashboard brings the calling phone, extension activity and shared contacts
+into one view. See who is ringing, busy, available or offline; inspect calls
+and use the eligible pickup and call controls. Its visual editor asks for the
+**Calling phone**, so the same view can serve a browser phone or an ESP.
 
-## Assist as a phone extension
+See the [Dashboard demo at the top of this page](#voip-stack-for-home-assistant-and-esphome)
+for incoming, active and held calls, presence, voicemail and Do Not Disturb.
+The [card guide](docs/USER_GUIDE.md#choose-a-card-view) includes configuration
+examples for both card types.
 
-There are two separate Assist-related features:
-
-| Feature | Where it runs | How it starts |
-|---|---|---|
-| ESP Voice Assistant | On a full-experience ESP device | Local wake word, touch control or an ESPHome action. |
-| Callable HA Assist | In Home Assistant through VoIP Stack | A SIP caller dials its phonebook name or extension. |
+### Receive calls over another HA view
 
-Enable **Include voice assistant** while configuring VoIP Stack, choose the
-pipeline and assign an extension. ESPs, registered SIP phones, browser phones
-and trunk callers can then call that Assist pipeline like any other contact.
+Enable call popups for an existing HA phone in the receiving browser or Companion
+session. An incoming call can appear while you are looking at another HA view,
+without a phone card on that view. The same phone can also have compact cards
+or a Dashboard.
 
-This is a Home Assistant PBX feature. The SIP caller talks to the selected HA
-Assist pipeline over the call. It does not start, replace or change the local
-Voice Assistant running on a full-experience ESP device.
-
-VoIP Stack sends one initial user message such as
-`Incoming SIP call from "Daniele".` and then streams the selected pipeline's
-STT, conversation and TTS over the same call. It does not inject a second
-persistent personality prompt. Put behavioral instructions in the conversation
-agent itself.
-
-Optional advanced call context appends caller ID, phonebook match, ingress and
-called extension once. Treat those fields as untrusted call metadata, not
-authentication.
-
-Voice intents may also resolve commands such as "Call Kitchen", "Answer" and
-"Hang up" against the live phonebook and the satellite's selected phone.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/voip-popup-settings.png" alt="Select an existing phone for this browser's call popups"/><br/><b>Choose the receiving phone</b></td>
+    <td width="50%"><img src="docs/images/voip-popup-ringing.png" alt="Incoming call popup over another Home Assistant view"/><br/><b>Answer or decline</b></td>
+  </tr>
+</table>
 
-## Door station and unanswered calls
-
-![Assist answers an unattended doorbell call](docs/images/assist-unanswered-doorbell.png)
-
-A typical path is:
-
-1. a door station calls `Front door`;
-2. a ring group alerts selected browser, SIP and ESP phones;
-3. the first endpoint to answer owns the call;
-4. if nobody answers, a native HA automation forwards the still-live call to
-   another phone or Assist;
-5. call events can trigger a mobile notification or another HA action.
-
-Copyable, current recipes:
-
-- [route a trunk caller to a ring group](docs/AUTOMATION_DIALPLAN.md#route-only-providerpbx-trunk-calls-to-a-ring-group)
-- [forward an unanswered phone to Assist](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist)
-- [forward an unanswered phone to a mobile number](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-call-to-a-mobile-number)
-- [route a known caller according to presence](docs/AUTOMATION_DIALPLAN.md#route-a-known-caller-according-to-presence)
-- [send an actionable mobile notification](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
-- [notify a no-answer timeout](docs/AUTOMATION_DIALPLAN.md#notify-a-no-answer-timeout)
-
-The assistant's personality is entirely up to your prompt. Professional
-receptionist and verbally abusive domestic secretary are both technically
-valid configurations.
-
-## Automations as dialplan
-
-**Automations as dialplan** lets you define call behavior in Home Assistant's
-normal automation editor. Create an Automation contact, then build a sequence:
-**greeting, then forward to a phone or voice assistant**. Add a keypad
-menu, presence condition or office-hours rule when you need it.
-
-**Phonebook as dialplan** remains the default when no routing automation overrides it.
-Native VoIP triggers select the
-call for the actions automatically, including across waits and synchronous
-scripts. No blueprint, generic event filter or Call-ID template is needed for
-the common examples. A destination can be its phonebook name or extension.
-
-Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
-then add a [forward after the greeting](docs/AUTOMATION_DIALPLAN.md#forward-after-the-greeting).
-These native automation features are included in 2026.10.0; they are not part of 2026.9.2.
-
-- [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
-- [Forward only when a phone does not answer](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist).
-- [Build a keypad menu](docs/AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
-- [Show received keys in HA notifications](docs/AUTOMATION_DIALPLAN.md#see-received-digits-in-persistent-notifications).
-- [Run a gate action from in-call DTMF](docs/AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf).
-
-Explicit extension digits entered during the trunk's initial DTMF menu retain
-precedence over a generic routing override. With no applicable automation
-selection, the configured phonebook route continues. Existing Event Entity
-and state automations remain available; see the
-[migration guide](docs/AUTOMATION_DIALPLAN.md#move-existing-automations-gradually).
-
-The full [Automations as dialplan cookbook](docs/AUTOMATION_DIALPLAN.md) explains
-call completion, fallback, time limits, concurrent callers and troubleshooting.
-
-## Use ESP firmware with an existing PBX
-
-An ESP running VoIP Stack can also be a SIP phone for a classic PBX. Configure
-it as a static peer: the PBX knows the ESP's address, so no SIP REGISTER or
-account credentials are needed on the firmware. A normal registered desk phone
-or softphone can then dial the ESP's extension.
-
-For example, reserve extension **1001** on the PBX and associate it with the
-ESP's fixed address, such as `192.168.1.60:5060`. On Asterisk, a dialplan entry
-then calls the configured static endpoint:
-
-```ini
-exten => 1001,1,Dial(PJSIP/esp-bedroom,30)
- same => n,Hangup()
-```
-
-The endpoint/AOR configuration is included in the guide below. Baresip is one
-way to test the calls; it is not required.
-
-For calls in the other direction, add a PBX destination to the firmware's
-existing phonebook:
-
-```yaml
-voip_stack:
-  static_contacts:
-    - name: "700"
-      ip: 192.168.1.20
-      port: 5060
-      transport: udp
-```
-
-This calls extension `700` on the PBX at `192.168.1.20`. The PBX must also have
-a static endpoint for the ESP and compatible audio settings. The device can
-retain its Assist and media features through ESPHome, or use a VoIP-only profile.
-
-[Set up an ESP with a classic PBX](docs/CLASSIC_PBX.md) includes the firmware
-settings, Asterisk and FreeSWITCH static-extension examples, ordinary SIP-phone
-calls, and the measured Asterisk 16 kHz microphone / 48 kHz playback setup.
-
-## Optional SIP trunk
-
-Local calls need no trunk. Add a named line to connect HA to a provider or another
-PBX. Use the integration's **Add SIP trunk** menu
-and edit each line separately. Keep **Register the trunk** enabled for account
-registration, or disable it for a static trunk and configure its allowed
-incoming SIP source IPs.
-
-Inbound mode can route immediately or collect an internal extension through
-negotiated RTP `telephone-event`/compatible SIP INFO DTMF. Outbound contacts
-with public numbers use the selected outgoing line. Explicit digits, no-digit fallback and
-automation overrides have distinct, documented precedence.
-
-Use **Set external call access** to allow or block trunk calls per phone.
-See the [automation editor walkthrough](docs/AUTOMATION_DIALPLAN.md#control-external-calls-per-phone).
-
-See [`docs/SIP_TRUNK.md`](docs/SIP_TRUNK.md) before exposing the listener beyond
-a trusted network.
+Minimize a connected call to keep a small caller/timer bar, then reopen it when
+needed. **Minimize keeps the call active; Hang up ends it.** You can receive
+video in the popup too.
+
+<table>
+  <tr>
+    <td width="65%"><img src="docs/images/voip-popup-video-demo.png" alt="Video-call popup using an illustrative gate-camera feed"/><br/><em>Video popup demonstration with an illustrative camera feed.</em></td>
+    <td align="center"><img src="docs/images/voip-popup-minimized.png" width="113" alt="Minimized call with timer and hangup control"/><br/><b>Minimized call</b></td>
+  </tr>
+</table>
+
+Browser and Companion media require a running HA frontend, a secure context and
+media permissions. Mobile systems can suspend background clients. Enabled
+logical HA phones retain their identity and no-answer rules without an open
+card; actual browser audio and auto-answer need an active receiving client.
+Companion uses its WebView, not a native operating-system telephone channel.
+See [popup setup](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
+and [actionable notifications](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification).
+
+## Shared contacts and live phone status (LDAP and BLF)
+
+![Shared contacts, phone identities and call routing](docs/images/phonebook-endpoint.png)
+
+Maintain one directory for HA phones, managed ESP endpoints, registered SIP
+accounts, contacts and callable services. Use recognizable names and extensions
+on every phone. Managed ESP profiles receive their shared contacts through
+LDAP; compatible SIP handsets can use the same directory.
+
+**LDAP provides the contacts. BLF and SIP presence provide live status.** See
+which extensions are ringing or busy before calling, and distinguish a phone
+that is unavailable from a contact that still belongs in your directory.
+The Dashboard and supported ESP contact lists show these states beside names.
+
+**MWI provides per-account voicemail indicators**, including waiting-message
+counts on compatible phones. It is separate from the address book and from
+listening to the messages themselves.
+
+Directory identities persist when a managed phone goes offline, so temporary
+disconnection does not erase its name and extension. The [directory guide](docs/PHONEBOOK_PROTOCOL.md)
+and [SIP busy-lamp setup](docs/USER_GUIDE.md#busy-lamps-on-sip-phones) explain
+configuration, client compatibility and the three services.
+
+## Transfer, park and pick up
+
+### Put the caller through
+
+Send an answered call to another contact from the card. The card's Transfer
+control performs a blind transfer; a compatible SIP handset or softphone can
+consult the other person first and complete an attended transfer.
+
+"I'll put you through" is finally a feature, not just a threat.
+
+<img src="docs/images/phone-cards/softphone-transfer.png" width="500" alt="Choosing a transfer destination from the phone card"/>
+
+### Park here, continue over there
+
+Park an established audio call, note the assigned slot and dial that slot from
+another phone. The caller waits while you change rooms. Optional hold audio
+comes from HA Media, and a parking timeout can return the call to a configured
+phone.
+
+The caller waits. You move. Nobody has to carry the wall-mounted kitchen tablet
+upstairs.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-parked.png" alt="Call parked with its assigned retrieval slot"/><br/><b>Leave the caller on a slot</b></td>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-retrieved.png" alt="Conversation resumed after retrieving a parked call"/><br/><b>Resume on another phone</b></td>
+  </tr>
+</table>
+
+### Answer another ringing phone
+
+Directed pickup lets your phone answer a call still ringing on another eligible
+extension, including an audio ring-group member. Use the available Dashboard
+control, native HA action or documented SIP feature code. A parking slot resumes
+a parked conversation; pickup answers a phone that is still ringing.
+
+See [transfer controls](docs/USER_GUIDE.md#forward-or-transfer-a-call) and
+[parking and pickup](docs/CALL_PARKING.md) for the supported endpoint/media paths.
+
+## Ring groups and audio conferences
+
+![Ring several phones or join an audio conference, with the original project characters](docs/images/ring-group-conference-group.png)
+
+_Ring several phones, or bring participants together in an audio conference._
+
+A **ring group** calls several eligible phones. The first answer wins and the
+other phones stop ringing. Use it for the doorbell, a shared office extension
+or several rooms. Busy, disabled and DND phones follow the group's eligibility
+rules rather than competing indefinitely.
+
+An **audio conference** joins participants in a room hosted by HA. Phones can
+call the group, and optional conference ringing invites configured members.
+Conferences are audio-only. Configure per-phone auto-answer deliberately when several
+members should join without a manual answer.
+
+[Group setup and membership](docs/GROUPS.md) covers ring groups, conferences
+and who is invited. The [video guide](docs/SIP_VIDEO.md) identifies the routes
+where video can be retained.
+
+## Voicemail and conversation recordings
+
+Give a phone its own mailbox, greeting and no-answer rule. A caller can leave
+a message; you can listen, repeat or delete it from the phone card or the SIP
+voicemail menu. Use DTMF from a compatible handset or ESP to navigate the menu,
+and MWI to see whether that account has waiting messages.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/phone-cards/softphone-voicemail.png" alt="Listen to and manage messages from the phone card"/><br/><b>Your phone's messages</b></td>
+    <td width="50%"><img src="docs/images/mailbox-action-dark.png" alt="Home Assistant action for phone mailbox settings"/><br/><b>Mailbox controls in HA</b></td>
+  </tr>
+</table>
+
+Recordings appear in HA Media. Mailbox events and native actions let installed
+HA services transcribe or deliver messages through your own automation. Enable
+mailboxes only where needed; deposit, spoken navigation and forwarding are
+separate choices, explained in the [voicemail guide](docs/VOICEMAIL.md).
+
+**Conversation recording** captures a supported two-party audio call whose
+media passes through HA. Start it explicitly from HA or the enabled card control;
+hangup finishes the recording. Direct calls bypassing HA and conferences are
+outside that recording scope. See [recording controls](docs/CALL_RECORDING.md).
+
+## Let Home Assistant handle reception
+
+![Unanswered doorbell, Assist receptionist and notification, in the original dark comic](docs/images/assist-unanswered-doorbell.png)
+
+Route a call by presence, office hours or caller. Play a greeting, ask for a
+keypad choice, ring a group, forward an unanswered call or send it to voicemail.
+Build these steps with native HA triggers, conditions and actions in the normal
+automation editor. Select phones and contacts by name.
+
+Make an HA Assist pipeline callable as an extension. The caller can speak to
+that pipeline, or an unanswered doorbell can be forwarded there. Its personality
+comes from the conversation agent you configure. **Professional receptionist
+and verbally abusive domestic secretary are both technically valid configurations.**
+
+That callable HA pipeline is independent of the local wake-word Voice Assistant
+on a FULL ESP. You can use both without making a phone call just to start the
+satellite's normal assistant.
+
+<img src="docs/images/automation-tts-action.png" width="640" alt="Configure a spoken greeting with a native Home Assistant action"/>
+
+An **Automation contact** can also place a backend audio call to a reachable
+ESP/SIP phone or external number through a selected trunk: wait for answer,
+play TTS or HA Media, then hang up. Notifications can open the intended HA phone
+and answer the identified call, or decline it with an explicit action.
+
+Start with the [automation cookbook](docs/AUTOMATION_DIALPLAN.md),
+[Assist voice commands](docs/ASSIST_INTENTS.md) and
+[actionable doorbell notifications](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification).
+
+## Standard SIP phones, accounts and outside lines
+
+Register a desk phone, softphone or ATA directly with HA using its own account,
+or configure a static SIP destination where appropriate. Phone names and
+extensions let these devices call the same rooms, services and contacts used by
+HA and ESP phones. SIP signaling supports UDP and TCP.
+
+ESP phones can use multiple named SIP accounts and select the line for a call.
+The normal HA integration can manage its account through the existing ESPHome
+connection; manual registered accounts also let an ESP behave as an independent
+phone with a compatible PBX. See [ESP accounts and lines](docs/ESP_REGISTRATION.md)
+and [classic PBX compatibility](docs/CLASSIC_PBX.md). For PCM, G.722 and Opus
+configuration, see [ESP audio codecs](docs/ESP_AUDIO_CODECS.md).
+
+The classic-PBX guide includes Asterisk and FreeSWITCH examples for ESP
+firmware alongside the normal HA-managed setup.
+
+**Named trunks** connect providers or other PBXs. Configure multiple lines,
+choose a phone's preferred outgoing line, select one for an action, and control
+which phones may make external calls. Registered and static authorized trunks
+have separate setup choices. Internal calling does not require a provider.
+
+<img src="docs/images/pbx-add-trunk-menu-dark.png" width="640" alt="Add a named SIP trunk from the Home Assistant integration menu"/>
+
+Media negotiation preserves compatible formats where possible. HA provides
+supported conversion when peers need different formats, including optional
+FFmpeg video conversion for otherwise incompatible routes. A JPEG ESP display
+can therefore receive a supported H.264 upstream source through an appropriately
+configured HA route; S3 does not need an H.264 decoder for that arrangement.
+
+Use the [trunk guide](docs/SIP_TRUNK.md) for credentials, line selection and
+external-call access, and the [video compatibility matrix](docs/SIP_VIDEO.md)
+for codecs and endpoint limits.
 
 ## Installation
 
-### Home Assistant through HACS
+Requires **Home Assistant 2026.7.0 or newer**. Choose one channel:
 
-1. Search for **VoIP Stack** in HACS.
-2. Open the integration and select **Download**.
-3. Restart Home Assistant.
-4. Open **Settings → Devices & services → Add integration**.
-5. Select **VoIP Stack** and complete the config flow.
+| Channel | Version | Starting point |
+| --- | --- | --- |
+| [Stable](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0) | **2026.11.0** | Stable PBX and phone cards, with matching firmware from `main`. |
+| [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev) | **2026.11.1-dev** | The Dashboard, popups and current ESP/directory features presented here. |
 
-To update an existing installation, open VoIP
-Stack in HACS, choose **Redownload** from its menu and select **2026.11.0**.
-Download, restart HA and reload
-the dashboard. HACS updates the HA integration and card, not ESP firmware.
+The preview is updated under the same version. If HACS already shows
+**2026.11.1-dev**, use **Redownload** to receive its current archive, then
+restart HA and reload the frontend. A changed archive under the same version
+does not produce a new-version update notification.
 
-![Install VoIP Stack from HACS](docs/images/hacs-download-voip-stack.png)
+### Fastest start
 
-The card is registered automatically. A normal LAN can keep SIP `5060` and RTP
-base `40000`. Container, LXC, VPN and multi-subnet installs may need an explicit
-reachable **Advertise host** and host networking.
+1. Find **VoIP Stack** in HACS, choose **Download** and your version, then restart
+   HA. For an existing installation, use **Redownload** to select the version.
+2. Add **VoIP Stack** under **Settings > Devices & services > Add integration**.
+3. Keep the HA phone created during setup, then use **Add phone** to create a
+   second browser phone. Give each a recognizable name and optional extension.
+4. Add a **VoIP Stack** card for each phone and select its Phone in the visual
+   editor. The preview also offers the **VoIP Dashboard** card.
+5. Open the phones on separate devices or browser sessions, allow microphone
+   access and call the other phone from the shared phonebook. Answer, speak in
+   both directions, hang up and call again.
 
-Manual source and release-archive installation, port requirements and network
-topologies are documented in the
-[deployment guide](docs/DEPLOYMENT_GUIDE.md#home-assistant).
+![Select the VoIP Stack version in HACS](docs/images/hacs-download-voip-stack.png)
 
-### ESPHome components
+The cards register automatically. Keep the default network settings unless
+another service conflicts; see the [deployment guide](docs/DEPLOYMENT_GUIDE.md)
+for containers, advertised addresses and manual installation. To receive calls
+over other HA views, enable [call popups](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
+for an existing HA phone in each receiving browser or Companion app.
 
-Use the maintained YAML whenever possible. For the coordinated
-firmware described here, a minimal custom external-component declaration is:
-
-```yaml
-external_components:
-  - source: github://n-IA-hane/esphome-voip-stack@main
-    components: [voip_stack]
-  - source: github://n-IA-hane/esphome-audio-stack@main
-    components: [esp_audio_stack, esp_aec]
-```
-
-Replace `esp_aec` with `esp_afe` only when the profile actually uses the full
-AFE pipeline. The maintained profiles use coordinated `main` sources. Keep the
-sources supplied with the selected profile rather than mixing release generations.
-
-After a major ESPHome or component upgrade, clear that device's ESPHome build
-cache before compiling. The [deployment guide](docs/DEPLOYMENT_GUIDE.md)
-contains the complete component and cache instructions.
-
-## Upgrading
-
-1. Read the target release notes and follow any migration instructions that
-   apply to your installed version.
-2. Update the integration through HACS and restart Home Assistant.
-3. When the card changes, reload the dashboard. Reset the frontend cache if the
-   browser or Companion app continues to show the previous card.
-4. Rebuild and upload ESPHome firmware when adopting firmware-side changes.
-   Follow the release's component references and clean-build instructions where
-   specified. Updating HA through HACS does not flash the ESP devices.
-
-Reconfiguration and edits to existing automations or YAMLs are needed only when
-the release instructions identify a relevant change.
-
-## Previous release: 2026.10.1
-
-Static SIP trunks can now operate without registration, with explicit allowed
-incoming source IPs. Remote ESP phonebooks reuse HA's connected ESPHome service
-identity. SIP interoperability fixes preserve audio through one-way video direction
-conflicts, and translated card buttons grow to fit their labels.
-
-The Waveshare 1.85C-BOX V2 gained a FULL profile with dual microphones,
-AFE/AEC, voice features, calls, media and the circular touch UI. The coordinated
-Audio Stack update delivers processed AFE samples without waiting for another
-input iteration. Playback also includes the upstream mixer restart correction
-and additional queue diagnostics.
-
-See the [release notes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1)
-for photographs, validation details and update instructions.
-
-## Previous release: 2026.10.0
-
-- Native call triggers, conditions and actions make greetings, forwarding,
-  unanswered-call rules and DTMF menus available in HA's normal automation editor.
-- ESP phones receive their HA controls and phonebook through the VoIP component,
-  without the retired VoIP HA packages.
-- Modular full profiles preserve paused music and handle interrupted replies,
-  ringtones and overlapping voice/media activity more consistently.
-- P4 video changes during calls preserve the negotiated media path; on-device
-  labels distinguish Direct from HA transcoding.
-- Audio and VoIP diagnostic actions help capture a useful issue report without
-  enabling verbose audio tracing.
-
-See the [complete changelog](CHANGELOG.md) for this release and earlier releases,
-and the [breaking changes](docs/BREAKING_CHANGES.md) before updating custom YAMLs.
-A HACS update changes HA and the card; ESP improvements require a firmware rebuild.
+An ESP joins through the normal ESPHome integration with its matching firmware.
+HACS updates HA and the frontend; rebuilding and uploading ESP firmware is a
+separate operation. Follow [migration notes](docs/BREAKING_CHANGES.md) when
+updating a copied configuration.
 
 ## Supported hardware
 
-Ready profiles are examples of complete pin, codec and resource choices; they
-are not a claim that every board with the same chip has the same wiring.
+Choose the exact profile, rather than a board with a similar chip name.
+Statuses below retain the existing profile evidence; they do not certify every
+silicon revision or workload. The [catalog](packages/DEVICE_CATALOG.md) also
+lists VoIP-only and experimental choices.
 
-| Device/profile | Configuration | Status |
-|---|---|---|
-| Spotpear Ball v2 | [`spotpear-ball-v2-full-afe.yaml`](yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml) | Field tested |
-| Waveshare ESP32-S3 Audio Board | [`waveshare-s3-full-afe.yaml`](yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml) | Field tested |
-| Waveshare ESP32-S3 Touch LCD 1.85C-BOX V2 | [`waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml`](yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml) | Supported FULL AEC/downmix or dual-microphone AFE |
-| Waveshare ESP32-P4 Touch LCD, full JPEG videophone | [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml) | Field tested |
-| Waveshare ESP32-P4 Touch LCD, portrait | [`waveshare-p4-touch-full-afe-portrait.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml) | Experimental layout |
-| Generic ESP32-S3, single bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | Reference profile |
-| Generic ESP32-S3 with DVP JPEG camera | [`generic-s3-full-aec-camera.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec-camera.yaml) | Reference wiring for Freenove FNK0085 N8R8; camera transmission |
-| Generic ESP32-S3, single bus, 4 MB flash | [`generic-s3-full-lite-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | Experimental; limited OTA headroom |
-| Generic ESP32-S3, dual bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/dual-bus/generic-s3-full-aec.yaml) | Reference profile |
-| Native ESPHome mic/speaker | [`generic-s3-full-esphome-native.yaml`](yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml) | Reference profile |
+| Device/profile | Support |
+| --- | --- |
+| [Spotpear Ball v2](yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml) | Field tested |
+| [Waveshare ESP32-S3 Audio Board](yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml) | Field tested |
+| [Waveshare ESP32-S3 Touch LCD 1.85C-BOX V2](yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml) | Supported FULL AEC/downmix or dual-microphone AFE |
+| [Waveshare ESP32-P4 Touch LCD, full JPEG videophone](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml) | Field tested |
+| [Waveshare ESP32-P4 Touch LCD, portrait](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml) | Experimental layout |
+| [Generic ESP32-S3, single bus](yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | Reference profile |
+| [Generic ESP32-S3 with DVP JPEG camera](yamls/full-experience/single-bus/generic-s3-full-aec-camera.yaml) | Reference wiring for Freenove FNK0085 N8R8; camera transmission |
+| [Generic ESP32-S3, single bus, 4 MB flash](yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | Experimental; limited OTA headroom |
+| [Generic ESP32-S3, dual bus](yamls/full-experience/dual-bus/generic-s3-full-aec.yaml) | Reference profile |
+| [Native ESPHome mic/speaker](yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml) | Reference profile |
 
-The complete hardware, memory and C6 firmware notes are in the
-[deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
+For firmware compatibility with an existing PBX, ESP phones can use static
+peers or manually configured registered accounts while keeping their other
+ESPHome features. See [classic PBX setup](docs/CLASSIC_PBX.md) and
+[registered ESP lines](docs/ESP_REGISTRATION.md).
 
-S3 camera profiles transmit JPEG video during calls; displaying the remote
-video on an S3 screen is not implemented. Supported P4 profiles transmit their
-camera and display the remote video. Devices with both a microphone and a
-speaker keep bidirectional audio on either platform. See the
-[SIP video guide](docs/SIP_VIDEO.md#esp32-s3-camera-preview-and-sip-video).
+## Find the task you need
 
-FULL profiles using `esp_aec` or `esp_afe` start in `sr_high_perf` and offer
-`sr_low_cost` as the lower-memory alternative. The processor and mode selector
-use the same initial-mode setting. VoIP-only profiles retain their separate
-FD/VoIP choices and standalone callbacks; the native ESPHome profile adds no
-external DSP mode. These defaults do not change microphone calibration or
-wake-word gain. Where mode restoration is enabled, the restored SR choice is
-applied before the processor starts, so the selector matches the running DSP.
-
-The Generic Full Lite AEC profile keeps Voice Assistant, wake word, software
-AEC, VoIP, HTTP playback, TTS, timers and the runtime controller. It uses size
-optimization and leaves Sendspin disabled. PSRAM is still required. Its measured
-OTA image was about 1.78 MB in an earlier build, leaving roughly 59 KB in the
-standard 4 MB flash layout. That is historical headroom; check the build size
-again after adding components or updating
-dependencies. The full 8 MB profile retains Sendspin and more flash headroom.
-
-## Documentation
-
-For custom firmware composition, see [Modular device packages](packages/README.md).
-
-Start with the practical [user guide](docs/USER_GUIDE.md) for normal setup and
-daily operation. Use the [automation cookbook](docs/AUTOMATION_DIALPLAN.md) for
-redirect, fallback, DTMF and guarded concurrent routing, and the
-[SIP feature reference](docs/WHATS_NEW_2026_8_1.md) for the established SIP and PBX
-capabilities.
-
-| Topic | Document |
-|---|---|
-| Choose and install a profile | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
-| Upgrade safely | [Breaking changes](docs/BREAKING_CHANGES.md) |
-| Services, selectors and side effects | [Home Assistant services](docs/SERVICES.md) |
-| Automations and contextual routing | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
-| Ring and conference groups | [Groups](docs/GROUPS.md) |
-| Phone mailboxes, MWI and message automations (PBX development branch) | [Voicemail](docs/VOICEMAIL.md) |
-| SIP video codecs and browser privacy | [SIP video](docs/SIP_VIDEO.md) |
-| Provider/PBX registration | [SIP trunk](docs/SIP_TRUNK.md) |
-| Dahua registered or static door station | [Dahua setup and audio comparison](docs/DAHUA.md) |
-| Names, extensions and route precedence | [Dial-plan resolver](docs/DIALPLAN_RESOLVER.md) |
-| ESP/HA phonebook representation | [Phonebook protocol](docs/PHONEBOOK_PROTOCOL.md) |
-| Expected signaling and media paths | [Call flows](docs/CALL_FLOWS.md) |
-| Runtime ownership and architecture | [Architecture](docs/ARCHITECTURE.md) |
-| Every option, trigger and condition | [Reference](docs/reference.md) |
-| Logs, captures and qualification | [Testing and debug](docs/TESTING_AND_DEBUG.md) |
-| Common failures | [Troubleshooting](docs/troubleshooting.md) |
-| All documentation | [Documentation index](docs/README.md) |
-
-## Testing
-
-The repository maintains more than 1,100 automated tests plus real SIP, RTP,
-browser, trunk and hardware qualification tools. A green unit suite is not
-treated as proof of a complete call: release qualification also checks media
-in both directions, remote/local hangup and final resource cleanup.
-
-Developer commands and capture locations are in
-[`docs/TESTING_AND_DEBUG.md`](docs/TESTING_AND_DEBUG.md).
-
-## Troubleshooting
-
-Start with [`docs/troubleshooting.md`](docs/troubleshooting.md). It covers:
-
-- an ESP or browser phone that does not ring;
-- unknown callers or route failures;
-- `488 media_incompatible`;
-- missing or one-way audio;
-- SIP registration/trunk failures;
-- hold, UPDATE and re-INVITE;
-- stale card state or frontend cache.
-
-For SIP call setup or hangup problems, the **`voip_stack.capture_sip`** action
-can produce a Wireshark-readable trace directly from HA, including HA OS,
-without SSH or tcpdump. Start it, reproduce the problem, then stop and download
-the PCAP from the action response. See the
-[step-by-step SIP capture guide](docs/troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
-for examples, memory limits and what the trace can diagnose. Requires a release
-containing this action.
+| Task | Guide |
+| --- | --- |
+| Add phones, choose a card, answer or transfer | [User guide](docs/USER_GUIDE.md) |
+| Configure voicemail, parking, pickup and recording | [PBX walkthrough](docs/PBX_WORKFLOWS.md) |
+| Connect a door station or check video formats | [SIP video](docs/SIP_VIDEO.md) · [Dahua](docs/DAHUA.md) |
+| Build greetings, routing or notifications | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
+| Choose firmware features or customize hardware | [Device guide](yamls/README.md) · [Packages](packages/README.md) |
+| Diagnose a failed call or report a problem | [Troubleshooting](docs/troubleshooting.md) · [Issue guidance](#before-opening-an-issue) |
+| Explore the complete documentation | [Documentation index](docs/README.md) |
 
 ## Before opening an issue
 
-**Report the parts you actually use.** If the issue involves only HA, browser
-cards or SIP equipment without an ESP, provide the HA-side information below
-and skip the ESP requirements. ESP dumps apply only to ESP-related faults;
-Audio Diagnostics additionally requires Audio Stack on that device.
+For a report, include the installed versions, affected hardware, exact call
+route, reproduction and relevant diagnostics with secrets removed. A passing
+build is not proof of working audio or video; the
+[testing guide](docs/TESTING_AND_DEBUG.md) explains useful evidence.
 
-Reproduce the issue with the current maintained release/profile and report the
-exact versions actually running, including ESP firmware when an ESP is involved.
-An updated YAML
-on your computer does not update a device until it is rebuilt and uploaded.
-
-Include:
-
-- Steps to reproduce, expected behavior, actual behavior and how often it happens.
-- HA and VoIP Stack versions; for ESP devices, ESPHome and component tags/commits.
-- Exact board, microphone/speaker and codec models, relevant YAML and custom wiring.
-- The call path: who calls whom, directly or through HA, SIP UDP/TCP, and PBX or
-  peer software/version. Include negotiated codecs and `ptime` if known.
-- HA integration diagnostics and logs around the failure, plus the ESP boot log.
-- For an updated ESP profile, complete **VoIP Diagnostics** log output during the
-  fault and after hangup. Add **Audio Diagnostics** when using Audio Stack.
-  Open the ESPHome logs before pressing the buttons, use INFO or a more verbose
-  logger level, and include whole diagnostic blocks, not only the last line.
-- A [SIP capture](docs/troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
-  for HA-handled signaling problems. It does not capture RTP media or SIP exchanged
-  directly between ESP devices. Further captures may be needed for those paths.
-
-To request an ESP dump from HA, open **Developer Tools > Actions**, select
-**Button: Press** (`button.press`) and choose that device's **VoIP Diagnostics**
-or **Audio Diagnostics** button. Open the ESPHome device logs first: the dump is
-printed there, not returned by the HA action. For missing buttons in custom
-firmware, use the [YAML definitions](docs/troubleshooting.md#collect-a-runtime-snapshot-from-an-esp)
-and rebuild/upload. The `voip_stack.dump_diagnostics` and
-`esp_audio_stack.dump_diagnostics` names are ESPHome actions, not HA services.
-
-For audio faults, state which direction is silent or distorted. For video faults,
-state whether the call began with video or video was enabled later. For custom
-Audio Stack hardware, include whether the problem persists with AEC/AFE disabled
-and whether the bus is shared or split, if you can test those cases.
-
-Use this structure, replacing the example details with what you observed:
-
-```text
-Title: ESP receives audio but the browser caller hears silence
-Versions: [exact installed HA, integration, ESPHome and component versions]
-Hardware: [board, microphone, speaker, codec and relevant wiring]
-Call path: HA browser card -> Generic S3, through HA, SIP UDP
-Steps: call, answer, speak in both directions, hang up from HA
-Expected: bidirectional audio and both endpoints idle after hangup
-Actual: ESP plays audio; browser hears silence; hangup works
-Frequency and test time: [repetitions, timestamp and timezone]
-Attachments: sanitized YAML, HA diagnostics, HA/ESP logs, full diagnostic blocks,
-             and a SIP capture when relevant
-```
-
-Never publish SIP passwords, authentication data, API keys or tokens. Review
-configuration files, logs and captures before attaching them.
-
-If you ignore these instructions and open an "it does not work" issue without
-reproduction details or supporting logs, I'll get pissed off like there's no
-tomorrow and close it as incomplete.
-
-## Support the project
-
-If VoIP Stack is useful to you, [consider sponsoring development](https://github.com/sponsors/n-IA-hane). Community support helps cover development tools and test hardware. The project remains free and open source.
-
-For bug reports and hardware feedback, follow the
-[issue-reporting instructions](#before-opening-an-issue) above.
-
-## Contributing
-
-Contributions should preserve standards-based SIP/SDP/RTP behavior and the
-single authoritative call lifecycle. Avoid endpoint-specific timing
-workarounds when a transaction, dialog, media or ownership invariant can solve
-the underlying problem.
-
-Before submitting a change, run the repository test environment documented in
-[`docs/TESTING_AND_DEBUG.md`](docs/TESTING_AND_DEBUG.md).
-
-### AI-assisted contributions
-
-Vibe coding is welcome here. I support AI-assisted development and consider it
-an invaluable tool, provided it is used thoughtfully.
-
-Asking an AI to "add this feature" or "fix this bug" and submitting the result
-is not enough. A change may solve the immediate problem while introducing
-regressions elsewhere, especially in a project where audio, video and call
-handling share limited resources.
-
-Understand the proposed changes, review their wider effects, and test the
-affected functionality before opening a pull request. Explain what you tested
-and what remains unverified. AI can help write the code, but careful review
-and testing remain the contributor's responsibility.
-
-## License
-
-Project-owned code is licensed under the MIT License; see
-[`LICENSE`](LICENSE).
-
-External Espressif components and optional system codecs keep their own
-licenses. They are consumed as upstream dependencies and are not copied into
-the project license.
-
-> [!NOTE]
-> VoIP Stack is designed for trusted local networks. It is not an emergency
-> telephone service.
+Developed and maintained by n-IA-hane, with community contributions.
+[Development guidance](docs/TESTING_AND_DEBUG.md), [sponsorship](https://github.com/sponsors/n-IA-hane)
+and useful bug reports help the project. Project code is [MIT licensed](LICENSE);
+external components retain their own licenses.

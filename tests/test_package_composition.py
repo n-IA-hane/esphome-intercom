@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
+import hashlib
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+from urllib.request import urlopen
 
 from esphome import yaml_util
 import pytest
@@ -13,6 +17,37 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FULL = ['voice', 'wake_word', 'voip', 'music', 'sendspin', 'timers', 'status_led', 'diagnostics']
+
+# Pinned real UI/schema-test dependency, identical to the official Alexa model
+# on 2026-11-10. Public YAML model selection and production caches stay intact.
+_UI_MODEL_BASE = "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/"
+_UI_MODEL_FILES = (
+    ("manifest.json", "alexa.json", "1d999798b35b1fe2606465b75ab840be51c1811d2909d5e620cefb6e96f8abd0"),
+    ("alexa.tflite", "alexa.tflite", "9011a8155b04de858c48038529235cbc0e42e9fca05a55bf588cb80a653a723b"),
+)
+
+
+def _verify_model_bytes(data: bytes, expected_sha256: str) -> bytes:
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("Pinned ESPHome test model SHA256 mismatch")
+    return data
+
+
+@lru_cache(maxsize=1)
+def _ui_model_files() -> tuple[tuple[str, bytes], ...]:
+    files = []
+    for cache_name, filename, digest in _UI_MODEL_FILES:
+        with urlopen(_UI_MODEL_BASE + filename, timeout=30) as response:
+            files.append((cache_name, _verify_model_bytes(response.read(128 * 1024), digest)))
+    return tuple(files)
+
+
+def seed_ui_schema_model_cache(data_directory: Path) -> None:
+    # ESPHome keys the cache by the original public manifest URL, unchanged.
+    target = data_directory / "micro_wake_word" / "a5f625a9"
+    target.mkdir(parents=True, exist_ok=True)
+    for filename, data in _ui_model_files():
+        (target / filename).write_bytes(data)
 
 
 def test_full_lite_shipped_defaults_keep_sendspin_optional() -> None:
@@ -35,25 +70,139 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     substitutions['firmware_features'] = features
     substitutions['assets_base'] = str(ROOT) + '/'
     substitutions['intercom_idf_root'] = str(ROOT / 'idf_components')
+    # Use the public GMF dependency rather than a workstation-only checkout.
+    substitutions['gmf_ai_audio_source'] = ''
     for key, repository in (
         ('ext_components_source', ROOT),
         ('audio_stack_components_source', Path(os.environ.get('AUDIO_STACK_REPO', ROOT.parent / 'esphome-audio-stack'))),
         ('voip_stack_components_source', Path(os.environ.get('VOIP_STACK_REPO', ROOT.parent / 'esphome-voip-stack'))),
         ('runtime_controller_components_source', Path(os.environ.get('RUNTIME_CONTROLLER_REPO', ROOT.parent / 'esphome-runtime-controller'))),
+        ('esp_screenshot_components_source', Path(os.environ.get('ESP_SCREENSHOT_REPO', ROOT.parent / 'esphome-screenshot'))),
+        ('esp_video_renderer_components_source', Path(os.environ.get('ESP_VIDEO_RENDERER_REPO', ROOT.parent / 'esphome-video-renderer'))),
         ('camera_components_source', Path(os.environ.get('ESP_VIDEO_CAMERA_REPO', ROOT.parent / 'esphome-esp-video-camera'))),
     ):
         component_path = 'components' if key == 'camera_components_source' else 'esphome/components'
         substitutions[key] = str(repository / component_path)
     directory.mkdir(parents=True, exist_ok=True)
+    if 'wake_word' in features:
+        seed_ui_schema_model_cache(directory / '.esphome')
     for companion in (ROOT / profile_path).parent.glob('*.csv'):
         shutil.copy2(companion, directory / companion.name)
     (directory / 'secrets.yaml').write_text('wifi_ssid: fixture-network\nwifi_password: fixture-password\n')
     config = directory / 'device.yaml'
-    package_path = str(profile['packages']['device']).split('/packages/', 1)[1].rsplit('@', 1)[0]
+    reference = profile['packages']['device']
+    if isinstance(reference, yaml_util.IncludeFile):
+        resolved = (reference.parent_file.parent / reference.file).resolve()
+        package_path = resolved.relative_to(ROOT / 'packages')
+    else:
+        package_path = str(reference).split('/packages/', 1)[1].rsplit('@', 1)[0]
     config.write_text(yaml_util.dump({'substitutions': substitutions}) +
                       '\npackages:\n  device: !include ' +
                       str(ROOT / 'packages' / package_path) + '\n')
     return config
+
+
+# Two 120-second ESPHome commands, two initial 30-second model downloads and
+# setup must finish before pytest interrupts their own bounded cleanup.
+@pytest.mark.timeout(310)
+@pytest.mark.parametrize('profile_path,features,attenuation', [
+    ('yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml', FULL, None),
+    ('yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml', FULL, 20),
+    ('yamls/voip-only/single-bus/waveshare-s3-voip.yaml', ['voip'], 20),
+])
+def test_announcement_attenuation_keeps_existing_volume_owners(
+    tmp_path: Path, profile_path: str, features: list[str], attenuation: int | None,
+) -> None:
+    """Resolve the baseline on each writer through the actual package/schema pipeline."""
+    import esphome.config_validation as cv
+    from tests.native_profile import nodes
+
+    config = device_config(tmp_path, features, profile_path)
+    data = yaml_util.load_yaml(config)
+    if attenuation is not None:
+        data['substitutions']['announcement_input_attenuation_db'] = str(attenuation)
+    config.write_text(yaml_util.dump(data))
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Could not resolve substitution' not in result.stderr, result.stderr
+    expanded = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    path = tmp_path / 'expanded.yaml'
+    path.write_text(expanded.stdout)
+    document = yaml_util.load_yaml(path)
+    expected = attenuation or 0
+    if features == ['voip']:
+        # This standalone phone owns a separate ringtone input, with no TTS lane.
+        assert not any(node.get('id') == 'tts_mixer_input' for node in nodes(document['speaker']))
+        assert not any(node.get('mixer_speaker.apply_ducking', {}).get('id') == 'tts_mixer_input'
+                       for node in nodes(document))
+        return
+    boot = next(node['if'] for node in nodes(document['esphome']['on_boot'])
+                if 'if' in node and any('mixer_speaker.apply_ducking' in action
+                                       for action in node['if'].get('then', [])))
+    assert str(boot['condition']['lambda']).strip() == f'return {expected} > 0;'
+    boot_action = boot['then'][0]['mixer_speaker.apply_ducking']
+    assert boot_action['id'] == 'tts_mixer_input'
+    assert cv.int_range(min=0, max=255)(boot_action['decibel_reduction']) == expected
+    assert boot_action['duration'] == '0ms'
+    for script_id in ('voip_ringing_loop', 'voip_stop_ringtone'):
+        script = next(item for item in document['script'] if item['id'] == script_id)
+        actions = [node['mixer_speaker.apply_ducking'] for node in nodes(script)
+                   if 'mixer_speaker.apply_ducking' in node]
+        assert len(actions) == 1
+        assert actions[0]['id'] == 'tts_mixer_input'
+        assert cv.int_range(min=0, max=255)(actions[0]['decibel_reduction']) == expected
+    if document['substitutions']['firmware_audio_backend'] == 'native':
+        volume = next(item for item in document['number'] if item.get('id') == 'master_volume')
+        actions = [node['mixer_speaker.apply_ducking'] for node in nodes(volume)
+                   if 'mixer_speaker.apply_ducking' in node]
+        tts = next(action for action in actions if action['id'] == 'tts_mixer_input')
+        reduction = str(tts['decibel_reduction'])
+        assert f'static_cast<unsigned>({expected})' in reduction
+        assert 'dynamic_reduction +' in reduction
+        assert 'std::min(255u,' in reduction
+        assert {action['id'] for action in actions} == {
+            'media_mixer_input', 'tts_mixer_input', 'voip_mixer_input',
+        }
+
+
+@pytest.mark.parametrize('profile_path', [
+    'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml',
+    'yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
+])
+def test_optional_g722_comment_keeps_package_pcm_defaults(tmp_path: Path, profile_path: str) -> None:
+    """Validate the actual uncommented example through native package/schema merging."""
+    original = (ROOT / profile_path).read_text()
+    commented = original[original.index('# voip_stack:\n'):].split('\n#\n', 1)[0]
+    assert '#       - codec: g722' in commented
+    config = device_config(tmp_path, FULL, profile_path)
+    config.write_text(config.read_text() + '\n' + '\n'.join(
+        line[2:] for line in commented.splitlines() if line.startswith('# ')
+    ) + '\n')
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'config', str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Could not resolve substitution' not in result.stderr, result.stderr
+    expanded = tmp_path / 'expanded.yaml'
+    expanded.write_text(result.stdout)
+    codecs = yaml_util.load_yaml(expanded)['voip_stack']['audio']['codecs']
+    assert [item['codec'] for item in codecs] == ['pcm', 'g722']
+    pcm, g722 = codecs
+    def shape(formats):
+        return [(fmt['sample_rate'], fmt['frame_ms']) for fmt in formats]
+    assert shape(pcm['tx']) == [(16000, 10), (16000, 20)]
+    assert shape(pcm['rx']) == [(48000, 10), (16000, 20), (16000, 10)]
+    assert shape(g722['tx']) == shape(g722['rx']) == [(16000, 20), (16000, 10)]
+    assert all(fmt['pcm_format'] == 's16le' and fmt['channels'] == 1
+               for codec in codecs for direction in ('tx', 'rx') for fmt in codec[direction])
 
 
 def maintenance_begin_actions(document):
@@ -184,6 +333,7 @@ def test_generic_feature_composition(tmp_path: Path, profile_path: str, features
     *[[feature for feature in FULL if feature != removed] + ['display']
       for removed in ('voip', 'voice', 'music', 'sendspin', 'timers', 'wake_word')],
 ])
+@pytest.mark.timeout(190)  # The official config subprocess has its own 180-second limit.
 def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[str]) -> None:
     config = device_config(tmp_path, features, 'yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml')
     result = subprocess.run(
@@ -198,8 +348,18 @@ def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[s
     assert document['substitutions']['firmware_features'] == features
     assert ('lvgl' in document) is ('display' in features)
     assert ('display' in document) is ('display' in features)
+    video_receive = 'display' in features and 'voip' in features
+    assert ('esp_video_renderer' in document) is video_receive
+    if video_receive:
+        renderer = document['esp_video_renderer']
+        assert (int(renderer['width']), int(renderer['height'])) == (240, 240)
+        assert int(renderer['framerate']) == 10
+        assert document['voip_stack']['video']['codec'] == 'jpeg'
+        assert 'camera_id' not in document['voip_stack']['video']
+        assert 'source' not in document['voip_stack']['video']
     if 'display' in features:
         pages = {str(page['id']) for page in document['lvgl']['pages']}
+        assert ('call_video_page' in pages) is video_receive
         if 'voice' not in features:
             def events(value):
                 if isinstance(value, dict):
@@ -392,6 +552,7 @@ def test_standalone_phone_has_no_implicit_led_or_coordinator(tmp_path, profile_p
     expanded.write_text(result.stdout)
     document = yaml_util.load_yaml(expanded)
     assert ('voip_stack' in document) is ('voip' in features)
+    assert ('blf' in document.get('voip_stack', {})) is ('voip' in features and 'blf' in features)
     _assert_standalone_callbacks_without_runtime(document)
     if not profile_path.startswith('yamls/voip-only/'):
         return
@@ -532,7 +693,13 @@ def test_p4_standalone_phone_keeps_codec_and_display_optional(tmp_path, codec, f
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Could not resolve substitution' not in result.stderr, result.stderr
     generated = next(tmp_path.rglob('main.cpp')).read_text()
+    defines = next(tmp_path.rglob('defines.h')).read_text()
     assert ('voip_stack::VoipStack' in generated) is ('voip' in features)
+    has_display = 'voip' in features and 'display' in features
+    assert '#define USE_ESPHOME_VOIP_BLF' not in defines
+    assert ('lvgl::LvglComponent' in generated) is has_display
+    assert 'top_voicemail_label' not in generated
+    assert 'add_on_message_waiting_callback' not in generated
     assert ('esp_video_camera::ESPVideoCamera' in generated) is ('video' in features)
     assert ('esp_h264_video_source::' in generated) is ('video' in features and codec == 'h264')
     assert ('esp_jpeg_video_source::' in generated) is ('video' in features and codec == 'jpeg')
@@ -663,3 +830,25 @@ def test_ws3_uses_official_resampler_scheduling_configuration(tmp_path: Path, fe
     for speaker in resamplers:
         assert 'task_core' not in speaker, speaker['id']
         assert 'task_priority' not in speaker, speaker['id']
+
+
+@pytest.mark.timeout(190)  # FULL codegen can exceed 30 s; retain its own 180-second subprocess limit.
+def test_ws3_jpeg_worker_does_not_preempt_its_audio_resampler(tmp_path: Path) -> None:
+    profile_path = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml'
+    profile = yaml_util.load_yaml(ROOT / profile_path)
+    config = device_config(tmp_path, profile['substitutions']['firmware_features'], profile_path)
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    generated = list(tmp_path.rglob('src/main.cpp'))
+    assert len(generated) == 1
+    source = generated[0].read_text()
+    audio = generated[0].parent / 'esphome/components/resampler/speaker/resampler_speaker.cpp'
+    consumer = re.search(r'\bRESAMPLER_TASK_PRIORITY\s*=\s*(\d+)', audio.read_text())
+    renderer = re.search(r'\bs3_video->set_task_priority\((\d+)\)', source)
+    assert consumer and renderer, 'The real schema/codegen must keep both scheduler owners visible'
+    assert int(renderer[1]) <= int(consumer[1]), (
+        'Best-effort JPEG must not preempt the downstream audio resampler', renderer[1], consumer[1]
+    )

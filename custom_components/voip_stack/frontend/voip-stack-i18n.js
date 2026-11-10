@@ -298,6 +298,25 @@ const DE = {
   "Title (optional)": "Titel (optional)",
 };
 
+const IT = {
+  "Call popups": "Popup chiamate",
+  "Home Assistant phone": "Telefono Home Assistant",
+  "Receive call popups on this device": "Ricevi popup chiamate su questo dispositivo",
+  "Uses an existing softphone without a card. This choice is saved in this app/browser. X, Esc and Back minimize an active call. Audio still requires browser permission.": "Usa un softphone esistente senza una card. La scelta viene salvata in questa app/browser. X, Esc e Indietro minimizzano la chiamata attiva. L'audio richiede comunque il permesso del browser.",
+  "Save": "Salva",
+  "Saved": "Salvato",
+  "-- Select phone --": "-- Seleziona telefono --",
+  "Minimize call": "Minimizza chiamata",
+  "Minimized call": "Chiamata minimizzata",
+  "Reopen call": "Riapri chiamata",
+  "Hang up call": "Riaggancia chiamata",
+  "Incoming call": "Chiamata in arrivo",
+  "The selected Home Assistant phone is unavailable.": "Il telefono Home Assistant selezionato non è disponibile.",
+  "End the current call before changing the browser phone.": "Termina la chiamata prima di cambiare il telefono del browser.",
+  "Select an existing Home Assistant phone.": "Seleziona un telefono Home Assistant esistente.",
+  "The HA frontend context provider is unavailable.": "Il contesto del frontend Home Assistant non è disponibile.",
+};
+
 export function voipStackLanguage(hass) {
   return String(hass?.language || hass?.locale?.language || "en").toLowerCase();
 }
@@ -305,13 +324,16 @@ export function voipStackLanguage(hass) {
 export function voipStackTranslate(hass, text) {
   const value = String(text ?? "");
   const language = voipStackLanguage(hass);
-  const dictionary = language === "de" || language.startsWith("de-")
+  const dictionary = language === "it" || language.startsWith("it-")
+    ? IT
+    : language === "de" || language.startsWith("de-")
     ? DE
     : language === "pt" || language === "pt-br"
       ? PT_BR
       : null;
   if (!dictionary) return value;
   if (dictionary[value]) return dictionary[value];
+  if (dictionary === IT) return value;
   const reason = value.match(/^Reason: (.+)$/);
   if (reason) {
     const label = language.startsWith("de") ? "Grund" : "Motivo";

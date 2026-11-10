@@ -22,6 +22,11 @@ EVENT_VOICEMAIL_RECEIVED = "voip_stack_voicemail_received"
 EVENT_VOICEMAIL_CHANGED = "voip_stack_voicemail_changed"
 
 
+def mailbox_display_name(endpoint):
+    """Keep the mailbox service distinct from its owning phone."""
+    return f"Voicemail: {endpoint.name}" if endpoint is not None else "Voicemail"
+
+
 def archive_path(hass):
     directories = hass.config.media_dirs
     directory = directories.get("local") or next(iter(directories.values()), None)
@@ -172,7 +177,7 @@ def resolve_mailbox_route(hass, target: str, entries, *, source_endpoint_id=""):
         return RouteDecision(RouteAction.REJECT, target=raw, status=480, reason=RouteReason.TARGET_UNREACHABLE)
     if mode == "access" and endpoint is None:
         return RouteDecision(RouteAction.REJECT, target=raw, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
-    entry = RosterEntry(raw, name=f"Voicemail: {endpoint.name}" if endpoint else "Voicemail",
+    entry = RosterEntry(raw, name=mailbox_display_name(endpoint),
                         metadata={"mailbox_endpoint_id": endpoint.endpoint_id if endpoint else "",
                                   "mailbox_mode": mode})
     return RouteDecision(RouteAction.VOICEMAIL, target=raw, entry=entry, reason=RouteReason.EXPLICIT_ROUTE)
@@ -244,8 +249,6 @@ async def _remove_mailbox(hass, endpoint_id):
 async def async_setup_mailboxes(hass, entry):
     """Observe persistent ownership and publish state without an idle polling task."""
     from homeassistant.core import callback
-    from homeassistant.helpers.device_registry import EVENT_DEVICE_REGISTRY_UPDATED
-    from .endpoint_lifecycle import create_runtime_task
     runtime = require_runtime_data(hass)
 
     @callback
@@ -257,16 +260,9 @@ async def async_setup_mailboxes(hass, entry):
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
 
-    @callback
-    def device_removed(event):
-        if event.data.get("action") != "remove":
-            return
-        endpoint = runtime.endpoints.by_device_id(event.data["device_id"])
-        if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
-            create_runtime_task(hass, async_remove_mailbox(hass, endpoint.endpoint_id))
-
     entry.async_on_unload(hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, changed))
-    entry.async_on_unload(hass.bus.async_listen(EVENT_DEVICE_REGISTRY_UPDATED, device_removed))
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
     await async_refresh_mailbox_state(hass)
 
 

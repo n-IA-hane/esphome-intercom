@@ -1,7 +1,5 @@
 # Voicemail
 
-This guide describes the implementation on the `dev` branch. It is not available in the current stable release.
-
 A mailbox belongs to a phone, not to a dashboard card. SIP phones and the HA
 softphone call the same voicemail application. The card displays message
 metadata; listening and deleting use the ordinary call and keypad commands.

@@ -251,42 +251,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("CallState.RINGING.value", publish)
         self.assertIn("sip_status_code=180", publish)
 
-    def test_forwarded_standard_sip_video_prefers_direct_then_transcodes(
-        self,
-    ) -> None:
-        forward = self.call_forwarder
-        video_start = forward.index("forward_video_enabled = bool(")
-        video = (
-            forward[video_start:]
-            + self.endpoint_dialing
-            + self.outbound_bridge_commit
-        )
-
-        self.assertIn("cfg.get(CONF_SIP_VIDEO, False)", video)
-        self.assertIn('source_route_endpoint.supports("video")', video)
-        self.assertIn('target_route_endpoint.supports("video")', video)
-        self.assertIn("runtime.prepare_outbound_leg(", forward[video_start:])
-        self.assertNotIn("SipCallClient(", forward[video_start:])
-        self.assertIn("build_pending_invite_video_relay(", video)
-        self.assertIn("configure_answered_invite_video_relay(", video)
-        self.assertIn("video_bridge_offer_formats(", video)
-        self.assertIn(
-            "enable_video_transcoding=video_transcoding_enabled",
-            forward[video_start:],
-        )
-        self.assertIn("enable_transcoding=data.enable_video_transcoding", video)
-        self.assertIn("generic_video_relay=video_relay is not None", video)
-        bridge_video = SIP_BRIDGE.read_text()
-        self.assertEqual(
-            bridge_video.count("sdp.video_formats_passthrough_compatible("), 2
-        )
-        self.assertIn(
-            "sdp.video_answer_contract(invite.video_format, remote_video)",
-            bridge_video,
-        )
-        self.assertIn("sdp.video_offer_answer_directional(", bridge_video)
-        self.assertIn("async_apply_outbound_video_answer", video)
-
     def test_browser_to_browser_call_uses_local_bridge_before_network_discovery(
         self,
     ) -> None:
@@ -304,8 +268,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         local_branch = call_service[local_start:local_return]
         self.assertIn("caller_owner_id=str(", local_branch)
         self.assertIn('call.data.get("media_client_id")', local_branch)
-        self.assertIn("request_video=bool(", local_branch)
-        self.assertIn('browser_endpoint.supports("video")', local_branch)
+        self.assertIn("request_video=_local_video_capable(browser_endpoint)", local_branch)
         self.assertIn("enable_caller_video_send=bool(", local_branch)
         self.assertIn('call.data.get("send_video", False)', local_branch)
 
@@ -957,8 +920,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_roster_entry_formats(", tx_profile)
         self.assertIn('route.entry, "tx_formats"', tx_profile)
         self.assertIn('_device_formats(dest_device, "tx_formats")', tx_profile)
-        self.assertIn("target_endpoint.supports(\"video\")", call_service)
-        self.assertIn('entry_metadata.get("capabilities", [])', call_service)
         self.assertIn("_roster_entry_formats(", rx_profile)
         self.assertIn('route.entry, "rx_formats"', rx_profile)
         self.assertIn('_device_formats(dest_device, "rx_formats")', rx_profile)

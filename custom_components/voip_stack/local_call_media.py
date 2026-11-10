@@ -16,6 +16,7 @@ from .core import rtp
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .queue_utils import put_drop_oldest
+from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite
@@ -76,6 +77,13 @@ class ApplicationCallSource(LocalAudioContract):
     send_video_format: Any = None
     recv_video_format: Any = None
     answer_video_format: Any = None
+    remote_video_rtp_host: str = ""
+    remote_video_rtp_port: int = 0
+    remote_video_rtcp_host: str = ""
+    remote_video_rtcp_port: int = 0
+    remote_video_rtcp_mux: bool = False
+    remote_video_payload_types: tuple[int, ...] = ()
+    remote_video_connection_held: bool = False
     peer_profile: str = ""
     received_via_trunk: bool = False
     trunk_id: str = ""
@@ -84,14 +92,15 @@ class ApplicationCallSource(LocalAudioContract):
     send_dtmf_events: frozenset[int] | None = None
 
     @classmethod
-    def from_client(cls, client, *, call_id, caller, target="", trunk_id=""):
-        return cls.from_peer_dialog(client.dialog, call_id=call_id, caller=caller, target=target, trunk_id=trunk_id)
+    def from_client(cls, client, *, call_id, caller, target="", trunk_id="", allow_video=False):
+        return cls.from_peer_dialog(client.dialog, call_id=call_id, caller=caller, target=target,
+                                    trunk_id=trunk_id, allow_video=allow_video)
 
     @classmethod
-    def from_peer_dialog(cls, dialog, *, call_id, caller, target="", trunk_id=""):
+    def from_peer_dialog(cls, dialog, *, call_id, caller, target="", trunk_id="", allow_video=False):
         from .core.sip import parse_sip_uri
 
-        if dialog is None or dialog.video_format is not None:
+        if dialog is None or (dialog.video_format is not None and not allow_video):
             raise ValueError("Retaining an application caller requires an established audio dialog")
         base = LocalAudioContract.from_dialog(dialog)
         fields = {name: getattr(base, name) for name in LocalAudioContract.__dataclass_fields__}
@@ -100,6 +109,12 @@ class ApplicationCallSource(LocalAudioContract):
             target=target, source_host=dialog.remote_host, source_port=dialog.remote_sip_port,
             received_via_trunk=bool(trunk_id), trunk_id=trunk_id,
             remote_audio_direction=dialog.remote_audio_direction,
+            video_format=dialog.video_format, send_video_format=dialog.send_video_format,
+            recv_video_format=dialog.recv_video_format, answer_video_format=dialog.recv_video_format,
+            remote_video_rtp_host=dialog.remote_video_rtp_host, remote_video_rtp_port=dialog.remote_video_rtp_port,
+            remote_video_rtcp_host=dialog.remote_video_rtcp_host, remote_video_rtcp_port=dialog.remote_video_rtcp_port,
+            remote_video_rtcp_mux=dialog.remote_video_rtcp_mux, remote_video_payload_types=dialog.remote_video_payload_types,
+            remote_video_connection_held=dialog.remote_video_connection_held,
             send_dtmf_payload_type=dialog.send_dtmf_payload_type,
             send_dtmf_clock_rate=dialog.send_dtmf_clock_rate,
             send_dtmf_events=dialog.send_dtmf_events)
@@ -140,6 +155,7 @@ class LocalCallMedia:
         self.invite = invite
         self.local_rtp_port = int(local_rtp_port)
         self.reservation = reservation
+        self.video_relay = None
         self.release_reservation_on_stop = True
         self.on_complete = on_complete
         self.on_dtmf = None
@@ -257,6 +273,8 @@ class LocalCallMedia:
                 raise RuntimeError("Local call media session is already closed")
             loop = asyncio.get_running_loop()
             bound_socket, self._rtp_socket = self._rtp_socket, None
+            if bound_socket is None:
+                bound_socket = self.reservation.take_audio_socket(self.local_rtp_port)
             try:
                 transport, _ = await loop.create_datagram_endpoint(
                     lambda: _LocalRtpProtocol(self),
@@ -334,23 +352,26 @@ class LocalCallMedia:
                     return_exceptions=True,
                 )
             finally:
-                # These resources are synchronous to release.  Keep them in a
-                # finally block so cancellation of a Home Assistant shutdown
-                # cannot strand the reserved RTP port behind a closed flag.
-                if self.transport is not None:
-                    self.transport.close()
-                    self.transport = None
-                if self._rtp_socket is not None:
-                    self._rtp_socket.close()
-                    self._rtp_socket = None
-                if self.release_reservation_on_stop:
-                    self.reservation.release()
-                self._cleanup_done.set()
-                _LOGGER.info(
-                    "Local call media session stopped call_id=%s counters=%s",
-                    self.invite.call_id,
-                    self.counters,
-                )
+                video, self.video_relay = self.video_relay, None
+                try:
+                    if video is not None:
+                        await async_wait_for_cleanup(asyncio.create_task(video.stop(), name="voip-application-video-stop"))
+                finally:
+                    # Cancellation must not strand either owned media child.
+                    if self.transport is not None:
+                        self.transport.close()
+                        self.transport = None
+                    if self._rtp_socket is not None:
+                        self._rtp_socket.close()
+                        self._rtp_socket = None
+                    if self.release_reservation_on_stop:
+                        self.reservation.release()
+                    self._cleanup_done.set()
+                    _LOGGER.info(
+                        "Local call media session stopped call_id=%s counters=%s",
+                        self.invite.call_id,
+                        self.counters,
+                    )
 
     def handle_rtp(self, data: bytes, addr) -> None:
         """Decode one negotiated RTP packet and enqueue pipeline PCM."""

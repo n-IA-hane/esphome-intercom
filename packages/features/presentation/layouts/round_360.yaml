@@ -53,6 +53,7 @@ font:
     - 󰢾
     - 󰟐
     - 󱗐
+    - ${ "\U000F01EE" if _round_has_phone else "" }
 - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
   id: call_icons
   size: 63
@@ -74,6 +75,7 @@ font:
     glyphs:
     - 󰁮
     - 󰛋
+    - "\U000F061C"
 - file:
     type: gfonts
     family: ${font_family}
@@ -226,7 +228,7 @@ lvgl:
   pages: ${ _round_page_initializing_page + _round_page_idle_page + _round_page_listening_page + _round_page_thinking_page
     + _round_page_replying_page + _round_page_error_page + _round_page_muted_page + (_round_timer_page if _round_has_timers
     else []) + _round_page_no_ha_page + _round_page_no_wifi_page + (_round_phone_pages if _round_has_phone else
-    []) + _round_page_settings_continuous_page }
+    []) + _round_page_settings_continuous_page + (_round_video_pages | default([])) }
 script:
 - id: compute_layout_metrics
   then:
@@ -327,7 +329,8 @@ script:
           id: top_battery_label
           text: !lambda |-
             bool charging = false;  // V2 has no USB/charge-status GPIO.
-            float bat = id(battery_percentage).state;
+            // Match the whole-percent battery value displayed by Home Assistant.
+            float bat = std::round(id(battery_percentage).state);
             float wifi = ${ 'id(wifi_pct).state' if 'diagnostics' in firmware_features else 'std::max(0.0f, std::min(100.0f, 2.0f * (wifi::global_wifi_component->wifi_rssi() + 100.0f)))' };
             std::string ret;
             if (bat < 10) ret = charging ? "\U000F089F" : "\U000F008E";
@@ -350,7 +353,9 @@ script:
       else:
       - lvgl.label.update:
           id: top_battery_label
-          text: ''
+          text: !lambda |-
+            std::string ret;
+            return ret;
 - id: backlight_timer
   mode: restart
   then:
@@ -371,7 +376,14 @@ script:
           brightness: 20%
       else:
       - light.turn_off: backlight
+packages:
+  phone_list_geometry: ${ _round_phone_list_geometry if 'voip' in firmware_features else {} }
 defaults:
+  _round_phone_list_geometry:
+    phone_list_view:
+    - id: !extend contacts_list_view
+      row_height: 52
+      visible_rows: 5
   _round_page_initializing_page:
   - id: initializing_page
     on_swipe_down: ${_round_navigation_down}
@@ -700,88 +712,27 @@ defaults:
   _round_phone_pages:
   - id: call_idle_page
     scrollable: false
-    bg_color: 255
-    on_swipe_left:
-    - voip_stack.next_contact: null
-    - script.execute: update_call_idle_labels
-    on_swipe_right:
-    - voip_stack.prev_contact: null
-    - script.execute: update_call_idle_labels
+    bg_color: 0x10151F
     on_swipe_up: ${_round_navigation_up}
     on_swipe_down: ${_round_navigation_down}
     widgets:
     - label:
-        id: call_idle_title_label
-        align: CENTER
-        text: ${friendly_name}
-        text_color: 16777215
+        align: TOP_MID
+        y: 8%
+        text: "\U000F06CB"
+        text_color: 0xFFFFFF
         text_font: font_info
-        text_align: CENTER
-        long_mode: SCROLL
-    - label:
-        id: call_idle_status_label
-        align: CENTER
-        text: IDLE
-        text_color: 65280
-        text_font: font_state
-        text_align: CENTER
-    - label:
-        id: call_idle_contacts_label
-        align: CENTER
-        text: 󰛋 0
-        text_color: 16777215
-        text_font: font_info
-        text_align: CENTER
-    - label:
-        id: call_idle_peer_label
-        align: CENTER
-        text: '-'
-        text_color: 16777215
-        text_font: font_title
-        text_align: CENTER
-        long_mode: SCROLL
-    - button:
-        id: call_idle_prev_contact_btn
-        align: CENTER
+    - obj:
+        id: phone_contacts_container
+        align: TOP_MID
+        y: 21%
+        width: 80%
+        height: 208
+        pad_all: 0
+        border_width: 0
         bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜱
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.prev_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_next_contact_btn
-        align: CENTER
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰜴
-            align: CENTER
-            text_color: 16777215
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.next_contact: null
-        - script.execute: update_call_idle_labels
-    - button:
-        id: call_idle_call_btn
-        align: CENTER
-        floating: true
-        bg_opa: TRANSP
-        shadow_opa: TRANSP
-        widgets:
-        - label:
-            text: 󰏲
-            align: CENTER
-            text_color: 65280
-            text_font: call_icons
-        on_short_click:
-        - voip_stack.call_toggle: null
+        scroll_dir: VER
+        scrollbar_mode: AUTO
   - id: call_ringing_in_page
     on_swipe_down: ${_round_navigation_down}
     on_swipe_up: ${_round_navigation_up}
@@ -888,14 +839,24 @@ defaults:
     scrollable: false
     bg_color: 34816
     widgets:
-    - label:
-        id: call_in_call_title_label
-        align: CENTER
-        text: ${friendly_name}
-        text_color: 16777215
-        text_font: font_info
-        text_align: CENTER
-        long_mode: SCROLL
+    - button:
+        id: call_keypad_btn
+        align: TOP_MID
+        y: 2%
+        width: 20%
+        height: 16%
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        shadow_opa: TRANSP
+        on_short_click:
+        - script.execute: call_to_dialer
+        widgets:
+        - label:
+            align: CENTER
+            text: "\U000F061C"
+            text_color: 16777215
+            text_font: font_title
     - label:
         id: call_in_call_status_label
         align: CENTER
@@ -996,6 +957,20 @@ defaults:
         - script.execute: voip_dial_backspace
         on_long_press:
         - script.execute: voip_dial_clear
+    - label:
+        id: call_dial_duration_label
+        scrollable: false
+        gesture_bubble: true
+        align: TOP_MID
+        y: 32
+        width: 100
+        height: 24
+        text: '00:00'
+        text_font: montserrat_14
+        text_color: 16777215
+        text_align: CENTER
+        long_mode: CLIP
+        hidden: true
     - buttonmatrix:
         id: call_dial_row_123
         align: TOP_MID
@@ -1004,6 +979,7 @@ defaults:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         scrollable: false
@@ -1032,6 +1008,7 @@ defaults:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         scrollable: false
@@ -1060,6 +1037,7 @@ defaults:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         scrollable: false
@@ -1088,6 +1066,7 @@ defaults:
         height: 31
         bg_opa: TRANSP
         border_width: 0
+        pad_all: 0
         pad_row: 0
         pad_column: 5
         scrollable: false
@@ -1099,19 +1078,21 @@ defaults:
           radius: 16
         rows:
         - buttons:
-          - text: 󰁮
+          - text: '*'
           - text: '0'
           - text: '#'
+          - text: 󰁮
         on_click:
         - if:
             condition:
-              lambda: return x == 0;
+              lambda: return x == 3;
             then:
             - script.execute: voip_dial_backspace
             else:
             - script.execute:
                 id: voip_dial_append
                 dial_char: !lambda |-
+                  if (x == 0) return '*';
                   if (x == 1) return '0';
                   if (x == 2) return '#';
                   return 0;
@@ -1131,6 +1112,7 @@ defaults:
         - script.execute: voip_dial_call
         widgets:
         - label:
+            id: call_dial_action_label
             align: CENTER
             text: 󰏲
             text_color: 16777215
@@ -1184,50 +1166,46 @@ defaults:
       place(obj, x, y);
     };
     lv_obj_t *titles[] = {
-      id(call_idle_title_label), id(call_ringing_in_title_label),
-      id(call_ringing_out_title_label), id(call_in_call_title_label), id(call_ended_title_label)
+      id(call_ringing_in_title_label),
+      id(call_ringing_out_title_label), id(call_ended_title_label)
     };
     for (auto *obj : titles) label_at(obj, 5);
     lv_obj_t *statuses[] = {
-      id(call_idle_status_label), id(call_ringing_in_status_label),
+      id(call_ringing_in_status_label),
       id(call_ringing_out_status_label), id(call_in_call_status_label), id(call_ended_status_label)
     };
     for (auto *obj : statuses) label_at(obj, 10);
-    label_at(id(call_idle_contacts_label), 15);
-
-    const int nav_size = std::min(gx[8], gy[8]);
-    const int nav_band = width_for_band(gy[20] - nav_size / 2, nav_size, 0);
-    const int inset = (w - nav_band) / 2;
-    const int left_x = gx.front() + inset + nav_size / 2;
-    const int right_x = gx.back() - inset - nav_size / 2;
-    button_at(id(call_idle_prev_contact_btn), left_x, gy[20], nav_size);
-    button_at(id(call_idle_next_contact_btn), right_x, gy[20], nav_size);
-    label_at(id(call_idle_peer_label), 20, right_x - left_x - nav_size - 2 * edge);
-
     lv_obj_t *peers[] = {
       id(call_ringing_in_peer_label), id(call_ringing_out_peer_label),
       id(call_in_call_peer_label), id(call_ended_peer_label)
     };
     for (auto *obj : peers) label_at(obj, 20);
     const int call_size = std::min(gx[10], gy[10]);
-    lv_obj_t *single_actions[] = {id(call_idle_call_btn), id(call_cancel_btn), id(call_hangup_btn)};
+    lv_obj_t *single_actions[] = {id(call_cancel_btn), id(call_hangup_btn)};
     for (auto *obj : single_actions) button_at(obj, gx[20], gy[28], call_size);
     button_at(id(call_answer_btn), gx[12], gy[28], call_size);
     button_at(id(call_decline_btn), gx[28], gy[28], call_size);
     label_at(id(call_ended_reason_caption), 26);
     label_at(id(call_ended_reason_label), 30);
 
-    const int number_y = h * 16 / 240;
-    const int number_h = std::max(24, h * 26 / 240);
-    const int row_h = std::max(29, h * 31 / 240);
-    const int call_y = h * 187 / 240;
-    const int call_h = std::max(40, h * 43 / 240);
+    const bool connected_keypad = id(phone).is_in_call();
+    const int number_y = h * (connected_keypad ? 12 : 16) / 240;
+    const int number_h = connected_keypad ? lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_value_label), LV_PART_MAIN)) : std::max(24, h * 26 / 240);
+    const int duration_y = h * 36 / 240;
+    const int duration_h = lv_font_get_line_height(lv_obj_get_style_text_font(id(call_dial_duration_label), LV_PART_MAIN));
+    const int gap = std::max(3, h * 3 / 240);
+    const int call_h = std::max(34, h * 34 / 240);
+    const int call_y = h - std::max(8, h * 8 / 240) - call_h;
+    const int keys_y = std::max(h * 54 / 240, connected_keypad ? duration_y + duration_h + gap : 0);
+    const int row_h = std::max(29, (call_y - keys_y - 4 * gap) / 4);
     fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
-    fit_centered_band(id(call_dial_row_123)->obj, h * 46 / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_456)->obj, h * 81 / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_789)->obj, h * 116 / 240, row_h, 6);
-    fit_centered_band(id(call_dial_row_del0hash)->obj, h * 151 / 240, row_h, 6);
-    fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
+    fit_centered_band(id(call_dial_duration_label), duration_y, duration_h, 6);
+    fit_centered_band(id(call_dial_row_123)->obj, keys_y, row_h, 6);
+    fit_centered_band(id(call_dial_row_456)->obj, keys_y + row_h + gap, row_h, 6);
+    fit_centered_band(id(call_dial_row_789)->obj, keys_y + 2 * (row_h + gap), row_h, 6);
+    fit_centered_band(id(call_dial_row_del0hash)->obj, keys_y + 3 * (row_h + gap), row_h, 6);
+    lv_obj_set_size(id(call_dial_call_btn), std::min(width_for_band(call_y, call_h, 2), w * 58 / 240), call_h);
+    lv_obj_align(id(call_dial_call_btn), LV_ALIGN_TOP_MID, 0, call_y);
   _round_timer_page:
   - id: timer_finished_page
     bg_color: 0

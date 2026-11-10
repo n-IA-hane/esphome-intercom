@@ -12,6 +12,9 @@
     },
     "esphome-runtime-controller": {
       "path": "../esphome-runtime-controller"
+    },
+    "esphome-esp-video-camera": {
+      "path": "../esphome-esp-video-camera"
     }
   }
 }

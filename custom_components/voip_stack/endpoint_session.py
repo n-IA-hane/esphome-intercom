@@ -338,6 +338,7 @@ class EndpointCallSession:
         self.resources: list[ManagedResource] = []
         self.tasks: set[asyncio.Task[Any]] = set()
         self.named_tasks: dict[str, asyncio.Task[Any]] = {}
+        self.video_intent_lock = asyncio.Lock()
         self.endpoint_claims: dict[str, str] = {}
         self.event_context = CallEventContext()
         self.committed_state: CallStateSnapshot | None = None

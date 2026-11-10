@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 import wave
 
 from .core import rtp
+from .core.sip_stun import is_stun_message
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .debug_capture import (
@@ -31,6 +32,7 @@ from .dtmf import (
     build_telephone_event_payload,
     telephone_event_code,
 )
+from .media_ports import bind_sip_audio_socket
 from .core.sdp import RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadEncoder
@@ -38,7 +40,6 @@ from .rtp_audio_receiver import RtpAudioReceiver
 
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
-_RTP_IP_TOS = 0xB8
 _DTMF_UPDATE_SECONDS = 0.05
 
 
@@ -70,16 +71,36 @@ def _normalized_audio_fmtp(fmt: RtpPcmFormat) -> tuple[tuple[str, str], ...]:
 def _audio_payload_relay_compatible(
     incoming: RtpPcmFormat,
     outgoing: RtpPcmFormat,
+    *,
+    payload_size: int | None = None,
 ) -> bool:
-    """Return whether compressed payload bytes may cross unchanged."""
+    """Keep static capacity conservative; admit actual stateless quanta at runtime."""
 
-    return bool(
+    same_shape = bool(
         incoming.encoding.upper() == outgoing.encoding.upper()
         and incoming.sample_rate == outgoing.sample_rate
         and incoming.channels == outgoing.channels
-        and incoming.frame_ms == outgoing.frame_ms
         and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
     )
+    if not same_shape:
+        return False
+    if (incoming.frame_ms == outgoing.frame_ms
+        and incoming.min_frame_ms >= outgoing.min_frame_ms
+        and max(incoming.frame_ms, incoming.max_frame_ms) <= max(outgoing.frame_ms, outgoing.max_frame_ms)
+        # Fixed-rate payloads have a known envelope. Longer legal input must
+        # use the existing decoder/reframer when it exceeds the RTP builder.
+        # Opus bytes vary independently of duration; compatible Opus retains
+        # its encoded relay path and its existing fmtp constraints.
+        and (incoming.encoding.upper() == "OPUS"
+             or rtp.audio_payload_size_limit(incoming) <= rtp.MAX_RTP_PAYLOAD_BYTES)
+    ):
+        return True
+    # VBR and stateful ADPCM cannot infer duration or decoder state from length.
+    return bool(payload_size is not None and incoming.encoding.upper() in {"L16", "L24", "PCM", "PCMA", "PCMU"}
+        and outgoing.frame_ms >= max(incoming.min_frame_ms, outgoing.min_frame_ms)
+        and payload_size == outgoing.rtp_timestamp_step * outgoing.channels * outgoing.bits // 8
+        and payload_size <= min(rtp.audio_payload_size_limit(incoming),
+            rtp.audio_payload_size_limit(outgoing), rtp.MAX_RTP_PAYLOAD_BYTES))
 
 
 @dataclass(slots=True)
@@ -192,13 +213,16 @@ class RtpPeer:
 
 
 class _RelayProtocol(asyncio.DatagramProtocol):
-    def __init__(self, relay: "SipRtpRelay", side: str) -> None:
+    def __init__(self, relay: "SipRtpRelay", side: str, *, paused: bool = False) -> None:
         self.relay = relay
         self.side = side
+        self.paused = paused
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport  # type: ignore[assignment]
+        if self.paused:
+            transport.pause_reading()
 
     def datagram_received(self, data: bytes, addr) -> None:
         self.relay.handle_packet(self.side, data, addr)
@@ -304,6 +328,7 @@ class SipRtpRelay:
         self.debug_capture = bool(debug_capture)
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
+        self._audio_sockets: tuple[socket.socket, ...] | None = None
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
@@ -606,6 +631,23 @@ class SipRtpRelay:
                         destination.unlink()
                 raise
 
+    def adopt_audio_sockets(self, sockets: tuple[socket.socket, ...]) -> None:
+        """Accept an existing reservation without opening a second media owner."""
+        if (self._released or self._stop_requested or self._start_task is not None
+                or self.left_transport is not None or self.right_transport is not None):
+            raise RuntimeError("SIP RTP relay cannot adopt sockets after startup")
+        combined = sockets if self._audio_sockets is None else self._audio_sockets + sockets
+        if any(sock.fileno() < 0 for sock in combined):
+            raise ValueError("RTP sockets do not match the relay reservation")
+        ports = [int(sock.getsockname()[1]) for sock in combined]
+        if (not sockets or len(combined) > 2 or len(set(ports)) != len(ports)
+                or len({sock.fileno() for sock in combined}) != len(combined)
+                or any(sock.fileno() < 0 or port not in (self.left_port, self.right_port)
+                       or sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_DGRAM
+                       for sock, port in zip(combined, ports, strict=True))):
+            raise ValueError("RTP sockets do not match the relay reservation")
+        self._audio_sockets = combined
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self.left_transport is not None and self.right_transport is not None:
@@ -631,10 +673,16 @@ class SipRtpRelay:
         left_sock: socket.socket | None = None
         right_sock: socket.socket | None = None
         try:
-            left_sock = self._rtp_socket(self.left_port)
-            right_sock = self._rtp_socket(self.right_port)
+            sockets, self._audio_sockets = self._audio_sockets or (), None
+            by_port = {int(sock.getsockname()[1]): sock for sock in sockets}
+            left_sock = by_port.get(self.left_port)
+            right_sock = by_port.get(self.right_port)
+            if left_sock is None:
+                left_sock = self._rtp_socket(self.left_port)
+            if right_sock is None:
+                right_sock = self._rtp_socket(self.right_port)
             left_transport, _ = await loop.create_datagram_endpoint(
-                lambda: _RelayProtocol(self, "left"),
+                lambda: _RelayProtocol(self, "left", paused=True),
                 sock=left_sock,
             )
             if self._stop_requested:
@@ -643,7 +691,7 @@ class SipRtpRelay:
             self.left_transport = left_transport
             left_sock = None
             right_transport, _ = await loop.create_datagram_endpoint(
-                lambda: _RelayProtocol(self, "right"),
+                lambda: _RelayProtocol(self, "right", paused=True),
                 sock=right_sock,
             )
             if self._stop_requested:
@@ -651,6 +699,9 @@ class SipRtpRelay:
                 raise asyncio.CancelledError
             self.right_transport = right_transport
             right_sock = None
+            # Both destinations exist before either queued RTP packet is read.
+            self.left_transport.resume_reading()
+            self.right_transport.resume_reading()
             if self.video_relay is not None:
                 await self.video_relay.start()
             if self._stop_requested:
@@ -685,16 +736,7 @@ class SipRtpRelay:
 
     @staticmethod
     def _rtp_socket(port: int) -> socket.socket:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.setblocking(False)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
-            sock.bind(("0.0.0.0", int(port)))
-            return sock
-        except BaseException:
-            sock.close()
-            raise
+        return bind_sip_audio_socket(port)
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
@@ -788,6 +830,10 @@ class SipRtpRelay:
     def _close_audio_resources(self) -> None:
         """Synchronously revoke both RTP transports."""
 
+        sockets, self._audio_sockets = self._audio_sockets, None
+        for sock in sockets or ():
+            with contextlib.suppress(OSError):
+                sock.close()
         if self.left_transport is not None:
             self.left_transport.close()
             self.left_transport = None
@@ -1046,6 +1092,8 @@ class SipRtpRelay:
             )
 
     def handle_packet(self, side: str, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         source = self.left if side == "left" else self.right
         dest = self.right if side == "left" else self.left
         transport = self.right_transport if side == "left" else self.left_transport
@@ -1109,8 +1157,12 @@ class SipRtpRelay:
             wire_format = output_encoder.fmt if output_encoder is not None else dest.outbound_rtp_format
             if rtp.use_audio_clock(dest, wire_format.rtp_clock_rate):
                 (self.left_to_right_clock if side == "left" else self.right_to_left_clock).source_base = None
+            converter = self.left_to_right if side == "left" else self.right_to_left
+            packet_size = (len(packet.payload) if decoder is not None and converter is not None
+                and converter._same_pcm_contract()
+                and not decoder.has_pending_pcm and not converter.has_pending_pcm else None)
             passthrough = not self.debug_capture and _audio_payload_relay_compatible(
-                received_format, wire_format
+                received_format, wire_format, payload_size=packet_size
             )
             clock = self.left_to_right_clock if side == "left" else self.right_to_left_clock
             clock.observe_format(received_format)
@@ -1119,6 +1171,7 @@ class SipRtpRelay:
                     packet.payload,
                     received_format,
                 )
+                rtp.validate_audio_payload_size(packet.payload, wire_format)
                 if decoder is not None:
                     if decoder.has_pcm_observers:
                         try:
@@ -1161,7 +1214,13 @@ class SipRtpRelay:
                 decoder = self.left_decoder if side == "left" else self.right_decoder
                 if decoder is None:
                     raise RuntimeError("RTP decoder missing for transcoding path")
-                pcm_frames = decoder.decode(packet.payload_type, packet.payload)
+                converter = self.left_to_right if side == "left" else self.right_to_left
+                if converter is None:
+                    raise RuntimeError("PCM converter missing for transcoding path")
+                # Same-geometry reframers accept arbitrary sample-aligned input.
+                # Resamplers require nominal input quanta from this receiver.
+                pcm_frames = decoder.decode(packet.payload_type, packet.payload,
+                    normalize_frames=not converter._same_pcm_contract())
                 if not pcm_frames:
                     return
                 if source.rx_ssrc is None:
@@ -1172,9 +1231,6 @@ class SipRtpRelay:
                     # Symmetric RTP: follow a valid same-SSRC NAT tuple rebind.
                     source.host = str(addr[0])
                     source.port = int(addr[1])
-                converter = self.left_to_right if side == "left" else self.right_to_left
-                if converter is None:
-                    raise RuntimeError("PCM converter missing for transcoding path")
                 converted_frames = []
                 for pcm in pcm_frames:
                     self._capture_pcm(side, pcm)

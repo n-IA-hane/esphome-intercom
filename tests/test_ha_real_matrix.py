@@ -121,14 +121,13 @@ def test_dtmf_peer_uses_early_media_rfc4733_and_preserves_bind_host(
     assert "dtmfmode=info" not in account
 
 
-def test_lab_wrapper_stops_tmux_before_collecting_processes() -> None:
+def test_lab_wrapper_uses_existing_service_owner() -> None:
     source = (ROOT / "scripts/with_ha_lab_candidate.sh").read_text()
 
-    assert source.index("tmux kill-session") < source.index("mapfile -t pids")
-    assert "ps -eo pid=,comm=,args=" in source
-    assert '$2 == "hass" || $2 ~ /^python/' in source
+    assert "tmux" not in source
+    assert "ps -eo" not in source
+    assert "kill -KILL" not in source
     assert 'nc -z "$sip_ready_host" "$sip_ready_port"' in source
-    assert 'kill -KILL "${pids[@]}"' in source
 
 
 def test_phone_policy_helper_uses_public_service_and_restores_state() -> None:

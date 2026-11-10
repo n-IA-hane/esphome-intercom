@@ -28,7 +28,7 @@ script:
           active: true
       - mixer_speaker.apply_ducking:
           id: tts_mixer_input
-          decibel_reduction: 0
+          decibel_reduction: ${ announcement_input_attenuation_db | default(0) }
           duration: 0ms
       - while:
           condition:
@@ -72,7 +72,7 @@ script:
                 announcement: true
             - mixer_speaker.apply_ducking:
                 id: tts_mixer_input
-                decibel_reduction: 0
+                decibel_reduction: ${ announcement_input_attenuation_db | default(0) }
                 duration: 0ms
             - runtime_controller.set_activity:
                 id: runtime

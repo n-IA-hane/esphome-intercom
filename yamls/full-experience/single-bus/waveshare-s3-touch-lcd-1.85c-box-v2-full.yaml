@@ -23,13 +23,42 @@
 # Support: https://github.com/sponsors/n-IA-hane
 
 substitutions:
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  gmf_ai_audio_source: ""
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, display, diagnostics]
   audio_processor: aec
   mic_mix: average
   voip_transport: udp
   # Optional overrides: mic_id, ai_avatar, component source refs, pins and buffers.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2.yaml@dev
+
+# Optional SIP codec in addition to the package's PCM defaults.
+# Uncomment the outer keys and the codec you need. Codec modules are compiled
+# only when declared. See docs/ESP_AUDIO_CODECS.md for rates and packet times.
+# voip_stack:
+#   audio:
+#     codecs:
+#       - codec: g722
+#         tx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#           - {sample_rate: 16000, frame_ms: 10}
+#         rx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#           - {sample_rate: 16000, frame_ms: 10}
+#
+#       # Opus qualification is pending; the current validator rejects FULL/P4.
+#       # Keep this example commented until this exact profile is qualified.
+#       - codec: opus
+#         tx:
+#           - {sample_rate: 16000, frame_ms: 20}
+#         rx:
+#           - {sample_rate: 48000, frame_ms: 20}

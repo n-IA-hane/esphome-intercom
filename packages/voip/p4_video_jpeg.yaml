@@ -4,6 +4,7 @@
 # source, decoder and voip_stack codec are emitted into the firmware.
 
 packages:
+  camera_quality: !include '../camera/p4_jpeg_quality.yaml'
   video_entities: !include video_entities.yaml
   csi_contract: !include p4_video_csi.yaml
 

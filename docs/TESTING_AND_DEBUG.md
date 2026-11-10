@@ -3,9 +3,89 @@
 Regression tests cover reported compatibility failures. Include the relevant
 protocol and device scenarios when validating a change.
 
-This project has enough call paths that manual spot checks are not enough.
-Use this page as the standard regression checklist before release-level
-changes.
+Start from the failing step in [troubleshooting](troubleshooting.md), identify
+the affected layer and actual target, then use the relevant procedure here.
+The [test-suite guide](../tests/README.md) is canonical for suite selection and
+levels of proof; the [scenario matrix](voip_test_matrix.md) lists coverage
+obligations. A local source check, a browser fixture and a physical call prove
+different things.
+
+## Before opening an issue
+
+**Report the parts you actually use.** For HA, browser cards or SIP equipment
+without an ESP, provide the HA-side information and skip ESP requirements.
+ESP dumps apply only to ESP-related faults; Audio Diagnostics additionally
+requires Audio Stack on that device.
+
+Reproduce with the current maintained release/profile and report the exact
+versions actually running. An updated YAML does not update an ESP until it is
+rebuilt and uploaded.
+
+Include:
+
+- Reproduction steps, expected behavior, actual behavior and frequency.
+- HA and VoIP Stack versions; for ESP faults, ESPHome and component tags/commits.
+- Exact board, microphone/speaker and codec models, relevant YAML and wiring.
+- Who calls whom, directly or through HA, SIP UDP/TCP, PBX or peer software and
+  version, and negotiated codecs and `ptime` if known.
+- HA integration diagnostics and logs around the failure; the ESP boot log
+  when an ESP is involved.
+- For an updated ESP profile, complete **VoIP Diagnostics** output during the
+  fault and after hangup. Add **Audio Diagnostics** with Audio Stack. Open the
+  ESPHome logs first, use INFO or a more verbose logger level, and include whole
+  diagnostic blocks.
+- A [SIP capture](troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
+  for HA-handled signaling faults. It contains neither RTP media nor SIP sent
+  directly between ESP devices; those paths may require separate captures.
+
+To request an ESP dump from HA, open **Developer Tools > Actions**, select
+**Button: Press** (`button.press`) and choose the device's **VoIP Diagnostics**
+or **Audio Diagnostics** button. Open its ESPHome logs first: output is printed
+there, not returned by the HA action. For missing buttons in custom firmware,
+use the [YAML definitions](troubleshooting.md#collect-a-runtime-snapshot-from-an-esp)
+and rebuild/upload. `voip_stack.dump_diagnostics` and
+`esp_audio_stack.dump_diagnostics` are ESPHome actions, not HA services.
+
+For audio faults, state which direction is silent or distorted. For video
+faults, say whether video was present at answer or enabled later. For custom
+Audio Stack hardware, include the AEC/AFE setting and whether the bus is shared
+or split; report any comparison you actually performed with processing disabled.
+
+Use this report structure:
+
+```text
+Title: ESP receives audio but the browser caller hears silence
+Versions: [exact installed HA, integration, ESPHome and component versions]
+Hardware: [board, microphone, speaker, codec and relevant wiring]
+Call path: HA browser card -> Generic S3, through HA, SIP UDP
+Steps: call, answer, speak in both directions, hang up from HA
+Expected: bidirectional audio and both endpoints idle after hangup
+Actual: ESP plays audio; browser hears silence; hangup works
+Frequency and test time: [repetitions, timestamp and timezone]
+Attachments: sanitized YAML, HA diagnostics, HA/ESP logs, full diagnostic blocks,
+             and a SIP capture when relevant
+```
+
+Never publish passwords, authentication data, API keys or tokens. Review
+configuration files, logs and captures before attaching them. Reports without
+reproduction details or supporting evidence may be closed as incomplete.
+
+## Contributing
+
+Preserve standards-based SIP/SDP/RTP behavior and the single authoritative call
+lifecycle. Prefer a transaction, dialog, media or ownership invariant over
+endpoint-specific timing workarounds. Run the applicable
+[repository suites](../tests/README.md) before submitting a change and include
+the actual results and remaining verification limits.
+
+### AI-assisted contributions
+
+Vibe coding and thoughtful AI-assisted development are welcome. Asking an AI
+to add a feature or fix a bug and submitting the result is not enough: audio,
+video and call handling share limited resources, and a local fix can introduce
+regressions elsewhere. Understand the changes, review their wider effects and
+test the affected functionality. Explain what you tested and what remains
+unverified. Review and testing remain the contributor's responsibility.
 
 ## Automated local tests
 
@@ -33,7 +113,9 @@ find custom_components/voip_stack/frontend -name '*.js' -print0 \
 ### Repeat a coordinated CI source set
 
 The software CI job uploads `coordinated-sources.json`, containing the actual
-backend commit and the four component commits checked out for that run.
+backend commit and the complete coordinated component set checked out for that
+run: Native, Audio, Runtime, Renderer, Screenshot and Camera. The accepted
+manifest schema is owned by [`coordinated_sources.py`](../scripts/coordinated_sources.py).
 Default runs continue following the coordinated `dev`/`main` branches. To repeat
 an exact run, select its backend revision and supply the complete artifact JSON
 as the manual workflow's `component_manifest` input.
@@ -48,7 +130,9 @@ python scripts/coordinated_sources.py --root /path/to/component-parent \
 The script rejects partial manifests, mutable commit references, mismatched
 backend revisions and existing component directories. It never resets a local
 checkout. This checkout manifest complements the local `candidate-lock.json`,
-which also records toolchain and dependency identities.
+which also records toolchain and dependency identities. Neither manifest is a
+physical qualification receipt. Replay a historical manifest with the matching
+runner/schema rather than treating it as a current partial manifest.
 
 The ESP component's `contract` job uploads `native.xml`. Its permanent REFER
 socket regressions exercise production response dispatch and retired-transaction
@@ -89,9 +173,20 @@ Some tests deliberately lock down source-level routing contracts; they catch
 accidental branch removal but do not prove a real SIP transaction, browser
 codec or RTP path. Release evidence must include the real matrix below.
 
-The peer-live runner also changes and restores DND and auto-answer on one real
-HA browser phone. Select that phone explicitly, either as argument 2 or through
-the self-hosted runner variable:
+The peer-live runner combines isolated peer groups with a final Home/Wildix
+witness. It requires operational authorization for the actual targets: it
+changes and restores DND and auto-answer on the selected real HA browser phone,
+deploys this checkout's component and restarts Home Assistant, then places the
+real Wildix-to-ESP routing call. Verify idle endpoints and the intended targets
+before execution.
+
+Supply `HOME_HA_URL`, `HOME_HA_AUTH_FILE` (a private auth-file path),
+`WILDIX_CONFIG` (a private peer-config path) and `P4_ROUTE_NAME`, as well as the
+HA test interpreter and explicit policy phone. The deployment's `HA_HOST`
+selects its SSH target separately from `HOME_HA_URL`; it defaults to `hass`.
+Review `HA_COMPONENT_DIR`, `HA_SERVICE` and backup policy for that target.
+After supplying those prerequisites, choose the phone as argument 2 or through
+the runner variable:
 
 ```bash
 HA_PYTHON=/path/to/ha/.venv/bin/python \
@@ -102,8 +197,12 @@ HA_PYTHON=/path/to/ha/.venv/bin/python \
   ./scripts/run_peer_live_qualification.sh evidence/results
 ```
 
-The command fails before testing when the selection is absent. It never assumes
-the historical `default` endpoint.
+The command fails before testing when the phone selection is absent. It never
+assumes the historical `default` endpoint. Other required live variables are
+checked after the isolated groups, not before the whole script. For isolated
+peer tests use `./scripts/test_suite.sh peer`; for an isolated HA candidate use
+the existing [`with_ha_lab_candidate.sh`](../scripts/with_ha_lab_candidate.sh)
+wrapper and applicable lab runner. This combined script has no lab-only switch.
 
 The same peer-live command also executes the two explicit-extension precedence
 cases from `tools/inbound_routing_qualification.py`. Their separate JSON
@@ -125,13 +224,19 @@ For an explicitly authorized live deployment, use the repository helper
 instead of copying the component by hand:
 
 ```bash
-tools/deploy_ha_voip_stack.sh
+HA_CREATE_BACKUP=1 tools/deploy_ha_voip_stack.sh
 ```
 
-It stages the exact local component, creates a timestamped remote backup,
-installs through the configured SSH alias, restarts Home Assistant and waits
-for a terminal service state. Environment overrides are documented by
-`tools/deploy_ha_voip_stack.sh --help`.
+It stages the exact local component and installs it using `rsync --delete`.
+The example explicitly requests a timestamped backup of an existing component;
+`HA_CREATE_BACKUP` defaults to `0`. The default SSH target is `hass`, component
+directory `/var/lib/hass/custom_components/voip_stack`, backup root
+`/var/lib/hass/.cache/voip_stack_deploy_backups` and service
+`home-assistant.service`. It restarts HA and waits for initialization. Review
+the environment overrides with `tools/deploy_ha_voip_stack.sh --help` first.
+The backup covers component files only, not HA configuration, persistent data
+or firmware; restoration and a further restart are separate authorized actions,
+not automatic rollback on failure.
 
 ## HACS release archive
 
@@ -486,11 +591,14 @@ esphome config device.yaml > device-expanded.yaml
   --input device-expanded.yaml --page settings_continuous_page \
   --width 240 --height 240 \
   --output test_captures/options-preview \
-  --build-parent /tmp/options-preview-build
+  --build-parent /var/tmp/voip-builds/options-preview
 ```
 
 Use the complete config dump here, without `--no-defaults`, so native generated
 entities are available to the host fixtures. Do not use `--show-secrets`.
+Keep the build parent on persistent disk; small snapshots/captures may use a
+separate temporary directory. The example path must resolve to persistent
+storage on the machine running the renderer.
 Box V2 uses 360 by 360 pixels; P4 uses `settings_p4_page` and the selected
 orientation's dimensions. `--prepare-only` writes the host configuration
 without compiling or running it.
@@ -663,8 +771,10 @@ When testing real devices, cover:
 - HA/card to registered SIP endpoint;
 - unknown, unregistered SIP endpoint to HA;
 - unknown, unregistered SIP endpoint to each ESP;
-- ESP in-dialog hold/re-INVITE receives `488` while the established call and
-  later BYE remain functional;
+- ESP incompatible audio updates receive `488` while the established call and
+  later BYE remain functional; compatible video add/remove and direction cases
+  use the existing owner, with rejected active retarget/format cases covered by
+  the [media compatibility table](ARCHITECTURE.md#in-dialog-media-compatibility);
 - HA-owned UPDATE/re-INVITE hold/resume and supported audio changes commit once;
   direct browser dialogs cover compatible video add/remove;
 - an audio-only SIP bridge can add video through a paired destination

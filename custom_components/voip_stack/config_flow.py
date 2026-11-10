@@ -150,6 +150,9 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     data.update(
         {
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
+            "trunk_media_nat": existing.get("trunk_media_nat") or (
+                "manual" if existing.get("trunk_outbound_media_address") else "auto"
+            ),
             "trunk_audio_codecs": list(codecs.audio),
             "trunk_video_codecs": list(codecs.video),
             CONF_TRUNK_ENABLED: False,
@@ -240,6 +243,11 @@ class TrunkFormMixin:
         }
         schema = vol.Schema(
             {
+                vol.Optional("trunk_media_nat", default=existing.get("trunk_media_nat") or (
+                    "manual" if existing.get("trunk_outbound_media_address") else "auto"
+                )): SelectSelector(SelectSelectorConfig(
+                    options=["auto", "direct", "manual"], translation_key="trunk_media_nat",
+                )),
                 vol.Optional(
                     "trunk_outbound_media_address",
                     default=existing.get("trunk_outbound_media_address", ""),
@@ -392,6 +400,14 @@ class TrunkFormMixin:
                 except ValueError:
                     errors["trunk_outbound_media_address"] = "trunk_media_address_invalid"
             user_input["trunk_outbound_media_address"] = media_address
+            media_mode = str(user_input.get("trunk_media_nat") or existing.get("trunk_media_nat") or (
+                "manual" if media_address else "auto"
+            ))
+            if media_mode not in {"auto", "direct", "manual"}:
+                errors["trunk_media_nat"] = "trunk_media_nat_invalid"
+            elif media_mode == "manual" and not media_address:
+                errors["trunk_outbound_media_address"] = "trunk_media_address_invalid"
+            user_input["trunk_media_nat"] = media_mode
             for key, allowed, empty in (("trunk_audio_codecs", AUDIO_CODECS, False),
                                         ("trunk_video_codecs", VIDEO_CODECS, True)):
                 try:
@@ -476,7 +492,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None):
         """Reconfigure the existing VoIP Stack entry from HA's native menu."""
-        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail"])
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services"])
 
     async def async_step_user(self, user_input=None):
         """Handle install/reconfigure of the single VoIP Stack entry.
@@ -769,6 +785,34 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 SelectSelector(SelectSelectorConfig(options=choices, mode="dropdown")),
         }))
 
+
+    async def async_step_phone_services(self, user_input=None):
+        """Configure the integration-owned standard LDAP directory."""
+        from .phone_services import CONF_PHONE_SERVICES, settings, validate_settings
+
+        entry, _existing = self._current_entry_data()
+        current = settings(entry)
+        errors = {}
+        if user_input is not None:
+            current = {**current, **user_input, "ldap_port": int(user_input["ldap_port"])}
+            for name in ("listen_host", "base_dn", "certificate", "private_key"):
+                current[name] = current[name].strip()
+            try:
+                validate_settings(current)
+            except ValueError as error:
+                errors["base"] = str(error)
+            else:
+                return self._store_entry({CONF_PHONE_SERVICES: current})
+        return self.async_show_form(step_id="phone_services", errors=errors, data_schema=vol.Schema({
+            vol.Required("enabled", default=current["enabled"]): BooleanSelector(),
+            vol.Required("listen_host", default=current["listen_host"]): str,
+            vol.Required("ldap_port", default=current["ldap_port"]): _port_selector(),
+            vol.Required("base_dn", default=current["base_dn"]): str,
+            vol.Required("allow_anonymous", default=current["allow_anonymous"]): BooleanSelector(),
+            vol.Required("tls", default=current["tls"]): BooleanSelector(),
+            vol.Optional("certificate", default=current["certificate"]): str,
+            vol.Optional("private_key", default=current["private_key"]): str,
+        }))
 
     async def async_step_parking(self, user_input=None):
         from .parking_config import DEFAULT_SLOTS, normalize_parking_config, parking_namespace_conflicts

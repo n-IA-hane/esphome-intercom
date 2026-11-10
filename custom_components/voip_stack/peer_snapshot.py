@@ -42,27 +42,16 @@ def device_entity_state(hass: HomeAssistant, device: dict, key: str) -> str:
 
 def device_is_phonebook_available(hass: HomeAssistant, device: dict) -> bool:
     """Return whether an ESP should be advertised to other VoIP peers."""
+    if device.get("managed"):
+        return bool(device.get("registered"))
     entities = device.get("entities") or {}
-    endpoint_entity = entities.get("voip_endpoint")
-    if not endpoint_entity:
-        return False
-    endpoint_state = hass.states.get(endpoint_entity)
-    if endpoint_state is None or str(endpoint_state.state).strip().lower() in (
-        "",
-        "unknown",
-        "unavailable",
-    ):
-        return False
-
     state_entity = entities.get("voip_state")
-    if state_entity:
-        state = hass.states.get(state_entity)
-        if state is None or str(state.state).strip().lower() in (
-            "unknown",
-            "unavailable",
-        ):
-            return False
-    return True
+    if not state_entity:
+        return False
+    state = hass.states.get(state_entity)
+    return state is not None and str(state.state).strip().lower() not in {
+        "", "unknown", "unavailable",
+    } and bool(device.get("sip_port") and device_transport(device))
 
 
 def device_transport(device: dict) -> str:
@@ -72,7 +61,7 @@ def device_transport(device: dict) -> str:
 
 
 async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
-    """Snapshot every online peer published through endpoint sensors."""
+    """Snapshot online ESPHome phones with an explicitly resolved SIP route."""
     devices = await _get_voip_devices(hass)
     cfg = transport_config(hass)
     out: list[Peer] = []
@@ -99,14 +88,14 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 endpoint_id=str(device.get("endpoint_id") or ""),
                 endpoint_kind=EndpointKind.ESPHOME.value,
                 capabilities=tuple(device.get("capabilities") or ("audio", "dtmf")),
-                sip_port=int(device.get("sip_port") or cfg["sip_port"]),
-                rtp_port=int(device.get("rtp_port") or cfg["rtp_port"]),
+                sip_port=int(device["sip_port"]),
+                rtp_port=device.get("rtp_port"),
                 extension=str(device.get("extension") or ""),
                 sip_uri_user=str(device.get("sip_uri_user") or ""),
                 conference_group=str(device.get("conference_group") or ""),
                 conference_ring=bool(device.get("conference_ring", False)),
                 ring_group=str(device.get("ring_group") or ""),
-                audio_mode=device.get("audio_mode", "full_duplex"),
+                audio_mode=device.get("audio_mode"),
                 tx_formats=list(device.get("tx_formats") or []),
                 rx_formats=list(device.get("rx_formats") or []),
                 sip_audio_tx_formats=tuple(
@@ -154,7 +143,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 audio_mode="full_duplex",
                 tx_formats=formats,
                 rx_formats=formats,
-                sdp_features=frozenset({"directional_audio_v1"}),
+                sdp_features=frozenset({"directional_audio_v1", "independent_audio_ptime_v1"}),
             )
         )
 

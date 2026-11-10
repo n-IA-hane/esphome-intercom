@@ -11,6 +11,7 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import Unauthorized
 
 from .config import debug_mode as current_debug_mode
 from .config import transport_config as current_transport_config
@@ -86,6 +87,7 @@ WS_TYPE_RESOLVE_DEVICE = f"{DOMAIN}/resolve_device"
 WS_TYPE_HA_SOFTPHONE_STATE = f"{DOMAIN}/ha_softphone_state"
 WS_TYPE_SUBSCRIBE_CALL_EVENTS = f"{DOMAIN}/subscribe_call_events"
 WS_TYPE_SUBSCRIBE_HA_SOFTPHONE = f"{DOMAIN}/subscribe_ha_softphone_state"
+WS_TYPE_SUBSCRIBE_PHONE_STATES = f"{DOMAIN}/subscribe_phone_states"
 
 
 def _clean_group_token(value: object) -> str:
@@ -372,7 +374,7 @@ def _update_browser_presence(
     endpoint_id: str,
     delta: int,
 ) -> None:
-    """Track connected cards and expose browser reachability to routing."""
+    """Track browser media clients independently of logical phone availability."""
     endpoint_id = _endpoint_store_id(endpoint_id)
     counts = require_runtime_data(hass).softphone_presence
     previous = int(counts.get(endpoint_id, 0) or 0)
@@ -381,15 +383,6 @@ def _update_browser_presence(
         counts[endpoint_id] = current
     else:
         counts.pop(endpoint_id, None)
-
-    endpoint = _browser_endpoint(hass, endpoint_id)
-    if endpoint is not None:
-        availability = (
-            EndpointAvailability.AVAILABLE if current else EndpointAvailability.OFFLINE
-        )
-        registry = _endpoint_registry(hass)
-        if endpoint.availability is not EndpointAvailability.UNAVAILABLE:
-            registry.update(endpoint_id, availability=availability)
 
     if previous != current:
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
@@ -1009,7 +1002,6 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "available": bool(
             endpoint is not None
             and endpoint.availability is EndpointAvailability.AVAILABLE
-            and connected_cards
         ),
         "enabled": bool(
             endpoint is not None
@@ -1023,7 +1015,9 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "dnd": _ha_softphone_dnd(hass, endpoint_id),
         "voicemail": dict(store.get("voicemail") or {"enabled": False, "new": 0, "old": 0, "total": 0}),
         "parking": {"enabled": bool(parking.get("enabled")),
-                    "unavailable_reason": parking.get("unavailable_reason", "")},
+                    "unavailable_reason": parking.get("unavailable_reason", ""),
+                    "video_supported": bool(session is not None and session.live
+                                            and session.owner in {"ha_softphone", "bridge"})},
         "recording": {"active": recording_active,
                       "finishing": recording is not None and recording.stopped.is_set(),
                       "owned": recording_active and recording.endpoint.endpoint_id == endpoint_id},
@@ -1400,6 +1394,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     from .phone_config import esphome_phone_policy
     from .repairs import async_sync_esphome_action_issue
     from .store import config_entry
+    from .peer_snapshot import device_is_phonebook_available
 
     devices = await get_resolver(hass).list_devices()
     registry = _endpoint_registry(hass)
@@ -1413,7 +1408,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         name = str(device.get("name") or "").strip()
         if not device_id or not name:
             continue
-        endpoint_id = f"esphome:{device_id}"
+        endpoint_id = str(device.get("endpoint_id") or f"esphome:{device_id}")
         discovered_ids.add(endpoint_id)
         previous = registry.get(endpoint_id)
         capabilities = frozenset(
@@ -1426,14 +1421,16 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             name=name,
             kind=EndpointKind.ESPHOME,
             extension=str(device.get("extension") or ""),
-            username=str(device.get("sip_uri_user") or ""),
+            username=str(device.get("endpoint_username") or device.get("sip_uri_user") or ""),
             device_id=device_id,
             entity_ids=frozenset(
                 str(value)
                 for value in (device.get("entities") or {}).values()
                 if isinstance(value, str) and "." in value
             ),
-            availability=EndpointAvailability.AVAILABLE,
+            availability=(EndpointAvailability.AVAILABLE
+                          if device_is_phonebook_available(hass, device)
+                          else EndpointAvailability.OFFLINE),
             capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),
             conference_group=str(device.get("conference_group") or ""),
@@ -1568,6 +1565,7 @@ def _endpoint_id_from_selector(
 
 
 def async_register_websocket_api(hass: HomeAssistant) -> None:
+    websocket_api.async_register_command(hass, websocket_subscribe_phone_states)
     websocket_api.async_register_command(hass, websocket_subscribe_call_events)
     websocket_api.async_register_command(hass, websocket_subscribe_ha_softphone_state)
     websocket_api.async_register_command(hass, websocket_ha_softphone_state)
@@ -1575,10 +1573,24 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_resolve_device)
 
 
+@websocket_api.websocket_command({vol.Required("type"): WS_TYPE_SUBSCRIBE_PHONE_STATES})
+@callback
+def websocket_subscribe_phone_states(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: Dict[str, Any],
+) -> None:
+    """Observe readable phones without publishing browser availability."""
+    from .phone_monitor import PhoneStateSubscription
+
+    PhoneStateSubscription(hass, connection, msg["id"]).start()
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_TYPE_SUBSCRIBE_CALL_EVENTS,
         vol.Optional("include_activity", default=False): bool,
+        vol.Optional("include_runtime_ready", default=False): bool,
         vol.Optional("endpoint_id", default=""): str,
         vol.Optional("device_id", default=""): str,
     }
@@ -1589,7 +1601,25 @@ def websocket_subscribe_call_events(
     connection: websocket_api.ActiveConnection,
     msg: Dict[str, Any],
 ) -> None:
-    require_websocket_read(hass, connection)
+    def user_active():
+        user = connection.user
+        return bool(user is not None and getattr(user, "id", "") and getattr(user, "is_active", True))
+
+    def readable_calls():
+        if not user_active():
+            return False
+        try:
+            require_websocket_read(hass, connection)
+        except Unauthorized:
+            return False
+        return True
+
+    # Readiness has no phone/call payload. Endpoint-only readers may use this
+    # same transport without gaining global call or activity permissions.
+    if not msg.get("include_runtime_ready", False):
+        require_websocket_read(hass, connection)
+    elif not user_active():
+        raise Unauthorized(user_id=getattr(connection.user, "id", None))
     msg_id = msg["id"]
     requested_endpoint = str(msg.get("endpoint_id") or "").strip()
     if not requested_endpoint and msg.get("device_id"):
@@ -1614,6 +1644,8 @@ def websocket_subscribe_call_events(
 
     @callback
     def forward_call_event(event) -> None:
+        if not readable_calls():
+            return
         event_endpoint = str(event.data.get("endpoint_id") or "").strip()
         if requested_endpoint:
             if event_endpoint and event_endpoint != requested_endpoint:
@@ -1626,23 +1658,46 @@ def websocket_subscribe_call_events(
 
     @callback
     def forward_activity(activity):
-        connection.send_event(msg_id, {"event_type": f"{DOMAIN}.activity", "data": activity})
+        if readable_calls():
+            connection.send_event(msg_id, {"event_type": f"{DOMAIN}.activity", "data": activity})
 
     listeners = [hass.bus.async_listen(CALL_EVENT, forward_call_event)]
-    observer = None
-    if msg.get("include_activity", False):
+    activity_unsubscribe = None
+
+    @callback
+    def attach_activity():
+        nonlocal activity_unsubscribe
+        if activity_unsubscribe is not None:
+            activity_unsubscribe()
+            activity_unsubscribe = None
+        runtime = runtime_data(hass)
+        if (not msg.get("include_activity", False) or not readable_calls()
+                or runtime is None or runtime.sip is None or not runtime.sip.active):
+            return
         observer = phone_state_observer(hass)
-        listeners.append(observer.subscribe(forward_activity, kind="activity"))
+        activity_unsubscribe = observer.subscribe(forward_activity, kind="activity")
+        forward_activity(observer.activity)
+
+    @callback
+    def forward_runtime_ready(_event):
+        if not user_active():
+            return
+        connection.send_event(msg_id, {"event_type": f"{DOMAIN}.runtime_ready", "data": {}})
+        attach_activity()
+
+    if msg.get("include_runtime_ready", False):
+        listeners.append(hass.bus.async_listen(f"{DOMAIN}.runtime_ready", forward_runtime_ready))
 
     @callback
     def unsubscribe():
+        if activity_unsubscribe is not None:
+            activity_unsubscribe()
         for listener in listeners:
             listener()
 
     connection.subscriptions[msg_id] = unsubscribe
     connection.send_result(msg_id)
-    if observer is not None:
-        forward_activity(observer.activity)
+    attach_activity()
 
 
 @websocket_api.websocket_command(

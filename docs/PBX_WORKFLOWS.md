@@ -1,9 +1,5 @@
 # Using the PBX features
 
-This page covers the updated **2026.11.0** release. If you downloaded an
-earlier build with the same version label, redownload it in HACS, restart HA
-and reload the dashboard. Version 2026.10.1 did not include these additions.
-
 Home Assistant owns the phones, calls and settings. A card is the control
 panel for one phone. Closing the card does not remove that phone's forwarding
 rules or mailbox. ESP hardware is optional.
@@ -71,9 +67,9 @@ Open that phone's card, then **Options > Call routing**. The same settings are
 available through **VoIP Stack: Configure phone routing**, using HA's device
 picker. This includes ESP mirror cards: the policy is stored in HA.
 
-![Phone options and expanded call-routing settings](images/pbx-phone-routing-green.png)
+![Phone options and expanded call-routing settings](images/phone-cards/softphone-routing.png)
 
-The screenshot shows a 20-second voicemail rule being prepared before saving.
+The screenshot shows the available routing controls before a timeout is enabled.
 Enable **Ringing timeout** to choose how long this phone rings and what happens
 afterwards. The outgoing-line selector chooses a specific trunk or follows the
 integration default. The Save button becomes available when you edit the rule.
@@ -159,8 +155,10 @@ that parked it, or another configured destination.
 
 Directed pickup is different: if Kitchen (extension 101) is still ringing,
 dial **`*8101`** or **`pickup.Kitchen`** from Office to answer it there. No parking
-step is needed. Current parking and directed pickup support audio calls and
-reject active video before moving the call. Directed pickup targets a ringing phone, including a member of a ring group.
+step is needed. The ordinary card workflow supports audio calls; browser Park
+is disabled while video is active. Directed pickup targets a ringing phone,
+including a member of a ring group. See the [media limits](CALL_PARKING.md#current-verification-boundary)
+for the different SIP parking and pickup paths.
 Groups containing only HA browser phones use the same pickup confirmation as
 mixed SIP/browser groups. See [parking and pickup](CALL_PARKING.md).
 
@@ -186,10 +184,10 @@ finished event supplies the saved file for further automation. See
 
 ## Keep ordinary call automations simple
 
-The published preview already supports backend Automation callers, TTS and
-recorded media playback. They are useful building blocks, not new requirements
-for the phone features above. A scheduled automation can call a destination,
-wait for the answer, play a message and hang up without an open browser.
+Backend Automation callers can play TTS and recorded media. They are optional
+building blocks for the phone features above. A scheduled automation can call
+a destination, wait for the answer, play a message and hang up without an open
+browser.
 
 Actions in the same ordinary Automation-call sequence follow its call; native
 VoIP triggers also provide their own call context. You do not need to find the

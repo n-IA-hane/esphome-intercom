@@ -15,6 +15,19 @@ Without an explicit framework version, the installed ESPHome release selects
 its default SDK. Updating the P4 SDK does not by itself prove that C6 firmware
 must be replaced; check the applicable ESP-Hosted MCU compatibility contract.
 
+## ESP-IDF 5.5.6 restart compatibility
+
+The maintained P4 package includes a build-local backport of Espressif's
+[SDMMC reset-order correction](https://github.com/espressif/esp-hosted-mcu/issues/240#issuecomment-6451429332).
+It resets SDMMC DMA before the other peripheral resets, preventing the documented
+SDIO state from surviving a software restart. The watchdog settings stay unchanged.
+
+The backport replaces one source file inside the existing `esp_system` build
+target, preserving its IRAM placement, compiler options and dependencies. It
+does not modify the shared SDK installation. It applies only to the recognized
+ESP-IDF 5.5.6 source; an unexpected source hash stops that build. Other SDK
+versions are reported explicitly and left unchanged.
+
 ## Camera and display
 
 Set `esp_video_camera.resolution`, `jpeg_quality` and `max_framerate` in the
@@ -26,11 +39,22 @@ Configured frame rate is a limit. Qualification reports captured, transmitted,
 decoded and presented frames separately and compares the same resolutions and
 concurrent workloads. JPEG and H.264 remain separate firmware profiles.
 
-The optional `p4_framebuffer_capture` diagnostic accepts `downsample: 2` or `4`
+For normal on-demand snapshots, use the standalone [ESP Screenshot component](ESP_SCREENSHOT.md)
+and the existing native button/API action. Choose its synchronized P4 backend
+when direct video draws outside LVGL; account for its actual buffer policy.
+
+The low-level `p4_framebuffer_capture` bench diagnostic remains separate. It
+accepts `downsample: 2` or `4`
 to reduce its preallocated RGB565 snapshot while retaining a coherent panel
 image. The default `1` preserves native capture. A full 800x1280 snapshot takes
 2,048,000 bytes; factor 2 takes 512,000 bytes. Record this diagnostic allocation
 when comparing memory and performance. It does not change the displayed image.
+
+Before changing C6 firmware after a reset, hang or Wi-Fi failure, preserve the
+boot/reset log, P4 application identity and actual ESP-Hosted MCU version.
+Compare those with the selected SDK's compatibility requirement. Use a supported
+update or ROM recovery only when that identified mismatch requires it; an audio
+problem alone is not evidence that the coprocessor needs reflashing.
 
 ## ESPHome 2026.10 physical check
 
@@ -69,11 +93,13 @@ missing controls even though the current DMA framebuffer was correct.
 
 ## Audio and controls
 
-P4 remains PCM. Its speaker bus runs at 48 kHz and AFE microphone output at
+P4 uses PCM by default. Its speaker bus runs at 48 kHz and AFE microphone output at
 16 kHz. The existing speaker resampler accepts compatible incoming PCM rates,
 including 16 kHz for direct ESP-to-ESP calls; 48 kHz speaker output does not
-require every peer to transmit 48 kHz RTP. Prefer 10 ms packetization when both
-endpoints support it.
+require every peer to transmit 48 kHz RTP. The FULL defaults prefer TX16k/20 ms
+and RX48k/10 ms, with declared alternatives. Transmit and receive durations are
+independent. Optional G.722 provides a wideband PBX codec alongside PCM; see
+[codec configuration](ESP_AUDIO_CODECS.md).
 
 Send Video controls the next-call camera preference while idle and requests a
 SIP direction update during an established video call. Incoming video remains

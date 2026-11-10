@@ -1,7 +1,7 @@
 """Read-only phone projections shared by HA actions and state observers."""
 
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from types import SimpleNamespace
 import logging
 
@@ -15,6 +15,47 @@ from .runtime_data import require_runtime_data
 _LOGGER = logging.getLogger(__name__)
 
 PHONE_STATE_CHANGED = "voip_stack.phone_state_changed"
+
+
+@dataclass(frozen=True, slots=True)
+class PhoneProjectionUpdate:
+    """One shared projection update, separate from call ownership."""
+
+    phones: dict
+    removed: tuple[str, ...] = ()
+    access_event: object = None
+    closed: bool = False
+
+
+def phone_state_dto(phone, *, peer_readable):
+    """Expose the monitor's UI contract from the existing phone projection.
+
+    Legacy ``phone_states`` retains its richer service/BLF-compatible shape.
+    This detached view contains canonical call identities and display fields.
+    """
+    calls = []
+    for call in phone["calls"]:
+        peer_id = str(call.get("peer_endpoint_id") or "")
+        calls.append({
+            "id": str(call.get("call_id") or ""),
+            "generation": int(call.get("generation") or 0),
+            "leg_id": str(call.get("leg_id") or ""),
+            "direction": "outgoing" if call["direction"] == "initiator" else "incoming",
+            "state": call["state"],
+            "held": bool(call.get("held")),
+            "peer_endpoint_id": peer_id if peer_id and peer_readable(peer_id) else "",
+            "peer_name": str(call.get("peer_name") or ""),
+            "pickup_available": bool(call.get("pickup_available")),
+        })
+    mailbox = phone["mailbox"]
+    return {
+        **{key: phone[key] for key in (
+            "schema_version", "endpoint_id", "device_id", "name", "extension",
+            "kind", "availability", "dnd", "state",
+        )},
+        "calls": calls,
+        "mailbox": {key: mailbox[key] for key in ("enabled", "waiting", "new", "old")},
+    }
 
 
 def resolve_phone(hass, selector):
@@ -109,6 +150,8 @@ class PhoneStateObserver:
         self.listeners = set()
         self.activity_listeners = set()
         self.dialog_listeners = set()
+        self.projection_listeners = set()
+        self.access_unsubscribers = []
         self.unsubscribers = []
         self.previous = {}
         self.dialogs = {}
@@ -164,6 +207,12 @@ class PhoneStateObserver:
             # and availability changes independently of a call.
             return
         self.refresh(dialogs=self.dialogs)
+        if previous is not None and (
+            previous.entity_ids != event.endpoint.entity_ids
+            or previous.device_id != event.endpoint.device_id
+            or previous.kind != event.endpoint.kind
+        ):
+            self._access_changed(event)
 
     def subscribe(self, listener, *, kind="state"):
         self._start()
@@ -171,23 +220,45 @@ class PhoneStateObserver:
             "state": self.listeners,
             "activity": self.activity_listeners,
             "dialog": self.dialog_listeners,
+            "projection": self.projection_listeners,
         }[kind]
         listeners.add(listener)
+        if kind == "projection" and not self.access_unsubscribers:
+            from homeassistant.auth import EVENT_USER_UPDATED, EVENT_USER_REMOVED
+            from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
+
+            self.access_unsubscribers = [
+                self.hass.bus.async_listen(name, self._access_changed)
+                for name in (EVENT_USER_UPDATED, EVENT_USER_REMOVED, EVENT_ENTITY_REGISTRY_UPDATED)
+            ]
 
         def unsubscribe():
             listeners.discard(listener)
-            if not (self.listeners or self.activity_listeners or self.dialog_listeners):
+            if not self.projection_listeners:
+                self._stop_access_observation()
+            if not (self.listeners or self.activity_listeners or self.dialog_listeners or self.projection_listeners):
                 self._stop()
 
         return unsubscribe
 
     def _stop(self):
+        self._stop_access_observation()
         for unsubscribe in self.unsubscribers:
             unsubscribe()
         self.unsubscribers.clear()
         self.previous = {}
         self.dialogs = {}
         self.activity = {"phones": [], "parked": []}
+
+    def _stop_access_observation(self):
+        for unsubscribe in self.access_unsubscribers:
+            unsubscribe()
+        self.access_unsubscribers.clear()
+
+    @callback
+    def _access_changed(self, event):
+        # Access changes reuse the cached projection and never scan call sessions.
+        self._deliver(self.projection_listeners, PhoneProjectionUpdate({}, access_event=event))
 
     @staticmethod
     def _deliver(listeners, *args):
@@ -217,10 +288,15 @@ class PhoneStateObserver:
         previous_activity, self.activity = self.activity, activity
         event_data = getattr(event, "data", {}) or {}
         context = getattr(event, "context", None)
+        changed, removed = {}, []
         for identity in previous.keys() | current.keys():
             before, after = previous.get(identity), current.get(identity)
             if before == after:
                 continue
+            if after is None:
+                removed.append(identity)
+            else:
+                changed[identity] = after
             payload = {
                 "endpoint_id": identity,
                 "previous": before,
@@ -245,16 +321,21 @@ class PhoneStateObserver:
                 PHONE_STATE_CHANGED, deepcopy(payload), context=phone_context
             )
             self._deliver(self.listeners, payload, phone_context)
+        if changed or removed:
+            self._deliver(self.projection_listeners, PhoneProjectionUpdate(changed, tuple(removed)))
         if previous != current or previous_dialogs != dialogs:
             self._deliver(self.dialog_listeners, dialogs)
         if previous_activity != activity:
             self._deliver(self.activity_listeners, activity)
 
     async def close(self):
+        removed = tuple(self.previous)
         self._stop()
+        self._deliver(self.projection_listeners, PhoneProjectionUpdate({}, removed, closed=True))
         self.listeners.clear()
         self.activity_listeners.clear()
         self.dialog_listeners.clear()
+        self.projection_listeners.clear()
 
 
 def phone_state_observer(hass):

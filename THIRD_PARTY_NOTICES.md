@@ -14,12 +14,20 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 | Local path | Upstream | Notes |
 |---|---|---|
 | `esphome/components/mipi_dsi/` | ESPHome community component lineage | Local P4 display support and panel models. |
+| `esphome/components/voice_assistant/` | ESPHome 2026.10.0, `704551a6` | Noncontinuous idle completion and callback ordering. |
+| `esphome/components/speaker_source/` | ESPHome 2026.10.0, `704551a6` | Terminal source error cleanup through the existing player owner. |
+| `esphome/components/audio_http/` | ESPHome 2026.10.0, `704551a6` | Release completed HTTP workers before publishing idle. |
 
-The audio, Voice Assistant, MWW, mixer, resampler, speaker-source and OTA
-providers now come from the installed official ESPHome distribution. Their
-upstream licenses apply to generated firmware. No copies of those providers
-are shipped here. The remaining P4 display adaptation retains its provenance
-and the ESPHome license.
+The three lifecycle adaptations above are loaded through the maintained
+`ext_components_source` includes. Their `UPSTREAM.md` files describe the bounded
+deltas. Other audio, MWW, mixer, resampler, speaker and OTA providers come from
+the installed official ESPHome distribution. Their upstream licenses apply to
+generated firmware. The existing ESPHome split license applies to all copied
+runtime and Python files.
+
+The host test entrypoint `tests/fixtures/assist_media/main.cpp` is derived from
+the same ESPHome revision and retains GPLv3 terms. Host-only micro-decoder and
+micro-flac sources are fetched as pinned CI dependencies and are not vendored.
 
 ## Contributed camera component
 
@@ -54,6 +62,31 @@ Component Manager. They are not vendored here; their upstream licenses apply.
 
 Firmware using Espressif-restricted components is intended for Espressif
 products/SoCs.
+
+## Opus audio
+
+The optional SIP Opus codec uses unmodified `esphome-libs/micro-opus` at
+`93bf9c10196e368405ee1501bfd72f0be2518741`. That component includes Opus
+`22244de5a79bd1d6d623c32e72bf1954b56235be` and microOggDemuxer
+`865ad9d831e7dc76bb9c142607bae33fc75648e7` as upstream submodules.
+ESPHome media paths can also use micro-opus independently of SIP codec selection.
+
+| Component | License and original notices |
+|---|---|
+| micro-opus wrapper | Apache-2.0: [license](licenses/MICRO-OPUS-LICENSE.txt) and [NOTICE](licenses/MICRO-OPUS-NOTICE.txt). |
+| Opus encoder and decoder | BSD-3-Clause: [copyright, conditions, disclaimer and patent-license references](licenses/OPUS-COPYING.txt). |
+| microOggDemuxer | Apache-2.0: [license and copyright](licenses/MICRO-OGG-DEMUXER-LICENSE.txt). |
+
+These files reproduce the upstream texts without modification. Paths inside the
+original NOTICE refer to the upstream layout; the table maps them to our copies.
+Both source and binary redistributions must retain the applicable notices. When
+redistributing firmware containing these components, include these texts in the
+documentation or other materials provided with the binary. A bare firmware
+binary does not carry this accompanying documentation. The firmware candidate
+bundler copies the repository license, this notice and the `licenses/` texts
+into its bundle. Keep the Opus royalty-free patent-license references and do
+not imply upstream endorsement. These materials cover the Opus dependency;
+they do not replace other firmware dependency licenses or source requirements.
 
 ## Documentation assets
 

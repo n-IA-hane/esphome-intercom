@@ -32,7 +32,9 @@ export function targetFromRosterEntry(entry) {
     capabilities: formatListFromMetadata(metadata.capabilities)
       .map((value) => value.toLowerCase()),
     camera_entity_id: String(metadata.camera_entity_id || "").trim(),
-    sip_video_codec: String(metadata.sip_video_codec || "").trim().toLowerCase(),
+    sip_video_codec: metadata.sip_video_codec == null
+      ? metadata.sip_video_codec
+      : String(metadata.sip_video_codec).trim().toLowerCase(),
     audio_mode: metadata.audio_mode || "full_duplex",
     tx_formats: formatListFromMetadata(metadata.tx_formats),
     rx_formats: formatListFromMetadata(metadata.rx_formats),

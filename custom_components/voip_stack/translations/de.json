@@ -76,7 +76,8 @@
           "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
           "trunk_audio_codecs": "Zulässige Audiocodecs",
           "trunk_video_codecs": "Zulässige Videocodecs",
-          "trunk_outbound_media_address": "IPv4-Medienadresse für ausgehende Anrufe"
+          "trunk_outbound_media_address": "IPv4-Medienadresse für ausgehende Anrufe",
+          "trunk_media_nat": "Media NAT traversal"
         },
         "data_description": {
           "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -96,7 +97,8 @@
           "trunk_allowed_ips": "Jede erlaubte Quell-IP oder jedes CIDR-Netz einzeln eingeben. Diese können vom ausgehenden Server abweichen. Ohne Registrierung erforderlich.",
           "trunk_audio_codecs": "Zulässige Codecs für eingehende und ausgehende Anrufe auf diesem Trunk. Behalte die Vorgaben, sofern dein Anbieter keine eigene Liste verlangt. Mindestens ein Audiocodec ist erforderlich. Beide Seiten benötigen einen gemeinsamen Codec; DTMF wird separat ausgehandelt. Andere Trunks und lokale Telefone bleiben unabhängig.",
           "trunk_video_codecs": "Leere die Liste für reine Audioanrufe. Die Auswahl aktiviert weder Video noch Transkodierung: Telefon und Medienpfad müssen den Codec unterstützen. H.264-Profile werden automatisch ausgehandelt. Behalte im Zweifel die Vorgaben.",
-          "trunk_outbound_media_address": "Optional. Adresse von Home Assistant, die diese Telefonanlage für Audio und Video ausgehender Anrufe erreichen kann. Hinter NAT die eigene öffentliche IPv4-Adresse verwenden und RTP/RTCP unter unveränderten Portnummern erreichbar halten. Nicht die Adresse des Anbieters eingeben. Ein leeres Feld verwendet die bisherige HA-Adresse. LAN-Anrufe und SIP-Registrierung bleiben unverändert."
+          "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
         }
       },
       "trunk_mode": {
@@ -144,8 +146,23 @@
         "menu_options": {
           "user": "Allgemeine Einstellungen",
           "parking": "Anruf parken",
-          "voicemail": "Mailbox-Stimme"
+          "voicemail": "Mailbox-Stimme",
+          "phone_services": "LDAP-Verzeichnis"
         }
+      },
+      "phone_services": {
+        "data": {
+          "allow_anonymous": "Anonyme Suchanfragen zulassen",
+          "base_dn": "Basis-DN",
+          "certificate": "Pfad zum PEM-Zertifikat",
+          "enabled": "LDAP-Verzeichnis aktivieren",
+          "ldap_port": "LDAP-Port",
+          "listen_host": "Lokale Empfangsadresse",
+          "private_key": "Pfad zum privaten PEM-Schlüssel",
+          "tls": "Implizites TLS (LDAPS)"
+        },
+        "description": "Das Standardverzeichnis erlaubt aktivierten Telefonkonten den Zugriff, auch wenn die Telefone offline sind. Bei einer einfachen Bind-Anmeldung ohne TLS werden Zugangsdaten über das Netzwerk übertragen. Für StartTLS am normalen Listener geben Sie ein Zertifikat und einen Schlüssel an; die Option TLS aktiviert stattdessen implizites LDAPS. Ein vorübergehender Listener-Ausfall lässt das Verzeichnis auf den Telefonen unverändert.",
+        "title": "LDAP-Verzeichnis"
       }
     },
     "error": {
@@ -165,7 +182,11 @@
       "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
       "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
       "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
-      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst."
+      "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst.",
+      "phone_service_base_dn_invalid": "Geben Sie einen gültigen LDAP-Basis-DN ein.",
+      "phone_service_certificate_required": "Geben Sie für TLS sowohl das Zertifikat als auch den privaten Schlüssel an.",
+      "phone_service_configuration": "Ungültige LDAP-Konfiguration.",
+      "trunk_media_nat_invalid": "Choose auto, direct or manual."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -332,7 +353,8 @@
             "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
             "trunk_audio_codecs": "Zulässige Audiocodecs",
             "trunk_video_codecs": "Zulässige Videocodecs",
-            "trunk_outbound_media_address": "IPv4-Medienadresse für ausgehende Anrufe"
+            "trunk_outbound_media_address": "IPv4-Medienadresse für ausgehende Anrufe",
+            "trunk_media_nat": "Media NAT traversal"
           },
           "data_description": {
             "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -352,7 +374,8 @@
             "trunk_allowed_ips": "Jede erlaubte Quell-IP oder jedes CIDR-Netz einzeln eingeben. Diese können vom ausgehenden Server abweichen. Ohne Registrierung erforderlich.",
             "trunk_audio_codecs": "Zulässige Codecs für eingehende und ausgehende Anrufe auf diesem Trunk. Behalte die Vorgaben, sofern dein Anbieter keine eigene Liste verlangt. Mindestens ein Audiocodec ist erforderlich. Beide Seiten benötigen einen gemeinsamen Codec; DTMF wird separat ausgehandelt. Andere Trunks und lokale Telefone bleiben unabhängig.",
             "trunk_video_codecs": "Leere die Liste für reine Audioanrufe. Die Auswahl aktiviert weder Video noch Transkodierung: Telefon und Medienpfad müssen den Codec unterstützen. H.264-Profile werden automatisch ausgehandelt. Behalte im Zweifel die Vorgaben.",
-            "trunk_outbound_media_address": "Optional. Adresse von Home Assistant, die diese Telefonanlage für Audio und Video ausgehender Anrufe erreichen kann. Hinter NAT die eigene öffentliche IPv4-Adresse verwenden und RTP/RTCP unter unveränderten Portnummern erreichbar halten. Nicht die Adresse des Anbieters eingeben. Ein leeres Feld verwendet die bisherige HA-Adresse. LAN-Anrufe und SIP-Registrierung bleiben unverändert."
+            "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
           }
         }
       },
@@ -369,7 +392,8 @@
         "trunk_validation_failed": "Prüfe die Verbindungseinstellungen und erlaubten Quellnetze. Statische Trunks mit demselben Transport dürfen keine überlappenden Quellnetze haben.",
         "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
         "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
-        "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen."
+        "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
+        "trunk_media_nat_invalid": "Choose auto, direct or manual."
       },
       "abort": {
         "reconfigure_successful": "Trunk-Konfiguration aktualisiert."
@@ -458,6 +482,13 @@
         "in_call": "Im Gespräch",
         "held": "Gehalten"
       }
+    },
+    "trunk_media_nat": {
+      "options": {
+        "auto": "Automatic",
+        "direct": "Direct",
+        "manual": "Manual"
+      }
     }
   },
   "system_health": {
@@ -500,6 +531,10 @@
     "mailbox_route_conflict": {
       "title": "Konflikt mit Mailbox-Codes",
       "description": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Mailbox-Adresse. Benenne das betreffende Ziel um; bestehende Routen bleiben unverändert."
+    },
+    "phone_service_unavailable": {
+      "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Prüfen Sie Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses und speichern Sie diese, um es erneut zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
+      "title": "LDAP-Verzeichnis nicht verfügbar"
     }
   },
   "exceptions": {

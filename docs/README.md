@@ -16,6 +16,18 @@ beyond the project overview in the [top-level README](../README.md).
 5. **Custom integrations or difficult faults:** continue with the protocol,
    service and testing references below. They do not replace the user walkthrough.
 
+## Release channels
+
+The stable release is **2026.11.0**. These `dev` guides also cover the
+**2026.11.1-dev** preview, including the VoIP Dashboard, global call popups,
+the persistent LDAP directory and managed ESP SIP accounts. Version notes at
+the relevant setup steps identify preview features. Existing PBX functions
+such as voicemail, transfers, parking, SIP BLF and MWI are already in stable.
+
+Choose the [release and installation path](../README.md#installation) first.
+Keep the ESP firmware's package and component sources coordinated with the
+selected channel; updating HACS does not flash a device.
+
 Historical release notes and migration entries describe their named versions.
 Do not use an old release example as the current installation procedure.
 
@@ -29,23 +41,25 @@ explains how to carry settings from an older YAML into the new device packages.
 
 | Need | Document |
 |---|---|
-| Set up the new PBX features with practical examples | [Illustrated PBX walkthrough](PBX_WORKFLOWS.md) |
+| Set up call handling with practical examples | [Illustrated PBX walkthrough](PBX_WORKFLOWS.md) |
 | Learn the complete everyday workflow | [User guide](USER_GUIDE.md) |
+| Share contacts and see ringing, busy and available phones | [LDAP directory](PHONEBOOK_PROTOCOL.md) and [SIP busy lamps](USER_GUIDE.md#busy-lamps-on-sip-phones) |
+| Choose a compact card, operator Dashboard or call popup | [Card views](USER_GUIDE.md#choose-a-card-view) and [global popups](USER_GUIDE.md#receive-calls-over-other-home-assistant-views) |
 | Build greetings, keypad menus and call routing in the HA editor | [Automation as dialplan cookbook](AUTOMATION_DIALPLAN.md) |
 | Review the current release | [Release history](../CHANGELOG.md) |
 | Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
 | Start simple and add ESP voice, calls, music or presentation | [Package walkthrough](../packages/README.md#work-through-a-full-profile) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
 | Update an existing installation | [Breaking changes](BREAKING_CHANGES.md) |
-| Connect ESP firmware to a classic PBX | [Static SIP peers without REGISTER](CLASSIC_PBX.md) |
+| Connect ESP firmware to a classic PBX | [Registered accounts](ESP_REGISTRATION.md) or [static SIP peers](CLASSIC_PBX.md) |
 | Configure ESP and HA options | [Configuration reference](reference.md) |
 | Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
 
 Published release notes and their artifacts are available in the
 [GitHub releases](https://github.com/n-IA-hane/esphome-intercom/releases).
-The PBX additions in these guides are included in the updated 2026.11.0
-release; they were not in 2026.10.1.
+Use the changelog for version differences; the task guides describe how to use
+the supported functions.
 
 ## Architecture and protocols
 
@@ -55,7 +69,7 @@ release; they were not in 2026.10.1.
 | Canonical end-to-end paths | [Call flows](CALL_FLOWS.md) |
 | SIP, SDP and RTP endpoint contract | [ESP VoIP profile](voip_profile.md) |
 | Retired proprietary protocol boundary | [Intercom protocol](INTERCOM_PROTOCOL.md) |
-| Phonebook rows and media capabilities | [Phonebook protocol](PHONEBOOK_PROTOCOL.md) |
+| Standard LDAP directory, roster rows and contact types | [Phonebook protocol](PHONEBOOK_PROTOCOL.md) |
 | Name, extension, group and trunk resolution | [Dial-plan resolver](DIALPLAN_RESOLVER.md) |
 | ESP entities published to HA | [ESP entity surface](ESP_ENTITY_SURFACE.md) |
 
@@ -73,7 +87,9 @@ release; they were not in 2026.10.1.
 | Play an ordinary ESPHome announcement or PCM sound | [ESPHome sound actions](ESPHOME_SOUND_ACTIONS.md) |
 | Record an established conversation | [Conversation recording](CALL_RECORDING.md) |
 | Provider registration and external routing | [SIP trunk](SIP_TRUNK.md) |
-| Browser and P4 video codec paths | [SIP video](SIP_VIDEO.md) |
+| Browser, SIP, P4 and supported S3 JPEG video paths | [SIP video](SIP_VIDEO.md) |
+| Register an ESP to HA or another PBX and select a line | [ESP accounts](ESP_REGISTRATION.md) |
+| Capture an ESP display through the existing native action | [Screenshot setup](ESP_SCREENSHOT.md) |
 
 ## Qualification
 
@@ -95,6 +111,11 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   [`esp_h264_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/esp_h264_video_source)
   and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/p4_video_renderer),
   the compile-gated P4 SIP video TX and RX paths.
+- [`esp_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer/tree/dev),
+  the standalone JPEG receive/display component used by supported S3 preview
+  profiles. A camera source and a receive display are separate capabilities.
+- [`esp_screenshot`](https://github.com/n-IA-hane/esphome-screenshot/tree/dev),
+  native display snapshots for supported LVGL and P4 MIPI display backends.
 - [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_audio_stack), the
   coordinated full-duplex audio backend for shared codec buses, dual I2S
   MEMS/amp boards that need software reference handling, Espressif

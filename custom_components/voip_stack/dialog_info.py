@@ -1,6 +1,7 @@
 """RFC 4235 full-state documents derived from the existing call registry."""
 
 from dataclasses import dataclass
+from hashlib import sha256
 import re
 from xml.etree import ElementTree
 
@@ -85,9 +86,10 @@ def snapshot_all(runtime):
             if not matching and endpoint_id in retired:
                 continue
             peer_id = str(
-                session.metadata.get(
-                    "dest_endpoint_id" if source else "source_endpoint_id"
-                )
+                ((session.metadata.get("dest_endpoint_id")
+                  or session.metadata.get("target_endpoint_id"))
+                 if source
+                 else session.metadata.get("source_endpoint_id"))
                 or ""
             )
             peer = runtime.endpoints.get(peer_id) if peer_id else None
@@ -253,7 +255,7 @@ def document(entity, version, states):
         },
     )
     for item in states:
-        attributes = {"id": item.identity, "direction": item.direction}
+        attributes = {"id": sha256(item.identity.encode("utf-8")).hexdigest(), "direction": item.direction}
         for key, value in (
             ("call-id", item.call_id),
             ("local-tag", item.local_tag),

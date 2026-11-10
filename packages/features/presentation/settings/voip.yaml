@@ -107,9 +107,8 @@ substitutions:
               height: ${_settings_switch_height}
               on_change:
                 - lambda: !lambda |-
-                    if (x == id(voip_conference_ring).state) return;
-                    if (x) id(voip_conference_ring).turn_on();
-                    else id(voip_conference_ring).turn_off();
+                    if (x == id(phone).get_conference_ring()) return;
+                    id(phone).set_conference_ring(x);
                 - script.execute: settings_sync_conference_ring
   _settings_voip_sync:
     - script.execute: settings_sync_auto_answer
@@ -169,7 +168,8 @@ substitutions:
   _settings_voip_callback: !lambda |-
     id(auto_answer_switch).add_on_state_callback([](bool) { id(settings_sync_auto_answer).execute(); });
     id(dnd_switch).add_on_state_callback([](bool) { id(settings_sync_dnd).execute(); });
-    id(voip_conference_ring).add_on_state_callback([](bool) { id(settings_sync_conference_ring).execute(); });
+    if (auto *setting = id(phone).get_conference_ring_switch())
+      setting->add_on_state_callback([](bool) { id(settings_sync_conference_ring).execute(); });
     ${ _settings_video_callback if _settings_video else '' }
   _settings_voip_widgets: ${ _settings_voip_heading + _settings_voip_container }
   _settings_voip_container:
@@ -234,6 +234,6 @@ script:
                 id: ui_conference_ring_sw
                 state:
                   checked: !lambda |-
-                    return id(voip_conference_ring).state;
+                    return id(phone).get_conference_ring();
 packages:
   video: ${ _settings_video_package if _settings_video else {} }

@@ -1,3 +1,11 @@
-# Playback uses the official ESPHome audio, mixer and speaker_source providers.
+# ESPHome 2026.10 compatibility. Official 106 or later core uses an explicit
+# esphome_legacy_audio_providers: [] override, after validating that core.
 esphome:
   min_version: 2026.10.0
+defaults:
+  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
+  _legacy_playback_components: ${ (["audio_http"] if "audio_http" in esphome_legacy_audio_providers else []) + (["speaker_source"] if "speaker_source" in esphome_legacy_audio_providers else []) }
+  _legacy_playback_provider:
+    source: ${ext_components_source}
+    components: ${_legacy_playback_components}
+external_components: ${ [_legacy_playback_provider] if _legacy_playback_components else [] }

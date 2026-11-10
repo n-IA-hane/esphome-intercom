@@ -68,6 +68,41 @@ def test_unicast_receive_ptime_comes_from_local_offer():
     assert {fmt.frame_ms for fmt in selected.recv_formats} == {20}
 
 
+def test_answer_prefers_announced_ptime_before_other_legal_packet_times():
+    formats = list(audio_format.HA_SIP_PCM_FORMATS)
+    offer = sdp.build_offer_directional(
+        "192.0.2.1", "192.0.2.1", 40000, formats, formats,
+        include_common_codecs=True, allow_directional_payloads=True,
+    )
+    fmt = next(item for item in sdp.offered_pcm_formats(offer)
+        if item.encoding == "L16" and item.sample_rate == 16000)
+    answer = _description([(fmt.payload_type, "L16/16000")], ptime=10)
+    selected = sdp.negotiate_answer_directional(answer, formats, formats, local_offer_sdp=offer)
+    assert selected.send.frame_ms == selected.recv.frame_ms == 10
+    assert [item.frame_ms for item in selected.recv_formats] == [10]
+
+
+@pytest.mark.parametrize("directional", [False, True])
+@pytest.mark.parametrize("peer_max", [0, 10, 30])
+def test_answer_retains_each_receivers_own_packetization_bounds(directional, peer_max):
+    formats = [audio_format.AudioFormat(rate, "s16le", 1, 10) for rate in (16000, 48000)]
+    offered = [(96, "L16/48000"), (97, "L16/16000")] if directional else [(97, "L16/16000")]
+    offer = _description(offered, ptime=10).replace("a=ptime:10", "a=ptime:10\r\na=minptime:10\r\na=maxptime:20")
+    answer = _description(offered, ptime=10)
+    if peer_max:
+        answer = answer.replace("a=ptime:10", f"a=ptime:10\r\na=maxptime:{peer_max}")
+    if directional:
+        offer += "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
+        answer += "a=x-voip-stack-flow:96 recv\r\na=x-voip-stack-flow:97 send\r\n"
+    selected = sdp.negotiate_answer_directional(answer, formats, formats, local_offer_sdp=offer)
+    assert selected is not None
+    assert (selected.recv.min_frame_ms, selected.recv.max_frame_ms) == (10, 20)
+    assert selected.send.max_frame_ms == peer_max
+    assert selected.send.frame_ms == selected.recv.frame_ms == 10
+    assert selected.send.channels == selected.recv.channels == 1
+    assert selected.recv_formats[0] == selected.recv
+
+
 def _dialog(fmt):
     return sip_client.SipDialog(
         target="Door", remote_host="192.0.2.10", remote_sip_port=5060,

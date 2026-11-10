@@ -40,38 +40,44 @@ const entityIds = await import(pathToFileURL({json.dumps(str(CARD.with_name("voi
 
 let source = fs.readFileSync({json.dumps(str(CARD))}, "utf8");
 source = source
-  .replace(/const \{{ VoipEntityIds \}} = await import\(`\.\/voip-stack-entity-ids\.js[^;]+;/, "const {{ VoipEntityIds }} = globalThis.__entityIds;")
+  .replace(/import\(`\.\/voip-stack-entity-ids\.js[^`]+`\)/, "Promise.resolve(globalThis.__entityIds)")
   .replace(
-    /const \{{ voipStackTranslate \}} = await import\(`\.\/voip-stack-i18n\.js[^;]+;/,
-    "const {{ voipStackTranslate }} = globalThis.__i18n;",
+    /import\(`\.\/voip-stack-i18n\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__i18n)",
   )
-  .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
+  .replace(/import\(`\.\/voip-phonebook-card\.js[^`]+`\)/, "Promise.resolve({{}})")
   .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
-    /const \{{\s*buildMainCardSkeleton[\s\S]*?\}} = await import\(`\.\/voip-stack-card-view\.js[^;]+;/,
-    "const {{ buildMainCardSkeleton, buildUnconfiguredCardSkeleton }} = globalThis.__cardView;",
+    /import\(`\.\/voip-stack-card-view\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardView)",
   )
   .replace(
-    /const \{{ voipStackEngine \}} = await import\(`\.\/voip-stack-engine\.js[^;]+;/,
-    "const {{ voipStackEngine }} = globalThis.__engine;",
+    /import\(`\.\/voip-stack-engine\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__engine)",
   )
   .replace(
-    /const \{{\s*audioModeLabel[\s\S]*?\}} = await import\(`\.\/voip-stack-card-model\.js[^;]+;/,
-    `const {{
-      audioModeLabel, formatCallDuration, formatEndReason,
-      formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
-      mirroredEndpointPeerLabel, normaliseAudioMode, normaliseTransport, reasonKey,
-      softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
-    }} = globalThis.__cardModel;`,
+    /import\(`\.\/voip-stack-card-model\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardModel)",
   )
+  .replace(/await import[^;]*voip-stack-dashboard-card[^;]*;/, "")
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");
 
 const serviceCalls = [];
 const engineEvents = [];
+const destinationPhones = new Map();
+const destinationListeners = new Set();
 let cameraPermissionChecks = 0;
 let audioPermissionChecks = 0;
 const engine = {{
   configure() {{}},
+  rememberSoftphoneState() {{}},
+  phoneStateFor(endpointId, deviceId) {{
+    return destinationPhones.get(endpointId) || [...destinationPhones.values()].find(phone => phone.device_id === deviceId) || null;
+  }},
+  subscribePhoneStates(listener) {{ destinationListeners.add(listener); return () => destinationListeners.delete(listener); }},
+  subscribeSoftphoneState() {{ return () => {{}}; }},
+  subscribeCallEvents() {{ return () => {{}}; }},
+
   async terminateSoftphoneCall(service, scope) {{
     const {{ endpoint_id, ...data }} = scope;
     serviceCalls.push(["voip_stack", service, data]);
@@ -277,6 +283,8 @@ const context = vm.createContext({{
   window: {{
     customCards: [],
     innerHeight: 800,
+    addEventListener() {{}},
+    removeEventListener() {{}},
     location: {{ href: "https://ha.example/", protocol: "https:", host: "ha.example" }},
     scrollBy() {{}},
   }},
@@ -285,6 +293,65 @@ const module = new vm.SourceTextModule(source, {{ context }});
 await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Card = module.namespace.VoipStackCard;
+
+// A stale legacy endpoint sensor must not hide a phone discovered by state.
+const stateOnly = new Card();
+stateOnly.config = {{ mode: "esp_mirror", device_id: "state-phone" }};
+stateOnly._availableDevices = [{{ device_id: "state-phone", entities: {{
+  voip_state: "sensor.phone_state", voip_endpoint: "sensor.old_endpoint",
+}} }}];
+stateOnly._hass = {{ states: {{
+  "sensor.phone_state": {{ state: "idle" }},
+  "sensor.old_endpoint": {{ state: "unavailable" }},
+}} }};
+assert.equal(stateOnly._isEspUnavailable(), false);
+stateOnly._hass.states["sensor.phone_state"].state = "unavailable";
+stateOnly._hass.states["sensor.old_endpoint"].state = "legacy route";
+assert.equal(stateOnly._isEspUnavailable(), true);
+stateOnly._hass.states["sensor.phone_state"].state = "idle";
+delete stateOnly._hass.states["sensor.old_endpoint"];
+assert.equal(stateOnly._isEspUnavailable(), false);
+
+// The compact card alone observes authoritative phone state. A roster can
+// retain an enabled ESP while list_devices omits it and the monitor is offline.
+const offlineEntry = {{id:"ws3-route",name:"WS3 LCD",enabled:true,
+  metadata:{{endpoint_id:"esphome:ws3",device_id:"ws3",endpoint_kind:"esphome",
+    call_policy:{{unavailable:{{action:"voicemail"}}}}}}}};
+const logicalBrowser = {{id:"browser-route",name:"Browser without open card",enabled:true,
+  metadata:{{endpoint_id:"browser:logical",device_id:"logical",endpoint_kind:"browser",local_ha:true}}}};
+const staticContact = {{id:"external-route",name:"Static contact",enabled:true,metadata:{{}}}};
+destinationPhones.set("esphome:ws3",{{endpoint_id:"esphome:ws3",device_id:"ws3",availability:"offline",state:"unavailable"}});
+destinationPhones.set("browser:logical",{{endpoint_id:"browser:logical",device_id:"logical",availability:"available",state:"idle",connected_cards:0}});
+function destinationCard() {{
+  const card=new Card();card.config={{mode:"ha_softphone",device_id:"owner"}};
+  card._softphoneSnapshot={{endpoint_id:"browser:owner"}};
+  card._rosterEntries=[offlineEntry,logicalBrowser,staticContact];card._availableDevices=[];
+  card._softphoneTargetDeviceId="ws3";
+  card._testSelect=new FakeElement();
+  card._render=()=>card._renderSoftphoneDestinationSelect(card._testSelect);
+  return card;
+}}
+const destinationOne=destinationCard(),destinationTwo=destinationCard();
+await destinationOne._subscribeBusEvents();await destinationTwo._subscribeBusEvents();
+assert.equal(destinationListeners.size,2);
+for(const listener of destinationListeners)listener({{kind:"snapshot"}});
+for(const card of [destinationOne,destinationTwo]) {{
+  assert.equal(card._getSoftphoneTargetDevice(),null);
+  assert.equal(card._testSelect.children[0].value,"");
+  assert.equal(card._testSelect.children[0].selected,true);
+  assert.equal(card._testSelect.children.some(option=>option.value==="ws3"),false);
+  assert.equal(card._testSelect.children[1].textContent,"Browser without open card");
+  assert.equal(card._testSelect.children[2].textContent,"Static contact");
+  await assert.rejects(card._startHaSoftphoneCall({{}},0),/No endpoint available/);
+}}
+destinationOne.disconnectedCallback();assert.equal(destinationListeners.size,1);
+destinationPhones.set("esphome:ws3",{{endpoint_id:"esphome:ws3",device_id:"ws3",availability:"available",state:"idle"}});
+for(const listener of destinationListeners)listener({{kind:"delta"}});
+assert.equal(destinationTwo._testSelect.children[0].textContent,"WS3 LCD");
+assert.equal(destinationTwo._getSoftphoneTargetDevice().name,"WS3 LCD");
+assert.equal(destinationTwo._getSoftphoneTargetDevice().route_id,"ws3-route");
+destinationTwo.disconnectedCallback();assert.equal(destinationListeners.size,0);
+destinationPhones.clear();
 
 assert.equal(cardModel.terminalPeerLabel({{
   direction: "incoming",
@@ -1001,6 +1068,36 @@ await hall._answer();
 assert.equal(serviceCalls.length, blockedActionCount);
 engine.releaseSoftphoneSession("kitchen-call", "kitchen");
 
+// A failed outbound service request must not erase the selected phone. The
+// real engine rejects an empty endpoint before sending another service call.
+const failedStart = makeCard();
+failedStart.config = {{ mode: "ha_softphone", device_id: "device-casa" }};
+failedStart._applySoftphoneSnapshot({{
+  endpoint_id: "browser:casa", device_id: "device-casa", state: "idle",
+  name: "Casa", capabilities: ["audio", "video"], sequence: 1,
+}});
+const failedStartSnapshot = failedStart._softphoneSnapshot;
+const priorStartHaSoftphone = engine.startHaSoftphone;
+const startAttempts = [];
+engine.startHaSoftphone = async (target, session, options) => {{
+  startAttempts.push({{ target, session, options }});
+  throw new Error("could not start SIP call to Waveshare P4 Touch");
+}};
+await failedStart._startCall("Waveshare P4 Touch");
+assert.match(failedStart._errorMsg, /could not start SIP call to Waveshare P4 Touch/);
+assert.equal(failedStart._softphoneSnapshot, failedStartSnapshot);
+assert.equal(failedStart._getSoftphoneEndpointId(), "browser:casa");
+assert.equal(failedStart._starting, false);
+assert.equal(engine.mediaIntent, null);
+assert.equal(engine.ownedSoftphoneCalls.size, 0);
+await failedStart._startCall("Another endpoint");
+assert.equal(startAttempts.length, 2, "Retry must reach the call service again");
+assert.deepEqual(startAttempts.map(item => item.options.endpoint_id), ["browser:casa", "browser:casa"]);
+assert.deepEqual(startAttempts.map(item => item.options.device_id), ["device-casa", "device-casa"]);
+assert.equal(engine.mediaIntent, null);
+assert.doesNotMatch(failedStart._errorMsg, /already handling another phone call/);
+engine.startHaSoftphone = priorStartHaSoftphone;
+
 // The page-level reservation is atomic across awaits: two cards cannot both
 // answer after observing an initially free engine.
 const kitchenRace = makeCard();
@@ -1304,6 +1401,21 @@ assert.equal(card._applySoftphoneSnapshot({{
   ...base, state: "idle", call_id: base.call_id, sequence: 0, revision: 0,
 }}), true);
 
+// After HA restarts, a fresh endpoint query may legitimately have no terminal
+// Call-ID history. Only an explicitly reconciled read of this card's old call
+// may clear it; delayed pushes and reads for a different/new call stay blocked.
+const resetView=makeCard();
+resetView._applySoftphoneSnapshot({{...base,state:"in_call",sequence:50}});
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:"another-call"}}),false);
+resetView._starting=true;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),false);
+resetView._starting=false;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),true);
+assert.equal(resetView._softphoneSnapshot.state,"idle");
+
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
 const incoming = makeCard();
@@ -1390,6 +1502,78 @@ releaseLookup({{ device_id: "__voip_stack_ha_softphone__" }});
 await pendingAnswer;
 assert.equal(serviceCalls.length, serviceCount);
 assert.equal(race._softphoneSnapshot.call_id, "race-B");
+
+// The phone's no-answer route may commit while microphone/worklet preflight
+// is still pending. The retired receiver must not send an Answer or Hangup.
+const forwardedPreflight = makeCard();
+forwardedPreflight.config.device_id = "device-casa";
+const ringingCasa = {{
+  endpoint_id: "browser:casa", device_id: "device-casa",
+  state: "ringing", direction: "incoming", call_id: "local-deadline",
+  caller: "Test", callee: "Casa", sequence: 10, revision: 3,
+}};
+forwardedPreflight._applySoftphoneSnapshot(ringingCasa);
+const preflightCommands = [];
+forwardedPreflight._hass.callService = async (...args) => preflightCommands.push(args);
+let enterPreflight, releasePreflight;
+const preflightEntered = new Promise(resolve => {{ enterPreflight = resolve; }});
+const previousPrepareAudioCall = engine.prepareAudioCall;
+engine.prepareAudioCall = async () => {{
+  audioPermissionChecks++;
+  enterPreflight();
+  await new Promise(resolve => {{ releasePreflight = resolve; }});
+  return true;
+}};
+const preparingAnswer = forwardedPreflight._answer();
+await preflightEntered;
+forwardedPreflight._onSoftphoneState({{
+  ...ringingCasa, state: "idle", terminal_reason: "forwarded",
+  last_sip_event: "ROUTE_FORWARD", sequence: 11, revision: 4,
+}});
+releasePreflight();
+await preparingAnswer;
+assert.equal(preflightCommands.length, 0);
+assert.equal(forwardedPreflight._softphoneSnapshot.state, "idle");
+assert.equal(forwardedPreflight._starting, false);
+assert.equal(engine.ownsSoftphoneSession("local-deadline", "browser:casa"), false);
+assert.equal(engine.mediaIntent, null);
+engine.prepareAudioCall = previousPrepareAudioCall;
+
+// The final local ringing check cannot reserve backend state. If voicemail
+// wins after the request is sent, the rejection releases only Casa's intent;
+// it must not compensate with Hangup or acquire the caller's application media.
+const forwardedRequest = makeCard();
+forwardedRequest.config.device_id = "device-casa";
+forwardedRequest._applySoftphoneSnapshot({{ ...ringingCasa, call_id: "local-in-flight" }});
+const requestCommands = [];
+let enterAnswerRequest, rejectAnswerRequest;
+const answerRequestEntered = new Promise(resolve => {{ enterAnswerRequest = resolve; }});
+forwardedRequest._hass.callService = async (...args) => {{
+  requestCommands.push(args);
+  assert.equal(args[1], "answer");
+  enterAnswerRequest();
+  await new Promise((_resolve, reject) => {{ rejectAnswerRequest = reject; }});
+}};
+const inFlightAnswer = forwardedRequest._answer();
+await answerRequestEntered;
+assert.equal(requestCommands.length, 1);
+assert.equal(requestCommands[0][2].device_id, "device-casa");
+assert.equal(requestCommands[0][2].call_id, "local-in-flight");
+forwardedRequest._onSoftphoneState({{
+  ...ringingCasa, call_id: "local-in-flight", state: "idle",
+  terminal_reason: "forwarded", last_sip_event: "ROUTE_FORWARD",
+  sequence: 12, revision: 5,
+}});
+const lateAnswerError = new Error("call_id local-in-flight belongs to another phone endpoint");
+rejectAnswerRequest(lateAnswerError);
+await inFlightAnswer;
+assert.equal(requestCommands.length, 1, "late Answer must not issue a compensating Hangup");
+assert.equal(forwardedRequest._softphoneSnapshot.state, "idle");
+assert.equal(forwardedRequest._starting, false);
+assert.equal(forwardedRequest._errorMsg, lateAnswerError.message);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:casa"), false);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:test"), false);
+assert.equal(engine.mediaIntent, null);
 
 // Home Assistant may recreate the Lovelace element while an Answer request is
 // in flight.  The page-level engine owns the media session, so the detached
@@ -1702,6 +1886,10 @@ assert.equal(esp.endpoint_kind, "esphome");
 assert.deepEqual(esp.capabilities, ["audio", "dtmf"]);
 assert.equal(esp.camera_entity_id, "camera.kitchen_esp");
 assert.equal(esp.sip_video_codec, "");
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:null,capabilities:["audio","dtmf"]}}}}).sip_video_codec,null);
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:" JPEG "}}}}).sip_video_codec,"jpeg");
+assert.equal(model.targetFromRosterEntry({{metadata:{{capabilities:["audio","video"]}}}}).sip_video_codec,undefined);
+
 
 assert.equal(model.normaliseTransport("sip_tcp"), "TCP");
 assert.equal(model.normaliseTransport(" UDP "), "UDP");

@@ -1,0 +1,568 @@
+{
+  "captured_on": "2026-11-04",
+  "source": "VoIP UI gallery provenance. Each gallery below states whether it is a live capture, a restored original or an offline demonstration.",
+  "p4_native_capture": {
+    "file": "p4-touch-overview.jpg",
+    "captured_on": "2026-11-04",
+    "source": "Existing esp_screenshot component on the running Waveshare P4 FULL firmware, direct JPEG snapshot.",
+    "processing": "Original 1280x800 JPEG bytes, no crop, resizing, generated UI or retouching.",
+    "firmware_build": "2026-11-04 00:41:10 +0000",
+    "capture_id": "580e5576-00000002",
+    "state": "Idle, empty SIP dial pad, local Voice Assistant inactive.",
+    "sha256": "1dd2c3a4c196abaa312b35022dddca67ee0bf011eabf27a32b1438f42b973062",
+    "cleanup": "Original contact view and scroll restored, measured master volume restored, no call or Assist session started."
+  },
+  "restored_phone_card_gallery": {
+    "source_commit": "22e91179f7a54c95e461c66ee11ce3ccb7365d18",
+    "theme": "Frosted Glass Dark",
+    "source": "Original themed phone-card screenshots, restored byte for byte from the published gallery commit.",
+    "presentation": "Demo contacts and illustrative call states. These screenshots document the UI, not a new real-call qualification.",
+    "files": [
+      {
+        "path": "docs/images/phone-cards/esp-mirror-keypad.png",
+        "bytes": 258164,
+        "sha256": "133382093ad8c8eb4498d512a439351374d82faf9bef139735e577534e7356d3"
+      },
+      {
+        "path": "docs/images/phone-cards/esp-mirror-options.png",
+        "bytes": 188338,
+        "sha256": "1e6f3a44d5def07d8dea5e65e72539a2e2e6c6d38396f9ea412629675eb42b27"
+      },
+      {
+        "path": "docs/images/phone-cards/esp-mirror.png",
+        "bytes": 183128,
+        "sha256": "a11dd28ad642a951d9833a99fc67908e6b8e960bf710c9ae133b77c7dcf9d339"
+      },
+      {
+        "path": "docs/images/phone-cards/phonebook.png",
+        "bytes": 235838,
+        "sha256": "9bce07e8b3e82991438ff3ba2973d6ba9e3f820cbcaa220bf5fa2de517fb0fe4"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-call.png",
+        "bytes": 162475,
+        "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-dtmf.png",
+        "bytes": 255921,
+        "sha256": "a1de3f9cfb031daeeb269a2bc2c3f85712443ce7208d4ee7dfb67af71ba4ea77"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-idle.png",
+        "bytes": 168261,
+        "sha256": "c304a3f85eae25272148010758fec443fdcd438fcea98cedeec85be1d561a3e8"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-options.png",
+        "bytes": 283130,
+        "sha256": "b2f93ee922d4429d9b352c33b4a737f5cc31728c99fe3f12044c3e77d12b5d33"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-parked.png",
+        "bytes": 172502,
+        "sha256": "8b9b4aa4990cf6bba3b6782901f663f1311b72b48ce800f9fd4fbab10ff31e4b"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-retrieve.png",
+        "bytes": 254201,
+        "sha256": "1b5765815bd8b80a73ad3271b7339a01309ac307c7e823a16ff02556d53b8c72"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-retrieved.png",
+        "bytes": 162475,
+        "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-ringing.png",
+        "bytes": 165257,
+        "sha256": "6802188e0939db0116652067d669be90e13a505e9696f2d5330352163f1e9b3b"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-routing.png",
+        "bytes": 410835,
+        "sha256": "728c89eccd4a90bce2c326e264901886684408535b3b7e0d46dc7e407ba45051"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-transfer.png",
+        "bytes": 172905,
+        "sha256": "f16a6361fe369e5a3121155cada9f70bd379ff812a462e15cf63d3ef1ac99bc1"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-voicemail.png",
+        "bytes": 265151,
+        "sha256": "b85aa0751ac29b06abdbb5bd06648c0016eb9975d15f546d5e4743d428f920c2"
+      }
+    ]
+  },
+  "p4_contact_list_demo": {
+    "file": "p4-contacts-blf-demo.png",
+    "source": "Production P4 FULL LVGL main page, geometry scripts, fonts, original avatar and phone_list_view, rendered with ESPHome host snapshot display.",
+    "presentation": "Illustrative contacts and BLF states, not an LDAP transaction, SIP call or live-device qualification.",
+    "inputs": [
+      {
+        "name": "Reception",
+        "extension": "100",
+        "state": "available"
+      },
+      {
+        "name": "Office",
+        "extension": "101",
+        "state": "in_call"
+      },
+      {
+        "name": "Kitchen",
+        "extension": "102",
+        "state": "ringing"
+      },
+      {
+        "name": "Living Room",
+        "extension": "103",
+        "state": "in_call"
+      },
+      {
+        "name": "Workshop",
+        "extension": "104",
+        "state": "in_call"
+      },
+      {
+        "name": "Bedroom",
+        "extension": "105",
+        "state": "on_hold"
+      },
+      {
+        "name": "Garage",
+        "extension": "106",
+        "state": "unavailable"
+      }
+    ],
+    "production_page_sha256": "6bd03bbc456f2e3f4f4a5d8b20fb2f92072b74b0e1a8f846103a50cf770313ad",
+    "sha256": "f33ca469beedc02a80652bfe6826b52b5fc2d48b1c20c7be93e97ca55f3200dc",
+    "dimensions": [
+      1280,
+      800
+    ]
+  },
+  "themed_automation_editors": {
+    "created_utc": "2026-11-04T09:33:52.039951+00:00",
+    "source_head": "ded4014ab83e1c73333b377e867490450afaa24b",
+    "ha_version": "2026.10.4",
+    "page": "/config/automation/edit/new",
+    "unsaved_editor_only": true,
+    "executed_services_or_saves": [],
+    "screenshots": [
+      {
+        "name": "automation-tts-action.png",
+        "width": 500,
+        "height": 615,
+        "sha256": "bcdcf1418f5f04ccaafc2cbec7ca93f37b9bc2ea87d8011dfbe95830ccd698ab",
+        "reviewed_visually": true,
+        "message": "Hello. This is a test.",
+        "caption_contract": "First Welcome greeting, call ends when automation finishes; no forwarding in this captured example"
+      },
+      {
+        "name": "automation-call-filter.png",
+        "width": 500,
+        "height": 618,
+        "sha256": "47a739d4b6a090424c9e7efc3856049893fbb404fb0d57d3e342390900637d5c",
+        "reviewed_visually": true
+      },
+      {
+        "name": "automation-trigger-picker.png",
+        "width": 1024,
+        "height": 694,
+        "sha256": "95e2be9326e4cfb11b72f7219ad6f094bdeb184caa0ba291f755d924b57dfde7",
+        "reviewed_visually": true
+      },
+      {
+        "name": "automation-keypad-condition.png",
+        "width": 500,
+        "height": 454,
+        "sha256": "2faf1b841e2edc51e8ec2a621af6dd21365143db3f6410fe0f3df71c56148645",
+        "reviewed_visually": true
+      },
+      {
+        "name": "automation-greeting-delay-forward.png",
+        "width": 1176,
+        "height": 301,
+        "sha256": "1d7e321486412aa0831b1415a42fb3500b172f96000ced835b438eb37f3e9d3b",
+        "reviewed_visually": true
+      },
+      {
+        "name": "tts-action-dark.png",
+        "width": 500,
+        "height": 615,
+        "sha256": "92c88f868ffab525aff75e23091ea3157dc38f4d910419024e77b2fe0375e93d",
+        "reviewed_visually": true
+      }
+    ],
+    "differences_from_old_assets": [
+      "Trigger picker query VoIP call, includes current Call picked up alongside original call triggers; lower unrelated results cropped out.",
+      "tts-action-dark optional uses automation action sidebar with same Good morning message/provider as old Developer Tools image; context differs, root chooses use."
+    ],
+    "theme": {
+      "name": "Frosted Glass Dark",
+      "dark": true,
+      "scope": "Temporary browser context only. No user theme preference or automation was saved."
+    },
+    "processing": "Direct screenshots of actual Home Assistant visual editors, cropped to the relevant controls. No image recolouring or generated UI."
+  },
+  "themed_native_editors": {
+    "source": "Actual Home Assistant visual editors, selectors and setup dialogs.",
+    "theme": "Frosted Glass Dark",
+    "ha_version": "2026.10.4",
+    "processing": "Native browser screenshots cropped to their controls; no image recolouring or generated UI.",
+    "safety": "Forms were left unsaved, actions unexecuted and setup/download dialogs cancelled. No phones were created.",
+    "screenshots": [
+      {
+        "name": "voicemail-settings-action.png",
+        "width": 1152,
+        "height": 1039,
+        "sha256": "f64c153c7b11a7e1ce58a9e776a10ef84d6d0b9ab5b57adba45861356960ad0c",
+        "reviewed_visually": true
+      },
+      {
+        "name": "mailbox-action-dark.png",
+        "width": 1152,
+        "height": 1039,
+        "sha256": "a275fbf7764a1dcdaa6876f81de1c04e07d2cb8342e67be012d6e29eb63bbca6",
+        "reviewed_visually": true
+      },
+      {
+        "name": "call-action-fields-dark.png",
+        "width": 1152,
+        "height": 1173,
+        "sha256": "fc0a070b49129c27d3c1355c31ca562eaff6ae4287217d10253ecbbce31c9436",
+        "reviewed_visually": true
+      },
+      {
+        "name": "call-action-picker-dark.png",
+        "width": 1120,
+        "height": 419,
+        "sha256": "23000a6e20d05804d12c66f495d35a1f8f26a4f4abd91e6ece16386540cc6f0c",
+        "reviewed_visually": true
+      },
+      {
+        "name": "call-phone-picker-dark.png",
+        "width": 1120,
+        "height": 378,
+        "sha256": "b8712a58ce711b75dcf041002ea0dfcccb837ada90f33164d87ff35adf8a0686",
+        "reviewed_visually": true
+      },
+      {
+        "name": "get-phone-state-action-dark.png",
+        "width": 1152,
+        "height": 470,
+        "sha256": "da5d5f45c81820f2e887dca3c93b99b60309a1702a67c07d54bb226711225aa8",
+        "reviewed_visually": true
+      },
+      {
+        "name": "phone-state-condition-dark.png",
+        "width": 500,
+        "height": 380,
+        "sha256": "efd66805dcd5f0481507efa0617f94cd6ffbde404a85bb2276bfcc97589b2e02",
+        "reviewed_visually": true
+      },
+      {
+        "name": "phone-state-trigger-dark.png",
+        "width": 500,
+        "height": 460,
+        "sha256": "6e53b58585859c57a963569ec6fad69a8c9a51bcc1f2895c115948e92963f534",
+        "reviewed_visually": true
+      },
+      {
+        "name": "pickup-action-dark.png",
+        "width": 1152,
+        "height": 913,
+        "sha256": "5a3e030695ec20f876f83c3d50c2c3a7d3b98d17c82fb7618c6e244193668710",
+        "reviewed_visually": true
+      },
+      {
+        "name": "pickup-ringing-action-dark.png",
+        "width": 1152,
+        "height": 913,
+        "sha256": "403036d6d6d217d28f51b729094e8cd33d94b23f445a42e44f8dcdf17d3d0c81",
+        "reviewed_visually": true
+      },
+      {
+        "name": "create-account-service.png",
+        "width": 1152,
+        "height": 1330,
+        "sha256": "b45ea4473948afb35faa5f382f36cdd52cec90729b770600ba15d134bd2cf367",
+        "reviewed_visually": true
+      },
+      {
+        "name": "create-account-service-filled.png",
+        "width": 1152,
+        "height": 1330,
+        "sha256": "b45ea4473948afb35faa5f382f36cdd52cec90729b770600ba15d134bd2cf367",
+        "reviewed_visually": true
+      },
+      {
+        "name": "pbx-add-trunk-menu-dark.png",
+        "width": 210,
+        "height": 585,
+        "sha256": "407d08afd2ad09c68df42463facb8d8aa55938a7607de0aa435cb6342697e88b",
+        "reviewed_visually": true
+      },
+      {
+        "name": "pbx-add-trunk-dark.png",
+        "width": 580,
+        "height": 550,
+        "sha256": "5dea14c438fb3d8861541211807c30e3f580d090bc1a559eb5daca6e6c1af449",
+        "reviewed_visually": true
+      },
+      {
+        "name": "voip-stack-add-integration.png",
+        "width": 580,
+        "height": 270,
+        "sha256": "57fda0870cd81b650999a9bebc8c5e6b1e83d890f7fd342d9250c2ca69467054",
+        "reviewed_visually": true
+      },
+      {
+        "name": "voip-stack-config-flow.png",
+        "width": 580,
+        "height": 1156,
+        "sha256": "3db4b661d7dd6d8668650ef9193853fa634d8b9e5aca87a36bcaacef94b61ef0",
+        "reviewed_visually": true
+      },
+      {
+        "name": "esphome-add-device.png",
+        "width": 580,
+        "height": 399,
+        "sha256": "5bd11727affaaf8e959726a3938b37d995fc5a3f99846df8035475852cbd8195",
+        "reviewed_visually": true
+      },
+      {
+        "name": "hacs-download-voip-stack.png",
+        "width": 560,
+        "height": 387,
+        "sha256": "f050cf32f71ff794c63a1e7a5d1cd5f5d41076da74080cdfa536d60e96dded48",
+        "reviewed_visually": true
+      },
+      {
+        "name": "card-selection.png",
+        "width": 1024,
+        "height": 390,
+        "sha256": "eb05298808bb69bb8484ea31902d9c501a29e37a6dd5ad1304ec2b9dba37a890",
+        "reviewed_visually": true
+      },
+      {
+        "name": "card-configuration.png",
+        "width": 1024,
+        "height": 616,
+        "sha256": "8ac6d42636300185cbf39fdc03ba543194cefbc88bc019c5ca548b81bb830821",
+        "reviewed_visually": true
+      }
+    ],
+    "notes": [
+      "Casa/Test selectors refer to existing phones, no device or phone created. Kitchen is a form destination text example only.",
+      "Create action/Developer Tools form edits changed browser properties only.",
+      "Call selector lists current matching devices, three results instead of historical single result.",
+      "SIP/RTP form opened through existing entry Reconfigure > General settings, same user-step schema, cancelled without Submit.",
+      "ESPHome shows current Add device dialog with fictitious intercom-mini.local, never submitted; this replaces historical discovery banner context.",
+      "HACS native version/download dialog on installed repository, cancelled without Download; source helper in installed172.f5ba6b7dcddd98b0.js only dispatches show-dialog.",
+      "Create-account two filenames intentionally show identical full form content, no account creation.",
+      "Automation first greeting TTS separately corrected to Hello. This is a test., its manifest updated."
+    ]
+  },
+  "previous_live_popup_capture": {
+    "captured_on": "2026-11-04",
+    "source_head": "4f2e538fca39bdbc312ff0976c39c56a3f099d4e",
+    "source": "Real production Home Assistant frontend in Chromium, existing phones and public controls.",
+    "theme": "Existing Home Assistant theme, including its actual transparency and colours.",
+    "processing": "Rectangular browser screenshot crops and lossless PNG optimization only. No generated, redrawn or injected UI state.",
+    "illustrative_video": "The gate picture is an existing illustrative camera input carried through a real browser-to-browser call. It is not a private or physical gate-camera capture.",
+    "privacy_review": "Crops contain only VoIP UI and illustrative video. Private camera views, household avatars, weather, map/geolocation details, credentials and unrelated dashboard content are excluded.",
+    "presentation_observations": {
+      "answered_call": "Two existing browser phones, public Casa to Test call and a real pointer click on visible Answer.",
+      "minimize_reopen": "Same call ID and browser media client across minimize and reopen; received canvas rendered the illustrative video.",
+      "qualification_scope": "Presentation documentation only. No ESP, physical camera, acoustic, trunk or full historical WebSocket EOF qualification."
+    },
+    "cleanup": {
+      "verified_at_utc": "2026-11-04T01:38:04Z",
+      "both_phones": "idle",
+      "call_scoped_resource_counters": 21,
+      "all_call_scoped_resource_counters_zero": true,
+      "capture_browser_processes_remaining": 0,
+      "persisted_browser_popup_binding": "Original absent binding preserved; authenticated source storage was never saved by the capture contexts.",
+      "phone_preferences": "Existing auto-answer, send-video and DND values preserved.",
+      "websocket_observation": "Four later media WebSocket handles emitted Close. Two earlier caller handles lacked a Close event; document-generation attribution was not collected, so their historical EOF remains unqualified. Browser contexts were disposed; final runtime and process checks independently confirmed quiescence."
+    },
+    "photos": [
+      {
+        "file": "voip-popup-settings.png",
+        "description": "Existing Call popups settings, Test phone enabled in the temporary capture browser.",
+        "view_path": "/voip-stack-popup",
+        "state": "browser-local opt-in",
+        "width": 588,
+        "height": 320,
+        "bytes": 17366,
+        "sha256": "959173c0a28e84a14a5f3253baceffc0fdb85b51a6b4f1cd5a8fcd2b40510323"
+      },
+      {
+        "file": "voip-popup-ringing.png",
+        "description": "Real incoming Casa to Test call shown over the Home Assistant History view without a phone card.",
+        "view_path": "/history",
+        "state": "ringing",
+        "width": 560,
+        "height": 207,
+        "bytes": 12519,
+        "sha256": "c496bc5020b5a61d2dbf44fd5dce76b30a676899c3e9f18eb3e2b08b5cb2f463"
+      },
+      {
+        "file": "voip-popup-minimized.png",
+        "description": "Actual minimized popup during the answered Casa to Test browser call.",
+        "view_path": "/history",
+        "state": "in_call",
+        "width": 113,
+        "height": 62,
+        "bytes": 2452,
+        "sha256": "3de25478c58bdecf9733fad628f93b36e841e3618ceb7a2d72d7ae9c858d3391"
+      },
+      {
+        "file": "voip-popup-video-demo.png",
+        "description": "Actual received video canvas in the answered browser call, using an illustrative gate through normal Chromium fake-camera input.",
+        "view_path": "/history",
+        "state": "in_call",
+        "width": 560,
+        "height": 364,
+        "bytes": 237371,
+        "sha256": "99fa57c8a9bb5a7cb421233251dea01faac9d08be60c79cdea890f8663645fe3"
+      }
+    ],
+    "p4_native_capture": {
+      "file": "p4-touch-overview.jpg",
+      "captured_on": "2026-11-04",
+      "source": "Existing esp_screenshot component on the running Waveshare P4 FULL firmware, direct JPEG snapshot.",
+      "processing": "Original 1280x800 JPEG bytes, no crop, resizing, generated UI or retouching.",
+      "firmware_build": "2026-11-04 00:41:10 +0000",
+      "capture_id": "580e5576-00000002",
+      "state": "Idle, empty SIP dial pad, local Voice Assistant inactive.",
+      "sha256": "1dd2c3a4c196abaa312b35022dddca67ee0bf011eabf27a32b1438f42b973062",
+      "cleanup": "Original contact view and scroll restored, measured master volume restored, no call or Assist session started."
+    },
+    "restored_phone_card_gallery": {
+      "source_commit": "22e91179f7a54c95e461c66ee11ce3ccb7365d18",
+      "theme": "Frosted Glass Dark",
+      "source": "Original themed phone-card screenshots, restored byte for byte from the published gallery commit.",
+      "presentation": "Demo contacts and illustrative call states. These screenshots document the UI, not a new real-call qualification.",
+      "files": [
+        {
+          "path": "docs/images/phone-cards/esp-mirror-keypad.png",
+          "bytes": 258164,
+          "sha256": "133382093ad8c8eb4498d512a439351374d82faf9bef139735e577534e7356d3"
+        },
+        {
+          "path": "docs/images/phone-cards/esp-mirror-options.png",
+          "bytes": 188338,
+          "sha256": "1e6f3a44d5def07d8dea5e65e72539a2e2e6c6d38396f9ea412629675eb42b27"
+        },
+        {
+          "path": "docs/images/phone-cards/esp-mirror.png",
+          "bytes": 183128,
+          "sha256": "a11dd28ad642a951d9833a99fc67908e6b8e960bf710c9ae133b77c7dcf9d339"
+        },
+        {
+          "path": "docs/images/phone-cards/phonebook.png",
+          "bytes": 235838,
+          "sha256": "9bce07e8b3e82991438ff3ba2973d6ba9e3f820cbcaa220bf5fa2de517fb0fe4"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-call.png",
+          "bytes": 162475,
+          "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-dtmf.png",
+          "bytes": 255921,
+          "sha256": "a1de3f9cfb031daeeb269a2bc2c3f85712443ce7208d4ee7dfb67af71ba4ea77"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-idle.png",
+          "bytes": 168261,
+          "sha256": "c304a3f85eae25272148010758fec443fdcd438fcea98cedeec85be1d561a3e8"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-options.png",
+          "bytes": 283130,
+          "sha256": "b2f93ee922d4429d9b352c33b4a737f5cc31728c99fe3f12044c3e77d12b5d33"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-parked.png",
+          "bytes": 172502,
+          "sha256": "8b9b4aa4990cf6bba3b6782901f663f1311b72b48ce800f9fd4fbab10ff31e4b"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-retrieve.png",
+          "bytes": 254201,
+          "sha256": "1b5765815bd8b80a73ad3271b7339a01309ac307c7e823a16ff02556d53b8c72"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-retrieved.png",
+          "bytes": 162475,
+          "sha256": "0d31e21b6ef4a9598498c8861aa62a7e82569404ce879de63f55b777bc2ce21c"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-ringing.png",
+          "bytes": 165257,
+          "sha256": "6802188e0939db0116652067d669be90e13a505e9696f2d5330352163f1e9b3b"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-routing.png",
+          "bytes": 410835,
+          "sha256": "728c89eccd4a90bce2c326e264901886684408535b3b7e0d46dc7e407ba45051"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-transfer.png",
+          "bytes": 172905,
+          "sha256": "f16a6361fe369e5a3121155cada9f70bd379ff812a462e15cf63d3ef1ac99bc1"
+        },
+        {
+          "path": "docs/images/phone-cards/softphone-voicemail.png",
+          "bytes": 265151,
+          "sha256": "b85aa0751ac29b06abdbb5bd06648c0016eb9975d15f546d5e4743d428f920c2"
+        }
+      ]
+    },
+    "historical_assets_in_commit": "ded4014ab83e1c73333b377e867490450afaa24b",
+    "note": "Historical real-call captures. Current popup assets are the separate themed UI demonstrations described below."
+  },
+  "themed_popup_gallery": {
+    "source": "Current production popup and phone-card components rendered in a private browser fixture.",
+    "theme": "Frosted Glass Dark",
+    "presentation": "Illustrative contacts and call states; existing illustrative gate-camera input rendered on the normal UI canvas. These are UI demonstrations, not new live SIP, physical-camera or acoustic evidence.",
+    "processing": "Native screenshots and rectangular crops only.",
+    "images": [
+      {
+        "file": "voip-popup-settings.png",
+        "sha256": "ac3f8acc61e6a75a434f422fee0aca7e581b8a593f868024e77f62813195d9fe"
+      },
+      {
+        "file": "voip-popup-ringing.png",
+        "sha256": "ebd86ad173c5e898f7a9770d52408ba7cd18ae42279e71eab460f323e1d97d42"
+      },
+      {
+        "file": "voip-popup-minimized.png",
+        "sha256": "54b9228f79058f45802d455bf41b603dd650c277d303ec9b2a5936fca7343001"
+      },
+      {
+        "file": "voip-popup-video-demo.png",
+        "sha256": "02fac0e9bcf6c6d4f77b638a22bb681582b42849a2cad6e874ee1b9d07d6a9b6"
+      }
+    ],
+    "verified_surfaces": {
+      "dialog": {
+        "blur": "blur(10px) saturate(1.25) contrast(1)",
+        "background": "rgba(0, 0, 0, 0)",
+        "shadow": "rgba(255, 255, 255, 0.3) 3px 3px 0.5px -3.5px inset, rgba(255, 255, 255, 0.2) -2px -2px 0.5px -2px inset, rgba(255, 255, 255, 0.06) 0px 0px 8px 1px inset, rgba(0, 0, 0, 0.18) 0px 0px 2px 0px, rgba(0, 0, 0, 0.34) 0px 14px 38px 0px, rgba(0, 0, 0, 0.24) 0px 2px 10px 0px"
+      },
+      "inner": {
+        "blur": "none",
+        "filter": "none",
+        "shadow": "none",
+        "pseudo": "none"
+      }
+    }
+  }
+}

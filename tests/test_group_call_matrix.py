@@ -28,7 +28,8 @@ from tests.support.voip_matrix import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+# Legacy adapters belong to this matrix only, never the shared integration cache.
+PKG_NAME = "voip_stack_group_matrix_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
@@ -105,10 +106,6 @@ def _install_ha_fakes() -> None:
 
 def _load_module(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
@@ -405,7 +402,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             "session",
         )
         registry.transition("group-call", owner="bridge")
-        from custom_components.voip_stack.endpoint_session import TerminationIntent
+        from voip_stack_group_matrix_test.endpoint_session import TerminationIntent
         async def finish():
             await registry.request_termination("group-call", TerminationIntent("remote_hangup"))
         asyncio.run(finish())
@@ -597,7 +594,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertTrue(hass.bus.contexts)
         self.assertTrue(all(item is context for item in hass.bus.contexts))
 
-    def test_sip_target_profile_preserves_directional_rtp_contracts(self) -> None:
+    def test_sip_target_profile_preserves_local_selection_preferences(self) -> None:
         audio_format = endpoint_routing.AudioFormat
         remote_tx = [
             audio_format(32000, "s16le", 1, 10),
@@ -614,20 +611,11 @@ class GroupCallMatrixTest(unittest.TestCase):
             target="standard-phone",
         )
 
-        self.assertEqual(
-            send,
-            [
-                audio_format(48000, "s16le", 1, 10),
-                audio_format(16000, "s16le", 1, 10),
-            ],
-        )
-        self.assertEqual(
-            recv,
-            [
-                audio_format(32000, "s16le", 1, 10),
-                audio_format(16000, "s16le", 1, 10),
-            ],
-        )
+        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertIn(audio_format(32000, "s16le", 1, 10), recv)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
 
     def test_sip_target_profile_accepts_disjoint_codecs_with_common_ptime(self) -> None:
         audio_format = endpoint_routing.AudioFormat
@@ -637,8 +625,10 @@ class GroupCallMatrixTest(unittest.TestCase):
             target="nonstandard-phone",
         )
 
-        self.assertEqual(send, [audio_format(48000, "s16le", 1, 10)])
-        self.assertEqual(recv, [audio_format(16000, "s16le", 1, 10)])
+        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
 
     def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:
         endpoint = peer.Peer(

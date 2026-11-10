@@ -2,6 +2,8 @@ aiohttp==3.14.3
 av==17.0.1
 coverage==7.15.4
 hypothesis==6.165.0
+# Independent LDAP client used by shared directory and ESP host witnesses.
+ldap3==2.9.1
 numpy==2.3.2
 pytest==9.0.3
 pytest-asyncio==1.4.0

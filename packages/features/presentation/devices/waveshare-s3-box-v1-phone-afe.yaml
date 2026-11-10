@@ -157,3 +157,6 @@ esphome:
         id: display_backlight
         brightness: 100%
     - script.execute: draw_call_screen
+
+packages:
+  visibility: !include '../visibility.yaml'

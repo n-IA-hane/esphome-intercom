@@ -117,3 +117,20 @@ def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> N
             if isinstance(imported, str) and imported.startswith("playwright."):
                 playwright_files.add(str(path.relative_to(ROOT)))
     assert playwright_files <= set(arguments)
+
+
+def test_logical_browser_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
+    target = "tests/test_browser_logical_availability_ha.py"
+    assert target in _record_suite_arguments(tmp_path, "ha")
+    for mode in ("fast", "software-full"):
+        assert f"--ignore={target}" in _record_suite_arguments(tmp_path, mode)
+
+
+def test_ha_regressions_are_assigned_to_the_ha_interpreter(tmp_path: Path) -> None:
+    """A new HA witness must not disappear from CI or run against stub modules."""
+    targets = {str(path.relative_to(ROOT)) for path in (ROOT / "tests").glob("*_ha.py")}
+    ha_arguments = set(_record_suite_arguments(tmp_path, "ha"))
+    assert targets <= ha_arguments
+    for mode in ("fast", "software-full"):
+        arguments = set(_record_suite_arguments(tmp_path, mode))
+        assert {f"--ignore={target}" for target in targets} <= arguments

@@ -1,6 +1,6 @@
 # Use the official ESPHome OTA backend for the full audio profiles.
 substitutions:
-  ext_components_source: github://n-IA-hane/esphome-intercom@main
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
 
 esphome:
   min_version: 2026.10.0

@@ -271,3 +271,84 @@ assert.equal(p._framesDrop, 0);
             str(PLAYBACK_PROCESSOR), frame_ms, context_rate, channels,
         ])},
     )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_fractional_clock_preserves_count_continuity_and_channels():
+    script = r'''
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync(PATH, 'utf8');
+const contextRate = 44100;
+for (const [wireRate, frameMs] of [[24000, 15], [48000, 2.5], [16000, 32]]) {
+  for (const packets of [100, 1000]) {
+    for (const channels of [1, 2]) {
+      let Processor;
+      const context = vm.createContext({
+        AudioWorkletProcessor: class { constructor() { this.port = {postMessage() {}, onmessage: null}; } },
+        sampleRate: contextRate, currentTime: 0,
+        registerProcessor(_name, value) { Processor = value; },
+        ArrayBuffer, DataView, Float32Array, Math, Number, Object, Error,
+      });
+      vm.runInContext(source, context);
+      const p = new Processor({processorOptions: {format: {
+        sampleRate: wireRate, frameMs, channels, pcmFormat: 's16le',
+      }}});
+      const sourceSamples = wireRate * frameMs / 1000;
+      function value(index, channel) {
+        return Math.round(9000 * Math.sin(2 * Math.PI * (channel ? 1301 : 997) * index / wireRate));
+      }
+      function packet(index) {
+        const buffer = new ArrayBuffer(sourceSamples * channels * 2);
+        const view = new DataView(buffer);
+        for (let i = 0; i < sourceSamples; i++) {
+          for (let ch = 0; ch < channels; ch++) {
+            view.setInt16((i * channels + ch) * 2, value(index * sourceSamples + i, ch), true);
+          }
+        }
+        return buffer;
+      }
+      let total = 0, maxError = 0;
+      const counts = new Set();
+      for (let n = 0; n < packets; n++) {
+        p._push(packet(n));
+        const frames = p._available / channels;
+        counts.add(frames);
+        for (let i = 0; i < frames; i++) {
+          const sourcePosition = (total + i) * wireRate / contextRate;
+          const base = Math.floor(sourcePosition), fraction = sourcePosition - base;
+          for (let ch = 0; ch < channels; ch++) {
+            const a = value(Math.max(0, base - 1), ch) / 32768;
+            const b = value(base, ch) / 32768;
+            const actual = p._ring[(p._read + i * channels + ch) % p._ring.length];
+            maxError = Math.max(maxError, Math.abs(actual - (a + (b - a) * fraction)));
+          }
+        }
+        total += frames;
+        assert.equal(total, Math.ceil((n + 1) * sourceSamples * contextRate / wireRate));
+        assert(p._resamplePosition >= 0 && p._resamplePosition < wireRate);
+        p._read = p._write;
+        p._available = 0;
+      }
+      assert.equal(total, packets * frameMs * contextRate / 1000);
+      assert.equal(counts.size, 2);
+      assert(maxError < 1e-7, `Interpolation discontinuity ${wireRate}/${frameMs}/${channels}: ${maxError}`);
+      assert.equal(p._framesDrop, 0);
+
+      // A new remote segment must not inherit the preceding fractional phase.
+      p._push(packet(packets));
+      p._read = p._write;
+      p._available = 0;
+      assert(p._resamplePosition !== 0);
+      p.port.onmessage({data: {type: 'remote_silence_resume'}});
+      p._push(packet(0));
+      assert.equal(p._available / channels, Math.ceil(sourceSamples * contextRate / wireRate));
+      for (let ch = 0; ch < channels; ch++) {
+        assert.equal(p._ring[(p._read + ch) % p._ring.length], value(0, ch) / 32768);
+      }
+    }
+  }
+}
+'''.replace("PATH", json.dumps(str(PLAYBACK_PROCESSOR)))
+    subprocess.run(["node", "-"], input=script, text=True, check=True, capture_output=True)

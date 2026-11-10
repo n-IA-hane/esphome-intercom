@@ -25,6 +25,11 @@ from .sip_registrar import SipRegistrar
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sixty-four dialog/presence pairs plus four account MWI usages.
+# Retiring notifiers retain their slot until their transaction is released.
+MAX_EVENT_USAGES_PER_SUBSCRIBER = 132
+MAX_EVENT_USAGES = 512
+
 
 @dataclass(slots=True)
 class SipApplicationMethods:
@@ -39,7 +44,9 @@ class SipApplicationMethods:
     subscription_timers: dict[str, asyncio.Task[object]] | None = None
     mailbox_archive: object | None = None
     mailbox_unsubscribe: Callable[[], None] | None = None
+    account_unsubscribe: Callable[[], None] | None = None
     dialog_unsubscribe: Callable[[], None] | None = None
+    presence_unsubscribe: Callable[[], None] | None = None
     endpoint_unsubscribe: Callable[[], None] | None = None
     parking_unsubscribe: Callable[[], None] | None = None
     notifiers: dict[int, "SipEventSubscription"] = field(default_factory=dict)
@@ -60,6 +67,7 @@ class SipApplicationMethods:
         self.tasks = set()
         self.publication_timers = {}
         self.subscription_timers = {}
+        self.account_unsubscribe = self.registrar.subscribe_account_changes(self._accounts_changed)
 
     async def handle(
         self,
@@ -69,7 +77,15 @@ class SipApplicationMethods:
         follow_up_sender: "SipFollowUpSender | None" = None,
         *, flow_trunk_id: str = "",
     ) -> SipRequestResult:
-        account = self.registrar.account_for_source(addr, transport)
+        try:
+            subscriber = sip.parse_sip_uri(_uri_from_header(request.header("From"))).user
+        except (ValueError, sip.SipError):
+            subscriber = ""
+        account = self.registrar.account_for_source(addr, transport, username=subscriber)
+        if account is None and request.method == "MESSAGE":
+            # A single authenticated identity can supply an untrusted display
+            # From; a shared flow must identify one of its registered accounts.
+            account = self.registrar.account_for_source(addr, transport)
         if request.method == "REFER":
             return self._refer(request, addr, transport, account, follow_up_sender, flow_trunk_id)
         if request.method == "SUBSCRIBE" and request.header("Event").partition(";")[0].strip().casefold() == "refer":
@@ -80,6 +96,13 @@ class SipApplicationMethods:
                     return SipRequestResult(status, reason, headers=headers, to_tag=subscription.to_tag)
             return SipRequestResult(481, "Subscription Does Not Exist")
         if account is None:
+            current = self._owned_unsubscribe(request, addr, transport, follow_up_sender)
+            if current is not None:
+                return self._subscribe(request, addr, current.subscriber, follow_up_sender,
+                    mailbox_id=current.mailbox_id, dialog_endpoint_id=current.dialog_endpoint_id,
+                    transport=transport)
+            return SipRequestResult(403, "Forbidden")
+        if not account.enabled:
             return SipRequestResult(403, "Forbidden")
         if request.method == "MESSAGE":
             return self._message(request, account.username)
@@ -131,6 +154,7 @@ class SipApplicationMethods:
                 follow_up_sender,
                 mailbox_id=mailbox_id,
                 dialog_endpoint_id=dialog_endpoint_id,
+                transport=transport,
             )
             if (event == "dialog" and result.status == 200 and self.dialog_unsubscribe is None
                     and any(item.event == "dialog" for item in self.subscriptions.values())):
@@ -138,8 +162,53 @@ class SipApplicationMethods:
 
                 self.dialog_unsubscribe = phone_state_observer(self.hass).subscribe(
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
+            if (event == "presence" and result.status == 200 and self.presence_unsubscribe is None
+                    and any(item.presence_endpoint_id for item in self.subscriptions.values())):
+                from .phone_state import phone_state_observer
+
+                self.presence_unsubscribe = phone_state_observer(self.hass).subscribe(self._presence_changed)
             return result
         return SipRequestResult(405, "Method Not Allowed")
+
+    def _owned_unsubscribe(self, request, addr, transport, sender):
+        """Contact removal does not revoke an established event dialog's cleanup."""
+        if request.method != "SUBSCRIBE":
+            return None
+        try:
+            if _publication_expires(request.header("Expires")) != 0:
+                return None
+            sequence = sip.parse_cseq(request.header("CSeq"))
+        except (TypeError, ValueError, sip.SipError):
+            return None
+        current = self.subscriptions.get(_subscription_key(request))
+        if (current is None or current.refer_notifier is not None
+                or sip.extract_tag(request.header("To")) != current.to_tag
+                or sequence.method != "SUBSCRIBE" or sequence.number <= current.dialog.remote_cseq
+                or addr != current.addr or transport.upper() != current.transport
+                or sender != current.sender or current.authentication_generation is None
+                or self.registrar.authentication_generation(current.subscriber) != current.authentication_generation):
+            return None
+        return current
+
+    @callback
+    def _accounts_changed(self, usernames):
+        """Revoke event owners on credential changes, independently of Contacts."""
+        owned = {id(item): item for item in self.subscriptions.values()}
+        owned.update(self.notifiers)
+        for subscription in owned.values():
+            if subscription.refer_notifier is not None:
+                continue
+            if subscription.subscriber.casefold() not in usernames:
+                if subscription.event == "presence" and self._presence_publisher(subscription).casefold() in usernames:
+                    target = self.registrar.accounts.get(self._presence_publisher(subscription).casefold())
+                    if target is None or not target.enabled:
+                        self._end_subscription(subscription, reason="noresource")
+                continue
+            self._end_subscription(subscription, notify=False)
+            subscription.pending_notification = None
+            subscription.notify_terminated = True
+            if subscription.notify_task is not None:
+                subscription.notify_task.cancel()
 
     def _refer(self, request, addr, transport, account, sender, flow_trunk_id):
         """Authorize Target-Dialog against the existing leg's stable principal."""
@@ -188,7 +257,8 @@ class SipApplicationMethods:
             subscriber = account.username if account is not None else f"trunk:{trusted_trunk}"
             owned = {id(item): item for item in self.subscriptions.values()}
             owned.update(self.notifiers)
-            if len(owned) >= 256 or sum(item.subscriber == subscriber for item in owned.values()) >= 64:
+            if (len(owned) >= MAX_EVENT_USAGES
+                    or sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
                 self.rejected_subscriptions += 1
                 return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
             tag = secrets.token_hex(8)
@@ -319,7 +389,7 @@ class SipApplicationMethods:
         addr: tuple[str, int],
         subscriber: str,
         follow_up_sender: "SipFollowUpSender | None",
-        *, mailbox_id: str = "", dialog_endpoint_id: str = "",
+        *, mailbox_id: str = "", dialog_endpoint_id: str = "", transport: str = "",
     ) -> SipRequestResult:
         """Create, refresh or terminate one RFC 6665 presence subscription."""
 
@@ -347,23 +417,30 @@ class SipApplicationMethods:
             return SipRequestResult(400, "Bad Request")
         if from_user.lower() != subscriber.lower():
             return SipRequestResult(403, "Forbidden")
-        target_account = self.registrar.accounts.get(target.lower())
-        if event != "dialog" and (target_account is None or not target_account.enabled):
+        try:
+            presence_endpoint = self._presence_endpoint(target=target) if event == "presence" else None
+        except ValueError:
+            return SipRequestResult(404, "Not Found")
+        publisher = presence_endpoint.username if presence_endpoint is not None and presence_endpoint.username else target
+        target_account = self.registrar.accounts.get(publisher.casefold())
+        if event != "dialog" and ((target_account is None and presence_endpoint is None)
+                                  or (target_account is not None and not target_account.enabled)):
             return SipRequestResult(404, "Not Found")
 
-        _package, parameters = sip._split_semicolon_params(request.header("Event"))
-        event_id = dict(parameters).get("id") or ""
-        key = f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{event}:{event_id}"
+        key = _subscription_key(request)
         subscriptions = self.subscriptions
         assert subscriptions is not None
         current = subscriptions.get(key)
+        if (current is not None and current.presence_endpoint_id
+                and (presence_endpoint is None or presence_endpoint.endpoint_id != current.presence_endpoint_id)):
+            return SipRequestResult(481, "Subscription Does Not Exist")
         request_to_tag = sip.extract_tag(request.header("To"))
         if (current is not None and request_to_tag != current.to_tag) or (current is None and request_to_tag):
             return SipRequestResult(481, "Call/Transaction Does Not Exist")
         owned = {id(item): item for item in subscriptions.values()}
         owned.update(self.notifiers)
-        if current is None and (len(owned) >= 256 or
-                sum(item.subscriber == subscriber for item in owned.values()) >= 64):
+        if current is None and (len(owned) >= MAX_EVENT_USAGES or
+                sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
             self.rejected_subscriptions += 1
             return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
         to_tag = current.to_tag if current is not None else secrets.token_hex(8)
@@ -385,6 +462,7 @@ class SipApplicationMethods:
             event=event,
             mailbox_id=mailbox_id,
             dialog_endpoint_id=dialog_endpoint_id,
+            presence_endpoint_id=presence_endpoint.endpoint_id if presence_endpoint is not None else "",
             dialog_filter=dialog_filter,
             dialog_version=current.dialog_version if current is not None else 0,
             target=target,
@@ -394,6 +472,8 @@ class SipApplicationMethods:
             addr=addr,
             expires_at=time.time() + expires,
             sender=follow_up_sender,
+            transport=transport.upper(),
+            authentication_generation=self.registrar.authentication_generation(subscriber),
             notify_lock=current.notify_lock if current is not None else asyncio.Lock(),
         )
         if current is not None:
@@ -401,6 +481,7 @@ class SipApplicationMethods:
             current.addr = addr
             current.expires_at = subscription.expires_at
             current.sender = follow_up_sender
+            current.transport = transport.upper()
             subscription = current
         if expires:
             subscriptions[key] = subscription
@@ -445,8 +526,10 @@ class SipApplicationMethods:
                     f"Voice-Message: {min(new, 4294967295)}/{min(old, 4294967295)} (0/0)\r\n").encode()
             content_type = "application/simple-message-summary"
         else:
-            publication = self._publication(subscription.target)
-            body = publication.body if publication is not None else _closed_pidf(subscription.target)
+            body = ((_endpoint_pidf(_uri_from_header(subscription.request.header("To")), False)
+                     if subscription.presence_endpoint_id else _closed_pidf(subscription.target))
+                    if terminated and termination_reason == "noresource"
+                    else self._presence_body(subscription))
             content_type = "application/pidf+xml"
         state = f"terminated;reason={termination_reason}" if terminated else f"active;expires={expires}"
         cseq = subscription.dialog.local_cseq
@@ -466,14 +549,79 @@ class SipApplicationMethods:
         )
 
     def dialog_credentials(self, call_id, address, transport):
-        account = self.registrar.account_for_source(address, transport)
-        if account is not None:
-            return SipDigestCredentials(account.username, account.password)
-        from .runtime_data import require_runtime_data
-        runtime = require_runtime_data(self.hass)
-        session = runtime.sip.get_session(runtime.sip.resolve_session_id(call_id)) if runtime.sip is not None else None
-        identity = session.metadata.get("inbound_trunk_id", "") if session is not None else ""
-        return self._subscriber_credentials("trunk:" + identity) if identity else None
+        return self.bind_dialog_credentials(call_id, address, transport)()
+
+    def bind_dialog_credentials(self, call_id, address, transport):
+        """Retain the verified principal for an event usage, rechecking revocation."""
+        from .runtime_data import runtime_data, sip_trunks
+        from .trunk_policy import identify_inbound_trunk
+
+        def denied():
+            return None
+        runtime = runtime_data(self.hass)
+        calls = runtime.sip if runtime is not None else None
+        session = calls.get_session(calls.resolve_session_id(call_id)) if calls is not None else None
+        if session is None or not session.live:
+            return denied
+        legs = [leg for leg in session.legs.values()
+                if (leg.sip_call_id or leg.leg_id) == call_id]
+        if len(legs) != 1 or legs[0].closed:
+            return denied
+        leg = legs[0]
+        # ingress is set by the routing owner after identifying the trunk.
+        # endpoint_id may instead be a caller-name directory match.
+        incoming_trunk = (session.metadata.get("inbound_trunk_id", "")
+                          if leg.role in {"caller", "trunk"} else "")
+        identity = leg.trunk_id or (incoming_trunk if session.metadata.get("ingress") == "trunk" else "")
+        if not identity and leg.endpoint_id:
+            endpoint_id = leg.endpoint_id
+            endpoint = runtime.endpoints.get(endpoint_id)
+            if endpoint is None or not endpoint.username:
+                return denied
+            username = endpoint.username
+            account = self.registrar.account_for_source(address, transport, username=username)
+            if account is None:
+                return denied
+            generation = self.registrar.authentication_generation(username)
+            bindings = frozenset((item.flow_key, item.capability_generation)
+                for item in self.registrar.registered_contacts(username)
+                if (item.source_host, item.source_port, item.transport.upper()) ==
+                   (*address, transport.upper()))
+
+            def account_credentials():
+                endpoint = runtime.endpoints.get(endpoint_id)
+                if (self.stopping or endpoint is None
+                        or endpoint.username.casefold() != username.casefold()
+                        or self.registrar.authentication_generation(username) != generation):
+                    return None
+                account = self.registrar.account_for_source(address, transport, username=username)
+                current = {(item.flow_key, item.capability_generation)
+                    for item in self.registrar.registered_contacts(username)
+                    if (item.source_host, item.source_port, item.transport.upper()) ==
+                       (*address, transport.upper())}
+                return (SipDigestCredentials(account.username, account.password)
+                        if account is not None and bindings.intersection(current) else None)
+
+            return account_credentials
+
+        identity = identity or incoming_trunk
+        if not identity:
+            return denied
+        owned_trunk = sip_trunks(self.hass).get(identity)
+        if owned_trunk is None:
+            return denied
+
+        def trunk_credentials():
+            if self.stopping or sip_trunks(self.hass).get(identity) is not owned_trunk:
+                return None
+            try:
+                trusted = identify_inbound_trunk(sip_trunks(self.hass), *address, transport,
+                                                 flow_trunk_id=identity)
+            except ValueError:
+                return None
+            return self._subscriber_credentials("trunk:" + identity) if trusted == identity else None
+
+        return trunk_credentials
 
     def _subscriber_credentials(self, subscriber):
         if subscriber.startswith("trunk:"):
@@ -556,12 +704,60 @@ class SipApplicationMethods:
         self._release_dialog_observers_if_unused()
 
     def _release_dialog_observers_if_unused(self):
+        if (self.presence_unsubscribe is not None
+                and not any(item.presence_endpoint_id for item in (self.subscriptions or {}).values())):
+            self.presence_unsubscribe()
+            self.presence_unsubscribe = None
         if any(item.event == "dialog" for item in (self.subscriptions or {}).values()):
             return
         for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
+
+    def _presence_endpoint(self, *, target="", endpoint_id=""):
+        from .runtime_data import runtime_data
+
+        runtime = runtime_data(self.hass)
+        if runtime is None:
+            return None
+        return runtime.endpoints.get(endpoint_id) if endpoint_id else runtime.endpoints.resolve(target)
+
+    def _presence_body(self, subscription):
+        endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
+        resource_uri = _uri_from_header(subscription.request.header("To"))
+        if subscription.presence_endpoint_id and endpoint is None:
+            return _endpoint_pidf(resource_uri, False)
+        publisher = endpoint.username if endpoint is not None and endpoint.username else subscription.target
+        account = self.registrar.accounts.get(publisher.casefold())
+        if account is not None and not account.enabled:
+            return (_endpoint_pidf(resource_uri, False) if subscription.presence_endpoint_id
+                    else _closed_pidf(subscription.target))
+        publication = self._publication(publisher)
+        if endpoint is not None:
+            return _endpoint_pidf(resource_uri, endpoint.availability.value == "available",
+                                  publication.body if publication is not None else None)
+        if publication is not None:
+            return publication.body
+        return _closed_pidf(subscription.target)
+
+    def _presence_publisher(self, subscription):
+        endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
+        return endpoint.username if endpoint is not None and endpoint.username else subscription.target
+
+    @callback
+    def _presence_changed(self, change, _context=None):
+        before, after = change.get("previous"), change.get("phone")
+        if before is not None and after is not None and before["availability"] == after["availability"]:
+            return
+        for subscription in tuple((self.subscriptions or {}).values()):
+            if subscription.event != "presence" or subscription.presence_endpoint_id != change["endpoint_id"]:
+                continue
+            if after is None:
+                self._end_subscription(subscription, reason="noresource")
+            else:
+                self._schedule_notification(subscription, self._notification_result(
+                    subscription, expires=max(0, int(subscription.expires_at - time.time()))))
 
     @callback
     def _mailbox_changed(self, event) -> None:
@@ -588,7 +784,8 @@ class SipApplicationMethods:
             if subscription.expires_at <= now:
                 self._end_subscription(subscription)
                 continue
-            if subscription.event != event or subscription.target.lower() != target.lower():
+            watched = self._presence_publisher(subscription) if event == "presence" else subscription.target
+            if subscription.event != event or watched.casefold() != target.casefold():
                 continue
             result = self._notification_result(
                 subscription,
@@ -860,9 +1057,31 @@ class SipApplicationMethods:
             if self.tasks is not None:
                 self.tasks.discard(task)
 
+    async def async_revoke_account(self, username: str) -> None:
+        """Retire a removed principal through the existing subscription owners."""
+        tasks = []
+        for subscription in tuple(self.subscriptions.values()):
+            if subscription.subscriber.casefold() != username.casefold():
+                continue
+            self._end_subscription(subscription, notify=False)
+            if subscription.notify_task is not None:
+                subscription.notify_task.cancel()
+                tasks.append(subscription.notify_task)
+            if subscription.refer_notifier is not None:
+                await subscription.refer_notifier.close()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for key, publication in tuple(self.publications.items()):
+            if publication.target.casefold() == username.casefold():
+                self.publications.pop(key, None)
+                self._cancel_timer(self.publication_timers, key)
+
     async def stop(self) -> None:
         """Cancel application transactions and discard expiring state."""
         self.stopping = True
+        if self.account_unsubscribe is not None:
+            self.account_unsubscribe()
+            self.account_unsubscribe = None
         retained = tuple(owner for key, owner in self.event_clients.items() if key in self.signaling_leases)
         if self.response_cache_timer is not None:
             self.response_cache_timer.cancel()
@@ -873,7 +1092,7 @@ class SipApplicationMethods:
             self.mailbox_unsubscribe()
             self.mailbox_unsubscribe = None
         self.mailbox_archive = None
-        for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
+        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
@@ -932,9 +1151,12 @@ class SipEventSubscription:
     expires_at: float
     sender: SipFollowUpSender
     notify_lock: asyncio.Lock
+    transport: str = ""
+    authentication_generation: str | None = None
     event: str = "presence"
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""
+    presence_endpoint_id: str = ""
     dialog_filter: tuple[str, str, str] = ("", "", "")
     dialog_version: int = 0
     dialog_snapshot: tuple = ()
@@ -942,6 +1164,12 @@ class SipEventSubscription:
     pending_notification: SipRequestResult | None = None
     notify_terminated: bool = False
     refer_notifier: sip_transfer.ReferNotifier | None = None
+
+
+def _subscription_key(request: sip.SipMessage) -> str:
+    package, parameters = sip._split_semicolon_params(request.header("Event"))
+    event_id = dict(parameters).get("id") or ""
+    return f"{request.header('Call-ID')}:{sip.extract_tag(request.header('From'))}:{package.strip().lower()}:{event_id}"
 
 
 def _publication_expires(value: str) -> int:
@@ -976,8 +1204,30 @@ def _uri_from_header(value: str) -> str:
 
 
 def _closed_pidf(target: str) -> bytes:
-    return (
-        '<presence xmlns="urn:ietf:params:xml:ns:pidf" '
-        f'entity="sip:{target}@localhost"><tuple id="phone">'
-        "<status><basic>closed</basic></status></tuple></presence>"
-    ).encode()
+    return _endpoint_pidf(f"sip:{target}@localhost", False)
+
+
+def _endpoint_pidf(uri: str, available: bool, publication: bytes | None = None) -> bytes:
+    """Compose canonical reachability without rewriting a publication lease."""
+    if publication is not None and available:
+        return publication
+    if publication is None:
+        document = ElementTree.Element("presence", {"xmlns": "urn:ietf:params:xml:ns:pidf", "entity": uri})
+        status = ElementTree.SubElement(ElementTree.SubElement(document, "tuple", {"id": "phone"}), "status")
+        ElementTree.SubElement(status, "basic").text = "open" if available else "closed"
+    else:
+        namespace = "{urn:ietf:params:xml:ns:pidf}"
+        document = ElementTree.fromstring(publication)
+        statuses = document.findall(f"{namespace}tuple/{namespace}status")
+        if not statuses:
+            used = {part.get("id") for part in document.findall(namespace + "tuple")}
+            identity = "reachability"
+            while identity in used:
+                identity += "-1"
+            part = ElementTree.SubElement(document, namespace + "tuple", {"id": identity})
+            statuses = [ElementTree.SubElement(part, namespace + "status")]
+        for status in statuses:
+            basics = status.findall(namespace + "basic") or [ElementTree.SubElement(status, namespace + "basic")]
+            for basic in basics:
+                basic.text = "closed"
+    return ElementTree.tostring(document, encoding="utf-8")

@@ -6,6 +6,8 @@ import asyncio
 import ssl
 import logging
 
+SIP_UDP_SAFE_REQUEST_BYTES = 1300
+
 
 async def default_tls_context() -> ssl.SSLContext:
     """Load the system trust store without blocking the event loop."""
@@ -32,16 +34,26 @@ def bind_flow_usage(routes, parent_key, usage_key):
 class SipResponseMailbox:
     """Bounded responses for one transaction, registered before its first send."""
 
-    def __init__(self, matches):
+    def __init__(self, matches, *, flow=None):
         self.matches = matches
+        self.flow = flow
         self.dialog_scoped = True
         self.queue = asyncio.Queue(maxsize=8)
 
     async def receive(self, timeout):
         try:
-            return await asyncio.wait_for(self.queue.get(), timeout)
+            item = await asyncio.wait_for(self.queue.get(), timeout)
         except TimeoutError:
             return None
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def fail(self, error):
+        """Wake only a transaction owned by the failed transport flow."""
+        if self.queue.full():
+            self.queue.get_nowait()
+        self.queue.put_nowait(error)
 
     def deliver(self, item):
         if self.queue.full():

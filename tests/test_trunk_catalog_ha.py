@@ -23,6 +23,9 @@ from custom_components.voip_stack.trunk_runtime import async_start_sip_trunk, as
 
 from .test_invite_router_behavior import _invite
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -195,6 +198,7 @@ async def test_native_flow_adopts_validated_registration_without_second_register
     peer, port = registrar
     monkeypatch.setattr(trunk_flow, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.subentries.async_init((catalog.entry_id, "trunk"), context={"source": "user"})
     form = await hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "Carrier", "trunk_enabled": True, "trunk_register": True, "make_default": False,
@@ -226,6 +230,7 @@ async def test_failed_reconfiguration_preserves_live_registration_and_saved_cred
     peer, port = registrar
     monkeypatch.setattr(trunk_flow, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.subentries.async_init((catalog.entry_id, "trunk"), context={"source": "user"})
     form = await hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "Carrier", "trunk_enabled": True, "trunk_register": True, "make_default": False,
@@ -264,6 +269,7 @@ async def test_tcp_reconfiguration_unregisters_only_the_old_outbound_flow(hass, 
     peer, port = tcp_registrar
     monkeypatch.setattr(trunk_flow, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.subentries.async_init((catalog.entry_id, "trunk"), context={"source": "user"})
     form = await hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "TCP carrier", "trunk_enabled": True, "trunk_register": True, "make_default": False,
@@ -348,6 +354,7 @@ def test_legacy_trunk_migrates_once_without_losing_phone_settings(hass):
 
 async def test_global_reconfiguration_preserves_named_trunks_and_phone_policies(hass, catalog):
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     hass.config_entries.async_update_entry(catalog, data={**catalog.data,
         "esphome_phone_policies": {"esp": {"outbound_trunk_id": "work"}},
     })
@@ -399,6 +406,7 @@ async def test_native_flow_live_listener_adopts_new_trunk_and_creates_sensor(has
     peer, port = registrar
     monkeypatch.setattr(trunk_flow, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.subentries.async_init((catalog.entry_id, "trunk"), context={"source": "user"})
     form = await hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "Carrier", "trunk_enabled": True, "trunk_register": True, "make_default": make_default,
@@ -514,6 +522,7 @@ async def test_first_trunk_is_default_without_toggle_second_trunk_offers_choice(
     catalog.runtime_data.default_trunk_id=''
     monkeypatch.setattr(trunk_flow,'async_advertise_host',AsyncMock(return_value='127.0.0.1'))
     hass.config.components.update({'assist_pipeline','ffmpeg','http','lovelace','media_source','network'})
+    prepare_frontend_dependency(hass)
     first=await hass.config_entries.subentries.async_init((catalog.entry_id,'trunk'),context={'source':'user'})
     assert 'make_default' not in first['data_schema'].schema
     first=await hass.config_entries.subentries.async_configure(first['flow_id'],{
@@ -545,6 +554,7 @@ async def test_trunk_flow_persists_codec_choices_and_preserves_them_when_disable
     peer,port=registrar
     monkeypatch.setattr(trunk_flow,'async_advertise_host',AsyncMock(return_value='127.0.0.1'))
     hass.config.components.update({'assist_pipeline','ffmpeg','http','lovelace','media_source','network'})
+    prepare_frontend_dependency(hass)
     form=await hass.config_entries.subentries.async_init((catalog.entry_id,'trunk'),context={'source':'user'})
     form=await hass.config_entries.subentries.async_configure(form['flow_id'],{
         'name':'Limited codecs','trunk_enabled':True,'trunk_register':True,'make_default':False})
@@ -626,6 +636,7 @@ async def test_home_assistant_stop_unregisters_owned_trunk_binding(hass, catalog
 @pytest.mark.parametrize("address", ["0.0.0.0", "127.0.0.1", "224.0.0.1", "::1", "https://example.org", "192.0.2.1\r\na=sendrecv"])
 async def test_trunk_rejects_invalid_outbound_media_address(hass, catalog, address):
     hass.config.components.update({'assist_pipeline', 'ffmpeg', 'http', 'lovelace', 'media_source', 'network'})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.subentries.async_init((catalog.entry_id, 'trunk'), context={'source': 'user'})
     form = await hass.config_entries.subentries.async_configure(form['flow_id'], {
         'name': 'Media address validation', 'trunk_enabled': True, 'trunk_register': True, 'make_default': False,
@@ -648,6 +659,7 @@ async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(h
 
     monkeypatch.setattr(trunk_flow, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     for subentry_id in tuple(catalog.subentries):
         hass.config_entries.async_remove_subentry(catalog, subentry_id)
     hass.config_entries.async_update_entry(catalog, data={})

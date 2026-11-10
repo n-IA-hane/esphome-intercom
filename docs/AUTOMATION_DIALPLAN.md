@@ -17,10 +17,10 @@ handle. An applicable routing rule can select another destination; without
 that selection, normal phonebook routing continues. HA's conditions and action
 sequences express your policy; VoIP Stack handles the call itself.
 
-This cookbook describes the native call automation interface developed for
-2026.10.0. The native triggers and Automation contact workflow are not part of
-2026.9.2. Existing event and state automations have a
-[migration guide](#move-existing-automations-gradually).
+Use the native VoIP triggers and actions for new automations. Existing event
+and state automations remain supported; the
+[migration guide](#move-existing-automations-gradually) explains how to adopt
+native call context without changing every rule at once.
 
 ## Start with the smallest rule
 
@@ -385,10 +385,12 @@ Use a condition when you need to choose between actions inside an execution.
 For example, a **Choose** block can send local callers to reception and trunk
 callers to a greeting, without duplicating the whole automation.
 
-Phone availability is different from a no-answer timer. A disconnected browser
-can still be a configured logical phone with a ringing state. Use the
-availability condition to avoid selecting it, or a no-answer trigger to give
-it time to answer before forwarding.
+Phone availability is different from browser media readiness and a no-answer
+timer. In the preview, an enabled browser phone remains logically available
+while its frontend is closed. The availability condition does not prove that
+its browser can play or capture audio. Use a no-answer trigger to allow time
+for a receiving client to answer before forwarding; see
+[browser-phone availability](USER_GUIDE.md#browser-phone-availability).
 
 For a keypad menu, select the input result and the key to match. This condition
 matches key `1` received by the preceding input-wait action:
@@ -454,14 +456,15 @@ with Home phone as Destination and use `voip_stack.forward`. With `on_failure: r
 resumes ringing if P4 is unavailable:
 
 ```yaml
-alias: VoIP - Move Home phone call to P4 when home
+alias: VoIP - Move unanswered Home phone call to P4 when home
 mode: parallel
 max: 10
 triggers:
-- trigger: voip_stack.call_received
+- trigger: voip_stack.call_unanswered
   options:
     destination: Home phone
     caller: Front Door
+    for: 00:00:15
 conditions:
 - condition: state
   entity_id: person.alex
@@ -469,13 +472,12 @@ conditions:
 actions:
 - action: voip_stack.forward
   data:
-    device_id: <home_phone_device_id>
     destination: Waveshare P4 Touch
     on_failure: resume
 ```
 
 This complete automation routes a trunk call to `Waveshare S3 Audio` before
-the fallback destination. It uses Home Assistant's native Event Entity trigger,
+the fallback destination. It uses the native VoIP trigger,
 so it needs no Jinja, Call-ID or helper timer:
 
 ```yaml
@@ -569,6 +571,8 @@ Both use the triggering call, including when several calls arrive together.
 If the automation makes no selection, the configured phonebook fallback wins.
 
 ## Forward an unanswered HA call to Assist
+
+![Illustration of Assist handling an unanswered doorbell call](images/assist-unanswered-doorbell.png)
 
 Use **VoIP call unanswered**, select `Home phone` as the destination and choose the
 ringing duration. The wait stops if Home phone answers or the call moves elsewhere:
@@ -804,9 +808,9 @@ actions:
     on_failure: resume
 ```
 
-This requires a configured and registered SIP trunk able to dial the public
-number. It creates an ordinary external telephone call, not a Companion-app
-VoIP channel. `on_failure: resume` leaves the original call available if the
+This requires a selected available SIP trunk able to dial the public number:
+a usable registration for a registered line, or a configured static route. It
+creates an ordinary external telephone call, not a Companion-app VoIP channel. `on_failure: resume` leaves the original call available if the
 trunk call cannot be started. Remove the `ingress: trunk` condition if local
 extension calls should use the same fallback.
 
@@ -911,6 +915,24 @@ Use **VoIP call received** with the receiving phone as Destination. The notifica
 opens that phone's card or declines the triggering call. Microphone permission
 and audio remain with the browser or Companion view that answers.
 
+Use a dashboard view with the intended phone card, or enable
+[global call popups](USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
+for that phone in this Companion app. Answer opens its existing WebView;
+the app does not become a native operating-system SIP phone. Keep microphone
+permission enabled and allow for the mobile system suspending background apps.
+
+For example, on OnePlus select the existing **Casa** HA phone in a VoIP Stack
+card on `/lovelace/phones`, then use that view in the URI below. The same setup
+works with global popups disabled. **Answer** opens the Companion WebView and
+lets the mounted card prepare microphone/audio ownership before it answers
+the exact ringing call. The phone's no-answer timer keeps running while the
+app opens and prepares its microphone. Leave enough ringing time for that
+startup before forwarding to voicemail or Assist; a short timeout can expire
+before a cold Companion view is ready. If Android or the WebView requires another user
+gesture, tap **Answer** on the card. Do not add a separate `voip_stack.answer`
+automation before the view is ready. The notification channel below is only
+an Android notification category, not a native telephone-call channel.
+
 The variables below identify this notification, so an old button cannot act on
 a newer call. Copy them unchanged; you do not enter a Call-ID yourself. Replace
 the notification service, phone device, phonebook names and dashboard path.
@@ -957,6 +979,7 @@ actions:
   - action: voip_stack.decline
     data:
       device_id: <home_phone_device_id>
+      call_id: "{{ trigger.call.call_id }}"
     continue_on_error: true
 - action: notify.mobile_app_your_phone
   data:
@@ -965,12 +988,23 @@ actions:
       tag: '{{ notification_tag }}'
 ```
 
-The Answer link selects both the phone and the original call. A stale link
+The Answer link selects both the phone and the original call. Keep both
+selectors in the URI, even if that dashboard contains only Casa. A stale link
 cannot answer a different call with another Call-ID. Decline waits only for the
-unique action sent in this notification. If the call has already ended, the
+unique action sent in this notification and passes the original `call_id` with
+the receiving phone's `device_id`. If the call has already ended, the
 call guard rejects Decline; `continue_on_error` lets the automation remove its
 old notification afterwards. A separate notification tag prevents that cleanup
 from clearing a newer notification.
+
+A call that ended or was routed elsewhere while media permission was pending
+must not be answered from the old link. The card rechecks the same call before
+the backend Answer request. The popup preference is independent of this
+explicit notification action and remains disabled after reconnect/reload.
+
+Decline terminates the call. To have Assist answer instead, use a routing or
+forwarding automation while the call is still active, such as the
+[unanswered-call recipe](#forward-an-unanswered-ha-call-to-assist).
 
 This follows Home Assistant's [actionable notification pattern](https://companion.home-assistant.io/docs/notifications/actionable-notifications/).
 The same automation is available in
@@ -1143,9 +1177,9 @@ actions:
     entity_id: button.front_gate
 ```
 
-`source_leg: callee` prevents a key pressed by the receiving room phone from
-running the action. Replace the caller and button entities with values from
-your installation. The event also exposes `callee`, `transport` and `ingress`
+`source_leg: callee` accepts the key from the receiving Home phone. A key
+pressed by the visitor on the caller side does not match this recipe. Replace
+the caller and button entities with values from your installation. The event also exposes `callee`, `transport` and `ingress`
 for more specific conditions.
 
 Do not treat caller text or a DTMF digit as authentication on an untrusted
@@ -1210,34 +1244,19 @@ routing decision open during the greeting.
 
 ### Say a greeting, then connect to Assist
 
-Select **VoIP call received**, set Destination to `Welcome`, then add **Speak to
-the caller** and **Forward call**. Replace the TTS entity and Assist extension
-with yours. The action sequence is:
+Use the [complete greeting-and-forward recipe](#forward-after-the-greeting):
+filter **VoIP call received** to `Welcome`, run **Speak to the caller**, then
+**Forward call** to your Assist name or extension. The greeting finishes before
+forwarding, and the caller remains on the same call.
 
-```yaml
-alias: VoIP - Welcome then Assist
-mode: parallel
-max: 10
-triggers:
-- trigger: voip_stack.call_received
-  options:
-    destination: Welcome
-actions:
-- action: voip_stack.tts_say
-  data:
-    tts_entity_id: tts.piper
-    message: Welcome. How can I help you?
-- action: voip_stack.forward
-  data:
-    destination: '1666'
-```
-
-The second action runs after the greeting has been sent. The caller stays on
-the same call. Assist starts listening using its existing configuration; disable
-advanced call details if no opening conversation message is wanted.
+Assist starts listening without an opening text turn by default. Only
+**Provide advanced call details to the assistant** adds the optional initial
+call-metadata message. Configure personality and behavior in the conversation
+agent, and treat caller metadata as untrusted. See
+[callable Assist](USER_GUIDE.md#make-assist-callable).
 
 For a TTS failure to skip straight to Assist, add `continue_on_error: true` to
-the first action. Otherwise the failed native execution uses the contact's
+the TTS action. Otherwise the failed native execution uses the contact's
 fallback or ends the call. Hanging up cancels pending audio work.
 
 ### Choose a destination with an HA condition
@@ -1368,12 +1387,16 @@ that call reaches Welcome. Each choice can forward to a phonebook name, an
 extension or a ring group. For example, use destination `"1"` if that is your
 home ring group's actual name or extension.
 
-**Leaving a message needs a voicemail destination.** To offer that choice,
-forward it to a configured voicemail service on your PBX or provider. Playing
-the greeting already answers the call; ending it afterwards is a hangup, not
-an unanswered busy rejection that can reliably trigger provider voicemail.
-VoIP Stack's menu does not itself record voicemail. If you only want to end
-the call, play an appropriate message and let that automation branch finish.
+**Leaving a message needs an enabled mailbox.** In the chosen menu branch,
+add **VoIP Stack: Send to voicemail** and select **Mailbox**. If this menu already
+spoke the desired greeting, enable **Skip greeting**. The recording tone still
+plays. Do not add Hang up afterwards: the mailbox application now records and
+ends the call. See the [native voicemail recipe](VOICEMAIL.md#send-a-call-to-voicemail).
+
+A voicemail service on an external PBX or provider is an optional destination.
+Playing a greeting already answers the call; ending it afterwards is a hangup,
+not an unanswered rejection that reliably invokes provider voicemail. For an
+information-only branch, play the message and let that branch finish.
 
 ## Keep evenings quiet
 
@@ -1474,19 +1497,21 @@ and advanced multi-call work. Leave them alone for native call-triggered
 examples in this guide. Extra templates are not required just because two
 callers arrive at the same time.
 
-## Browser auto-answer needs a running receiving card
+## Browser auto-answer needs a running receiving client
 
-Auto-answer is performed by the receiving card in the browser. Keep that card
-loaded in a running browser or Companion view, with persistent microphone
-permission. Changing dashboard views can unload the card, and a mobile browser
-can suspend a background tab.
+Auto-answer needs an active HA frontend in the receiving browser or Companion
+app, with persistent microphone permission. Keep the receiving phone's card
+loaded, or enable its
+[global call popup](USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
+The browser owns the media; an enabled logical phone alone cannot answer while
+that client is closed or suspended.
 
-If Phone A calls Phone B while B's card is unloaded, A remains calling and B
-remains ringing. Opening B's card can then cause the automatic answer. The
-caller enters the connected state and its in-call keypad becomes available at
-that point. The setting is saved in HA, but answering still requires the
-receiving browser. For a two-browser-phone test, keep both receiving and
-calling cards loaded in separate browser tabs or devices.
+Without an active receiving client, the call can still ring logically and run
+the phone's routing, automation and no-answer rules. Opening the receiving card
+while it is ringing can then permit auto-answer. Once a browser call is
+established, changing HA views or removing its card keeps the page-owned media
+running. Closing the page or mobile background suspension remains a limit.
+For independent browser phones, use separate browser tabs or devices.
 
 ## Refresh the editor after updating
 
@@ -1621,10 +1646,11 @@ HA Delay is detected through this inactivity timeout, since the completed
 service action no longer owns the HA script. Keep explicit Hang up as the last
 action; the contact's incoming-call fallback does not route outgoing calls.
 
-This first outgoing application path supports registered SIP accounts, reachable
-ESPHome phones and direct SIP addresses. Browser destinations, groups, provider
-trunk routing and video origination are not supported on this path. Existing
-phone-originated calls keep their normal routing. Start the sequence from a
+Outgoing Automation calls support registered SIP accounts, reachable ESPHome
+phones, direct SIP addresses and external numbers through the selected available
+trunk. See [line selection and an external announcement](SIP_TRUNK.md#choose-an-outgoing-line).
+Browser destinations, groups and video origination are not supported on this
+path. Existing phone-originated calls keep their normal routing. Start the sequence from a
 normal time/event automation, not from a native VoIP call trigger that already
 owns another call. Administrators and automations may originate these calls.
 

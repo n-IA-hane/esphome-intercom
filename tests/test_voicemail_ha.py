@@ -23,6 +23,9 @@ from .test_automation_originate_ha import lab as lab, simple_sequence, tts_fixtu
 from .test_browser_phone_policy_ha import browser_lab as browser_lab, originate
 from .test_trunk_calls_ha import trunks as trunks
 
+from .support.ha_frontend import prepare_frontend_dependency
+
+
 pytestmark = pytest.mark.ha
 
 
@@ -477,6 +480,7 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "user"},
     )
@@ -504,6 +508,7 @@ async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, cust
     }})
     child = next(item for item in entry.subentries.values() if item.data.get("endpoint_id") == "kitchen")
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "reconfigure", "subentry_id": child.subentry_id},
     )
@@ -818,6 +823,7 @@ async def test_global_voicemail_configuration_requires_tts_and_language(mailbox_
             data={"id": "feature-conflict", "name": conflict, "number": "12345"},
         ))
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     monkeypatch.setattr(config_module, "voice_engine", lambda *_args: None)
     form = await lab.hass.config_entries.flow.async_init(
         "voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id},
@@ -878,6 +884,7 @@ async def test_voicemail_voice_selection_uses_ha_catalog_and_persists(mailbox_la
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry, data={})
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     engine = SimpleNamespace(available=True, supported_languages=["it"], default_language="it",
         async_get_supported_voices=lambda language: [SimpleNamespace(voice_id="raffa_reference", name="Raffa")])
     monkeypatch.setattr(config_module, "voice_engine", lambda *_args: engine)
@@ -959,7 +966,8 @@ async def test_feature_code_does_not_shadow_plain_numeric_extension(mailbox_lab)
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("digits_transport", ["info", "rtp"])
 @pytest.mark.parametrize("other_mailbox", [False, True])
-async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_path, monkeypatch, caplog, digits_transport, other_mailbox):
+@pytest.mark.parametrize("mailbox_id", ["source", "esphome:fixture-device"])
+async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_path, monkeypatch, caplog, digits_transport, other_mailbox, mailbox_id):
     import socket
     from homeassistant.components import tts
     from custom_components.voip_stack.core.audio_format import AudioFormat
@@ -978,12 +986,12 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Source", unique_id="phone:source",
-        data={"endpoint_id": "source", "name": "Source", "kind": "sip_account",
+        data={"endpoint_id": mailbox_id, "name": "Source", "kind": "sip_account",
               "username": "source", "extension": "101", "voicemail": {"enabled": True, "pin_hash": _pin_hash(pin)}},
     ))
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source", name="Source", username="source",
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=mailbox_id, name="Source", username="source",
                                                extension="101", kind=EndpointKind.SIP_ACCOUNT, availability="available"))
-    lab.roster.append(RosterEntry("source", address="127.0.0.2", metadata={"endpoint_id": "source"}))
+    lab.roster.append(RosterEntry("source", address="127.0.0.2", metadata={"endpoint_id": mailbox_id}))
     spoken = []
     class Speech:
         def async_set_message(self, text):
@@ -994,7 +1002,7 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
     archive = await get_archive(lab.hass)
     messages = []
     for caller, value in (("Older", 1100), ("Newer", 2200)):
-        writer = await archive.begin("source", caller=caller)
+        writer = await archive.begin(mailbox_id, caller=caller)
         for _ in range(10):
             assert writer.offer(struct.pack("<3200h", *([value] * 3200)), AudioFormat(16000, frame_ms=20))
         messages.append(await writer.finish())
@@ -1030,12 +1038,16 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
                     sequence += 1
                     await lab.hass.loop.sock_sendto(audio, raw, (client.dialog.remote_rtp_host, client.dialog.remote_rtp_port))
     try:
-        result = await client.invite(target="mailbox.source" if other_mailbox else "*97", remote_host="127.0.0.1",
+        result = await client.invite(target=f"mailbox.{mailbox_id}" if other_mailbox else "*97", remote_host="127.0.0.1",
                                      remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if result == "ringing":
             result = await client.wait_for_final(timeout=3)
         assert result == "in_call"
         session = lab.calls.get_session(client.dialog_ids.call_id)
+        assert session.callee == "Voicemail: Source"
+        assert sip.parse_sip_uri(session.metadata["sip_uri"]).user == (f"mailbox.{mailbox_id}" if other_mailbox else "*97")
+        if other_mailbox and ":" in mailbox_id:
+            assert "%3A" in session.metadata["sip_uri"]
         if other_mailbox:
             await press("0000#" + pin + "#")
         async with asyncio.timeout(3):
@@ -1048,20 +1060,20 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
             assert not any("PIN" in text for text in spoken)
             from custom_components.voip_stack.mailbox_api import _call_selections
 
-            selections = await _call_selections(lab.hass, session.call_id, "source")
+            selections = await _call_selections(lab.hass, session.call_id, mailbox_id)
             assert selections == {messages[1]["id"]: "01#", messages[0]["id"]: "02#"}
             with pytest.raises(ValueError, match="own mailbox"):
                 await _call_selections(lab.hass, session.call_id, "another-phone")
-            writer = await archive.begin("source", caller="Arrived during playback")
+            writer = await archive.begin(mailbox_id, caller="Arrived during playback")
             assert writer.offer(bytes(640), AudioFormat(16000, frame_ms=20))
             added = await writer.finish()
-            assert await _call_selections(lab.hass, session.call_id, "source") == selections
-            await archive.delete(added["id"], "source")
+            assert await _call_selections(lab.hass, session.call_id, mailbox_id) == selections
+            await archive.delete(added["id"], mailbox_id)
         assert pin not in caplog.text
         await press("01#2")
         await asyncio.wait_for(deleted.wait(), 3)
         assert results[0]["message_id"] == messages[1]["id"]
-        assert [item["id"] for item in archive.list("source")] == [messages[0]["id"]]
+        assert [item["id"] for item in archive.list(mailbox_id)] == [messages[0]["id"]]
         assert session.live
         assert client.bye()
         await asyncio.wait_for(session.termination_started.wait(), 3)
@@ -1289,6 +1301,7 @@ async def test_disabling_mailbox_deletes_only_its_messages_and_recreates_empty(
         entry = config_entry(lab.hass)
         child = next(item for item in entry.subentries.values() if item.data.get("endpoint_id") == "kitchen")
         lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+        prepare_frontend_dependency(lab.hass)
         form = await lab.hass.config_entries.subentries.async_init(
             (entry.entry_id, "phone"), context={"source": "reconfigure", "subentry_id": child.subentry_id},
         )

@@ -143,12 +143,15 @@ def softphone_originate(monkeypatch):
         },
         "endpoint_routing": {
             "ha_router_decision": Mock(),
+            "peer_video_codec": lambda _peer, entry: getattr(entry, "metadata", {}).get("sip_video_codec")
+                or ("" if getattr(entry, "metadata", {}).get("capabilities") else None),
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
             "sip_target_audio_profile": Mock(return_value=([], [])),
             "sip_target_rtp_audio_profile": Mock(return_value=None),
-            "sip_target_has_unspecified_audio": Mock(return_value=False),
+            "sip_target_offer_common_audio": Mock(return_value=False),
             "supports_directional_audio_payloads": Mock(return_value=False),
+            "supports_independent_audio_ptime": Mock(return_value=False),
         },
         "esphome_actions": {
             "async_call_action": AsyncMock(),
@@ -303,8 +306,9 @@ def test_provider_identity_uri_falls_back_to_server(softphone_originate) -> None
     )
 
 
+@pytest.mark.parametrize("camera", [False, True])
 def test_browser_to_browser_uses_local_bridge_before_network(
-    softphone_originate,
+    softphone_originate, camera,
 ) -> None:
     hass = SimpleNamespace(
         data={"voip_stack": {}},
@@ -338,7 +342,7 @@ def test_browser_to_browser_uses_local_bridge_before_network(
         hass,
         destination="Test",
         media_client_id="browser-casa",
-        send_video=True,
+        send_video=camera,
     )
 
     asyncio.run(
@@ -354,7 +358,7 @@ def test_browser_to_browser_uses_local_bridge_before_network(
         "casa",
         "test",
         request_video=True,
-        enable_caller_video_send=True,
+        enable_caller_video_send=camera,
         caller_owner_id="browser-casa",
         context=call.context,
     )
@@ -420,7 +424,8 @@ def test_outgoing_peer_video_offer_respects_camera_and_capabilities(
         availability=_Availability.AVAILABLE,
         supports=lambda capability: source_video if capability == 'video' else True,
     )
-    metadata = {'sip_profile': profile, 'sip_video_codec': video_codec, 'registered': True}
+    metadata = {'sip_profile': profile, 'sip_video_codec': video_codec if peer_video else '',
+                'registered': True, 'capabilities': ['audio', 'dtmf'] + (['video'] if peer_video else [])}
     if kind:
         metadata['endpoint_kind'] = kind
         metadata['endpoint_id'] = 'destination'

@@ -9,31 +9,40 @@ The package syntax requires ESPHome 2026.10.0 or newer. The current composition 
 firmware checks use ESPHome 2026.10.0 with ESP-IDF 5.5.6. Validation, compilation and
 physical testing are different checks; experimental boards remain experimental.
 
-This guide describes the reorganized 2026.11.0 packages. Start with the
-[device setup guide](../yamls/README.md#how-to-use) and use a coordinated source
+The package layout exists in stable 2026.11.0; this guide also describes current
+preview services, including optional directory, BLF, MWI and S3 JPEG reception.
+Use the [matching source channel](../docs/DEPLOYMENT_GUIDE.md#development-preview-firmware),
+then start with the [device setup guide](../yamls/README.md#how-to-use) and use a coordinated source
 revision containing this layout. Updating an older YAML is covered in the
 [migration checklist](../docs/BREAKING_CHANGES.md#development-firmware-new-device-packages).
 
 ## Select features in the device YAML
 
-For example, the headless Waveshare S3 Audio FULL AFE profile contains:
+For example, the current preview's headless Waveshare S3 Audio FULL AFE profile
+contains:
 
 ```yaml
 substitutions:
-  firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics]
+  firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics]
   # Keep the board's other substitutions, pins and component sources.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@dev
 ```
 
-Edit that existing list. These are examples of replacement values:
+Use that preview package together with all applicable
+[coordinated component overrides](../docs/DEPLOYMENT_GUIDE.md#development-preview-firmware);
+changing only the package ref is insufficient. Stable installations retain
+their release's sources and supported feature list.
+
+Edit the existing list. These are examples of replacement values:
 
 | Intended firmware | `firmware_features` |
 | --- | --- |
 | Voice Assistant and wake word | `[voice, wake_word]` |
-| Voice Assistant and telephone | `[voice, wake_word, voip]` |
-| Telephone | `[voip]` |
+| Voice Assistant and managed telephone | `[voice, wake_word, voip, directory, blf, mwi]` |
+| Managed telephone with shared contacts and indicators | `[voip, directory, blf, mwi]` |
+| Minimal telephone without those optional services | `[voip]` |
 | HTTP music | `[music]` |
 | HTTP music and Sendspin | `[music, sendspin]` |
 | Full device without Sendspin | Keep the supplied list and remove `sendspin` |
@@ -162,7 +171,7 @@ second `substitutions:` block to append. Rebuild and upload after making a choic
 You use ordinary HTTP music and Assist, but do not use a Sendspin server:
 
 ```yaml
-firmware_features: [voice, wake_word, voip, music, timers, status_led, diagnostics]
+firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, timers, status_led, diagnostics]
 ```
 
 Only `sendspin` was removed. HTTP music, announcements, calls and the status ring
@@ -190,10 +199,11 @@ do not need the FULL runtime. Neither selection changes AFE into lightweight AEC
 ### 3. Add telephone calls to the satellite
 
 ```yaml
-firmware_features: [voice, wake_word, voip, status_led, diagnostics]
+firmware_features: [voice, wake_word, voip, directory, blf, mwi, status_led, diagnostics]
 ```
 
-The package now includes the SIP endpoint, call controls and ringtone handling.
+The package now includes the SIP endpoint, call controls, ringtone handling
+and the selected directory, BLF and MWI services.
 With the device connected to HA, call it from another phone, answer, hang up and
 try Assist again. Then originate a call from the ESP. A normal shared phonebook
 comes from VoIP Stack; [a conventional PBX](../docs/CLASSIC_PBX.md) needs its own
@@ -202,7 +212,7 @@ addressing configuration.
 ### 4. Add music, timers and supported presentation
 
 ```yaml
-firmware_features: [voice, wake_word, voip, music, sendspin, timers, status_led, diagnostics]
+firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics]
 ```
 
 This restores the headless profile's full selection. Music and announcements use
@@ -213,8 +223,10 @@ Sendspin also needs a compatible server; including the feature does not create o
 
 On a display board, begin with **that board's** YAML and keep its `display` entry.
 Adding `display` to this headless Waveshare example does not add screen hardware.
-Likewise, video needs a P4 video profile and its selected codec, not just a new
-word in the feature list. Keep the selected board's flash and OTA limits in mind.
+Video also needs a configured camera source or receive display. P4 videophones
+select JPEG or H.264. Supported S3 FULL displays can receive JPEG through their
+board package when `display` and `voip` are selected; camera transmission is a
+separate path. A feature name alone does not add missing hardware. Keep the selected board's flash and OTA limits in mind.
 
 ### 5. Customize one setting
 
@@ -293,13 +305,16 @@ removing one feature does not promise that every related library disappears.
 | `wake_word` | MWW models, startup/mute handling and detector controls | Requires `voice` |
 | `voip` | SIP binding, call controls, phone settings, media input, call callbacks and phone UI attachments | Preserves the selected audio directions and codec |
 | `music` | HTTP music source, player input and playback coordination | Shares the physical speaker |
-| `sendspin` | Sendspin source and its player binding, plus artwork where the display supports it | Requires `music`; client protocol stays at 0.7.2 |
+| `sendspin` | Sendspin source and its player binding, plus artwork where the display supports it | Requires `music`; the native ESPHome client owns its protocol |
 | `timers` | Voice timer callbacks, alarm source, stop handling and timer UI | Requires `voice` |
 | `display` | The board's display/touch/backlight and presentation | Only on profiles with a screen; common idle artwork may also serve music/clock views |
 | `status_led` | The actual status light and projection | Only on boards with that hardware; BOX-3's legacy indication uses its display backlight |
 | `diagnostics` | Native ESPHome diagnostic entities | Optional, independent of detailed debug logging |
 | `sensor_dock` | BOX-3 dock bus and sensors | BOX-3 profiles only, independent of its screen |
-| `video` | Camera transmission and the selected SIP video codec | Requires `voip`; P4 renderer profiles also require `display` |
+| `directory` | Standard LDAP contacts using the managed HA account | Requires `voip`; independent of live SIP state |
+| `blf` | Busy lamps/presence and eligible-contact pickup | Requires `voip`; uses the configured SIP account |
+| `mwi` | Per-account voicemail message counts and mailbox-call metadata | Requires `voip`; not a message catalog or recording transport |
+| `video` | Configured camera and selected video codec | Requires `voip`; P4 receive profiles also require `display`. Supported S3 FULL receive display follows `display` + `voip` independently of a camera. |
 
 If a dependency is absent, its dependent feature is not instantiated. For example,
 `sendspin` without `music`, or `wake_word` without `voice`, contributes no consumer.
@@ -324,6 +339,10 @@ FULL profiles use Runtime Controller for competing voice, music, call and timer
 activity. Standalone telephone profiles keep their existing direct call callbacks
 and do not add a controller merely to operate one phone. Both use the same SIP
 component, audio backends and appropriate shared lifecycle helpers.
+
+Maintained FULL video policies pause the recognizer during negotiated video
+without changing the saved Wake Word preference. Normal ready conditions decide
+whether it resumes afterward. See the [video roles and limits](../docs/SIP_VIDEO.md).
 
 ## Find the implementation
 
@@ -410,6 +429,11 @@ real packages, removes features and generates C++ for representative combination
 It also resolves compatibility entrypoints in an isolated cache layout. The media
 contract tests inspect the composed result, not just the shortened device file.
 Builds and physical audio tests remain separate requirements.
+
+The helper does not rewrite every renderer, screenshot or IDF source override.
+For the current preview, use the complete
+[source selection](../docs/DEPLOYMENT_GUIDE.md#development-preview-firmware)
+and review all applicable substitutions after switching sources.
 
 ## Pair Sendspin with Music Assistant
 

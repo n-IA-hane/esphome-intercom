@@ -11,15 +11,20 @@ SDP and RTP are the functional primitives.
 Every ESP running `voip_stack` is a SIP user agent:
 
 - it can originate and receive SIP calls;
-- it does not register to a PBX;
-- it does not require SIP authentication;
-- it accepts compatible PCM SDP and rejects incompatible media with SIP status;
+- it can operate standalone with direct/manual peers, or use optional
+  registered accounts and lines, including an HA-managed account;
+- configured accounts support SIP Digest authentication; a standalone NoReg
+  profile does not require an account;
+- it accepts its configured PCM or Opus contract and rejects incompatible media
+  with SIP status;
 - it can run full-duplex, mic-only or speaker-only; signaling-only endpoints
   are rejected because every VoIP endpoint must expose real audio media.
 
 Inbound reachability is deliberately independent of roster membership. The
 phonebook is a dial plan, not a caller allowlist: a reachable compatible SIP
-peer can call an ESP even when it is unknown to HA and has no registration.
+peer can call an ESP even when it is unknown to HA and has no registration,
+when direct calls are enabled. `registration.accept_direct_calls` is a separate
+policy from account registration. See [registered ESP accounts](ESP_REGISTRATION.md).
 
 Home Assistant is more than a card backend:
 
@@ -188,21 +193,35 @@ All call control is SIP:
 - busy/DND: `486 Busy Here`
 - declined: `603 Decline`
 - incompatible media: `488 Not Acceptable Here`
-- auth challenges unsupported by ESP: `auth_required_unsupported`
-- optional HA trunk registration: `REGISTER` with digest auth toward the
-  provider/PBX only
+- auth challenge without usable account credentials: `auth_required_unsupported`
+- optional ESP account or HA trunk registration: `REGISTER` with Digest auth
 
-ESP devices do not implement provider/PBX registration. HA trunk registration
-and HA local SIP registration are separate features that live only in
-`voip_stack`.
+ESP account registration, HA's local registrar and HA's provider/PBX trunks
+have separate owners and configuration. An ESP account may register with HA or
+another supported registrar; that does not require every ESP to register.
 
 For outbound INVITE failures, HA sends the required ACK for non-2xx final
 responses before surfacing the terminal reason. This keeps failed calls SIP
 compliant rather than relying on retry side effects.
 
-ESP endpoints do not renegotiate established media. They reject a hold or
-media-changing in-dialog re-INVITE with `488 Not Acceptable Here` without
-replacing or tearing down the original dialog.
+### In-dialog media compatibility
+
+An update is evaluated against the current dialog and media owner. Support for
+one change does not imply support for every re-INVITE or UPDATE.
+
+| Requested change | ESP Native | HA-owned dialog |
+| --- | --- | --- |
+| Audio format, packet time or direction/hold contract change | Rejected with `488`; retain the established media. | Accepted only when the live leg and required converter support the complete offer. |
+| Compatible video direction change | Supported through the existing video owner. | Supported within the current compatible video contract. |
+| Video add/remove | Supported when compatible with the compiled video capability and existing media owner. | Direct browser dialogs support compatible add/remove; a bridge addition also requires the destination's matching offer/answer and a usable relay. |
+| Established video codec/format change | Codec/PT or fixed-format changes are rejected while video remains negotiated. | An incompatible established codec contract is rejected. |
+| Video RTP endpoint change while active | Rejected. | May be accepted when the codec contract and live relay remain compatible. |
+| Video RTP endpoint change while inactive | Only the bounded inactive retarget case supported by the existing owner is accepted. | Subject to the same live contract and relay validation. |
+| Delayed offer without SDP | The in-dialog re-INVITE handler requires SDP and rejects an empty/non-SDP body with `415`. | An offerless re-INVITE receives an offer in `200 OK`; a valid answer must arrive in ACK. An offerless UPDATE is a session refresh. |
+
+Rejected updates must preserve the original dialog and usable media; a later
+BYE must still terminate it. These are implementation contracts, not a physical
+qualification of every device or peer.
 
 HA-owned dialogs accept a compatible peer-initiated re-INVITE or UPDATE. The
 new offer may change direction, RTP destination, payload type, packet duration
@@ -384,7 +403,7 @@ HA-router routing:
 - Assist target: answer locally and run the configured native HA pipeline;
 - ESP target: forward/bridge to the ESP SIP endpoint;
 - registered local SIP endpoint: forward to its REGISTER Contact;
-- external/public number: trunk if registered, otherwise reject
+- external/public number: selected trunk if enabled and ready, otherwise reject
   `trunk_unavailable`;
 - disabled entry: reject;
 - unresolved explicit route hint: reject `route_not_found`.
@@ -394,9 +413,11 @@ applies the Request-URI dial plan, media checks, DND and busy policy. The local
 registrar authenticates account registration and supplies a current Contact;
 it is not a global INVITE allowlist.
 
-The optional SIP trunk is used only when configured and registered. It never
-registers ESP devices to the provider. ESP devices remain local SIP user agents;
-HA maps provider-side numbers or DTMF extension digits to local SIP targets.
+The optional SIP trunk is used only when enabled and ready. A registered trunk
+requires a current registration; a static trunk requires an active runtime and
+configured trusted networks. HA maps provider-side numbers or DTMF extension
+digits to local SIP targets. Trunk selection does not register ESP accounts or
+silently fail over to another provider. See [SIP trunks](SIP_TRUNK.md).
 
 Inbound trunk calls use deterministic policy:
 
@@ -429,10 +450,17 @@ User-facing contacts are data-driven. Name-only contacts route through HA,
 targets, endpoint contacts expose `address` or `sip_uri`, and local SIP
 accounts are published by the registrar.
 
-ESP phonebook storage is bounded. The runtime accepts up to 64 normalized
-contacts per ESP phonebook and replaces existing names in place. Larger rosters
-must be filtered by HA before push rather than relying on dynamic ESP heap
-growth during call handling.
+Compatible HA-managed ESP firmware uses the LDAP directory: enrollment delivers
+the managed account and directory configuration, then requests refreshes for
+the current directory generation. Native commits a successful query atomically
+while preserving manual contacts. A failed query must not erase the last usable
+snapshot. See the [phonebook contract](PHONEBOOK_PROTOCOL.md#standard-ldap-directory).
+
+Legacy/custom firmware may instead enable the HA roster provider and its JSON
+push actions. The legacy roster is bounded to 64 normalized contacts and
+replaces existing names in place; HA must filter larger pushed rosters. Managed
+LDAP disables that provider, so a successful `set_roster_json` request is not
+evidence that the active LDAP directory refreshed.
 
 ## SIP/TCP backpressure
 
@@ -589,6 +617,15 @@ one pending state update. A terminal update cannot be replaced by a later state
 change. The application owner limits retained subscriptions and publications to
 256 globally and 64 per account. Each successful PUBLISH produces a new ETag;
 independent publications for the same address remain independent records.
+
+Application follow-ups select the transport for the routed request, including
+an explicit TCP Contact or Route. Oversized UDP requests use the existing TCP
+listener's connection owner under RFC 3261 section 18.1.1, with Via rebuilt for
+TCP and the same subscription dialog, CSeq and authentication state. A UDP
+subscription does not require its larger NOTIFY requests to remain on UDP.
+A confirmed TCP flow failure can reopen the same peer once for a NOTIFY,
+retaining its transaction identity and deadline. A response timeout does not
+trigger that recovery or a UDP downgrade.
 
 Replaces waits for the source and destination dialogs' current media transitions
 before preparing the handoff. The source media lock remains held through commit or rollback;

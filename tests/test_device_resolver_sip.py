@@ -178,6 +178,19 @@ class SipEndpointParseTest(unittest.TestCase):
         )
         self.assertEqual(parsed["sdp_features"], ["directional_audio_v1"])
 
+    def test_packet_time_upgrade_keeps_legacy_endpoint_feature(self) -> None:
+        base = "Phone | 192.0.2.2 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101"
+        for extras, expected in [
+            (" | sf=d1", ["directional_audio_v1"]),
+            (" | sf=d1 | ip=1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
+            (" | ip=1 | sf=d1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
+            (" | sf=d1 | ip=0", ["directional_audio_v1"]),
+        ]:
+            with self.subTest(extras=extras):
+                parsed = device_resolver.parse_voip_endpoint(base + extras)
+                self.assertIsNotNone(parsed)
+                self.assertEqual(parsed["sdp_features"], expected)
+
     def test_parses_transitional_pcm_and_compact_codec_endpoint(self) -> None:
         endpoint = (
             "Spotpear Ball v2 | 192.168.1.31 | 5060 | 40000 | full_duplex | "
@@ -283,12 +296,15 @@ class SipEndpointParseTest(unittest.TestCase):
 
     def test_list_devices_re_reads_live_endpoint_state(self) -> None:
         class FakeEntity:
+            platform = "esphome"
+
             def __init__(self, entity_id: str) -> None:
                 self.entity_id = entity_id
                 self.device_id = "dev-ws3"
 
         class FakeEntityRegistry:
             entities = {
+                "sensor.ws3_voip_state": FakeEntity("sensor.ws3_voip_state"),
                 "sensor.ws3_voip_endpoint": FakeEntity("sensor.ws3_voip_endpoint"),
                 "text.ws3_voip_extension": FakeEntity("text.ws3_voip_extension"),
                 "text.ws3_voip_ring_groups": FakeEntity("text.ws3_voip_ring_groups"),
@@ -320,6 +336,8 @@ class SipEndpointParseTest(unittest.TestCase):
                 self.value = "unknown"
 
             def get(self, entity_id):
+                if entity_id == "sensor.ws3_voip_state":
+                    return FakeState("idle")
                 if entity_id == "sensor.ws3_voip_endpoint":
                     return FakeState(self.value)
                 if entity_id == "text.ws3_voip_extension":
@@ -339,7 +357,7 @@ class SipEndpointParseTest(unittest.TestCase):
 
         class FakeConfigEntries:
             def async_entries(self, _domain):
-                return [FakeConfigEntry()]
+                return [FakeConfigEntry()] if _domain == "esphome" else []
 
             def async_get_entry(self, _entry_id):
                 return FakeConfigEntry()
@@ -359,7 +377,11 @@ class SipEndpointParseTest(unittest.TestCase):
 
             import asyncio
 
-            self.assertEqual(asyncio.run(resolver.list_devices()), [])
+            unknown, = asyncio.run(resolver.list_devices())
+            self.assertEqual(unknown["name"], "WS3")
+            self.assertIsNone(unknown["sip_port"])
+            self.assertEqual(unknown["sip_transport"], "")
+            self.assertEqual(unknown["tx_formats"], [])
             hass.states.value = (
                 "Waveshare S3 Audio | 192.168.1.47 | 5060 | 40000 | "
                 "full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp"

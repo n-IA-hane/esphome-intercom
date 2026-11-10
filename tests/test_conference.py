@@ -16,7 +16,7 @@ import voluptuous as vol
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+PKG_NAME = "voip_stack_conference_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {"rtp", "sdp", "sip"}
 
@@ -58,6 +58,7 @@ def _install_ha_fakes() -> None:
         exceptions, "Unauthorized", _FakeUnauthorized
     )
     exceptions.UnknownUser = getattr(exceptions, "UnknownUser", _FakeUnauthorized)
+    exceptions.ConfigEntryError = getattr(exceptions, "ConfigEntryError", type("ConfigEntryError", (Exception,), {}))
     config_entries.ConfigEntry = getattr(config_entries, "ConfigEntry", type("ConfigEntry", (), {}))
     config_entries.ConfigSubentry = getattr(
         config_entries, "ConfigSubentry", type("ConfigSubentry", (), {})
@@ -73,10 +74,6 @@ def _install_ha_fakes() -> None:
 
 def _load_module(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
@@ -150,6 +147,7 @@ class _FakeBus:
 
 class _FakeHass:
     def __init__(self, *, activate_calls: bool = True) -> None:
+        self.loop = asyncio.get_running_loop()
         endpoints = endpoint_registry_module.EndpointRegistry()
         endpoints.register(
             phone_endpoint.PhoneEndpoint(

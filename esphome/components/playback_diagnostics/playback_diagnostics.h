@@ -73,7 +73,7 @@ class PlaybackDiagnostics : public Component {
   void on_player_state_(media_player::MediaPlayerState state);
   void capture_(const char *reason);
   void emit_();
-  Stage stage_(speaker::Speaker *speaker, const Progress *progress, uint32_t now) const;
+  Stage stage_(speaker::Speaker *speaker, const Progress *progress) const;
   static const char *safe_reason_(const std::string &value);
   static const char *safe_code_(const std::string &value);
   static const char *safe_message_(const std::string &value);

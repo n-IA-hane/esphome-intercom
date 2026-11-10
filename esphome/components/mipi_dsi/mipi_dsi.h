@@ -17,6 +17,9 @@
 #include "esp_lcd_panel_io.h"
 
 #include "esp_lcd_mipi_dsi.h"
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+#include "driver/ppa.h"
+#endif
 
 #include <utility>
 #include "freertos/semphr.h"
@@ -72,6 +75,10 @@ class MipiDsi final : public display::Display {
   void update() override;
 
   void setup() override;
+  // Display-backed media consumers reserve their resources at DATA.
+  float get_setup_priority() const override {
+    return setup_priority::DATA + 1.0f;
+  }
 
   void draw_pixel_at(int x, int y, Color color) override;
   void fill(Color color) override;
@@ -83,6 +90,30 @@ class MipiDsi final : public display::Display {
                       display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad) override;
   uint8_t *get_frame_buffer() const { return this->frame_buffer_; }
   size_t get_frame_buffer_size() const { return this->frame_buffer_size_; }
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+  using WriteAdmission = bool (*)(void *context);
+  bool supports_native_rgb565() const;
+  bool supports_rgb565_transform() const;
+  /// Native coordinates bypass logical Display rotation for codec output
+  /// that is already oriented. Input is borrowed through panel completion.
+  bool draw_native_rgb565(int x, int y, int width, int height,
+                          const uint8_t *data, size_t bytes);
+  /// Write a native framebuffer rectangle through the display's existing
+  /// submission owner. Input remains borrowed until PPA and the one panel
+  /// completion finish; no framebuffer pointer or write lease escapes.
+  bool draw_rgb565_transformed(const ppa_srm_oper_config_t &operation,
+                               size_t input_bytes, int native_x, int native_y,
+                               int output_width, int output_height,
+                               WriteAdmission still_current = nullptr,
+                               void *context = nullptr);
+#endif
+#ifdef USE_ESP_SCREENSHOT
+  /// Copy completed RGB565 pixels in logical display orientation, followed by
+  /// an optional clockwise output rotation. Returns busy
+  /// without waiting when a panel DMA submission owns the framebuffer.
+  bool copy_frame_buffer_rgb565(uint8_t *target, size_t capacity,
+                               display::DisplayRotation rotation = display::DISPLAY_ROTATION_0_DEGREES);
+#endif
   void dump_config() override;
 
  protected:
@@ -92,7 +123,16 @@ class MipiDsi final : public display::Display {
   void write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                          int x_pad);
   bool check_buffer_();
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+  bool draw_rotated_rgb565_(int x, int y, int width, int height,
+                            const uint8_t *data, int x_offset, int y_offset,
+                            int x_pad);
+  void mirror_native_rgb565_(int x, int y, int width, int height,
+                             const uint8_t *data, size_t stride);
+#endif
   bool submit_bitmap_(int x_start, int y_start, int x_end, int y_end, const uint8_t *ptr);
+  bool submit_bitmap_locked_(int x_start, int y_start, int x_end, int y_end,
+                             const uint8_t *ptr);
   /// Send the region touched since the last flush to the panel.
   void flush_dirty_();
   // Maps drawn coordinates to the buffer the way draw_pixel_at() stores them
@@ -153,6 +193,9 @@ class MipiDsi final : public display::Display {
   StaticSemaphore_t submit_mutex_storage_{};
   uint8_t *frame_buffer_{nullptr};
   size_t frame_buffer_size_{0};
+#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
+  ppa_client_handle_t transform_client_{nullptr};
+#endif
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};

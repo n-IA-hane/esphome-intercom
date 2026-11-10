@@ -11,6 +11,97 @@
         "Stable bulk drawing and code-generation APIs"
       ],
       "public_proposal": false
+    },
+    "speaker_source": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Retire a terminal source error through the existing STOP and IDLE cleanup",
+        "Preserve queued media and replacement ownership without retrying failed items"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "speaker_source_media_player.cpp": "7dc655aade30cef85cb6c02516caac74a8d9d72eb146691ee7ceffa9fc13e613",
+        "speaker_source_media_player.h": "0ee7125411afbc45a03620ac1ebf33ca14524b1643b7b707b33a7ea798e94bdc",
+        "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "media_player.py": "4aad49e9f7a9f054106655e286b7c3907a091b5202c76fd769f799809144cd57"
+      }
+    },
+    "voice_assistant": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Emit on_idle once on a real noncontinuous transition to IDLE",
+        "Publish desired state before callbacks so a newly started run retains its owner"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "voice_assistant.h": "ab25f7a66f0cf44a05f0e66a65da86c58a7efc281ae250e55795421834a30a5c",
+        "voice_assistant.cpp": "c43bda2b65765e7e83134d65d24194ba53998247cc9d7224139bc43e322d0580",
+        "__init__.py": "e7736867211050c0922584976e0ea05139f562a6e230e17fcc5b7078b5f8b0ef"
+      }
+    },
+    "audio_http": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "adaptations": [
+        "Join completed decoder and reader workers before publishing natural IDLE",
+        "Disable the old loop before callbacks may start another playback"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
+        "audio_http_media_source.cpp": "4fadaa8ab30888895744ab4cc9318a2a46ffca8820315d6901efb5885c2480fc",
+        "media_source.py": "33ed90d0ce6cc5c4819a0ed42f98eef067e0012f9f275d5a9b4a70586c7e100d",
+        "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "micro_wake_word": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "704551a6c93c29a311802f7ee97d67a9e9bce718",
+      "esphome_baseline": "2026.10.0",
+      "adaptations": [
+        "Reset the input stride phase and pending probability after successful creation of a new interpreter",
+        "Preserve the current stream when resetting only detection probabilities",
+        "Borrow legacy vector or current AudioCapture PCM and select owner fill/error APIs without copies or runtime version checks"
+      ],
+      "public_proposal": false,
+      "source_sha256": {
+        "__init__.py": "e10914e16c4d4d356b7f1dce3d216f98176d5225866679643b7fe52cbe20a612",
+        "core_compat.h": "7abd3f635ade65ae182923d22353fd1eb17a1abdd997987d3726d4e761194628",
+        "micro_wake_word.cpp": "9242d9eff12f3b64d26b51fd85dd4200c02f9d40371f54945f00e275c5db80be",
+        "micro_wake_word.h": "d8f35206bb56722ce69809653f59998290a9794f9b404fbfe2f4a9a857a83409",
+        "model_data.cpp": "39e5b641eb8576a32397a102a1b1ae7704da0983b8eb5be96b41d419a36a57ca",
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "preprocessor_settings.h": "683b3ecca1a10bd778f883a2465b4cd073e6674afddfc7ba66cd8c16acabf6eb",
+        "streaming_model.cpp": "4dd2ac9ee59cb4eb61002c2bc6f51b6e26c3d72a8f4e9061a3adb5b910c97c2b",
+        "streaming_model.h": "97d31ca2ca763406ed117fe4f7599d6f992b974a57f455036f1efd41bcdf4ae1"
+      },
+      "upstream_source_sha256": {
+        "__init__.py": "e10914e16c4d4d356b7f1dce3d216f98176d5225866679643b7fe52cbe20a612",
+        "micro_wake_word.cpp": "d042c89920d2877dec565349063a5c8e86476ed22abebea21f5fb12ac22c4893",
+        "micro_wake_word.h": "d8f35206bb56722ce69809653f59998290a9794f9b404fbfe2f4a9a857a83409",
+        "model_data.cpp": "39e5b641eb8576a32397a102a1b1ae7704da0983b8eb5be96b41d419a36a57ca",
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "preprocessor_settings.h": "683b3ecca1a10bd778f883a2465b4cd073e6674afddfc7ba66cd8c16acabf6eb",
+        "streaming_model.cpp": "aa2dc589f1f97fb02f8340e74793f88e3e152380643bb61a9e056a4d8b9ae915",
+        "streaming_model.h": "97d31ca2ca763406ed117fe4f7599d6f992b974a57f455036f1efd41bcdf4ae1"
+      },
+      "compatibility": {
+        "schema_baseline": "2026.10.0",
+        "tested_core_interfaces": [
+          "ESPHome 2026.10.0 installed",
+          "ESPHome official106 (2026.11.0-dev)"
+        ],
+        "schema_options_not_imported": [
+          "task_core",
+          "ring_buffer_duration",
+          "prefer_internal_ram"
+        ],
+        "adapter_allocations": 0,
+        "observer_included": false,
+        "new_bss_selector": false
+      }
     }
   },
   "dependencies": {
@@ -33,31 +124,24 @@
   "native_components": [
     "audio",
     "audio_file",
-    "audio_http",
     "media_source",
     "microphone",
-    "micro_wake_word",
     "mixer",
     "ota",
     "resampler",
     "sendspin",
-    "speaker",
-    "speaker_source",
-    "voice_assistant"
+    "speaker"
   ],
   "native_provider_baseline": {
     "distribution": "esphome",
     "version": "2026.10.0",
-    "source_policy": "Use the installed official ESPHome providers without local source overrides or vendor source replacement helpers."
+    "source_policy": "Use installed official ESPHome providers except the four explicitly recorded lifecycle fixes loaded through ext_components_source."
   },
   "retired_local_providers": [
     "audio",
-    "micro_wake_word",
     "mixer",
     "ota",
-    "resampler",
-    "speaker_source",
-    "voice_assistant"
+    "resampler"
   ],
   "retired_adapters": [
     "audio_dsp_iram",

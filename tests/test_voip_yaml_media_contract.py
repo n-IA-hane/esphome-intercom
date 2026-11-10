@@ -3,6 +3,8 @@
 from pathlib import Path
 import os
 import re
+import subprocess
+import sys
 
 import pytest
 import esphome.config_validation as cv
@@ -129,12 +131,33 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
     for relative in (*PHYSICAL_AUDIO_STACK_PROFILES,
                      'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'):
         audio = profile(relative).get('voip_stack', {}).get('audio', {})
-        formats = audio.get('rx_formats', [])
+        formats = [fmt for codec in audio.get('codecs', [])
+                   if codec['codec'] == 'pcm' for fmt in codec.get('rx', [])]
         if formats:
             assert any((f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
                        == (16000, 's16le', 1, 10) for f in formats), relative
             checked += 1
     assert checked >= 3
+
+
+@pytest.mark.parametrize('relative', [
+    'full-experience/single-bus/waveshare-s3-full-afe.yaml',
+    'full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
+])
+def test_full_profiles_declare_independent_pcm_preferences(relative: str) -> None:
+    audio = profile(relative)['voip_stack']['audio']
+    assert not {'tx', 'rx', 'tx_formats', 'rx_formats'} & audio.keys()
+    assert len(audio['codecs']) == 1
+    pcm = audio['codecs'][0]
+    assert pcm['codec'] == 'pcm'
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['tx']] == [
+        (16000, 10), (16000, 20),
+    ]
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['rx']] == [
+        (48000, 10), (16000, 20), (16000, 10),
+    ]
 
 
 def test_physical_audio_stack_speakers_bound_silent_tx_lifecycle() -> None:
@@ -166,10 +189,16 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert any(node.get('text') == '\U000F006E' for node in nodes(dialer))
     assert 'voip_dial_backspace' in values_text(dialer)
     assert "if (x == 2) return '#';" in values_text(dialer)
-    assert not any(node.get('text') == '*' for node in nodes(dialer))
+    row = by_id(dialer, 'call_dial_row_del0hash')
+    assert [button['text'] for button in row['rows'][0]['buttons']] == ['*', '0', '#', '\U000F006E']
+    dispatch = values_text(row['on_click'])
+    for route in ("return x == 3;", "if (x == 0) return '*';",
+                  "if (x == 1) return '0';", "if (x == 2) return '#';"):
+        assert route in dispatch
     code = values_text(config['script'])
     assert 'circle_half_chord' not in code
-    assert 'id(phone).get_contact_count()' in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
     assert 'get_contacts_csv()' not in code
 
 
@@ -187,7 +216,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert int(phone['rx_task_stack_size']) == 12288
     providers = {name for provider in config['external_components'] for name in provider['components']}
     assert 'voice_assistant' in config
-    assert 'voice_assistant' not in providers
+    assert {'voice_assistant', 'speaker_source', 'audio_http'} <= providers
     assert 'speaker' not in providers
     assert by_id(config['display'], 's3_box_lcd')['psram_dma'] is True
 
@@ -235,8 +264,11 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     actions = config['lvgl']['on_boot']
     if isinstance(actions, dict):
         actions = actions['then']
-    assert action_id(actions[0], 'script.execute') == 'compute_layout_metrics'
-    assert action_id(actions[1], 'script.execute') == 'reposition_widgets'
+    boot_scripts = [action_id(action, 'script.execute') for action in actions]
+    metrics_index = boot_scripts.index('compute_layout_metrics')
+    reposition_index = boot_scripts.index('reposition_widgets')
+    assert metrics_index < reposition_index
+    assert 'id(s3_video).attach_video_container(id(call_video_surface));' in values_text(actions[:metrics_index])
     options = by_id(config['lvgl']['pages'], 'ui_aec_mode_dd')['options']
     assert options == ['sr_low_cost', 'sr_high_perf']
     assert options == by_id(config['select'], 'aec_mode_select')['options']
@@ -305,7 +337,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     config = profile(P4_LANDSCAPE_FULL_AFE)
     providers = {name for provider in config['external_components'] for name in provider['components']}
     assert 'voice_assistant' in config
-    assert 'voice_assistant' not in providers
+    assert {'voice_assistant', 'speaker_source', 'audio_http'} <= providers
     assert {'mipi_dsi', 'esp_video_camera',
             'esp_jpeg_video_source', 'p4_video_renderer'} <= providers
     assert 'speaker' not in providers
@@ -314,7 +346,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     for key, expected in {'id': 'p4_camera', 'name': 'P4 Camera', 'i2c_id': 'internal_i2c',
                           'device': 'jpeg', 'resolution': '800x800', 'jpeg_quality': 10,
                           'max_framerate': 10, 'rotation': 270, 'buffer_count': 2}.items():
-        assert camera[key] == expected
+        assert (float(camera[key]) if key == 'max_framerate' else camera[key]) == expected
     assert config['esp_afe']['output_prebuffer_frames'] == 1
     assert 'gmf_output_delay_samples' not in config['esp_afe']
     video = config['voip_stack']['video']
@@ -323,7 +355,9 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert config['voip_stack']['audio_task_stacks_in_psram'] is True
     assert by_id(config['lvgl']['pages'], 'call_video_surface')
     code = values_text(config['script'])
-    assert 'id(phone).get_contact_count()' in code and 'get_contacts_csv()' not in code
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert 'id(phone).get_contact_count()' in values_text(contacts['row_count'])
+    assert 'get_contacts_csv()' not in code
     boot = config['esphome'].get('on_boot', [])
     assert not _master_volume_boot_writes(boot, config['script']), 'Boot must not overwrite master volume'
     assert 'id(master_volume).add_on_state_callback' in values_text(boot)
@@ -349,6 +383,91 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert 'platform: esp32_hosted' not in hosted and 'http_request:' not in hosted
     update = (ROOT / 'packages/board/esp32p4_c6_update.yaml').read_text()
     assert 'platform: esp32_hosted' in update and 'http_request:' in update and 'update_interval: 6h' in update
+
+
+def test_p4_full_jpeg_framerate_override_reaches_camera_and_media_owners(tmp_path) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    original = yaml_util.load_yaml(P4_LANDSCAPE_FULL_AFE)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'],
+                         str(P4_LANDSCAPE_FULL_AFE.relative_to(ROOT)))
+    document = yaml_util.load_yaml(path)
+    document['substitutions']['p4_sip_jpeg_fps'] = '20'
+    path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert float(resolved['esp_video_camera']['max_framerate']) == 20
+    assert int(resolved['esp_jpeg_video_source']['framerate']) == 20
+    assert int(resolved['p4_video_renderer']['framerate']) == 20
+    assert int(resolved['voip_stack']['video']['framerate']) == 20
+    assert resolved['esp_video_camera']['resolution'] == '800x800'
+    assert resolved['esp_video_camera']['jpeg_quality'] == 10
+    assert resolved['esp_video_camera']['buffer_count'] == 2
+
+
+@pytest.mark.parametrize('entrypoint', [
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml',
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+])
+@pytest.mark.parametrize('override', [None, 20])
+def test_ws3_full_public_profile_includes_qualified_jpeg_receive(tmp_path, entrypoint, override) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/' + entrypoint
+    original = yaml_util.load_yaml(ROOT / relative)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'], relative)
+    if override is not None:
+        document = yaml_util.load_yaml(path)
+        document['substitutions']['s3_sip_jpeg_fps'] = str(override)
+        path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    renderer = resolved['esp_video_renderer']
+    expected_rate = override or 10
+    assert (int(renderer['width']), int(renderer['height']), int(renderer['framerate'])) == (320, 240, expected_rate)
+    assert renderer['voip']['id'] == 's3_video_sink'
+    video = resolved['voip_stack']['video']
+    assert (video['codec'], video['sink']) == ('jpeg', 's3_video_sink')
+    assert (int(video['width']), int(video['height']), int(video['framerate'])) == (320, 240, expected_rate)
+    assert by_id(resolved['lvgl']['pages'], 'call_video_page')
+    assert by_id(resolved['lvgl']['pages'], 'call_video_surface')
+    assert resolved['voip_stack']['on_video_start'] == [{'script.execute': 'suspend_mww_for_video'}]
+    assert resolved['voip_stack']['on_video_end'] == [{'script.execute': 'resume_mww_after_video'}]
+    assert any('micro_wake_word.stop' in action
+               for action in by_id(resolved['script'], 'suspend_mww_for_video')['then'])
+
+
+@pytest.mark.parametrize('without', ['display', 'voip'])
+def test_ws3_public_profile_omits_jpeg_receiver_without_both_features(tmp_path, without) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml'
+    original = yaml_util.load_yaml(ROOT / relative)
+    removed = {without} | ({'directory', 'blf', 'mwi'} if without == 'voip' else set())
+    features = [name for name in original['substitutions']['firmware_features'] if name not in removed]
+    path = device_config(tmp_path, features, relative)
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert 'esp_video_renderer' not in resolved
+    assert 'video' not in resolved.get('voip_stack', {})
+    providers = {name for provider in resolved['external_components'] for name in provider['components']}
+    assert 'esp_video_renderer' not in providers
+
 
 def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
@@ -458,19 +577,24 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
 
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
-    navigation = []
-    for node in nodes(config['lvgl']):
-        for event in ('on_swipe_left', 'on_swipe_right'):
-            if event in node and any('voip_stack.next_contact' in action or 'voip_stack.prev_contact' in action
-                                     for action in nodes(node[event])):
-                navigation.append(node[event])
-    assert navigation
-    for actions in navigation:
-        assert 'get_current_destination()' not in values_text(actions)
-        assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(actions))
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert contacts['parent_id'] == 'phone_contacts_container'
+    assert 'contact->stable_id()' in values_text(contacts['row_key'])
+    assert 'row.set_id(contact->stable_id())' in values_text(contacts['render_row'])
+    assert 'row.set_name(contact->name)' in values_text(contacts['render_row'])
+    selection = contacts['on_select']
+    assert 'if (!id(phone).is_idle()) return;' in values_text(selection)
+    assert 'id(phone).call_contact(row_id);' in values_text(selection)
+    assert 'id(phone).pickup_contact(row_id);' in values_text(selection)
+    assert 'get_current_destination()' not in values_text(selection)
+    assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(selection))
     callback = config['voip_stack']['on_destination_changed']
     assert 'id(videophone_peer) = destination;' in values_text(callback)
     assert any(action_id(node, 'script.execute') == 'update_status' for node in nodes(callback))
+    status = values_text(by_id(config['script'], 'update_status'))
+    assert 'idle ? id(phone).get_current_destination() : id(phone).get_active_peer_name()' in status
+    assert 'if (!idle) id(videophone_peer) = peer;' in status
+    assert 'lv_label_set_text(id(videophone_peer_label), peer.c_str());' in status
 
 
 def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> None:
@@ -570,9 +694,17 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("void P4VideoRenderer::loop()") :
         renderer_cpp.index("void P4VideoRenderer::dump_config()")
     ]
-    assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
-        renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
-    )
+    stale_pending = renderer_loop[
+        renderer_loop.index("if (pending >= 0 && !pending_current)") :
+        renderer_loop.index("if (this->rx_running_.load(")
+    ]
+    assert "int expected = pending;" in stale_pending
+    assert "this->pending_surface_.compare_exchange_strong(expected, -1," in stale_pending
+    assert "this->commit_direct_surface_(pending)" not in stale_pending
+    presentation = renderer_loop[renderer_loop.index("const bool presented =") :]
+    assert presentation.index("this->commit_direct_surface_(pending)") < (
+        presentation.index("if (!presented)")
+    ) < presentation.index("this->pending_surface_.compare_exchange_strong(")
     assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
         renderer_loop.index("const bool page_active")
     )
@@ -729,7 +861,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "this->direct_display_->draw_pixels_at(" in direct_present
+    assert "return this->present_native_rgb565_(" in direct_present
+    assert "this->owned_display_->draw_rgb565_transformed(" in direct_present
+    native_present = renderer_cpp[
+        renderer_cpp.index("bool P4VideoRenderer::present_native_rgb565_(") :
+        renderer_cpp.index("bool P4VideoRenderer::present_surface_direct_(")
+    ]
+    assert "this->owned_display_->draw_native_rgb565(" in native_present
+    assert "this->direct_display_->draw_pixels_at(" in native_present
     assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
@@ -968,7 +1107,8 @@ def test_native_full_and_audio_stack_full_have_reciprocal_pcm_formats() -> None:
     def formats(path, direction):
         audio = profile(path)['voip_stack']['audio']
         return {(f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
-                for f in [audio[direction], *audio.get(direction + '_formats', [])]}
+                for codec in audio['codecs'] if codec['codec'] == 'pcm'
+                for f in codec.get(direction, [])}
     native = 'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'
     other = 'full-experience/single-bus/waveshare-s3-full-afe.yaml'
     assert formats(native, 'tx') & formats(other, 'rx')

@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -330,6 +331,13 @@ class BareSip:
         os.set_blocking(self.master, False)
         self.output = ""
         self.call_established = False
+        self._console_lock = threading.Lock()
+        self._console_chunks: list[str] = []
+        self._console_stop = threading.Event()
+        self._console_reader = threading.Thread(
+            target=self._drain_console, name="baresip-console", daemon=True
+        )
+        self._console_reader.start()
         try:
             self.wait_for("registered successfully" if wait_for_registration else "baresip is ready.", 8)
         except BaseException:
@@ -339,19 +347,32 @@ class BareSip:
             self.close()
             raise
 
-    def read(self) -> str:
-        while True:
-            ready, _, _ = select.select([self.master], [], [], 0)
-            if not ready:
-                break
+    def _drain_console(self) -> None:
+        # Baresip writes UI output synchronously. Keep its PTY flowing even
+        # while the caller waits on device state or a fixed media interval.
+        while not self._console_stop.is_set():
             try:
+                ready, _, _ = select.select([self.master], [], [], 0.1)
+                if not ready:
+                    if self.proc.poll() is not None:
+                        break
+                    continue
                 chunk = os.read(self.master, 65536)
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
+                continue
+            except OSError:
                 break
             if not chunk:
                 break
-            self.output += chunk.decode(errors="replace")
-        return self.output
+            with self._console_lock:
+                self._console_chunks.append(chunk.decode(errors="replace"))
+
+    def read(self) -> str:
+        with self._console_lock:
+            if self._console_chunks:
+                self.output += "".join(self._console_chunks)
+                self._console_chunks.clear()
+            return self.output
 
     def wait_for(self, needle: str, timeout: float) -> str:
         deadline = time.monotonic() + timeout
@@ -420,8 +441,16 @@ class BareSip:
                         os.killpg(self.proc.pid, signal.SIGKILL)
                     with suppress(subprocess.TimeoutExpired):
                         self.proc.wait(timeout=2)
-        with suppress(OSError):
-            os.close(self.master)
+        self._console_reader.join(timeout=1)
+        self._console_stop.set()
+        self._console_reader.join(timeout=1)
+        if self._console_reader.is_alive():
+            raise RuntimeError("Owned bareSIP console reader did not stop")
+        self.read()
+        if self.master >= 0:
+            with suppress(OSError):
+                os.close(self.master)
+            self.master = -1
         if self._temporary_config is not None:
             self._temporary_config.cleanup()
             self._temporary_config = None

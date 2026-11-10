@@ -4,8 +4,7 @@
 The page, theme, fonts and settings synchronization scripts are imported, never
 redrawn. Only hardware data owners are replaced with host data entities. Pass
 the output of ``esphome config`` as --input, including generated owner defaults.
-Build storage may be
-placed on a RAM-backed parent with --build-parent.
+Use a persistent disk directory with --build-parent.
 """
 from __future__ import annotations
 
@@ -79,6 +78,8 @@ def references(value):
             if key in ("id", "text_font") and isinstance(item, str):
                 result.add(item)
             if key in ("script.execute", "button.press") and isinstance(item, str):
+                result.add(item)
+            if key == "voip_stack.stop" and isinstance(item, str):
                 result.add(item)
     return result
 
@@ -191,6 +192,13 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         lvgl = next(item for item in lvgl if any(str(p.get("id")) == page_id for p in item.get("pages", [])))
     page = copy.deepcopy(next(p for p in lvgl["pages"] if str(p.get("id")) == page_id))
     page_hash = hashlib.sha256(yaml_util.dump(page).encode()).hexdigest()
+    microphone = next((node for node in nodes(page) if str(node.get("id", "")) == "ui_mic_vol_slider"), None)
+    microphone_owner = None
+    if microphone is not None:
+        owners = [name for name in references(microphone) if find_id(config, "number", name)]
+        if len(owners) != 1:
+            raise ValueError("The production microphone slider must have one declared number owner")
+        microphone_owner = owners[0]
     phone_pages = [copy.deepcopy(p) for p in lvgl["pages"] if str(p.get("id", "")).startswith("call_")] if pointer else []
     if pointer and not any(p["id"] == "call_dialer_page" for p in phone_pages):
         raise ValueError("Pointer witness requires the real production dialer")
@@ -223,6 +231,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
                 continue
             if name == "settings_open":
                 original["then"] = [{"lambda": Lambda("id(ui_options_events)++;")}, *original["then"]]
+            elif name == "round_navigate":
+                original["then"] = [{"lambda": Lambda("id(ui_navigation_events)++;")}, *original["then"]]
             scripts.append(original)
         projected = page_selector(config) + "\n"
         projected += page_transition(config) + "\n" + overlay_policy(config)
@@ -234,6 +244,14 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     top_layer = copy.deepcopy(lvgl.get("top_layer", {}))
     source = [page, phone_pages, scripts, registrations, top_layer]
     declared = widget_ids([page, *phone_pages], top_layer) | {str(script["id"]) for script in scripts}
+    keypad = config.get("call_keypad")
+    keypad = copy.deepcopy(keypad) if keypad and {str(keypad["name_label_id"]), str(keypad["duration_label_id"])} <= declared else None
+    keypad_visibility = []
+    if keypad:
+        keypad_visibility = [copy.deepcopy(action) for action in config.get("lvgl_visibility", {}).get("on_change", [])
+                             if "call_keypad_ui" in "\n".join(strings(action))]
+        source.append(keypad_visibility)
+        declared |= {str(keypad["id"]), "display_visibility"}
     if pointer:
         declared |= {"idle_anim", "idle_page"}
     required = references(source) - declared
@@ -266,7 +284,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     context_policy = policy + (page_selector(config) if pointer else "")
     context_pages = sorted(references(Lambda(context_policy)) - declared - {page_id})
     context_pages = [name for name in context_pages if any(str(p.get("id")) == name for p in lvgl["pages"])]
-    context_pages = sorted(set(context_pages) | {"main_page"})
+    declared_pages = {str(item["id"]) for item in lvgl["pages"]}
+    context_pages = sorted(set(context_pages) | (required & declared_pages) | {"main_page"})
     if pointer:
         context_pages = sorted(set(context_pages) | {"idle_page"})
     contextual = []
@@ -275,6 +294,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         contextual.append({"id": name, "bg_color": original.get("bg_color", 0x202020),
                            **{key: copy.deepcopy(value) for key, value in original.items()
                               if key in ("scrollable", "on_swipe_up", "on_swipe_down")}})
+        # A retained context gesture can reference another real page.
+        context_pages.extend(sorted((references(contextual[-1]) & declared_pages) - set(context_pages) - declared))
     required |= references(contextual) - declared
     target.update({"id": "render_lvgl", "displays": ["render_display"],
                    "pages": contextual
@@ -294,6 +315,14 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     required -= set(fonts) | set(LV_FONTS) | {"settings_active", "main_page", "settings_close"}
     required -= set(context_pages)
     required -= {str(item["id"]) for item in host["globals"]}
+    # Bind the native setting through its optional entity when the real profile
+    # has one; PBX-only profiles retain the same authoritative phone interface.
+    if "phone" in required:
+        host["external_components"] = [{"source": str(ROOT / "tests/fixtures/lvgl_host"), "components": ["ui_fixture"]}]
+        host.setdefault("ui_fixture", {})
+    if "phone" in required and find_id(config, "switch", "voip_conference_ring"):
+        required.add("voip_conference_ring")
+        host["ui_fixture"]["conference_ring_id"] = "voip_conference_ring"
     for owner in sorted(required):
         if find_id(config, "number", owner):
             slider = next((node for node in nodes(page) if node.get("min_value") is not None
@@ -342,12 +371,19 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             if original.get("parameters"):
                 item["parameters"] = copy.deepcopy(original["parameters"])
             host["script"].append(item)
-        elif pointer and owner == "phone":
+        elif owner == "phone":
             host["ui_fixture"]["phone_id"] = owner
         elif pointer and owner == "runtime":
             host["ui_fixture"]["runtime_id"] = owner
+        elif pointer and (find_id(config, "esp_video_renderer", owner) or find_id(config, "p4_video_renderer", owner)):
+            host["ui_fixture"]["video_id"] = owner
         else:
             raise ValueError(f"No host data owner for {owner!r}; refusing to remove production callbacks")
+    if keypad:
+        host.setdefault("external_components", []).append({"source": str(ROOT / "esphome/components"),
+                                                           "components": ["call_keypad", "lvgl_visibility"]})
+        host["call_keypad"] = keypad
+        host["lvgl_visibility"] = {"id": "display_visibility", "on_change": keypad_visibility}
     if not pointer:
         host["script"].append({"id": "settings_close", "then": [
             {"lambda": Lambda("id(ui_navigation_events)++; id(settings_active) = false;")},
@@ -392,6 +428,31 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             capture.append({"lvgl.label.update": {"id": label, "text": value}})
     if policy:
         capture.append({"lambda": Lambda("auto *target = id(" + page_id + ")->obj;\n" + policy)})
+    # The title is ordinary scroll content, not a second fixed viewport. Check
+    # actual LVGL coordinates before taking the same top/middle/end snapshots.
+    capture.append({"lambda": Lambda(r"""
+      auto *wrapper = id(settings_page_wrapper);
+      auto *header = id(settings_page_header);
+      lv_obj_update_layout(wrapper);
+      if (lv_obj_get_parent(header) != wrapper || lv_obj_get_y(wrapper) != 0 ||
+          lv_obj_get_height(wrapper) != lv_display_get_vertical_resolution(lv_display_get_default()) ||
+          lv_obj_get_scrollbar_mode(wrapper) != LV_SCROLLBAR_MODE_AUTO) ::exit(90);
+      lv_area_t before, divider;
+      lv_obj_get_coords(header, &before);
+      lv_obj_get_coords(lv_obj_get_child(id(settings_audio_column), 0), &divider);
+      const int gap = divider.y1 - before.y2 - 1;
+      if (gap < 0 || gap > std::max(12, int(lv_display_get_vertical_resolution(lv_display_get_default())) / 32)) ::exit(91);
+      const int maximum = lv_obj_get_scroll_bottom(wrapper);
+      const int offset = std::min(maximum, int(before.y2) + 8);
+      lv_obj_scroll_to_y(wrapper, offset, LV_ANIM_OFF);
+      lv_refr_now(nullptr);
+      lv_area_t after; lv_obj_get_coords(header, &after);
+      if (before.y1 - after.y1 != lv_obj_get_scroll_y(wrapper)) ::exit(92);
+      if (maximum > before.y2 + 8 && after.y2 >= 0) ::exit(93);
+      lv_obj_scroll_to_y(wrapper, 0, LV_ANIM_OFF); lv_refr_now(nullptr);
+      printf("UI_OPTIONS flow_header=pass scrollbar_auto=pass top=%d gap=%d max_scroll=%d\n",
+             int(before.y1), gap, maximum);
+    """)})
     for position in ("top", "mid", "end"):
         amount = "0" if position == "top" else "lv_obj_get_scroll_bottom(id(settings_page_wrapper)) / 2" if position == "mid" else "LV_COORD_MAX"
         capture.extend([
@@ -443,7 +504,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             int x=(bounds.x1+bounds.x2)/2;
             int y=header&&delta>0?bounds.y2-2:(bounds.y1+bounds.y2)/2;
             int end=std::max(0,std::min(int(lv_display_get_vertical_resolution(lv_display_get_default()))-1,y-delta*80));
-            auto observed=input.watch(lv_screen_active(),LV_EVENT_GESTURE);
+            auto observed=input.watch(header?object:lv_screen_active(),LV_EVENT_GESTURE);
             input.swipe(x,y,x,end); input.pump(300);
             printf("UI_POINTER navigation delta=%d x=%d y=%d end=%d gestures=%llu matched=%u mutations=%u calls=%u writes=%u\n",delta,x,y,end,
               static_cast<unsigned long long>(input.count(observed)),unsigned(lv_screen_active()==expected),id(ui_buffer_mutations),esphome::ui_fixture::dial_requests,id(ui_owner_writes));
@@ -458,7 +519,9 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           gesture(id(idle_page)->obj,1,id(call_idle_page)->obj);
           gesture(id(call_idle_page)->obj,1,id(call_dialer_page)->obj);
           gesture(id(call_dial_row_123)->obj,1,id(SETTINGS_PAGE)->obj);
-          gesture(id(settings_page_header),1,id(SETTINGS_PAGE)->obj,true);
+          // The preceding end snapshot deliberately left the title off-screen.
+          // A title gesture starts with the same visible-title precondition as a user.
+          lv_obj_scroll_to_y(id(settings_page_wrapper),0,LV_ANIM_OFF); input.pump(50);
           gesture(id(settings_page_header),-1,id(call_dialer_page)->obj,true);
           gesture(id(call_dial_row_123)->obj,-1,id(call_idle_page)->obj);
           gesture(id(call_idle_page)->obj,-1,id(idle_page)->obj);
@@ -488,6 +551,28 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           input.swipe(body.x1+20,(body.y1+body.y2)/2,body.x1+20,(body.y1+body.y2)/2-60);input.pump(120);
           if(lv_screen_active()!=id(SETTINGS_PAGE)->obj || lv_obj_get_scroll_y(id(settings_page_wrapper))==scroll_before) ::exit(77);
           printf("UI_POINTER options_body_scroll=pass navigation_suppressed=pass\n");
+          for (int boundary=0; boundary<2; ++boundary) {
+            enter_view(3);
+            auto *wrapper=id(settings_page_wrapper);
+            lv_obj_scroll_to_y(wrapper,boundary?LV_COORD_MAX:0,LV_ANIM_OFF);input.pump(50);
+            lv_obj_update_layout(wrapper);lv_obj_get_coords(wrapper,&body);
+            const int before=lv_obj_get_scroll_y(wrapper),top=lv_obj_get_scroll_top(wrapper),bottom=lv_obj_get_scroll_bottom(wrapper);
+            if ((boundary?bottom:top)!=0) ::exit(94);
+            const auto screen_gestures=input.watch(id(SETTINGS_PAGE)->obj,LV_EVENT_GESTURE);
+            const auto body_gestures=input.watch(wrapper,LV_EVENT_GESTURE);
+            id(ui_navigation_events)=0;
+            const int x=body.x1+20,y=(body.y1+body.y2)/2;
+            input.swipe(x,y,x,y+(boundary?-80:80));input.pump(300);
+            const char *target=lv_screen_active()==id(SETTINGS_PAGE)->obj?"settings":
+              lv_screen_active()==id(call_dialer_page)->obj?"dialer":"other";
+            printf("UI_POINTER options_body_boundary=%s delta=%d scroll_before=%d scroll_after=%d top_before=%d bottom_before=%d page_gestures=%llu body_gestures=%llu navigation_calls=%u target=%s writes=%u\n",
+              boundary?"bottom":"top",boundary?1:-1,before,int(lv_obj_get_scroll_y(wrapper)),top,bottom,
+              static_cast<unsigned long long>(input.count(screen_gestures)),static_cast<unsigned long long>(input.count(body_gestures)),
+              id(ui_navigation_events),target,id(ui_owner_writes));
+            if(id(ui_owner_writes)||esphome::ui_fixture::dial_requests||esphome::ui_fixture::voip_action_writes) ::exit(95);
+            if(!boundary && (lv_screen_active()!=id(call_dialer_page)->obj || id(ui_navigation_events)!=1)) ::exit(96);
+            if(boundary && lv_screen_active()!=id(SETTINGS_PAGE)->obj) ::exit(97);
+          }
           enter_view(1);id(phone).idle=false;id(phone).in_call=true;id(draw_display).execute();input.pump(60);
           if(lv_screen_active()!=id(call_in_call_page)->obj) ::exit(78);
           lv_obj_t *hangup=nullptr;
@@ -504,10 +589,10 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           printf("UI_POINTER in_call_gesture=pass hangup_suppressed=pass positive_hangup_tap=pass\n");
           enter_view(3);
           lv_screen_load(id(SETTINGS_PAGE)->obj); input.pump(80);
-          id(master_volume).publish_state(50.0f); id(mic_gain).publish_state(5.0f);
+          id(master_volume).publish_state(50.0f); MICROPHONE_MIDPOINT
           PLAYER_MIDPOINT
-          const char *names[]={"master","playback","mic"};
-          lv_obj_t *sliders[]={id(ui_speaker_vol_slider),PLAYBACK_SLIDER id(ui_mic_vol_slider)};
+          const char *names[]={"master",PLAYBACK_NAME MICROPHONE_NAME};
+          lv_obj_t *sliders[]={id(ui_speaker_vol_slider),PLAYBACK_SLIDER MICROPHONE_SLIDER};
           int previous_center=-100000;
           for(auto *slider:sliders) {
             lv_area_t area; lv_obj_get_coords(slider,&area);
@@ -545,6 +630,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             if(input.count(pressed)!=before) ::exit(68);
             printf("UI_POINTER slider=%s knob=pass extension=pass track_rejected=pass pad=%d\n",names[index++],pad);
           }
+          MICROPHONE_PROBE_START
           for(int requested:{24,lv_slider_get_max_value(id(ui_mic_vol_slider))}) {
             id(mic_gain).publish_state(static_cast<float>(requested));input.pump(40);
             lv_obj_update_layout(id(SETTINGS_PAGE)->obj);
@@ -569,6 +655,7 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             if(input.count(pressed)!=before+1 || id(speaker_mute).state!=mute_before) ::exit(76);
             printf("UI_POINTER mic_value=%d knob=pass extended_topmost=pass no_switch_overlap=pass extent=%d\n",requested,bottom-area.y2);
           }
+          MICROPHONE_PROBE_END
           lv_area_t toggle,viewport;lv_obj_get_coords(id(ui_speaker_mute_sw),&toggle);lv_obj_get_coords(id(settings_page_wrapper),&viewport);
           int offset=(toggle.y1+toggle.y2-viewport.y1-viewport.y2)/2;
           lv_obj_scroll_to_y(id(settings_page_wrapper),lv_obj_get_scroll_y(id(settings_page_wrapper))+offset,LV_ANIM_OFF);input.pump(40);
@@ -577,16 +664,246 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
           input.tap((toggle.x1+toggle.x2)/2,(toggle.y1+toggle.y2)/2);
           if(id(speaker_mute).state==before_mute || id(ui_owner_writes)!=1) ::exit(73);
           printf("UI_POINTER passive_row_child_switch=pass writes=1\n");
+          MODE_DROPDOWN
           for(unsigned i=0;i<3;i++)lv_obj_remove_event_dsc(trace_objects[i],trace_descriptors[i]);
         '''.replace("SETTINGS_PAGE", page_id).replace("APPLY_OVERLAY_POLICY", policy or "(void)target;")
+        pointer_code = re.sub(r"MICROPHONE_PROBE_START(.*?)MICROPHONE_PROBE_END",
+            lambda match: match[1].replace("id(mic_gain)", f"id({microphone_owner})") if microphone_owner
+                else 'printf("UI_POINTER microphone_control=absent\\n");', pointer_code, flags=re.S)
+        pointer_code = pointer_code.replace("MICROPHONE_MIDPOINT",
+            f'id({microphone_owner}).publish_state((lv_slider_get_min_value(id(ui_mic_vol_slider)) + '
+            'lv_slider_get_max_value(id(ui_mic_vol_slider))) / 2.0f); '
+            f'printf("UI_POINTER microphone_owner={microphone_owner} '
+            f'minimum={int(microphone["min_value"])} maximum={int(microphone["max_value"])}\\n");'
+            if microphone_owner else "")
+        pointer_code = pointer_code.replace("MICROPHONE_NAME", '"mic",' if microphone_owner else "")
+        pointer_code = pointer_code.replace("MICROPHONE_SLIDER", "id(ui_mic_vol_slider)," if microphone_owner else "")
+        pointer_code = pointer_code.replace("PLAYBACK_NAME", '"playback",' if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYER_MIDPOINT", "id(speaker_media_player).volume=0.5f;id(speaker_media_player).publish_state();" if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYBACK_SLIDER", "id(ui_playback_vol_slider)," if host.get("media_player") else "")
         pointer_code = pointer_code.replace("EXPECTED_HIT_SIZE", "40" if width <= 240 else "48")
+        pointer_code = pointer_code.replace("MODE_DROPDOWN", r'''
+          auto *dropdown=id(ui_aec_mode_dd)->obj;
+          lv_area_t choice,visible;lv_obj_get_coords(dropdown,&choice);lv_obj_get_coords(id(settings_page_wrapper),&visible);
+          lv_obj_scroll_to_y(id(settings_page_wrapper),lv_obj_get_scroll_y(id(settings_page_wrapper))+
+            (choice.y1+choice.y2-visible.y1-visible.y2)/2,LV_ANIM_OFF);input.pump(50);
+          lv_obj_get_coords(dropdown,&choice);id(ui_owner_writes)=0;
+          const uint32_t selected=(lv_dropdown_get_selected(dropdown)+1)%lv_dropdown_get_option_count(dropdown);
+          input.tap((choice.x1+choice.x2)/2,(choice.y1+choice.y2)/2);
+          if(!lv_dropdown_is_open(dropdown)) ::exit(98);
+          auto *list=lv_dropdown_get_list(dropdown);lv_obj_update_layout(list);lv_obj_get_coords(list,&choice);
+          const int line=lv_font_get_line_height(lv_obj_get_style_text_font(list,LV_PART_MAIN));
+          const int y=choice.y1+lv_obj_get_style_pad_top(list,LV_PART_MAIN)+line/2+
+            selected*(line+lv_obj_get_style_text_line_space(list,LV_PART_MAIN));
+          input.tap((choice.x1+choice.x2)/2,y);
+          if(lv_dropdown_is_open(dropdown)||lv_dropdown_get_selected(dropdown)!=selected||
+             id(aec_mode_select).active_index()!=selected||id(ui_owner_writes)!=1) ::exit(99);
+          printf("UI_POINTER dropdown=mode open=pass select=pass writes=1\n");
+        ''' if "ui_aec_mode_dd" in set(strings(page)) else "")
         capture.append({"lambda": Lambda(pointer_code)})
     capture.append({"lambda": Lambda("::exit(0);")})
     host["esphome"]["on_boot"] = registrations + [{"priority": -300, "then": capture}]
     assert host["lvgl"]["pages"][-1] == yaml_input(page)
     return host, page_hash
+
+
+def _header_widgets(value, names):
+    """Retain production header leaves and their exact container geometry."""
+    if isinstance(value, list):
+        return [projected for item in value if (projected := _header_widgets(item, names)) is not None]
+    if not isinstance(value, dict):
+        return None
+    if str(value.get("id", "")) in names:
+        return copy.deepcopy(value)
+    projected = copy.deepcopy(value)
+    retained = False
+    for key, item in value.items():
+        if isinstance(item, (dict, list)):
+            child = _header_widgets(item, names)
+            if child:
+                projected[key] = child
+                retained = True
+            elif key in ("widgets", "tiles") or key.startswith("on_"):
+                projected.pop(key, None)
+    if not retained:
+        return None
+    return {key: item for key, item in projected.items() if not key.startswith("on_")}
+
+
+def make_status_config(config, page_id, width, height, build_parent):
+    """Partial pixel proof: exact status widgets/fonts, with fixture input data."""
+    lvgl = config["lvgl"][0] if isinstance(config["lvgl"], list) else config["lvgl"]
+    original = next(page for page in lvgl["pages"] if str(page["id"]) == page_id)
+    page_hash = hashlib.sha256(yaml_util.dump(original).encode()).hexdigest()
+    header_names = {"weather_clock_label", "weather_date_label"}
+    headers = _header_widgets(original.get("widgets", []), header_names) or []
+    # A dynamic P4 landscape card needs its layout owner. Avoid projecting its
+    # initial one-pixel placeholder as if it were the running device geometry.
+    if any(item.get("width") == 1 or item.get("height") == 1 for item in nodes(headers)):
+        headers = []
+    status_names = {"top_clock_label", "top_battery_label", "top_voicemail_label"}
+    top = [copy.deepcopy(widget) for widget in lvgl.get("top_layer", {}).get("widgets", [])
+           if any(str(node.get("id", "")) in status_names for node in nodes(widget))]
+    if not top:
+        raise ValueError("Production status widgets missing")
+    page = {"id": page_id, "bg_color": original.get("bg_color", 0), "widgets": yaml_input(headers)}
+    host = {
+        "esphome": {"name": f"lvgl-status-{width}-{height}", "build_path": str(build_parent / "build"),
+                    "compile_process_limit": 2, "includes": [str(ROOT / "tests/fixtures/lvgl_host/status_inputs.h")]},
+        "host": {}, "logger": {"level": "INFO"},
+        "globals": [{"id": "ui_voicemail_waiting", "type": "bool", "initial_value": "false"}],
+        "display": [{"platform": "snapshot", "id": "render_display",
+                     "dimensions": {"width": width, "height": height}, "auto_clear_enabled": False}],
+        "lvgl": {"id": "render_lvgl", "displays": ["render_display"], "pages": [page],
+                 "top_layer": {"widgets": yaml_input(top)}, "color_depth": 16},
+        "script": [],
+    }
+    owner = copy.deepcopy(find_id(config, "script", "update_voicemail_status"))
+    if owner is None:
+        raise ValueError("Production voicemail visibility owner missing")
+    body = str(owner["then"][0]["lambda"])
+    if body.count("id(phone).is_idle()") != 1:
+        raise ValueError("Production phone-idle boundary changed")
+    owner["then"][0]["lambda"] = Lambda(body.replace("id(phone).is_idle()", "id(status_phone_idle)"))
+    host["script"].append(owner)
+    # The unchanged badge callback still crosses its native phone boundary.
+    if "phone" in references(top):
+        host["external_components"] = [{"source": str(ROOT / "tests/fixtures/lvgl_host"), "components": ["ui_fixture"]}]
+        host["ui_fixture"] = {"phone_id": "phone"}
+    host["globals"].append({"id": "status_phone_idle", "type": "bool", "initial_value": "true"})
+    original_pages = {str(item["id"]): item for item in lvgl["pages"]}
+    supplied = {str(item["id"]) for item in host["globals"]} | {"update_voicemail_status", "top_voicemail_label", page_id}
+    contact_views = [copy.deepcopy(view) for view in config.get("phone_list_view", [])
+                     if str(view["id"]) in references(owner)]
+    for view in contact_views:
+        parent_id = str(view["parent_id"])
+        source_page = next(item for item in lvgl["pages"] if parent_id in widget_ids([item], {}))
+        target_page = next((item for item in host["lvgl"]["pages"] if str(item["id"]) == str(source_page["id"])), None)
+        if target_page is None:
+            target_page = {"id": str(source_page["id"]), "bg_color": source_page.get("bg_color", 0), "widgets": []}
+            host["lvgl"]["pages"].append(target_page)
+        target_page["widgets"].extend(yaml_input(_header_widgets(source_page.get("widgets", []), {parent_id})))
+        # Status snapshots supply an empty directory, while the real component
+        # retains its accessor, row pool and native size-change callbacks.
+        view.pop("on_select", None)
+        view["row_count"] = Lambda("return 0;")
+        view["render_row"] = Lambda("(void)index; (void)row;")
+        supplied.update({str(view["id"]), parent_id, str(source_page["id"])})
+    if contact_views:
+        host["phone_list_view"] = contact_views
+        host.setdefault("external_components", []).append({
+            "source": str(ROOT / "esphome/components"), "components": ["phone_list_view"],
+        })
+    for name in references(owner) - supplied:
+        if name in original_pages:
+            host["lvgl"]["pages"].append({"id": name, "bg_color": original_pages[name].get("bg_color", 0), "widgets": []})
+        elif (declaration := find_id(config, "globals", name)) is not None:
+            copied = copy.deepcopy(declaration)
+            if name == "voice_assistant_phase":
+                copied["initial_value"] = str(config["substitutions"]["voice_assist_idle_phase_id"])
+            host["globals"].append(copied)
+        else:
+            raise ValueError(f"Unknown production badge input {name}")
+    ids = widget_ids(host["lvgl"]["pages"], {"widgets": top})
+    boot = [{"lvgl.page.show": page_id}]
+    for name, value in (("top_clock_label", "12:34"), ("weather_clock_label", "12:34"),
+                        ("weather_date_label", "Thursday 29 October")):
+        if name in ids:
+            boot.append({"lvgl.label.update": {"id": name, "text": value}})
+    if "top_battery_label" in ids:
+        owner = find_id(config, "script", "update_idle_labels")
+        def updates_status(node):
+            action = node.get("lvgl.label.update")
+            if not isinstance(action, dict):
+                return False
+            targets = action.get("id", [])
+            if not isinstance(targets, list):
+                targets = [targets]
+            return any(str(target.get("id", "") if isinstance(target, dict) else target) == "top_battery_label"
+                       for target in targets)
+        formatter = next(copy.deepcopy(node) for node in nodes(owner) if updates_status(node))
+        for name in references(formatter)-ids-{"ui_voicemail_waiting"}:
+            if find_id(config, "sensor", name):
+                host.setdefault("sensor", []).append({"platform": "template", "id": name, "update_interval": "never"})
+                boot.append({"sensor.template.publish": {"id": name, "state": 100.0}})
+            elif find_id(config, "binary_sensor", name):
+                host.setdefault("binary_sensor", []).append({"platform": "template", "id": name})
+                boot.append({"binary_sensor.template.publish": {"id": name, "state": True}})
+            else:
+                raise ValueError(f"Unknown production status input {name}")
+        host["script"].append({"id": "status_snapshot_refresh", "then": [formatter, {"script.execute": "update_voicemail_status"}]})
+        refresh = "status_snapshot_refresh"
+    else:
+        refresh = "update_voicemail_status"
+    geometry = []
+    for view in contact_views:
+        name, parent_id = str(view["id"]), str(view["parent_id"])
+        geometry.append(f'''lv_obj_update_layout(id({parent_id}));
+            const int rows_{name} = lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN) ? 4 : 3;
+            if (lv_obj_get_height(id({parent_id})) != id({name}).get_row_height() * rows_{name}) ::exit(84);
+            printf("UI_STATUS_CONTACTS rows=%d height=%d\\n", rows_{name}, int(lv_obj_get_height(id({parent_id}))));''')
+    for state in ("off", "on"):
+        boot.extend([
+            {"globals.set": {"id": "ui_voicemail_waiting", "value": "true" if state == "on" else "false"}},
+            {"script.execute": refresh},
+            {"lambda": Lambda("lv_obj_update_layout(id(" + page_id + ")->obj); lv_refr_now(nullptr);")},
+            *([{"lambda": Lambda("\n".join(geometry))}] if geometry else []),
+            {"snapshot.take": {"id": "render_display", "filename": state}},
+        ])
+    # State inputs exercise the actual production predicate, without a SIP model.
+    boot.extend([
+        {"lambda": Lambda("id(status_phone_idle) = false;")},
+        {"script.execute": "update_voicemail_status"},
+        {"lambda": Lambda('if (!lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN)) ::exit(81); id(status_phone_idle) = true;')},
+    ])
+    if any(str(item["id"]) == "voice_assistant_phase" for item in host["globals"]):
+        boot.extend([
+            {"lambda": Lambda("++id(voice_assistant_phase);")},
+            {"script.execute": "update_voicemail_status"},
+            {"lambda": Lambda('if (!lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN)) ::exit(82); --id(voice_assistant_phase);')},
+        ])
+    options = next((str(item["id"]) for item in lvgl["pages"] if "settings" in str(item["id"])), None)
+    if options:
+        if options not in ids:
+            host["lvgl"]["pages"].append({"id": options, "widgets": []})
+        boot.extend([
+            {"lvgl.page.show": options},
+            {"script.execute": "update_voicemail_status"},
+            {"lambda": Lambda('if (!lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN)) ::exit(83); printf("UI_MWI nonidle=hidden options=hidden\\n");')},
+            {"lvgl.page.show": page_id},
+            {"script.execute": "update_voicemail_status"},
+        ])
+    bounds = []
+    for name in sorted(ids & (status_names | header_names)):
+        bounds.append('lv_area_t area_' + name + '; lv_obj_get_coords(id(' + name + '), &area_' + name + '); ' +
+                      'printf("UI_STATUS_BOUNDS ' + name + ' %d %d %d %d\\n",int(area_' + name + '.x1),int(area_' + name + '.y1),int(area_' + name + '.x2),int(area_' + name + '.y2));')
+    boot.append({"lambda": Lambda("\n".join(bounds) + "\n::exit(0);")})
+    host["esphome"]["on_boot"] = [{"priority": -300, "then": boot}]
+    fonts = {str(font["id"]): font for font in config["font"]}
+    used = set(strings([host["lvgl"], contact_views])) & set(fonts)
+    host["font"] = [copy.deepcopy(fonts[name]) for name in sorted(used)]
+    return host, page_hash
+
+
+def apply_buffer_rotation(config, width, height, percent, rotation):
+    """Keep logical geometry while exercising ESPHome's real tiled/rotated flush."""
+    if percent not in (25, 100) or rotation not in (0, 90, 180, 270):
+        raise ValueError("The buffer comparison supports 25/100 percent and right-angle rotations")
+    native_width, native_height = (height, width) if rotation in (90, 270) else (width, height)
+    config["display"][0]["dimensions"] = {"width": native_width, "height": native_height}
+    config["lvgl"]["buffer_size"] = str(percent) + "%"
+    if rotation:
+        config["lvgl"]["rotation"] = rotation
+    else:
+        config["lvgl"].pop("rotation", None)
+    probe = r'''
+      auto *draw = lv_display_get_buf_active(lv_display_get_default());
+      if (draw == nullptr) ::exit(110);
+      printf("UI_BUFFER bytes=%u logical_width=%d logical_height=%d\n", unsigned(draw->data_size),
+             int(lv_display_get_horizontal_resolution(lv_display_get_default())),
+             int(lv_display_get_vertical_resolution(lv_display_get_default())));
+    '''
+    config["esphome"]["on_boot"][-1]["then"].insert(0, {"lambda": Lambda(probe)})
 
 
 def main():
@@ -600,16 +917,33 @@ def main():
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--round", action="store_true", help="Also show the physical circular viewport, retaining raw captures")
     parser.add_argument("--pointer", action="store_true", help="Exercise the real production dialer with a host LVGL pointer")
+    parser.add_argument("--status-only", action="store_true", help="Render exact production status overlays off/on, without the full page or input qualification")
+    parser.add_argument("--buffer-percent", type=int, choices=(25, 100), help="Compare actual LVGL draw buffers using unchanged production widgets")
+    parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270), default=0, help="Exercise software rotation while preserving logical page dimensions")
     args = parser.parse_args()
+    args.input = args.input.resolve()
+    args.output = args.output.resolve()
+    args.build_parent = args.build_parent.resolve()
+    if args.status_only and args.pointer:
+        parser.error("--status-only and --pointer qualify different scopes")
+    if args.rotation and args.buffer_percent is None:
+        parser.error("--rotation requires an explicit --buffer-percent comparison")
+    capture_names = ("off", "on") if args.status_only else ("top", "mid", "end")
     args.output.mkdir(parents=True, exist_ok=True)
     args.build_parent.mkdir(parents=True, exist_ok=True)
     production = yaml_util.load_yaml(args.input)
-    config, page_hash = make_host_config(production, args.page, args.width, args.height, args.build_parent, args.pointer)
+    config, page_hash = (make_status_config(production, args.page, args.width, args.height, args.build_parent)
+                         if args.status_only else make_host_config(production, args.page, args.width, args.height, args.build_parent, args.pointer))
+    if args.buffer_percent is not None:
+        apply_buffer_rotation(config, args.width, args.height, args.buffer_percent, args.rotation)
     path = args.build_parent / "host.yaml"
     path.write_text(yaml_util.dump(config))
     shutil.copyfile(path, args.output / "host.yaml")
     result = {"production_page_sha256": page_hash, "source": str(args.input),
               "width": args.width, "height": args.height, "scope": "Production page pixels with host data owners; no hardware or audio qualification."}
+    if args.status_only:
+        result["scope"] = "Status-overlay-only native LVGL pixels: production widgets/fonts/positions and adjacent static header containers; fixture battery/network/clock/MWI input. Avatar, media, other page content, gestures and hardware are outside this proof."
+        result["states"] = {"off": False, "on": True}
     policy = overlay_policy(production)
     result["production_overlay_policy_sha256"] = hashlib.sha256(policy.encode()).hexdigest() if policy else None
     result["status"] = "prepared"
@@ -633,7 +967,7 @@ def main():
             raise RuntimeError(f"Host compilation failed; see {args.output / 'compile.log'}")
         executable = args.build_parent / "build/.pioenvs" / config["esphome"]["name"] / "program"
         captures = args.build_parent / ".esphome/snapshots" / config["esphome"]["name"]
-        for position in ("top", "mid", "end"):
+        for position in capture_names:
             stale = captures / (position + ".bmp")
             if stale.exists():
                 archive = args.output / "previous-incomplete-snapshots"
@@ -648,7 +982,7 @@ def main():
         from PIL import Image, ImageDraw
 
         result["snapshots"] = []
-        for position in ("top", "mid", "end"):
+        for position in capture_names:
             source = captures / (position + ".bmp")
             if not source.is_file():
                 raise RuntimeError(f"Snapshot missing: {source}")

@@ -840,13 +840,13 @@ async def test_outgoing_announcement_owns_rtp_port_before_invite_and_reuses_it(l
 
 
 async def test_outgoing_rtp_bind_failure_releases_call_and_allows_retry(lab, monkeypatch):
-    from custom_components.voip_stack import automation_originate
+    from custom_components.voip_stack import media_ports
 
     def unavailable(_port):
         raise OSError("RTP socket unavailable")
 
     with monkeypatch.context() as patch:
-        patch.setattr(automation_originate, "bind_sip_rtp_socket", unavailable)
+        patch.setattr(media_ports, "bind_sip_audio_socket", unavailable)
         with pytest.raises(ServiceValidationError):
             await dial(lab, Context())
     assert not lab.phones[0].invites

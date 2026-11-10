@@ -5,7 +5,7 @@ voip_stack:
       on_value:
         then:
           - lambda: |-
-              const char *route = x == "direct" ? "Direct" :
-                                  x == "ha_transcoding" ? "HA transcoding" : "";
+              const char *route = x == "direct" ? "No conversion" :
+                                  x == "ha_transcoding" ? "HA processing" : "";
               lv_label_set_text(id(p4_call_media_route_label), route);
               lv_label_set_text(id(p4_video_media_route_label), route);

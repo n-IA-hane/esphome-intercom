@@ -9,6 +9,7 @@ import contextlib
 from dataclasses import dataclass, field
 import json
 import logging
+import math
 import socket
 import struct
 import time
@@ -19,6 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp, sdp
+from .core.sip_stun import is_stun_message
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING
 from .media_debug import merge_media_debug
@@ -64,6 +66,7 @@ from .core.video_rtp import (
     split_annex_b,
     unknown_dynamic_payload_type,
 )
+from .core.imageattr import constraints_payload
 from .websocket_api import (
     _ha_softphone_store,
     _publish_ha_softphone_state,
@@ -87,7 +90,6 @@ _MAX_BROWSER_ACCESS_UNIT_BYTES = 1024 * 1024
 _MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES = 2 * 1024 * 1024
 _MAX_BROWSER_JPEG_DIMENSION = 1280
 _MAX_BROWSER_JPEG_PIXELS = 1280 * 800
-_JPEG_BROWSER_MAX_FPS = 15
 # Do not introduce a private RTP MTU contract. The queue byte budget below is
 # the memory backstop; this ceiling only rejects datagrams that cannot be valid
 # UDP payloads.
@@ -100,6 +102,44 @@ _SYMMETRIC_RTP_KEEPALIVE_INTERVAL = 0.25
 _SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS = 8
 _SYMMETRIC_RTP_REFRESH_INTERVAL = 15.0
 _VIDEO_PACKETIZE_SEMAPHORE = asyncio.Semaphore(1)
+
+
+class _VideoFrameCadence:
+    """Reserve one frame slot or return its wait, without accumulating bursts."""
+
+    __slots__ = ("period", "next_at", "last_at")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.period = 0.0
+        self.next_at: float | None = None
+        self.last_at: float | None = None
+
+    def delay(self, now: float, framerate: float | None) -> float:
+        # This downstream meter needs one frame of arrival credit in addition
+        # to the current frame: upstream selection and network delivery both
+        # add jitter. It is a two-frame token bucket (R*t + 2), using only the
+        # server clock. Long stalls cannot accumulate more than that credit.
+        period = (
+            1.0 / framerate
+            if framerate is not None and math.isfinite(framerate) and framerate > 0
+            else 0.0
+        )
+        if period != self.period or (self.last_at is not None and now < self.last_at):
+            self.period = period
+            self.next_at = None
+        self.last_at = now
+        if not period:
+            return 0.0
+        if self.next_at is None or now - self.next_at >= period:
+            self.next_at = now
+            return 0.0
+        if now < self.next_at:
+            return self.next_at - now
+        self.next_at += period
+        return 0.0
 
 
 def _video_loss_requires_key_frame(
@@ -301,6 +341,8 @@ class _RtpVideoProtocol(asyncio.DatagramProtocol):
         return counts
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         if not self.min_datagram_bytes <= len(data) <= self.max_datagram_bytes:
             self._record_drop("size")
             return
@@ -473,7 +515,24 @@ class VoipVideoWebSocketView(HomeAssistantView):
                     )
                 else:
                     assert session is not None
+                    call = prepared.registry.get_session(session.call_id)
+                    generation = call.generation if call is not None else None
                     await ws.prepare(request)
+                    if (call is None or not call.live
+                            or call_projection(hass) is not prepared.registry
+                            or prepared.registry.get_session(session.call_id) is not call
+                            or call.generation != generation
+                            or media_owner.owners.get(media_owner.owner_key) is not claimed.owner
+                            or claimed.owner.handoff_requested.is_set()
+                            or media_owner.media.shutdown.is_set()):
+                        await ws.close(code=1008, message=b"video call changed before attachment")
+                        return ws
+                    try:
+                        _, session = prepared.resolve_current()
+                    except web.HTTPException:
+                        await ws.close(code=1008, message=b"video media changed before attachment")
+                        return ws
+                    assert session is not None
                     _detach_video_socket(hass, session)
                     await _run_video_session(
                         hass,
@@ -519,6 +578,7 @@ def _active_video_session(
         video_format = getattr(invite, "video_format", None)
         local_port = int(item.get("local_video_rtp_port") or 0)
         if invite is not None and video_format is not None and local_port:
+            source_client = registry.source_sip_client_for(call_id)
             rtp_source = item.get("video_rtp_source")
             if not isinstance(rtp_source, RtpSenderState):
                 rtp_source = RtpSenderState.create(
@@ -556,7 +616,8 @@ def _active_video_session(
                 rtp_socket=item.get("video_rtp_socket"),
                 rtcp_socket=item.get("video_rtcp_socket"),
                 request_remote_keyframe=(
-                    (lambda: endpoint.async_request_video_keyframe(call_id))
+                    source_client.request_video_keyframe if source_client is not None
+                    else (lambda: endpoint.async_request_video_keyframe(call_id))
                     if endpoint is not None
                     else None
                 ),
@@ -601,26 +662,43 @@ def _active_video_session(
 
 
 def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> None:
-    """Transfer pre-bound RTP/RTCP sockets from call to media lifetime."""
+    """Lend bound descriptors to this WebSocket, retaining the SIP receive queue."""
 
     registry = call_projection(hass)
     if registry is None:
         return
     item = registry.resource_for(session.call_id, "softphone_media")
-    if isinstance(item, dict) and (
-        item.get("video_rtp_socket") is session.rtp_socket
-        or item.get("video_rtcp_socket") is session.rtcp_socket
-    ):
-        if item.get("video_rtp_socket") is session.rtp_socket:
-            item.pop("video_rtp_socket", None)
-        if item.get("video_rtcp_socket") is session.rtcp_socket:
-            item.pop("video_rtcp_socket", None)
-        return
-    client = registry.sip_client_for(session.call_id)
-    if client is not None and client.video_rtp_socket is session.rtp_socket:
-        client.video_rtp_socket = None
-    if client is not None and client.video_rtcp_socket is session.rtcp_socket:
-        client.video_rtcp_socket = None
+    # A preanswered resource may exist without owning this video's contract;
+    # _active_video_session then resolves the outbound client's descriptors.
+    media_owns_video = isinstance(item, dict) and (
+        (getattr(item.get("invite"), "video_format", None) is not None
+         and item.get("local_video_rtp_port"))
+        or any(descriptor is not None and item.get(name) is descriptor for name, descriptor in (
+            ("video_rtp_socket", session.rtp_socket), ("video_rtcp_socket", session.rtcp_socket)))
+    )
+    if media_owns_video:
+        owned = (item.get("video_rtp_socket"), item.get("video_rtcp_socket"))
+    else:
+        client = registry.sip_client_for(session.call_id)
+        if client is None:
+            return
+        owned = (client.video_rtp_socket, client.video_rtcp_socket)
+    if any(expected is not current for expected, current in zip(
+            (session.rtp_socket, session.rtcp_socket), owned, strict=True)):
+        raise RuntimeError("video socket owner changed before attachment")
+    borrowed = []
+    try:
+        for original in owned:
+            borrowed.append(original.dup() if original is not None else None)
+    except BaseException:
+        for descriptor in borrowed:
+            if descriptor is not None:
+                descriptor.close()
+        raise
+    # The call retains the originals and closes them through its existing
+    # cleanup. Closing this WS's duplicates cannot unbind the SIP media port
+    # or lose SPS/PPS arriving before the replacement WS attaches.
+    session.rtp_socket, session.rtcp_socket = borrowed
 
 
 async def _run_local_video_session(
@@ -668,6 +746,7 @@ async def _run_local_video_session(
         "video_access_units_tx": 0,
         "video_access_units_rx": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_access_unit_queue_drops": 0,
         "video_rate_limited_access_units": 0,
@@ -856,7 +935,7 @@ def _sdp_parameter_sets(video_format: sdp.RtpVideoFormat) -> list[bytes]:
 def _video_format_payload(
     video_format: sdp.RtpVideoFormat,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "codec": video_format.browser_codec,
         "encoding": video_format.encoding,
         "clock_rate": video_format.clock_rate,
@@ -867,6 +946,9 @@ def _video_format_payload(
         "max_framerate": video_format.max_framerate,
         "format": video_format.wire_token(),
     }
+    if video_format.encoding == "JPEG" and video_format.image_attributes is not None:
+        payload["image_attributes"] = constraints_payload(video_format.image_attributes)
+    return payload
 
 
 def _video_negotiation_payload(
@@ -965,20 +1047,11 @@ async def _video_access_units_to_ws(
     access_units: _ByteBudgetQueue,
     ws_send_lock: asyncio.Lock,
 ) -> None:
-    last_jpeg_sent = 0.0
-    loop = asyncio.get_running_loop()
     while not closed.is_set():
         access_unit = await access_units.get()
         if access_unit.encoding == "JPEG":
-            due = last_jpeg_sent + (1.0 / _JPEG_BROWSER_MAX_FPS)
-            wait_seconds = max(0.0, due - loop.time())
-            if wait_seconds:
-                try:
-                    await asyncio.wait_for(closed.wait(), timeout=wait_seconds)
-                    return
-                except TimeoutError:
-                    pass
-            # A newer independent JPEG may have arrived while pacing.
+            # Socket backpressure and the bounded queue already limit work.
+            # Keep the newest independent image without imposing a global FPS.
             while True:
                 try:
                     access_unit = access_units.get_nowait()
@@ -990,8 +1063,6 @@ async def _video_access_units_to_ws(
                 _VIDEO_HEADER.pack(_VIDEO_ACCESS_UNIT, flags, access_unit.timestamp)
                 + access_unit.data
             )
-        if access_unit.encoding == "JPEG":
-            last_jpeg_sent = loop.time()
 
 
 class _BrowserJpegNormalizer:
@@ -1288,6 +1359,7 @@ async def _run_video_session(
         "video_drop_addr": 0,
         "video_drop_payload_type": 0,
         "video_drop_error": 0,
+        "video_drop_wait_keyframe": 0,
         "video_drop_direction": 0,
         "video_drop_connection_hold": 0,
         "video_reordered_packets": 0,
@@ -1653,6 +1725,18 @@ async def _run_video_session(
                 return
         if needs_key_frame and not access_unit.key_frame:
             counters["video_drop_error"] += 1
+            counters["video_drop_wait_keyframe"] += 1
+            if counters["video_drop_wait_keyframe"] == 1:
+                _LOGGER.info(
+                    "HA softphone video waiting for key frame call_id=%s "
+                    "codec=%s payload_type=%s key_frame=%s nal_types=%s",
+                    session.call_id,
+                    browser_format.encoding,
+                    packet.payload_type,
+                    access_unit.key_frame,
+                    tuple(nal[0] & 0x1F for nal in split_annex_b(access_unit.data))
+                    if browser_format.encoding == "H264" else (),
+                )
             request_key_frame(now)
             return
         if access_unit.key_frame:
@@ -2044,7 +2128,7 @@ async def _run_video_session(
         nonlocal jpeg_normalization_required, browser_tx_drop_logs
         observed_generation = int(session.media_generation)
         received_in_burst = 0
-        last_access_unit_at = 0.0
+        cadence = _VideoFrameCadence()
         async for msg in ws:
             received_in_burst += 1
             if received_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -2052,7 +2136,7 @@ async def _run_video_session(
                 await asyncio.sleep(0)
             if observed_generation != session.media_generation:
                 observed_generation = int(session.media_generation)
-                last_access_unit_at = 0.0
+                cadence.reset()
                 if not await refresh_media_state(observed_generation):
                     return
             if msg.type == WSMsgType.BINARY:
@@ -2076,29 +2160,6 @@ async def _run_video_session(
                 try:
                     packet_generation = observed_generation
                     send_format = session.send_video_format
-                    max_framerate = send_format.max_framerate
-                    if max_framerate is not None and max_framerate > 0:
-                        now = loop.time()
-                        due = last_access_unit_at + (1.0 / max_framerate)
-                        if last_access_unit_at > 0.0 and now < due:
-                            counters["video_rate_limited_access_units"] += 1
-                            if send_format.encoding == "JPEG":
-                                # JPEG pictures are independent, so dropping
-                                # an early frame cannot damage a later one.
-                                continue
-                            # H.264/VP8 access units form a dependency chain.
-                            # Dropping one delta frame here leaves an RTP-clean
-                            # but undecodable GOP at the SIP receiver. Apply
-                            # backpressure for the short cadence remainder
-                            # instead; the browser's bounded WebSocket queue
-                            # remains the overload gate.
-                            try:
-                                await asyncio.wait_for(closed.wait(), timeout=due - now)
-                                return
-                            except TimeoutError:
-                                pass
-                            now = loop.time()
-                        last_access_unit_at = now
 
                     def media_current(generation: int = packet_generation) -> bool:
                         return bool(
@@ -2109,6 +2170,31 @@ async def _run_video_session(
                             and session.can_send
                             and not session.remote_connection_held
                         )
+
+                    max_framerate = send_format.max_framerate
+                    wait_seconds = cadence.delay(loop.time(), max_framerate)
+                    if wait_seconds > 0:
+                        counters["video_rate_limited_access_units"] += 1
+                        if send_format.encoding == "JPEG":
+                            # Independent pictures may be discarded before
+                            # normalization; client timestamps grant no credit.
+                            continue
+                        # H.264/VP8 pictures retain their dependency chain.
+                        # Backpressure waits for admission instead of dropping
+                        # an arbitrary already-encoded delta frame.
+                        while wait_seconds > 0:
+                            try:
+                                await asyncio.wait_for(
+                                    closed.wait(), timeout=wait_seconds
+                                )
+                                return
+                            except TimeoutError:
+                                pass
+                            if not media_current():
+                                break
+                            wait_seconds = cadence.delay(loop.time(), max_framerate)
+                        if not media_current():
+                            continue
 
                     access_unit = data[_VIDEO_HEADER.size :]
                     if send_format.encoding == "JPEG" and jpeg_normalization_required:

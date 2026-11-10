@@ -3,6 +3,8 @@
 VoIP Stack implements two PBX-style group primitives on the HA side. ESP
 devices and SIP endpoints only declare membership and place normal SIP calls.
 
+![Ring groups and audio conference groups](images/ring-group-conference-group.png)
+
 ## Choose the group type
 
 | What should happen? | Choose |
@@ -37,7 +39,8 @@ Use ring groups for "call anyone in this area".
 
 ## Conference group
 
-A conference group is a SIP conference focus hosted by HA.
+A conference group is an audio SIP conference focus hosted by HA. It does not
+mix or distribute video.
 
 Example: `CG Casa`.
 
@@ -64,9 +67,11 @@ When a conference room starts:
 - members with `conference_ring: false` do not ring, but can still join
   manually by calling the group.
 
-This is useful when HA should ring as a central listener but ESP endpoints
-should only join on demand, or when mic-only endpoints should auto-answer into
-a monitoring conference.
+Use this when one phone should ring while another joins only on demand.
+Auto-answer is a separate per-phone policy. For a browser member to ring
+physically or auto-answer, its receiving HA frontend must be active with media
+permissions and a card loaded or, in the preview, global popups enabled. See
+[browser-phone availability](USER_GUIDE.md#browser-phone-availability).
 
 ## Declaring groups
 
@@ -86,6 +91,11 @@ The component exposes `text.voip_ring_groups`, `text.voip_conference_groups` and
 `switch.voip_conference_ring`. Editing those entities from HA updates the ESP
 membership without reflashing. `voip_stack:` by itself can still run standalone,
 with `ha_integration: false`; its HA interface is otherwise created automatically when API is configured.
+
+For an HA phone, select it in **VoIP Stack: Configure Home Assistant phone** and
+edit its group fields. The picker supplies `device_id`. If omitted in YAML,
+settings apply only to the configured preferred or sole compatible phone;
+choose explicitly when several room phones exist.
 
 HA softphone service:
 

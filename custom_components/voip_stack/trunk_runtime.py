@@ -46,6 +46,7 @@ def trunk_client_config(cfg: dict):
         outbound_proxy=str(cfg[CONF_TRUNK_OUTBOUND_PROXY]),
         registration_id=int(cfg.get("trunk_registration_id", 1)),
         outbound_media_address=str(cfg.get("trunk_outbound_media_address") or ""),
+        media_nat_mode=str(cfg.get("trunk_media_nat") or ""),
         audio_codecs=tuple(cfg["trunk_audio_codecs"]) if "trunk_audio_codecs" in cfg else None,
         video_codecs=tuple(cfg["trunk_video_codecs"]) if "trunk_video_codecs" in cfg else None,
     )
@@ -69,6 +70,15 @@ def create_trunk_client(hass: HomeAssistant, cfg: dict, *, local_ip: str, trunk_
             async_dispatcher_send(hass, TRUNK_UPDATE_SIGNAL, trunk_id)
 
     client.on_state_change = changed
+    def media_stun_urls():
+        from homeassistant.components.web_rtc import async_get_ice_servers
+        urls = []
+        for server in async_get_ice_servers(hass):
+            values = server.urls
+            urls.extend([values] if isinstance(values, str) else values)
+        return tuple(url for url in urls if url.startswith("stun:"))
+
+    client.media_stun_urls = media_stun_urls
     return client
 
 

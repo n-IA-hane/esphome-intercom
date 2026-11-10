@@ -625,6 +625,13 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
             from .video_ws_view import async_register_video_ws_view
 
             async_register_video_ws_view(hass)
+        if hass.state == CoreState.running:
+            # Assets can change while process-wide services remain registered.
+            # The existing registrar replaces stale URLs/panel and updates the
+            # same Lovelace resource instead of creating a second frontend owner.
+            from .frontend import JSModuleRegistration
+
+            await JSModuleRegistration(hass).async_register()
         return
 
     registration.initialized = True
@@ -782,12 +789,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_start_sip_trunk(hass)
     from .mailbox import async_setup_mailboxes
     await async_setup_mailboxes(hass, entry)
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
+    from .phone_services import async_setup_phone_services
+    await async_setup_phone_services(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     _register_runtime_shutdown(hass, entry)
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
+    # Platforms can now serve fresh snapshots after an entry reload.
+    hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
     return True
 
 
@@ -803,6 +816,13 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     """Release media owners before closing the PBX runtime."""
     from .websocket_api import _async_shutdown_all
 
+    runtime = _runtime_data(hass)
+    from .phone_services import async_close_phone_services
+    await async_close_phone_services(hass)
+    if runtime is not None and runtime.phone_provisioning is not None:
+        await runtime.phone_provisioning.async_close()
+    if runtime is not None and runtime.directory is not None:
+        runtime.directory.close()
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
 

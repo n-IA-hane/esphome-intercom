@@ -77,6 +77,7 @@ class VoipStackRuntime:
     media_capture: bool = False
     sip: SipEndpointRuntime | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    capability_probes: dict[tuple[str, str], asyncio.Task[Any]] = field(default_factory=dict)
     shutdown_task: asyncio.Task[Any] | None = None
     entity_managers: dict[str, Any] = field(default_factory=dict)
     entry_runtime_signature: dict[str, Any] | None = None
@@ -98,6 +99,10 @@ class VoipStackRuntime:
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
+    phone_provisioning: Any | None = None
+    directory: Any | None = None
+    ldap_server: Any | None = None
+    phone_services: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

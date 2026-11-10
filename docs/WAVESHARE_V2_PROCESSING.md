@@ -51,6 +51,12 @@ whether the microphones came from TDM or conventional I2S Left/Right slots.
 See the [general microphone-delivery guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md)
 for codec-free wiring and actual channel-count limitations.
 
+Current preview FULL display profiles also include a separate JPEG receive
+path with VoIP. It does not create a camera or an H.264 decoder on this S3 board.
+See [S3 receive display](SIP_VIDEO.md#esp32-s3-receive-display) and
+[preview sources](DEPLOYMENT_GUIDE.md#development-preview-firmware). Negotiated
+video pauses the wake-word recognizer without changing its saved enable choice.
+
 ## One physical calibration for this board
 
 Both processors include the same [board audio package](../packages/audio/profiles/waveshare-s3-box-v2-common.yaml):

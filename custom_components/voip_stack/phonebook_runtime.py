@@ -29,7 +29,7 @@ def format_entry_unified(peer: Peer) -> str:
     sip_transport_token = "sip_tcp" if sip_transport == "tcp" else "sip_udp"
     return (
         f"{name}|{peer_ip}|{peer.sip_port or 5060}|"
-        f"{peer.rtp_port or 40000}|{peer.audio_mode}|{tx}|{rx}|{sip_transport_token}"
+        f"{peer.rtp_port or 40000}|{peer.audio_mode or ''}|{tx}|{rx}|{sip_transport_token}"
     )
 
 
@@ -64,10 +64,21 @@ async def push_roster_json_to_esps(
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    directory = runtime.directory
+    generation = directory.generation if directory is not None else None
+
+    def current():
+        return (runtime_data(hass) is runtime and runtime.directory is directory
+                and (directory is None or (not directory.closed and directory.generation == generation)))
+
     async with runtime.phonebook_push_lock:
         devices = await _get_voip_devices(hass)
+        if not current():
+            return
         services = available_esphome_services(hass)
         for device in devices:
+            if not current():
+                return
             # Use the owning ESPHome entry resolved by the device registry.
             # Its API connection may use a different address from SIP discovery.
             slug = str(device.get("route_id") or "").strip()
@@ -101,6 +112,8 @@ async def push_roster_json_to_esps(
                     "Phonebook JSON push to %s failed: %s", device.get("name"), err
                 )
                 continue
+            if not current():
+                return
             runtime.phonebook_delivered_roster[service_name] = roster_json
             _LOGGER.info(
                 "Phonebook JSON pushed to %s via esphome.%s",

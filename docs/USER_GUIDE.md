@@ -11,6 +11,8 @@ phones. For the difference between a phone, card, contact and trunk, see
 | I want to... | Start here |
 | --- | --- |
 | Choose which phone places a call | [Calling phone picker](#choose-the-calling-phone-in-the-editor) |
+| Choose a card or Dashboard | [Available card views](#choose-a-card-view) |
+| Receive a popup over another HA view | [Global call popups](#receive-calls-over-other-home-assistant-views) |
 | Add a provider or another PBX | [SIP trunks](#configure-a-trunk) |
 | Send an unanswered call somewhere else | [Ringing timeout and forwarding](#choose-what-happens-when-nobody-answers) |
 | Move an answered call to someone else | [Transfer a call](#forward-or-transfer-a-call) |
@@ -20,9 +22,14 @@ phones. For the difference between a phone, card, contact and trunk, see
 | React when a phone rings or its mailbox changes | [Native automation tools](#phone-state-in-automations) |
 
 The screenshots use Home Assistant's visual editors. Choose phones by their
-names; HA stores the identifiers for you. The new PBX actions described here
-are included in the current **2026.11.0** release. If an action is missing
-after redownloading the same version, restart HA and reload the browser.
+names; HA stores the identifiers for you.
+
+**Release scope:** stable **2026.11.0** includes compact phone cards, routing,
+groups, voicemail, recording, parking, pickup and SIP BLF/MWI. The Dashboard,
+global popups, persistent LDAP directory and managed ESP registration described
+here require **2026.11.1-dev** and matching preview firmware where applicable.
+Choose the intended release in HACS, restart HA and refresh its frontend after
+an update. The [changelog](../CHANGELOG.md) retains release history.
 
 ## Install Home Assistant VoIP Stack
 
@@ -54,11 +61,125 @@ After saving, the card controls the phone you selected. Incoming calls for that 
 move every connected card bound to the same Device to `ringing`. The browser
 that answers becomes the media owner.
 
+### Choose a card view
+
+The visual card picker exposes two public card types: **VoIP Stack Card** and,
+in the preview, **VoIP Dashboard**. Choose the existing phone by name in the
+visual editor. The compact `custom:voip-stack-card` has three modes:
+
+| Mode | Select | Media owner |
+| --- | --- | --- |
+| `ha_softphone` | An existing logical HA phone | The answering browser or Companion session |
+| `esp_mirror` | An existing physical ESPHome phone | The ESP phone |
+| `phonebook` | Shared directory, without another phone | No separate media session |
+
+The `custom:voip-stack-dashboard-card` uses one selected `device_id`, with no
+mode field. It combines extension status, contacts and the selected HA or ESP
+phone's call controls. Its visual editor asks for **Calling phone**. Its saved
+YAML has this shape:
+
+```yaml
+type: custom:voip-stack-dashboard-card
+device_id: <phone_device_id>
+```
+
+Choose the phone by name in the visual editor. See the
+[Dashboard demo at the top of the README](../README.md#voip-stack-for-home-assistant-and-esphome).
+
+The phonebook mode shows the shared contacts without creating another phone.
+Select a contact from a phone's card to use it as the destination.
+
+![Shared phonebook with demo room phones and a door station](images/phone-cards/phonebook.png)
+
+### Browser-phone availability
+
+An enabled Home Assistant phone keeps its extension available when its cards
+are closed. Incoming calls can ring logically, run call automations and follow
+the phone's no-answer rule. Open a card during ringing to answer the same call;
+the answering browser supplies its microphone and speaker with the normal
+permissions. Opening a card does not re-enable a disabled phone.
+
+Browser audio and auto-answer still need a running receiving HA frontend,
+with a card loaded or the optional global popup enabled. A logical phone alone
+cannot supply a microphone or answer calls by itself.
+
+### Receive calls over other Home Assistant views
+
+The **2026.11.1-dev** preview includes optional global call popups for an
+existing HA browser phone. This is a browser setting, not another card type
+or another phone to provision.
+
+1. Open the intended phone under **Settings > Devices & services > VoIP Stack**
+   and choose **Visit** on its Device page. Alternatively, open the phone
+   card's **Options > Call popups**.
+2. Select the existing **Home Assistant phone**.
+3. Enable **Receive call popups on this device** and choose **Save**.
+4. Allow microphone access and enable browser audio when prompted. Allow
+   camera access only if you want to transmit video.
+
+<table>
+  <tr>
+    <td width="50%"><img src="images/voip-popup-settings.png" alt="Enable call popups for an existing Home Assistant phone"/></td>
+    <td width="50%"><img src="images/voip-popup-ringing.png" alt="Incoming call displayed over another Home Assistant view"/></td>
+  </tr>
+</table>
+
+The choice persists in this browser or Companion app. Repeat it on each
+receiving device. There is no HA user-to-phone mapping. Finish the current
+call before choosing a different popup phone.
+
+To turn popups off, clear **Receive call popups on this device** and save.
+The selected phone is remembered together with the disabled preference.
+Reloading a view, reconnecting to HA or restarting HA does not enable it again.
+Other tabs at the same HA address follow the saved choice. This controls popup
+presentation only; it does not change the phone's DND/Auto Answer settings or
+hang up media already owned by a phone card.
+
+Incoming calls now open over other HA views, including views without a phone
+card. The popup uses the same call controls and media as that phone's card.
+
+| Action | Result |
+| --- | --- |
+| X, Esc or Back | Minimize the active call; audio continues during a connected call. |
+| Tap the small caller/timer bar | Reopen the same call. |
+| Decline while ringing | Reject the identified incoming call. |
+| Hang up while connected | End the call and release its media. |
+
+<img src="images/voip-popup-minimized.png" width="113" alt="Minimized call with caller, duration and explicit hangup control"/>
+
+<details>
+<summary>Video popup demonstration</summary>
+
+![Video in the global call popup](images/voip-popup-video-demo.png)
+
+Doorbell video-call demonstration in the global popup, using an illustrative
+gate-camera feed.
+
+</details>
+
+Keep the HA frontend running. Browser permissions and mobile background
+suspension still apply. In the Companion app this runs inside the existing
+WebView, without a native operating-system call channel. Use the
+[notification recipe](AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+to open and answer a particular ringing call. To send callers to Assist or
+another destination, choose a routing automation before terminating the call.
+
+For a OnePlus phone, the Companion notification's **Answer** action can open
+an existing dashboard view containing the **Casa** HA phone card. Global
+popups may remain disabled. Allow the Companion microphone permission; if
+the WebView still requests a tap to activate audio, use **Answer** on that
+card. The browser prepares its media before sending Answer to HA. A successful
+notification delivery alone does not mean that a background microphone or
+an Android call service is running.
+
 ## Read the phone card
 
-The same icons are used in audio and video mode.
+The same icons are used in audio and video mode. The compact-card screenshots
+use the Frosted Glass Dark theme with demo contacts and illustrative call states.
 
-![Idle phone with keypad and options icons](images/pbx-phone-idle-green.png)
+![Idle phone with keypad and options icons](images/phone-cards/softphone-idle.png)
+
+![Incoming call with Answer and Decline controls](images/phone-cards/softphone-ringing.png)
 
 | Control | What it does |
 | --- | --- |
@@ -69,11 +190,28 @@ The same icons are used in audio and video mode.
 | Options (sliders) | Open this phone's answer, DND, mailbox, audio/video and routing settings. |
 | Call / Hang up | Start the selected call or end the current conversation. In video mode, use the handset icon in the translucent bottom bar. |
 
-![Phone options on the same green-themed dashboard](images/pbx-phone-options-green.png)
+![Phone options with audio, video and routing settings](images/phone-cards/softphone-options.png)
 
 Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
-video. Disabling **Enable this phone's mailbox** deletes its messages and settings.
+video. For example, a dashboard phone with Send Camera off can call a Companion
+phone and receive its camera when that phone answers with Send Camera on.
+Disabling **Enable this phone's mailbox** deletes its messages and settings.
+
+For a browser phone, Options also selects the microphone, speaker and camera.
+These device selections are shared by the cards in that browser or Companion
+session. Leaving a selector unset keeps the current choice. During a call,
+the tune button beside Hang up opens these controls, so you can change a headset
+or camera without ending the call. Speaker routing depends on browser support;
+otherwise choose the output in the operating system.
+
+**Microphone anti-alias filter** is enabled by default and saved per browser and
+logical phone. A change takes effect when the next call opens its microphone.
+The filter adds processing only when the negotiated transmit sample rate is
+lower than the browser's capture rate. It is separate from the ESP's AEC/AFE
+configuration. DND, Auto Answer and default Send Camera belong to the phone in
+HA; browser device selection, ringtone and microphone filtering are local
+preferences.
 
 Occupied parking slots appear as a left-aligned bullet list. Other phones that
 are calling, ringing or busy appear on the right, with the bullets at the right
@@ -88,19 +226,18 @@ Empty lists occupy no space. They are hidden while
 the keypad, options or video view needs that space. Voicemail stays in its own
 button and is not duplicated in these lists.
 
-![An established audio call, with Parking available](images/pbx-phone-audio-call-green.png)
+![An established audio call, with Parking available](images/phone-cards/softphone-call.png)
 
 The keypad closes when you start or answer a call. Open it again if an IVR or
 door station needs DTMF. On short video cards it scrolls above the call bar.
 
-![Live video received from a Mobotix door station](images/pbx-mobotix-video-green.png)
-
-This is a real call through a FreeSWITCH-based PBX with the local webcam off.
-The image arrives from the door station. **P is disabled during video calls**:
+The [historical MOBOTIX video-call capture](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/pbx-mobotix-video-green.png)
+shows video received from a real door station in the VoIP Stack Home Assistant
+card. **P is disabled during video calls**:
 parking currently supports audio calls. Switching off Send Camera alone does
 not make a call audio-only when the peer is sending video.
 
-![DTMF keypad open during the same video call](images/pbx-mobotix-keypad-green.png)
+![DTMF keypad open during a call](images/phone-cards/softphone-dtmf.png)
 
 For parking and retrieval, follow the [parking walkthrough](CALL_PARKING.md).
 For forwarding, ringing timeouts, mailbox setup and line selection, see
@@ -214,6 +351,12 @@ hangup_call
 An ESP mirror card selects the existing ESPHome Device. VoIP Stack does not
 create or own a duplicate Device.
 
+![ESP mirror card ready to call Home Assistant](images/phone-cards/esp-mirror.png)
+
+The ESP owns its microphone and speaker; the receiving browser phone owns its
+browser media. See the [ESP deployment guide](DEPLOYMENT_GUIDE.md#esp-devices)
+for device profiles and the distinction between local Assist and SIP calling.
+
 ## Make local calls
 
 The destination may be a phonebook name, extension, group, SIP URI or public
@@ -285,9 +428,12 @@ explicit SIP addresses remain usable while you resolve the conflict.
    username and generated password.
 4. Use UDP or TCP according to the account and network configuration.
 
-The registered client appears in the central phonebook while at least one
-Contact binding is active. Account passwords are returned only by the account
-management action and are not placed in entity state.
+The account supplies a persistent phone identity in the preview directory.
+Its active REGISTER Contact binding supplies the current SIP destination;
+registration expiry makes that route unavailable without deleting the account,
+extension, mailbox or directory identity. See the [directory contract](PHONEBOOK_PROTOCOL.md).
+Generated account passwords are returned by the account-management action and
+are not placed in entity state.
 
 ## Configure groups
 
@@ -306,8 +452,17 @@ Open **VoIP Stack > Reconfigure**, enable **Include voice assistant**, choose a
 pipeline and assign an extension. Assist then becomes a normal phonebook
 destination.
 
-Hanging up terminates the Assist media leg and its active pipeline work. It
-does not leave a listening call session behind.
+By default, the call starts listening without an opening text message.
+Enabling **Provide advanced call details to the assistant** adds one initial
+user text turn, such as `Incoming SIP call from "Kitchen".`, with caller ID,
+phonebook match, source and called extension. These are untrusted call metadata,
+not authentication or instructions. VoIP Stack does not add a persistent
+personality prompt; put behavioral instructions in the conversation agent.
+
+Calling this extension uses the selected HA Assist pipeline. It does not start
+or replace the local Voice Assistant on a full-experience ESP. Hanging up
+terminates the Assist media leg and its active pipeline work; it does not leave
+a listening call session behind.
 
 ## Dahua door stations
 
@@ -362,7 +517,7 @@ Open the phone's card and choose **Options > Call routing**. These are the
 phone's settings in the backend: they still apply when its card is closed.
 The ESP mirror card exposes the same phone-routing policy.
 
-![Phone routing options, including an optional ringing timeout](images/pbx-phone-routing-green.png)
+![Phone routing options, including an optional ringing timeout](images/phone-cards/softphone-routing.png)
 
 For a phone that should ring for 20 seconds and then take a message:
 
@@ -402,7 +557,7 @@ examples](PHONE_ROUTING.md).
 4. On success, your phone becomes free. If the transfer fails, read the error
    and keep using the existing call; do not assume the destination answered.
 
-![Choose a destination in the card's transfer view](images/phone-transfer-dark.png)
+![Choose a destination in the card's transfer view](images/phone-cards/softphone-transfer.png)
 
 The card reuses the same contact and keypad view as normal dialing. Opening the
 transfer view does not send the call anywhere until you confirm.
@@ -421,6 +576,11 @@ support REFER with Replaces. The destination retains its answered SIP dialog;
 it is not called a second time. On failure, use the handset's normal resume or
 hangup controls. SIP consultation calls can coexist; browser and ESP controls
 retain their single-call behavior.
+
+A SIP handset can hang up its original call before receiving the final transfer
+result. HA keeps the transfer notification active until that result is delivered,
+using the original SIP account or trusted trunk when authentication is requested.
+Revoking that account or registration still prevents further authenticated retries.
 
 In an HA automation, choose **VoIP Stack: Transfer call** and the destination.
 Native VoIP call triggers supply the current call. For a manually configured
@@ -475,6 +635,8 @@ to see the callers and recording dates. Select a message to listen; use its
 Delete control to delete that message. The softphone calls the same voicemail
 menu used by a SIP handset and sends the keypad commands. Its list remains open.
 
+![Mailbox messages with playback and Delete controls](images/phone-cards/softphone-voicemail.png)
+
 | From a phone connected to this PBX | What happens |
 | --- | --- |
 | Dial `*97`, or configure the handset's voicemail key to use it | Open that identified phone's own mailbox without a PIN |
@@ -517,6 +679,11 @@ and online presence, which uses `presence`. Removing the monitored phone ends
 its BLF subscription with `noresource`. Subscriptions can request up to one hour
 and must refresh before expiry.
 
+Logical HA phones can be monitored in the same way as registered SIP phones.
+Closing their card does not make the logical phone unavailable. LDAP supplies
+contact identities and destinations; live availability and call activity arrive
+through the standard SIP subscriptions above.
+
 ## Parking and picking up calls
 
 ### Continue a conversation on another phone
@@ -525,13 +692,13 @@ Parking is available by default. During an audio call,
 press **P** on the card. The phone is released and the left-hand list shows the
 assigned slot, for example **701**.
 
-![The occupied slot shown after parking a call](images/pbx-phone-parked-green.png)
+![The occupied slot shown after parking a call](images/phone-cards/softphone-parked.png)
 
 On the phone where you want to continue, open the keypad, enter **701** and
 press **Call**. The original card can retrieve it too. The slot disappears when
 the conversation resumes.
 
-![Dial the assigned slot from the receiving phone](images/pbx-phone-pickup-green.png)
+![Dial the assigned slot from the receiving phone](images/phone-cards/softphone-retrieve.png)
 
 A SIP handset can park by transferring to **700** instead of pressing P.
 **These are two ways to park, not two steps.** Once parked, call the reported

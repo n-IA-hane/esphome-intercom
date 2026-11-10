@@ -2,7 +2,11 @@
 
 from .endpoint_lifecycle import call_registry
 from .media_offer_answer import validate_direct_video_reoffer
-from .media_session_updates import commit_audio_session_update, commit_video_session_update
+from .media_session_updates import (
+    commit_audio_session_update,
+    commit_video_session_update,
+    committed_video_format_state,
+)
 from .runtime_data import require_runtime_data
 from .sip_client import PreparedDialogMediaUpdate
 from .websocket_api import _ha_softphone_store, _fire_call_event
@@ -83,19 +87,7 @@ def attach_browser_dialog_updates(hass, client, endpoint_id, source_device_id, *
                             else "inactive"
                         ),
                         "video_failure_reason": "",
-                        "video_format": (
-                            updated_video.wire_token() if updated_video else ""
-                        ),
-                        "video_send_format": (
-                            updated.send_video_format.wire_token()
-                            if updated.send_video_format is not None
-                            else ""
-                        ),
-                        "video_receive_format": (
-                            updated.recv_video_format.wire_token()
-                            if updated.recv_video_format is not None
-                            else ""
-                        ),
+                        **committed_video_format_state(updated),
                         "video_direction": updated.local_video_direction,
                         "video_connection_held": updated.remote_video_connection_held,
                         "last_sip_event": method,

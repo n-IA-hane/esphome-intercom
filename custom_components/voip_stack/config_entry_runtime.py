@@ -15,9 +15,12 @@ from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
 from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     CONF_ESPHOME_PHONE_POLICIES,
+    CONF_PHONE_KIND,
+    CONF_PHONE_SEND_VIDEO,
     phone_subentries,
     sync_registry_from_entry,
 )
+from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import runtime_data, sip_registrar
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
@@ -40,6 +43,10 @@ async def async_refresh_phonebook_sensor(hass: HomeAssistant) -> None:
 
 async def async_current_roster_json(hass: HomeAssistant) -> str:
     runtime = runtime_data(hass)
+    if runtime is not None and runtime.directory is not None and not runtime.directory.closed:
+        from .roster import dump_roster_json
+
+        return dump_roster_json(list(runtime.directory.snapshot()))
     sensor = runtime.phonebook_sensor if runtime is not None else None
     if sensor is not None:
         return str(sensor.extra_state_attributes.get("roster_json", "") or "")
@@ -50,7 +57,15 @@ async def async_current_roster_json(hass: HomeAssistant) -> str:
 
 
 async def async_refresh_and_push_phonebook(hass: HomeAssistant) -> None:
+    runtime = runtime_data(hass)
+    if runtime is not None and runtime.phonebook_sensor is None:
+        from .directory_runtime import async_refresh_directory
+
+        if await async_refresh_directory(hass) is None:
+            return
     await async_refresh_phonebook_sensor(hass)
+    if runtime_data(hass) is not runtime:
+        return
     roster_json = await async_current_roster_json(hass)
     await push_roster_json_to_esps(hass, roster_json)
 
@@ -75,6 +90,8 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             EXTERNAL_CALL_BLOCKED_ENDPOINTS, CONF_ESPHOME_PHONE_POLICIES,
             "default_trunk_id",
             "esphome_mailboxes", "voicemail", "parking",
+            "managed_esphome_phones",
+            "phone_services",
         }
     }
 
@@ -88,6 +105,27 @@ def entry_phone_signature(entry: ConfigEntry) -> tuple:
             phone_subentries(entry), key=lambda item: item.subentry_id
         )
     )
+
+
+def _only_browser_camera_send_changed(previous: tuple, current: tuple) -> bool:
+    """Camera transmission intent does not change the public directory."""
+    if len(previous) != len(current):
+        return False
+    changed = False
+    for (old_id, old_title, old), (new_id, new_title, new) in zip(previous, current):
+        if (old_id, old_title) != (new_id, new_title):
+            return False
+        if old == new:
+            continue
+        if old.get(CONF_PHONE_KIND) != EndpointKind.BROWSER.value:
+            return False
+        if (
+            {key: value for key, value in old.items() if key != CONF_PHONE_SEND_VIDEO}
+            != {key: value for key, value in new.items() if key != CONF_PHONE_SEND_VIDEO}
+        ):
+            return False
+        changed = True
+    return changed
 
 
 async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -130,6 +168,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         lot.slots = tuple(settings["slots"])
     from .trunk_runtime import async_reconcile_trunks
     await async_reconcile_trunks(hass, entry)
+    from .phone_services import async_reconcile_phone_services
+    await async_reconcile_phone_services(hass, entry)
 
     phones_changed = previous_phones is not None and previous_phones != phone_signature
     contacts_changed = (
@@ -179,7 +219,10 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (
             manual_roster_entries(hass)
         )
-    if phones_changed or contacts_changed:
+    directory_phones_changed = phones_changed and not _only_browser_camera_send_changed(
+        previous_phones, phone_signature
+    )
+    if directory_phones_changed or contacts_changed:
         await async_refresh_and_push_phonebook(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)
@@ -212,7 +255,10 @@ def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
 async def _async_restore_phonebook_service(hass: HomeAssistant, service: str) -> None:
     """Rehydrate one restarted ESP without republishing to every phone."""
 
+    runtime = runtime_data(hass)
     await async_refresh_phonebook_sensor(hass)
+    if runtime_data(hass) is not runtime:
+        return
     roster_json = await async_current_roster_json(hass)
     await push_roster_json_to_esps(
         hass,

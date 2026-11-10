@@ -29,127 +29,10 @@ time:
 text_sensor:
 - id: text_request
   platform: template
-  on_value:
-    then:
-    - lambda: |-
-        static constexpr size_t kRoundTextRows = 10;
-        const std::string &text = x;
-        lv_obj_t* lines[] = {
-          id(think_line_0), id(think_line_1), id(think_line_2), id(think_line_3), id(think_line_4),
-          id(think_line_5), id(think_line_6), id(think_line_7), id(think_line_8), id(think_line_9)
-        };
-        for (size_t i = 0; i < kRoundTextRows; i++) lv_label_set_text(lines[i], "");
-        if (text == "...") return;
-        std::vector<std::string> words;
-        words.reserve(text.size()/5);
-        size_t start = 0;
-        for (size_t i = 0; i <= text.size(); ++i) {
-          if (i == text.size() || text[i] == ' ' || text[i] == '\n' || text[i] == '\r' || text[i] == '\t') {
-            if (i > start) words.push_back(text.substr(start, i - start));
-            start = i + 1;
-          }
-        }
-        if (words.empty()) return;
-        const auto &chords = id(chord_widths_cache);
-        const size_t total_rows = kRoundTextRows;
-        const lv_font_t *font = lv_obj_get_style_text_font(id(think_line_0), LV_PART_MAIN);
-        // Start from middle of display (row total_rows/2 - 3)
-        size_t start_row = total_rows / 2 - 3;
-        if (start_row >= total_rows) start_row = 0;
-        // lines[] already cleared above
-        size_t row = start_row;
-        size_t word_idx = 0;
-        const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;  // ~60% of line height
-        while (row < total_rows && word_idx < words.size()) {
-          const int chord_w = chords[row];
-          if (chord_w <= 0) { row++; continue; }
-          const size_t sw = word_idx;
-          std::string line;
-          line.reserve(chord_w / avg_char_w);
-          while (word_idx < words.size()) {
-            const auto &word = words[word_idx];
-            std::string candidate = line.empty() ? word : (line + ' ' + word);
-            if ((int)(candidate.length() * avg_char_w) > chord_w) {
-              lv_point_t size;
-              lv_text_get_size(&size, candidate.c_str(), font, 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
-              if (size.x > chord_w) {
-                if (word_idx == sw) { line = word; word_idx++; }
-                break;
-              }
-            }
-            line = candidate;
-            word_idx++;
-          }
-          if (word_idx > sw) lv_label_set_text(lines[row], line.c_str());
-          row++;
-        }
+  on_value: "${ [{'then': _round_text_request_actions}] if _fw_voice else [] }"
 - id: text_response
   platform: template
-  on_value:
-    then:
-    - lambda: |-
-        static constexpr size_t kRoundTextRows = 10;
-        // Skip redundant "..." during replying phase (label text set by update_replying_text)
-        if (x == "..." && id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
-          return;
-        }
-        const std::string &text = x;
-        std::vector<std::string> words;
-        words.reserve(text.size()/5);
-        size_t start = 0;
-        for (size_t i = 0; i <= text.size(); ++i) {
-          if (i == text.size() || text[i] == ' ' || text[i] == '\n' || text[i] == '\r' || text[i] == '\t') {
-            if (i > start) {
-              words.push_back(text.substr(start, i - start));
-            }
-            start = i + 1;
-          }
-        }
-        id(reply_page_index) = 0;
-        id(wrapped_lines_reply).clear();
-        id(reply_total_pages) = 1;
-        if (words.empty()) return;
-        const auto &chords = id(chord_widths_cache);
-        const size_t total_rows = kRoundTextRows;
-        const lv_font_t *font = lv_obj_get_style_text_font(id(reply_line_0), LV_PART_MAIN);
-        const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;
-        size_t word_idx = 0;
-        size_t safety = 0;
-        size_t line_count = 0;
-        while (word_idx < words.size() && safety++ < words.size() * 2) {
-          int row = line_count % total_rows;
-          const int chord_w = chords[row];
-          if (chord_w <= 0) { id(wrapped_lines_reply).push_back(""); line_count++; continue; }
-          const size_t start_word = word_idx;
-          std::string line;
-          line.reserve(chord_w / avg_char_w);
-          while (word_idx < words.size()) {
-            const auto &word = words[word_idx];
-            std::string candidate = line.empty() ? word : (line + ' ' + word);
-            if ((int)(candidate.length() * avg_char_w) > chord_w) {
-              lv_point_t size;
-              lv_text_get_size(&size, candidate.c_str(), font, 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
-              if (size.x > chord_w) {
-                if (word_idx == start_word) { line = word; word_idx++; }
-                break;
-              }
-            }
-            line = candidate;
-            word_idx++;
-          }
-          if (word_idx > start_word) {
-            id(wrapped_lines_reply).push_back(line);
-            line_count++;
-          }
-        }
-        while (!id(wrapped_lines_reply).empty() &&
-               (id(wrapped_lines_reply).size() % kRoundTextRows) != 0) {
-          id(wrapped_lines_reply).push_back("");
-        }
-        line_count = id(wrapped_lines_reply).size();
-        id(reply_total_pages) =
-            (line_count + kRoundTextRows - 1) / kRoundTextRows;
-        if (id(reply_total_pages) < 1) id(reply_total_pages) = 1;
+  on_value: "${ [{'then': _round_text_response_actions}] if _fw_voice else [] }"
 interval:
 - interval: 30s
   then:
@@ -179,9 +62,6 @@ globals:
   type: int
   restore_value: false
   initial_value: '1'
-- id: wrapped_lines_reply
-  type: std::vector<std::string>
-  restore_value: false
 - id: chord_widths_cache
   type: std::array<int16_t, 10>
   restore_value: false
@@ -207,8 +87,15 @@ script:
         lv_indev_wait_release(input);
       }
       if (id(g_ota_in_progress) || id(init_in_progress) ||
-          ${ 'id(phone).is_active()' if _round_has_phone else 'false' } ||
           ${ 'id(runtime).is_activity_active("timer_ringing")' if _round_has_timers else 'false' }) return;
+      ${ ('if (id(phone).is_in_call() && id(voip_dialer_active) && delta < 0) {\n'
+          '  id(voip_dialer_active) = false;\n'
+          '  id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;\n'
+          '  id(nav_anim_ms) = 300;\n'
+          '  id(draw_display).execute();\n'
+          '  return;\n'
+          '}') if _round_has_phone else '' }
+      if (${ 'id(phone).is_active()' if _round_has_phone else 'false' }) return;
       if (delta == 0) return;
 
       // These are positions in the visible sequence, derived from the
@@ -263,9 +150,6 @@ script:
       id(runtime_visual_source) = mood == id(mood_happy) ? 2 :
                                   mood == id(mood_angry) ? 3 : 1;
       id(runtime_response_text_ready) = !t.empty();
-  - globals.set:
-      id: reply_page_index
-      value: '0'
   - script.stop: reply_pagination_timer
   - script.stop: backlight_timer
   - light.turn_on:
@@ -285,7 +169,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _round_draw_base + (_round_draw_phone_tail if _round_has_phone else []) + (_round_draw_timer_tail if
-    _round_has_timers else []) }
+    _round_has_timers else []) + (_voicemail_draw if _round_has_phone and 'mwi' in firmware_features else []) }
 - id: switch_to_va
   then:
   - lambda: !lambda |-
@@ -310,6 +194,22 @@ switch:
   on_turn_off:
   - script.execute: draw_display
 packages:
+  round_text: !include
+    file: ${ 'round_text.yaml' if _fw_voice else '../shared/absent.yaml' }
+  visibility: !include
+    file: visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: true
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _round_has_phone and 'mwi' in firmware_features else '' }
+  phone_presentation: !include
+    file: ${ 'phone.yaml' if _round_has_phone else '../shared/absent.yaml' }
+    vars:
+      _adaptive_phone_contacts: true
+      _voicemail_y: 70%
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj)${ (' && id(voice_assistant_phase) == ' ~ voice_assist_idle_phase_id) if 'voice' in firmware_features else '' }
+      _keypad_idle_reset: id(voip_dial_length) = 0; id(voip_dial_buffer)[0] = 0;
+      _keypad_idle_text: 'id(voip_dial_length) == 0 ? "Number / extension" : id(voip_dial_buffer).data()'
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'
@@ -319,6 +219,8 @@ packages:
   artwork: ${ _round_artwork if _fw_sendspin else {} }
   content: !include 'round_content.yaml'
 defaults:
+  _visibility_has_avatar: true
+  _visibility_has_pagination: true
   _round_navigation_up:
   - script.execute:
       id: round_navigate
@@ -378,6 +280,7 @@ defaults:
         }
       }
 
+      ${ _round_video_route | default('') }
       if (target == nullptr) return;
 
       const char* page_name = "unknown";
@@ -394,6 +297,7 @@ defaults:
       ${ _round_name_call_in_call_page if _round_has_phone else '' }
       ${ _round_name_call_ended_page if _round_has_phone else '' }
       ${ _round_timer_name if _round_has_timers else '' }
+      ${ _round_name_video_page | default('') }
       id(runtime_rendered_page) = page_name;
 
       // Skip page load if already showing (avoids redundant SPI transfer)
@@ -419,7 +323,8 @@ defaults:
       // The VA idle animation is stopped before page switches. Start the
       // idle animation loop immediately when VA idle becomes the visible
       // page, instead of waiting for the template binary_sensor refresh.
-      if (target == id(idle_page)->obj) {
+      id(display_visibility).reconcile();
+      if (target == id(idle_page)->obj && id(display_visibility).is_visible(id(idle_anim))) {
         if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
       } else if (id(ai_animation_loop).is_running()) {
         id(ai_animation_loop).stop();
@@ -437,7 +342,8 @@ defaults:
           target != id(replying_page)->obj &&
           target != id(thinking_page)->obj &&
           target != id(settings_continuous_page)->obj &&
-          ${ 'target != id(call_dialer_page)->obj' if _round_has_phone else 'true' };
+          ${ _round_video_status_allowed | default('true') } &&
+          ${ '(target != id(call_dialer_page)->obj)' if _round_has_phone else 'true' };
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);

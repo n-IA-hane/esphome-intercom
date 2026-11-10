@@ -6,8 +6,10 @@ experimental and untested profiles are listed separately; appearing in this
 directory does not by itself mean that a board has passed hardware testing.
 
 The one-device-package layout and `firmware_features` examples describe the
-current development tree. Use the YAML, packages and components from the matching
-coordinated revision. Downloading an older stable YAML does not add this layout.
+selected source tree. Stable 2026.11.0 and the current preview have distinct
+capabilities; keep the YAML, packages and components from one matching
+coordinated revision. Updating documentation does not add optional registration,
+LDAP or receive video to an older binary.
 
 ## Choose a starting point
 
@@ -31,6 +33,13 @@ provides `audio_processor`, `mic_mix` and `voip_transport` substitutions. Start
 there to choose AEC/AFE, separate/averaged microphones and SIP UDP/TCP without
 copying hardware or application wiring. Read the [choice table](../packages/README.md#choose-processing-and-sip-on-waveshare-box-v2)
 before changing processing; V1 is a different board.
+
+For a dedicated telephone on the same BOX V2 hardware, use the
+[VoIP-only YAML](voip-only/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-voip.yaml).
+It includes the touch phone interface, shared directory, BLF and voicemail
+indicators, with Opus enabled. Its mono AEC receives the averaged microphones.
+The FULL profile keeps PCM and optional G.722 for calls alongside Assist, wake
+words and media playback. Choose the profile for the job you need.
 
 ## How to use
 
@@ -138,17 +147,21 @@ reusable opt-in debug packages can live under `packages/debug/`.
 
 ## Product mode
 
-Each ESP flashed with these YAMLs is an independent SIP phone on the local
-fabric. Same-transport devices can call each other directly when the HA-managed
-roster provides complete direct SIP endpoint data. Names, numbers and
-cross-transport routes go to HA, which is the stable roster authority and SIP
-bridge/B2BUA.
+Each ESP flashed with these YAMLs is an independent SIP phone. Its selected
+account/line and resolved directory record determine whether a destination is
+called through HA or directly. A direct peer route needs a compatible SIP
+transport and usable destination; HA can bridge separately negotiated UDP and
+TCP legs. A friendly name alone does not decide which path is used.
 
-There is one product mode: SIP-only phone mode. Phonebook, contacts,
-destination and caller entities are always exposed. `transport: udp` selects
+VoIP uses standard SIP rather than the retired proprietary intercom protocol.
+Its native HA interface exposes phonebook, destination and caller entities when
+that interface is enabled; standalone firmware can omit it. `transport: udp` selects
 SIP/UDP signaling and `transport: tcp` selects SIP/TCP signaling; audio remains
 RTP/UDP in the current profile. Static contacts are optional local entries for
-offline/custom installs; normal shared routing comes from `sensor.voip_phonebook`.
+offline/custom installs. Current managed profiles enroll their HA account
+privately through ESPHome and obtain shared contacts through LDAP. BLF/presence
+and MWI use separate SIP subscriptions; the public phonebook sensor and JSON
+action remain compatibility projections. See [ESP/HA integration](../docs/ESP_ENTITY_SURFACE.md).
 
 ## Select firmware features
 
@@ -177,8 +190,9 @@ Public YAMLs ship with `logger.level: INFO`. INFO covers all user-visible call-l
 ## P4 status
 
 Waveshare P4 Touch YAMLs build and boot with the maintained audio/LVGL state
-model, FD high-perf AFE defaults and the current ESPHome/ESP-Hosted baseline.
-The following profiles have distinct, qualified media roles:
+model, SR high-performance FULL AFE defaults and their selected ESPHome/ESP-Hosted
+baseline. The following profiles configure distinct media roles; historical
+qualification applies only to the identified firmware, hardware and workload:
 
 - [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml)
   combines bidirectional RTP/JPEG, the native Home Assistant camera,
@@ -188,20 +202,22 @@ The following profiles have distinct, qualified media roles:
 - [`waveshare-p4-touch-videophone-h264.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml)
   is the lightweight bidirectional H.264 videophone.
 
-The full SIP/JPEG profile suspends an enabled Wake Word switch only while
-negotiated video media is active, then restores the user's previous state.
+The full SIP/JPEG profile pauses the wake-word recognizer only while
+negotiated video media is active. It never changes the stored Wake Word choice;
+normal readiness conditions decide whether recognition resumes afterward.
 Audio-only calls leave Wake Word unchanged. Treat P4 as a hardware-specific
 target: hosted Wi-Fi/SDIO firmware, LVGL/PPA, media transport and task
 scheduling matter more on P4 than on compact S3 boards.
 
-If a P4 target resets, hangs, or loses Wi-Fi under media/TTS streaming, update
-the on-board ESP32-C6 hosted Wi-Fi firmware before chasing audio bugs. The
-root README's P4 section documents the validated recovery path: use a P4
-`esp-serial-flasher` SDIO-ROM recovery flasher, short the C6 `IO9` pad to `GND` while
-the flasher boots, program the C6 `network_adapter` firmware, then reflash the
-normal ESPHome P4 YAML. Current P4 packages also enable ESPHome's native
-`esp32_hosted` update entity for future C6 updates once the coprocessor is on a
-modern firmware.
+For a reset, hang or Wi-Fi failure, preserve the exact firmware identity,
+boot/reset log and hosted-MCU version before changing the device. Check the
+[P4 hardware guide](../docs/P4_HARDWARE_AND_MEDIA.md) and the selected SDK's
+ESP-Hosted compatibility requirement. A C6 update or ROM recovery is a response
+to an identified need, not the first generic fix for an audio failure.
+
+Supported S3 FULL displays also have a JPEG receive path, separately from S3
+camera transmission. See the [media roles](../docs/SIP_VIDEO.md#esp32-s3-receive-display);
+a camera profile alone does not supply a receive display or H.264 decoder.
 
 ## Local development vs release mode
 
@@ -228,8 +244,11 @@ Use `dev`, a tag or a temporary branch name instead of `main` only when that ref
 exists in every managed project repository. The script applies the same ref;
 it does not create branches or tags. The camera repository keeps its upstream
 `main`, and the official Voice PE base keeps its own pinned revision. In local
-mode, managed component sources use sibling checkouts. Review `git diff` after
-switching, and follow the release's coordinated source manifest when provided.
+mode, managed component sources use sibling checkouts. The helper does not
+manage every renderer, screenshot or IDF override. Follow the
+[complete preview source selection](../docs/DEPLOYMENT_GUIDE.md#development-preview-firmware)
+and inspect those additional substitutions explicitly. Review `git diff` after
+switching and keep the release's coordinated source manifest when provided.
 
 ## Not sure which one to pick?
 

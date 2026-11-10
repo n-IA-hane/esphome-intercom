@@ -19,6 +19,7 @@ FIXTURES = ROOT / "tests/fixtures/playback_diagnostics"
 
 @pytest.mark.skipif(not os.environ.get("PLAYBACK_DIAGNOSTICS_COMPILE_COMMANDS"),
                     reason="Target assembly guard requires an explicit existing Xtensa compile database")
+@pytest.mark.diagnostic_reference
 def test_real_xtensa_progress_has_no_atomic_helper_or_lock(tmp_path):
     database = Path(os.environ["PLAYBACK_DIAGNOSTICS_COMPILE_COMMANDS"])
     entry = next((item for item in json.loads(database.read_text())
@@ -206,6 +207,13 @@ int main(int argc, char **argv) {
     assert(test_logs.empty());
     r.observer.dump("progress");
     r.flush();
+  } else if (scenario == "clock_domains") {
+    test_now = 10000;
+    test_esp_time_us = 207000;
+    r.tts.emit(160, 200000);
+    r.hardware.emit(480, 200000);
+    r.observer.dump("progress");
+    r.flush();
   } else if (scenario == "public_states") {
     r.source.state = media_source::MediaSourceState::PLAYING;
     r.tts.stopped = false;
@@ -244,7 +252,7 @@ def observer_binary(tmp_path_factory, request):
     headers = (
         "esphome/core/component.h", "esphome/core/hal.h", "esphome/core/helpers.h",
         "esphome/core/log.h", "esphome/core/defines.h", "esphome/core/automation.h",
-        "esphome/core/version.h", "esp_app_desc.h",
+        "esphome/core/version.h", "esp_app_desc.h", "esp_timer.h",
         "esphome/components/speaker/speaker.h", "esphome/components/media_source/media_source.h",
         "esphome/components/media_player/media_player.h",
         "esphome/components/speaker_source/speaker_source_media_player.h",
@@ -300,6 +308,12 @@ def test_progress_is_aggregated_without_realtime_logging(observer_binary):
     assert "48000" in output
     assert "160" in output
     assert "480" in output
+
+
+def test_progress_age_uses_completion_clock_not_rtos_clock(observer_binary):
+    output = run_observer(observer_binary, "clock_domains")
+    assert output.count("age_ms=7 ") == 2
+    assert "age_ms=9800" not in output
 
 
 def test_known_error_retains_verified_code_and_message(observer_binary):

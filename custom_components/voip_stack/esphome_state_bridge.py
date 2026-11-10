@@ -132,7 +132,6 @@ async def async_emit_state_event(
                 "callee": destination,
                 "destination": destination,
                 "reason": reason,
-                "endpoint": device_entity_state(hass, device, "voip_endpoint"),
                 "caller_entity_id": entities.get("incoming_caller", ""),
                 "destination_entity_id": entities.get("destination", ""),
                 "last_reason_entity_id": entities.get("last_reason", ""),

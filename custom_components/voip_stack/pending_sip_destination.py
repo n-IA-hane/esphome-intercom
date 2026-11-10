@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from homeassistant.exceptions import ServiceValidationError
 
-from .media_ports import RtpPortReservation
 from .endpoint_session import CleanupStage
 
 
@@ -124,8 +123,8 @@ class PendingSipDestination:
         for resource in tuple(session.resources):
             if resource.name.startswith("pending_bridge_media:"):
                 if self.invite.initial_response_sent:
-                    ports = resource.value.detach()
-                    reservation = RtpPortReservation(self.hass, ports)
+                    reservation = resource.value.transfer()
+                    ports = reservation.ports
                     registry.attach_media(
                         session.call_id,
                         {

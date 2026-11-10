@@ -20,32 +20,38 @@ const VOIP_STACK_MODULE_VERSION = (() => {
     return "dev";
   }
 })();
-const { VoipEntityIds } = await import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const VOIP_STACK_CARD_VERSION = VOIP_STACK_MODULE_VERSION.replace(/-\d+$/, "") || "dev";
-const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-await import(`./voip-phonebook-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const { voipStackEngine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const {
-  audioModeLabel,
-  formatListFromMetadata,
-  formatCallDuration,
-  formatEndReason,
-  formatKnownReason,
-  formatVideoFailureReason,
-  normaliseAudioMode,
-  normaliseCardConfig,
-  normaliseTransport,
-  mirroredEndpointPeerLabel,
-  reasonKey,
-  softphoneSnapshotSupersedes,
-  targetFromRosterEntry,
-  terminalPeerLabel,
-} = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const {
-  buildMainCardSkeleton,
-  buildUnconfiguredCardSkeleton,
-} = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+// Start independent dependencies together, but define the card only when all
+// required modules, including the phonebook custom element, are ready.
+const [
+  { VoipEntityIds },
+  { voipStackTranslate },
+  { voipStackEngine },
+  {
+    audioModeLabel,
+    formatListFromMetadata,
+    formatCallDuration,
+    formatEndReason,
+    formatKnownReason,
+    formatVideoFailureReason,
+    normaliseAudioMode,
+    normaliseCardConfig,
+    normaliseTransport,
+    mirroredEndpointPeerLabel,
+    reasonKey,
+    softphoneSnapshotSupersedes,
+    targetFromRosterEntry,
+    terminalPeerLabel,
+  },
+  { buildMainCardSkeleton, buildUnconfiguredCardSkeleton },
+] = await Promise.all([
+  import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-engine.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+  import(`./voip-phonebook-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`),
+]);
 const HANGUP_SERVICE_TIMEOUT_MS = 3000;
 
 function settleServiceWithin(promise, timeoutMs, timeoutMessage) {
@@ -174,6 +180,8 @@ class VoipStackCard extends HTMLElement {
     this._mediaDeviceStatus = "";
     this._ringtoneRequestKey = `voip-stack-card-${Math.random().toString(36).slice(2)}`;
     this._deepLinkAnswerConsumed = false;
+    this._deepLinkAnswerCallKey = "";
+    this._answerLinkListener = () => this.consumePhoneAnswerLink();
 
     // ESP mirror cards keep a short local display copy of the ESP terminal
     // reason text sensor. HA softphone cards render terminal data directly
@@ -184,6 +192,7 @@ class VoipStackCard extends HTMLElement {
     this._videoDurationTimer = null;
     this._unsubCallEvents = null;
     this._unsubSoftphoneState = null;
+    this._unsubDestinationStates = null;
 
     // Static skeleton: built once per mode, then mutated via textContent/
     // hidden/className. Eliminates innerHTML interpolation of untrusted
@@ -222,9 +231,16 @@ class VoipStackCard extends HTMLElement {
       const detail = event?.detail || {};
       if (
         !this._isHaSoftphoneMode() ||
-        detail.endpoint_id !== this._getSoftphoneEndpointId()
+        detail.endpoint_id !== this._getSoftphoneEndpointId() ||
+        detail.call_id !== this._sessionCallId()
       ) return;
       this._applyHangupAudioLevel(detail.level);
+    };
+    this._browserPreferencesListener = event => {
+      if (event.detail !== this._phonePreferenceStorageId()) return;
+      this._readBrowserPreferences();
+      this._syncRingtoneRequest(this._getEspState());
+      this._render();
     };
     this._resizeObserver = new ResizeObserver(() => this._measureLayout());
   }
@@ -235,11 +251,14 @@ class VoipStackCard extends HTMLElement {
 
   connectedCallback() {
     this._lifecycleGeneration++;
+    window.addEventListener("location-changed", this._answerLinkListener);
+    window.addEventListener("pageshow", this._answerLinkListener);
     voipStackEngine.addEventListener("state", this._engineListener);
     voipStackEngine.addEventListener("error", this._engineErrorListener);
     voipStackEngine.addEventListener("video-error", this._engineErrorListener);
     voipStackEngine.addEventListener("media-devices", this._mediaDevicesListener);
     voipStackEngine.addEventListener("audio-level", this._audioLevelListener);
+    voipStackEngine.addEventListener("phone-preferences", this._browserPreferencesListener);
     void voipStackEngine.refreshMediaDevices?.();
     this._observeLayout();
     if (this._hass) {
@@ -253,7 +272,11 @@ class VoipStackCard extends HTMLElement {
 
   disconnectedCallback() {
     this._lifecycleGeneration++;
+    window.removeEventListener("location-changed", this._answerLinkListener);
+    window.removeEventListener("pageshow", this._answerLinkListener);
     this._resizeObserver.disconnect();
+    this._unsubDestinationStates?.();
+    this._unsubDestinationStates = null;
     if (this._unsubCallEvents) {
       this._unsubCallEvents();
       this._unsubCallEvents = null;
@@ -287,6 +310,7 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.removeEventListener("video-error", this._engineErrorListener);
     voipStackEngine.removeEventListener("media-devices", this._mediaDevicesListener);
     voipStackEngine.removeEventListener("audio-level", this._audioLevelListener);
+    voipStackEngine.removeEventListener("phone-preferences", this._browserPreferencesListener);
     voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
     voipStackEngine.releaseVideoCanvas(this);
     voipStackEngine.releaseSoftphoneController(this, this._softphoneRuntimeKey());
@@ -295,9 +319,14 @@ class VoipStackCard extends HTMLElement {
 
   async _subscribeBusEvents() {
     if (this._isHaSoftphoneMode()) {
+      if (!this._unsubDestinationStates) {
+        this._unsubDestinationStates = voipStackEngine.subscribePhoneStates(() => {
+          if (this.isConnected) this._render();
+        });
+      }
       if (!this._unsubSoftphoneState) {
         this._unsubSoftphoneState = voipStackEngine.subscribeSoftphoneState(
-          (state) => this._onSoftphoneState(state),
+          (state, context) => this._onSoftphoneState(state, context),
           this._softphoneSelector(),
         );
       }
@@ -357,11 +386,11 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  _onSoftphoneState(state) {
+  _onSoftphoneState(state, context = null) {
     if (!this._isHaSoftphoneMode() || !state) return;
     if (!this._softphoneSnapshotMatches(state)) return;
     this._softphoneStateEpoch++;
-    if (!this._applySoftphoneSnapshot(state)) return;
+    if (!this._applySoftphoneSnapshot(state, context)) return;
     this._ensureHaSoftphoneAudioPath(state);
     this._render();
   }
@@ -414,7 +443,11 @@ class VoipStackCard extends HTMLElement {
   }
 
   _targetSupportsVideo(target = {}) {
-    if (target?.manual || !Array.isArray(target?.capabilities)) return true;
+    if (target?.manual || target?.sip_video_codec === null) return true;
+    if (typeof target?.sip_video_codec === "string") {
+      return target.sip_video_codec.trim().length > 0;
+    }
+    if (!Array.isArray(target?.capabilities) || target.capabilities.length === 0) return true;
     return target.capabilities.some(
       (item) => String(item).toLowerCase() === "video",
     );
@@ -578,14 +611,26 @@ class VoipStackCard extends HTMLElement {
     };
   }
 
-  _applySoftphoneSnapshot(payload = {}) {
+  _applySoftphoneSnapshot(payload = {}, context = null) {
     const snapshot = this._normaliseSoftphoneSnapshot(payload);
     const current = this._softphoneSnapshot;
-    if (!softphoneSnapshotSupersedes(current, snapshot)) return false;
+    const reconciledIdle = context?.authoritative === true && !this._starting &&
+      ["idle", "unavailable"].includes(snapshot.state) &&
+      String(context.previousCallId || "") === String(current?.call_id || "");
+    if (!reconciledIdle && !softphoneSnapshotSupersedes(current, snapshot)) return false;
     this._softphoneSnapshot = snapshot;
-    if (this._mailboxOpen && !this._mailboxBusy &&
-        (current?.voicemail?.new !== snapshot.voicemail?.new ||
-         current?.voicemail?.old !== snapshot.voicemail?.old)) void this._loadMailbox();
+    const mailboxChanged = ["new", "old", "total"].some(
+      key => current?.voicemail?.[key] !== snapshot.voicemail?.[key],
+    );
+    if (mailboxChanged) this._mailboxRequest++; // Retire lists read before the MWI update.
+    if (snapshot.voicemail?.total === 0) {
+      this._mailboxOpen = false;
+      this._mailboxMessages = [];
+      this._mailboxOffset = this._mailboxTotal = 0;
+      this._renderMailbox();
+    } else if (this._mailboxOpen && !this._mailboxBusy && mailboxChanged) {
+      void this._loadMailbox();
+    }
     this._softphoneDnd = !!snapshot.dnd;
     this._autoAnswer = !!snapshot.auto_answer;
     this._softphoneExtension = snapshot.extension;
@@ -722,6 +767,57 @@ class VoipStackCard extends HTMLElement {
     return formatVideoFailureReason(reason);
   }
 
+  // Presentation API shared with the dashboard. Call/media ownership stays
+  // in the existing card and page engine.
+  setDashboardMode(enabled) {
+    this._dashboardEmbedded = !!enabled;
+    this._render();
+  }
+
+  setIncomingPopupMode(enabled) {
+    this._incomingPopupMode = !!enabled;
+    this.toggleAttribute("data-receive-popup", this._incomingPopupMode);
+  }
+
+  consumePhoneAnswerLink() {
+    if (this._isSoftphoneController()) this._maybeAnswerFromUrl();
+  }
+
+  focusPhoneView() {
+    if (!this._isHaSoftphoneMode()) return true;
+    return voipStackEngine.focusSoftphoneView(this, this._softphoneRuntimeKey(), this._getSoftphoneEndpointId());
+  }
+
+  openPhoneOptions() {
+    this.focusPhoneView();
+    if (!this._settingsOpen) this._toggleSettings();
+  }
+
+  togglePhoneOptions() {
+    if (!this._els || this._els.settingsBtn.hidden) return;
+    this.focusPhoneView();
+    this._toggleSettings();
+  }
+
+  togglePhoneKeypad() {
+    if (!this._els || this._els.keypadBtn.hidden) return;
+    this.focusPhoneView();
+    // Options may cover an already-open keypad. Reveal that existing view
+    // rather than toggling its retained state closed behind the panel.
+    if (this._settingsOpen && this._keypadOpen()) {
+      this._settingsOpen = false;
+      this._render();
+    } else {
+      this._toggleKeypad();
+    }
+  }
+
+  async answerPhoneCall({ video = false } = {}) {
+    this.focusPhoneView();
+    await this._answer({ sendVideo: !!video, acceptVideo: !!video });
+    if (this._errorMsg) throw new Error(this._errorMsg);
+  }
+
   setConfig(config) {
     const oldSelector = this.config?.entity_id || this.config?.device_id || "";
     const oldMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
@@ -733,6 +829,8 @@ class VoipStackCard extends HTMLElement {
     if (oldMode === "ha_softphone" && newMode !== "ha_softphone") {
       this._lifecycleGeneration++;
       this._callOperationId++;
+      this._unsubDestinationStates?.();
+      this._unsubDestinationStates = null;
       if (this._unsubSoftphoneState) {
         this._unsubSoftphoneState();
         this._unsubSoftphoneState = null;
@@ -765,15 +863,7 @@ class VoipStackCard extends HTMLElement {
       this._softphoneTargetDeviceId;
     // Ringtone and microphone filtering are browser preferences. Auto-answer
     // and camera intent come from the logical phone snapshot.
-    const deviceId = this._phonePreferenceStorageId();
-    if (deviceId) {
-      try {
-        this._ringtoneEnabled = localStorage.getItem(`voip_ringtone_${deviceId}`) === "true";
-        this._micAntiAliasEnabled =
-          localStorage.getItem(`voip_microphone_anti_alias_${deviceId}`) !==
-          "false";
-      } catch (_) {}
-    }
+    this._readBrowserPreferences();
     if (this._hass && this._isHaSoftphoneMode()) {
       if (this.isConnected) this._subscribeBusEvents();
       if (this.isConnected) this._loadSoftphoneState();
@@ -973,13 +1063,13 @@ class VoipStackCard extends HTMLElement {
   }
 
   _shouldAnswerFromUrl() {
-    if (this._deepLinkAnswerConsumed) return false;
     try {
       const params = new URLSearchParams(window.location.search || "");
       const value = (params.get("voip_answer") || "").toLowerCase();
       if (!(value === "1" || value === "true" || value === "yes")) return false;
       const endpointId = String(params.get("voip_endpoint") || "").trim();
       const callId = String(params.get("voip_call_id") || "").trim();
+      if (this._incomingPopupMode && (!endpointId || !callId)) return false;
       const currentEndpoint = this._getSoftphoneEndpointId();
       // Links without a selector are scoped to the historical initial phone.
       // Additional phones require an explicit endpoint so two ringing kiosk
@@ -987,6 +1077,10 @@ class VoipStackCard extends HTMLElement {
       if (!endpointId && currentEndpoint !== "default") return false;
       if (endpointId && endpointId !== currentEndpoint) return false;
       if (callId && callId !== String(this._softphoneSnapshot?.call_id || "")) return false;
+      // A legacy unscoped link remains one-shot. A new notification for a
+      // different exact call may be consumed by the same mounted phone card.
+      if (this._deepLinkAnswerConsumed && (!callId ||
+          this._deepLinkAnswerCallKey === JSON.stringify([currentEndpoint, callId]))) return false;
       return true;
     } catch (_) {
       return false;
@@ -999,7 +1093,7 @@ class VoipStackCard extends HTMLElement {
       url.searchParams.delete("voip_answer");
       url.searchParams.delete("voip_endpoint");
       url.searchParams.delete("voip_call_id");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     } catch (_) {
       // Best effort only. Leaving the parameter is harmless because the local
       // consumed flag prevents repeated answers in this card instance.
@@ -1017,6 +1111,7 @@ class VoipStackCard extends HTMLElement {
     if (!snap.call_id) return;
 
     this._deepLinkAnswerConsumed = true;
+    this._deepLinkAnswerCallKey = JSON.stringify([this._getSoftphoneEndpointId(), String(snap.call_id)]);
     this._clearAnswerUrlParam();
     this._autoAnswering = true;
     this._tryAutoAnswer({
@@ -1187,14 +1282,6 @@ class VoipStackCard extends HTMLElement {
       return state === "unknown" || state === "unavailable";
     }
 
-    const endpointEntityId = configuredDevice?.entities?.voip_endpoint;
-    if (endpointEntityId) {
-      const entity = this._hass.states[endpointEntityId];
-      if (!entity) return true;
-      const state = String(entity.state || "").toLowerCase();
-      return state === "unknown" || state === "unavailable";
-    }
-
     // Only fall back to endpoint discovery when no stable HA entity binding is
     // available. A bound state entity always wins so reconnects render on the
     // next hass update without waiting for list_devices to refresh.
@@ -1271,6 +1358,7 @@ class VoipStackCard extends HTMLElement {
       ) continue;
       const target = this._targetFromRosterEntry(entry);
       if (!target.device_id || !target.name) continue;
+      if (target.state === "unavailable" || ["offline", "unavailable"].includes(target.availability)) continue;
       targets.push(target);
     }
     return targets;
@@ -1291,7 +1379,7 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return null;
     const wanted = this._transferDraft?.targetDeviceId || this._softphoneTargetDeviceId;
-    return targets.find(d => d.device_id === wanted) || targets[0];
+    return wanted ? targets.find(d => d.device_id === wanted) || null : targets[0];
   }
 
   _activeSoftphonePeerDevice() {
@@ -1462,7 +1550,7 @@ class VoipStackCard extends HTMLElement {
       });
     }
     this._rosterEntries = rosterEntries;
-    if (this._isHaSoftphoneMode() && !this._getSoftphoneTargetDevice()) {
+    if (this._isHaSoftphoneMode() && !this._softphoneTargetDeviceId) {
       this._softphoneTargetDeviceId = this._softphoneTargets()[0]?.device_id || null;
     }
     return true;
@@ -1473,7 +1561,9 @@ class VoipStackCard extends HTMLElement {
   }
 
   _targetFromRosterEntry(entry) {
-    return targetFromRosterEntry(entry);
+    const target = targetFromRosterEntry(entry);
+    const phone = voipStackEngine.phoneStateFor(target.endpoint_id, target.device_id);
+    return { ...target, availability: phone?.availability || "", state: phone?.state || "" };
   }
 
   _normaliseTransport(value) {
@@ -1733,6 +1823,11 @@ class VoipStackCard extends HTMLElement {
       this._skeletonMode = "main";
     }
     const els = this._els;
+    if (this._dashboardEmbedded) {
+      els.card.style.border = "0";
+      els.card.style.borderRadius = "0";
+      els.card.style.boxShadow = "none";
+    }
 
     const espState = this._getEspState();
     if (this._transferDraft && (this._transferDraft.callId !== this._sessionCallId() || espState !== "in_call")) {
@@ -1764,7 +1859,7 @@ class VoipStackCard extends HTMLElement {
 
     if (!this._isHaSoftphoneMode() && this._isEspUnavailable()) {
       els.headerName.textContent = this._formatHeaderTitle(displayName);
-      els.header.hidden = !displayName;
+      els.header.hidden = this._dashboardEmbedded || !displayName;
       els.destRow.hidden = true;
       els.offlinePanel.hidden = false;
       els.answerBtn.hidden = true;
@@ -1877,7 +1972,7 @@ class VoipStackCard extends HTMLElement {
     this._syncRingtoneRequest(espState);
 
     els.headerName.textContent = this._formatHeaderTitle(displayName);
-    els.header.hidden = !displayName;
+    els.header.hidden = this._dashboardEmbedded || !displayName;
 
     // ESP cards mirror the ESP contact cycler. The optional keypad keeps its
     // own manual buffer and calls the ESPHome start_call service directly.
@@ -1967,7 +2062,8 @@ class VoipStackCard extends HTMLElement {
     // request. In particular, a trunk call may remain in CALLING until SIP
     // timer B expires, so `_starting` must never lock out Hangup.
     els.hangupBtn.disabled = this._stopping;
-    els.callBtn.disabled = buttonDisabled || browserMediaBusy || !!this._transferBusy;
+    els.callBtn.disabled = buttonDisabled || browserMediaBusy || !!this._transferBusy ||
+      (softphoneMode && !keypadOpen && !this._getSoftphoneTargetDevice());
     els.callBtn.textContent = this._t(transferring ? "Transfer" : "Call");
     if (els.transferBtn) {
       els.transferBtn.hidden = espState !== "in_call" || !this._sessionCallId();
@@ -1995,6 +2091,7 @@ class VoipStackCard extends HTMLElement {
     const showRuntimeOptions = (showCall && !this._starting && !this._stopping) || inCallOptions;
     const showSettingsPanel = showRuntimeOptions && this._settingsOpen;
     els.card.classList.toggle("settings-open", showSettingsPanel);
+    els.card.classList.toggle("dashboard-inline-options", !!this._dashboardEmbedded && showSettingsPanel);
     const canUseKeypad = transferring || softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
     els.keypadBtn.hidden = !(
@@ -2019,7 +2116,7 @@ class VoipStackCard extends HTMLElement {
     if (els.voicemailBtn) {
       els.voicemailBtn.hidden = !softphoneMode || !showCall || this._starting || this._stopping ||
         !this._softphoneSnapshot?.voicemail?.enabled ||
-        !(this._softphoneSnapshot.voicemail.total > 0 || this._mailboxOpen);
+        !(this._softphoneSnapshot.voicemail.total > 0);
       els.voicemailBtn.setAttribute("aria-expanded", String(this._mailboxOpen));
       els.voicemailPanel.hidden = !this._mailboxOpen || !this._softphoneSnapshot?.voicemail?.enabled;
     }
@@ -2047,6 +2144,10 @@ class VoipStackCard extends HTMLElement {
     if (els.ringtoneRow) {
       els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode());
       els.ringtoneCheckbox.checked = !!this._ringtoneEnabled;
+    }
+    if (els.popupSettings) {
+      els.popupSettings.hidden = !softphoneMode;
+      els.popupSettings.href = `/voip-stack-popup?endpoint_id=${encodeURIComponent(this._getSoftphoneEndpointId())}`;
     }
     if (els.microphoneAntiAliasRow) {
       els.microphoneAntiAliasRow.hidden =
@@ -2118,6 +2219,20 @@ class VoipStackCard extends HTMLElement {
 
     // Error
     els.err.textContent = this._t(this._errorMsg);
+    if (this._dashboardEmbedded) {
+      const presentation = {
+        video: visualMediaVisible, settings: showSettingsPanel,
+        keypad: !showSettingsPanel && !els.keypadPanel.hidden,
+        keypadAvailable: !els.keypadBtn.hidden, optionsAvailable: !els.settingsBtn.hidden,
+      };
+      const key = JSON.stringify(presentation);
+      if (key !== this._dashboardPresentationKey) {
+        this._dashboardPresentationKey = key;
+        this.dispatchEvent(new CustomEvent("voip-presentation-changed", {
+          detail: presentation, bubbles: true, composed: true,
+        }));
+      }
+    }
   }
 
   _renderPhoneActivity(hidden) {
@@ -2172,13 +2287,15 @@ class VoipStackCard extends HTMLElement {
       .filter(box => box.width && box.height);
     if (!buttons.length) return;
     const card = e.card.getBoundingClientRect();
+    const viewportLeft = card.left + e.card.clientLeft;
+    const viewportRight = viewportLeft + e.card.clientWidth;
     const top = Math.min(...buttons.map(box => box.top));
     const bottom = Math.max(...buttons.map(box => box.bottom));
     const left = Math.min(...buttons.map(box => box.left));
     const right = Math.max(...buttons.map(box => box.right));
     for (const [list, width] of [
-      [e.parkingNotice, left - card.left - 2 * gap],
-      [e.phoneActivity, card.right - right - 2 * gap],
+      [e.parkingNotice, left - viewportLeft - 2 * gap],
+      [e.phoneActivity, viewportRight - right - 2 * gap],
     ]) {
       if (!list || list.hidden) continue;
       list.style.top = `${top - card.top + e.card.scrollTop}px`;
@@ -2214,11 +2331,14 @@ class VoipStackCard extends HTMLElement {
     const height = card.clientHeight;
     card.style.setProperty("--voip-video-control-size", `${Math.max(24, Math.min(36, width / 12))}px`);
     const controls = this._els?.runtimeControls;
+    card.style.setProperty("--voip-video-actions-space", "0px");
     if (controls && card.classList.contains("video-active") && !this._settingsOpen) {
       const bounds = controls.getBoundingClientRect();
-      const right = card.getBoundingClientRect().right - bounds.left;
-      const gap = parseFloat(getComputedStyle(this._els.hangupBtn).columnGap) || 0;
-      card.style.setProperty("--voip-video-actions-space", `${Math.ceil(right + gap)}px`);
+      if (bounds.width > 0 && bounds.height > 0) {
+        const right = card.getBoundingClientRect().right - bounds.left;
+        const gap = parseFloat(getComputedStyle(this._els.hangupBtn).columnGap) || 0;
+        card.style.setProperty("--voip-video-actions-space", `${Math.ceil(right + gap)}px`);
+      }
       const keypad = this._els.keypadPanel;
       if (keypad && !keypad.hidden) {
         const available = this._els.hangupBtn.parentElement.offsetTop - keypad.offsetTop;
@@ -2360,6 +2480,14 @@ class VoipStackCard extends HTMLElement {
       opt.textContent = this._t("No endpoints");
       options.push(opt);
     } else {
+      if (!current) {
+        const prompt = document.createElement("option");
+        prompt.value = "";
+        prompt.textContent = this._t("Destination");
+        prompt.disabled = true;
+        prompt.selected = true;
+        options.push(prompt);
+      }
       for (const device of targets) {
         const opt = document.createElement("option");
         opt.value = device.device_id;
@@ -2461,7 +2589,7 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  async _startCall(destination = "") {
+  async _startCall(destination = "", options = {}) {
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
     const mediaIntentToken = softphoneAction ? {} : null;
@@ -2489,7 +2617,7 @@ class VoipStackCard extends HTMLElement {
       const deviceInfo = await this._getDeviceInfo();
       if (operationId !== this._callOperationId) return;
       if (softphoneAction) {
-        return await this._startHaSoftphoneCall(deviceInfo, operationId, destination);
+        return await this._startHaSoftphoneCall(deviceInfo, operationId, destination, options);
       }
       if (deviceInfo?.softphone) {
         throw new Error("Set card mode to Home Assistant softphone to call from HA");
@@ -2526,7 +2654,7 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
-  async _startHaSoftphoneCall(softphoneInfo, operationId, destination = "") {
+  async _startHaSoftphoneCall(softphoneInfo, operationId, destination = "", options = {}) {
     const manualTarget = destination || (this._softphoneKeypadOpen ? this._softphoneManualTarget.trim() : "");
     const target = manualTarget
       ? {
@@ -2560,7 +2688,7 @@ class VoipStackCard extends HTMLElement {
       this._softphoneSupportsVideo() &&
       this._targetSupportsVideo(target) &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
-      this._softphoneSnapshot?.send_video
+      (typeof options.sendVideo === "boolean" ? options.sendVideo : this._softphoneSnapshot?.send_video)
     );
     if (sendVideo) {
       sendVideo = await voipStackEngine.prepareVideoCameraPermission({
@@ -2657,7 +2785,9 @@ class VoipStackCard extends HTMLElement {
     let timer = null;
     try {
       if (!callId) {
-        const reply = await this._startCall("*97");
+        // Mailbox playback and DTMF are an audio application. Override this
+        // call's intent before camera permission/preparation, never the phone preference.
+        const reply = await this._startCall("*97", { sendVideo: false });
         callId = reply?.call_id || "";
         if (!callId || reply?.superseded) throw new Error("The voicemail call could not start.");
         this._mailboxCallId = callId;
@@ -2690,8 +2820,15 @@ class VoipStackCard extends HTMLElement {
       }
     } catch (err) {
       if (this._getSoftphoneEndpointId() === endpointId) {
-        this._showError(err.message || String(err));
-        if (callId && this._sessionCallId() === callId && this._mailboxCallId === callId) await this._hangup();
+        const failure = err.message || String(err);
+        let cleanupFailure = "";
+        if (callId && this._sessionCallId() === callId && this._mailboxCallId === callId) {
+          await this._hangup();
+          cleanupFailure = this._errorMsg;
+        }
+        if (this._getSoftphoneEndpointId() === endpointId) {
+          this._showError(cleanupFailure && cleanupFailure !== failure ? `${failure} ${cleanupFailure}` : failure);
+        }
       }
     } finally {
       if (timer) clearTimeout(timer);
@@ -2747,7 +2884,7 @@ class VoipStackCard extends HTMLElement {
         const wantsVideo = Boolean(
           this._softphoneSupportsVideo() &&
           this._softphoneSnapshot?.video_camera_send_enabled &&
-          this._softphoneSnapshot?.send_video
+          (typeof options.sendVideo === "boolean" ? options.sendVideo : this._softphoneSnapshot?.send_video)
         );
         const audioDirection = String(
           this._softphoneSnapshot?.audio_direction || "sendrecv"
@@ -2793,6 +2930,7 @@ class VoipStackCard extends HTMLElement {
           ...this._softphoneServiceScope(),
           call_id: callId,
           send_video: sendVideo,
+          ...(typeof options.acceptVideo === "boolean" ? {accept_video:options.acceptVideo} : {}),
           media_client_id: voipStackEngine.mediaClientId,
         });
         // The backend can commit a local or SIP answer and publish in_call
@@ -2934,10 +3072,7 @@ class VoipStackCard extends HTMLElement {
       }
     }
     this._activeDeviceInfo = null;
-    if (wasSoftphone) {
-      this._softphoneSnapshot = null;
-      this._activeSessionDeviceId = null;
-    }
+    // Media cleanup does not own the backend phone projection or selection.
   }
 
   async _tryAutoAnswer(options = {}) {
@@ -2983,7 +3118,12 @@ class VoipStackCard extends HTMLElement {
       ) {
         // Check video permission, but don't skip auto-answer, proceed
         // regardless with receive-only video if needed.
-        videoPermission = (await voipStackEngine.checkAutoAnswerMedia("video")).ready;
+        // A notification answer is a user action and may retry a cached denial.
+        videoPermission = requirePersistentPermission
+          ? (await voipStackEngine.checkAutoAnswerMedia("video")).ready
+          : await voipStackEngine.prepareVideoCameraPermission({
+            endpointId: this._getSoftphoneEndpointId(),
+          });
         if (lifecycleGeneration !== this._lifecycleGeneration) return;
       }
       if (softphoneAction) {
@@ -3101,7 +3241,9 @@ class VoipStackCard extends HTMLElement {
   _applyHangupAudioLevel(level) {
     const card = this._els?.card;
     if (!card) return;
-    const scale = 1 + Math.max(0, Math.min(1, Number(level) || 0)) * 0.08;
+    // Make quiet received speech visible without changing the media level.
+    // The inner circle reserves room for the full 24 percent expansion.
+    const scale = 1 + Math.sqrt(Math.max(0, Math.min(1, Number(level) || 0))) * 0.24;
     card.style.setProperty("--voip-hangup-scale", scale.toFixed(4));
   }
 
@@ -3311,6 +3453,18 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
+  _readBrowserPreferences() {
+    const deviceId = this._phonePreferenceStorageId();
+    if (deviceId) {
+      try {
+        this._ringtoneEnabled = localStorage.getItem(`voip_ringtone_${deviceId}`) === "true";
+        this._micAntiAliasEnabled =
+          localStorage.getItem(`voip_microphone_anti_alias_${deviceId}`) !==
+          "false";
+      } catch (_) {}
+    }
+  }
+
   _toggleRingtone() {
     this._settingsOpen = true;
     this._ringtoneEnabled = !this._ringtoneEnabled;
@@ -3320,6 +3474,7 @@ class VoipStackCard extends HTMLElement {
         localStorage.setItem(`voip_ringtone_${deviceId}`, this._ringtoneEnabled.toString());
       } catch (_) {}
     }
+    voipStackEngine.dispatchEvent?.(new CustomEvent("phone-preferences", {detail:deviceId}));
     if (this._ringtoneEnabled) voipStackEngine.unlockRingtone();
     this._syncRingtoneRequest(this._getEspState());
     this._render();
@@ -3337,6 +3492,7 @@ class VoipStackCard extends HTMLElement {
         );
       } catch (_) {}
     }
+    voipStackEngine.dispatchEvent?.(new CustomEvent("phone-preferences", {detail:deviceId}));
     this._render();
   }
 
@@ -3733,6 +3889,9 @@ class VoipStackCard extends HTMLElement {
       const snapshot = result || { state: "idle" };
       if (!this._softphoneSnapshotMatches(snapshot)) return;
       if (!this._applySoftphoneSnapshot(snapshot)) return;
+      // The query can finish before the subscription's first event. The page
+      // owner needs the same resolved identity while setup outlives this view.
+      voipStackEngine.rememberSoftphoneState(this._softphoneSnapshot);
       // The WebSocket subscription can publish its initial state before HA
       // recreates this card. A direct state load must therefore drive the same
       // media attachment path, especially after an in-call page reload.
@@ -3795,7 +3954,8 @@ class VoipStackCard extends HTMLElement {
 
   getCardSize() { return 7; }
 
-  static getConfigElement() {
+  static async getConfigElement() {
+    await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
     return document.createElement("voip-stack-card-editor");
   }
 
@@ -3809,6 +3969,12 @@ if (!customElements.get("voip-stack-card")) {
   customElements.define("voip-stack-card", VoipStackCard);
   console.info(`VOIP STACK CARD ${VOIP_STACK_CARD_VERSION} (build ${VOIP_STACK_MODULE_VERSION})`);
 }
+
+// The dashboard remains available from this resource, but its optional editor
+// must not hold an incoming-call card behind another network/module chain.
+(async () => {
+  await import(`./voip-stack-dashboard-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+})().catch((error) => _voip_log.error("VoIP Stack dashboard card could not load", error));
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some(card => card.type === "voip-stack-card")) {

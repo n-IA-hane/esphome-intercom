@@ -183,15 +183,11 @@ async def async_prepare_group_candidates(
                 )
                 continue
 
-        targets = (
-            build_sip_contact_targets(
-                (member,),
-                roster_entries,
-                policy=ring_policy,
-                exclude_endpoint_id=source_endpoint_id,
-            )
-            if detailed_preflight
-            else ()
+        targets = build_sip_contact_targets(
+            (member,),
+            roster_entries,
+            policy=ring_policy or RingPolicy(),
+            exclude_endpoint_id=source_endpoint_id,
         ) or (None,)
         for contact_order, target in enumerate(targets):
             if len(result.attempts) >= MAX_GROUP_ATTEMPTS:
@@ -211,7 +207,7 @@ async def async_prepare_group_candidates(
                 "local_rtp_port_index": 1,
                 "invite": invite,
             }
-            if detailed_preflight:
+            if detailed_preflight or target is not None:
                 candidate_id = (
                     target.candidate_id
                     if target is not None
@@ -221,6 +217,7 @@ async def async_prepare_group_candidates(
                     uri_override=target.uri if target is not None else "",
                     endpoint_id_override=getattr(target, "endpoint_id", ""),
                     peer_user_agent_override=getattr(target, "user_agent", ""),
+                    roster_entry_override=getattr(target, "roster_entry", None),
                     candidate_id=candidate_id,
                     tier=target.tier if target is not None else member_tier,
                     order=(
@@ -244,7 +241,7 @@ async def async_prepare_group_candidates(
                 continue
             if not detailed_preflight:
                 leg.candidate_id = leg.candidate_id or f"forward:{member_order}"
-                leg.order = member_order
+                leg.order = target.order if target is not None else member_order
                 result.attempts.append(leg)
                 continue
             if leg.endpoint_id == source_endpoint_id:

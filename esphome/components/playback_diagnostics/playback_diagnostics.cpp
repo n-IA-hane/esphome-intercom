@@ -5,6 +5,7 @@
 #include "esphome/core/version.h"
 
 #include <esp_app_desc.h>
+#include <esp_timer.h>
 
 #include <algorithm>
 #include <limits>
@@ -147,8 +148,7 @@ void PlaybackDiagnostics::on_player_state_(media_player::MediaPlayerState state)
   this->capture_("media_state");
 }
 
-PlaybackDiagnostics::Stage PlaybackDiagnostics::stage_(speaker::Speaker *speaker, const Progress *progress,
-                                                       uint32_t now) const {
+PlaybackDiagnostics::Stage PlaybackDiagnostics::stage_(speaker::Speaker *speaker, const Progress *progress) const {
   Stage value;
   value.rate = speaker->get_audio_stream_info().get_sample_rate();
   value.flags = (speaker->is_stopped() ? 1 : 0) | (speaker->is_running() ? 2 : 0) |
@@ -156,7 +156,10 @@ PlaybackDiagnostics::Stage PlaybackDiagnostics::stage_(speaker::Speaker *speaker
   if (progress != nullptr) {
     value.frames = progress->frames.load(std::memory_order_relaxed);
     value.callbacks = progress->callbacks.load(std::memory_order_relaxed);
-    value.age_ms = value.callbacks == 0 ? UINT32_MAX : now - progress->last_ms.load(std::memory_order_relaxed);
+    // Completion timestamps use esp_timer, not the RTOS clock behind millis().
+    // Read now after last_ms so a concurrent completion cannot appear in the future.
+    const uint32_t last_ms = progress->last_ms.load(std::memory_order_relaxed);
+    value.age_ms = value.callbacks == 0 ? UINT32_MAX : static_cast<uint32_t>(esp_timer_get_time() / 1000) - last_ms;
   }
   return value;
 }
@@ -179,9 +182,9 @@ void PlaybackDiagnostics::capture_(const char *reason) {
   out.media_active = this->media_source_ == nullptr ? -1 :
       (this->media_source_->get_state() != media_source::MediaSourceState::IDLE);
   out.watch = !this->watching_ ? 0 : (this->started_ ? 2 : 1);
-  out.high = this->stage_(this->tts_, &this->high_, out.time_ms);
-  out.input = this->stage_(this->mixer_input_, nullptr, out.time_ms);
-  out.low = this->stage_(this->hardware_, &this->low_, out.time_ms);
+  out.high = this->stage_(this->tts_, &this->high_);
+  out.input = this->stage_(this->mixer_input_, nullptr);
+  out.low = this->stage_(this->hardware_, &this->low_);
   out.high_delta = out.high.frames - this->high_start_;
   out.low_delta = out.low.frames - this->low_start_;
   out.queued_bytes = this->stack_->get_speaker_buffer_available();

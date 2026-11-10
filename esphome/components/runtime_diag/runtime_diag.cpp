@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <sstream>
+#include <utility>
 
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>
@@ -159,9 +160,9 @@ void RuntimeDiag::capture(const char *reason) {
   constexpr size_t CHUNK_SIZE = 180;
   const size_t chunks = std::max<size_t>(1, (snapshot.size() + CHUNK_SIZE - 1) / CHUNK_SIZE);
   for (size_t offset = 0, index = 0; offset < snapshot.size(); offset += CHUNK_SIZE, index++) {
-    const std::string chunk = snapshot.substr(offset, CHUNK_SIZE);
-    ESP_LOGI(TAG, "snapshot[%u/%u] %s", static_cast<unsigned>(index + 1), static_cast<unsigned>(chunks),
-             chunk.c_str());
+    const auto length = static_cast<int>(std::min(CHUNK_SIZE, snapshot.size() - offset));
+    ESP_LOGI(TAG, "snapshot[%u/%u] %.*s", static_cast<unsigned>(index + 1), static_cast<unsigned>(chunks),
+             length, snapshot.data() + offset);
   }
   this->max_loop_gap_ms_ = 0;
   this->loop_count_ = 0;
@@ -338,8 +339,9 @@ std::string RuntimeDiag::build_snapshot_(const char *reason) {
   for (UBaseType_t i = 0; i < count; i++) {
     uint32_t previous_runtime = 0;
     bool found_previous = false;
-    for (const auto &previous : this->previous_tasks_) {
-      if (previous.used && previous.number == tasks[i].xTaskNumber) {
+    for (uint8_t previous_index = 0; previous_index < this->previous_task_count_; ++previous_index) {
+      const auto &previous = this->previous_tasks_[previous_index];
+      if (previous.number == tasks[i].xTaskNumber) {
         previous_runtime = previous.runtime;
         found_previous = true;
         break;
@@ -375,14 +377,11 @@ std::string RuntimeDiag::build_snapshot_(const char *reason) {
     out << "}";
   }
   out << "]";
-  for (auto &previous : this->previous_tasks_) {
-    previous = {};
-  }
   for (UBaseType_t i = 0; i < count && i < MAX_TASKS; i++) {
     this->previous_tasks_[i].number = tasks[i].xTaskNumber;
     this->previous_tasks_[i].runtime = static_cast<uint32_t>(tasks[i].ulRunTimeCounter);
-    this->previous_tasks_[i].used = true;
   }
+  this->previous_task_count_ = static_cast<uint8_t>(std::min(count, MAX_TASKS));
   this->previous_total_runtime_ = total_runtime;
   this->previous_task_sample_us_ = now_us;
   this->have_previous_tasks_ = true;
@@ -390,7 +389,7 @@ std::string RuntimeDiag::build_snapshot_(const char *reason) {
   out << ",\"tasks\":\"trace_facility_disabled\"";
 #endif
   out << "}";
-  return out.str();
+  return std::move(out).str();
 }
 
 }  // namespace runtime_diag

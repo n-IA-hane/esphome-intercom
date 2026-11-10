@@ -148,6 +148,7 @@ def test_replay_rejects_implicit_resampling(tmp_path):
         replay_wav(path)
 
 
+@pytest.mark.diagnostic_reference
 def test_stream_rechunking_keeps_feature_sequence_and_model_state():
     pytest.importorskip("pymicro_features")
 
@@ -175,6 +176,7 @@ def test_stream_rechunking_keeps_feature_sequence_and_model_state():
         np.testing.assert_array_equal(inputs, results[0][1])
 
 
+@pytest.mark.diagnostic_reference
 def test_actual_model_silence_does_not_activate(tmp_path):
     pytest.importorskip("pymicro_wakeword")
     path = tmp_path / "silence.wav"
@@ -188,6 +190,7 @@ CORPUS = Path(os.environ["MWW_TEST_CORPUS"]) if os.environ.get("MWW_TEST_CORPUS"
 
 
 @pytest.mark.skipif(CORPUS is None, reason="Set MWW_TEST_CORPUS to an identified official fixture corpus")
+@pytest.mark.diagnostic_reference
 @pytest.mark.parametrize("number", [1, 2, 3])
 def test_official_alexa_corpus_stateful_replay_is_rechunking_invariant(number):
     pytest.importorskip("pymicro_wakeword")

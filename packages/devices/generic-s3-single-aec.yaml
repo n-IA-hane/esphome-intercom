@@ -4,14 +4,18 @@ substitutions:
   firmware_led_package: ../../led/status_ws2812_single.yaml
   firmware_voice_binding:
     voice_assistant:
-      microphone: mic_main
+      microphone:
+        microphone: mic_main
+        gain_factor: 1
       media_player: speaker_media_player
       noise_suppression_level: 2
       auto_gain: 31dBFS
       volume_multiplier: 2.0
   firmware_wake_word_binding:
     micro_wake_word:
-      microphone: mic_main
+      microphone:
+        microphone: mic_main
+        gain_factor: 1
       models:
       - model: alexa
   firmware_voip_binding:
@@ -21,33 +25,33 @@ substitutions:
       signaling_buffers_in_psram: true
       buffers_in_psram: true
       audio:
-        tx_formats:
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        rx:
-          sample_rate: 48000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        rx_formats:
-        - sample_rate: 32000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 32
+        codecs:
+          - codec: pcm
+            tx:
+              # Prefer 16 kHz / 10 ms to HA; retain 20 ms for compatible peers.
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+            rx:
+              # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
+              # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
+              - sample_rate: 48000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
       microphone: mic_main
       speaker: voip_speaker_input
       delete_contact_missing_from:

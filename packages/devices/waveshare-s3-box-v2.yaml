@@ -24,13 +24,17 @@ substitutions:
   voip_audio_task_stacks_in_psram: 'true'
   voip_tx_task_stack_size: '12288'
   voip_rx_task_stack_size: '12288'
+  # Match the FULL LCD receive envelope; audio-only profiles omit the renderer.
+  s3_sip_jpeg_width: '320'
+  s3_sip_jpeg_height: '240'
+  s3_sip_jpeg_fps: '10'
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
-  ext_components_source: github://n-IA-hane/esphome-intercom@main
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@main
-  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@main
-  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
+  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
+  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/dev/
   ai_avatar: f_off
   settings_row_width: '255'
   settings_wide_width: '285'
@@ -71,7 +75,9 @@ substitutions:
   firmware_voice_binding:
     voice_assistant:
       id: va
-      microphone: ${mic_id}
+      microphone:
+        microphone: ${mic_id}
+        gain_factor: 1
       media_player: speaker_media_player
       noise_suppression_level: 0
       auto_gain: 0dBFS
@@ -79,7 +85,9 @@ substitutions:
   firmware_wake_word_binding:
     micro_wake_word:
       id: mww
-      microphone: ${mic_id}
+      microphone:
+        microphone: ${mic_id}
+        gain_factor: 1
       stop_after_detection: false
       models:
       - model: alexa
@@ -98,38 +106,33 @@ substitutions:
       conference_ring: false
       ring_groups: RG Casa
       audio:
-        tx:
-          sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        tx_formats:
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        rx:
-          sample_rate: 48000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        rx_formats:
-        - sample_rate: 32000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 10
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 16
-        - sample_rate: 16000
-          pcm_format: s16le
-          channels: 1
-          frame_ms: 32
+        codecs:
+          - codec: pcm
+            tx:
+              # Prefer 16 kHz / 10 ms to HA; retain 20 ms for compatible peers.
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+            rx:
+              # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
+              # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
+              - sample_rate: 48000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
+              - sample_rate: 16000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
       microphone: ${mic_id}
       speaker: voip_speaker_input
       delete_contact_missing_from:
@@ -165,6 +168,7 @@ packages:
   hardware: !include '../board/waveshare_s3_box_v2.yaml'
   display_hardware: !include '${ ''../board/waveshare_s3_box_v2_display.yaml'' if ''display'' in firmware_features
     else ''../features/shared/absent.yaml'' }'
+  video_receive: !include ${ '../voip/s3_video_call_page.yaml' if 'display' in firmware_features and 'voip' in firmware_features else '../features/shared/absent.yaml' }
   audio: !include ${ '../audio/profiles/waveshare-s3-box-v2-afe.yaml' if _v2_afe else '../audio/profiles/waveshare-s3-box-v2-aec.yaml' }
   boot: !include '../features/shared/spotpear_boot.yaml'
   diagnostics: ${ _round_diagnostics if 'diagnostics' in firmware_features else {} }
