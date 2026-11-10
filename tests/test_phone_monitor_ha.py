@@ -92,7 +92,11 @@ async def test_snapshot_schema_and_subscription_are_passive(hass, monitor, monke
     assert set(kitchen) == {
         "schema_version", "endpoint_id", "device_id", "name", "extension", "kind",
         "availability", "dnd", "state", "calls", "mailbox",
+        "ring_group", "queues", "queue_states",
     }
+    assert kitchen["ring_group"] == ""
+    assert kitchen["queues"] == []
+    assert kitchen["queue_states"] == []
     assert kitchen["availability"] == "offline" and kitchen["state"] == "unavailable"
     assert kitchen["mailbox"] == {"enabled": False, "waiting": False, "new": 0, "old": 0}
     assert not monitor.calls.sessions and not monitor.runtime.softphone_presence

@@ -86,7 +86,7 @@ class VoipStackRuntime:
     entry_contacts_signature: tuple[dict[str, Any], ...] | None = None
     entry_group_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_paging_records: dict[str, dict[str, Any]] = field(default_factory=dict)
-    entry_membership_signature: tuple = ()
+    entry_membership_signature: tuple | None = None
     group_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_generations: dict[str, int] = field(default_factory=dict)
     device_resolver: VoipDeviceResolver | None = None

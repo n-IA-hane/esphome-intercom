@@ -145,7 +145,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         paging_now = paging_group_configs(entry)
         memberships_now = membership_signature(hass, entry)
         groups_changed = (groups_changed or paging_now != runtime.entry_paging_records
-                          or memberships_now != runtime.entry_membership_signature)
+                          or (runtime.entry_membership_signature is not None
+                              and memberships_now != runtime.entry_membership_signature))
         runtime.entry_paging_records = paging_now
         runtime.entry_membership_signature = memberships_now
         if runtime.queues is not None:
