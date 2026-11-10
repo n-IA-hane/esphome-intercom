@@ -29,127 +29,10 @@ time:
 text_sensor:
 - id: text_request
   platform: template
-  on_value:
-    then:
-    - lambda: |-
-        static constexpr size_t kRoundTextRows = 10;
-        const std::string &text = x;
-        lv_obj_t* lines[] = {
-          id(think_line_0), id(think_line_1), id(think_line_2), id(think_line_3), id(think_line_4),
-          id(think_line_5), id(think_line_6), id(think_line_7), id(think_line_8), id(think_line_9)
-        };
-        for (size_t i = 0; i < kRoundTextRows; i++) lv_label_set_text(lines[i], "");
-        if (text == "...") return;
-        std::vector<std::string> words;
-        words.reserve(text.size()/5);
-        size_t start = 0;
-        for (size_t i = 0; i <= text.size(); ++i) {
-          if (i == text.size() || text[i] == ' ' || text[i] == '\n' || text[i] == '\r' || text[i] == '\t') {
-            if (i > start) words.push_back(text.substr(start, i - start));
-            start = i + 1;
-          }
-        }
-        if (words.empty()) return;
-        const auto &chords = id(chord_widths_cache);
-        const size_t total_rows = kRoundTextRows;
-        const lv_font_t *font = lv_obj_get_style_text_font(id(think_line_0), LV_PART_MAIN);
-        // Start from middle of display (row total_rows/2 - 3)
-        size_t start_row = total_rows / 2 - 3;
-        if (start_row >= total_rows) start_row = 0;
-        // lines[] already cleared above
-        size_t row = start_row;
-        size_t word_idx = 0;
-        const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;  // ~60% of line height
-        while (row < total_rows && word_idx < words.size()) {
-          const int chord_w = chords[row];
-          if (chord_w <= 0) { row++; continue; }
-          const size_t sw = word_idx;
-          std::string line;
-          line.reserve(chord_w / avg_char_w);
-          while (word_idx < words.size()) {
-            const auto &word = words[word_idx];
-            std::string candidate = line.empty() ? word : (line + ' ' + word);
-            if ((int)(candidate.length() * avg_char_w) > chord_w) {
-              lv_point_t size;
-              lv_text_get_size(&size, candidate.c_str(), font, 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
-              if (size.x > chord_w) {
-                if (word_idx == sw) { line = word; word_idx++; }
-                break;
-              }
-            }
-            line = candidate;
-            word_idx++;
-          }
-          if (word_idx > sw) lv_label_set_text(lines[row], line.c_str());
-          row++;
-        }
+  on_value: "${ [{'then': _round_text_request_actions}] if _fw_voice else [] }"
 - id: text_response
   platform: template
-  on_value:
-    then:
-    - lambda: |-
-        static constexpr size_t kRoundTextRows = 10;
-        // Skip redundant "..." during replying phase (label text set by update_replying_text)
-        if (x == "..." && id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
-          return;
-        }
-        const std::string &text = x;
-        std::vector<std::string> words;
-        words.reserve(text.size()/5);
-        size_t start = 0;
-        for (size_t i = 0; i <= text.size(); ++i) {
-          if (i == text.size() || text[i] == ' ' || text[i] == '\n' || text[i] == '\r' || text[i] == '\t') {
-            if (i > start) {
-              words.push_back(text.substr(start, i - start));
-            }
-            start = i + 1;
-          }
-        }
-        id(reply_page_index) = 0;
-        id(wrapped_lines_reply).clear();
-        id(reply_total_pages) = 1;
-        if (words.empty()) return;
-        const auto &chords = id(chord_widths_cache);
-        const size_t total_rows = kRoundTextRows;
-        const lv_font_t *font = lv_obj_get_style_text_font(id(reply_line_0), LV_PART_MAIN);
-        const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;
-        size_t word_idx = 0;
-        size_t safety = 0;
-        size_t line_count = 0;
-        while (word_idx < words.size() && safety++ < words.size() * 2) {
-          int row = line_count % total_rows;
-          const int chord_w = chords[row];
-          if (chord_w <= 0) { id(wrapped_lines_reply).push_back(""); line_count++; continue; }
-          const size_t start_word = word_idx;
-          std::string line;
-          line.reserve(chord_w / avg_char_w);
-          while (word_idx < words.size()) {
-            const auto &word = words[word_idx];
-            std::string candidate = line.empty() ? word : (line + ' ' + word);
-            if ((int)(candidate.length() * avg_char_w) > chord_w) {
-              lv_point_t size;
-              lv_text_get_size(&size, candidate.c_str(), font, 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
-              if (size.x > chord_w) {
-                if (word_idx == start_word) { line = word; word_idx++; }
-                break;
-              }
-            }
-            line = candidate;
-            word_idx++;
-          }
-          if (word_idx > start_word) {
-            id(wrapped_lines_reply).push_back(line);
-            line_count++;
-          }
-        }
-        while (!id(wrapped_lines_reply).empty() &&
-               (id(wrapped_lines_reply).size() % kRoundTextRows) != 0) {
-          id(wrapped_lines_reply).push_back("");
-        }
-        line_count = id(wrapped_lines_reply).size();
-        id(reply_total_pages) =
-            (line_count + kRoundTextRows - 1) / kRoundTextRows;
-        if (id(reply_total_pages) < 1) id(reply_total_pages) = 1;
+  on_value: "${ [{'then': _round_text_response_actions}] if _fw_voice else [] }"
 interval:
 - interval: 30s
   then:
@@ -179,9 +62,6 @@ globals:
   type: int
   restore_value: false
   initial_value: '1'
-- id: wrapped_lines_reply
-  type: std::vector<std::string>
-  restore_value: false
 - id: chord_widths_cache
   type: std::array<int16_t, 10>
   restore_value: false
@@ -270,9 +150,6 @@ script:
       id(runtime_visual_source) = mood == id(mood_happy) ? 2 :
                                   mood == id(mood_angry) ? 3 : 1;
       id(runtime_response_text_ready) = !t.empty();
-  - globals.set:
-      id: reply_page_index
-      value: '0'
   - script.stop: reply_pagination_timer
   - script.stop: backlight_timer
   - light.turn_on:
@@ -317,6 +194,8 @@ switch:
   on_turn_off:
   - script.execute: draw_display
 packages:
+  round_text: !include
+    file: ${ 'round_text.yaml' if _fw_voice else '../shared/absent.yaml' }
   visibility: !include
     file: visibility.yaml
     vars:

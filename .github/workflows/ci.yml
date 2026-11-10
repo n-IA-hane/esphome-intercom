@@ -273,7 +273,7 @@ jobs:
         with:
           python-version: "3.14.2"
       - name: Install official ESPHome and composition helper dependency
-        run: python -m pip install esphome==2026.10.0 pytest==9.0.3
+        run: python -m pip install esphome==2026.10.0 pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Compile and link ${{ matrix.label }}
         env:
           FIRMWARE_BUILD_DIR: ${{ runner.temp }}/${{ matrix.build_dir }}
@@ -294,6 +294,40 @@ jobs:
           PY
           set -o pipefail
           python -m esphome compile "$FIRMWARE_BUILD_DIR/device.yaml" 2>&1 | tee "test-results/${{ matrix.build_dir }}-firmware.log"
+      - name: Verify native round text and visibility with the compiled LVGL source
+        if: matrix.variant == 'full'
+        env:
+          FIRMWARE_BUILD_DIR: ${{ runner.temp }}/${{ matrix.build_dir }}
+          RESULT_PREFIX: ${{ matrix.build_dir }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          project = Path(os.environ['FIRMWARE_BUILD_DIR'])
+          sources = list(project.rglob('managed_components/lvgl__lvgl/.component_hash'))
+          assert len(sources) == 1, sources
+          host = Path(os.environ['RUNNER_TEMP']) / 'lvgl-round-text'
+          env = dict(os.environ, LVGL_HOST_SOURCE=str(sources[0].parent),
+                     LVGL_HOST_BUILD_ROOT=str(host))
+          prefix = os.environ['RESULT_PREFIX']
+          subprocess.run([sys.executable, '-m', 'pytest', '-q',
+              'tests/test_lvgl_round_text_runtime.py',
+              'tests/test_lvgl_round_text_caller_runtime.py',
+              '--basetemp=' + str(host / 'text-pytest'),
+              '--junitxml=test-results/' + prefix + '-round-text.xml'], env=env, check=True)
+          # Reuse the same plain library and configuration rather than building
+          # LVGL again for the existing visibility contracts.
+          library = host / 'round-text/lvgl/lib/liblvgl.a'
+          assert library.is_file(), library
+          env.update(LVGL_HOST_LIBRARY=str(library),
+                     LVGL_HOST_CONFIG=str(Path('tests/fixtures/lvgl_round_text/lv_conf.h').resolve()))
+          subprocess.run([sys.executable, '-m', 'pytest', '-q',
+              'tests/test_lvgl_visibility_runtime.py',
+              '--basetemp=' + str(host / 'visibility-pytest'),
+              '--junitxml=test-results/' + prefix + '-visibility.xml'], env=env, check=True)
+          PY
       - name: Preserve full firmware build and source identities
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
