@@ -595,40 +595,37 @@ defaults:
     }
 
     const bool contacts_were_hidden = lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN);
-    set_hidden(id(call_idle_group), true);
-    set_hidden(id(call_keypad_group), true);
-    set_hidden(id(call_ringing_in_group), true);
-    set_hidden(id(call_ringing_out_group), true);
-    set_hidden(id(call_in_call_group), true);
-    set_hidden(id(call_ended_group), true);
+    lv_obj_t *visible_call_group = id(call_idle_group);
 
     if (id(call_ended_active) && !id(phone).is_active()) {
       // ui_call_ended owns the tile for ~4 s after a terminated
       // call so the user reads the reason regardless of the runtime state
       // state already returning to IDLE.
-      set_hidden(id(call_ended_group), false);
+      visible_call_group = id(call_ended_group);
     } else if (call_state == "ringing") {
       set_label(id(call_ringing_in_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_in_group), false);
+      visible_call_group = id(call_ringing_in_group);
     } else if (call_state == "calling" || call_state == "remote_ringing") {
       set_label(id(call_ringing_out_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_out_group), false);
+      visible_call_group = id(call_ringing_out_group);
     } else if (call_state == "in_call" && id(voip_keypad_visible)) {
       lv_obj_set_y(id(call_keypad_group), 0);
-      set_hidden(id(call_keypad_group), false);
+      visible_call_group = id(call_keypad_group);
     } else if (call_state == "in_call" || call_state == "connecting") {
       set_label(id(call_in_call_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_in_call_group), false);
+      visible_call_group = id(call_in_call_group);
     } else {
       if (id(voip_keypad_visible)) {
         lv_obj_set_y(id(call_keypad_group), 0);
-        set_hidden(id(call_keypad_group), false);
+        visible_call_group = id(call_keypad_group);
       } else {
         lv_obj_set_y(id(call_idle_group), 0);
         lv_obj_set_y(id(call_keypad_group), id(main_layout)[11]);
-        set_hidden(id(call_idle_group), false);
+        visible_call_group = id(call_idle_group);
       }
     }
+    lv_obj_t *call_groups[] = {id(call_idle_group), id(call_keypad_group), id(call_ringing_in_group), id(call_ringing_out_group), id(call_in_call_group), id(call_ended_group)};
+    for (auto *group : call_groups) set_hidden(group, group != visible_call_group);
     if (contacts_were_hidden && !lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN))
       id(contacts_list_view).refresh();
 
@@ -681,10 +678,18 @@ defaults:
       auto set_quick_button = [&](lv_obj_t *btn, lv_obj_t *label, bool active,
                                   uint32_t on_color, uint32_t off_color,
                                   const char *on_text, const char *off_text) {
-        lv_obj_set_style_bg_color(btn, lv_color_hex(active ? on_color : off_color), LV_PART_MAIN);
-        lv_obj_set_style_border_width(btn, active ? 2 : 0, LV_PART_MAIN);
-        lv_obj_set_style_border_color(btn, lv_color_hex(active ? 0xFFFFFF : off_color), LV_PART_MAIN);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        const auto background = lv_color_hex(active ? on_color : off_color);
+        if (!lv_color_eq(lv_obj_get_style_bg_color(btn, LV_PART_MAIN), background))
+          lv_obj_set_style_bg_color(btn, background, LV_PART_MAIN);
+        const int32_t border_width = active ? 2 : 0;
+        if (lv_obj_get_style_border_width(btn, LV_PART_MAIN) != border_width)
+          lv_obj_set_style_border_width(btn, border_width, LV_PART_MAIN);
+        const auto border = lv_color_hex(active ? 0xFFFFFF : off_color);
+        if (!lv_color_eq(lv_obj_get_style_border_color(btn, LV_PART_MAIN), border))
+          lv_obj_set_style_border_color(btn, border, LV_PART_MAIN);
+        const auto foreground = lv_color_hex(0xFFFFFF);
+        if (!lv_color_eq(lv_obj_get_style_text_color(label, LV_PART_MAIN), foreground))
+          lv_obj_set_style_text_color(label, foreground, LV_PART_MAIN);
         set_label(label, active ? on_text : off_text);
       };
 

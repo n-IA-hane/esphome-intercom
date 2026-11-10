@@ -19,6 +19,7 @@ def execute(tmp_path, body, *, standalone=False):
 #include <string>
 #define id(x) x
 struct Obj {bool hidden=true;unsigned align=0;int x=0,y=0;std::string text;};
+using lv_obj_t=Obj;
 Obj objects[22];
 Obj *call_idle_group=&objects[0],*call_keypad_group=&objects[1],*call_ringing_in_group=&objects[2],
  *call_ringing_out_group=&objects[3],*call_in_call_group=&objects[4],*call_ended_group=&objects[5],
@@ -39,7 +40,8 @@ void lv_obj_set_tile_id(Obj*,int,int,unsigned){}
 void lv_label_set_text(Obj*o,const char*text){o->text=text;}
 uint32_t lv_color_hex(uint32_t x){return x;}
 void lv_obj_set_style_bg_color(Obj*,uint32_t,unsigned){}
-void set_hidden(Obj*o,bool hidden){o->hidden=hidden;}
+unsigned visibility_changes=0;
+void set_hidden(Obj*o,bool hidden){if(o->hidden!=hidden)++visibility_changes;o->hidden=hidden;}
 void set_label(Obj*o,const char*text){lv_label_set_text(o,text);}
 std::array<int,20> main_layout{};
 bool call_ended_active=false,voip_keypad_visible=false;
@@ -60,7 +62,9 @@ struct List {unsigned calls=0;void refresh(){++calls;}}contacts_list_view;
 void render(){BODY}
 int main(){
  render();assert(contacts_list_view.calls==1);
+ const auto idle_changes=visibility_changes;
  for(unsigned n=0;n<20;++n)render();assert(contacts_list_view.calls==1);
+ if(!standalone_phone)assert(visibility_changes==idle_changes);
  phone.state="in_call";render();assert(contacts_list_view.calls==1);
  if(standalone_phone){
    assert(videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_TOP_MID);
@@ -75,8 +79,23 @@ int main(){
    assert(!videophone_title_label->hidden&&videophone_keypad_button->align==LV_ALIGN_BOTTOM_LEFT);
    assert(videophone_peer_label->text==phone.selected);
  }
+ if(!standalone_phone){
+   const bool has_keypad=HAS_KEYPAD;
+   const char *states[]={"idle","ringing","calling","remote_ringing","connecting","in_call"};
+   const unsigned expected_groups[]={0,2,3,3,4,4};
+   for(unsigned i=0;i<6;++i)for(bool notice:{false,true})for(bool keypad:{false,true}){
+     phone.state=states[i];call_ended_active=notice;voip_keypad_visible=keypad;
+     unsigned expected=expected_groups[i];
+     if(i==0&&notice)expected=5;
+     else if(has_keypad&&keypad&&(i==0||i==5))expected=1;
+     render();
+     for(unsigned group=0;group<6;++group)assert(objects[group].hidden==(group!=expected));
+     const auto before=visibility_changes;render();assert(visibility_changes==before);
+   }
+ }
 }
-'''.replace("BODY", str(body)).replace("STANDALONE", "true" if standalone else "false")
+'''.replace("BODY", str(body)).replace("STANDALONE", "true" if standalone else "false").replace(
+        "HAS_KEYPAD", "true" if "call_keypad_group" in str(body) else "false")
     path = tmp_path / "adapter.cpp"
     path.write_text(code)
     binary = tmp_path / "adapter"

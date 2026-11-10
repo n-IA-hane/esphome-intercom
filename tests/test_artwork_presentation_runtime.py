@@ -190,6 +190,12 @@ int main(int argc, char **argv) {
     assert(background.source==&cover && runtime_visual_source==4);
     image_error();
     assert(background.source==&neutral && runtime_visual_source==1);
+  } else if (scenario=="stable_idle_projection") {
+    ui_state=ui_state_idle; project();
+    const int before=background.invalidations;
+    for (unsigned n=0; n<100; ++n) project();
+    assert(background.source==&neutral && runtime_visual_source==1);
+    assert(background.invalidations==before);
   } else if (scenario=="other_owner_callbacks") {
     tts_start(":-) Response text");
     for (int owner : {ui_state_va_listening, ui_state_va_thinking, ui_state_va_replying,
@@ -218,7 +224,7 @@ int main(int argc, char **argv) {
 @pytest.mark.parametrize("scenario", [
     "direct_tts", "assist_pipeline_first", "assist_audio_first", "pending_tts_text",
     "cover_cleared_during_assist", "paused_and_idle", "other_owner_callbacks",
-    "replacement_cover",
+    "replacement_cover", "stable_idle_projection",
 ])
 def test_artwork_respects_committed_content_owner(artwork_binary: Path, scenario):
     subprocess.run([str(artwork_binary), scenario], check=True, capture_output=True, text=True)

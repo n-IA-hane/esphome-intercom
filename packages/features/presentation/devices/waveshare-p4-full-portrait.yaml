@@ -526,33 +526,31 @@ defaults:
     const std::string call_state = id(phone).get_state_str();
 
     const bool contacts_were_hidden = lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN);
-    set_hidden(id(call_idle_group), true);
-    set_hidden(id(call_ringing_in_group), true);
-    set_hidden(id(call_ringing_out_group), true);
-    set_hidden(id(call_in_call_group), true);
-    set_hidden(id(call_ended_group), true);
+    lv_obj_t *visible_call_group = id(call_idle_group);
 
     if (id(call_ended_active) && !id(phone).is_active()) {
       // ui_call_ended owns the tile for ~4 s after a terminated
       // call so the user reads the reason regardless of the runtime state
       // state already returning to IDLE.
-      set_hidden(id(call_ended_group), false);
+      visible_call_group = id(call_ended_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "ringing") {
       set_label(id(call_ringing_in_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_in_group), false);
+      visible_call_group = id(call_ringing_in_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "calling" || call_state == "remote_ringing") {
       set_label(id(call_ringing_out_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_out_group), false);
+      visible_call_group = id(call_ringing_out_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else if (call_state == "in_call" || call_state == "connecting") {
       set_label(id(call_in_call_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_in_call_group), false);
+      visible_call_group = id(call_in_call_group);
       lv_obj_set_tile_id(id(top_tileview), 1, 0, LV_ANIM_OFF);
     } else {
-      set_hidden(id(call_idle_group), false);
+      visible_call_group = id(call_idle_group);
     }
+    lv_obj_t *call_groups[] = {id(call_idle_group), id(call_ringing_in_group), id(call_ringing_out_group), id(call_in_call_group), id(call_ended_group)};
+    for (auto *group : call_groups) set_hidden(group, group != visible_call_group);
     if (contacts_were_hidden && !lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN))
       id(contacts_list_view).refresh();
   _p4_draw_actions:
