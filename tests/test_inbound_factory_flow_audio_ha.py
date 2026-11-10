@@ -9,6 +9,7 @@ import pytest
 
 from custom_components.voip_stack import sip_runtime, trunk_inbound_router
 from custom_components.voip_stack.core import sip
+from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.sdp import RtpPcmFormat
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.inbound_routing import bridge
@@ -67,7 +68,7 @@ class _WirePeer(asyncio.DatagramProtocol):
         self.transport.sendto(response, address)
 
 
-async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=None, encoding="L16"):
+async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=None, encoding="L16", codec_policy=None):
     loop = asyncio.get_running_loop()
     transports, clients = [], []
     peers = []
@@ -102,7 +103,7 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
             metadata.update(sip_audio_tx_formats=["L16/16000/1/20"],
                 sip_audio_rx_formats=["L16/16000/1/20"], sip_capabilities_known=advisory)
         elif encoding == "L16":
-            # Explicit policy, without advisory OPTIONS provenance.
+            # Configured capability metadata also remains advisory.
             metadata.update(sip_audio_tx_formats=["L16/16000/1/20"], sip_audio_rx_formats=["L16/16000/1/20"])
         entry = RosterEntry("phone", sip_uri=contact, metadata=metadata)
         decision = RouteDecision(RouteAction.BRIDGE, target="phone", entry=entry)
@@ -143,6 +144,8 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
 
         def client_factory(**kwargs):
             observed["client_common"] = kwargs["include_common_codecs"]
+            if codec_policy is not None:
+                kwargs["codec_policy"] = codec_policy
             client = SipCallClient(**kwargs)
             clients.append(client)
             real_invite = client.invite
@@ -173,19 +176,24 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         else:
             assert not a.messages
             delivered = b
-        common_allowed = advisory is not False
-        assert observed["result"] == ("in_call" if encoding == "L16" or common_allowed else "media_incompatible")
+        policy_allowed = codec_policy is None or codec_policy.audio is None or encoding in codec_policy.audio
+        assert observed["result"] == ("in_call" if policy_allowed else "media_incompatible")
+        invite_wire = next(m for m, _ in delivered.messages if m.method == "INVITE")
+        if codec_policy is not None:
+            from custom_components.voip_stack.core import sdp
+            offered_codecs = {fmt.encoding for fmt in sdp.offered_pcm_formats(invite_wire.body)}
+            assert offered_codecs <= set(codec_policy.audio)
+            assert ("PCMU" in offered_codecs) is policy_allowed
         if observed["result"] == "in_call":
             await asyncio.wait_for(delivered.acked.wait(), .5)
-            invite_wire = next(m for m, _ in delivered.messages if m.method == "INVITE")
             ack = next(m for m, _ in delivered.messages if m.method == "ACK")
             assert invite_wire.uri == contact and ack.uri == contact
             assert ack.header("Route") == f"<{contact};lr>"
         assert not any(m.method == "OPTIONS" for peer in peers for m, _ in peer.messages)
         if encoding == "PCMU":
-            assert observed["client_common"] is common_allowed
+            assert observed["client_common"] is True
             if factory == "bridge":
-                assert observed["profile_common"] is common_allowed
+                assert observed["profile_common"] is True
     finally:
         for client in clients:
             await client.close()
@@ -202,6 +210,13 @@ async def test_preanswered_factory_pins_wire_flow_and_preserves_ack_uri_route(mo
 
 
 @pytest.mark.parametrize("factory", ["bridge", "preanswered"])
-@pytest.mark.parametrize("advisory", [False, True, None], ids=["explicit-policy", "cached-options", "no-cache"])
-async def test_inbound_factories_keep_common_audio_only_when_permitted(monkeypatch, socket_enabled, factory, advisory):
+@pytest.mark.parametrize("advisory", [False, True, None], ids=["configured-capabilities", "cached-options", "no-cache"])
+async def test_inbound_factories_keep_common_audio_with_advisory_metadata(monkeypatch, socket_enabled, factory, advisory):
     await _exercise_factory(monkeypatch, factory=factory, advisory=advisory, encoding="PCMU")
+
+
+@pytest.mark.parametrize("factory", ["bridge", "preanswered"])
+@pytest.mark.parametrize("allowed", [True, False], ids=["policy-permits-pcmu", "policy-l16-only"])
+async def test_inbound_factories_preserve_explicit_codec_policy(monkeypatch, socket_enabled, factory, allowed):
+    policy = CodecPolicy(audio=("PCMU",) if allowed else ("L16",))
+    await _exercise_factory(monkeypatch, factory=factory, advisory=True, encoding="PCMU", codec_policy=policy)

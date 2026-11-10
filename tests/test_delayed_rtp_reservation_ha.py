@@ -350,6 +350,7 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
         if message.status_code == 200 and "INVITE" in message.header("CSeq") and message.body and "source_raw" not in observed:
             port = int(re.search(rb"m=audio (\d+)", message.body)[1])
             pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", message.body)[1])
+            observed["source_offer_ptime"] = float(re.search(rb"a=ptime:([\d.]+)", message.body)[1])
             reservation = lab.calls.artifacts_for(caller.dialog_ids.call_id).delayed_offer_ports
             observed["source_port"], observed["source_fd"] = port, reservation.audio_socket(port).fileno()
             observed["source_raw"] = rtp.build_packet(rtp.RtpPacket(pt, 718, 1600, 901, source_pcm))
@@ -382,7 +383,10 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
         result = await caller.invite(target=target, remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], delayed_offer=True, timeout=3)
         assert result == "in_call"
         assert caller.dialog.send_format.encoding == caller.dialog.recv_format.encoding == "L16"
-        assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 20
+        # The late offer's receive preference drives our TX. Our receive
+        # preference remains 20 ms; offer/answer need not be symmetric.
+        assert caller.dialog.send_format.frame_ms == observed["source_offer_ptime"]
+        assert caller.dialog.recv_format.frame_ms == 20
         async with asyncio.timeout(3):
             to_destination = rtp.parse_packet((await phone.audio.get())[0])
             to_source = rtp.parse_packet(await lab.hass.loop.sock_recv(media, 4096))
