@@ -209,6 +209,8 @@ class TrunkFormMixin:
         )
 
     async def async_step_trunk(self, user_input=None):
+        from .inbound_identity_form import did_form_fields, validate_did_form
+
         _current_entry, existing = self._current_entry_data()
         target_choices, target_default = _trunk_target_choices(self.hass, _current_entry, existing)
         register = getattr(
@@ -243,6 +245,7 @@ class TrunkFormMixin:
         }
         schema = vol.Schema(
             {
+                **did_form_fields(existing),
                 vol.Optional("trunk_media_nat", default=existing.get("trunk_media_nat") or (
                     "manual" if existing.get("trunk_outbound_media_address") else "auto"
                 )): SelectSelector(SelectSelectorConfig(
@@ -339,6 +342,7 @@ class TrunkFormMixin:
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input = dict(user_input)
+            errors.update(validate_did_form(user_input, existing))
             user_input[CONF_TRUNK_REGISTER] = register
             user_input.setdefault(CONF_TRUNK_EXPIRES, defaults[CONF_TRUNK_EXPIRES])
             if not register:
@@ -449,9 +453,12 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         """Expose the native Add phone flow on the integration entry."""
         from .contact_flow import ContactSubentryFlowHandler
         from .trunk_flow import TrunkSubentryFlowHandler
+        from .paging_flow import PagingSubentryFlowHandler
+        from .group_flow import GroupSubentryFlowHandler
 
         return {PHONE_SUBENTRY_TYPE: PhoneSubentryFlowHandler, "contact": ContactSubentryFlowHandler,
-                "trunk": TrunkSubentryFlowHandler}
+                "trunk": TrunkSubentryFlowHandler, "paging": PagingSubentryFlowHandler,
+                "group": GroupSubentryFlowHandler}
 
     def _current_entry(self) -> ConfigEntry | None:
         if self.source == SOURCE_RECONFIGURE:

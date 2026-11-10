@@ -13,7 +13,15 @@ def async_get_tools(
     hass: HomeAssistant, llm_context: LLMContext, api_id: str
 ) -> LLMTools | None:
     """Offer registered call handlers when the request identifies its satellite."""
-    if api_id != LLM_API_ASSIST or not llm_context.device_id:
+    if api_id != LLM_API_ASSIST:
+        return None
+    from .assist_call_tools import current_call_tools
+    if call_tools := current_call_tools(hass, llm_context.context):
+        return LLMTools(tools=call_tools, prompt=(
+            "You are speaking to a caller on a live telephone call. Use the current-call tools to inspect, "
+            "transfer, resume or end this conversation. Transfer only to configured internal destinations. "
+            "Never ask for a Call-ID or claim a transfer succeeded before its result is known."))
+    if not llm_context.device_id:
         return None
 
     tools = [

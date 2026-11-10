@@ -140,6 +140,7 @@ class _SoftphoneMediaSession:
     update_event: asyncio.Event = field(default_factory=asyncio.Event)
     handoff_transport: Callable[[Callable], Any] | None = None
     observe_audio: Callable | None = None
+    application_playback: Any = None
 
 
 def _browser_audio_message_limit(session: _SoftphoneMediaSession | None) -> int:
@@ -523,6 +524,22 @@ def _active_softphone_media_session(
         return _emit
 
     if item is not None:
+        application_playback = item.get("application_playback")
+        if application_playback is not None:
+            from .browser_paging import BROWSER_PAGING_PCM, BrowserPagingMedia
+
+            application = registry.resource_for(call_id, "browser_paging")
+            current = registry.get_session(call_id)
+            if (not isinstance(application_playback, BrowserPagingMedia)
+                    or application is None or application.media is not application_playback
+                    or current is None or not current.live or current.owner != "paging"
+                    or current.metadata.get("application") != "browser_paging"
+                    or current.metadata.get("endpoint_id") != endpoint_id):
+                return None
+            fmt = RtpPcmFormat(96, "L16", BROWSER_PAGING_PCM.sample_rate, 1, BROWSER_PAGING_PCM.frame_ms)
+            return _SoftphoneMediaSession(call_id=call_id, local_rtp_port=0,
+                remote_rtp_host="", remote_rtp_port=0, send_format=fmt, recv_format=fmt,
+                local_audio_direction="recvonly", application_playback=application_playback)
         if item.get("rtp_loopback"):
             rtp_source = item.get("audio_rtp_source")
             if not isinstance(rtp_source, rtp.AudioRtpSenderState):
@@ -793,6 +810,10 @@ async def _run_audio_session(
     endpoint_id: str,
     playback=None,
 ) -> None:
+    if session.application_playback is not None:
+        await _run_application_audio_session(hass, ws, session,
+            handoff_requested=handoff_requested, endpoint_id=endpoint_id, playback=playback)
+        return
     if session.conference_queue is not None:
         await _run_conference_audio_session(
             hass,
@@ -1556,6 +1577,67 @@ async def _run_audio_session(
             _schedule_debug_capture_write(hass, debug_capture, counters)
         if caller_cancelled:
             raise asyncio.CancelledError
+
+
+async def _run_application_audio_session(hass, ws, session, *, endpoint_id, playback,
+                                          handoff_requested=None):
+    """Deliver call-owned paging PCM, with no browser capture or RTP loopback."""
+    media = session.application_playback
+
+    async def output():
+        loop = asyncio.get_running_loop()
+        while not media.closed.is_set():
+            await playback.wait_ready()
+            pcm = await media.tx_queue.get()
+            try:
+                await ws.send_bytes(encode_audio_frame(pcm))
+                media.counters["ws_tx"] += 1
+                media.last_output_deadline = loop.time() + session.recv_format.audio_format.frame_ms / 1000
+                await asyncio.sleep(max(0, media.last_output_deadline - loop.time()))
+            finally:
+                media.tx_queue.task_done()
+
+    async def controls():
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                try:
+                    payload = json.loads(str(msg.data))
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(payload, dict) and payload.get("type") == "audio_ready":
+                    playback.ready(ws)
+            elif msg.type == WSMsgType.BINARY:
+                # A recipient cannot inject microphone PCM into the announcement.
+                media.counters["drop_direction"] += 1
+            elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                return
+
+    call_ended, remove_listener = _listen_for_call_end(hass, session.call_id, endpoint_id)
+    tasks = set()
+    try:
+        await ws.send_json({"state": "in_call", "call_id": session.call_id,
+            "tx_format": session.send_format.audio_format.wire_token(),
+            "rx_format": session.recv_format.audio_format.wire_token(),
+            "selected_tx_format": session.send_format.audio_format.wire_token(),
+            "selected_rx_format": session.recv_format.audio_format.wire_token(),
+            "audio_direction": "recvonly", "video_active": False})
+        tasks = {asyncio.create_task(output()), asyncio.create_task(controls()),
+                 asyncio.create_task(call_ended.wait()), asyncio.create_task(media.closed.wait())}
+        if handoff_requested is not None:
+            tasks.add(asyncio.create_task(handoff_requested.wait()))
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if not task.cancelled() and task.exception() is not None and not media.closed.is_set():
+                media.counters["tx_error"] += 1
+                task.result()
+    finally:
+        remove_listener()
+        for task in tasks:
+            task.cancel()
+        await async_wait_for_cleanup(asyncio.gather(*tasks, return_exceptions=True))
+        ws.force_close()
+        if handoff_requested is None or not handoff_requested.is_set():
+            await media.stop("browser_disconnected")
 
 
 async def _run_conference_audio_session(

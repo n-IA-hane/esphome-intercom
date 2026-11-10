@@ -54,6 +54,9 @@ def phone_state_dto(phone, *, peer_readable):
             "kind", "availability", "dnd", "state",
         )},
         "calls": calls,
+        "queues": list(phone.get("queues", ())),
+        "ring_group": str(phone.get("ring_group") or ""),
+        "queue_states": deepcopy(phone.get("queue_states", [])),
         "mailbox": {key: mailbox[key] for key in ("enabled", "waiting", "new", "old")},
     }
 
@@ -127,6 +130,10 @@ def phone_states(hass, *, dialogs=None):
             "kind": endpoint.kind.value,
             "availability": endpoint.availability.value,
             "dnd": endpoint.dnd,
+            "queues": list(endpoint.queues),
+            "ring_group": endpoint.ring_group,
+            "queue_states": (runtime.queues.phone_summary(endpoint.endpoint_id)
+                             if getattr(runtime, "queues", None) is not None else []),
             "state": state,
             "calls": calls,
             "mailbox": mailbox_state(hass, endpoint.endpoint_id),
@@ -158,6 +165,7 @@ class PhoneStateObserver:
         self.activity = {"phones": [], "parked": []}
 
     def _start(self):
+        from .call_queues import EVENT_QUEUE_CHANGED
         from .mailbox import EVENT_VOICEMAIL_CHANGED
         from .parking import PARKING_CHANGED
         from .dialog_info import activity_snapshot
@@ -170,7 +178,7 @@ class PhoneStateObserver:
         self.activity = activity_snapshot(runtime, dialogs=self.dialogs)
         self.unsubscribers = [
             self.hass.bus.async_listen(name, self.refresh)
-            for name in (EVENT_VOICEMAIL_CHANGED, PARKING_CHANGED)
+            for name in (EVENT_VOICEMAIL_CHANGED, PARKING_CHANGED, EVENT_QUEUE_CHANGED)
         ]
         self.unsubscribers.append(runtime.sip.subscribe_state(self._committed))
         self.unsubscribers.append(runtime.endpoints.subscribe(self._endpoint_changed))

@@ -154,6 +154,10 @@ def entry_route_mappings(
             for subentry in phone_subentries(entry)
             if subentry.subentry_id != exclude_subentry_id
         )
+        mappings.extend(
+            subentry.data for subentry in entry.subentries.values()
+            if subentry.subentry_type in {"group", "paging"} and subentry.subentry_id != exclude_subentry_id
+        )
         if data.get("managed_esphome_phones"):
             from .managed_phones import managed_route_mappings
 

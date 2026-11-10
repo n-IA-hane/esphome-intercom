@@ -231,6 +231,16 @@ and [actionable notifications](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-n
 
 ## Shared contacts and live phone status (LDAP and BLF)
 
+Call queues and ring groups now have their own VoIP Stack service devices.
+Create one explicitly or declare its name on a phone, then manage the same
+membership from the group or the phone. Queues add persistent operator login,
+logout and pause. See [groups and queues](docs/GROUPS_AND_QUEUES.md).
+
+Use [paging](docs/PAGING.md) to deliver TTS announcements to your phones in
+speakerphone mode. [Incoming number rules](docs/INBOUND_NUMBERS.md) connect
+provider DID ranges to your HA dialplan; the [LDAP phone guide](docs/LDAP_PHONES.md)
+explains how to put the shared directory on a compatible desk phone.
+
 ![Shared contacts, phone identities and call routing](docs/images/phonebook-endpoint.png)
 
 Maintain one directory for HA phones, managed ESP endpoints, registered SIP

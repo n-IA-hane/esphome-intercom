@@ -131,6 +131,7 @@ class AssistEndpoint:
             conversation = AssistConversation(
                 media, str(assist_cfg.get(CONF_ASSIST_PIPELINE) or "preferred"), prompt
             )
+            media.conversation = conversation
             media.start_consumer(conversation._pipeline_loop)
         try:
             await media.start()
@@ -167,6 +168,10 @@ class AssistEndpoint:
             role="assist",
             state=CallState.IN_CALL.value,
         )
+        from .assist_call import attach_assist_application
+        from .runtime_data import require_runtime_data
+        local_ip = str(require_runtime_data(self.hass).transport_config.get("advertise_host") or invite.request_uri.host)
+        attach_assist_application(self.hass, session, invite, media, destination_name, local_ip)
         publish_bridge_projection(
             self.hass,
             session,

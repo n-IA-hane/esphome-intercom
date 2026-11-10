@@ -1,3 +1,197 @@
+set_phone_memberships:
+  name: Set phone group membership
+  description: Change a phone's ring groups or queues, including a configured ESP that is offline.
+  fields:
+    phone:
+      name: Phone
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+            - integration: esphome
+    field:
+      name: Group type
+      required: true
+      selector:
+        select:
+          options:
+            - label: Ring groups
+              value: ring_group
+            - label: Queues
+              value: queues
+    value:
+      name: Group names
+      description: Comma-separated names. An empty value removes the phone from this type of group.
+      required: true
+      selector:
+        text:
+
+set_phone_queues:
+  name: Set phone queues
+  description: Set the queue declarations of one phone. New names create automatic queue devices.
+  fields:
+    phone:
+      name: Phone
+      required: true
+      selector:
+        text:
+    queues:
+      name: Queues
+      description: Comma-separated queue names, or an empty value to leave all queues.
+      required: true
+      selector:
+        text:
+
+set_queue_agent_state:
+  name: Set queue operator state
+  description: Log a configured member in or out, or pause and resume queue assignments.
+  fields:
+    queue:
+      name: Queue
+      required: true
+      selector:
+        text:
+    phone:
+      name: Phone
+      required: true
+      selector:
+        text:
+    state:
+      name: Operator state
+      required: true
+      selector:
+        select:
+          options:
+            - label: Logged in and available
+              value: available
+            - label: Paused
+              value: paused
+            - label: Logged out
+              value: logged_out
+
+get_queue_state:
+  name: Get queue state
+  description: Return the queue policy, waiting callers and current member availability.
+  fields:
+    queue:
+      name: Queue
+      required: true
+      selector:
+        text:
+    phone:
+      name: Phone
+      description: Optional member filter.
+      selector:
+        text:
+
+configure_queue:
+  name: Configure queue
+  description: Update an existing queue. The same settings are available on its VoIP Stack device.
+  fields:
+    queue:
+      name: Queue
+      required: true
+      selector:
+        text:
+    enabled:
+      name: Enabled
+      selector:
+        boolean:
+    max_waiting:
+      name: Maximum waiting callers
+      selector:
+        number: {min: 1, max: 64, mode: box}
+    max_wait:
+      name: Maximum wait
+      selector:
+        number: {min: 1, max: 3600, unit_of_measurement: s, mode: box}
+    ring_timeout:
+      name: Ring time per attempt
+      selector:
+        number: {min: 1, max: 120, unit_of_measurement: s, mode: box}
+    no_agent_wait:
+      name: Wait without operators
+      selector:
+        number: {min: 0, max: 120, unit_of_measurement: s, mode: box}
+    retry_delay:
+      name: Retry delay
+      selector:
+        number: {min: 0.1, max: 120, unit_of_measurement: s, mode: box}
+    wrap_up:
+      name: Pause after a conversation
+      selector:
+        number: {min: 0, max: 3600, unit_of_measurement: s, mode: box}
+    fallback:
+      name: Fallback destination
+      selector:
+        text:
+    hold_media:
+      name: Hold audio URI
+      selector:
+        text:
+
+announce:
+  name: Announce
+  description: Deliver one TTS message or audio file to phones or paging groups. Busy phones are skipped.
+  fields:
+    targets:
+      name: Phones or paging groups
+      description: Endpoint IDs, device IDs, names or paging group IDs.
+      required: true
+      selector:
+        text:
+          multiple: true
+    tts_entity_id:
+      name: TTS provider
+      selector:
+        entity:
+          domain: tts
+    message:
+      name: Message
+      selector:
+        text:
+          multiline: true
+    language:
+      name: Language
+      selector:
+        text:
+    options:
+      name: TTS options
+      selector:
+        object:
+    media:
+      name: Audio file
+      description: Use instead of a TTS provider and message.
+      selector:
+        media:
+          accept: [audio/*]
+    answer_timeout:
+      name: Answer window
+      default: 5
+      selector:
+        number: {min: 1, max: 120, unit_of_measurement: s, mode: box}
+    timeout:
+      name: Total time limit
+      default: 120
+      selector:
+        number: {min: 1, max: 600, unit_of_measurement: s, mode: box}
+    wait:
+      name: Wait until finished
+      default: true
+      selector:
+        boolean:
+
+stop_announcement:
+  name: Stop announcement
+  description: Stop only the identified announcement and release its recipient calls.
+  fields:
+    announcement_id:
+      name: Announcement ID
+      required: true
+      selector:
+        text:
+
 purge_devices:
   name: Purge stale devices (disabled)
   description: >-

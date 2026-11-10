@@ -52,10 +52,12 @@ from .phone_config import (
     CONF_PHONE_DND,
     CONF_PHONE_EXTENSION,
     CONF_PHONE_RING_GROUP,
+    CONF_PHONE_QUEUES,
     CONF_PHONE_SEND_VIDEO,
     update_phone_subentry,
 )
 from .debug_capture import debug_capture_pending_writes
+from .phone_queue_membership import normalize_phone_queues
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
     endpoint_directory,
@@ -454,6 +456,7 @@ async def async_set_ha_softphone_settings(
     endpoint_id: str,
     extension: object = None,
     ring_group: object = None,
+    queues: object = None,
     conference_group: object = None,
     conference_ring: object = None,
     auto_answer: object = None,
@@ -463,6 +466,8 @@ async def async_set_ha_softphone_settings(
     store = _ha_softphone_store(hass, endpoint_id)
     if extension is not None:
         store["extension"] = _clean_endpoint_field(extension)
+    if queues is not None:
+        store["queues"] = list(normalize_phone_queues(queues))
     groups = _ha_softphone_groups(hass, endpoint_id)
     if ring_group is not None:
         groups["ring_group"] = _clean_group_name(ring_group)
@@ -566,6 +571,7 @@ async def _async_load_ha_softphone_store(
     runtime["extension"] = _clean_endpoint_field(
         data.get(CONF_PHONE_EXTENSION, runtime.get("extension", ""))
     )
+    runtime["queues"] = list(normalize_phone_queues(data.get(CONF_PHONE_QUEUES, runtime.get("queues"))))
     current_groups = _ha_softphone_groups(hass, endpoint_id)
     runtime["groups"] = {
         "ring_group": _clean_group_name(
@@ -600,6 +606,7 @@ async def _async_save_ha_softphone_store(hass: HomeAssistant, endpoint_id: str) 
         CONF_PHONE_SEND_VIDEO: _ha_softphone_send_video(hass, endpoint_id),
         CONF_PHONE_EXTENSION: _ha_softphone_extension(hass, endpoint_id),
         CONF_PHONE_RING_GROUP: groups["ring_group"],
+        CONF_PHONE_QUEUES: list(normalize_phone_queues(runtime.get("queues"))),
         CONF_PHONE_CONFERENCE_GROUP: groups["conference_group"],
         CONF_PHONE_CONFERENCE_RING: groups["conference_ring"],
     }
@@ -953,6 +960,10 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
             }
         )
     session = registry.sessions.get(registry.resolve_session_id(str(call_id or "")))
+    paging = bool(session is not None and session.live and session.owner == "paging"
+                  and session.metadata.get("application") == "browser_paging"
+                  and session.metadata.get("endpoint_id") == endpoint_id
+                  and str(store.get("call_id") or "") == session.call_id)
     event_context = registry.event_context(str(call_id or ""))
     video_active = bool(store.get("video_active", False))
     video_offered = bool(store.get("video_offered", False))
@@ -1022,6 +1033,9 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
                       "finishing": recording is not None and recording.stopped.is_set(),
                       "owned": recording_active and recording.endpoint.endpoint_id == endpoint_id},
         "extension": _ha_softphone_extension(hass, endpoint_id),
+        "queues": list(endpoint.queues) if endpoint is not None else [],
+        "queue_states": (entry_runtime.queues.phone_summary(endpoint_id)
+                         if entry_runtime is not None and getattr(entry_runtime, "queues", None) is not None else []),
         "groups": _ha_softphone_groups(hass, endpoint_id),
         "busy": bool(store.get("session_device_id") and active_softphone),
         "state": store.get("state", CallState.IDLE.value),
@@ -1047,7 +1061,10 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "selected_tx_rtp_format": store.get("selected_tx_rtp_format", ""),
         "selected_rx_rtp_format": store.get("selected_rx_rtp_format", ""),
         "audio_mode": store.get("audio_mode", ""),
-        "audio_direction": store.get("audio_direction", "sendrecv"),
+        "audio_direction": "recvonly" if paging else store.get("audio_direction", "sendrecv"),
+        "announcement_id": str(session.metadata.get("announcement_id") or "") if paging else "",
+        "answer_mode": "auto" if paging else "",
+        "generation": session.generation if session is not None else 0,
         "audio_connection_held": bool(store.get("audio_connection_held", False)),
         "video_active": video_active,
         "video_offered": video_offered,
@@ -1433,6 +1450,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
                           else EndpointAvailability.OFFLINE),
             capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),
+            queues=normalize_phone_queues(device.get("queues", previous.queues if previous is not None else ())),
             conference_group=str(device.get("conference_group") or ""),
             conference_ring=bool(device.get("conference_ring", False)),
             active_call_id=(previous.active_call_id if previous is not None else ""),

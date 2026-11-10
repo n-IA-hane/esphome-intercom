@@ -50,6 +50,7 @@ def build_ring_group_fork(
     preflight_failures: list[PreflightFailure],
     on_ringing: Callable[[], None] | None = None,
     on_leg_state: Callable[[OutboundLeg, str], None] | None = None,
+    ring_timeout: float = RING_GROUP_TIMEOUT_S,
 ) -> tuple[
     list[DialCandidate],
     dict[str, ForkPayload],
@@ -65,7 +66,7 @@ def build_ring_group_fork(
         try:
             decision = await asyncio.wait_for(
                 route_future,
-                timeout=RING_GROUP_TIMEOUT_S,
+                timeout=ring_timeout,
             )
         except asyncio.TimeoutError:
             return "timeout", {"member": "__browser__", "browser": True}
@@ -148,7 +149,7 @@ def build_ring_group_fork(
                 remote_host=uri.host,
                 remote_sip_port=sip_default_port(uri),
                 request_uri=str(uri),
-                timeout=8.0,
+                timeout=min(8.0, ring_timeout),
             )
             if result == "ringing":
                 if on_leg_state is not None:
@@ -157,7 +158,7 @@ def build_ring_group_fork(
                     ringing_published = True
                     on_ringing()
                 result = await client.wait_for_final(
-                    timeout=RING_GROUP_TIMEOUT_S
+                    timeout=ring_timeout
                 )
             if result == "in_call" and client.dialog is None:
                 return DialOutcome(

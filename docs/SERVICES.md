@@ -1,5 +1,10 @@
 # Home Assistant services
 
+For the 2026.12 development additions, see [group and queue actions](GROUPS_AND_QUEUES.md#actions)
+and [paging announcements](PAGING.md). Group declarations, operator login and
+announcement jobs are separate operations; changing one does not unregister a
+phone or change its global autoanswer preference.
+
 The `voip_stack.*` services are the public control surface for the HA
 softphone, central phonebook, local SIP endpoint accounts and automation
 fallback routing.

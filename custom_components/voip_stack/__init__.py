@@ -342,6 +342,7 @@ async def _handle_set_ha_softphone_settings_service(call: ServiceCall) -> None:
         endpoint_id=endpoint_id,
         extension=call.data.get("extension"),
         ring_group=call.data.get("ring_group"),
+        queues=call.data.get("queues"),
         conference_group=call.data.get("conference_group"),
         conference_ring=call.data.get("conference_ring"),
         auto_answer=call.data.get("auto_answer"),
@@ -556,6 +557,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     from .phone_state import async_get_phone_state
     from .call_pickup import async_pickup_call
     from .call_recording import async_start_recording, async_stop_recording, async_get_recording, async_delete_recording
+    from .phone_queue_membership import async_set_phone_queues, async_set_phone_memberships_service
+    from .call_queues import async_set_queue_agent_state, async_get_queue_state, async_configure_queue
+    from .paging import async_announce, async_stop_announcement
 
     await async_register_services(
         hass,
@@ -584,6 +588,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "transfer": _handle_sip_transfer_service,
             "park": async_park_call,
             "get_phone_state": async_get_phone_state,
+            "set_phone_queues": async_set_phone_queues,
+            "set_phone_memberships": async_set_phone_memberships_service,
+            "set_queue_agent_state": async_set_queue_agent_state,
+            "get_queue_state": async_get_queue_state,
+            "configure_queue": async_configure_queue,
+            "announce": async_announce,
+            "stop_announcement": async_stop_announcement,
             "pickup": async_pickup_call,
             "start_recording": async_start_recording,
             "stop_recording": async_stop_recording,
@@ -753,6 +764,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .phone_policy_runtime import setup_phone_policy_events
 
     setup_phone_policy_events(hass, entry)
+    from .call_queues import async_setup_queues
+
+    await async_setup_queues(hass, entry)
+    from .group_config import group_records, membership_signature
+    from .paging_config import paging_group_configs
+    entry.runtime_data.entry_group_records = group_records(entry)
+    entry.runtime_data.entry_paging_records = paging_group_configs(entry)
+    entry.runtime_data.entry_membership_signature = membership_signature(hass, entry)
     from .repairs import async_sync_runtime_issues
 
     async_sync_runtime_issues(hass)
@@ -787,6 +806,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             "endpoint may already be listening on that port."
         )
     await _async_start_sip_trunk(hass)
+    from .paging import async_setup_paging
+
+    paging = await async_setup_paging(hass, entry)
+    from .browser_paging import async_originate_browser_paging
+    paging.browser_originate = async_originate_browser_paging
     from .mailbox import async_setup_mailboxes
     await async_setup_mailboxes(hass, entry)
     from .esphome_provisioning import setup_provisioning
@@ -817,6 +841,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
+    if runtime is not None and runtime.queues is not None:
+        await runtime.queues.close()
+        runtime.queues = None
     from .phone_services import async_close_phone_services
     await async_close_phone_services(hass)
     if runtime is not None and runtime.phone_provisioning is not None:

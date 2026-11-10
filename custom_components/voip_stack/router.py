@@ -21,13 +21,15 @@ class RouteAction(StrEnum):
     AUTOMATION = "automation"
     VOICEMAIL = "voicemail"
     PARKING = "parking"
+    QUEUE = "queue"
+    PAGING = "paging"
     REJECT = "reject"
     BUSY = "busy"
 
     @property
     def is_local_application(self) -> bool:
         """PBX applications are destinations regardless of the calling transport."""
-        return self in {self.ASSIST, self.AUTOMATION, self.VOICEMAIL, self.PARKING}
+        return self in {self.ASSIST, self.AUTOMATION, self.VOICEMAIL, self.PARKING, self.QUEUE, self.PAGING}
 
 
 class RouteReason(StrEnum):
@@ -229,6 +231,10 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
     if entry is not None:
         endpoint_kind = str(entry.metadata.get("endpoint_kind") or "")
+        service = entry.metadata.get("virtual_endpoint")
+        if service in {"queue", "paging"}:
+            action = RouteAction.QUEUE if service == "queue" else RouteAction.PAGING
+            return RouteDecision(action, target=entry.id, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("virtual_endpoint") == "automation":
             return RouteDecision(RouteAction.AUTOMATION, target=entry.id, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("virtual_endpoint") == "assist_pipeline":

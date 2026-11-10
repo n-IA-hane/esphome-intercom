@@ -29,21 +29,57 @@ call_received:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
 route_requested:
   fields:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
 call_connected:
   fields:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
 call_ended:
   fields:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
     reason:
       selector:
         text: {}
@@ -60,6 +96,15 @@ dtmf_received:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
     digit:
       selector:
         select:
@@ -92,6 +137,15 @@ call_unanswered:
     caller: *id001
     destination: *id002
     ingress: *id003
+    trunk:
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+              model: SIP trunk
+    called_number:
+      selector:
+        text: {}
     for:
       required: false
       selector:

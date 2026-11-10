@@ -18,6 +18,7 @@ from .endpoint_session import (
     TerminationIntent,
 )
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
+from .inbound_identity import INBOUND_IDENTITY_KEYS, identity_fields
 from .media_reservation import release_media_reservation
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 
@@ -55,6 +56,7 @@ _EVENT_IDENTITY_KEYS = (
     "endpoint_id", "source_endpoint_id", "dest_endpoint_id", "target_endpoint_id",
     "device_id", "source_device_id", "dest_device_id", "target_device_id",
     "ingress", "origin",
+    *INBOUND_IDENTITY_KEYS, "outbound_trunk_id",
 )
 
 
@@ -99,7 +101,9 @@ class CallRuntimeApi:
         fields = {
             key: metadata[key]
             for key in _EVENT_IDENTITY_KEYS
-            if metadata.get(key) not in (None, "")
+            if key in metadata and (
+                key in INBOUND_IDENTITY_KEYS or metadata[key] not in (None, "")
+            )
         }
         participants = {
             str(fields[key]).strip()
@@ -220,6 +224,7 @@ class CallRuntimeApi:
             self.upsert(call_id, state="connecting", owner="router")
 
         self._set_artifact(call_id, "pending_route", route)
+        self.remember_invite_identity(call_id, route.get("invite"))
 
     def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
         """Detach route state from its authoritative call generation."""
@@ -230,8 +235,17 @@ class CallRuntimeApi:
         """Attach an INVITE to the sole current call owner."""
 
         self._set_artifact(call_id, "pending_invite", invite)
+        self.remember_invite_identity(call_id, invite)
+
+    def remember_invite_identity(self, call_id: str, invite: Any) -> None:
+        """Retain the first ingress identity while routing changes destinations."""
         session = self.get_session(call_id)
         if session is not None:
+            for key, value in identity_fields(invite).items():
+                if value or (
+                    getattr(invite, "received_via_trunk", False) and hasattr(invite, key)
+                ):
+                    session.metadata.setdefault(key, value)
             inbound = str(getattr(invite, "trunk_id", "") or "")
             outbound = str(getattr(invite, "outbound_trunk_id", "") or "")
             if inbound:
@@ -250,6 +264,7 @@ class CallRuntimeApi:
         call_id = session.call_id
         self._remember_terminated(call_id, generation=session.generation)
         context = session.event_context
+        context.terminal_identity_fields = self._event_identity_fields(session.metadata, session.endpoint_claims)
         terminal_endpoints = set(
             self._event_identity_fields(session.metadata, session.endpoint_claims).get(
                 "participant_endpoint_ids", ()
@@ -427,7 +442,7 @@ class CallRuntimeApi:
             generation = terminal[0] if terminal is not None else 0
             phase = SessionPhase.TERMINATED.value
             owner = "terminal"
-            metadata = {}
+            metadata = context.terminal_identity_fields
         else:
             context = session.event_context
             revision = session.revision
@@ -454,7 +469,7 @@ class CallRuntimeApi:
         fields.update(
             self._event_identity_fields(
                 metadata,
-                session.endpoint_claims if session is not None else (),
+                session.endpoint_claims if session is not None else context.terminal_endpoint_ids,
             )
         )
         return fields

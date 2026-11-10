@@ -49,6 +49,7 @@ class SipApplicationMethods:
     presence_unsubscribe: Callable[[], None] | None = None
     endpoint_unsubscribe: Callable[[], None] | None = None
     parking_unsubscribe: Callable[[], None] | None = None
+    queue_unsubscribe: Callable[[], None] | None = None
     notifiers: dict[int, "SipEventSubscription"] = field(default_factory=dict)
     coalesced_notifications: int = 0
     rejected_subscriptions: int = 0
@@ -124,6 +125,13 @@ class SipApplicationMethods:
                     return SipRequestResult(400, "Bad Request")
                 if parking is not None and parking[1]:
                     dialog_endpoint_id = "parking:" + parking[1]
+                elif str(target).startswith(("queue-login+", "queue-pause+")):
+                    from .queue_agent import queue_agent_address, queue_agent_resource
+                    own_phone = endpoint_directory(self.hass).by_username(account.username)
+                    address = queue_agent_address(self.hass, target, own_phone.endpoint_id) if own_phone else None
+                    if address is None:
+                        return SipRequestResult(404, "Not Found")
+                    dialog_endpoint_id = queue_agent_resource(address)
                 elif endpoint is not None:
                     dialog_endpoint_id = endpoint.endpoint_id
                 else:
@@ -162,6 +170,11 @@ class SipApplicationMethods:
 
                 self.dialog_unsubscribe = phone_state_observer(self.hass).subscribe(
                     lambda dialogs: self._notify_dialog_changes(dialogs=dialogs), kind="dialog")
+            if event == "dialog" and result.status == 200 and self.queue_unsubscribe is None:
+                from .call_queues import get_queue_manager
+                manager = get_queue_manager(self.hass)
+                if manager is not None:
+                    self.queue_unsubscribe = manager.subscribe(self._notify_dialog_changes)
             if (event == "presence" and result.status == 200 and self.presence_unsubscribe is None
                     and any(item.presence_endpoint_id for item in self.subscriptions.values())):
                 from .phone_state import phone_state_observer
@@ -513,6 +526,10 @@ class SipApplicationMethods:
 
             states = (snapshot(require_runtime_data(self.hass), subscription.dialog_endpoint_id, subscription.dialog_filter)
                       if dialog_states is None else dialog_states)
+            from .queue_agent import parse_queue_agent_resource, queue_agent_snapshot
+            if (address := parse_queue_agent_resource(subscription.dialog_endpoint_id)) is not None:
+                from .call_queues import get_queue_manager
+                states = queue_agent_snapshot(get_queue_manager(self.hass), address) or ()
             body = document(subscription.request.uri, subscription.dialog_version, states)
             subscription.dialog_snapshot = states
             content_type = "application/dialog-info+xml"
@@ -691,6 +708,11 @@ class SipApplicationMethods:
                 from .parking import parking_address
                 removed = parking_address(self.hass, subscription.dialog_endpoint_id.removeprefix("parking:")) is None
             states = filter_dialogs(dialogs.get(subscription.dialog_endpoint_id, ()), subscription.dialog_filter)
+            from .queue_agent import parse_queue_agent_resource, queue_agent_snapshot
+            if (address := parse_queue_agent_resource(subscription.dialog_endpoint_id)) is not None:
+                snapshot = queue_agent_snapshot(runtime.queues, address)
+                removed = snapshot is None
+                states = filter_dialogs(snapshot or (), subscription.dialog_filter)
             if not removed and states == subscription.dialog_snapshot:
                 continue
             if removed:
@@ -710,7 +732,7 @@ class SipApplicationMethods:
             self.presence_unsubscribe = None
         if any(item.event == "dialog" for item in (self.subscriptions or {}).values()):
             return
-        for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
+        for name in ("dialog_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe", "queue_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
@@ -1092,7 +1114,7 @@ class SipApplicationMethods:
             self.mailbox_unsubscribe()
             self.mailbox_unsubscribe = None
         self.mailbox_archive = None
-        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe"):
+        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe", "queue_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)

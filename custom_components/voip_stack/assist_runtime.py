@@ -57,6 +57,8 @@ class AssistConversation:
         self.pipeline_id = str(pipeline_id or "").strip()
         self.call_connected_intent = str(call_connected_intent or "").strip()
         self._pipeline_failed = False
+        self.context = Context()
+        self.detached = False
 
     async def _audio_stream(self) -> AsyncGenerator[bytes]:
         """Wait for speech, then delimit one utterance with the same detector."""
@@ -162,7 +164,7 @@ class AssistConversation:
             await PipelineInput(
                 run=PipelineRun(
                     self.hass,
-                    context=Context(),
+                    context=self.context,
                     pipeline=async_get_pipeline(self.hass, pipeline_id=pipeline_id),
                     start_stage=PipelineStage.INTENT,
                     end_stage=PipelineStage.TTS,
@@ -199,7 +201,7 @@ class AssistConversation:
                 self.media._accepting_input = True
                 await async_pipeline_from_audio_stream(
                     self.hass,
-                    context=Context(),
+                    context=self.context,
                     event_callback=self._pipeline_event,
                     stt_metadata=stt.SpeechMetadata(
                         language="",
@@ -230,7 +232,7 @@ class AssistConversation:
             reason = "pipeline_error"
             _LOGGER.exception("Assist pipeline failed call_id=%s", self.media.invite.call_id)
         finally:
-            if not self.media.closed.is_set() and not self.media._completed:
+            if not self.detached and not self.media.closed.is_set() and not self.media._completed:
                 self.media._completed = True
                 self.hass.async_create_task(self.media.on_complete(reason))
 

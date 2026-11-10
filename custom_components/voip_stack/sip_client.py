@@ -1796,6 +1796,8 @@ class SipCallClient:
             remote_display_name=self._pending_target_display,
         )
         headers.extend(("Route", value) for value in routing.route_headers)
+        if getattr(self, "_pending_answer_mode", ""):
+            headers.append(("Answer-Mode", self._pending_answer_mode))
         if self.include_route_metadata:
             caller_name = _sip_header_token(self.local_name)
             dest_name = _sip_header_token(self._pending_target_display)
@@ -2077,8 +2079,15 @@ class SipCallClient:
         target_display_name: str = "",
         timeout: float = 8.0,
         delayed_offer: bool = False,
+        answer_mode: str = "",
+        audio_direction: str = "sendrecv",
     ) -> str:
         """Run one owned INVITE transaction that survives caller-task cancellation."""
+        if answer_mode not in {"", "Auto", "Manual"}:
+            raise ValueError("Unsupported SIP answer mode")
+        if audio_direction not in {"sendrecv", "sendonly", "recvonly", "inactive"}:
+            raise ValueError("Unsupported SIP audio direction")
+        self.invite_sent_at = None
         if self._closing or self._closed:
             raise RuntimeError("SIP client is already closed")
         if self._invite_task is not None and not self._invite_task.done():
@@ -2094,6 +2103,8 @@ class SipCallClient:
                 target_display_name=target_display_name,
                 timeout=timeout,
                 delayed_offer=delayed_offer,
+                answer_mode=answer_mode,
+                audio_direction=audio_direction,
             ),
             name=f"voip-sip-client-invite-{self.dialog_ids.call_id}",
         )
@@ -2132,7 +2143,10 @@ class SipCallClient:
         target_display_name: str = "",
         timeout: float = 8.0,
         delayed_offer: bool = False,
+        answer_mode: str = "",
+        audio_direction: str = "sendrecv",
     ) -> str:
+        self._pending_answer_mode = answer_mode
         transport_param = (("transport", self.signaling_transport.lower()),)
         request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
         logical_uri = sip.parse_sip_uri(request_uri)
@@ -2292,6 +2306,7 @@ class SipCallClient:
                 video_format=self.video_format,
                 video_formats=self.video_formats,
                 video_direction=self.video_direction,
+                audio_direction=audio_direction,
             )
             offer = self._advertise_media(offer)
             offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
@@ -2482,6 +2497,8 @@ class SipCallClient:
                 return "cancelled"
             try:
                 await self._send_raw(raw, remote_host, int(remote_sip_port))
+                if self.invite_sent_at is None:
+                    self.invite_sent_at = asyncio.get_running_loop().time()
                 sent_invite = True
                 break
             except (ConnectionError, OSError, RuntimeError) as err:

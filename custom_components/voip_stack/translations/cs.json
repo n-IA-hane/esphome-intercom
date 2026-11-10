@@ -77,7 +77,12 @@
           "trunk_audio_codecs": "Povolené zvukové kodeky",
           "trunk_video_codecs": "Povolené video kodeky",
           "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
-          "trunk_media_nat": "Media NAT traversal"
+          "trunk_media_nat": "Media NAT traversal",
+          "trunk_did_source": "Called number source",
+          "trunk_did_header": "Custom called-number header",
+          "trunk_did_fixed": "Fixed called number",
+          "trunk_did_fallbacks": "Alternative sources in priority order",
+          "trunk_did_prefix_rules": "Ordered prefix replacements"
         },
         "data_description": {
           "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -186,7 +191,8 @@
       "phone_service_base_dn_invalid": "Zadejte platné základní DN pro LDAP.",
       "phone_service_certificate_required": "Pro TLS zadejte certifikát i soukromý klíč.",
       "phone_service_configuration": "Neplatná konfigurace LDAP.",
-      "trunk_media_nat_invalid": "Choose auto, direct or manual."
+      "trunk_media_nat_invalid": "Choose auto, direct or manual.",
+      "trunk_did_invalid": "Invalid called-number source or prefix rules."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -354,7 +360,12 @@
             "trunk_audio_codecs": "Povolené zvukové kodeky",
             "trunk_video_codecs": "Povolené video kodeky",
             "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
-            "trunk_media_nat": "Media NAT traversal"
+            "trunk_media_nat": "Media NAT traversal",
+            "trunk_did_source": "Called number source",
+            "trunk_did_header": "Custom called-number header",
+            "trunk_did_fixed": "Fixed called number",
+            "trunk_did_fallbacks": "Alternative sources in priority order",
+            "trunk_did_prefix_rules": "Ordered prefix replacements"
           },
           "data_description": {
             "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -393,10 +404,73 @@
         "trunk_codecs_invalid": "Vyberte podporované kodeky a ponechte alespoň jeden zvukový kodek.",
         "trunk_target_required": "Vyberte přijímající telefon nebo zadejte cíl vytáčecího plánu.",
         "trunk_media_address_invalid": "Zadejte dostupnou unicast IPv4 adresu, nebo ponechte pole prázdné.",
-        "trunk_media_nat_invalid": "Choose auto, direct or manual."
+        "trunk_media_nat_invalid": "Choose auto, direct or manual.",
+        "trunk_did_invalid": "Invalid called-number source or prefix rules."
       },
       "abort": {
         "reconfigure_successful": "Konfigurace trunku byla aktualizována."
+      }
+    },
+    "group": {
+      "entry_type": "Ring group or queue",
+      "initiate_flow": {
+        "user": "Add ring group or queue"
+      },
+      "title": "Ring group or queue",
+      "step": {
+        "user": {
+          "title": "Group type",
+          "data": {
+            "kind": "Type"
+          }
+        },
+        "group": {
+          "title": "Configure group",
+          "description": "Membership is shared with each phone settings.",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "members": "Phones",
+            "enabled": "Enabled",
+            "keep_empty": "Keep this group when empty",
+            "max_waiting": "Maximum waiting callers",
+            "max_wait": "Maximum wait (seconds)",
+            "ring_timeout": "Ring time per attempt (seconds)",
+            "no_agent_wait": "Wait without agents (seconds)",
+            "retry_delay": "Retry delay (seconds)",
+            "wrap_up": "Pause after a call (seconds)",
+            "fallback": "Fallback destination",
+            "hold_media": "Hold audio URI"
+          }
+        }
+      },
+      "error": {
+        "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
+      },
+      "abort": {
+        "reconfigure_successful": "Group updated"
+      }
+    },
+    "paging": {
+      "entry_type": "Paging group",
+      "initiate_flow": {
+        "user": "Add paging group"
+      },
+      "title": "Paging group",
+      "step": {
+        "user": {
+          "title": "Paging group",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "members": "Phones",
+            "answer_timeout": "Answer window (seconds)",
+            "timeout": "Maximum duration (seconds)"
+          }
+        }
+      },
+      "error": {
+        "invalid_paging_group": "Invalid paging group or conflicting destination."
       }
     }
   },
@@ -488,6 +562,21 @@
         "auto": "Automatic",
         "direct": "Direct",
         "manual": "Manual"
+      }
+    },
+    "group_kind": {
+      "options": {
+        "ring": "Ring group",
+        "queue": "Call queue"
+      }
+    },
+    "trunk_did_source": {
+      "options": {
+        "request_uri": "Request-URI",
+        "to": "To",
+        "p_called_party_id": "P-Called-Party-ID",
+        "custom_header": "Custom header",
+        "fixed": "Fixed number"
       }
     }
   },
@@ -740,6 +829,9 @@
       },
       "phone_endpoint_conference_group": {
         "name": "Konferenční skupiny"
+      },
+      "phone_endpoint_queues": {
+        "name": "Fronty"
       }
     },
     "binary_sensor": {
@@ -767,6 +859,14 @@
         "ingress": {
           "name": "Původ hovoru",
           "description": "Volitelný filtr."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -785,6 +885,14 @@
         "ingress": {
           "name": "Původ hovoru",
           "description": "Volitelný filtr."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -803,6 +911,14 @@
         "ingress": {
           "name": "Původ hovoru",
           "description": "Volitelný filtr."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -821,6 +937,14 @@
         "ingress": {
           "name": "Původ hovoru",
           "description": "Volitelný filtr."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -847,6 +971,14 @@
         "outcome": {
           "name": "Výsledek hovoru",
           "description": "Ukončeno normálně, zmeškáno nebo selhalo. Pro jakýkoli výsledek ponechte prázdné."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -873,6 +1005,14 @@
         "source_leg": {
           "name": "Kdo stiskl klávesu",
           "description": "Volitelný filtr."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -895,6 +1035,14 @@
         "for": {
           "name": "Doba bez odpovědi",
           "description": "Ponechte prázdné pro použití časového limitu vyzvánění telefonu. Nastavte dobu pro nezávislé čekání automatizace."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },

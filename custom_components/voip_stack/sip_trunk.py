@@ -834,6 +834,7 @@ class SipTrunkClient:
             supported_send_formats=manager.supported_send_formats,
             supported_recv_formats=manager.supported_recv_formats,
             on_invite=manager.on_invite,
+            invite_identity_resolver=getattr(manager, "invite_identity_resolver", None),
             codec_policy_resolver=lambda _initial: CodecPolicy(self.config.audio_codecs, self.config.video_codecs),
             on_offerless_invite=getattr(manager, "on_offerless_invite", None),
             on_terminated=manager.on_terminated,

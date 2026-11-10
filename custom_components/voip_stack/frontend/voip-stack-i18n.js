@@ -299,6 +299,10 @@ const DE = {
 };
 
 const IT = {
+  "Queues": "Code",
+  "Available": "Disponibile",
+  "Paused": "In pausa",
+  "Logged out": "Disconnesso dalle code",
   "Call popups": "Popup chiamate",
   "Home Assistant phone": "Telefono Home Assistant",
   "Receive call popups on this device": "Ricevi popup chiamate su questo dispositivo",

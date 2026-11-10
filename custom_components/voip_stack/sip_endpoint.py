@@ -135,6 +135,7 @@ class SipEndpointManager:
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        invite_identity_resolver=None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -159,6 +160,7 @@ class SipEndpointManager:
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.invite_identity_resolver = invite_identity_resolver
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -229,6 +231,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    invite_identity_resolver=self.invite_identity_resolver,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -255,6 +258,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    invite_identity_resolver=self.invite_identity_resolver,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,

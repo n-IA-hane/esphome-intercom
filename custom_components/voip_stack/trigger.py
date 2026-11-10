@@ -33,11 +33,28 @@ TRIGGER_EVENTS = {
 }
 _LOGGER = logging.getLogger(__name__)
 
+
+def _trunk_selector_id(hass, value):
+    """Convert the native line device selector to its stable trunk identity."""
+    from homeassistant.helpers import device_registry as dr
+    device = dr.async_get(hass).async_get(str(value))
+    if device is None:
+        return value
+    identities = [identity.removeprefix("trunk:") for domain, identity in device.identifiers
+                  if domain == "voip_stack" and identity.startswith("trunk:")]
+    if len(identities) != 1:
+        raise ValueError("Select a VoIP Stack SIP trunk")
+    return identities[0]
+
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional("caller"): cv.string,
         vol.Optional("destination"): cv.string,
         vol.Optional("ingress"): vol.In(["trunk", "extension"]),
+        vol.Optional("trunk"): cv.string,
+        vol.Optional("inbound_trunk_id"): cv.string,
+        vol.Optional("outbound_trunk_id"): cv.string,
+        vol.Optional("called_number"): cv.string,
         vol.Optional("reason"): cv.string,
         vol.Optional("outcome"): vol.In(["ended", "missed", "failed"]),
         vol.Optional("digit"): vol.In(list("0123456789*#ABCD")),
@@ -50,14 +67,19 @@ OPTIONS_SCHEMA = vol.Schema(
 class VoipCallTrigger(Trigger):
     @classmethod
     async def async_validate_config(cls, hass, config):
-        return vol.Schema({vol.Optional("options", default=dict): OPTIONS_SCHEMA})(
+        result = vol.Schema({vol.Optional("options", default=dict): OPTIONS_SCHEMA})(
             config
         )
+        if result["options"].get("trunk"):
+            result["options"]["trunk"] = _trunk_selector_id(hass, result["options"]["trunk"])
+        return result
 
     def __init__(self, hass, config: TriggerConfig):
         super().__init__(hass, config)
         self._kind = config.key.rsplit(".", 1)[-1]
-        self._options = config.options or {}
+        self._options = dict(config.options or {})
+        if self._options.get("trunk"):
+            self._options["trunk"] = _trunk_selector_id(hass, self._options["trunk"])
 
     async def async_attach_runner(self, run_action, did_not_trigger=None):
         runs: set[asyncio.Task] = set()

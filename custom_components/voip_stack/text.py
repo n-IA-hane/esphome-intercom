@@ -31,6 +31,7 @@ _SETTINGS = (
     _PhoneTextSetting(
         "ring_group", "phone_endpoint_ring_group", "mdi:phone-ring", 255
     ),
+    _PhoneTextSetting("queues", "phone_endpoint_queues", "mdi:human-queue", 240),
     _PhoneTextSetting(
         "conference_group",
         "phone_endpoint_conference_group",
@@ -84,7 +85,8 @@ class PhoneEndpointSettingText(TextEntity):
             f"phone_endpoint_{endpoint.endpoint_id}_{setting.key}"
         )
         self._attr_device_info = endpoint_device_info(endpoint)
-        self._attr_native_value = str(getattr(endpoint, setting.key, "") or "")
+        value = getattr(endpoint, setting.key, "")
+        self._attr_native_value = ", ".join(value) if setting.key == "queues" else str(value or "")
 
     @callback
     def async_entity_id_changed(self, old_entity_id: str) -> None:
@@ -106,9 +108,8 @@ class PhoneEndpointSettingText(TextEntity):
     @callback
     def apply_endpoint(self, endpoint) -> None:
         self.endpoint = endpoint
-        self._attr_native_value = str(
-            getattr(endpoint, self.setting.key, "") or ""
-        )
+        value = getattr(endpoint, self.setting.key, "")
+        self._attr_native_value = ", ".join(value) if self.setting.key == "queues" else str(value or "")
         if self.hass is not None:
             self.async_write_ha_state()
 

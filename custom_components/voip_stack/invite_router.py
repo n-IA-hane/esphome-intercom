@@ -20,6 +20,7 @@ from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
 from .automation_routing import matches_call
+from .inbound_identity import identity_fields
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -167,6 +168,10 @@ async def route_invite(
     identified_source = source_endpoint_id if not trunk_invite and (
         registered_source or caller_peer is not None or caller_is_known_roster_endpoint
     ) else ""
+    if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
+        from .queue_agent import route_queue_agent_call
+        return await route_queue_agent_call(runtime, invite, registry,
+                                            source_endpoint if identified_source and not trunk_invite else None)
     from .esphome_origination import apply_correlated_invite, CorrelationError
     try:
         requested_trunk = apply_correlated_invite(registry, invite, identified_source)
@@ -265,6 +270,11 @@ async def route_invite(
     if not trunk_direct_preprocessed and decision.action is RouteAction.AUTOMATION:
         from .automation_call import route_automation_call
         return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
+    if not trunk_direct_preprocessed and decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+        from .queue_call import route_queue_call
+        from .paging import route_paging_call
+        handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+        return await handler(runtime, invite, decision, registry, source_endpoint)
     if not trunk_direct_preprocessed and decision.action is RouteAction.ASSIST:
         called_extension = (
             str(decision.entry.extension or invite.routing_target)
@@ -303,6 +313,8 @@ async def route_invite(
         if trunk_result is not None:
             return trunk_result
     native_override = any(matches_call({
+        **identity_fields(invite),
+        "outbound_trunk_id": invite.outbound_trunk_id,
         "caller": invite.caller,
         "callee": decision.target or invite.target,
         "destination": decision.entry.display_name if decision.entry is not None else invite.target,
@@ -374,6 +386,11 @@ async def route_invite(
         if decision.action is RouteAction.AUTOMATION:
             from .automation_call import route_automation_call
             return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
+        if decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+            from .queue_call import route_queue_call
+            from .paging import route_paging_call
+            handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+            return await handler(runtime, invite, decision, registry, source_endpoint)
         if decision.action is RouteAction.ASSIST:
             called_extension = (
                 str(decision.entry.extension or route_destination)

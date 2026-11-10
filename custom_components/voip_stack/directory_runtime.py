@@ -91,6 +91,20 @@ def compose_directory_entries(hass, peers, registered):
     for endpoint in runtime.endpoints.endpoints:
         if isinstance(endpoint, PhoneEndpoint) and endpoint.endpoint_id.casefold() not in entries:
             entries[endpoint.endpoint_id.casefold()] = _endpoint_entry(endpoint)
+    if runtime.queues is not None:
+        runtime.queues.refresh()
+        for row in runtime.queues.roster_entries():
+            entries[row.metadata["endpoint_id"]] = row
+    from .paging_config import paging_group_entries
+
+    from .store import config_entry
+    entry = config_entry(hass)
+    if entry is not None:
+        for row in paging_group_entries(entry):
+            entries[row.metadata["endpoint_id"]] = row
+        from .group_config import group_roster_entries
+        for row in group_roster_entries(hass, entry):
+            entries[row.metadata["endpoint_id"]] = row
     for group in collect_groups([], entries.values(), [], existing_entries=entries.values()).values():
         entries[f"group:{group.group_type}:{group.name}".casefold()] = RosterEntry(
             id=group.name, name=group.name, ha_bridge=True, enabled=bool(group.members),

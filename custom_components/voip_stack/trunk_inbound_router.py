@@ -278,6 +278,15 @@ async def async_route_trunk_invite(
         from .automation_call import route_automation_call
         await route_automation_call(runtime, invite, decision, registry, None)
         return
+    if decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+        from .queue_call import route_queue_call
+        from .paging import route_paging_call
+        handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+        result = await handler(runtime, invite, decision, registry, None)
+        if result.status >= 300:
+            await terminate_source("application_rejected", status=result.status,
+                                   answered=bool((registry.resource_for(invite.call_id, "preanswered") or {}).get("final_response_sent")))
+        return
     if decision.action is RouteAction.ASSIST:
         registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)

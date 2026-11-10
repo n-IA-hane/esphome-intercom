@@ -29,6 +29,9 @@ const [
   { voipStackEngine },
   {
     audioModeLabel,
+    availableQueueNames,
+    queueDeclarationText,
+    isPagingAutoAnswer,
     formatListFromMetadata,
     formatCallDuration,
     formatEndReason,
@@ -153,6 +156,7 @@ class VoipStackCard extends HTMLElement {
     this._videoSendSwitchEntityId = null;
     this._dndSwitchEntityId = null;
     this._ringGroupsTextEntityId = null;
+    this._queuesTextEntityId = null;
     this._conferenceGroupsTextEntityId = null;
     this._extensionTextEntityId = null;
     this._conferenceRingSwitchEntityId = null;
@@ -474,6 +478,7 @@ class VoipStackCard extends HTMLElement {
   // detect a missing permission as early as possible rather than wait for a
   // call to find we don't have media permissions to auto-answer.
   _checkAutoAnswerMedia(snapshot = {}) {
+    if (isPagingAutoAnswer(snapshot)) return;
     if (!this._autoAnswer || !this._isSoftphoneController()) return;
     void voipStackEngine.checkAutoAnswerMedia("audio");
     if (this._wantsAutoAnswerVideo(snapshot)) {
@@ -511,7 +516,7 @@ class VoipStackCard extends HTMLElement {
       !this._isSoftphoneController() ||
       snapshot.state !== "ringing" ||
       snapshot.direction !== "incoming" ||
-      !this._autoAnswer ||
+      (!this._autoAnswer && !isPagingAutoAnswer(snapshot)) ||
       !snapshot.call_id ||
       this._autoAnswerCallId === snapshot.call_id ||
       this._starting ||
@@ -883,7 +888,7 @@ class VoipStackCard extends HTMLElement {
       "_voipStateEntityId", "_transportEntityId", "_callerEntityId",
       "_destinationEntityId", "_lastReasonEntityId", "_previousButtonEntityId",
       "_nextButtonEntityId", "_callButtonEntityId", "_declineButtonEntityId",
-      "_autoAnswerSwitchEntityId", "_videoSendSwitchEntityId", "_dndSwitchEntityId", "_ringGroupsTextEntityId",
+      "_autoAnswerSwitchEntityId", "_videoSendSwitchEntityId", "_dndSwitchEntityId", "_ringGroupsTextEntityId", "_queuesTextEntityId",
       "_conferenceGroupsTextEntityId", "_extensionTextEntityId",
       "_conferenceRingSwitchEntityId",
     ]) this[key] = null;
@@ -996,6 +1001,7 @@ class VoipStackCard extends HTMLElement {
         this._videoSendSwitchEntityId,
         this._dndSwitchEntityId,
         this._ringGroupsTextEntityId,
+        this._queuesTextEntityId,
         this._conferenceGroupsTextEntityId,
         this._conferenceRingSwitchEntityId,
       ]) {
@@ -1693,6 +1699,7 @@ class VoipStackCard extends HTMLElement {
         this._dndSwitchEntityId = e.dnd || null;
         this._extensionTextEntityId = e.voip_extension || null;
         this._ringGroupsTextEntityId = e.voip_ring_groups || null;
+        this._queuesTextEntityId = e.voip_queues || null;
         this._conferenceGroupsTextEntityId = e.voip_conference_groups || null;
         this._conferenceRingSwitchEntityId = e.voip_conference_ring || null;
         this._startCallService = e.start_call_service || "";
@@ -1733,6 +1740,7 @@ class VoipStackCard extends HTMLElement {
           else if (id.startsWith("switch.") && (id.includes("do_not_disturb") || id.includes("_dnd"))) this._dndSwitchEntityId = id;
           else if (id.startsWith("text.") && id.includes("voip_extension")) this._extensionTextEntityId = id;
           else if (id.startsWith("text.") && id.includes("voip_ring_groups")) this._ringGroupsTextEntityId = id;
+          else if (id.startsWith("text.") && id.includes("voip_queues")) this._queuesTextEntityId = id;
           else if (id.startsWith("text.") && id.includes("voip_conference_groups")) this._conferenceGroupsTextEntityId = id;
           else if (id.startsWith("switch.") && id.includes("voip_conference_ring")) this._conferenceRingSwitchEntityId = id;
         }
@@ -2175,6 +2183,7 @@ class VoipStackCard extends HTMLElement {
       const showGroups = showSettingsPanel && this._canConfigureHaSoftphone() && (
         softphoneMode ||
         !!this._ringGroupsTextEntityId ||
+        !!this._queuesTextEntityId ||
         !!this._conferenceGroupsTextEntityId ||
         !!this._conferenceRingSwitchEntityId
       );
@@ -2447,6 +2456,7 @@ class VoipStackCard extends HTMLElement {
       };
     }
     if (els.ringGroupInput) els.ringGroupInput.onchange = (event) => this._setGroupSetting("ring_group", event.target.value);
+    if (els.queuesInput) els.queuesInput.onchange = (event) => this._setGroupSetting("queues", event.target.value);
     if (els.conferenceGroupInput) els.conferenceGroupInput.onchange = (event) => this._setGroupSetting("conference_group", event.target.value);
     if (els.conferenceRingCheckbox) els.conferenceRingCheckbox.onchange = (event) => this._setGroupSetting("conference_ring", event.target.checked);
     els.callBtn.onclick = () => this._transferDraft ? this._submitTransfer() : this._startCall();
@@ -3078,6 +3088,7 @@ class VoipStackCard extends HTMLElement {
   async _tryAutoAnswer(options = {}) {
     const requirePersistentPermission = options.requirePersistentPermission !== false;
     const softphoneAction = this._isHaSoftphoneMode();
+    const pagingAutoAnswer = softphoneAction && isPagingAutoAnswer(this._softphoneSnapshot);
     const lifecycleGeneration = this._lifecycleGeneration;
     const callId = softphoneAction
       ? String(options.callId || this._sessionCallId() || "")
@@ -3111,6 +3122,7 @@ class VoipStackCard extends HTMLElement {
       let videoPermission;
       if (
         softphoneAction &&
+        !pagingAutoAnswer &&
         this._softphoneSupportsVideo() &&
         this._softphoneSnapshot?.video_offered &&
         this._softphoneSnapshot?.video_camera_send_enabled &&
@@ -3130,7 +3142,7 @@ class VoipStackCard extends HTMLElement {
         if (
           lifecycleGeneration !== this._lifecycleGeneration ||
           !this._isSoftphoneController() ||
-          (requirePersistentPermission && !this._autoAnswer)
+          (requirePersistentPermission && !this._autoAnswer && !isPagingAutoAnswer(this._softphoneSnapshot))
         ) return;
         const state = String(this._softphoneSnapshot?.state || "").toLowerCase();
         if (
@@ -3141,7 +3153,7 @@ class VoipStackCard extends HTMLElement {
       }
       // The media is available or not needed: try answering
       _voip_log.info("voip: auto-answering call");
-      await this._answer({ callId, videoPermission });
+      await this._answer({ callId, videoPermission, ...(pagingAutoAnswer ? { sendVideo: false } : {}) });
     } catch (e) {
       console.warn("voip: auto-answer failed", e);
     } finally {
@@ -3777,8 +3789,11 @@ class VoipStackCard extends HTMLElement {
     const ringGroups = this._availableSoftphoneGroups("ring");
     const conferenceGroups = this._availableSoftphoneGroups("conference");
     const softphoneMode = this._isHaSoftphoneMode();
+    const mirror = softphoneMode ? null : voipStackEngine.phoneStateFor("", this._getConfigDeviceId());
     const extension = softphoneMode ? this._softphoneExtension : this._entityState(this._extensionTextEntityId);
-    const ringGroup = softphoneMode ? this._softphoneGroups.ring_group : this._entityState(this._ringGroupsTextEntityId);
+    const ringGroup = softphoneMode ? this._softphoneGroups.ring_group : mirror?.ring_group ?? this._entityState(this._ringGroupsTextEntityId);
+    const queues = softphoneMode ? queueDeclarationText(this._softphoneSnapshot?.queues)
+      : mirror?.queues != null ? queueDeclarationText(mirror.queues) : this._entityState(this._queuesTextEntityId);
     const conferenceGroup = softphoneMode ? this._softphoneGroups.conference_group : this._entityState(this._conferenceGroupsTextEntityId);
     const conferenceRing = softphoneMode
       ? !!this._softphoneGroups.conference_ring
@@ -3789,8 +3804,11 @@ class VoipStackCard extends HTMLElement {
       if (els.extensionInput.value !== extension) els.extensionInput.value = extension;
     }
     if (els.ringGroupInput) els.ringGroupInput.disabled = !softphoneMode && !this._ringGroupsTextEntityId;
+    if (els.queuesInput) els.queuesInput.disabled = !softphoneMode && !this._queuesTextEntityId;
     if (els.conferenceGroupInput) els.conferenceGroupInput.disabled = !softphoneMode && !this._conferenceGroupsTextEntityId;
     this._populateGroupSuggestions(els.ringGroupInput, els.ringGroupOptions, ringGroups, ringGroup);
+    this._populateGroupSuggestions(els.queuesInput, els.queuesOptions, availableQueueNames(this._rosterEntries || []), queues);
+    this._renderQueueStates();
     this._populateGroupSuggestions(els.conferenceGroupInput, els.conferenceGroupOptions, conferenceGroups, conferenceGroup);
     if (els.conferenceRingCheckbox) {
       els.conferenceRingCheckbox.checked = conferenceRing;
@@ -3799,7 +3817,60 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
+  _renderQueueStates() {
+    const container = this._els?.queueStates;
+    if (!container) return;
+    const snapshot = this._isHaSoftphoneMode() ? this._softphoneSnapshot
+      : voipStackEngine.phoneStateFor("", this._getConfigDeviceId());
+    const states = Array.isArray(snapshot?.queue_states) ? snapshot.queue_states : [];
+    container.hidden = !states.length;
+    if (container.contains?.(document.activeElement)) return;
+    container.replaceChildren();
+    for (const queue of states) {
+      const row = document.createElement("div");
+      row.className = "softphone-group-row";
+      const label = document.createElement("span");
+      label.textContent = String(queue.name || "");
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", String(queue.name || ""));
+      for (const [state, text] of [["available", "Available"], ["paused", "Paused"], ["logged_out", "Logged out"]]) {
+        const option = document.createElement("option");
+        option.value = state;
+        option.textContent = this._t(text);
+        select.appendChild(option);
+      }
+      select.value = queue.state;
+      select.disabled = !!this._routingSettingsBusy;
+      select.onchange = () => this._setQueueAgentState(queue.queue_id, select.value);
+      row.append(label, select);
+      container.appendChild(row);
+    }
+  }
+
+  async _setQueueAgentState(queue, state) {
+    const phone = this._isHaSoftphoneMode() ? this._getSoftphoneEndpointId() : this._getConfigDeviceId();
+    if (!phone || this._routingSettingsBusy) return;
+    this._routingSettingsBusy = true;
+    this._render();
+    try {
+      await this._hass.callService("voip_stack", "set_queue_agent_state", { queue, phone, state });
+      if (this._isHaSoftphoneMode()) await this._loadSoftphoneState();
+    } catch (err) { this._showError(err.message || String(err)); }
+    finally { this._routingSettingsBusy = false; this._render(); }
+  }
+
   async _setGroupSetting(key, value) {
+    if (key === "queues" || key === "ring_group") {
+      this._settingsOpen = true;
+      try {
+        const phone = this._isHaSoftphoneMode() ? this._getSoftphoneEndpointId() : this._getConfigDeviceId();
+        await this._hass.callService("voip_stack", key === "queues" ? "set_phone_queues" : "set_phone_memberships",
+          key === "queues" ? { phone, queues: value } : { phone, field: key, value });
+        if (this._isHaSoftphoneMode()) await this._loadSoftphoneState();
+      } catch (err) { this._showError(err.message || String(err)); }
+      this._render();
+      return;
+    }
     if (this._isHaSoftphoneMode()) {
       await this._setHaSoftphoneSettings({ [key]: value });
       return;

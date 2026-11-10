@@ -32,12 +32,17 @@ nav:
       - PBX walkthrough: PBX_WORKFLOWS.md
       - Phone defaults: PHONE_ROUTING.md
       - Automations: AUTOMATION_DIALPLAN.md
+      - Office automation patterns: OFFICE_AUTOMATIONS.md
       - Assist voice commands: ASSIST_INTENTS.md
       - Voicemail: VOICEMAIL.md
       - Parking and pickup: CALL_PARKING.md
       - Conversation recording: CALL_RECORDING.md
       - SIP trunks: SIP_TRUNK.md
       - Groups and conferences: GROUPS.md
+      - Group devices and call queues: GROUPS_AND_QUEUES.md
+      - Paging announcements: PAGING.md
+      - Incoming numbers and DID routing: INBOUND_NUMBERS.md
+      - LDAP on desk phones: LDAP_PHONES.md
       - Video: SIP_VIDEO.md
       - Dahua door stations: DAHUA.md
       - ESP with a classic PBX: CLASSIC_PBX.md
@@ -60,6 +65,7 @@ nav:
       - Troubleshooting: troubleshooting.md
       - Tests and diagnostics: TESTING_AND_DEBUG.md
       - Upgrade notes: BREAKING_CHANGES.md
+      - 2026.12 development preview: WHATS_NEW_2026_12_0_DEV.md
 validation:
   nav:
     omitted_files: info

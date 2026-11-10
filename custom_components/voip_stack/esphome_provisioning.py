@@ -20,12 +20,15 @@ from .endpoint_lifecycle import create_runtime_task
 from .managed_phones import (CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID,
     ManagedPhone, active_managed_accounts, managed_phone_mode, managed_records, normalize_mac)
 from .phone_endpoint import EndpointKind, PhoneEndpoint
+from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
+    normalize_membership_tracking, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
 from .sip_registrar import generate_password
 
 _LOGGER = logging.getLogger(__name__)
 _ROLES = {"voip_extension": "extension", "voip_ring_groups": "ring_group",
-          "voip_conference_groups": "conference_group", "voip_conference_ring": "conference_ring"}
+          "voip_conference_groups": "conference_group", "voip_conference_ring": "conference_ring",
+          "voip_queues": "queues"}
 
 
 @callback
@@ -53,6 +56,9 @@ class EspHomeProvisioner:
         self._revision = 0
         self._directory_config = None
         self._directory_epoch = ""
+        self._membership_scopes = {}
+        self._membership_changes = {}
+        self._membership_delivered = {}
 
     def _owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -107,6 +113,23 @@ class EspHomeProvisioner:
         if entity is not None and entity.platform == "esphome" and entity_role(entity) in {
                 *_ROLES, "voip_state"}:
             old, new = event.data.get("old_state"), event.data.get("new_state")
+            field = _ROLES.get(entity_role(entity))
+            if field in {"queues", "ring_group"}:
+                if (old is not None and new is not None
+                        and old.state not in {"unknown", "unavailable"}
+                        and new.state not in {"unknown", "unavailable"}
+                        and entity.device_id in self._membership_scopes):
+                    self._membership_changes[(entity.device_id, field)] = (
+                        self._membership_scopes[entity.device_id],
+                        membership_text(field, old.state), membership_text(field, new.state))
+                elif new is None or new.state in {"unknown", "unavailable"}:
+                    self._membership_scopes.pop(entity.device_id, None)
+                    self._membership_delivered = {key: value for key, value in self._membership_delivered.items()
+                                                  if key[0] != entity.device_id}
+            elif entity_role(entity) == "voip_state" and (new is None or new.state in {"unknown", "unavailable"}):
+                self._membership_scopes.pop(entity.device_id, None)
+                self._membership_delivered = {key: value for key, value in self._membership_delivered.items()
+                                              if key[0] != entity.device_id}
             if old is None or new is None or old.state != new.state:
                 self.schedule()
 
@@ -181,6 +204,9 @@ class EspHomeProvisioner:
             username=previous.username if previous else "", endpoint_id=previous.endpoint_id if previous else "",
             display_name=name, route_id=slugify_route_id(info.name), api_host=str(origin.data.get("host") or ""),
             extension=previous.extension if previous else "", ring_group=previous.ring_group if previous else "",
+            queues=previous.queues if previous else (),
+            membership_pending=previous.membership_pending if previous else {},
+            membership_observed=previous.membership_observed if previous else {},
             conference_group=previous.conference_group if previous else "",
             conference_ring=previous.conference_ring if previous else False)
         updates = {}
@@ -190,13 +216,25 @@ class EspHomeProvisioner:
             if (entity.platform == "esphome" and role in _ROLES and state is not None
                     and state.state not in {"unknown", "unavailable"}):
                 value = state.state.strip()
-                updates[_ROLES[role]] = value.casefold() in {"on", "true", "1"} if role == "voip_conference_ring" else value
+                field = _ROLES[role]
+                if field in {"queues", "ring_group"}:
+                    record = {**phone.record(), **updates}
+                    change = self._membership_changes.pop((device.id, field), None)
+                    scope = (native, native.client)
+                    live = (change is not None and all(left is right for left, right in zip(change[0], scope))
+                            and change[1] == record["membership_observed"].get(field)
+                            and change[2] == membership_text(field, value))
+                    updates.update(observe_native_membership(record, field, value, allow_change=live))
+                else:
+                    updates[field] = value.casefold() in {"on", "true", "1"} if role == "voip_conference_ring" else value
+        self._membership_scopes[device.id] = (native, native.client)
         return replace(phone, **updates)
 
     async def async_sync(self):
         async with self._lock:
             if not self._owned():
                 return
+            revision = self._revision
             records = managed_records(self.entry)
             changed = False
             for phone in tuple(records.values()):
@@ -205,7 +243,7 @@ class EspHomeProvisioner:
                 if (origin is None or phone.origin_entry_id in self._removed_origins
                         or device is None or phone.device_id in self._removed_devices):
                     await self._purge_endpoint(phone.endpoint_id, phone.username)
-                    if not self._owned():
+                    if not self._owned() or revision != self._revision:
                         return
                     records.pop(phone.device_id, None)
                     self._delivered.pop(phone.device_id, None)
@@ -221,7 +259,7 @@ class EspHomeProvisioner:
                 endpoint = self.runtime.endpoints.by_device_id(device_id)
                 if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
                     await self._purge_endpoint(endpoint.endpoint_id, endpoint.username)
-                    if not self._owned():
+                    if not self._owned() or revision != self._revision:
                         return
                     changed = True
             devices = dr.async_get(self.hass)
@@ -249,7 +287,7 @@ class EspHomeProvisioner:
                         old = registry.get(phone.endpoint_id)
                         fields = dict(name=phone.display_name, username=phone.username, extension=phone.extension,
                             ring_group=phone.ring_group, conference_group=phone.conference_group,
-                            conference_ring=phone.conference_ring)
+                            conference_ring=phone.conference_ring, queues=phone.queues)
                         if old is None:
                             registry.register(PhoneEndpoint(endpoint_id=phone.endpoint_id, device_id=device.id,
                                 kind=EndpointKind.ESPHOME, capabilities=frozenset({"audio", "dtmf"}), **fields))
@@ -260,11 +298,17 @@ class EspHomeProvisioner:
                         self._save(records)
                         self._refresh_accounts()
                         await self._deliver(phone, native)
-                        if not self._owned():
+                        if not self._owned() or revision != self._revision:
+                            return
+                        await self._deliver_memberships(phone.device_id, phone.record(), native)
+                        if not self._owned() or revision != self._revision:
                             return
                     except Exception as error:
                         # Third-party RPC errors may contain secret parameters.
                         _LOGGER.warning("Phone provisioning incomplete for %s (%s)", device.id, type(error).__name__)
+            await self._sync_legacy_memberships()
+            if not self._owned() or revision != self._revision:
+                return
             if changed and self._owned():
                 from .config_entry_runtime import async_refresh_and_push_phonebook
                 await async_refresh_and_push_phonebook(self.hass)
@@ -275,6 +319,82 @@ class EspHomeProvisioner:
                 native = getattr(origin, "runtime_data", None)
                 if phone.active and native is not None:
                     await self._deliver_directory_refresh(phone, native)
+
+    async def _sync_legacy_memberships(self):
+        """Retain direct-phone declarations without creating a SIP credential."""
+        legacy = dict(self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}))
+        managed = {phone.endpoint_id for phone in managed_records(self.entry).values()}
+        deliveries = []
+        for endpoint_id, saved in tuple(legacy.items()):
+            device_id = saved.get("device_id", "")
+            device = dr.async_get(self.hass).async_get(device_id)
+            origin = self.hass.config_entries.async_get_entry(device.config_entry_id) if device is not None else None
+            if (endpoint_id in managed or device is None or origin is None
+                    or origin.domain != "esphome" or device_id in self._removed_devices
+                    or origin.entry_id in self._removed_origins):
+                legacy.pop(endpoint_id, None)
+                continue
+            native = getattr(origin, "runtime_data", None)
+            if not getattr(native, "available", False) or not getattr(getattr(native, "client", None), "is_connected", False):
+                continue
+            record = dict(saved)
+            for entity in er.async_entries_for_device(er.async_get(self.hass), device_id):
+                field = _ROLES.get(entity_role(entity))
+                state = self.hass.states.get(entity.entity_id)
+                if (entity.platform != "esphome" or field not in {"queues", "ring_group"}
+                        or state is None or state.state in {"unknown", "unavailable"}):
+                    continue
+                change = self._membership_changes.pop((device_id, field), None)
+                scope = (native, native.client)
+                live = (change is not None and all(left is right for left, right in zip(change[0], scope))
+                        and change[1] == record.get("membership_observed", {}).get(field)
+                        and change[2] == membership_text(field, state.state))
+                record.update(observe_native_membership(record, field, state.state, allow_change=live))
+            if isinstance(record.get("queues"), tuple):
+                record["queues"] = list(record["queues"])
+            legacy[endpoint_id] = record
+            self._membership_scopes[device_id] = (native, native.client)
+            deliveries.append((device_id, record, native))
+            endpoint = self.runtime.endpoints.get(endpoint_id)
+            if endpoint is not None:
+                self.runtime.endpoints.update(endpoint_id, queues=tuple(record.get("queues", ())),
+                                              ring_group=str(record.get("ring_group") or ""))
+        if legacy != self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}):
+            self.hass.config_entries.async_update_entry(self.entry,
+                data={**self.entry.data, CONF_ESPHOME_PHONE_MEMBERSHIPS: legacy})
+        for device_id, record, native in deliveries:
+            revision = self._revision
+            await self._deliver_memberships(device_id, record, native)
+            if not self._owned() or revision != self._revision:
+                return
+
+    async def _deliver_memberships(self, device_id, record, native):
+        """Deliver desired text through ESPHome's existing HA entity owner."""
+        revision, client = self._revision, native.client
+        for entity in er.async_entries_for_device(er.async_get(self.hass), device_id):
+            field = _ROLES.get(entity_role(entity))
+            pending = normalize_membership_tracking(record.get("membership_pending"))
+            if entity.platform != "esphome" or field not in pending:
+                continue
+            state = self.hass.states.get(entity.entity_id)
+            if state is None or state.state in {"unknown", "unavailable"}:
+                continue
+            if (not self._owned() or revision != self._revision or native.client is not client
+                    or not native.available or not client.is_connected):
+                return
+            signature = (id(native), id(client), pending[field], record.get("membership_observed", {}).get(field))
+            key = (device_id, field)
+            if self._membership_delivered.get(key) == signature:
+                continue
+            try:
+                await self.hass.services.async_call("text", "set_value", {
+                    "entity_id": entity.entity_id, "value": pending[field]}, blocking=True)
+            except Exception as error:
+                _LOGGER.warning("Phone membership delivery pending for %s (%s)", device_id, type(error).__name__)
+                return
+            if not self._owned() or revision != self._revision or native.client is not client:
+                return
+            self._membership_delivered[key] = signature
 
     async def _deliver(self, phone, native):
         revision, client, services = self._revision, native.client, native.services

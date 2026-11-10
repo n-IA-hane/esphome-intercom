@@ -442,3 +442,27 @@ async def test_batched_independent_calls_keep_each_phone_trigger_context(hass, p
                    for p in changes)
     finally:
         remove()
+
+
+async def test_queue_agent_change_pushes_phone_projection_without_call_or_entity_change(hass, phones):
+    from custom_components.voip_stack.call_queues import EVENT_QUEUE_CHANGED
+
+    state = {"value": "available"}
+    phones.runtime.queues = SimpleNamespace(phone_summary=lambda endpoint_id: [
+        {"queue_id": "stable-queue", "name": "Support", "state": state["value"],
+         "logged_in": state["value"] != "logged_out", "paused": state["value"] == "paused",
+         "waiting": 0, "busy": False}] if endpoint_id == "kitchen" else [])
+    changes = []
+    remove = phone_state_observer(hass).subscribe(changes.append, kind="projection")
+    try:
+        state["value"] = "paused"
+        hass.bus.async_fire(EVENT_QUEUE_CHANGED)
+        await hass.async_block_till_done()
+        assert len(changes) == 1
+        assert changes[0].phones["kitchen"]["queue_states"][0]["state"] == "paused"
+        state["value"] = "logged_out"
+        hass.bus.async_fire(EVENT_QUEUE_CHANGED)
+        await hass.async_block_till_done()
+        assert changes[-1].phones["kitchen"]["queue_states"][0]["logged_in"] is False
+    finally:
+        remove()

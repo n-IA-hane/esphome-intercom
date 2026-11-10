@@ -682,6 +682,7 @@ async def route_sip_bridge(
     if session is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")
     session.artifacts.caller_invite = invite
+    registry.remember_invite_identity(invite.call_id, invite)
     session.update_metadata(inbound_trunk_id=invite.trunk_id,
                             outbound_trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
     session.legs[client.dialog_ids.call_id].trunk_id = getattr(decision, "trunk_id", "") if bridge_to_trunk else ""

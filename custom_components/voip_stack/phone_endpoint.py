@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .phone_policy import PhonePolicy
+from .phone_queue_membership import normalize_phone_queues
 
 
 DEFAULT_ENDPOINT_ID = "default"
@@ -122,6 +123,7 @@ class PhoneEndpoint:
     send_video: bool = False
     offline_policy: OfflinePolicy = OfflinePolicy.UNAVAILABLE
     ring_group: str = ""
+    queues: tuple[str, ...] = ()
     conference_group: str = ""
     conference_ring: bool = False
     offline_forward_target: str = ""
@@ -129,6 +131,7 @@ class PhoneEndpoint:
     policy: PhonePolicy = field(default_factory=PhonePolicy)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "queues", normalize_phone_queues(self.queues))
         if not isinstance(self.policy, PhonePolicy):
             raise EndpointValidationError("policy must be a PhonePolicy")
         object.__setattr__(

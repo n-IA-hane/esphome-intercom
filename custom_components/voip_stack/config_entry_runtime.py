@@ -91,6 +91,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             "default_trunk_id",
             "esphome_mailboxes", "voicemail", "parking",
             "managed_esphome_phones",
+            "esphome_phone_memberships",
             "phone_services",
         }
     }
@@ -134,6 +135,21 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    from .group_config import async_apply_group_updates, group_records, membership_signature
+    from .paging_config import paging_group_configs
+    async with runtime.group_update_lock:
+        await async_apply_group_updates(hass, entry, runtime.entry_group_records)
+        groups_now = group_records(entry)
+        groups_changed = groups_now != runtime.entry_group_records
+        runtime.entry_group_records = groups_now
+        paging_now = paging_group_configs(entry)
+        memberships_now = membership_signature(hass, entry)
+        groups_changed = (groups_changed or paging_now != runtime.entry_paging_records
+                          or memberships_now != runtime.entry_membership_signature)
+        runtime.entry_paging_records = paging_now
+        runtime.entry_membership_signature = memberships_now
+        if runtime.queues is not None:
+            runtime.queues.refresh()
     runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = tuple(
         entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
     )
@@ -222,7 +238,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     directory_phones_changed = phones_changed and not _only_browser_camera_send_changed(
         previous_phones, phone_signature
     )
-    if directory_phones_changed or contacts_changed:
+    if directory_phones_changed or contacts_changed or groups_changed:
         await async_refresh_and_push_phonebook(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)

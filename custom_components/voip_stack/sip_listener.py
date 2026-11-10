@@ -50,6 +50,7 @@ from .core.sip_transaction import (
 )
 from .queue_utils import put_drop_oldest
 from .dtmf import build_sip_info_dtmf_body
+from .inbound_identity import identity_fields
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +99,12 @@ class SipInvite:
     target_route: str = ""
     initial_response_sent: bool = False
     trunk_id: str = ""
+    called_number: str = ""
+    called_number_raw: str = ""
+    called_number_source: str = ""
+    caller_number: str = ""
+    caller_name: str = ""
+    inbound_trunk_id: str = ""
     outbound_trunk_id: str = ""
     identified_source_endpoint_id: str = ""
     replaces: sip_transfer.SipReplaces | None = None
@@ -152,6 +159,13 @@ class SipInitialInvite:
     caller_route: str = ""
     target_route: str = ""
     trunk_id: str = ""
+    called_number: str = ""
+    called_number_raw: str = ""
+    called_number_source: str = ""
+    caller_number: str = ""
+    caller_name: str = ""
+    inbound_trunk_id: str = ""
+    outbound_trunk_id: str = ""
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
 
@@ -251,6 +265,7 @@ class _PendingInvite:
     connected_identity_name: str = ""
     connected_identity_user: str = ""
     delayed_offer_plan: UasDelayedOfferPlan | None = None
+    identity: SipInvite | SipInitialInvite | None = None
     codec_policy: CodecPolicy = CodecPolicy()
 
 
@@ -565,6 +580,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        invite_identity_resolver=None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -594,6 +610,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.invite_identity_resolver = invite_identity_resolver
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -1107,6 +1124,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         initial_invite = (
             self._parse_initial_invite(request, addr) if not request.body else None
         )
+        if pending.identity is not None:
+            if invite is not None:
+                invite = replace(invite, **identity_fields(pending.identity),
+                                 received_via_trunk=pending.identity.received_via_trunk,
+                                 trunk_id=pending.identity.trunk_id,
+                                 outbound_trunk_id=pending.identity.outbound_trunk_id)
+            if initial_invite is not None:
+                initial_invite = replace(initial_invite, **identity_fields(pending.identity),
+                                         received_via_trunk=pending.identity.received_via_trunk,
+                                         trunk_id=pending.identity.trunk_id,
+                                         outbound_trunk_id=pending.identity.outbound_trunk_id)
         signaling_invite = invite or initial_invite
         if signaling_invite is None:
             raise sip.SipError("cannot activate dialog from invalid INVITE")
@@ -1961,6 +1989,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 signaling_transport=initial.signaling_transport,
                 received_via_trunk=initial.received_via_trunk,
                 trunk_id=initial.trunk_id,
+                outbound_trunk_id=initial.outbound_trunk_id,
+                **identity_fields(initial),
                 peer_profile=initial.peer_profile,
                 caller_route=initial.caller_route,
                 target_route=initial.target_route,
@@ -3204,7 +3234,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             return
         to_tag = sip.make_tag()
-        pending = _PendingInvite(request, addr, to_tag, self.signaling_transport, codec_policy=signaling_invite.codec_policy)
+        pending = _PendingInvite(request, addr, to_tag, self.signaling_transport, codec_policy=signaling_invite.codec_policy, identity=signaling_invite)
         self.pending_invites[call_id] = pending
         self._send_response(request, addr, 100, "Trying")
         delayed_plan: UasDelayedOfferPlan | None = None
@@ -3775,6 +3805,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 caller_uri=from_uri,
                 target=target,
                 caller=caller,
+                caller_number=from_uri.user if from_uri is not None else caller_route,
+                caller_name=sip.name_addr_display_name(request.header("From")),
                 call_id=request.header("Call-ID"),
                 cseq=request.header("CSeq"),
                 signaling_transport=self.signaling_transport,
@@ -3786,6 +3818,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 target_route=target_route,
             )
             previous = self.active_dialogs.get(initial.call_id) or self.pending_invites.get(initial.call_id)
+            original = getattr(previous, "invite", None) or getattr(previous, "identity", None)
+            if original is None:
+                delayed = getattr(previous, "delayed_offer", None)
+                original = delayed.initial_invite if delayed is not None else None
+            if original is not None:
+                initial = replace(initial, **identity_fields(original),
+                                  received_via_trunk=original.received_via_trunk,
+                                  trunk_id=original.trunk_id,
+                                  outbound_trunk_id=original.outbound_trunk_id)
+            elif self.invite_identity_resolver is not None:
+                initial = self.invite_identity_resolver(request, initial)
             policy = previous.codec_policy if previous is not None else (
                 self.codec_policy_resolver(initial) if self.codec_policy_resolver is not None else CodecPolicy()
             )
@@ -3938,6 +3981,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 signaling_transport=initial.signaling_transport,
                 received_via_trunk=initial.received_via_trunk,
                 trunk_id=initial.trunk_id,
+                outbound_trunk_id=initial.outbound_trunk_id,
+                **identity_fields(initial),
                 peer_profile=peer_profile,
                 codec_policy=codec_policy,
                 replaces=initial.replaces,
@@ -3962,6 +4007,7 @@ class SipUdpServer:
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        invite_identity_resolver=None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -3983,6 +4029,7 @@ class SipUdpServer:
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.invite_identity_resolver = invite_identity_resolver
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -4012,6 +4059,7 @@ class SipUdpServer:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    invite_identity_resolver=self.invite_identity_resolver,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -4089,6 +4137,7 @@ class SipTcpServer:
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        invite_identity_resolver=None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -4115,6 +4164,7 @@ class SipTcpServer:
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.invite_identity_resolver = invite_identity_resolver
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -4166,6 +4216,7 @@ class SipTcpServer:
             on_invite=self.on_invite,
             on_offerless_invite=self.on_offerless_invite,
             codec_policy_resolver=self.codec_policy_resolver,
+            invite_identity_resolver=self.invite_identity_resolver,
             on_terminated=self.on_terminated,
             on_register=self.on_register,
             on_info=self.on_info,

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 import re
 
 from .sip_registrar import SipAccount, normalize_username
+from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
 CONF_MANAGED_PHONES = "managed_esphome_phones"
 MANAGED_ACCOUNT_ID = "ha"
@@ -34,11 +35,17 @@ class ManagedPhone:
     api_host: str = ""
     extension: str = ""
     ring_group: str = ""
+    queues: tuple[str, ...] = ()
     conference_group: str = ""
     conference_ring: bool = False
     active: bool = True
+    membership_pending: dict[str, str] = field(default_factory=dict)
+    membership_observed: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
+        object.__setattr__(self, "queues", normalize_phone_queues(self.queues))
+        for name in ("membership_pending", "membership_observed"):
+            object.__setattr__(self, name, normalize_membership_tracking(getattr(self, name)))
         mac = normalize_mac(self.mac)
         username = normalize_username(self.username or f"esp_{mac}")
         endpoint_id = self.endpoint_id or f"esphome:{self.device_id}"
@@ -59,7 +66,9 @@ class ManagedPhone:
             conference_group=self.conference_group, conference_ring=self.conference_ring)
 
     def record(self) -> dict:
-        return asdict(self)
+        record = asdict(self)
+        record["queues"] = list(self.queues)
+        return record
 
 
 def managed_records(entry) -> dict[str, ManagedPhone]:

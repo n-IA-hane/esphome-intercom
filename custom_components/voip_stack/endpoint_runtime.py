@@ -465,6 +465,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         trunk_id: str = "",
         precondition=None,
         control_endpoint_id: str = "",
+        _resolved_decision=None,
+        _ring_timeout: float | None = None,
     ) -> None:
         await async_forward_existing_call(
             ForwardRuntime(
@@ -487,6 +489,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             trunk_id=trunk_id,
             precondition=precondition,
             control_endpoint_id=control_endpoint_id,
+            _resolved_decision=_resolved_decision,
+            _ring_timeout=_ring_timeout,
         )
 
     async def _run_trunk_inbound_route_guarded(
@@ -788,6 +792,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             ingress="trunk" if initial.received_via_trunk else "extension",
             origin="trunk" if initial.received_via_trunk else "extension",
         )
+        registry.remember_invite_identity(initial.call_id, initial)
         try:
             ports = reserve_delayed_offer_ports(hass, registry, initial.call_id)
         except (OSError, RuntimeError):
@@ -885,6 +890,19 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     endpoint_termination = EndpointTerminationHandler(hass)
     _on_terminated = endpoint_termination.handle
 
+    def identity_for_invite(request, initial):
+        from .inbound_identity import apply_inbound_identity
+
+        try:
+            classified = _classified_trunk_invite(initial)
+        except ValueError:
+            return initial  # The routing boundary rejects ambiguous sources.
+        if not classified.received_via_trunk:
+            return classified
+        config = (_get_trunk_config(hass, trunk_id=classified.trunk_id)
+                  if classified.trunk_id else _get_trunk_config(hass))
+        return apply_inbound_identity(classified, config, request)
+
     def codec_policy_for_invite(initial):
         from .core.codec_policy import CodecPolicy
         try:
@@ -908,6 +926,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_invite=_on_invite,
         on_offerless_invite=_on_offerless_invite,
         codec_policy_resolver=codec_policy_for_invite,
+        invite_identity_resolver=identity_for_invite,
         on_terminated=_on_terminated,
         on_register=_on_register,
         on_info=_on_info,

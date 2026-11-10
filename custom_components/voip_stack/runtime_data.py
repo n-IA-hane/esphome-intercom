@@ -84,6 +84,10 @@ class VoipStackRuntime:
     entry_phone_signature: tuple[Any, ...] | None = None
     entry_phone_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_contacts_signature: tuple[dict[str, Any], ...] | None = None
+    entry_group_records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    entry_paging_records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    entry_membership_signature: tuple = ()
+    group_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_generations: dict[str, int] = field(default_factory=dict)
     device_resolver: VoipDeviceResolver | None = None
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
@@ -103,6 +107,8 @@ class VoipStackRuntime:
     directory: Any | None = None
     ldap_server: Any | None = None
     phone_services: Any | None = None
+    queues: Any | None = None
+    paging: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

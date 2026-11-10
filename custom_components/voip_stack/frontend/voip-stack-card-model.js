@@ -45,6 +45,20 @@ export function targetFromRosterEntry(entry) {
   };
 }
 
+export function queueDeclarationText(value) {
+  return Array.isArray(value) ? value.filter(item => typeof item === "string").join(", ") : String(value || "").trim();
+}
+
+export function availableQueueNames(entries = []) {
+  return [...new Set(entries.filter(entry => entry?.enabled !== false && entry?.metadata?.virtual_endpoint === "queue")
+    .map(entry => String(entry.name || entry.metadata?.name || "").trim()).filter(Boolean))].sort();
+}
+
+export function isPagingAutoAnswer(snapshot = {}) {
+  return !!String(snapshot.announcement_id || "").trim() && snapshot.answer_mode === "auto" &&
+    snapshot.audio_direction === "recvonly";
+}
+
 export function terminalPeerLabel(snapshot = {}) {
   const direction = String(snapshot.direction || "").trim().toLowerCase();
   if (direction === "incoming") {

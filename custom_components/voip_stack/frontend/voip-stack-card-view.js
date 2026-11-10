@@ -1085,6 +1085,24 @@ export function buildMainCardSkeleton(cardVersion) {
     ringGroupRow.appendChild(ringGroupOptions);
     softphoneGroupsPanel.appendChild(ringGroupRow);
 
+    const queuesRow = document.createElement("div");
+    queuesRow.className = "softphone-group-row";
+    const queuesLabel = document.createElement("label");
+    queuesLabel.htmlFor = "phone-queues";
+    queuesLabel.textContent = translate("Queues");
+    const queuesInput = document.createElement("input");
+    queuesInput.type = "text";
+    queuesInput.id = "phone-queues";
+    queuesInput.maxLength = 240;
+    queuesInput.autocomplete = "off";
+    queuesInput.setAttribute("list", "phone-queue-options");
+    const queuesOptions = document.createElement("datalist");
+    queuesOptions.id = "phone-queue-options";
+    queuesRow.append(queuesLabel, queuesInput, queuesOptions);
+    softphoneGroupsPanel.appendChild(queuesRow);
+    const queueStates = document.createElement("div");
+    softphoneGroupsPanel.appendChild(queueStates);
+
     const conferenceGroupRow = document.createElement("div");
     conferenceGroupRow.className = "softphone-group-row";
     const conferenceGroupLabel = document.createElement("label");
@@ -1220,7 +1238,7 @@ export function buildMainCardSkeleton(cardVersion) {
       microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
       videoCameraRow, videoCameraCheckbox,
       mediaDeviceViews: [idleMediaDevices],
-      softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
+      softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, queuesInput, queuesOptions, queueStates, conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
       stats, err,
     };
 

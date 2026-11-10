@@ -1,5 +1,25 @@
 # Calling by voice with Assist
 
+## Assist answering a telephone call
+
+When someone calls the configured Assist extension, the selected conversation
+agent can receive tools bound to that particular call: inspect its state,
+transfer the caller, cancel a pending transfer and resume, or hang up. These
+are separate from the satellite commands below.
+
+The tools do not ask the model for a Call-ID or choose a preferred phone.
+Their authority expires when the call generation, media owner or conversation
+changes. Transfers accept configured internal phones, queues and ring groups
+whose members are internal phones. Arbitrary SIP addresses and outside numbers
+are not destinations for these tools.
+
+A failed transfer retains the existing Assist conversation. A successful
+transfer hands the call to the existing bridge and ends the Assist media
+consumer. Use a conversation agent supporting Home Assistant's Assist LLM tools;
+ordinary sentence-only agents do not gain these tools automatically.
+
+## Voice commands from a satellite
+
 Enable **Assist intents** in the VoIP Stack integration to use voice commands
 for calling, answering, declining and hanging up. The command acts on the VoIP
 device that heard it. A contact name, extension or Home Assistant area can be

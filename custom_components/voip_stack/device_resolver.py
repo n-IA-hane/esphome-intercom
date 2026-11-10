@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .core.audio_format import parse_audio_format_list
 from .const import DOMAIN
+from .phone_queue_membership import normalize_phone_queues
 from .runtime_data import runtime_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ _ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("voip_extension", ("voip_extension",)),
     ("voip_transport", ("voip_transport",)),
     ("voip_ring_groups", ("voip_ring_groups",)),
+    ("voip_queues", ("voip_queues",)),
     ("voip_conference_groups", ("voip_conference_groups",)),
     ("voip_conference_ring", ("voip_ring_on_conference",)),
     ("video_send", ("video_send", "send_video")),
@@ -44,6 +46,7 @@ _ENTITY_ROLE_DOMAINS: dict[str, frozenset[str]] = {
     "voip_extension": frozenset({"text"}),
     "voip_transport": frozenset({"sensor", "text_sensor"}),
     "voip_ring_groups": frozenset({"text"}),
+    "voip_queues": frozenset({"text"}),
     "voip_conference_groups": frozenset({"text"}),
     "voip_conference_ring": frozenset({"switch"}),
     "video_send": frozenset({"switch"}),
@@ -415,6 +418,9 @@ class VoipDeviceResolver:
             if route_id:
                 entities["start_call_service"] = f"esphome.{route_id}_start_call"
             ring_group = self._state_value(entities.get("voip_ring_groups"))
+            queue_entity = self.hass.states.get(entities.get("voip_queues", ""))
+            queue_state = (str(queue_entity.state).strip() if queue_entity is not None
+                           and queue_entity.state not in {"unknown", "unavailable"} else None)
             conference_group = self._state_value(entities.get("voip_conference_groups"))
             extension = self._state_value(entities.get("voip_extension")) or endpoint.get("extension") or ""
             camera_entity_id = entities.get("camera", "")
@@ -438,6 +444,7 @@ class VoipDeviceResolver:
                 "conference_group": conference_group,
                 "conference_ring": _parse_bool(self._state_value(entities.get("voip_conference_ring"))),
                 "ring_group": ring_group,
+                **({"queues": list(normalize_phone_queues(queue_state))} if queue_state is not None else {}),
                 "audio_mode": endpoint.get("audio_mode"),
                 "tx_formats": _format_tokens(endpoint.get("tx_formats") or []),
                 "rx_formats": _format_tokens(endpoint.get("rx_formats") or []),
@@ -453,6 +460,14 @@ class VoipDeviceResolver:
                     and getattr(getattr(native, "client", None), "is_connected", False)),
             })
 
+        if entry is not None:
+            legacy = entry.data.get("esphome_phone_memberships", {})
+            for item in out:
+                saved = next((record for record in legacy.values()
+                              if record.get("device_id") == item["device_id"]), None)
+                if saved is not None:
+                    item.update(queues=list(normalize_phone_queues(saved.get("queues"))),
+                                ring_group=str(saved.get("ring_group") or ""))
         if entry is None or not entry.data.get("managed_esphome_phones"):
             return out
         from .managed_phones import managed_phone_mode, managed_records
@@ -493,6 +508,7 @@ class VoipDeviceResolver:
                 "rtp_port": previous.get("rtp_port"),
                 "sip_transport": binding.transport.lower() if binding is not None else "",
                 "extension": phone.extension, "ring_group": phone.ring_group,
+                "queues": list(phone.queues),
                 "conference_group": phone.conference_group, "conference_ring": phone.conference_ring,
                 "audio_mode": caps.get("audio_mode", previous.get("audio_mode")),
                 "tx_formats": previous.get("tx_formats", []), "rx_formats": previous.get("rx_formats", []),

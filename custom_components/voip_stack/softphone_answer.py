@@ -51,6 +51,12 @@ async def async_answer_browser_call(
     endpoint_device_id = command.device_id
     call_id = command.call_id
     registry = command.registry
+    paging = registry.resource_for(call_id, "browser_paging") if call_id else None
+    if paging is not None:
+        if paging.endpoint_id != endpoint_id:
+            raise ServiceValidationError("This paging call belongs to another phone")
+        paging.accept(call)
+        return
     if call_id and registry.resolve_session_id(call_id) in registry.sessions:
         session = registry.sessions[registry.resolve_session_id(call_id)]
         if getattr(session, "owner", "") in {"automation", "assist", "voicemail"}:

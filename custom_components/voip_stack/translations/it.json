@@ -77,7 +77,12 @@
           "trunk_audio_codecs": "Codec audio consentiti",
           "trunk_video_codecs": "Codec video consentiti",
           "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti",
-          "trunk_media_nat": "Gestione NAT dei media"
+          "trunk_media_nat": "Gestione NAT dei media",
+          "trunk_did_source": "Sorgente numero chiamato",
+          "trunk_did_header": "Header personalizzato del numero chiamato",
+          "trunk_did_fixed": "Numero chiamato fisso",
+          "trunk_did_fallbacks": "Sorgenti alternative in ordine di priorita",
+          "trunk_did_prefix_rules": "Sostituzioni dei prefissi in ordine"
         },
         "data_description": {
           "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -186,7 +191,8 @@
       "phone_service_configuration": "Configurazione LDAP non valida.",
       "phone_service_base_dn_invalid": "Inserisci un DN base LDAP valido.",
       "phone_service_certificate_required": "Specifica sia il certificato sia la chiave privata per TLS.",
-      "trunk_media_nat_invalid": "Scegli auto, direct o manual."
+      "trunk_media_nat_invalid": "Scegli auto, direct o manual.",
+      "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -354,7 +360,12 @@
             "trunk_audio_codecs": "Codec audio consentiti",
             "trunk_video_codecs": "Codec video consentiti",
             "trunk_outbound_media_address": "Indirizzo IPv4 media per le chiamate uscenti",
-            "trunk_media_nat": "Gestione NAT dei media"
+            "trunk_media_nat": "Gestione NAT dei media",
+            "trunk_did_source": "Sorgente numero chiamato",
+            "trunk_did_header": "Header personalizzato del numero chiamato",
+            "trunk_did_fixed": "Numero chiamato fisso",
+            "trunk_did_fallbacks": "Sorgenti alternative in ordine di priorita",
+            "trunk_did_prefix_rules": "Sostituzioni dei prefissi in ordine"
           },
           "data_description": {
             "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -393,10 +404,73 @@
         "trunk_codecs_invalid": "Seleziona codec supportati e mantieni almeno un codec audio.",
         "trunk_target_required": "Seleziona un telefono destinatario o inserisci una destinazione del piano di chiamata.",
         "trunk_media_address_invalid": "Inserisci un indirizzo IPv4 unicast raggiungibile, oppure lascia vuoto.",
-        "trunk_media_nat_invalid": "Scegli auto, direct o manual."
+        "trunk_media_nat_invalid": "Scegli auto, direct o manual.",
+        "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide."
       },
       "abort": {
         "reconfigure_successful": "Configurazione del trunk aggiornata."
+      }
+    },
+    "group": {
+      "entry_type": "Gruppo o coda",
+      "initiate_flow": {
+        "user": "Aggiungi gruppo o coda"
+      },
+      "title": "Gruppo o coda",
+      "step": {
+        "user": {
+          "title": "Tipo di gruppo",
+          "data": {
+            "kind": "Tipo"
+          }
+        },
+        "group": {
+          "title": "Configura gruppo",
+          "description": "Le appartenenze sono condivise con le impostazioni dei telefoni.",
+          "data": {
+            "name": "Nome",
+            "extension": "Interno",
+            "members": "Telefoni",
+            "enabled": "Abilitato",
+            "keep_empty": "Conserva il gruppo anche senza membri",
+            "max_waiting": "Numero massimo di chiamanti in attesa",
+            "max_wait": "Attesa massima (secondi)",
+            "ring_timeout": "Squillo per tentativo (secondi)",
+            "no_agent_wait": "Attesa senza operatori (secondi)",
+            "retry_delay": "Intervallo fra tentativi (secondi)",
+            "wrap_up": "Pausa dopo una chiamata (secondi)",
+            "fallback": "Destinazione alternativa",
+            "hold_media": "URI audio di attesa"
+          }
+        }
+      },
+      "error": {
+        "invalid_group": "Nome o interno in conflitto, telefoni o parametri non validi."
+      },
+      "abort": {
+        "reconfigure_successful": "Gruppo aggiornato"
+      }
+    },
+    "paging": {
+      "entry_type": "Gruppo annunci",
+      "initiate_flow": {
+        "user": "Aggiungi gruppo annunci"
+      },
+      "title": "Gruppo annunci",
+      "step": {
+        "user": {
+          "title": "Gruppo annunci",
+          "data": {
+            "name": "Nome",
+            "extension": "Interno",
+            "members": "Telefoni",
+            "answer_timeout": "Tempo per rispondere (secondi)",
+            "timeout": "Durata massima (secondi)"
+          }
+        }
+      },
+      "error": {
+        "invalid_paging_group": "Gruppo annunci non valido o destinazione in conflitto."
       }
     }
   },
@@ -488,6 +562,21 @@
         "auto": "Automatico",
         "direct": "Diretto",
         "manual": "Manuale"
+      }
+    },
+    "group_kind": {
+      "options": {
+        "ring": "Gruppo di squillo",
+        "queue": "Coda chiamate"
+      }
+    },
+    "trunk_did_source": {
+      "options": {
+        "request_uri": "Request-URI",
+        "to": "To",
+        "p_called_party_id": "P-Called-Party-ID",
+        "custom_header": "Header personalizzato",
+        "fixed": "Numero fisso"
       }
     }
   },
@@ -740,6 +829,9 @@
       },
       "phone_endpoint_conference_group": {
         "name": "Gruppi conferenza"
+      },
+      "phone_endpoint_queues": {
+        "name": "Code"
       }
     },
     "binary_sensor": {
@@ -767,6 +859,14 @@
         "ingress": {
           "name": "Provenienza della chiamata",
           "description": "Filtro facoltativo."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -785,6 +885,14 @@
         "ingress": {
           "name": "Provenienza della chiamata",
           "description": "Filtro facoltativo."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -803,6 +911,14 @@
         "ingress": {
           "name": "Provenienza della chiamata",
           "description": "Filtro facoltativo."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -821,6 +937,14 @@
         "ingress": {
           "name": "Provenienza della chiamata",
           "description": "Filtro facoltativo."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -847,6 +971,14 @@
         "outcome": {
           "name": "Esito della chiamata",
           "description": "Terminata, persa o fallita. Vuoto include tutti gli esiti."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -873,6 +1005,14 @@
         "source_leg": {
           "name": "Chi ha premuto il tasto",
           "description": "Filtro facoltativo."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },
@@ -895,6 +1035,14 @@
         "for": {
           "name": "Tempo senza risposta",
           "description": "Contata dall'inizio dello squillo di questo destinatario."
+        },
+        "trunk": {
+          "name": "Linea SIP",
+          "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "called_number": {
+          "name": "Numero chiamato",
+          "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
         }
       }
     },

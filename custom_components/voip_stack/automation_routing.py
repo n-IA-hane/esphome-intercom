@@ -157,7 +157,9 @@ def matches_call(payload: dict, options: dict) -> bool:
     """Match the event snapshot rather than mutable Event Entity attributes."""
     aliases = {
         "caller": ("caller", "caller_number", "caller_extension"),
-        "destination": ("callee", "destination", "called_extension"),
+        "destination": ("callee", "destination", "called_extension", "called_number"),
+        "trunk": ("inbound_trunk_id",),
+        "trunk_id": ("inbound_trunk_id",),
         "reason": ("reason", "terminal_reason"),
         "outcome": ("type",),
     }

@@ -37,6 +37,7 @@ from .phone_endpoint import (
 from .sip_registrar import account_from_mapping, normalize_username
 from .runtime_data import runtime_data
 from .phone_policy import DestinationKind, PhoneDestination, PhonePolicy
+from .phone_queue_membership import normalize_phone_queues
 
 
 PHONE_SUBENTRY_TYPE = "phone"
@@ -51,6 +52,7 @@ CONF_PHONE_DND = "dnd"
 CONF_PHONE_AUTO_ANSWER = "auto_answer"
 CONF_PHONE_SEND_VIDEO = "send_video"
 CONF_PHONE_RING_GROUP = "ring_group"
+CONF_PHONE_QUEUES = "queues"
 CONF_PHONE_CONFERENCE_GROUP = "conference_group"
 CONF_PHONE_CONFERENCE_RING = "conference_ring"
 CONF_PHONE_VIDEO_ENABLED = "video_enabled"
@@ -125,6 +127,7 @@ def browser_phone_data(
         CONF_PHONE_RING_GROUP: str(
             options.get(CONF_HA_SOFTPHONE_RING_GROUP) or ""
         ).strip(),
+        CONF_PHONE_QUEUES: [],
         CONF_PHONE_CONFERENCE_GROUP: str(
             options.get(CONF_HA_SOFTPHONE_CONFERENCE_GROUP) or ""
         ).strip(),
@@ -176,6 +179,7 @@ def sip_account_phone_data(
         CONF_PHONE_ENABLED: account.enabled,
         CONF_PHONE_DND: False,
         CONF_PHONE_RING_GROUP: account.ring_group,
+        CONF_PHONE_QUEUES: list(normalize_phone_queues(raw.get(CONF_PHONE_QUEUES))),
         CONF_PHONE_CONFERENCE_GROUP: account.conference_group,
         CONF_PHONE_CONFERENCE_RING: account.conference_ring,
         CONF_PHONE_VIDEO_ENABLED: True,
@@ -415,6 +419,7 @@ def endpoint_from_data(
         policy=policy,
         offline_policy=OfflinePolicy.FORWARD if offline_target else OfflinePolicy.UNAVAILABLE,
         ring_group=str(data.get(CONF_PHONE_RING_GROUP) or ""),
+        queues=normalize_phone_queues(data.get(CONF_PHONE_QUEUES)),
         conference_group=str(data.get(CONF_PHONE_CONFERENCE_GROUP) or ""),
         conference_ring=bool(data.get(CONF_PHONE_CONFERENCE_RING, False)),
         offline_forward_target=offline_target,
@@ -686,6 +691,7 @@ def replace_sip_account_subentries(
             )
             for key in (
                 CONF_PHONE_DND,
+                CONF_PHONE_QUEUES,
                 CONF_PHONE_VIDEO_ENABLED,
                 CONF_PHONE_OFFLINE_POLICY,
                 CONF_PHONE_OFFLINE_FORWARD_TARGET,
@@ -742,6 +748,8 @@ def update_phone_subentry(
         return False
     data = dict(subentry.data)
     data.update(updates)
+    if CONF_PHONE_QUEUES in updates:
+        data[CONF_PHONE_QUEUES] = list(normalize_phone_queues(updates[CONF_PHONE_QUEUES]))
     if CONF_PHONE_POLICY in updates:
         data.pop(CONF_PHONE_OFFLINE_POLICY, None)
         data.pop(CONF_PHONE_OFFLINE_FORWARD_TARGET, None)
