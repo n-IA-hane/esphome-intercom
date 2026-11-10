@@ -165,7 +165,6 @@ class VoipStackCard extends HTMLElement {
     this._autoAnswer = false;
     this._autoAnswering = false;  // Prevents re-entry during auto-answer
     this._autoAnswerCallId = "";
-    this._autoAnswerMicReady = false;
     this._autoAnswerPermissionPending = false;
     this._autoAnswerPermissionGeneration = 0;
     this._ringtoneEnabled = false;
@@ -204,6 +203,10 @@ class VoipStackCard extends HTMLElement {
       if (this._isSoftphoneController()) {
         const snapshot = this._softphoneSnapshot || {};
         this._ensureHaSoftphoneAudioPath(snapshot);
+        // Any change to the phone state may need an Auto Answer media check,
+        // and may be an incoming call to auto-answer. This card may have now
+        // become the phone's controller.
+        this._checkAutoAnswerMedia(snapshot);
         this._maybeAutoAnswer(snapshot);
       }
       this._render();
@@ -466,6 +469,43 @@ class VoipStackCard extends HTMLElement {
       voipStackEngine.claimSoftphoneController(this, this._softphoneRuntimeKey());
   }
 
+  // Check media access as soon as a card for an auto-answering phone is
+  // displayed and it is that phone's controller, so we prompt for approval or
+  // detect a missing permission as early as possible rather than wait for a
+  // call to find we don't have media permissions to auto-answer.
+  _checkAutoAnswerMedia(snapshot = {}) {
+    if (!this._autoAnswer || !this._isSoftphoneController()) return;
+    void voipStackEngine.checkAutoAnswerMedia("audio");
+    if (this._wantsAutoAnswerVideo(snapshot)) {
+      void voipStackEngine.checkAutoAnswerMedia("video");
+    }
+  }
+
+  // Whether auto-answer should try to send video. This is decided before a
+  // call arrives, so it skips the video_offered check _tryAutoAnswer makes.
+  _wantsAutoAnswerVideo(snapshot = this._softphoneSnapshot || {}) {
+    return Boolean(
+      this._softphoneSupportsVideo(snapshot) &&
+      snapshot.video_camera_send_enabled &&
+      snapshot.send_video
+    );
+  }
+
+  // A failed check is otherwise silent until a call rings unanswered, so the
+  // card explains why Auto Answer won't work.
+  _autoAnswerMediaWarning() {
+    if (!this._isHaSoftphoneMode() || !this._autoAnswer) return "";
+    const audio = voipStackEngine.autoAnswerMediaResult("audio");
+    if (audio && !audio.ready) {
+      return "Auto Answer is unavailable, the microphone could not be opened.";
+    }
+    const video = voipStackEngine.autoAnswerMediaResult("video");
+    if (video && !video.ready && this._wantsAutoAnswerVideo()) {
+      return "Auto Answer will not send video, the camera is not available.";
+    }
+    return "";
+  }
+
   _maybeAutoAnswer(snapshot = {}) {
     if (
       !this._isSoftphoneController() ||
@@ -621,6 +661,9 @@ class VoipStackCard extends HTMLElement {
       }
       this._cleanupAfterTerminalSession(snapshot);
     }
+    // Any change to the phone state may need an Auto Answer media check, and
+    // may be an incoming call to auto-answer.
+    this._checkAutoAnswerMedia(snapshot);
     this._maybeAutoAnswer(snapshot);
     if (this._isSoftphoneController()) this._maybeAnswerFromUrl();
     return true;
@@ -2001,6 +2044,11 @@ class VoipStackCard extends HTMLElement {
     if (browserMediaBusy && (showAnswer || showCall) && !statusReason) {
       statusReason = "This browser is already handling another phone call.";
     }
+    // Lowest priority: an Auto Answer media problem, shown only when nothing
+    // more important is on the status line. Empty when Auto Answer is fine.
+    if ((showAnswer || showCall) && !statusReason) {
+      statusReason = this._autoAnswerMediaWarning();
+    }
 
     // Action buttons: exactly one set visible at a time.
     els.answerBtn.hidden = !showAnswer;
@@ -3034,29 +3082,31 @@ class VoipStackCard extends HTMLElement {
     const callId = softphoneAction
       ? String(options.callId || this._sessionCallId() || "")
       : "";
-    // Check if browser has persistent mic permission
     try {
       const audioDirection = String(
         this._softphoneSnapshot?.audio_direction || "sendrecv"
       ).toLowerCase();
-      const needsMicrophone = !softphoneAction ||
-        ["sendonly", "sendrecv"].includes(audioDirection);
-      if (
-        requirePersistentPermission &&
-        needsMicrophone &&
-        !this._autoAnswerMicReady
-      ) {
-        if (!navigator.permissions?.query) {
-          _voip_log.info("voip: auto-answer skipped, persistent mic permission unavailable");
-          return;
-        }
-        const perm = await navigator.permissions.query({ name: "microphone" });
+      const needsMicrophone = ["sendonly", "sendrecv"].includes(audioDirection);
+      // Check the browser can open the media it needs to auto-answer. Usually
+      // the microphone was already checked when the card was first shown, so
+      // the result is known or a prompt for it is still open. If the
+      // microphone is unavailable we can't auto-answer, so let the call ring,
+      // answering by hand asks for permission again if the browser isn't denied.
+      // Non-softphone ESP mirror cards answer by pressing the ESP's Call
+      // button, so they never use browser media and skip this check.
+      // requirePersistentPermission is usually true, but set false to skip this
+      // check when opening a URL with voip_answer=1, which usually indicates
+      // a user is responding to a call so we want to answer regardless of
+      // existing browser permissions then prompt for permission if needed.
+      if (softphoneAction && requirePersistentPermission && needsMicrophone) {
+        // This may wait on a microphone prompt that is still open. If the card
+        // was detached or reconfigured in the meantime, drop this attempt.
+        const media = await voipStackEngine.checkAutoAnswerMedia("audio");
         if (lifecycleGeneration !== this._lifecycleGeneration) return;
-        if (perm.state !== "granted") {
-          _voip_log.info("voip: auto-answer skipped, mic permission not persistent");
+        if (!media.ready) {
+          _voip_log.info("voip: auto-answer skipped, microphone unavailable");
           return;
         }
-        this._autoAnswerMicReady = true;
       }
       let videoPermission;
       if (
@@ -3066,16 +3116,21 @@ class VoipStackCard extends HTMLElement {
         this._softphoneSnapshot?.video_camera_send_enabled &&
         this._softphoneSnapshot?.send_video
       ) {
-        videoPermission = await voipStackEngine.prepareVideoCameraPermission({
-          persistentOnly: requirePersistentPermission,
-          endpointId: this._getSoftphoneEndpointId(),
-        });
+        // Check video permission, but don't skip auto-answer, proceed
+        // regardless with receive-only video if needed.
+        // A notification answer is a user action and may retry a cached denial.
+        videoPermission = requirePersistentPermission
+          ? (await voipStackEngine.checkAutoAnswerMedia("video")).ready
+          : await voipStackEngine.prepareVideoCameraPermission({
+            endpointId: this._getSoftphoneEndpointId(),
+          });
         if (lifecycleGeneration !== this._lifecycleGeneration) return;
       }
       if (softphoneAction) {
         if (
           lifecycleGeneration !== this._lifecycleGeneration ||
-          !this._isSoftphoneController()
+          !this._isSoftphoneController() ||
+          (requirePersistentPermission && !this._autoAnswer)
         ) return;
         const state = String(this._softphoneSnapshot?.state || "").toLowerCase();
         if (
@@ -3084,7 +3139,7 @@ class VoipStackCard extends HTMLElement {
           !["ringing", "incoming"].includes(state)
         ) return;
       }
-      // permissions.query not available or permission granted: try answering
+      // The media is available or not needed: try answering
       _voip_log.info("voip: auto-answering call");
       await this._answer({ callId, videoPermission });
     } catch (e) {
@@ -3116,7 +3171,6 @@ class VoipStackCard extends HTMLElement {
     const permissionGeneration = ++this._autoAnswerPermissionGeneration;
     if (this._autoAnswer || this._autoAnswerPermissionPending) {
       this._autoAnswerPermissionPending = false;
-      this._autoAnswerMicReady = false;
       const previous = this._autoAnswer;
       this._autoAnswer = false;
       this._render();
@@ -3153,7 +3207,9 @@ class VoipStackCard extends HTMLElement {
         if (!microphoneReady) {
           throw new Error("The browser did not provide a microphone track.");
         }
-        this._autoAnswerMicReady = true;
+        // Save the microphone availability for auto-answer page-wide, so each
+        // card doesn't need to check the microphone again.
+        voipStackEngine.recordAutoAnswerMedia("audio", true);
         await this._hass.callService("voip_stack", "set_auto_answer", {
           ...this._softphoneServiceScope(),
           auto_answer: true,
@@ -3162,7 +3218,6 @@ class VoipStackCard extends HTMLElement {
         this._autoAnswer = true;
         _voip_log.info("voip: mic permission granted for auto-answer");
       } catch (err) {
-        this._autoAnswerMicReady = false;
         this._autoAnswer = false;
         this._showError(
           `Auto Answer was not enabled: ${err?.message || String(err)}`,
@@ -3465,6 +3520,9 @@ class VoipStackCard extends HTMLElement {
           endpointId: this._getSoftphoneEndpointId(),
         });
         if (!permitted) throw new Error("Browser camera access was not granted.");
+        // Save the camera availability for auto-answer page-wide, so each card
+        // doesn't need to check the camera again.
+        voipStackEngine.recordAutoAnswerMedia("video", true);
       }
       await this._hass.callService("voip_stack", "set_send_video", {
         ...this._softphoneServiceScope(),

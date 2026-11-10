@@ -654,29 +654,11 @@ assert.equal(missingRetrySchedules, 0);
 assert.equal(missingStates.at(-1).state, "unavailable");
 assert.equal(missingStates.at(-1).terminal_reason, "unknown_endpoint");
 
-// Permission probing is independent from preference storage: camera intent is
-// supplied by the authoritative logical-phone snapshot.
+// Camera preflight ignores the Permissions API state: it opens the camera once,
+// then releases that one temporary stream.
 let mediaRequests = 0;
-context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
-context.navigator.mediaDevices = {{
-  getUserMedia: async () => {{ mediaRequests++; throw new Error("must not prompt"); }},
-}};
-const permission = new Engine();
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true }}),
-  false,
-);
-assert.equal(mediaRequests, 0);
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true, endpointId: "kitchen" }}),
-  false,
-);
-assert.equal(mediaRequests, 0);
-
-// A granted preflight does not start the camera twice. The negotiated sender
-// performs the single real acquisition after the call is established.
 let stopped = 0;
-context.navigator.permissions = {{ query: async () => ({{ state: "granted" }}) }};
+context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
 context.navigator.mediaDevices = {{
   getUserMedia: async () => {{
     mediaRequests++;
@@ -684,22 +666,107 @@ context.navigator.mediaDevices = {{
     return {{ getVideoTracks() {{ return [track]; }}, getTracks() {{ return [track]; }} }};
   }},
 }};
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true }}),
-  true,
-);
-assert.equal(mediaRequests, 0);
-assert.equal(stopped, 0);
-
-// An explicit user action with a prompt-state permission still probes the
-// camera, then releases that one temporary stream.
-context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: false }}),
-  true,
-);
+const permission = new Engine();
+assert.equal(await permission.prepareVideoCameraPermission(), true);
 assert.equal(mediaRequests, 1);
 assert.equal(stopped, 1);
+
+// The microphone check also releases its stream straight away.
+// prepareAudioCall would keep the microphone open for the next call.
+let microphoneStopped = 0;
+const savedMediaDevices = context.navigator.mediaDevices;
+context.navigator.mediaDevices = {{
+  getUserMedia: async ({{ audio }}) => {{
+    assert.ok(audio);
+    const track = {{ stop() {{ microphoneStopped++; }} }};
+    return {{ getAudioTracks() {{ return [track]; }}, getTracks() {{ return [track]; }} }};
+  }},
+}};
+const microphone = new Engine();
+microphone.prepareAudioCall = async () => {{ throw new Error("must not prepare a call"); }};
+context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
+assert.equal((await microphone.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(microphoneStopped, 1);
+assert.equal(microphone._preparedAudio, null);
+// A refused microphone returns false rather than throwing, because the probe
+// does not catch errors from it.
+context.navigator.mediaDevices = {{
+  getUserMedia: async () => {{ throw new Error("Permission denied"); }},
+}};
+assert.equal(await new Engine().prepareMicrophonePermission(), false);
+context.navigator.mediaDevices = savedMediaDevices;
+
+// A granted Permissions API state is trusted without opening media.
+const autoAnswer = new Engine();
+let audioAttempts = 0;
+autoAnswer.prepareMicrophonePermission = async () => {{
+  audioAttempts++;
+  return true;
+}};
+context.navigator.permissions = {{ query: async () => ({{ state: "granted" }}) }};
+assert.equal((await autoAnswer.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(audioAttempts, 0);
+
+// WebViews report "prompt" or "denied" while the native app grants access, so
+// every other state is settled by one real acquisition shared by all cards on
+// the page.
+for (const state of ["prompt", "denied"]) {{
+  const webview = new Engine();
+  let attempts = 0;
+  webview.prepareMicrophonePermission = async () => {{ attempts++; return true; }};
+  context.navigator.permissions = {{ query: async () => ({{ state }}) }};
+  const [first, second] = await Promise.all([
+    webview.checkAutoAnswerMedia("audio"),
+    webview.checkAutoAnswerMedia("audio"),
+  ]);
+  assert.equal(first.ready, true);
+  assert.equal(second.ready, true);
+  assert.equal((await webview.checkAutoAnswerMedia("audio")).ready, true);
+  assert.equal(attempts, 1);
+  assert.equal(webview.autoAnswerMediaResult("audio").ready, true);
+}}
+// The camera check is shared the same way, so the camera opens only once.
+mediaRequests = 0;
+stopped = 0;
+const cameraCheck = new Engine();
+assert.equal((await cameraCheck.checkAutoAnswerMedia("video")).ready, true);
+assert.equal((await cameraCheck.checkAutoAnswerMedia("video")).ready, true);
+assert.equal(mediaRequests, 1);
+assert.equal(stopped, 1);
+
+// A failure is remembered for the page, so a reload is the only unattended
+// retry. A permission change or a user gesture settles it again.
+let permissionChange = null;
+context.navigator.permissions = {{
+  query: async () => ({{
+    state: "prompt",
+    addEventListener(type, listener) {{
+      if (type === "change") permissionChange = listener;
+    }},
+  }}),
+}};
+const blocked = new Engine();
+let blockedAttempts = 0;
+blocked.prepareMicrophonePermission = async () => {{
+  blockedAttempts++;
+  return false;
+}};
+const blockedResult = await blocked.checkAutoAnswerMedia("audio");
+assert.equal(blockedResult.ready, false);
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, false);
+assert.equal(blockedAttempts, 1);
+// Desktop browsers fire `change` after a site-settings edit.
+permissionChange();
+assert.equal(blocked.autoAnswerMediaResult("audio"), null);
+blocked.prepareMicrophonePermission = async () => {{ blockedAttempts++; return true; }};
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(blockedAttempts, 2);
+// Record a failure, then a switch's success: the success replaces it without
+// probing again.
+blocked.recordAutoAnswerMedia("audio", false);
+blocked.recordAutoAnswerMedia("audio", true);
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(blockedAttempts, 2);
 
 // A rejected WebSocket ownership claim did not attach media, so it must not
 // send BYE for the dialog owned by the newer card.

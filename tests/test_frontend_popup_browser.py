@@ -198,12 +198,15 @@ def test_explicit_answer_camera_uses_real_acquisition_when_permission_query_unsu
         page.mouse.click(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2)
     elif answer_path == 'url':
         page.evaluate("""()=>{
+          // A notification is an explicit answer and may retry camera access
+          // even when an earlier automatic page probe was denied.
+          __voipStackEngine.recordAutoAnswerMedia('video',false);
           history.pushState({},'', '/?'+new URLSearchParams({voip_answer:'1',voip_endpoint:phone.endpoint_id,voip_call_id:'camera-A'}));
           dispatchEvent(new Event('location-changed'));
         }""")
     page.wait_for_function("services.some(x=>x.service==='answer')")
-    assert page.evaluate("services.find(x=>x.service==='answer').data.send_video") is (answer_path != 'automatic')
-    assert page.evaluate('cameraRequests') == (0 if answer_path == 'automatic' else 1)
+    assert page.evaluate("services.find(x=>x.service==='answer').data.send_video") is True
+    assert page.evaluate('cameraRequests') == 1
     assert page.evaluate('cameraQueries') == (1 if answer_path == 'automatic' else 0)
     assert page.evaluate('audioPreparations') == 1
 
