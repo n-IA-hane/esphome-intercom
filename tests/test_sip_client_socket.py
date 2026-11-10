@@ -37,6 +37,33 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    def test_browser_audio_message_budget_reserves_renegotiable_encoder_pcm(self):
+        view = _load_audio_ws_runtime_module()
+        self.assertEqual(view._browser_audio_message_limit(None), 4096)
+        for encoding, rate, channels, duration, expected in (
+            ("OPUS", 48000, 2, 2.5, 5761),
+            ("OPUS", 48000, 2, 60, 5761),
+            ("L16", 16000, 1, 20, 5761),
+        ):
+            with self.subTest(encoding=encoding, duration=duration):
+                frame = sdp.RtpPcmFormat(96, encoding, rate, channels, duration)
+                session = view._SoftphoneMediaSession(
+                    call_id="budget", local_rtp_port=40000, remote_rtp_host="",
+                    remote_rtp_port=0, send_format=frame, recv_format=frame,
+                )
+                self.assertEqual(view._browser_audio_message_limit(session), expected)
+                self.assertGreaterEqual(expected, frame.audio_format.nominal_frame_bytes + 1)
+        session.send_format=sdp.RtpPcmFormat(96,"L16",48000,1,10)
+        before_claim=view._browser_audio_message_limit(session)
+        session.send_format=sdp.RtpPcmFormat(98,"OPUS",48000,2,60)
+        self.assertEqual(before_claim,view._browser_audio_message_limit(session))
+        self.assertGreaterEqual(before_claim,session.send_format.audio_format.nominal_frame_bytes+1)
+        session.local_rtp_port=0
+        self.assertEqual(view._browser_audio_message_limit(session),4096)
+        session.local_rtp_port=40000
+        session.conference_room="conference"
+        self.assertEqual(view._browser_audio_message_limit(session),4096)
+
     async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
         pcm = b"".join(
@@ -4975,14 +5002,16 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         original_offer = sdp.build_offer(
             "192.168.1.48", "192.168.1.48", 40000, [fmt]
         ).encode()
-        negotiated = sdp.audio_format_to_rtp(fmt, 96)
+        negotiated = sdp.negotiate_directional(original_offer, [fmt], [fmt],
+            local_capabilities=sip_listener.HA_AUDIO_CAPABILITIES)
+        self.assertIsNotNone(negotiated)
         initial_answer = sdp.rewrite_sdp_origin(
             sdp.build_answer_directional(
                 "192.168.1.10",
                 "192.168.1.10",
                 42000,
-                negotiated,
-                negotiated,
+                negotiated.send,
+                negotiated.recv,
                 remote_sdp=original_offer,
             ),
             5151,
@@ -5105,7 +5134,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 "192.168.1.48",
                 45002,
                 [audio_format.AudioFormat(8000, "s16le", 1, 20)],
-            ).encode(),
+            ).replace("L16/8000/1", "SPEEX/8000/1").encode(),
         )
         await endpoint._handle_datagram(incompatible_media_change, addr)
         self.assertEqual(sip.parse_message(sent[-1]).status_code, 488)

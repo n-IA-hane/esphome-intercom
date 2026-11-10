@@ -159,6 +159,8 @@ ha_tests=(
   tests/test_bridge_local_tx_capabilities_ha.py
   tests/test_inbound_factory_flow_audio_ha.py
   tests/test_sip_capabilities_ha.py
+  tests/test_sip_negotiation_capabilities_runtime.py
+  tests/test_ha_generic_negotiation_ha.py
   tests/test_browser_contact_audio_ha.py
   tests/test_udp_outbound_flow_ha.py
   tests/test_contact_audio_routing_ha.py

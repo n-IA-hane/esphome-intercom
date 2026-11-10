@@ -127,11 +127,12 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
         assert result == "in_call"
         if destination_rate == 16000:
             # ptime is HA's receive preference, while maxptime describes
-            # its actual budget. A caller with only20ms TX may retain20ms.
+            # its actual budget. Actual 20 ms packets remain valid even when
+            # the HA caller's nominal transmit interval follows the answer.
             answer_format = sdp.parse_sdp(observed["source_answer"])
             assert answer_format["ptime"] == 10
             assert answer_format["maxptime"] >= source_ms == 20
-            assert caller.dialog.send_format.frame_ms == 20
+            assert caller.dialog.send_format.frame_ms == answer_format["ptime"]
             assert caller.dialog.recv_format.frame_ms == 10
             assert observed["source"].recv_format.frame_ms == 10
             assert observed["source"].recv_format.max_frame_ms >= 20
@@ -163,7 +164,9 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
         )), ("127.0.0.1", target_port))
         async with asyncio.timeout(2):
             returned = [rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096)) for _ in range(2)]
-        assert (caller.dialog.send_format.sample_rate, caller.dialog.send_format.frame_ms) == (source_rate, source_ms)
+        # Nominal TX follows the answer; the real packets above retain source_ms.
+        assert (caller.dialog.send_format.sample_rate, caller.dialog.send_format.frame_ms) == (
+            source_rate, sdp.parse_sdp(observed["source_answer"])["ptime"])
         # HA must retain the already accepted destination receiver.
         assert (relay.right.outbound_rtp_format.sample_rate, relay.right.outbound_rtp_format.frame_ms) == (destination_rate, 10)
         assert all(len(packet.payload) == destination_rate * 10 // 1000 * 2 for packet in forwarded)

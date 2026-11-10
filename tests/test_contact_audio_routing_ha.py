@@ -10,11 +10,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.voip_stack import call_forwarder
-from custom_components.voip_stack.core import rtp, sip
+from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_routing import roster_from_peers
 from custom_components.voip_stack.phone_endpoint import EndpointAvailability, EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry
+from custom_components.voip_stack.runtime_data import sip_endpoint_manager
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
@@ -126,7 +127,14 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         peers[winner].finish()
         assert await caller.wait_for_final(timeout=2) == "in_call"
         assert caller.dialog.send_format.sample_rate == 16000
-        assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 20
+        owner = next(endpoint for endpoint in sip_endpoint_manager(runtime.hass)._dialog_endpoints()
+            if caller.dialog.call_id in endpoint.active_dialogs)
+        answer = sdp.parse_sdp(owner.active_dialogs[caller.dialog.call_id].answer_sdp)
+        offer = sdp.parse_sdp(caller.dialog.local_sdp_body)
+        # Nominal receive preferences are independent; wire PCM below stays at 20 ms.
+        assert caller.dialog.send_format.frame_ms == answer['ptime']
+        assert caller.dialog.recv_format.frame_ms == offer['ptime']
+        assert answer['maxptime'] >= 20
         if forwarding is not None:
             await asyncio.wait_for(forwarding, 2)
         samples = 16000 * 20 // 1000

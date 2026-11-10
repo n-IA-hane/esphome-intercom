@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from .sip_capture import send_sip_datagram
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import g711
 from .core.codec_capabilities import supports_dahua_pcm
 from .core.g722_codec import G722Decoder, G722Encoder
@@ -212,7 +213,7 @@ class RtpPayloadEncoder:
     def _set_format(self, fmt: sdp.RtpPcmFormat) -> None:
         pcm_format = fmt.audio_format
         codec = (
-            OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
+            OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms, fmtp=fmt.fmtp)
             if fmt.encoding == "OPUS"
             else G722Encoder(frame_ms=pcm_format.frame_ms)
             if fmt.encoding == "G722"
@@ -1560,6 +1561,7 @@ class SipCallClient:
                     self.supported_recv_formats,
                     local_offer_sdp=local_offer_sdp,
                     allow_dahua_pcm=self.include_dahua_pcm,
+                    local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
                 if local_offer_sdp
                 else sdp.negotiate_directional(
@@ -1568,6 +1570,7 @@ class SipCallClient:
                     self.supported_recv_formats,
                     allow_dahua_pcm=self.include_dahua_pcm,
                     codec_policy=self.codec_policy,
+                    local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
             )
             if selected is None:
@@ -3881,6 +3884,7 @@ class SipCallClient:
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=self.include_dahua_pcm,
+                local_capabilities=HA_AUDIO_CAPABILITIES,
             )
             if audio is None:
                 return None
@@ -4524,6 +4528,7 @@ class SipCallClient:
                 local_offer_direction=local_offer_direction,
                 local_offer_sdp=self._local_sdp_body or None,
                 allow_dahua_pcm=self.include_dahua_pcm,
+                local_capabilities=HA_AUDIO_CAPABILITIES,
             )
             if selected is not None:
                 recv_payload_history = _validate_receive_payload_update(self.dialog, selected.recv_formats)

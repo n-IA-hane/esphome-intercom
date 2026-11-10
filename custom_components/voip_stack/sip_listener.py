@@ -16,6 +16,7 @@ from .sip_capture import capture_io, send_sip_datagram
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp, sip, sip_transfer
 from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
@@ -1099,6 +1100,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             accepted = sdp.negotiate_answer_directional(
                 pending.answer_sdp, self.supported_recv_formats, self.supported_send_formats,
                 local_offer_sdp=request.body, allow_dahua_pcm=invite.peer_profile == "dahua",
+                local_capabilities=HA_AUDIO_CAPABILITIES,
             )
             if accepted is not None:
                 invite = replace(invite, send_format=accepted.recv, recv_format=accepted.send)
@@ -1725,6 +1727,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 local_offer_direction=previous.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=previous.peer_profile == "dahua",
+                local_capabilities=HA_AUDIO_CAPABILITIES,
             )
             if audio is None:
                 _LOGGER.warning(
@@ -3817,6 +3820,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     self.supported_recv_formats,
                     local_offer_sdp=local_offer_sdp,
                     allow_dahua_pcm=peer_profile == "dahua",
+                    local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
                 if local_offer_sdp
                 else sdp.negotiate_directional(
@@ -3825,6 +3829,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     self.supported_recv_formats,
                     allow_dahua_pcm=peer_profile == "dahua",
                     codec_policy=codec_policy,
+                    local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
             )
             if selected is None:

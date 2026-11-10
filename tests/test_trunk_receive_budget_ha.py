@@ -9,6 +9,7 @@ import struct
 import pytest
 
 from custom_components.voip_stack.core import rtp, sdp, sip
+from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_routing import roster_from_peers
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
@@ -104,6 +105,8 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert session.metadata['inbound_trunk_id']=='home'
         relay=runtime.calls.resource_for(session.call_id,'relay')
         observed['relay_receiver']=asdict(relay.left.inbound_rtp_format)
+        receive_limit=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(relay.left.inbound_rtp_format)
+        assert receive_limit==128
         values=tuple(range(-480,480))
         payload=struct.pack('!960h',*values)
         packet=rtp.build_packet(rtp.RtpPacket(126,123,24000,9876,payload[:960]))[:12]+payload
@@ -115,9 +118,9 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert (second.sequence-first.sequence)&65535==1
         assert (second.timestamp-first.timestamp)&0xffffffff==480
         assert first.payload+second.payload==payload
-        assert sdp.parse_sdp(observed['answer'])['maxptime']==20
-        assert observed['source_before']['max_frame_ms']==observed['source_after']['max_frame_ms']==20
-        assert observed['relay_receiver']['max_frame_ms']==20
+        assert sdp.parse_sdp(observed['answer'])['maxptime']==receive_limit
+        assert observed['source_before']['max_frame_ms']==observed['source_after']['max_frame_ms']==receive_limit
+        assert observed['relay_receiver']['max_frame_ms']==receive_limit
         from custom_components.voip_stack.runtime_data import sip_endpoint_manager
         from custom_components.voip_stack.core.sip_dialog import build_dialog_request
         manager=sip_endpoint_manager(runtime.hass)
@@ -134,8 +137,8 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         provider.transport.sendto(ack.raw,('127.0.0.1',runtime.runtime.transport_config['sip_port']))
         await wait_until(lambda:not owner.active_dialogs[session.call_id].invite_2xx.active)
         updated=owner.invite_for_call(session.call_id)
-        assert updated.local_recv_capabilities==original_capabilities and updated.recv_format.max_frame_ms==20
-        assert relay.left.inbound_rtp_format.max_frame_ms==20
+        assert updated.local_recv_capabilities==original_capabilities and updated.recv_format.max_frame_ms==receive_limit
+        assert relay.left.inbound_rtp_format.max_frame_ms==receive_limit
         assert relay.right.outbound_rtp_format.frame_ms==10 and relay.right.outbound_rtp_format.max_frame_ms==10
         again=rtp.build_packet(rtp.RtpPacket(126,124,24960,9876,payload[:960]))[:12]+payload
         await runtime.hass.loop.sock_sendto(provider.rtp_socket,again,(caller.dialog.remote_rtp_host,caller.dialog.remote_rtp_port))
@@ -148,7 +151,7 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
         parked=await park_established_sip_call(runtime.hass,session.call_id,'caps')
         assert parked.invite.local_recv_capabilities==original_capabilities
-        assert parked.invite.recv_format.max_frame_ms==20
+        assert parked.invite.recv_format.max_frame_ms==receive_limit
         assert get_parking_lot(runtime.hass).calls
         await caller.terminate()
         await wait_until(lambda:not runtime.calls.sessions)
@@ -183,4 +186,49 @@ def test_invite_receive_capabilities_are_local_and_survive_replacement():
         send_format=sdp.RtpPcmFormat(96,'L16',48000,1,10,max_frame_ms=10))
     selected=bridge_source_audio(copied,destination)
     assert selected.local_recv_capabilities is invite.local_recv_capabilities
-    assert rtp.audio_payload_size_limit(selected.recv_format)==960
+    limit=HA_AUDIO_CAPABILITIES.receive_payload_bytes
+    assert rtp.audio_payload_size_limit(selected.recv_format)==limit
+    from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
+    receiver=RtpAudioReceiver(selected.recv_format)
+    values=tuple(range(limit//2))
+    maximum=struct.pack(f'!{len(values)}h',*values)
+    decoded=receiver.decode(selected.recv_format.payload_type,maximum)
+    tail_bytes=(-limit)%selected.recv_format.audio_format.nominal_frame_bytes
+    decoded.extend(receiver.decode(selected.recv_format.payload_type,bytes(tail_bytes)))
+    assert b''.join(decoded)==struct.pack(f'<{len(values)}h',*values)+bytes(tail_bytes)
+    with pytest.raises(rtp.RtpError,match='too large'):
+        receiver.decode(selected.recv_format.payload_type,bytes(limit+2))
+
+
+@pytest.mark.parametrize('source_rate,dest_send_rate,dest_recv_rate,kept',[
+    (48000,48000,16000,True),
+    (8000,48000,48000,False),
+])
+def test_bridge_receive_geometry_changes_only_when_conversion_count_improves(
+    source_rate,dest_send_rate,dest_recv_rate,kept,
+):
+    from types import SimpleNamespace
+    from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_RX_FORMATS,HA_SIP_PCM_TX_FORMATS
+    from custom_components.voip_stack.sip_bridge import bridge_source_audio
+    from custom_components.voip_stack.sip_listener import SipInvite
+
+    body=('v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Bridge preference\r\n'
+        'c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 45000 RTP/AVP 96 97 98\r\n'
+        'a=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n'
+        'a=rtpmap:98 L16/8000/1\r\na=ptime:10\r\na=sendrecv\r\n').encode()
+    original=sdp.RtpPcmFormat(96 if source_rate==48000 else 98,'L16',source_rate,1,10)
+    invite=SipInvite(source_host='127.0.0.2',source_port=5060,
+        request_uri=sip.parse_sip_uri('sip:target@127.0.0.1'),
+        caller_uri=sip.parse_sip_uri('sip:source@127.0.0.2'),target='target',caller='source',
+        call_id='bridge-cost',cseq='1 INVITE',remote_sdp=body,
+        send_format=original,recv_format=original,remote_rtp_host='127.0.0.2',remote_rtp_port=45000,
+        local_send_capabilities=HA_SIP_PCM_TX_FORMATS,local_recv_capabilities=HA_SIP_PCM_RX_FORMATS)
+    destination=SimpleNamespace(send_format=sdp.RtpPcmFormat(100,'L16',dest_send_rate,1,10),
+        recv_format=sdp.RtpPcmFormat(101,'L16',dest_recv_rate,1,10))
+
+    selected=bridge_source_audio(invite,destination)
+
+    assert (selected is invite)==kept
+    assert selected.send_format.sample_rate==selected.recv_format.sample_rate==48000
+    assert selected.send_format.frame_ms==selected.recv_format.frame_ms==10
+    assert selected.recv_format.payload_type==96

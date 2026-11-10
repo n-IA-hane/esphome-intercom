@@ -131,12 +131,8 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if result == "ringing":
             result = await caller.wait_for_final(timeout=3)
-        if caller_discovery == "incompatible":
-            assert result == "media_incompatible"
-            assert any(response.status_code == 488 for response in caller.protocol.responses)
-            assert not target.invites and not lab.calls.sessions
-            assert not lab.runtime.rtp_port_pool.get("used")
-            return
+        # Stale OPTIONS preferences cannot reject a valid authoritative INVITE.
+        # Every discovery case must also prove both media paths and teardown.
         assert result == "in_call" and caller.dialog is not None
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")

@@ -1,7 +1,9 @@
 /** Pure negotiated-media rules for the browser softphone. */
 
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
-const FRAME_MS = Object.freeze([10, 16, 20, 32]);
+const MAX_SAMPLE_RATE = 192000;
+const MAX_FRAME_MS = 1000;
+const MAX_PCM_FRAME_BYTES = MAX_SAMPLE_RATE * 2 * 4;
 
 export function parsePcmFormat(token, label = "audio format") {
   const parts = String(token || "").split(":");
@@ -16,14 +18,22 @@ export function parsePcmFormat(token, label = "audio format") {
   if (!PCM_FORMATS.includes(pcmFormat)) {
     throw new Error(`${label} has unsupported PCM format ${pcmFormat}`);
   }
+  if (!Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > MAX_SAMPLE_RATE) {
+    throw new Error(`${label} has unsupported sample_rate ${sampleRate}`);
+  }
   if (![1, 2].includes(channels)) {
     throw new Error(`${label} has unsupported channel count ${channels}`);
   }
-  if (!FRAME_MS.includes(frameMs)) {
+  if (frameMs <= 0 || frameMs > MAX_FRAME_MS) {
     throw new Error(`${label} has unsupported frame_ms ${frameMs}`);
   }
-  if ((sampleRate * frameMs) % 1000 !== 0) {
+  const frameSamples = sampleRate * frameMs / 1000;
+  if (!Number.isSafeInteger(frameSamples) || frameSamples < 1) {
     throw new Error(`${label} does not form whole PCM frames`);
+  }
+  const bytesPerSample = pcmFormat === "s16le" ? 2 : pcmFormat === "s24le" ? 3 : 4;
+  if (frameSamples * channels * bytesPerSample > MAX_PCM_FRAME_BYTES) {
+    throw new Error(`${label} exceeds local PCM frame byte budget`);
   }
   return { sampleRate, pcmFormat, channels, frameMs };
 }

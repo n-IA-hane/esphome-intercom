@@ -36,9 +36,9 @@ def test_directional_rtp_profile_never_reuses_payload_for_different_formats() ->
     profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
     assert profile is not None
     formats = (*profile.send_rtp_formats, *profile.recv_rtp_formats)
-    by_payload: dict[int, tuple[str, int, int, int]] = {}
+    by_payload: dict[int, tuple[str, int, int]] = {}
     for item in formats:
-        wire = (item.encoding, item.sample_rate, item.channels, item.frame_ms)
+        wire = (item.encoding, item.sample_rate, item.channels)
         assert by_payload.setdefault(item.payload_type, wire) == wire
 
 
@@ -62,16 +62,64 @@ def test_esphome_opus_profile_prefers_20ms_and_keeps_10ms_fallback() -> None:
     profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
 
     assert profile is not None
-    assert [fmt.wire_token() for fmt in profile.send_rtp_formats] == [
-        "pt=98:OPUS/48000/2/20ms",
-        "pt=96:OPUS/48000/2/10ms",
-        "pt=99:L16/48000/1/10ms",
+    assert [(fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            for fmt in profile.send_rtp_formats[:3]] == [
+        ("OPUS", 48000, 2, 20),
+        ("OPUS", 48000, 2, 10),
+        ("L16", 48000, 1, 10),
     ]
-    assert [fmt.wire_token() for fmt in profile.recv_rtp_formats] == [
-        "pt=98:OPUS/48000/2/20ms",
-        "pt=96:OPUS/48000/2/10ms",
-        "pt=97:L16/16000/1/10ms",
+    assert [(fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            for fmt in profile.recv_rtp_formats[:3]] == [
+        ("OPUS", 48000, 2, 20),
+        ("OPUS", 48000, 2, 10),
+        ("L16", 16000, 1, 10),
     ]
+    # Discovery ranks codecs and packet times while SDP keeps local alternatives.
+    assert any(fmt.encoding == "PCMA" for fmt in profile.send_rtp_formats)
+    assert any(fmt.encoding == "PCMU" for fmt in profile.recv_rtp_formats)
+
+
+@pytest.mark.parametrize("known", [False, True])
+def test_rtp_discovery_hints_cannot_remove_local_codec_alternatives(known):
+    metadata = {
+        "sip_capabilities_known": known,
+        "sip_audio_tx_formats": ["L16/16000/1/32"],
+        "sip_audio_rx_formats": ["L16/48000/1/10"],
+    }
+    profile = endpoint_routing.sip_target_rtp_audio_profile(
+        None, SimpleNamespace(metadata=metadata)
+    )
+    assert profile is not None
+    for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
+        assert any(fmt.encoding == "PCMA" for fmt in formats)
+        assert any(fmt.encoding == "PCMU" for fmt in formats)
+    assert profile.send_rtp_formats[0].wire_token().endswith("L16/48000/1/10ms")
+    assert profile.recv_rtp_formats[0].wire_token().endswith("L16/16000/1/32ms")
+    assert profile.send_formats[0].wire_token() == "48000:s16le:1:10"
+    assert profile.recv_formats[0].wire_token() == "16000:s16le:1:10"
+    assert endpoint_routing.sip_target_offer_common_audio(None, SimpleNamespace(metadata=metadata))
+
+
+def test_invalid_backend_shape_is_not_promoted_from_discovery():
+    profile = endpoint_routing.sip_target_rtp_audio_profile(None, SimpleNamespace(metadata={
+        "sip_audio_tx_formats": ["PCMA/48000/2/10"],
+        "sip_audio_rx_formats": ["PCMU/48000/2/10"],
+    }))
+    assert profile is not None
+    for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
+        assert all((fmt.sample_rate, fmt.channels) == (8000, 1)
+                   for fmt in formats if fmt.encoding in {"PCMA", "PCMU"})
+
+
+def test_empty_discovery_keeps_local_directional_preferences():
+    profile = endpoint_routing.sip_target_rtp_audio_profile(None, None)
+    assert profile is not None
+    assert (profile.send_rtp_formats[0].encoding, profile.send_rtp_formats[0].sample_rate,
+            profile.send_rtp_formats[0].channels, profile.send_rtp_formats[0].frame_ms) == (
+                "L16", 48000, 1, 10)
+    assert (profile.recv_rtp_formats[0].encoding, profile.recv_rtp_formats[0].sample_rate,
+            profile.recv_rtp_formats[0].channels, profile.recv_rtp_formats[0].frame_ms) == (
+                "L16", 16000, 1, 10)
 
 
 def test_esphome_extension_is_the_authoritative_request_uri_user(

@@ -216,7 +216,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         dialog = lab.calls.sip_client_for(call_id).dialog
         record_property("wire_offer", offers[0])
         assert (dialog.send_format.sample_rate, dialog.send_format.frame_ms) == (48000, 10)
-        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 20 if independent else 10)
+        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 10)
         receiver = RtpAudioReceiver(dialog.recv_format, dialog.recv_formats)
         for count in ((160, 320) if independent else (160,)):
             samples = [1000, -2000] * (count // 2)
@@ -418,7 +418,7 @@ async def test_two_accounts_on_same_udp_tuple_do_not_share_capabilities(trunks):
         transport.close()
 
 
-@pytest.mark.parametrize("ptime", [None, 0, 30])
+@pytest.mark.parametrize("ptime", [None, 0])
 async def test_incomplete_options_never_invents_packet_quantum(ptime):
     body = CAPS + (f"a=ptime:{ptime}\r\n".encode() if ptime is not None else b"")
     capabilities = sdp.options_capabilities(body)
@@ -474,7 +474,7 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
         offer = await asyncio.wait_for(peer.invites.get(), 1)
         assert (b"a=x-voip-stack-flow:" in offer.body) == (outcome in {"known", "no-ptime"})
         assert caller.dialog.send_format.sample_rate == 16000
-        assert caller.dialog.send_format.frame_ms == 20
+        assert caller.dialog.send_format.frame_ms == 10
         assert caller.dialog.recv_format.frame_ms == 20
         caller.bye()
         await wait_until(lambda: not lab.calls.sessions)
@@ -686,3 +686,9 @@ def test_options_packet_quanta_override_stale_managed_peer(independent):
     assert ("independent_audio_ptime_v1" in profile.sdp_features) == independent
     assert (profile.send_rtp_formats[0].sample_rate, profile.send_rtp_formats[0].frame_ms) == (48000, 10)
     assert (profile.recv_rtp_formats[0].sample_rate, profile.recv_rtp_formats[0].frame_ms) == (16000, 20 if independent else 10)
+
+
+def test_options_valid_packet_time_is_not_limited_by_offer_presets():
+    result = sdp.options_capabilities(CAPS + b"a=ptime:30\r\n")
+    assert result["sip_audio_tx_formats"] == ["L16/16000/1/30"]
+    assert result["sip_audio_rx_formats"] == ["L16/48000/1/30"]

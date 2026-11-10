@@ -1,13 +1,17 @@
 """Bridge packet-time alternatives come from the actual listener TX policy."""
 
 from dataclasses import replace
+import struct
 from types import SimpleNamespace
 
 import pytest
 
 from custom_components.voip_stack.core import sdp, sip
+from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import AudioFormat
+from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_bridge import bridge_source_audio
+from custom_components.voip_stack.sip_client import RtpPayloadEncoder
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint
 
 
@@ -57,8 +61,20 @@ def test_bridge_never_invents_16k_mono_s16_10ms_for_restricted_listener(other):
     assert selected.local_recv_capabilities is invite.local_recv_capabilities
 
 
-def test_20ms_only_listener_rejects_receiver_maxptime10():
-    assert parse_with_send_formats([AudioFormat(16000, frame_ms=20)]) is None
+def test_20ms_preference_uses_backend10ms_with_receiver_maxptime10():
+    preferred=AudioFormat(16000,frame_ms=20)
+    invite=parse_with_send_formats([preferred])
+    assert invite is not None
+    assert invite.local_send_capabilities==(preferred,)
+    assert invite.send_format.audio_format==AudioFormat(16000,frame_ms=10)
+    assert HA_AUDIO_CAPABILITIES.supports_rtp(invite.send_format)
+    assert invite.send_format.frame_ms<=sdp.parse_sdp(OFFER)['maxptime']==10
+    assert invite.recv_format.frame_ms==20
+    values=tuple(range(-80,80))
+    pcm=struct.pack('<160h',*values)
+    payload=RtpPayloadEncoder(invite.send_format).encode(pcm)
+    assert payload==struct.pack('!160h',*values)
+    assert RtpAudioReceiver(invite.send_format).decode(invite.send_format.payload_type,payload)==[pcm]
 
 
 def test_answered_source_retains_the_existing_media_contract():

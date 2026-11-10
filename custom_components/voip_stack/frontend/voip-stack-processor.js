@@ -1,5 +1,7 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
-const FRAME_MS = Object.freeze([10, 16, 20, 32]);
+const MAX_SAMPLE_RATE = 192000;
+const MAX_FRAME_MS = 1000;
+const MAX_PCM_FRAME_BYTES = MAX_SAMPLE_RATE * 2 * 4;
 const TX_BUFFER_POOL = 4;
 // Fourth-order Butterworth (two cascaded biquads) Q values. Keep this filter
 // before decimation: sampling first irreversibly folds microphone energy above
@@ -43,17 +45,20 @@ function normaliseFormat(value) {
     throw new Error("recorder worklet PCM format has invalid numeric fields");
   }
   if (!PCM_FORMATS.includes(pcmFormat)) throw new Error(`recorder worklet unsupported PCM format ${pcmFormat}`);
+  if (!Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > MAX_SAMPLE_RATE) throw new Error(`recorder worklet unsupported sample_rate ${sampleRate}`);
   if (![1, 2].includes(channels)) throw new Error(`recorder worklet unsupported channel count ${channels}`);
-  if (!FRAME_MS.includes(frameMs)) throw new Error(`recorder worklet unsupported frame_ms ${frameMs}`);
-  if ((sampleRate * frameMs) % 1000 !== 0) throw new Error("recorder worklet PCM format does not form whole frames");
+  if (frameMs <= 0 || frameMs > MAX_FRAME_MS) throw new Error(`recorder worklet unsupported frame_ms ${frameMs}`);
+  const frameSamples = sampleRate * frameMs / 1000;
+  if (!Number.isSafeInteger(frameSamples) || frameSamples < 1) throw new Error("recorder worklet PCM format does not form whole frames");
   const bytesPerSample = pcmFormat === "s16le" ? 2 : pcmFormat === "s24le" ? 3 : 4;
+  if (frameSamples * channels * bytesPerSample > MAX_PCM_FRAME_BYTES) throw new Error("recorder worklet PCM frame exceeds local byte budget");
   return {
     sampleRate,
     frameMs,
     channels,
     pcmFormat,
     bytesPerSample,
-    frameSamples: Math.floor((sampleRate * frameMs) / 1000),
+    frameSamples,
   };
 }
 

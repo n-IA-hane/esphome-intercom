@@ -594,7 +594,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertTrue(hass.bus.contexts)
         self.assertTrue(all(item is context for item in hass.bus.contexts))
 
-    def test_sip_target_profile_preserves_directional_rtp_contracts(self) -> None:
+    def test_sip_target_profile_preserves_local_selection_preferences(self) -> None:
         audio_format = endpoint_routing.AudioFormat
         remote_tx = [
             audio_format(32000, "s16le", 1, 10),
@@ -611,20 +611,11 @@ class GroupCallMatrixTest(unittest.TestCase):
             target="standard-phone",
         )
 
-        self.assertEqual(
-            send,
-            [
-                audio_format(48000, "s16le", 1, 10),
-                audio_format(16000, "s16le", 1, 10),
-            ],
-        )
-        self.assertEqual(
-            recv,
-            [
-                audio_format(32000, "s16le", 1, 10),
-                audio_format(16000, "s16le", 1, 10),
-            ],
-        )
+        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertIn(audio_format(32000, "s16le", 1, 10), recv)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
 
     def test_sip_target_profile_accepts_disjoint_codecs_with_common_ptime(self) -> None:
         audio_format = endpoint_routing.AudioFormat
@@ -634,8 +625,10 @@ class GroupCallMatrixTest(unittest.TestCase):
             target="nonstandard-phone",
         )
 
-        self.assertEqual(send, [audio_format(48000, "s16le", 1, 10)])
-        self.assertEqual(recv, [audio_format(16000, "s16le", 1, 10)])
+        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
+        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
 
     def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:
         endpoint = peer.Peer(

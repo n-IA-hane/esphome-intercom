@@ -194,10 +194,17 @@ class RtpPcmFormat:
 
     @property
     def rtp_timestamp_step(self) -> int:
-        return (self.rtp_clock_rate * (self.frame_ms or 20)) // 1000
+        return round(self.rtp_clock_rate * (self.frame_ms or 20) / 1000)
 
     def wire_token(self) -> str:
         return f"pt={self.payload_type}:{self.encoding}/{self.sample_rate}/{self.channels}/{self.frame_ms}ms"
+
+
+def _packet_time(value: str) -> int | float:
+    number = float(value)
+    if not math.isfinite(number) or not 0 < number <= 1000:
+        raise ValueError("packet time must be finite and within (0,1000] milliseconds")
+    return int(number) if number.is_integer() else number
 
 
 def parse_rtp_audio_capability(
@@ -211,7 +218,8 @@ def parse_rtp_audio_capability(
     if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
         raise SdpError(f"unsupported RTP audio encoding {encoding!r}")
     try:
-        rate, channels, frame_ms = map(int, parts[1:])
+        rate, channels = map(int, parts[1:3])
+        frame_ms = _packet_time(parts[3])
     except ValueError as err:
         raise SdpError(f"invalid RTP audio capability {token!r}") from err
     fmt = RtpPcmFormat(int(payload_type), encoding, rate, channels, frame_ms)
@@ -1039,12 +1047,15 @@ def h264_receiver_limits(
     return _h264_receiver_limits(video_format)
 
 
+def _pcm_wire_bytes(fmt: AudioFormat) -> int:
+    width = 3 if fmt.pcm_format in (PcmFormat.S24LE, PcmFormat.S24LE_IN_S32) else fmt.container_bytes_per_sample
+    return fmt.nominal_frame_samples * fmt.channels * width
+
+
 def audio_format_to_rtp(fmt: AudioFormat, payload_type: int) -> RtpPcmFormat:
     if not 96 <= int(payload_type) <= 127:
         raise SdpError("phase-1 PCM uses dynamic RTP payload types 96-127")
-    if fmt.channels != 1:
-        raise SdpError("phase-1 ESP RTP PCM is mono only")
-    if not fmt.fits_udp_payload(UDP_SAFE_PAYLOAD_BYTES):
+    if _pcm_wire_bytes(fmt) > UDP_SAFE_PAYLOAD_BYTES:
         raise SdpError(
             f"RTP PCM frame too large for voip-pcm/1: "
             f"{fmt.wire_token()} is {fmt.nominal_frame_bytes} bytes; "
@@ -1062,9 +1073,7 @@ def audio_format_to_rtp(fmt: AudioFormat, payload_type: int) -> RtpPcmFormat:
 
 
 def is_rtp_pcm_mappable(fmt: AudioFormat) -> bool:
-    if fmt.channels != 1:
-        return False
-    if not fmt.fits_udp_payload(UDP_SAFE_PAYLOAD_BYTES):
+    if _pcm_wire_bytes(fmt) > UDP_SAFE_PAYLOAD_BYTES:
         return False
     return fmt.pcm_format in {PcmFormat.S16LE, PcmFormat.S24LE, PcmFormat.S24LE_IN_S32}
 
@@ -1150,95 +1159,57 @@ def _formats_for_local_direction(
 
 
 def _rtp_compatible_audio(
-    offered: RtpPcmFormat, local: AudioFormat
+    offered: RtpPcmFormat, local: AudioFormat, *, local_capabilities=None, receive: bool = False,
 ) -> RtpPcmFormat | None:
-    # RFC 3264: ptime recommends what this receiver would like. It never
-    # supplies the missing side of an explicitly advertised min/max range.
     if offered.min_frame_ms and local.frame_ms < offered.min_frame_ms:
         return None
     if offered.max_frame_ms and local.frame_ms > offered.max_frame_ms:
         return None
-    if offered.encoding == "OPUS":
-        if (
-            local.pcm_format == PcmFormat.S16LE
-            and local.sample_rate == 48000
-            and local.channels == 1
-        ):
-            return RtpPcmFormat(
-                offered.payload_type, "OPUS", 48000, offered.channels, local.frame_ms
-            )
+    encoding = offered.encoding
+    if encoding == "OPUS":
+        valid = (local.pcm_format == PcmFormat.S16LE and local.sample_rate == 48000
+                 and local.channels == 1 and offered.sample_rate == 48000 and offered.channels == 2)
+    elif encoding == "G722":
+        valid = (local.pcm_format == PcmFormat.S16LE and local.sample_rate == 16000
+                 and local.channels == 1 and offered.sample_rate == 8000 and offered.channels == 1)
+    elif encoding == "PCM":
+        valid = (local.pcm_format == PcmFormat.S16LE and local.sample_rate == 16000
+                 and local.channels == 1 and local.frame_ms == 20 and offered.sample_rate == 16000 and offered.channels == 1)
+    elif encoding in {"PCMA", "PCMU"}:
+        valid = (local.pcm_format == PcmFormat.S16LE and local.sample_rate == offered.sample_rate
+                 and local.channels == offered.channels)
+    else:
+        wanted = "L16" if local.pcm_format == PcmFormat.S16LE else "L24" if local.pcm_format in (PcmFormat.S24LE, PcmFormat.S24LE_IN_S32) else ""
+        valid = (encoding == wanted and offered.sample_rate == local.sample_rate and offered.channels == local.channels)
+    if not valid:
         return None
-    if offered.encoding == "G722":
-        if (
-            local.pcm_format == PcmFormat.S16LE
-            and local.sample_rate == 16000
-            and local.channels == 1
-        ):
-            return RtpPcmFormat(
-                offered.payload_type,
-                "G722",
-                8000,
-                1,
-                local.frame_ms,
-            )
+    if local_capabilities is None and encoding in {"L16", "L24"} and not is_rtp_pcm_mappable(local):
         return None
-    if offered.encoding == "PCM":
-        if (
-            local.pcm_format == PcmFormat.S16LE
-            and local.sample_rate == 16000
-            and local.channels == 1
-            and local.frame_ms == 20
-            and offered.sample_rate == 16000
-            and offered.channels == 1
-        ):
-            return RtpPcmFormat(
-                offered.payload_type,
-                "PCM",
-                16000,
-                1,
-                20,
-            )
+    selected = replace(offered, frame_ms=local.frame_ms)
+    if local_capabilities is not None and not local_capabilities.supports_rtp(selected, receive=receive):
         return None
-    if not is_rtp_pcm_mappable(local):
-        return None
-    if offered.encoding in {"PCMA", "PCMU"}:
-        if (
-            local.pcm_format == PcmFormat.S16LE
-            and local.sample_rate == offered.sample_rate
-            and local.channels == offered.channels
-        ):
-            return RtpPcmFormat(
-                offered.payload_type,
-                offered.encoding,
-                offered.sample_rate,
-                offered.channels,
-                local.frame_ms,
-            )
-        return None
-    wanted = audio_format_to_rtp(local, offered.payload_type)
-    if (
-        offered.encoding == wanted.encoding
-        and offered.sample_rate == wanted.sample_rate
-        and offered.channels == wanted.channels
-    ):
-        return wanted
-    return None
+    return selected
 
 
 def _best_offered_match(
-    offered: list[RtpPcmFormat], local_preferred: list[AudioFormat]
+    offered: list[RtpPcmFormat], local_preferred: list[AudioFormat],
+    *,
+    local_capabilities=None,
 ) -> RtpPcmFormat | None:
     for local in local_preferred:
         for offered_fmt in offered:
-            selected = _rtp_compatible_audio(offered_fmt, local)
+            selected = _rtp_compatible_audio(offered_fmt, local, local_capabilities=local_capabilities)
             if selected is not None:
-                return _first_offered_match([offered_fmt], local_preferred)
+                return _first_offered_match([offered_fmt], local_preferred, local_capabilities=local_capabilities)
     return None
 
 
 def _first_offered_match(
     offered: list[RtpPcmFormat],
     local_preferred: list[AudioFormat],
+    *,
+    local_capabilities=None,
+    receive: bool = False,
 ) -> RtpPcmFormat | None:
     for offered_fmt in offered:
         # ptime states the receiver's preference. A min/max range permits
@@ -1246,7 +1217,7 @@ def _first_offered_match(
         for local in sorted(
             local_preferred, key=lambda fmt: fmt.frame_ms != offered_fmt.frame_ms
         ):
-            selected = _rtp_compatible_audio(offered_fmt, local)
+            selected = _rtp_compatible_audio(offered_fmt, local, local_capabilities=local_capabilities, receive=receive)
             if selected is not None:
                 return _with_receiver_parameters(selected, offered_fmt)
     return None
@@ -1262,6 +1233,8 @@ def _local_receive_match(
     offered: list[RtpPcmFormat],
     local_preferred: list[AudioFormat],
     receiver_formats: list[RtpPcmFormat] | None = None,
+    *,
+    local_capabilities=None,
 ) -> RtpPcmFormat | None:
     """Match RX against our own receiver, never the remote receiver's ptime."""
     for local in local_preferred:
@@ -1273,7 +1246,7 @@ def _local_receive_match(
             )
             if receiver is None:
                 continue
-            selected = _rtp_compatible_audio(receiver, local)
+            selected = _rtp_compatible_audio(receiver, local, local_capabilities=local_capabilities, receive=True)
             if selected is not None:
                 return _with_receiver_parameters(
                     replace(selected, payload_type=candidate.payload_type), receiver,
@@ -1342,6 +1315,7 @@ def _bidirectional_offered_match(
     local_recv_preferred: list[AudioFormat],
     *,
     prefer_offer_order: bool,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     """Select one offered payload that is usable in both RTP directions."""
 
@@ -1359,10 +1333,10 @@ def _bidirectional_offered_match(
         )
     )
     for offered_fmt, local_send in candidates:
-        if _rtp_compatible_audio(offered_fmt, local_send) is None:
+        if _rtp_compatible_audio(offered_fmt, local_send, local_capabilities=local_capabilities) is None:
             continue
-        send = _first_offered_match([offered_fmt], local_send_preferred)
-        recv = _local_receive_match([offered_fmt], local_recv_preferred)
+        send = _first_offered_match([offered_fmt], local_send_preferred, local_capabilities=local_capabilities)
+        recv = _local_receive_match([offered_fmt], local_recv_preferred, local_capabilities=local_capabilities)
         if send is not None and recv is not None:
             return RtpPcmDirection(send=_with_receiver_parameters(send, offered_fmt), recv=recv)
     return None
@@ -1395,13 +1369,14 @@ def _negotiate_for_local_direction(
     direction: str,
     *,
     prefer_offer_order: bool,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     direction = normalize_direction(direction)
     if direction == "sendonly":
         selected = (
-            _first_offered_match(offered, local_send_preferred)
+            _first_offered_match(offered, local_send_preferred, local_capabilities=local_capabilities)
             if prefer_offer_order
-            else _best_offered_match(offered, local_send_preferred)
+            else _best_offered_match(offered, local_send_preferred, local_capabilities=local_capabilities)
         )
         return (
             RtpPcmDirection(send=selected, recv=selected)
@@ -1409,7 +1384,7 @@ def _negotiate_for_local_direction(
             else None
         )
     if direction == "recvonly":
-        selected = _local_receive_match(offered, local_recv_preferred)
+        selected = _local_receive_match(offered, local_recv_preferred, local_capabilities=local_capabilities)
         return (
             RtpPcmDirection(send=selected, recv=selected)
             if selected is not None
@@ -1420,6 +1395,7 @@ def _negotiate_for_local_direction(
         local_send_preferred,
         local_recv_preferred,
         prefer_offer_order=prefer_offer_order,
+        local_capabilities=local_capabilities,
     )
 
 
@@ -1439,6 +1415,8 @@ def _negotiate_answer_with_offer_payloads(
     local_send_preferred: list[AudioFormat],
     local_recv_preferred: list[AudioFormat],
     direction: str,
+    *,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     """Negotiate the two RTP payload spaces of an RFC 3264 answer.
 
@@ -1453,8 +1431,8 @@ def _negotiate_answer_with_offer_payloads(
         for offered_format in offered:
             if not _same_rtp_audio_codec(answered_format, offered_format):
                 continue
-            send = _first_offered_match([answered_format], local_send_preferred)
-            recv = _first_offered_match([offered_format], local_recv_preferred)
+            send = _first_offered_match([answered_format], local_send_preferred, local_capabilities=local_capabilities)
+            recv = _first_offered_match([offered_format], local_recv_preferred, local_capabilities=local_capabilities, receive=True)
             if direction == "sendonly":
                 if send is not None:
                     return RtpPcmDirection(
@@ -1551,10 +1529,13 @@ def build_offer_directional(
         # that wire contract until the peer advertises the versioned upgrade.
         send_times = send_rtp_formats if send_rtp_formats is not None else audio_rtp_formats
         recv_times = recv_rtp_formats if recv_rtp_formats is not None else audio_rtp_formats
-        send_times = send_times if send_times is not None else rtp_mappable_formats(send_formats)
-        recv_times = recv_times if recv_times is not None else rtp_mappable_formats(recv_formats)
-        legacy_frame_ms = next((fmt.frame_ms for fmt in send_times
-            if any(receiver.frame_ms == fmt.frame_ms for receiver in recv_times)), None)
+        send_times = send_times if send_times is not None else tuple(audio_format_to_rtp(fmt, 96) for fmt in rtp_mappable_formats(send_formats))
+        recv_times = recv_times if recv_times is not None else tuple(audio_format_to_rtp(fmt, 96) for fmt in rtp_mappable_formats(recv_formats))
+        first_sender = next(iter(send_times), None)
+        selected_send_times = [fmt.frame_ms for fmt in send_times
+            if first_sender is not None and _same_rtp_audio_codec(fmt, first_sender)]
+        legacy_frame_ms = next((fmt.frame_ms for fmt in recv_times
+            if fmt.frame_ms in selected_send_times), None)
         if legacy_frame_ms is None:
             raise SdpError("Legacy directional audio requires a common packet time")
     directional_flows: dict[tuple[str, int, int], str] = {}
@@ -1726,7 +1707,6 @@ def build_offer_directional(
     if allow_directional_payloads:
         lines.append("a=x-voip-stack-independent-ptime:1")
     packet_time = preferred_frame_ms or rtp_formats[0].frame_ms
-    lines.append(f"a=ptime:{packet_time}")
     receive_packet_times = [
         receiver.frame_ms for fmt in rtp_formats
         if (receiver := _local_receive_match([fmt], receive_capabilities)) is not None
@@ -1738,6 +1718,15 @@ def build_offer_directional(
         if receive_packet_times and audio_direction != "sendonly"
         else packet_time
     )
+    if explicit_rtp_formats and audio_direction != "sendonly":
+        # maxptime is media-wide. Every advertised receiving mapping must fit,
+        # rather than inheriting the largest duration from a different rate.
+        receive_bounds = [fmt.max_frame_ms for fmt in explicit_recv if fmt.max_frame_ms
+            and any(_same_rtp_audio_codec(fmt, wire) for wire in rtp_formats)]
+        if receive_bounds:
+            max_packet_time = min(max_packet_time, *receive_bounds)
+            packet_time = min(packet_time, max_packet_time)
+    lines.append(f"a=ptime:{packet_time}")
     if (not allow_directional_payloads or max_packet_time > packet_time
             or any(fmt.frame_ms > max_packet_time for fmt in rtp_formats)):
         lines.append(f"a=maxptime:{max_packet_time}")
@@ -1819,7 +1808,7 @@ def _common_codec_offer_formats(
         # Keep the packet time of the available PCM profile. Native SIP offers
         # use 10 ms; adding Opus must not retime their existing PCM payloads.
         for frame_ms in dict.fromkeys((preferred_frame_ms, 20, 10)):
-            if frame_ms is None:
+            if frame_ms not in (2.5, 5, 10, 20, 40, 60):
                 continue
             if any(
                 AudioFormat(48000, PcmFormat.S16LE, channels, frame_ms) in format_set
@@ -1932,11 +1921,12 @@ def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
                 left, spec = line.removeprefix("a=fmtp:").split(None, 1)
                 fmtp[int(left)] = spec.strip()
             elif line.startswith("a=ptime:"):
-                ptime = int(line.removeprefix("a=ptime:").strip())
+                ptime_raw = line.removeprefix("a=ptime:").strip()
+                ptime = 0 if capabilities and ptime_raw == "0" else _packet_time(ptime_raw)
             elif line.startswith("a=minptime:"):
-                minptime = int(line.removeprefix("a=minptime:").strip())
+                minptime = _packet_time(line.removeprefix("a=minptime:").strip())
             elif line.startswith("a=maxptime:"):
-                maxptime = int(line.removeprefix("a=maxptime:").strip())
+                maxptime = _packet_time(line.removeprefix("a=maxptime:").strip())
         except ValueError as err:
             raise SdpError(f"bad SDP audio attribute: {line}") from err
     connection_ip = media_conn or session_conn
@@ -3377,6 +3367,15 @@ def _offered_audio_mapping(parsed: dict, payload_type: int):
     return explicit
 
 
+def _local_receive_budget(fmt: RtpPcmFormat, capabilities) -> RtpPcmFormat:
+    if capabilities is None:
+        return fmt
+    maximum = capabilities.max_receive_packet_ms(fmt)
+    if fmt.max_frame_ms:
+        maximum = min(maximum, fmt.max_frame_ms)
+    return replace(fmt, max_frame_ms=maximum)
+
+
 def negotiate_directional(
     remote_sdp: str | bytes,
     local_send_preferred: list[AudioFormat],
@@ -3385,6 +3384,7 @@ def negotiate_directional(
     allow_dahua_pcm: bool = False,
     codec_policy=None,
     local_recv_capabilities: tuple[AudioFormat, ...] | None = None,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
@@ -3398,11 +3398,15 @@ def negotiate_directional(
     offered = offered_pcm_formats(remote_sdp, allow_dahua_pcm=allow_dahua_pcm)
     if codec_policy is not None:
         offered = list(codec_policy.audio_formats(offered))
+    if local_capabilities is not None:
+        local_send_preferred = local_capabilities.expand(local_send_preferred, offered)
+        local_recv_preferred = local_capabilities.expand(local_recv_preferred, offered, receive=True)
     explicit = _negotiate_audio_flow_attributes(
         remote_sdp,
         offered,
         local_send_preferred,
         local_recv_preferred,
+        local_capabilities=local_capabilities,
     )
     selected = explicit or _negotiate_for_local_direction(
         offered,
@@ -3410,6 +3414,7 @@ def negotiate_directional(
         local_recv_preferred,
         format_direction,
         prefer_offer_order=False,
+        local_capabilities=local_capabilities,
     )
     if selected is None:
         return None
@@ -3419,8 +3424,9 @@ def negotiate_directional(
     # to our transmitter and must never become our own receive capacity.
     receive_shape = _format_key(selected.recv.audio_format)[:3]
     receive_capabilities = local_recv_preferred if local_recv_capabilities is None else local_recv_capabilities
-    maximum = max([selected.recv.frame_ms, *(local.frame_ms for local in receive_capabilities
-        if _format_key(local)[:3] == receive_shape)])
+    maximum = (local_capabilities.max_receive_packet_ms(selected.recv) if local_capabilities is not None
+        else max([selected.recv.frame_ms, *(local.frame_ms for local in receive_capabilities
+        if _format_key(local)[:3] == receive_shape)]))
     return replace(selected, recv=replace(selected.recv, max_frame_ms=maximum))
 
 
@@ -3432,6 +3438,7 @@ def negotiate_answer_directional(
     local_offer_direction: str = "sendrecv",
     local_offer_sdp: str | bytes | None = None,
     allow_dahua_pcm: bool = False,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     """Negotiate one standards-compliant media contract from an SDP answer."""
 
@@ -3449,16 +3456,22 @@ def negotiate_answer_directional(
         remote_sdp,
         allow_dahua_pcm=allow_dahua_pcm,
     )
+    if local_capabilities is not None:
+        local_send_preferred = local_capabilities.expand(local_send_preferred, answered_formats)
+        local_recv_preferred = local_capabilities.expand(local_recv_preferred, answered_formats, receive=True)
     if local_offer_sdp is not None:
         offered_formats = offered_pcm_formats(
             local_offer_sdp, allow_dahua_pcm=allow_dahua_pcm
         )
+        if local_capabilities is not None:
+            local_recv_preferred = local_capabilities.expand(local_recv_preferred, offered_formats, receive=True)
         explicit = _negotiate_audio_flow_attributes(
             remote_sdp,
             answered_formats,
             local_send_preferred,
             local_recv_preferred,
             receiver_formats=offered_formats,
+            local_capabilities=local_capabilities,
         )
         if explicit is not None:
             # The ESP directional extension has a separate per-payload contract.
@@ -3472,10 +3485,12 @@ def negotiate_answer_directional(
                 return None
             explicit = replace(explicit, send=_with_receiver_parameters(explicit.send, peer_receiver),
                 recv=_with_receiver_parameters(explicit.recv, local_receiver))
+            explicit = replace(explicit, recv=_local_receive_budget(explicit.recv, local_capabilities))
             return replace(explicit, recv_formats=(explicit.recv,) if local_direction in {"recvonly", "sendrecv"} else ())
         selected = _negotiate_answer_with_offer_payloads(
             answered_formats, offered_formats,
             local_send_preferred, local_recv_preferred, format_direction,
+            local_capabilities=local_capabilities,
         )
         if selected is None:
             return None
@@ -3486,7 +3501,7 @@ def negotiate_answer_directional(
             for offered in offered_formats:
                 if not any(_same_rtp_audio_codec(offered, answer) for answer in answered_formats):
                     continue
-                compatible = _first_offered_match([offered], local_recv_preferred)
+                compatible = _first_offered_match([offered], local_recv_preferred, local_capabilities=local_capabilities, receive=True)
                 if compatible is not None:
                     receive.append(replace(offered, frame_ms=compatible.frame_ms))
         transmit = []
@@ -3494,19 +3509,22 @@ def negotiate_answer_directional(
             for answer in answered_formats:
                 if not any(_same_rtp_audio_codec(answer, offered) for offered in offered_formats):
                     continue
-                compatible = _first_offered_match([answer], local_send_preferred)
+                compatible = _first_offered_match([answer], local_send_preferred, local_capabilities=local_capabilities)
                 if compatible is not None:
                     transmit.append(replace(answer, frame_ms=compatible.frame_ms))
-        return replace(selected, recv_formats=tuple(receive), send_formats=tuple(transmit))
+        return replace(selected, recv=_local_receive_budget(selected.recv, local_capabilities),
+            recv_formats=tuple(_local_receive_budget(fmt, local_capabilities) for fmt in receive), send_formats=tuple(transmit))
     selected = _negotiate_for_local_direction(
         answered_formats,
         local_send_preferred,
         local_recv_preferred,
         format_direction,
         prefer_offer_order=True,
+        local_capabilities=local_capabilities,
     )
     if selected is None:
         return None
+    selected = replace(selected, recv=_local_receive_budget(selected.recv, local_capabilities))
     return replace(selected, recv_formats=(selected.recv,) if local_direction in {"recvonly", "sendrecv"} else ())
 
 
@@ -3517,6 +3535,7 @@ def _negotiate_audio_flow_attributes(
     local_recv_preferred: list[AudioFormat],
     *,
     receiver_formats: list[RtpPcmFormat] | None = None,
+    local_capabilities=None,
 ) -> RtpPcmDirection | None:
     """Apply the ESPHome directional payload extension when both flows exist."""
 
@@ -3533,12 +3552,12 @@ def _negotiate_audio_flow_attributes(
     ]
     if not remote_recv or not remote_send:
         return None
-    send = _best_offered_match(remote_recv, local_send_preferred)
+    send = _best_offered_match(remote_recv, local_send_preferred, local_capabilities=local_capabilities)
     if send is None:
         return None
     if not supports_independent_audio_ptime(remote_sdp):
         local_recv_preferred = [fmt for fmt in local_recv_preferred if fmt.frame_ms == send.frame_ms]
-    recv = _local_receive_match(remote_send, local_recv_preferred, receiver_formats)
+    recv = _local_receive_match(remote_send, local_recv_preferred, receiver_formats, local_capabilities=local_capabilities)
     return RtpPcmDirection(send, recv) if send is not None and recv is not None else None
 
 

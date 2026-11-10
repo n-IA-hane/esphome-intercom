@@ -1704,6 +1704,15 @@ const model = await import(pathToFileURL({json.dumps(str(MEDIA_MODEL))}));
 assert.deepEqual(model.parsePcmFormat("48000:s16le:2:20"), {{
   sampleRate: 48000, pcmFormat: "s16le", channels: 2, frameMs: 20,
 }});
+for (const frameMs of [2.5, 15, 32, 40]) {{
+  assert.deepEqual(model.parsePcmFormat(`48000:s16le:1:${{frameMs}}`), {{
+    sampleRate: 48000, pcmFormat: "s16le", channels: 1, frameMs,
+  }});
+}}
+assert.equal(model.parsePcmFormat("22050:s24le:2:20").sampleRate, 22050);
+for (const token of ["192001:s16le:1:20", "0:s16le:1:20", "16000.5:s16le:1:20", "48000:s16le:1:1001", "48000:s16le:1:0", "48000:s16le:1:NaN"]) {{
+  assert.throws(() => model.parsePcmFormat(token));
+}}
 assert.throws(() => model.parsePcmFormat("48000:f32le:2:20"), /unsupported PCM/);
 assert.throws(() => model.parsePcmFormat("44100:s16le:2:16"), /whole PCM frames/);
 assert.deepEqual(model.resolveSessionFormats({{

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import logging
 from typing import Any
 
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp
 from .core.sdp import remote_can_receive, remote_can_send
 from .sip_client import SipCallClient, SipDialog
@@ -50,8 +51,29 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
         allow_dahua_pcm=invite.peer_profile == "dahua",
         codec_policy=invite.codec_policy,
         local_recv_capabilities=invite.local_recv_capabilities or None,
+        local_capabilities=HA_AUDIO_CAPABILITIES,
     )
-    return replace(invite, send_format=selected.send, recv_format=selected.recv) if selected is not None else invite
+    if selected is None:
+        return invite
+
+    def pcm_shape(fmt):
+        pcm = fmt.audio_format
+        return pcm.sample_rate, pcm.pcm_format, pcm.channels
+
+    # Keep the caller's receive geometry when a preference merely moves a
+    # conversion to the opposite direction. Packet-time changes remain valid.
+    if pcm_shape(selected.recv) != pcm_shape(invite.recv_format):
+        original_conversions = sum((
+            pcm_shape(invite.recv_format) != pcm_shape(destination.send_format),
+            pcm_shape(destination.recv_format) != pcm_shape(invite.send_format),
+        ))
+        candidate_conversions = sum((
+            pcm_shape(selected.recv) != pcm_shape(destination.send_format),
+            pcm_shape(destination.recv_format) != pcm_shape(selected.send),
+        ))
+        if candidate_conversions >= original_conversions:
+            return invite
+    return replace(invite, send_format=selected.send, recv_format=selected.recv)
 
 
 @dataclass(frozen=True, slots=True)

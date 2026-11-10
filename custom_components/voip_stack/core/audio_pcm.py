@@ -81,7 +81,6 @@ class _PolyphaseResampler:
         if self._identity:
             return
 
-        out_samples = (in_samples * self._up) // self._down
         taps = _RESAMPLER_TAPS_PER_PHASE
         filter_len = taps * self._up
         n = np.arange(filter_len) - (filter_len - 1) / 2.0
@@ -95,21 +94,39 @@ class _PolyphaseResampler:
         kernel /= kernel.reshape(taps, self._up).sum(axis=0).max()
 
         self._history = taps
-        out_index = np.arange(out_samples)
-        upsampled = out_index * self._down
+        self._kernel = kernel
+        self._tap_index = np.arange(taps)
+        # Position of the next output sample, measured in upsampled source
+        # units relative to the next input block. Keep its fractional phase
+        # across blocks whose durations contain a fractional output sample.
+        self._position = 0
+        self._plan_key: tuple[int, int] | None = None
+        self._prepare_plan(in_samples)
+        self._tail = np.zeros((channels, self._history), dtype=np.float64)
+
+    def _prepare_plan(self, in_samples: int) -> None:
+        plan_key = (in_samples, self._position)
+        if plan_key == self._plan_key:
+            return
+        out_samples = max(
+            0, (in_samples * self._up - self._position + self._down - 1) // self._down
+        )
+        upsampled = self._position + np.arange(out_samples) * self._down
         phase = upsampled % self._up
         center = upsampled // self._up
-        tap_index = np.arange(taps)
-        self._gather = self._history + center[:, None] - tap_index[None, :]
-        self._coeffs = kernel[phase[:, None] + tap_index[None, :] * self._up]
-        self._tail = np.zeros((channels, self._history), dtype=np.float64)
+        self._gather = self._history + center[:, None] - self._tap_index[None, :]
+        self._coeffs = self._kernel[phase[:, None] + self._tap_index[None, :] * self._up]
+        self._plan_key = plan_key
 
     def process(self, channels: np.ndarray) -> np.ndarray:
         if self._identity:
             return channels
+        self._prepare_plan(channels.shape[1])
         x = np.concatenate([self._tail, channels], axis=1)
         self._tail = x[:, -self._history:]
-        return np.einsum("ot,cot->co", self._coeffs, x[:, self._gather], optimize=True)
+        output = np.einsum("ot,cot->co", self._coeffs, x[:, self._gather], optimize=True)
+        self._position += output.shape[1] * self._down - channels.shape[1] * self._up
+        return output
 
 
 class PcmFrameConverter:
@@ -118,10 +135,6 @@ class PcmFrameConverter:
     def __init__(self, src: AudioFormat, dst: AudioFormat) -> None:
         self.src = src
         self.dst = dst
-        if (src.frame_ms * dst.sample_rate) % 1000:
-            raise ValueError(
-                f"{src.wire_token()} cannot be reframed exactly at {dst.sample_rate} Hz"
-            )
         self._resampler = _PolyphaseResampler(
             src.sample_rate, dst.sample_rate, src.nominal_frame_samples, dst.channels
         )
