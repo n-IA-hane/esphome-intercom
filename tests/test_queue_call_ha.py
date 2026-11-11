@@ -32,12 +32,11 @@ async def queue_lab(trunks, monkeypatch):
     manager = QueueManager(lab.hass, SimpleNamespace(runtime_data=lab.runtime,
         entry_id=lab.hass.config_entries.async_entries("voip_stack")[0].entry_id))
     identity = "d5cf849db68449f49f03552eeab34511"
-    manager.definitions[identity] = QueueDefinition(identity, "Reception", ("sip:bedroom0", "sip:bedroom1"))
+    manager.definitions[identity] = QueueDefinition(identity, "Reception", ("sip:bedroom0", "sip:bedroom1"), "401")
     manager.policies[identity] = QueuePolicy(max_wait=5, ring_timeout=1, retry_delay=0.1, no_agent_wait=1, wrap_up=1)
     manager.agent_states[identity] = {member: "available" for member in manager.definitions[identity].members}
     lab.runtime.queues = manager
-    contact = RosterEntry(f"queue:{identity}", name="Reception", extension="401", ha_bridge=True,
-                          metadata={"virtual_endpoint": "queue", "queue_id": identity, "endpoint_id": f"service:queue:{identity}"})
+    contact = manager.roster_entries()[0]
     lab.roster.append(contact)
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source", name="Source", username="source", kind=EndpointKind.SIP_ACCOUNT,
                                                 availability="available"))
@@ -57,7 +56,11 @@ async def queue_lab(trunks, monkeypatch):
         clients.append(client)
         return client, audio
 
-    yield SimpleNamespace(**vars(lab), manager=manager, identity=identity, contact=contact, caller=caller)
+    from custom_components.voip_stack.const import QUEUE_EVENT
+    events = []
+    unsubscribe = lab.hass.bus.async_listen(QUEUE_EVENT, lambda event: events.append(dict(event.data)))
+    yield SimpleNamespace(**vars(lab), manager=manager, identity=identity, contact=contact, caller=caller, queue_events=events)
+    unsubscribe()
     for client in clients:
         await client.terminate()
         await client.close()
@@ -172,25 +175,79 @@ async def test_two_real_waiting_callers_reach_the_same_agent_in_fifo_order(queue
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("change", ["removed", "disabled"])
+@pytest.mark.parametrize("change", ["removed", "disabled", "timeout", "no_agents"])
 async def test_queue_changes_while_waiting_use_original_fallback_and_cleanup(queue_lab, change):
     lab = queue_lab
-    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], fallback="bedroom1", no_agent_wait=5)
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], fallback="bedroom1",
+        max_wait=1 if change == "timeout" else 5, no_agent_wait=0.1 if change == "no_agents" else 5)
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
     client, _audio = await dial_queue(lab)
     await wait_until(lambda: bool(lab.manager.waiting))
     if change == "removed":
         lab.manager.definitions.pop(lab.identity)
         lab.manager.policies.pop(lab.identity)
-    else:
+    elif change == "disabled":
         lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], enabled=False)
     lab.manager._changed()
     await wait_until(lambda: bool(lab.phones[1].invites))
     await wait_for_bridge(lab, client.dialog_ids.call_id)
     assert not lab.phones[0].invites
     assert not lab.manager.waiting and not lab.manager.reservations
+    exited = [event for event in lab.queue_events if event["event_type"] == "exited"]
+    assert len(exited) == 1
+    assert exited[0]["reason"] == f"queue_{change}"
+    assert exited[0]["outcome"] == change
+    assert exited[0]["disposition"] == "forwarded"
+    assert exited[0]["destination"] == "bedroom1"
     await client.terminate()
     await wait_until(lambda: lab.calls.get_session(client.dialog_ids.call_id) is None)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_failed_queue_fallback_retains_cause_without_claiming_a_committed_forward(queue_lab):
+    lab = queue_lab
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
+        max_wait=1, no_agent_wait=5, fallback_timeout="bedroom1")
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.phones[1].final_status = 486
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    observer = asyncio.create_task(client.wait_for_dialog_termination(timeout=3))
+    try:
+        assert await observer == "remote_hangup"
+        await asyncio.wait_for(session.terminated.wait(), 3)
+    finally:
+        observer.cancel()
+        await asyncio.gather(observer, return_exceptions=True)
+    exited = [event for event in lab.queue_events if event["event_type"] == "exited"]
+    assert len(exited) == 1
+    assert exited[0]["reason"] == "queue_timeout" and exited[0]["outcome"] == "timeout"
+    assert exited[0]["disposition"] == "ended" and exited[0]["destination"] == "bedroom1"
+    assert not lab.manager.waiting and not lab.manager.reservations and not lab.calls.sessions
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_queue_fallback_to_another_queue_preserves_original_exit_cause_at_commit(queue_lab):
+    lab = queue_lab
+    other = "478e08a5a14545e8ad795ec6a4332222"
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom1",), "402")
+    lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
+    lab.manager.agent_states[other] = {"sip:bedroom1": "available"}
+    lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], max_wait=1,
+        no_agent_wait=5, fallback_timeout="Support")
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    client, _audio = await dial_queue(lab)
+    session = await wait_for_bridge(lab, client.dialog_ids.call_id)
+    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    exited = [event for event in lab.queue_events if event["event_type"] == "exited" and event["queue_id"] == lab.identity]
+    assert len(exited) == 1
+    assert exited[0]["reason"] == "queue_timeout" and exited[0]["outcome"] == "timeout"
+    assert exited[0]["disposition"] == "forwarded" and exited[0]["destination"] == "Support"
+    assert any(event["event_type"] == "answered" and event["queue_id"] == other for event in lab.queue_events)
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+    assert not lab.manager.waiting and not lab.manager.reservations and not lab.calls.sessions
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
@@ -362,6 +419,78 @@ async def test_rejected_queue_transfer_leaves_original_ticket_media_and_claims_i
     assert not ticket.closed and tuple(lab.manager.waiting[lab.identity]) == (ticket,)
     assert not lab.manager.staged_admissions and dict(session.endpoint_claims) == claims
     assert not any(phone.invites for phone in lab.phones)
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("automatic", [False, True])
+async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_queue(queue_lab, automatic):
+    lab = queue_lab
+    other = "1f37a89d29a9436c9ff348d94b1e7777"
+    lab.manager.definitions[other] = QueueDefinition(other, "Closed queue", ("sip:bedroom0",))
+    lab.manager.policies[other] = QueuePolicy(enabled=False, fallback_disabled="bedroom1")
+    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
+        no_agent_wait=0.1 if automatic else 5, fallback_no_agents="Closed queue" if automatic else "")
+    lab.phones[1].auto_answer = False
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    original = lab.calls.resource_for(session.call_id, "queue")
+    media = original.media
+    task = None
+    try:
+        if not automatic:
+            task = await lab.calls.forward_call(call_id=session.call_id, destination="Closed queue", on_failure="resume")
+        await asyncio.wait_for(lab.phones[1].invited.wait(), 2)
+        task = task or lab.calls.task_for(session.call_id, "forward")
+        assert not task.done()
+        assert lab.calls.resource_for(session.call_id, "queue") is original
+        assert original.media is media and not media.closed.is_set() and not original.detached
+        assert other not in lab.manager.waiting and not lab.manager.staged_admissions
+        assert not lab.phones[0].invites
+        lab.phones[1].answer()
+        assert (await asyncio.wait_for(asyncio.shield(task), 2)).status == "connected"
+        assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+        exited = [event for event in lab.queue_events if event["event_type"] == "exited"]
+        source = [event for event in exited if event["queue_id"] == lab.identity]
+        target = [event for event in exited if event["queue_id"] == other]
+        assert len(source) == len(target) == 1
+        assert source[0]["reason"] == ("queue_no_agents" if automatic else "transferred")
+        assert source[0]["disposition"] == "forwarded" and source[0]["destination"] == "bedroom1"
+        assert target[0]["reason"] == "queue_disabled" and target[0]["disposition"] == "rejected"
+        assert not lab.manager.waiting and not lab.manager.reservations
+    finally:
+        await client.terminate()
+        await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_disabled_queue_fallback_cycle_rejects_before_retiring_original_application(queue_lab):
+    from homeassistant.exceptions import ServiceValidationError
+    lab = queue_lab
+    for identity, name, fallback in (("closed-b", "Closed B", "Closed C"), ("closed-c", "Closed C", "Closed B")):
+        lab.manager.definitions[identity] = QueueDefinition(identity, name, ("sip:bedroom0",))
+        lab.manager.policies[identity] = QueuePolicy(enabled=False, fallback_disabled=fallback)
+        lab.manager.agent_states[identity] = {"sip:bedroom0": "paused"}
+        lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{identity}")
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    original = lab.calls.resource_for(session.call_id, "queue")
+    media, claims = original.media, dict(session.endpoint_claims)
+    with pytest.raises(ServiceValidationError, match="routing hops"):
+        await lab.calls.forward_call(call_id=session.call_id, destination="Closed B", on_failure="resume")
+    assert original.media is media and not media.closed.is_set() and not original.detached
+    assert lab.calls.resource_for(session.call_id, "queue") is original
+    assert dict(session.endpoint_claims) == claims
+    assert set(lab.manager.waiting) == {lab.identity} and not lab.manager.staged_admissions
+    assert not any(phone.invites for phone in lab.phones)
+    rejected = [event for event in lab.queue_events if event["event_type"] == "exited"]
+    assert {event["queue_id"] for event in rejected} == {"closed-b", "closed-c"} and len(rejected) == 2
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
 
@@ -607,6 +736,7 @@ async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(que
         lab.manager.enqueue(lab.identity, "another-waiter", 1)
     else:
         lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], enabled=False)
+        lab.roster[:] = [entry for entry in lab.roster if entry.metadata.get("virtual_endpoint") != "queue"] + lab.manager.roster_entries()
     lab.phones[1].auto_answer = False
     client, _audio = await lab.caller()
     result = await client.invite(target="401", remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
@@ -618,5 +748,96 @@ async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(que
     session = await wait_for_bridge(lab, client.dialog_ids.call_id)
     assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
     assert not lab.phones[0].invites
+    rejected = [event for event in lab.queue_events
+        if event["event_type"] == "exited" and event["call_id"] == client.dialog_ids.call_id]
+    assert len(rejected) == 1
+    assert rejected[0]["reason"] == f"queue_{blocked}"
+    assert rejected[0]["outcome"] == blocked
+    assert rejected[0]["disposition"] == "rejected"
+    assert rejected[0]["destination"] == "bedroom1"
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_commit(queue_lab):
+    from custom_components.voip_stack import audio_ws_view
+    from custom_components.voip_stack.websocket_owner import MediaWebSocketOwner, async_release_media_owner
+    from .test_browser_paging_ha import Browser
+
+    class Client(Browser):
+        async def close(self, **_kwargs):
+            self.force_close()
+
+    lab = queue_lab
+    endpoint = PhoneEndpoint(endpoint_id="browser-agent", name="Browser agent", username="browser-agent",
+        device_id="browser-agent-device", kind=EndpointKind.BROWSER, availability="available")
+    lab.runtime.endpoints.register(endpoint)
+    lab.runtime.softphone_presence[endpoint.endpoint_id] = 1
+    lab.roster.append(RosterEntry(endpoint.name, metadata={"local_ha": True,
+        "endpoint_id": endpoint.endpoint_id, "endpoint_kind": "browser"}))
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
+        members=("sip:bedroom0", endpoint.endpoint_id))
+    lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
+    lab.phones[0].auto_answer = False
+    client, audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    worker = None
+    try:
+        await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+        await wait_until(lambda: lab.runtime.softphones.get(endpoint.endpoint_id, {}).get("state") == "ringing")
+        forwarding = lab.calls.task_for(session.call_id, "forward")
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": endpoint.device_id, "call_id": session.call_id, "media_client_id": "queue-agent-client",
+        }, blocking=True)
+        await wait_until(lambda: lab.calls.resource_for(session.call_id, f"softphone_media_endpoint:{endpoint.endpoint_id}") is not None)
+        assert not any(event["event_type"] == "offer_ended" and event.get("endpoint_id") == endpoint.endpoint_id
+                       for event in lab.queue_events)
+        live = audio_ws_view._active_softphone_media_session(lab.hass, endpoint.endpoint_id)
+        playback = lab.calls.resource_for(session.call_id, "browser_playback")
+        browser = Client()
+        owner_key = f"{endpoint.endpoint_id}|{session.call_id}"
+        owner = MediaWebSocketOwner(websocket=browser, client_id="queue-agent-client")
+        lab.runtime.media.owners_for("audio")[owner_key] = owner
+        playback.attach(browser)
+
+        async def run_browser():
+            try:
+                await audio_ws_view._run_audio_session(lab.hass, browser, live, endpoint_id=endpoint.endpoint_id,
+                    playback=playback, handoff_requested=owner.handoff_requested)
+            finally:
+                playback.detach(browser)
+                await async_release_media_owner(lab.runtime.media.owners_for("audio"),
+                    lab.runtime.media.owner_lock_for("audio"), owner_key, owner)
+
+        worker = asyncio.create_task(run_browser())
+        await wait_until(lambda: bool(browser.contracts))
+        browser.ready()
+        assert (await asyncio.wait_for(asyncio.shield(forwarding), 2)).status == "connected"
+        ended = [event for event in lab.queue_events if event["event_type"] == "offer_ended"]
+        winning = [event for event in ended if event["endpoint_id"] == endpoint.endpoint_id]
+        assert len(winning) == 1 and winning[0]["outcome"] == "in_call"
+        assert all(event["outcome"] == "cancelled" for event in ended if event["endpoint_id"] != endpoint.endpoint_id)
+        assert any(event["event_type"] == "answered" and event["endpoint_id"] == endpoint.endpoint_id for event in lab.queue_events)
+        fmt = client.dialog.send_format
+        samples = fmt.audio_format.nominal_frame_bytes // 2
+        for index in range(8):
+            packet = rtp.RtpPacket(fmt.payload_type, index, index * fmt.rtp_timestamp_step, 447,
+                struct.pack(f"!{samples}h", *([2310] * samples)))
+            audio.sendto(rtp.build_packet(packet), (client.dialog.remote_rtp_host, client.dialog.remote_rtp_port))
+            await asyncio.sleep(float(fmt.frame_ms) / 1000)
+        await wait_until(lambda: any(any(frame) for frame in browser.frames))
+        voiced = next(frame for frame in browser.frames if any(frame))
+        assert set(struct.unpack(f"<{len(voiced)//2}h", voiced)) == {2310}
+        assert any(request.method == "CANCEL" for request in lab.phones[0].requests)
+        await client.terminate()
+        await asyncio.wait_for(session.terminated.wait(), 2)
+        assert not lab.calls.sessions and not lab.manager.waiting and not lab.manager.reservations
+        assert not lab.runtime.media.owners_for("audio")
+    finally:
+        await client.terminate()
+        if session.live:
+            await lab.calls.terminate_call_wait(session.call_id, reason="test_cleanup")
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from .call_projection import publish_bridge_projection
-from .call_queues import get_queue_manager
+from .call_queues import QueueExit, get_queue_manager
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, TerminationIntent, SessionHandoff
 from .local_application import LocalCallApplication, ApplicationRef, attach_local_application
@@ -83,7 +83,8 @@ class QueueCall(LocalCallApplication):
                     self.session.call_id, f"queue_conversation:{queue_id}:{self.ticket.entry_id}:{self.session.call_id}", winner, begin_wrap_up,
                     stage=CleanupStage.OBSERVER, generation=self.session.generation)
             else:
-                self.manager.finish(self.ticket, reason="transferred")
+                departure = self.ticket.exit or QueueExit("transferred", destination=self.session.callee)
+                self.manager.finish(self.ticket, queue_exit=QueueExit(departure.cause, "forwarded", departure.destination))
             self.ticket.changed.set()
             return
         self.manager.finish(self.ticket, reason=reason)
@@ -91,6 +92,7 @@ class QueueCall(LocalCallApplication):
     async def _fallback(self, policy, reason):
         fallback = policy.fallback_for(reason)
         if fallback and self.session.live:
+            self.ticket.exit = QueueExit(reason, destination=fallback)
             task = await call_registry(self.hass).forward_call(call_id=self.session.call_id,
                 destination=fallback, on_failure="terminate")
             if task is not None:
@@ -183,10 +185,12 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
     try:
         start_queue_application(runtime.hass, session, invite, decision.entry, runtime.local_ip)
     except ValueError:
-        policy = manager.policy(queue.queue_id)
-        reason = "queue_full" if policy.enabled else "queue_disabled"
+        rejection = manager.admission_rejection(queue.queue_id)
+        if rejection is None:
+            raise
+        reason = rejection.cause
         manager.record_rejection(queue.queue_id, session.call_id, session.generation, reason)
-        fallback = policy.fallback_for(reason)
+        fallback = rejection.destination
         if fallback:
             registry.transition(session.call_id, owner="router", state="ringing")
             registry.set_pending_invite(session.call_id, invite)

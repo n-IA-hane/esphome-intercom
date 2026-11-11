@@ -383,6 +383,30 @@ async def async_forward_existing_call(
             _registered_roster_entries(hass),
         )
         decision = _resolved_decision or route_resolver.route(destination, roster_entries)
+        rejected_queues = set()
+        while decision.action is RouteAction.QUEUE and decision.entry is not None:
+            from .call_queues import QueueExit, get_queue_manager
+            queues = get_queue_manager(hass)
+            if queues is None:
+                break
+            queue_id = decision.entry.metadata["queue_id"]
+            if application is not None and application.owner == "queue" and application.ticket.queue_id == queue_id:
+                break
+            rejection = queues.admission_rejection(queue_id)
+            if rejection is None:
+                break
+            if queue_id in rejected_queues or len(rejected_queues) >= 8 - len(context.route_history if context else ()):
+                raise _service_error(f"call_id {call_id} exceeded 8 routing hops", "route_hop_limit_exceeded",
+                    call_id=call_id, limit=8)
+            rejected_queues.add(queue_id)
+            queues.record_rejection(queue_id, call_id, registry.get_session(call_id).generation, rejection.cause)
+            if not rejection.destination:
+                break
+            destination = rejection.destination
+            decision = route_resolver.route(destination, roster_entries)
+            if application is not None and application.owner == "queue" and application.ticket.exit is not None:
+                departure = application.ticket.exit
+                application.ticket.exit = QueueExit(departure.cause, departure.disposition, destination)
         _check_external_route(decision)
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
@@ -1023,6 +1047,7 @@ async def async_forward_existing_call(
                     **({"ring_timeout": _ring_timeout} if _ring_timeout is not None else {}),
                 )
                 fork_result = None
+                pickup_gate = winner = None
                 try:
                     fork_result, pickup_gate = await run_owned_ring_group_fork(
                         authoritative_session, fork_candidates, candidate_payloads,
@@ -1043,16 +1068,17 @@ async def async_forward_existing_call(
                     )
                     raise
                 finally:
-                    winner_id = fork_result.winner.endpoint_id if fork_result is not None and fork_result.winner is not None else ""
+                    if fork_result is not None and fork_result.winner is not None:
+                        winner = candidate_payloads.get(fork_result.winner.candidate_id)
+                    winning_leg = pickup_gate.current.payload if winner is pickup_gate and pickup_gate is not None else winner
+                    winner_id = str(getattr(winning_leg, "endpoint_id", "") or "")
                     missing = "timeout" if fork_result is not None and fork_result.outcome.disposition is DialDisposition.TIMEOUT else "cancelled"
                     for endpoint_id in offers:
+                        if endpoint_id == winner_id and isinstance(winning_leg, BrowserLeg):
+                            # The existing media-ready commit owns a browser answer.
+                            continue
                         offer_end(endpoint_id, "in_call" if endpoint_id == winner_id else missing)
 
-                winner = (
-                    candidate_payloads.get(fork_result.winner.candidate_id)
-                    if fork_result.winner is not None
-                    else None
-                )
                 if winner is pickup_gate:
                     if pickup_gate.current.payload is None:
                         registry.take_pending_route(call_id)

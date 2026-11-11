@@ -23,7 +23,7 @@ QUEUE_EVENT_TYPES = ("entered", "offer_started", "offer_ended", "answered", "exi
                      "agent_state_changed", "policy_changed")
 _MAX_WINDOW = timedelta(days=31)
 _LOGGER = logging.getLogger(__name__)
-_TEXT_FIELDS = ("config_entry_id", "entry_id", "queue_id", "queue_name", "call_id", "endpoint_id",
+_TEXT_FIELDS = ("config_entry_id", "entry_id", "queue_id", "queue_name", "call_id", "endpoint_id", "disposition", "destination",
                 "attempt_id", "reason", "outcome", "state", "previous_state", "caller_number", "called_number")
 
 
@@ -190,7 +190,8 @@ def reduce_queue_metrics(events, queue_id, start, end, as_of):
             outcome = str(first.get("outcome") or first.get("reason") or "rejected")
             # A later completion whose admission is outside this query (or
             # Recorder retention) cannot become a new rejected admission.
-            if row["answered"] is not None or outcome not in {"overflow", "rejected"}:
+            if row["answered"] is not None or (
+                    first.get("disposition") != "rejected" and outcome not in {"overflow", "rejected"}):
                 unanchored += 1
                 continue
             rejected += 1

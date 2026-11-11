@@ -136,6 +136,20 @@ class QueueDefinition:
     extension: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class QueueExit:
+    """Why an admission ends, independently of its destination's outcome."""
+
+    cause: str
+    disposition: str = "ended"
+    destination: str = ""
+
+    def event_fields(self):
+        return {"reason": self.cause,
+                "outcome": "transferred" if self.cause == "queue_transfer" else self.cause.removeprefix("queue_"),
+                "disposition": self.disposition, "destination": self.destination}
+
+
 @dataclass(slots=True, eq=False)
 class QueueTicket:
     queue_id: str
@@ -153,6 +167,7 @@ class QueueTicket:
     offers: dict[str, tuple[str, float]] = field(default_factory=dict)
     connected_at: float | None = None
     completed: bool = False
+    exit: QueueExit | None = None
 
 
 class QueueManager:
@@ -175,6 +190,7 @@ class QueueManager:
         self.conversations: dict[str, QueueTicket] = {}
         self._listeners: set[Callable] = set()
         self._unsub = None
+        self._wrap_timer = None
         self.closed = False
 
     def resolve(self, ref) -> QueueDefinition | None:
@@ -286,15 +302,23 @@ class QueueManager:
             and not endpoint.dnd
             and not endpoint.active_call_id)
 
-    def enqueue(self, ref, call_id, generation, *, replacing=None) -> QueueTicket:
+    def admission_rejection(self, ref) -> QueueExit | None:
+        """Return the same admission policy before routing and at commit."""
         queue = self.resolve(ref)
         policy = self.policy(ref)
         if self.closed or not policy.enabled:
-            raise ValueError("The queue is disabled")
+            return QueueExit("queue_disabled", "rejected", "" if self.closed else policy.fallback_for("queue_disabled"))
         pending = self.waiting.get(queue.queue_id, ())
         held = sum(ticket.queue_id == queue.queue_id for ticket in self.staged_admissions.values())
         if len(pending) + held >= policy.max_waiting:
-            raise ValueError("The queue is full")
+            return QueueExit("queue_full", "rejected", policy.fallback_for("queue_full"))
+        return None
+
+    def enqueue(self, ref, call_id, generation, *, replacing=None) -> QueueTicket:
+        queue = self.resolve(ref)
+        policy = self.policy(ref)
+        if rejection := self.admission_rejection(ref):
+            raise ValueError("The queue is disabled" if rejection.cause == "queue_disabled" else "The queue is full")
         existing = [ticket for rows in self.waiting.values() for ticket in rows if ticket.call_id == call_id]
         if replacing is not None and (replacing.closed or replacing not in existing
                 or replacing.call_id != call_id or replacing.generation != generation
@@ -321,7 +345,8 @@ class QueueManager:
         now = self.clock()
         ticket = QueueTicket(queue.queue_id, call_id, generation, now, now,
                              policy=self.policy(queue.queue_id), closed=True, admitted=False)
-        self._event("exited", ticket, reason=reason, outcome="rejected", wait_seconds=0)
+        departure = QueueExit(reason, "rejected", ticket.policy.fallback_for(reason))
+        self._event("exited", ticket, **departure.event_fields(), wait_seconds=0)
 
     def prepare_transfer(self, replacing, ref):
         return self.enqueue(ref, replacing.call_id, replacing.generation, replacing=replacing)
@@ -352,7 +377,9 @@ class QueueManager:
             self.publish_transfer(previous, prepared)
 
     def publish_transfer(self, previous, prepared):
-        self._event("exited", previous, outcome="transferred", reason="queue_transfer",
+        departure = previous.exit or QueueExit("queue_transfer", destination=f"queue:{prepared.queue_id}")
+        previous.exit = QueueExit(departure.cause, "forwarded", departure.destination)
+        self._event("exited", previous, **previous.exit.event_fields(),
                     wait_seconds=max(0, self.clock() - previous.enqueued))
         self._event("entered", prepared)
         self._changed()
@@ -462,7 +489,7 @@ class QueueManager:
         if notify:
             self._changed()
 
-    def finish(self, ticket, *, connected_endpoint="", reason="abandoned", notify=True):
+    def finish(self, ticket, *, connected_endpoint="", reason="abandoned", queue_exit=None, notify=True):
         if ticket.closed:
             return
         ticket.closed = True
@@ -474,7 +501,8 @@ class QueueManager:
                 self.waiting.pop(ticket.queue_id, None)
         self.release_attempt(ticket, notify=False)
         if ticket.admitted and ticket.connected_at is None:
-            self._event("exited", ticket, reason=reason, outcome=reason.removeprefix("queue_"),
+            ticket.exit = queue_exit or ticket.exit or QueueExit(reason)
+            self._event("exited", ticket, **ticket.exit.event_fields(),
                         wait_seconds=max(0, self.clock() - ticket.enqueued))
         if connected_endpoint:
             self.start_wrap_up(ticket.queue_id, connected_endpoint, duration=ticket.policy.wrap_up, notify=False)
@@ -484,6 +512,9 @@ class QueueManager:
     def connected(self, ticket, endpoint_id):
         if ticket.closed or ticket.connected_at is not None:
             return
+        for identity, (phone, _started) in tuple(ticket.offers.items()):
+            if phone == endpoint_id:
+                self.finish_offer(ticket, phone, "in_call", True, identity, notify=False)
         ticket.connected_at = self.clock()
         self.conversations[endpoint_id] = ticket
         stats = self._stats(ticket.queue_id, endpoint_id)
@@ -504,6 +535,7 @@ class QueueManager:
         self._stats(ticket.queue_id, endpoint_id)["last_ended"] = self.last_ended[endpoint_id]
         self.start_wrap_up(ticket.queue_id, endpoint_id, duration=ticket.policy.wrap_up, notify=False)
         self._event("exited", ticket, endpoint_id=endpoint_id, outcome="completed", reason=reason,
+                    disposition="completed", destination=endpoint_id,
                     wait_seconds=max(0, ticket.connected_at - ticket.enqueued),
                     talk_seconds=max(0, self.clock() - ticket.connected_at))
         self._changed(persist=True)
@@ -535,8 +567,27 @@ class QueueManager:
             duration = self.policies.get(queue_id, QueuePolicy()).wrap_up
         if duration > 0 and not self.closed:
             self.wrap_until[endpoint_id] = max(self.wrap_until.get(endpoint_id, 0), self.clock() + duration)
+            self._schedule_wrap_expiry()
             if notify:
                 self._changed()
+
+    def _schedule_wrap_expiry(self):
+        if self._wrap_timer is not None:
+            self._wrap_timer.cancel()
+            self._wrap_timer = None
+        if self.hass is not None and self.wrap_until and not self.closed:
+            self._wrap_timer = self.hass.loop.call_later(
+                max(0, min(self.wrap_until.values()) - self.clock()), self._expire_wraps)
+
+    def _expire_wraps(self):
+        self._wrap_timer = None
+        now = self.clock()
+        expired = [endpoint for endpoint, deadline in self.wrap_until.items() if deadline <= now]
+        for endpoint in expired:
+            self.wrap_until.pop(endpoint)
+        if expired:
+            self._changed()
+        self._schedule_wrap_expiry()
 
     def subscribe(self, callback):
         self._listeners.add(callback)
@@ -617,12 +668,16 @@ class QueueManager:
     def roster_entries(self):
         return [RosterEntry(id=f"queue:{queue.queue_id}", name=queue.name,
             extension=queue.extension, ha_bridge=True,
-            enabled=self.policies[queue.queue_id].enabled, metadata={"virtual_endpoint": "queue", "queue_id": queue.queue_id,
+            metadata={"virtual_endpoint": "queue", "queue_id": queue.queue_id,
+                "queue_enabled": self.policies[queue.queue_id].enabled,
                 "endpoint_id": f"service:queue:{queue.queue_id}", "endpoint_kind": "service"})
             for queue in self.definitions.values()]
 
     async def close(self):
         self.closed = True
+        if self._wrap_timer is not None:
+            self._wrap_timer.cancel()
+            self._wrap_timer = None
         if self._unsub is not None:
             self._unsub()
         for tickets in self.waiting.values():

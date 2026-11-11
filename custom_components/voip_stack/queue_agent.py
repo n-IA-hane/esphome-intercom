@@ -34,7 +34,7 @@ def queue_agent_snapshot(manager, address):
     if queue is None or endpoint_id not in queue.members:
         return None
     state = manager.agent_states[queue_id][endpoint_id]
-    active = state != "logged_out" if control == "login" else state == "paused"
+    active = state == "logged_out" if control == "login" else state == "paused"
     return (DialogState(queue_agent_resource(address), "confirmed", "recipient"),) if active else ()
 
 

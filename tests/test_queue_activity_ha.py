@@ -59,6 +59,18 @@ def test_outcome_without_its_admission_is_not_invented_as_a_new_cohort_entry():
     assert report["outcomes"] == {}
 
 
+def test_rejected_operational_causes_and_legacy_rejections_remain_distinct_cohorts():
+    start = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    events = [occurrence("exited", "full", 1, reason="queue_full", outcome="full", disposition="rejected"),
+        occurrence("exited", "disabled", 2, reason="queue_disabled", outcome="disabled", disposition="rejected"),
+        occurrence("exited", "legacy", 3, reason="queue_full", outcome="rejected"),
+        occurrence("exited", "old-completion", 4, outcome="completed", disposition="completed")]
+    report = activity.reduce_queue_metrics(events, "support", start, end, end)
+    assert report["rejected"] == 3 and report["unanchored"] == 1
+    assert report["outcomes"] == {"full": 1, "disabled": 1, "rejected": 1}
+
+
 def test_p95_and_operator_workload_are_admission_based_as_of_until():
     start = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
     end = start + timedelta(hours=1)
@@ -118,6 +130,31 @@ async def test_event_entity_is_only_a_projection_of_the_raw_semantic_event(hass)
     entity.async_write_ha_state.assert_called_once()
     entity._receive(Event(activity.QUEUE_EVENT, {**data, "queue_id": "other"}))
     entity.async_write_ha_state.assert_called_once()
+
+
+async def test_fallback_delivery_keeps_operational_cause_in_recorder_metrics_and_event_entity(recorder_mock, hass):
+    payload = {"queue_id": "support", "entry_id": "timeout-admission", "reason": "queue_timeout",
+        "outcome": "timeout", "disposition": "forwarded", "destination": "Night desk"}
+    activity.emit_queue_event(hass, {**payload, "event_type": "entered"})
+    terminal = activity.emit_queue_event(hass, {**payload, "event_type": "exited", "wait_seconds": 12})
+    entity = activity.QueueActivityEvent("support", "Support")
+    entity.hass = hass
+    entity.async_write_ha_state = Mock()
+    entity._receive(Event(activity.QUEUE_EVENT, terminal))
+    assert entity.state_attributes["reason"] == "queue_timeout"
+    assert entity.state_attributes["disposition"] == "forwarded"
+    assert entity.state_attributes["destination"] == "Night desk"
+    await hass.async_block_till_done()
+    await recorder_mock.async_block_till_done()
+    end = dt_util.utcnow() + timedelta(seconds=1)
+    start = end - timedelta(hours=1)
+    history = await activity.async_get_queue_activity(hass, "support", since=start, until=end)
+    exited = [row for row in history["events"] if row["event_type"] == "exited"]
+    assert len(exited) == 1
+    assert all(exited[0][key] == value for key, value in payload.items())
+    report = await activity.async_get_queue_metrics(hass, "support", since=start, until=end)
+    assert report["outcomes"] == {"timeout": 1}
+    assert report["pending"] == 0
 
 
 async def test_pagination_keeps_equal_submicrosecond_recorder_timestamps(recorder_mock, hass):

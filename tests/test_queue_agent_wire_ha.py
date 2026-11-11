@@ -155,7 +155,7 @@ async def test_login_pause_keys_retransmit_once_and_notify_only_the_registered_o
     assert manager.agent_states["support"] == {"sip:queue_agent_a": "available", "sip:queue_agent_b": "logged_out"}
     login = ElementTree.fromstring((await asyncio.wait_for(a.notifies.get(), 3)).body)
     assert "queue-login" in login.attrib["entity"]
-    assert login.find("d:dialog/d:state", NS).text == "confirmed"
+    assert not login.findall("d:dialog", NS)
     await _dial_key(lab, a, listener, "queue-pause+support", "pause-a", retransmit=True)
     assert manager.agent_states["support"] == {"sip:queue_agent_a": "paused", "sip:queue_agent_b": "logged_out"}
     pause = ElementTree.fromstring((await asyncio.wait_for(a.notifies.get(), 3)).body)

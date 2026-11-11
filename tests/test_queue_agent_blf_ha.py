@@ -27,7 +27,7 @@ async def test_queue_blf_login_pause_logout_and_removal_are_real_notifications(l
         notify = await asyncio.wait_for(notifications.get(), 1)
         root = ElementTree.fromstring(notify.body)
         states = [item.text for item in root.findall("d:dialog/d:state", NS)]
-        assert states == (["confirmed"] if control == "login" else [])
+        assert states == []
     manager.set_agent_state("support", "sip:watcher", "paused")
     notify = await asyncio.wait_for(notifications.get(), 1)
     assert "queue-pause" in ElementTree.fromstring(notify.body).attrib["entity"]
@@ -35,7 +35,9 @@ async def test_queue_blf_login_pause_logout_and_removal_are_real_notifications(l
     manager.set_agent_state("support", "sip:watcher", "logged_out")
     for _ in range(2):
         notify = await asyncio.wait_for(notifications.get(), 1)
-        assert not ElementTree.fromstring(notify.body).findall("d:dialog", NS)
+        root = ElementTree.fromstring(notify.body)
+        states = [item.text for item in root.findall("d:dialog/d:state", NS)]
+        assert states == (["confirmed"] if "queue-login" in root.attrib["entity"] else [])
     manager.reconcile([])
     for _ in range(2):
         notify = await asyncio.wait_for(notifications.get(), 1)
