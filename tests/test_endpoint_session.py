@@ -42,6 +42,38 @@ endpoint_session = _load_module("endpoint_session")
 
 
 class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_eager_factory_cannot_run_before_session_owns_task(self):
+        session = endpoint_session.EndpointCallSession("eager", 1)
+        loop = asyncio.get_running_loop()
+        previous = loop.get_task_factory()
+        seen = []
+        async def fail_immediately():
+            seen.append(asyncio.current_task() in session.tasks)
+            raise ValueError("synchronous failure")
+        loop.set_task_factory(asyncio.eager_task_factory)
+        try:
+            task = session.create_task(fail_immediately(), name="fast-failure")
+            before_yield = list(seen)
+            with self.assertRaisesRegex(ValueError, "synchronous failure"):
+                await task
+        finally:
+            loop.set_task_factory(previous)
+        self.assertEqual(before_yield, [])
+        self.assertEqual(seen, [True])
+
+    async def test_cleanup_dependency_includes_an_owned_tasks_helper_child(self):
+        session = endpoint_session.EndpointCallSession("indirect", 1)
+        seen = []
+        async def helper():
+            session.start_termination(endpoint_session.TerminationIntent("local_hangup"))
+            seen.append(session.cleanup_waits_for(asyncio.current_task()))
+        async def parent():
+            await asyncio.shield(asyncio.create_task(helper()))
+        task = session.create_task(parent(), name="parent")
+        await session.terminated.wait()
+        await asyncio.gather(task, return_exceptions=True)
+        self.assertEqual(seen, [True])
+
     async def test_terminal_signaling_precedes_resource_cleanup_once(self) -> None:
         events: list[str] = []
 

@@ -120,6 +120,7 @@ def create_runtime_task(hass: HomeAssistant, coro: Coroutine[Any, Any, Any]) -> 
     task = hass.async_create_background_task(
         coro,
         "voip-stack-runtime",
+        eager_start=False,
     )
     tasks.add(task)
     task.add_done_callback(tasks.discard)

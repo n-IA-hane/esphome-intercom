@@ -31,6 +31,13 @@ PLAYBACK_PROCESSOR = (
 )
 
 
+def _worklet_script(script):
+    loader = json.dumps(str(Path(__file__).resolve().parents[1] / "tools/ha_voip_lab/worklet_source.cjs"))
+    preamble = (f"import workletSource from {loader};\n" if "import fs " in script
+                else f"const workletSource = require({loader});\n")
+    return preamble + script.replace("fs.readFileSync(", "workletSource.readPcmWorklet(")
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_playback_distinguishes_packet_loss_from_remote_silence() -> None:
     script = rf'''
@@ -102,7 +109,7 @@ assert.equal(silence._hasPreviousInput, true);
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],
-        input=script,
+        input=_worklet_script(script),
         text=True,
         check=True,
         capture_output=True,
@@ -197,7 +204,7 @@ assert.ok(enabled.alias < disabled.alias * 0.08);
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],
-        input=script,
+        input=_worklet_script(script),
         text=True,
         check=True,
         capture_output=True,
@@ -266,7 +273,7 @@ assert.equal(p._framesDrop, 0);
     import os
     subprocess.run(
         ["node", "--input-type=module", "-"],
-        input=script, text=True, check=True, capture_output=True,
+        input=_worklet_script(script), text=True, check=True, capture_output=True,
         env={**os.environ, "CASE": json.dumps([
             str(PLAYBACK_PROCESSOR), frame_ms, context_rate, channels,
         ])},
@@ -351,4 +358,4 @@ for (const [wireRate, frameMs] of [[24000, 15], [48000, 2.5], [16000, 32]]) {
   }
 }
 '''.replace("PATH", json.dumps(str(PLAYBACK_PROCESSOR)))
-    subprocess.run(["node", "-"], input=script, text=True, check=True, capture_output=True)
+    subprocess.run(["node", "-"], input=_worklet_script(script), text=True, check=True, capture_output=True)

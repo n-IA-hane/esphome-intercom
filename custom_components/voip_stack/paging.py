@@ -426,10 +426,29 @@ class PagingCall(LocalCallApplication):
             await self.job.stop(reason)
 
 
+def verified_paging_source(hass, invite, *, session=None, local_source=None):
+    """Authorize a verified internal caller, never its untrusted display name."""
+    if (getattr(invite, "received_via_trunk", False)
+            or (session is not None and session.metadata.get("inbound_trunk_id"))):
+        return None
+    endpoints = require_runtime_data(hass).endpoints
+    identity = str(getattr(invite, "identified_source_endpoint_id", "") or "")
+    if identity:
+        return endpoints.get(identity)
+    if session is not None and local_source is not None:
+        registry = call_registry(hass)
+        token = getattr(local_source, "token", None)
+        if (token is not None and token.call_id == session.call_id and token.generation == session.generation
+                and session.live and registry.resource_for(session.call_id, "browser_source") is local_source):
+            return endpoints.get(local_source.call.caller_endpoint_id)
+    return None
+
+
 async def route_paging_call(runtime, invite, decision, registry, source_endpoint):
     """Make a saved group callable without a second inbound SIP owner."""
     from .inbound_routing.local import _claim_source
     from .sip_listener import SipInviteResult
+    source_endpoint = verified_paging_source(runtime.hass, invite)
     if source_endpoint is None:
         return SipInviteResult(403, "Forbidden", to_tag="")
     if busy := await _claim_source(hass=runtime.hass, registry=registry, invite=invite,
@@ -449,6 +468,9 @@ async def route_paging_call(runtime, invite, decision, registry, source_endpoint
 def start_paging_application(hass, session, invite, contact, local_ip, *, previous=None, local_source=None):
     """Use the same live source for direct and forwarded paging calls."""
     registry = call_registry(hass)
+    local_source = local_source or (previous.local_source if previous is not None else None)
+    if verified_paging_source(hass, invite, session=session, local_source=local_source) is None:
+        raise ServiceValidationError("Live paging requires a verified internal caller")
     manager = _manager(hass)
     identity = contact.metadata["paging_group_id"]
     config = paging_group_configs(manager.entry).get(identity)

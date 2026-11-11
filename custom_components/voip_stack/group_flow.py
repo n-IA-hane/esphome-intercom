@@ -38,17 +38,21 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
             try:
                 kind = self._kind
                 policy = {key: user_input[key] for key in (
-                    "max_waiting", "max_wait", "ring_timeout", "no_agent_wait", "retry_delay", "wrap_up", "fallback", "hold_media")
+                    "max_waiting", "max_wait", "ring_timeout", "no_agent_wait", "retry_delay", "wrap_up", "fallback", "hold_media", "strategy", "agent_order", "auto_pause_after",
+                    "fallback_full", "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed")
                     if key in user_input} if kind == "queue" else {}
-                if "max_waiting" in policy:
-                    if float(policy["max_waiting"]) != int(policy["max_waiting"]):
-                        raise ValueError("Queue capacity must be an integer")
-                    policy["max_waiting"] = int(policy["max_waiting"])
+                for integer in ("max_waiting", "auto_pause_after"):
+                    if integer in policy:
+                        if float(policy[integer]) != int(policy[integer]):
+                            raise ValueError("Queue capacity and pause threshold must be integers")
+                        policy[integer] = int(policy[integer])
                 data = normalize_group_data({**previous, **user_input, "kind": kind, "origin":
                     "manual" if user_input.get("keep_empty", previous.get("origin") != "auto") else "auto",
                     "policy": {**previous.get("policy", {}), **policy}}, identity=previous.get("group_id", ""))
                 validate_group_namespace(self.hass, entry, data, exclude=previous.get("group_id", ""))
                 selected = list(dict.fromkeys(user_input.get("members", members)))
+                if any(identity not in selected for identity in policy.get("agent_order", ())):
+                    raise ValueError("Agent order must contain only selected members")
                 if any(identity not in {choice["value"] for choice in choices} for identity in selected):
                     raise ValueError("Select configured phones")
                 data["member_update"] = selected
@@ -73,7 +77,14 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
             ("no_agent_wait", 1, 0, 120), ("retry_delay", 1, 0.1, 120), ("wrap_up", 0, 0, 3600)):
             if kind == "queue":
                 fields[vol.Optional(key, default=values.get(key, default))] = NumberSelector({"min": minimum, "max": maximum, "mode": "box"})
-        for key in ("fallback", "hold_media"):
+        if kind == "queue":
+            fields[vol.Optional("strategy", default=values.get("strategy", "ring_all"))] = SelectSelector({
+                "options": ["ring_all", "round_robin", "longest_idle", "ordered"], "translation_key": "queue_strategy"})
+            fields[vol.Optional("agent_order", default=list(values.get("agent_order", [])))] = SelectSelector({
+                "options": choices, "multiple": True, "sort": False})
+            fields[vol.Optional("auto_pause_after", default=values.get("auto_pause_after", 0))] = NumberSelector({
+                "min": 0, "max": 100, "mode": "box"})
+        for key in ("fallback", "hold_media", "fallback_full", "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed"):
             if kind == "queue":
                 fields[vol.Optional(key, default=values.get(key, ""))] = TextSelector()
         return self.async_show_form(step_id="group", errors=errors, data_schema=vol.Schema(fields))

@@ -72,7 +72,7 @@ class LocalMediaBridge:
     video_peers: tuple | None = None
 
     @classmethod
-    async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None):
+    async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None, right_port=None):
         """Bind only the spare reserved port, leaving live application media alone."""
         relay, sock = None, right_socket
         try:
@@ -85,11 +85,11 @@ class LocalMediaBridge:
                 raise ValueError("Local application handoff requires an owned video update")
             relay = SipRtpRelay(
                 left=application_rtp_peer(invite), right=application_rtp_peer(remote_invite),
-                left_port=media.local_rtp_port, right_port=media.reservation.ports[1],
+                left_port=media.local_rtp_port, right_port=right_port if right_port is not None else media.reservation.ports[1],
             )
             result = cls(media, invite, relay, transport, video_relay=video, video_update=video_update,
                          video_peers=(video.left, video.right) if video is not None else None)
-            if sock is None:
+            if sock is None and right_port is None:
                 sock = media.reservation.take_audio_socket(relay.right_port)
             if sock is None:
                 sock = relay._rtp_socket(relay.right_port)

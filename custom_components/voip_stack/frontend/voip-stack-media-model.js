@@ -5,6 +5,16 @@ const MAX_SAMPLE_RATE = 192000;
 const MAX_FRAME_MS = 1000;
 const MAX_PCM_FRAME_BYTES = MAX_SAMPLE_RATE * 2 * 4;
 
+export function pcmFrameSamples(sampleRate, frameMs, label = "audio format") {
+  const raw = sampleRate * frameMs / 1000;
+  const samples = Math.round(raw);
+  const tolerance = 8 * Number.EPSILON * Math.max(1, Math.abs(raw));
+  if (!Number.isSafeInteger(samples) || samples < 1 || Math.abs(raw - samples) > tolerance) {
+    throw new Error(`${label} does not form whole PCM frames`);
+  }
+  return samples;
+}
+
 export function parsePcmFormat(token, label = "audio format") {
   const parts = String(token || "").split(":");
   if (parts.length !== 4) throw new Error(`${label} missing negotiated PCM token`);
@@ -27,10 +37,7 @@ export function parsePcmFormat(token, label = "audio format") {
   if (frameMs <= 0 || frameMs > MAX_FRAME_MS) {
     throw new Error(`${label} has unsupported frame_ms ${frameMs}`);
   }
-  const frameSamples = sampleRate * frameMs / 1000;
-  if (!Number.isSafeInteger(frameSamples) || frameSamples < 1) {
-    throw new Error(`${label} does not form whole PCM frames`);
-  }
+  const frameSamples = pcmFrameSamples(sampleRate, frameMs, label);
   const bytesPerSample = pcmFormat === "s16le" ? 2 : pcmFormat === "s24le" ? 3 : 4;
   if (frameSamples * channels * bytesPerSample > MAX_PCM_FRAME_BYTES) {
     throw new Error(`${label} exceeds local PCM frame byte budget`);

@@ -24,6 +24,12 @@ if TYPE_CHECKING:
     from .sip_listener import SipInvite
 
 
+@dataclass(frozen=True, slots=True)
+class ApplicationRef:
+    kind: str
+    identity: str
+
+
 @dataclass(slots=True)
 class LocalCallApplication:
     """Use the session's media resources; application subclasses own policy."""
@@ -41,6 +47,17 @@ class LocalCallApplication:
     outgoing: bool = False
     local_source: PendingLocalSource | None = None
     source_client: object | None = None
+    resource_key: str = ""
+
+    @property
+    def ref(self):
+        return ApplicationRef(self.owner, str(self.contact.metadata.get("queue_id")
+            or self.contact.metadata.get("paging_group_id") or self.contact.id))
+
+    @property
+    def resource_name(self):
+        kind = "assist_application" if self.owner == "assist" else self.owner
+        return self.resource_key or f"{kind}:{self.session.call_id}"
 
     def require_current(self, generation: int | None = None) -> None:
         registry = call_registry(self.hass)
@@ -50,6 +67,8 @@ class LocalCallApplication:
             )
             or self.session.owner != self.owner
             or (generation is not None and generation != self.session.generation)
+            or (self.resource_key and not any(resource.name == self.resource_name and resource.value is self
+                                             for resource in self.session.resources))
         ):
             raise ServiceValidationError(
                 "This call has ended or changed owner"
@@ -217,7 +236,7 @@ def attach_local_application(application_type, hass, session, invite, contact, l
         playback=previous.playback if previous is not None else registry.resource_for(session.call_id, "browser_playback"),
         local_source=source, **settings,
     )
-    registry.own_resource(session.call_id, f"{application.owner}:{session.call_id}", application, application.close,
+    registry.own_resource(session.call_id, application.resource_name, application, application.close,
                           stage=application.cleanup_stage, generation=session.generation)
     if application.media is not None:
         application.media.on_dtmf = application.handle_dtmf

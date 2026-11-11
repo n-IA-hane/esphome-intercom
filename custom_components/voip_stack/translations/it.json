@@ -440,7 +440,20 @@
             "retry_delay": "Intervallo fra tentativi (secondi)",
             "wrap_up": "Pausa dopo una chiamata (secondi)",
             "fallback": "Destinazione alternativa",
-            "hold_media": "URI audio di attesa"
+            "hold_media": "URI audio di attesa",
+            "strategy": "Strategia di distribuzione",
+            "agent_order": "Ordine preferito dei telefoni (ordine di selezione)",
+            "auto_pause_after": "Pausa dopo squilli senza risposta (0 disabilita)",
+            "fallback_full": "Destinazione se piena",
+            "fallback_timeout": "Destinazione a fine attesa",
+            "fallback_no_agents": "Destinazione senza operatori",
+            "fallback_disabled": "Destinazione se disabilitata",
+            "fallback_removed": "Destinazione se rimossa"
+          },
+          "data_description": {
+            "agent_order": "Seleziona i telefoni nell’ordine di squillo desiderato. Gli altri membri seguono. Non cambia l’appartenenza.",
+            "auto_pause_after": "0 disabilita. Imposta 3 per mettere in pausa dopo tre squilli senza risposta; occupato, offline e annullamenti non contano.",
+            "fallback": "Usata quando la destinazione specifica della condizione è vuota."
           }
         }
       },
@@ -577,6 +590,14 @@
         "p_called_party_id": "P-Called-Party-ID",
         "custom_header": "Header personalizzato",
         "fixed": "Numero fisso"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Tutti insieme",
+        "round_robin": "A rotazione con memoria",
+        "longest_idle": "Libero da più tempo",
+        "ordered": "Ordine configurato con escalation"
       }
     }
   },

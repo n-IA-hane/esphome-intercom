@@ -30,6 +30,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up the single integration-owned call event entity."""
     async_add_entities([VoipStackCallEvent(hass, entry)])
+    from .queue_activity import async_setup_queue_activity
+    async_setup_queue_activity(hass, entry, async_add_entities)
     endpoint_manager = EndpointEntityManager(
         hass,
         entry,

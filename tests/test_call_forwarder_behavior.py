@@ -205,3 +205,27 @@ async def test_forbidden_external_forward_preserves_current_call(monkeypatch, di
     artifacts.assert_not_called()
     runtime.prepare_outbound_leg.assert_not_called()
     assert registry.artifact_for("call-1", "pending_invite") is invite
+
+
+@pytest.mark.asyncio
+async def test_outgoing_route_selection_returns_the_owned_transfer_task(monkeypatch):
+    from custom_components.voip_stack import route_decisions
+
+    registry = _registry()
+    pending = {"outgoing_automation": True}
+    registry.artifact_for = lambda _call_id, name: pending if name == "pending_route" else None
+    registry.own_task = Mock(return_value=True)
+    monkeypatch.setattr(call_forwarder, "_call_registry", lambda _hass: registry)
+    monkeypatch.setattr(call_forwarder, "create_runtime_task",
+                        lambda _hass, coro: asyncio.create_task(coro, eager_start=False))
+    select = Mock()
+    monkeypatch.setattr(route_decisions, "set_pending_route_decision", select)
+
+    task = await call_forwarder.async_forward_existing_call(
+        _runtime(), call_id="call-1", destination="Reception",
+    )
+    assert isinstance(task, asyncio.Task)
+    registry.own_task.assert_called_once_with("call-1", task)
+    assert not task.done()
+    assert await task == call_forwarder.TransferResult("started", "Reception")
+    assert select.call_args.args[1]["destination"] == "Reception"

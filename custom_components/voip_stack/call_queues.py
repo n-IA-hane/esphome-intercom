@@ -8,15 +8,62 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
+import math
 import time
 from typing import Callable
+from uuid import uuid4
 
 from .phone_endpoint import EndpointAvailability
 from .roster import RosterEntry, normalize_roster_key
 
 EVENT_QUEUE_CHANGED = "voip_stack.queue_changed"
 AGENT_STATES = frozenset({"available", "paused", "logged_out"})
+
+
+def _storage_mapping(value):
+    return value if isinstance(value, Mapping) else {}
+
+
+def _storage_identity(value):
+    return isinstance(value, str) and bool(value) and len(value) <= 256 and all(ord(char) >= 32 for char in value)
+
+
+def _storage_timestamp(value):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        timestamp = float(value)
+    except OverflowError:
+        return None
+    return timestamp if math.isfinite(timestamp) and timestamp >= 0 else None
+
+
+def _normalized_agent_stats(value):
+    value = _storage_mapping(value)
+    misses = value.get("consecutive_misses", 0)
+    misses = min(misses, 2**31 - 1) if isinstance(misses, int) and not isinstance(misses, bool) and misses >= 0 else 0
+    reason = value.get("pause_reason", "")
+    return {"consecutive_misses": misses, "pause_reason": reason[:256] if isinstance(reason, str) else "",
+            "last_answered": _storage_timestamp(value.get("last_answered")),
+            "last_ended": _storage_timestamp(value.get("last_ended"))}
+
+
+def normalize_queue_operations(data):
+    """Restore only known, bounded operational fields; preserve valid intent."""
+    data = _storage_mapping(data)
+    states = {queue_id: {endpoint_id: state if isinstance(state, str) and state in AGENT_STATES else "logged_out"
+                        for endpoint_id, state in _storage_mapping(rows).items() if _storage_identity(endpoint_id)}
+              for queue_id, rows in _storage_mapping(data.get("agent_states")).items() if _storage_identity(queue_id)}
+    stats = {queue_id: {endpoint_id: _normalized_agent_stats(row)
+                       for endpoint_id, row in _storage_mapping(rows).items() if _storage_identity(endpoint_id)}
+             for queue_id, rows in _storage_mapping(data.get("agent_stats")).items() if _storage_identity(queue_id)}
+    round_robin = {queue_id: endpoint_id for queue_id, endpoint_id in _storage_mapping(data.get("round_robin")).items()
+                   if _storage_identity(queue_id) and _storage_identity(endpoint_id)}
+    last_ended = {endpoint_id: timestamp for endpoint_id, value in _storage_mapping(data.get("last_ended")).items()
+                  if _storage_identity(endpoint_id) and (timestamp := _storage_timestamp(value)) is not None}
+    return {"agent_states": states, "agent_stats": stats, "round_robin": round_robin, "last_ended": last_ended}
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,13 +79,36 @@ class QueuePolicy:
     wrap_up: float = 0
     fallback: str = ""
     hold_media: str = ""
+    strategy: str = "ring_all"
+    agent_order: tuple[str, ...] = ()
+    auto_pause_after: int = 0
+    fallback_full: str = ""
+    fallback_timeout: str = ""
+    fallback_no_agents: str = ""
+    fallback_disabled: str = ""
+    fallback_removed: str = ""
+
+    def fallback_for(self, reason):
+        return getattr(self, f"fallback_{reason.removeprefix('queue_')}", "") or self.fallback
 
     @classmethod
     def from_data(cls, data):
         values = dict(data or {})
         if set(values) - set(cls.__dataclass_fields__):
             raise ValueError("Unknown queue setting")
+        order = values.get("agent_order", ())
+        if not isinstance(order, (list, tuple)) or len(order) > 128 or any(
+                not isinstance(item, str) or not item or len(item) > 256 for item in order):
+            raise ValueError("agent_order must contain configured phone identities")
+        values["agent_order"] = tuple(dict.fromkeys(order))
         policy = cls(**values)
+        if policy.strategy not in {"ring_all", "round_robin", "longest_idle", "ordered"}:
+            raise ValueError("Unknown queue strategy")
+        if isinstance(policy.auto_pause_after, bool) or not isinstance(policy.auto_pause_after, int) or not 0 <= policy.auto_pause_after <= 100:
+            raise ValueError("auto_pause_after must be 0 (disabled) or between 1 and 100")
+        for name in ("fallback_full", "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed"):
+            if not isinstance(getattr(policy, name), str) or len(getattr(policy, name)) > 256:
+                raise ValueError(f"{name} must be a destination of at most 256 characters")
         if not isinstance(policy.enabled, bool):
             raise ValueError("enabled must be a boolean")
         if isinstance(policy.max_waiting, bool) or not isinstance(policy.max_waiting, int) or not 1 <= policy.max_waiting <= 64:
@@ -77,6 +147,12 @@ class QueueTicket:
     reserved: tuple[str, ...] = ()
     closed: bool = False
     policy: QueuePolicy = field(default_factory=QueuePolicy)
+    entry_id: str = field(default_factory=lambda: uuid4().hex)
+    admitted: bool = True
+    tried: set[str] = field(default_factory=set)
+    offers: dict[str, tuple[str, float]] = field(default_factory=dict)
+    connected_at: float | None = None
+    completed: bool = False
 
 
 class QueueManager:
@@ -89,8 +165,14 @@ class QueueManager:
         self.policies: dict[str, QueuePolicy] = {}
         self.agent_states: dict[str, dict[str, str]] = {}
         self.waiting: dict[str, deque[QueueTicket]] = {}
+        self.staged_admissions: dict[str, QueueTicket] = {}
         self.reservations: dict[str, QueueTicket] = {}
         self.wrap_until: dict[str, float] = {}
+        self.agent_stats: dict[str, dict[str, dict]] = {}
+        self.round_robin: dict[str, str] = {}
+        self.last_ended: dict[str, float] = {}
+        # Operational projection of the existing endpoint claim, not a call owner.
+        self.conversations: dict[str, QueueTicket] = {}
         self._listeners: set[Callable] = set()
         self._unsub = None
         self.closed = False
@@ -158,6 +240,8 @@ class QueueManager:
         queue = self.resolve(ref)
         policy = self.policy(ref)
         updated = QueuePolicy.from_data({**asdict(policy), **changes})
+        if any(member not in queue.members for member in updated.agent_order):
+            raise ValueError("Agent order must contain only configured queue members")
         if self.hass is not None:
             from .group_config import group_subentries
             for item in group_subentries(self.entry):
@@ -166,17 +250,25 @@ class QueueManager:
                         data={**item.data, "policy": asdict(updated), "enabled": updated.enabled})
                     break
         self.policies[queue.queue_id] = updated
+        self._event("policy_changed", queue_id=queue.queue_id)
         self._changed(persist=True)
 
-    def set_agent_state(self, ref, endpoint_id, state):
+    def set_agent_state(self, ref, endpoint_id, state, reason=""):
         queue = self.resolve(ref)
         if queue is None or endpoint_id not in queue.members:
             raise ValueError("The phone does not declare this queue")
         if state not in AGENT_STATES:
             raise ValueError("Agent state must be available, paused or logged_out")
-        if self.agent_states[queue.queue_id][endpoint_id] == state:
-            return
+        if not isinstance(reason, str) or len(reason) > 256:
+            raise ValueError("Pause reason must be at most 256 characters")
+        previous = self.agent_states[queue.queue_id][endpoint_id]
+        stats = self._stats(queue.queue_id, endpoint_id)
+        if state == "available":
+            stats["consecutive_misses"] = 0
+        stats["pause_reason"] = reason if state == "paused" else ""
         self.agent_states[queue.queue_id][endpoint_id] = state
+        self._event("agent_state_changed", queue_id=queue.queue_id, endpoint_id=endpoint_id,
+                    state=state, previous_state=previous, reason=stats["pause_reason"] or "manual")
         self._changed(persist=True)
 
     def eligible(self, ref, *, call_id="") -> tuple[str, ...]:
@@ -192,23 +284,83 @@ class QueueManager:
             and (endpoint := endpoints.get(member)) is not None
             and endpoint.availability is EndpointAvailability.AVAILABLE
             and not endpoint.dnd
-            and (not endpoint.active_call_id or endpoint.active_call_id == call_id))
+            and not endpoint.active_call_id)
 
-    def enqueue(self, ref, call_id, generation) -> QueueTicket:
+    def enqueue(self, ref, call_id, generation, *, replacing=None) -> QueueTicket:
         queue = self.resolve(ref)
         policy = self.policy(ref)
         if self.closed or not policy.enabled:
             raise ValueError("The queue is disabled")
-        pending = self.waiting.setdefault(queue.queue_id, deque())
-        if len(pending) >= policy.max_waiting:
+        pending = self.waiting.get(queue.queue_id, ())
+        held = sum(ticket.queue_id == queue.queue_id for ticket in self.staged_admissions.values())
+        if len(pending) + held >= policy.max_waiting:
             raise ValueError("The queue is full")
-        if any(ticket.call_id == call_id for rows in self.waiting.values() for ticket in rows):
+        existing = [ticket for rows in self.waiting.values() for ticket in rows if ticket.call_id == call_id]
+        if replacing is not None and (replacing.closed or replacing not in existing
+                or replacing.call_id != call_id or replacing.generation != generation
+                or replacing.queue_id == queue.queue_id):
+            raise ValueError("The queue transfer source changed")
+        if any(ticket is not replacing for ticket in existing) or any(
+                ticket.call_id == call_id for ticket in self.staged_admissions.values()):
             raise ValueError("The call already has a queue ticket")
         now = self.clock()
         ticket = QueueTicket(queue.queue_id, call_id, generation, now, now + policy.max_wait, policy=policy)
-        pending.append(ticket)
+        if replacing is not None:
+            ticket.admitted = False
+            self.staged_admissions[ticket.entry_id] = ticket
+            return ticket
+        self.waiting.setdefault(queue.queue_id, deque()).append(ticket)
+        self._event("entered", ticket)
         self._changed()
         return ticket
+
+    def record_rejection(self, ref, call_id, generation, reason):
+        queue = self.resolve(ref)
+        if queue is None:
+            return
+        now = self.clock()
+        ticket = QueueTicket(queue.queue_id, call_id, generation, now, now,
+                             policy=self.policy(queue.queue_id), closed=True, admitted=False)
+        self._event("exited", ticket, reason=reason, outcome="rejected", wait_seconds=0)
+
+    def prepare_transfer(self, replacing, ref):
+        return self.enqueue(ref, replacing.call_id, replacing.generation, replacing=replacing)
+
+    def commit_transfer(self, previous, prepared, *, notify=True):
+        """Swap the admission in one synchronous section, before publishing it."""
+        if (previous.closed or previous not in self.waiting.get(previous.queue_id, ())
+                or self.staged_admissions.get(prepared.entry_id) is not prepared
+                or prepared.closed or prepared.admitted or prepared.call_id != previous.call_id
+                or prepared.generation != previous.generation or self.resolve(prepared.queue_id) is None
+                or not self.policy(prepared.queue_id).enabled):
+            raise ValueError("The queue transfer changed before commit")
+        old = self.waiting[previous.queue_id]
+        old.remove(previous)
+        if not old:
+            self.waiting.pop(previous.queue_id, None)
+        for member in previous.reserved:
+            if self.reservations.get(member) is previous:
+                self.reservations.pop(member)
+        previous.reserved = ()
+        previous.closed = True
+        prepared.admitted = True
+        prepared.enqueued = self.clock()
+        prepared.deadline = prepared.enqueued + prepared.policy.max_wait
+        self.staged_admissions.pop(prepared.entry_id)
+        self.waiting.setdefault(prepared.queue_id, deque()).append(prepared)
+        if notify:
+            self.publish_transfer(previous, prepared)
+
+    def publish_transfer(self, previous, prepared):
+        self._event("exited", previous, outcome="transferred", reason="queue_transfer",
+                    wait_seconds=max(0, self.clock() - previous.enqueued))
+        self._event("entered", prepared)
+        self._changed()
+
+    def rollback_transfer(self, prepared):
+        if self.staged_admissions.get(prepared.entry_id) is prepared:
+            self.staged_admissions.pop(prepared.entry_id)
+            prepared.closed = True
 
     def claim_turn(self, ticket) -> tuple[str, ...]:
         """The FIFO head atomically reserves agents across all queues."""
@@ -219,39 +371,172 @@ class QueueManager:
         if ticket.reserved:
             return ticket.reserved
         members = self.eligible(ticket.queue_id, call_id=ticket.call_id)
+        policy = self.policy(ticket.queue_id)
+        definition = self.resolve(ticket.queue_id)
+        order = tuple(dict.fromkeys((*policy.agent_order, *definition.members)))
+        members = tuple(member for member in order if member in members)
+        if policy.strategy != "ring_all" and members:
+            untried = tuple(member for member in members if member not in ticket.tried)
+            if not untried:
+                ticket.tried.clear()
+                untried = members
+            if policy.strategy == "round_robin":
+                last = self.round_robin.get(ticket.queue_id)
+                if last in order:
+                    i = order.index(last) + 1
+                    rotated = order[i:] + order[:i]
+                    untried = tuple(member for member in rotated if member in untried)
+            elif policy.strategy == "longest_idle":
+                untried = tuple(sorted(untried, key=lambda member: self.last_ended.get(member, 0)))
+            members = untried[:1]
         for member in members:
             self.reservations[member] = ticket
         ticket.reserved = members
         return members
 
-    def release_attempt(self, ticket):
+    def _stats(self, queue_id, endpoint_id):
+        if not isinstance(self.agent_stats, dict):
+            self.agent_stats = dict(_storage_mapping(self.agent_stats))
+        rows = self.agent_stats.get(queue_id)
+        if not isinstance(rows, dict):
+            rows = dict(_storage_mapping(rows))
+            self.agent_stats[queue_id] = rows
+        rows[endpoint_id] = _normalized_agent_stats(rows.get(endpoint_id))
+        return rows[endpoint_id]
+
+    def _event(self, kind, ticket=None, **values):
+        if self.hass is None:
+            return
+        from .queue_activity import emit_queue_event
+        queue_id = ticket.queue_id if ticket is not None else values.pop("queue_id")
+        definition = self.resolve(queue_id)
+        payload = {"event_type": kind, "config_entry_id": self.entry.entry_id,
+            "queue_id": queue_id, "queue_name": definition.name if definition else queue_id}
+        if ticket is not None:
+            payload.update(entry_id=ticket.entry_id, call_id=ticket.call_id, generation=ticket.generation)
+        emit_queue_event(self.hass, {**payload, **values})
+
+    def begin_offer(self, ticket, endpoint_id):
+        if ticket.closed or self.reservations.get(endpoint_id) is not ticket:
+            return ""
+        for identity, (phone, _started) in ticket.offers.items():
+            if phone == endpoint_id:
+                return identity
+        identity = uuid4().hex
+        ticket.offers[identity] = (endpoint_id, self.clock())
+        ticket.tried.add(endpoint_id)
+        self.round_robin[ticket.queue_id] = endpoint_id
+        self._event("offer_started", ticket, endpoint_id=endpoint_id, attempt_id=identity)
+        self._changed(persist=True)
+        return identity
+
+    def finish_offer(self, ticket, endpoint_id, outcome, rang, attempt_id, *, notify=True):
+        offer = ticket.offers.get(attempt_id)
+        if offer is None or offer[0] != endpoint_id:
+            return
+        ticket.offers.pop(attempt_id)
+        stats = self._stats(ticket.queue_id, endpoint_id)
+        if outcome == "in_call":
+            stats["consecutive_misses"] = 0
+        elif outcome == "timeout" and rang:
+            stats["consecutive_misses"] += 1
+            threshold = self.policies.get(ticket.queue_id, ticket.policy).auto_pause_after
+            if (threshold and stats["consecutive_misses"] >= threshold
+                    and self.agent_states.get(ticket.queue_id, {}).get(endpoint_id) == "available"):
+                self.agent_states[ticket.queue_id][endpoint_id] = "paused"
+                stats["pause_reason"] = "no_answer"
+                self._event("agent_state_changed", queue_id=ticket.queue_id, endpoint_id=endpoint_id,
+                    state="paused", previous_state="available", reason="no_answer")
+        self._event("offer_ended", ticket, endpoint_id=endpoint_id, attempt_id=attempt_id,
+                    outcome=outcome, reason="no_answer" if outcome == "timeout" and rang else outcome)
+        if notify:
+            self._changed(persist=True)
+
+    def release_attempt(self, ticket, *, notify=True):
+        for identity, (member, _started) in tuple(ticket.offers.items()):
+            self.finish_offer(ticket, member, "cancelled", False, identity, notify=False)
         for member in ticket.reserved:
             if self.reservations.get(member) is ticket:
                 self.reservations.pop(member)
         ticket.reserved = ()
-        self._changed()
+        if notify:
+            self._changed()
 
-    def finish(self, ticket, *, connected_endpoint=""):
+    def finish(self, ticket, *, connected_endpoint="", reason="abandoned", notify=True):
         if ticket.closed:
             return
         ticket.closed = True
+        self.staged_admissions.pop(ticket.entry_id, None)
         pending = self.waiting.get(ticket.queue_id)
         if pending is not None and ticket in pending:
             pending.remove(ticket)
             if not pending:
                 self.waiting.pop(ticket.queue_id, None)
-        self.release_attempt(ticket)
-        # Wrap-up starts on call completion, through the existing session owner.
+        self.release_attempt(ticket, notify=False)
+        if ticket.admitted and ticket.connected_at is None:
+            self._event("exited", ticket, reason=reason, outcome=reason.removeprefix("queue_"),
+                        wait_seconds=max(0, self.clock() - ticket.enqueued))
         if connected_endpoint:
-            self.start_wrap_up(ticket.queue_id, connected_endpoint, duration=ticket.policy.wrap_up)
-        self._changed()
+            self.start_wrap_up(ticket.queue_id, connected_endpoint, duration=ticket.policy.wrap_up, notify=False)
+        if notify:
+            self._changed()
 
-    def start_wrap_up(self, queue_id, endpoint_id, *, duration=None):
+    def connected(self, ticket, endpoint_id):
+        if ticket.closed or ticket.connected_at is not None:
+            return
+        ticket.connected_at = self.clock()
+        self.conversations[endpoint_id] = ticket
+        stats = self._stats(ticket.queue_id, endpoint_id)
+        stats["last_answered"] = time.time()
+        stats["consecutive_misses"] = 0
+        self._event("answered", ticket, endpoint_id=endpoint_id,
+                    wait_seconds=max(0, ticket.connected_at - ticket.enqueued))
+        self.finish(ticket, notify=False)
+        self._changed(persist=True)
+
+    def complete_conversation(self, ticket, endpoint_id, reason):
+        if ticket.completed or ticket.connected_at is None:
+            return
+        ticket.completed = True
+        if self.conversations.get(endpoint_id) is ticket:
+            self.conversations.pop(endpoint_id)
+        self.last_ended[endpoint_id] = time.time()
+        self._stats(ticket.queue_id, endpoint_id)["last_ended"] = self.last_ended[endpoint_id]
+        self.start_wrap_up(ticket.queue_id, endpoint_id, duration=ticket.policy.wrap_up, notify=False)
+        self._event("exited", ticket, endpoint_id=endpoint_id, outcome="completed", reason=reason,
+                    wait_seconds=max(0, ticket.connected_at - ticket.enqueued),
+                    talk_seconds=max(0, self.clock() - ticket.connected_at))
+        self._changed(persist=True)
+
+    def endpoint_changed(self, event):
+        previous = event.previous
+        endpoint = event.endpoint
+        if previous is not None and previous.active_call_id and previous.active_call_id != endpoint.active_call_id:
+            conversation = self.conversations.get(endpoint.endpoint_id)
+            if conversation is not None and conversation.call_id == previous.active_call_id:
+                self.complete_conversation(conversation, endpoint.endpoint_id, "agent_leg_ended")
+            sip = getattr(self.entry.runtime_data, "sip", None)
+            session = sip.get_session(previous.active_call_id) if sip is not None else None
+            connected_leg = session is not None and any(
+                leg.endpoint_id == endpoint.endpoint_id and (leg.state == "in_call" or leg.phase in {"answered", "held"})
+                for leg in session.legs.values())
+            # An answered caller does not make an unanswered fork candidate a
+            # completed conversation. Use the released endpoint's actual leg.
+            if conversation is not None or connected_leg:
+                self.last_ended[endpoint.endpoint_id] = time.time()
+                for queue in self.definitions.values():
+                    if endpoint.endpoint_id in queue.members:
+                        self._stats(queue.queue_id, endpoint.endpoint_id)["last_ended"] = self.last_ended[endpoint.endpoint_id]
+        self.refresh() if self.hass is not None else None
+        self._changed(persist=True)
+
+    def start_wrap_up(self, queue_id, endpoint_id, *, duration=None, notify=True):
         if duration is None:
             duration = self.policies.get(queue_id, QueuePolicy()).wrap_up
         if duration > 0 and not self.closed:
             self.wrap_until[endpoint_id] = max(self.wrap_until.get(endpoint_id, 0), self.clock() + duration)
-            self._changed()
+            if notify:
+                self._changed()
 
     def subscribe(self, callback):
         self._listeners.add(callback)
@@ -270,7 +555,8 @@ class QueueManager:
 
     def _snapshot(self):
         return {"policies": {key: asdict(value) for key, value in self.policies.items()},
-                "agent_states": {key: dict(value) for key, value in self.agent_states.items()}}
+                "agent_states": {key: dict(value) for key, value in self.agent_states.items()},
+                "agent_stats": self.agent_stats, "round_robin": self.round_robin, "last_ended": self.last_ended}
 
     def get_state(self, ref, phone=None):
         queue = self.resolve(ref)
@@ -287,10 +573,36 @@ class QueueManager:
             members.append({"phone": member, "state": state, "logged_in": state != "logged_out",
                 "paused": state == "paused", "busy": bool(endpoint and endpoint.active_call_id),
                 "available": member in eligible,
-                "online": bool(endpoint and endpoint.availability is EndpointAvailability.AVAILABLE)})
+                "online": bool(endpoint and endpoint.availability is EndpointAvailability.AVAILABLE),
+                "dnd": bool(endpoint and endpoint.dnd),
+                **self._stats(queue.queue_id, member),
+                "reserved_queue_id": self.reservations[member].queue_id if member in self.reservations else None,
+                "reserved_attempt_id": next((identity for identity, (phone, _) in self.reservations[member].offers.items()
+                    if phone == member), None) if member in self.reservations else None,
+                "wrap_up_remaining": max(0, self.wrap_until.get(member, 0) - self.clock())})
+            row = members[-1]
+            reasons = []
+            if not self.policies[queue.queue_id].enabled:
+                reasons.append("queue_disabled")
+            if state != "available":
+                reasons.append(state)
+            if not row["online"]:
+                reasons.append("offline")
+            if row["dnd"]:
+                reasons.append("dnd")
+            if row["busy"]:
+                reasons.append("busy")
+            if row["reserved_queue_id"]:
+                reasons.append("reserved")
+            if row["wrap_up_remaining"]:
+                reasons.append("wrap_up")
+            row["unavailable_reasons"] = reasons
+            row["unavailable_reason"] = reasons[0] if reasons else None
         return {"queue_id": queue.queue_id, "name": queue.name,
                 "policy": asdict(self.policies[queue.queue_id]),
-                "waiting": len(self.waiting.get(queue.queue_id, ())), "members": members}
+                "waiting": len(self.waiting.get(queue.queue_id, ())), "members": members,
+                "oldest_wait_seconds": max((max(0, self.clock() - ticket.enqueued)
+                    for ticket in self.waiting.get(queue.queue_id, ())), default=0)}
 
     def phone_summary(self, endpoint_id):
         rows = []
@@ -331,7 +643,8 @@ async def async_setup_queues(hass, entry):
     from homeassistant.helpers.storage import Store
     from .group_config import async_apply_group_updates, group_records, group_subentries
     store = Store(hass, 1, f"voip_stack.queues.{entry.entry_id}")
-    data = await store.async_load() or {}
+    data = _storage_mapping(await store.async_load())
+    policies = _storage_mapping(data.get("policies"))
     previous_ids = set(group_records(entry))
     # A saved form command can survive a restart before the update listener ran.
     await async_apply_group_updates(hass, entry)
@@ -339,27 +652,31 @@ async def async_setup_queues(hass, entry):
         identity = item.data["group_id"]
         legacy = normalize_roster_key(item.data["name"])
         if (item.data["kind"] == "queue" and identity not in previous_ids
-                and legacy in data.get("policies", {})):
+                and legacy in policies):
             try:
-                policy = QueuePolicy.from_data(data["policies"][legacy])
+                policy = QueuePolicy.from_data(policies[legacy])
             except (ValueError, TypeError):
                 continue
             hass.config_entries.async_update_subentry(entry, item,
                 data={**item.data, "policy": asdict(policy), "enabled": policy.enabled})
     manager = QueueManager(hass, entry, store=store)
-    for key, value in data.get("policies", {}).items():
+    for key, value in policies.items():
         try:
             manager.policies[key] = QueuePolicy.from_data(value)
         except (ValueError, TypeError):
             continue
-    manager.agent_states = data.get("agent_states", {})
+    operations = normalize_queue_operations(data)
+    manager.agent_states = operations["agent_states"]
+    manager.agent_stats = operations["agent_stats"]
+    manager.round_robin = operations["round_robin"]
+    manager.last_ended = operations["last_ended"]
     for identity, record in group_records(entry, "queue").items():
         legacy = normalize_roster_key(record["name"])
         if identity not in manager.agent_states and legacy in manager.agent_states:
             manager.agent_states[identity] = dict(manager.agent_states[legacy])
     entry.runtime_data.queues = manager
     manager.refresh()
-    manager._unsub = entry.runtime_data.endpoints.subscribe(lambda _event: (manager.refresh(), manager._changed()))
+    manager._unsub = entry.runtime_data.endpoints.subscribe(manager.endpoint_changed)
     return manager
 
 
@@ -373,7 +690,7 @@ async def async_set_queue_agent_state(call):
     if manager is None:
         raise ServiceValidationError("Queues are unavailable")
     try:
-        manager.set_agent_state(call.data["queue"], endpoint.endpoint_id, call.data["state"])
+        manager.set_agent_state(call.data["queue"], endpoint.endpoint_id, call.data["state"], call.data.get("reason", ""))
     except ValueError as error:
         raise ServiceValidationError(str(error)) from error
 

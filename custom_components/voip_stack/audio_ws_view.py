@@ -499,7 +499,8 @@ def _active_softphone_media_session(
         return None
     call_id = active.call_id
     registry = active.registry
-    item = registry.resource_for(call_id, "softphone_media") if call_id else None
+    item = (registry.resource_for(call_id, f"softphone_media_endpoint:{endpoint_id}")
+            or registry.resource_for(call_id, "softphone_media")) if call_id else None
     if item is not None and item.get("endpoint_id") not in (None, "", endpoint_id):
         item = None
 

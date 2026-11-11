@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
@@ -71,6 +71,11 @@ from .sip_runtime import (
 )
 from .trunk_dtmf import collect_trunk_dtmf
 from .trunk_routing import async_request_inbound_destination, trunk_default_target
+from .automation_routing import has_native_route_window
+
+if TYPE_CHECKING:
+    from .call_forwarder import TransferResult
+
 
 _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
@@ -86,7 +91,7 @@ class TrunkInboundRuntime:
     local_ip: str
     ha_peer_name: str
     route_resolver: EndpointRouteResolver
-    forward_existing_call: Callable[..., Awaitable[None]]
+    forward_existing_call: Callable[..., Awaitable[asyncio.Task[TransferResult]]]
     defer_invite_to_softphone: Callable[..., None]
     start_local_assist_bridge: Callable[..., Awaitable[Any]]
 
@@ -166,7 +171,9 @@ async def async_route_trunk_invite(
 
     # Explicit digits always select the canonical phonebook route. Only
     # the no-digits fallback may be overridden by an automation.
-    if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):
+    if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window(
+        hass, invite, trunk_invite=True, default_destination=trunk_default_target(configured_trunk)
+    )):
         automation_decision = await async_request_inbound_destination(
             hass,
             invite,

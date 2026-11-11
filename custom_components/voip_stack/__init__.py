@@ -559,6 +559,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     from .call_recording import async_start_recording, async_stop_recording, async_get_recording, async_delete_recording
     from .phone_queue_membership import async_set_phone_queues, async_set_phone_memberships_service
     from .call_queues import async_set_queue_agent_state, async_get_queue_state, async_configure_queue
+    from .queue_activity import async_get_queue_activity_service, async_get_queue_metrics_service
     from .paging import async_announce, async_stop_announcement
 
     await async_register_services(
@@ -592,6 +593,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "set_phone_memberships": async_set_phone_memberships_service,
             "set_queue_agent_state": async_set_queue_agent_state,
             "get_queue_state": async_get_queue_state,
+            "get_queue_activity": async_get_queue_activity_service,
+            "get_queue_metrics": async_get_queue_metrics_service,
             "configure_queue": async_configure_queue,
             "announce": async_announce,
             "stop_announcement": async_stop_announcement,
@@ -841,9 +844,10 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
-    if runtime is not None and runtime.queues is not None:
-        await runtime.queues.close()
-        runtime.queues = None
+    queues = runtime.queues if runtime is not None else None
+    if queues is not None:
+        queues.closed = True
+        queues._changed()
     from .phone_services import async_close_phone_services
     await async_close_phone_services(hass)
     if runtime is not None and runtime.phone_provisioning is not None:
@@ -852,6 +856,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
         runtime.directory.close()
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
+    if queues is not None:
+        await queues.close()
+        runtime.queues = None
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:

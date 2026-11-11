@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, fields
 from enum import IntEnum, StrEnum
 import inspect
 import logging
 from typing import Any, TypeAlias, TYPE_CHECKING
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, ref
 
 from .fsm import sip_public_state
 from .session_cleanup import async_wait_for_cleanup
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(__name__)
+_TASK_LINEAGE = ContextVar("voip_owned_task_lineage", default=())
 
 AsyncCloser: TypeAlias = Callable[[str], Awaitable[None] | None]
 TerminationSignaler: TypeAlias = Callable[
@@ -508,6 +510,13 @@ class EndpointCallSession:
                 raise ValueError(f"duplicate task name {clean_name!r}")
             self.named_tasks[clean_name] = task
         self.tasks.add(task)
+        # Child cleanup tasks inherit this context. Weak references keep an
+        # inherited dependency from extending either owner's lifetime.
+        lineage = (ref(self), ref(task))
+        if task is asyncio.current_task(loop=task.get_loop()):
+            _TASK_LINEAGE.set((*_TASK_LINEAGE.get(), lineage))
+        elif (context := task.get_context()) is not None:
+            context.run(_TASK_LINEAGE.set, (*context.get(_TASK_LINEAGE, ()), lineage))
 
         def _forget(completed: asyncio.Task[Any]) -> None:
             self.tasks.discard(completed)
@@ -532,11 +541,12 @@ class EndpointCallSession:
     def cleanup_waits_for(self, task: asyncio.Task[Any] | None) -> bool:
         """Return whether the terminal barrier is currently draining ``task``."""
 
-        return bool(
-            task is not None
-            and self._termination_task is not None
-            and task in self.tasks
-        )
+        if task is None or self._termination_task is None:
+            return False
+        if task is self._termination_task or task in self.tasks:
+            return True
+        return any(session() is self and (owner() is self._termination_task or owner() in self.tasks)
+                   for session, owner in _TASK_LINEAGE.get())
 
     def create_task(
         self,
@@ -544,7 +554,8 @@ class EndpointCallSession:
         *,
         name: str,
     ) -> asyncio.Task[Any]:
-        return self.own_task(asyncio.create_task(coroutine, name=name))
+        self.ensure_live()
+        return self.own_task(asyncio.create_task(coroutine, name=name, eager_start=False), name=name)
 
     async def _close_resources(
         self,
@@ -570,6 +581,7 @@ class EndpointCallSession:
         self,
         intent: TerminationIntent,
     ) -> SessionTerminationResult:
+        _TASK_LINEAGE.set((*_TASK_LINEAGE.get(), (ref(self), ref(asyncio.current_task()))))
         errors: list[str] = []
         closed_legs: list[str] = []
         closed_resources: list[str] = []

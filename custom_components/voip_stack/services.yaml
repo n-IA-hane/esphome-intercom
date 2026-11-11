@@ -69,6 +69,61 @@ set_queue_agent_state:
               value: paused
             - label: Logged out
               value: logged_out
+    reason:
+      name: Pause reason
+      description: Optional operator reason, retained until the next state change.
+      selector:
+        text:
+
+get_queue_activity:
+  name: Get queue activity
+  description: Read semantic queue events from Home Assistant Recorder. Administrative access is required.
+  fields:
+    queue:
+      name: Queue
+      required: true
+      selector:
+        text:
+    since:
+      name: Since
+      description: ISO timestamp with timezone. Defaults to 24 hours before Until.
+      selector:
+        text:
+    until:
+      name: Until
+      description: ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days.
+      selector:
+        text:
+    limit:
+      name: Event limit
+      default: 100
+      selector:
+        number: {min: 1, max: 1000, mode: box}
+    cursor:
+      name: Next page cursor
+      description: Use next_cursor from the previous response, keeping the same queue and window.
+      selector:
+        text:
+
+get_queue_metrics:
+  name: Get queue metrics
+  description: Read admission-cohort counts, waits and operator workload from Recorder as of Until. Recorder retention applies. Administrative access is required.
+  fields:
+    queue:
+      name: Queue
+      required: true
+      selector:
+        text:
+    since:
+      name: Since
+      description: ISO timestamp with timezone. Defaults to 24 hours before Until.
+      selector:
+        text:
+    until:
+      name: Until
+      description: ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days.
+      selector:
+        text:
 
 get_queue_state:
   name: Get queue state
@@ -128,6 +183,46 @@ configure_queue:
         text:
     hold_media:
       name: Hold audio URI
+      selector:
+        text:
+    strategy:
+      name: Distribution strategy
+      selector:
+        select:
+          options: [ring_all, round_robin, longest_idle, ordered]
+    agent_order:
+      name: Preferred phone order
+      description: Ordered stable phone identities. Remaining queue members follow; this does not change membership.
+      selector:
+        object:
+    auto_pause_after:
+      name: Pause after unanswered rings
+      description: 0 disables automatic pause. Use 3 for three consecutive unanswered ringing attempts. Busy, offline and cancellations do not count.
+      selector:
+        number: {min: 0, max: 100, mode: box}
+    fallback_full:
+      name: Fallback for full
+      description: Overrides the common fallback for this condition. Empty inherits the common destination.
+      selector:
+        text:
+    fallback_timeout:
+      name: Fallback for timeout
+      description: Overrides the common fallback for this condition. Empty inherits the common destination.
+      selector:
+        text:
+    fallback_no_agents:
+      name: Fallback for no agents
+      description: Overrides the common fallback for this condition. Empty inherits the common destination.
+      selector:
+        text:
+    fallback_disabled:
+      name: Fallback for disabled
+      description: Overrides the common fallback for this condition. Empty inherits the common destination.
+      selector:
+        text:
+    fallback_removed:
+      name: Fallback for removed
+      description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
         text:
 

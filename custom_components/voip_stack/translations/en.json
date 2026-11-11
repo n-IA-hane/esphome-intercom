@@ -440,7 +440,20 @@
             "retry_delay": "Retry delay (seconds)",
             "wrap_up": "Pause after a call (seconds)",
             "fallback": "Fallback destination",
-            "hold_media": "Hold audio URI"
+            "hold_media": "Hold audio URI",
+            "strategy": "Distribution strategy",
+            "agent_order": "Preferred phone order (selection order)",
+            "auto_pause_after": "Pause after unanswered rings (0 disables)",
+            "fallback_full": "Fallback when full",
+            "fallback_timeout": "Fallback after maximum wait",
+            "fallback_no_agents": "Fallback without operators",
+            "fallback_disabled": "Fallback when disabled",
+            "fallback_removed": "Fallback when removed"
+          },
+          "data_description": {
+            "agent_order": "Select preferred phones in the order they should ring. Remaining members follow. This does not change membership.",
+            "auto_pause_after": "Disabled at 0. Set 3 to pause after three unanswered ringing attempts; busy, offline and cancellations do not count.",
+            "fallback": "Used when a specific exit destination is empty."
           }
         }
       },
@@ -577,6 +590,14 @@
         "p_called_party_id": "P-Called-Party-ID",
         "custom_header": "Custom header",
         "fixed": "Fixed number"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Ring all",
+        "round_robin": "Round robin with memory",
+        "longest_idle": "Longest idle",
+        "ordered": "Configured order with escalation"
       }
     }
   },

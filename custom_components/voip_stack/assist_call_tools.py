@@ -84,19 +84,21 @@ class CurrentCallTool(Tool):
         if registry.forward_call is None:
             return {"error": "routing_unavailable"}
         session.update_metadata(assist_transfer_destination=destination, assist_transfer_result="pending")
-        await registry.forward_call(call_id=self.call_id, destination=destination, on_failure="resume")
-        task = call_runtime_artifacts(hass).task_for(self.call_id, "forward")
-        if task is not None:
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                if not (task.cancelled() and session.live and session.owner == "assist"
-                        and not asyncio.current_task().cancelling()):
-                    raise
-        if session.live and session.owner == "assist":
+        task = await registry.forward_call(call_id=self.call_id, destination=destination, on_failure="resume")
+        try:
+            result = await asyncio.shield(task)
+            status = result.status
+        except asyncio.CancelledError:
+            if not (task.cancelled() and session.live and session.owner == "assist"
+                    and not asyncio.current_task().cancelling()):
+                raise
+            status = "failed_resumed"
+        if status == "failed_resumed":
             session.update_metadata(assist_transfer_result="not_answered")
             return {"status": "not_answered", "resumed": True}
-        return {"status": "connected" if session.live else "ended"}
+        status = status if session.live else "ended"
+        session.update_metadata(assist_transfer_result=status)
+        return {"status": status}
 
 
 def current_call_tools(hass, context):

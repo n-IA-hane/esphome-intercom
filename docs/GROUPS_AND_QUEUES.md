@@ -96,9 +96,11 @@ audio are empty by default. Configure them on the queue device or with
 | --- | --- |
 | `voip_stack.set_phone_queues` | `phone`, `queues` as CSV text or a list of names. |
 | `voip_stack.set_phone_memberships` | `phone`, `field` (`queues` or `ring_group`), `value` as CSV text or a list. |
-| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` (`available`, `paused`, `logged_out`). |
+| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` (`available`, `paused`, `logged_out`), optional pause `reason`. |
 | `voip_stack.get_queue_state` | `queue`, optional `phone`; returns queue and member state. |
 | `voip_stack.configure_queue` | `queue` and the policy fields to change. |
+| `voip_stack.get_queue_activity` | `queue`, optional `since`, `until`, `limit`, `cursor`; returns Recorder events. |
+| `voip_stack.get_queue_metrics` | `queue`, optional `since`, `until`; returns admission-cohort metrics. |
 
 Phone selectors accept an existing phone identity or device. Queue selectors
 accept its stable group ID, name or configured extension. The actions enforce
@@ -134,3 +136,73 @@ Physical key colors and lamp behavior depend on the SIP phone's BLF settings.
 The local automated tests cover HA configuration, synchronization, service and
 dialog-info contracts. They do not establish physical lamp behavior or acoustic
 quality on a particular phone.
+
+## Distribution and exits
+
+`strategy` defaults to `ring_all`. The alternatives reuse the same global phone
+reservation owner:
+
+- `round_robin`: remember the last operator actually offered a call, including
+  across restarts. An unavailable phone or a failed preparation does not advance
+  the cursor.
+- `longest_idle`: offer to the eligible phone whose last conversation ended
+  longest ago, including ordinary calls outside a queue.
+- `ordered`: offer in configured order and escalate after an unsuccessful
+  attempt. `agent_order` is an ordered list of stable phone identities. In the
+  editor, select the preferred phones in that order; remove and select again to
+  change it. Other members follow in their existing order. It does not change
+  membership.
+
+Sequential strategies reserve only the current candidate. Other queues may
+still use another eligible phone. Callers remain FIFO within their queue; there
+is no priority or aging policy between queues in this release.
+
+`auto_pause_after` is disabled at `0`. Set it to `3` to pause an operator in
+this queue after three consecutive offers that actually rang and timed out.
+Busy, DND, offline, cancelled offers and losing legs do not count as missed
+answers. A successful answer or setting the operator available clears the
+counter. The pause reason is `no_answer`; other queues retain their state.
+
+The common `fallback` is inherited by empty specific exit settings:
+`fallback_full`, `fallback_timeout`, `fallback_no_agents`, `fallback_disabled`
+and `fallback_removed`. Their reasons remain distinct in activity. Without a
+fallback, a full queue rejects admission with SIP 486; a caller already answered
+is terminated through its existing call owner. A transfer between two distinct
+queues preserves the caller and replaces the admission atomically. The same
+queue cannot immediately re-enter itself, and genuine routing loops remain
+bounded.
+
+`get_queue_state` includes unavailable reasons, reservation queue and attempt,
+remaining wrap-up, last answer/end, consecutive misses and the oldest waiting
+call. The phone card shows the primary exclusion reason beside the queue name, with
+additional detail in its label tooltip.
+Wrap-up starts when the connected conversation ends, not when it is answered.
+
+## Activity and metrics
+
+Each queue device has an activity event entity. The raw versioned
+`voip_stack.queue_event` occurrences are recorded by Home Assistant Recorder
+and described in Logbook. Admission, offer, answer, exit and operator changes
+have separate identities; multiple attempts are not multiple incoming calls.
+No audio, credentials or SIP header dumps are retained in these events.
+
+The two history actions require administrative permission. They default to the
+last 24 hours, accept timezone-qualified ISO timestamps and limit each window to
+31 days. Activity is paginated (`limit` 100 by default, maximum 1000). Reuse the
+returned `next_cursor` with the same queue and window. Retention and event
+exclusions are controlled by Recorder. Without Recorder, calls still work and
+history reports that it is unavailable.
+
+Metrics select admissions in `[since, until)` and evaluate their state as of
+`until`. They distinguish pending, answered, abandoned, timeout, transfer and
+rejected calls. Wait statistics include completed waits only; pending calls are
+not counted as successful zero-wait answers. Operator workloads and talk time
+come from answered/completed conversations. An admission before the requested
+window is not counted as a new call just because its exit occurs inside it.
+These are operational counters, not a contractual service-level guarantee.
+
+The distribution semantics follow the established ideas documented in
+[Asterisk queue configuration](https://github.com/asterisk/asterisk/blob/master/configs/samples/queues.conf.sample)
+and [FreeSWITCH call queues](https://developer.signalwire.com/freeswitch/applications/call-queues/).
+Their settings are not copied into an extra PBX engine: HA endpoints, sessions,
+Recorder and the existing fork/reservation owners remain authoritative.

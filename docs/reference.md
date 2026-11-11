@@ -7,10 +7,27 @@ The membership actions are `voip_stack.set_phone_memberships` (`phone`, `field`,
 phone's existing configuration, including queued delivery to an offline ESP.
 
 Use `voip_stack.set_queue_agent_state` with `queue`, `phone` and `state` to log
-in, pause or log out. `voip_stack.get_queue_state` returns policy and member
+in, pause or log out; optional `reason` records a pause reason until the next
+state change. `voip_stack.get_queue_state` returns policy and member
 availability. `voip_stack.configure_queue` changes the existing queue's waiting,
-ringing, retry, wrap-up and fallback settings. These actions do not register or
-unregister the phone.
+ringing, retry, wrap-up and fallback settings. Its additional policy fields are
+`strategy` (`ring_all`, `round_robin`, `longest_idle`, `ordered`), `agent_order`
+(preferred stable phone identities, without changing membership) and
+`auto_pause_after` (`0` disables automatic pause; only consecutive offers that
+actually rang and timed out count). Automatic pause records `reason: no_answer`.
+The exit destinations `fallback_full`, `fallback_timeout`, `fallback_no_agents`,
+`fallback_disabled` and `fallback_removed` inherit the common `fallback` when
+empty. These actions do not register or unregister the phone.
+
+`voip_stack.get_queue_activity` accepts `queue` and optional `since`, `until`,
+`limit` and `cursor`; it returns Recorder events and `next_cursor` for the next
+page with the same queue and window. `voip_stack.get_queue_metrics` accepts
+`queue` and optional `since` and `until`; it returns admission-cohort counts,
+completed waits and operator workload as of `until`. Both actions require
+administrative access and Recorder. Timezone-qualified ISO timestamps default
+to the last 24 hours, with a maximum window of 31 days. Activity defaults to
+100 events per page, with a maximum of 1000. Recorder retention and event
+exclusions apply.
 
 `voip_stack.announce` delivers one TTS message or audio file to `targets` and
 returns per-target outcomes. `voip_stack.stop_announcement` accepts the returned

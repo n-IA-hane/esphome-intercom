@@ -1,3 +1,5 @@
+import { pcmFrameSamples } from "./voip-stack-media-model.js";
+
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const MAX_SAMPLE_RATE = 192000;
 const MAX_FRAME_MS = 1000;
@@ -22,8 +24,7 @@ function normaliseFormat(value) {
   if (!Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > MAX_SAMPLE_RATE) throw new Error(`playback worklet unsupported sample_rate ${sampleRate}`);
   if (![1, 2].includes(channels)) throw new Error(`playback worklet unsupported channel count ${channels}`);
   if (frameMs <= 0 || frameMs > MAX_FRAME_MS) throw new Error(`playback worklet unsupported frame_ms ${frameMs}`);
-  const frameSamples = sampleRate * frameMs / 1000;
-  if (!Number.isSafeInteger(frameSamples) || frameSamples < 1) throw new Error("playback worklet PCM format does not form whole frames");
+  const frameSamples = pcmFrameSamples(sampleRate, frameMs, "playback worklet PCM format");
   const bytesPerSample = pcmFormat === "s16le" ? 2 : pcmFormat === "s24le" ? 3 : 4;
   if (frameSamples * channels * bytesPerSample > MAX_PCM_FRAME_BYTES) throw new Error("playback worklet PCM frame exceeds local byte budget");
   return {

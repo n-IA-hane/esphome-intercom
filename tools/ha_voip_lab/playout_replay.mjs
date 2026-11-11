@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import workletSource from './worklet_source.cjs';
 
 const [sourcePath, tracePath, reportPath, rateArg] = process.argv.slice(2);
 const contextRate = Number(rateArg || 48000);
@@ -14,7 +15,7 @@ const context = vm.createContext({AudioWorkletProcessor: Worklet, sampleRate: co
   registerProcessor: (_, value) => { Processor = value; }, ArrayBuffer, DataView,
   Float32Array, Math, Number, Object, Error});
 Object.defineProperty(context, 'currentTime', {get: () => now});
-vm.runInContext(fs.readFileSync(sourcePath, 'utf8'), context);
+vm.runInContext(workletSource.readPcmWorklet(sourcePath), context);
 const [rate, pcm, channels, frameMs] = trace.format.split(':');
 const format = {sampleRate: Number(rate), pcmFormat: pcm, channels: Number(channels), frameMs: Number(frameMs)};
 const processor = new Processor({processorOptions: {format}});

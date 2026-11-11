@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from .voip_phase1_support import audio_format, audio_pcm
+from .test_frontend_audio_worklet_runtime import _worklet_script
 
 
 @pytest.mark.parametrize(
@@ -185,15 +186,15 @@ for (const path of PATHS) {
       format: {sampleRate, frameMs, pcmFormat: "s16le", channels: 1},
     }});
   }
-  for (const [rate, duration, samples] of [[48000, 2.5, 120], [24000, 15, 360], [8000, 30, 240], [22050, 20, 441]]) {
+  for (const [rate, duration, samples] of [[50000, 1.1, 55], [48000, 2.5, 120], [24000, 15, 360], [8000, 30, 240], [22050, 20, 441]]) {
     const processor = create(rate, duration);
     assert.equal(processor._format.frameSamples, samples);
   }
-  for (const [rate, duration] of [[192001, 20], [0, 20], [16000.5, 20], [48000, 1001], [48000, 0], [48000, Infinity], [44100, 2.5]]) {
+  for (const [rate, duration] of [[50000, 1.10000001], [50000, 1.11], [192001, 20], [0, 20], [16000.5, 20], [48000, 1001], [48000, 0], [48000, Infinity], [44100, 2.5]]) {
     assert.throws(() => create(rate, duration));
   }
 }
 """.replace("PATHS", json.dumps(paths))
     subprocess.run(
-        ["node", "-"], input=script, text=True, check=True, capture_output=True
+        ["node", "-"], input=_worklet_script(script), text=True, check=True, capture_output=True
     )

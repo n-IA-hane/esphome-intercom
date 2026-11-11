@@ -440,7 +440,20 @@
             "retry_delay": "Retry delay (seconds)",
             "wrap_up": "Pause after a call (seconds)",
             "fallback": "Fallback destination",
-            "hold_media": "Hold audio URI"
+            "hold_media": "Hold audio URI",
+            "strategy": "Způsob rozdělování hovorů",
+            "agent_order": "Preferované pořadí telefonů (pořadí výběru)",
+            "auto_pause_after": "Pozastavit po nezodpovězených vyzváněních (0 vypne)",
+            "fallback_full": "Náhradní cíl při plné frontě",
+            "fallback_timeout": "Náhradní cíl po maximální době čekání",
+            "fallback_no_agents": "Náhradní cíl bez dostupných operátorů",
+            "fallback_disabled": "Náhradní cíl při vypnuté frontě",
+            "fallback_removed": "Náhradní cíl při odstranění fronty"
+          },
+          "data_description": {
+            "agent_order": "Vyberte preferované telefony v pořadí, v jakém mají vyzvánět. Ostatní členové následují. Členství se tím nemění.",
+            "auto_pause_after": "Hodnota 0 funkci vypne. Hodnota 3 pozastaví přiřazování po třech nezodpovězených pokusech s vyzváněním; obsazenost, nedostupnost a zrušení se nepočítají.",
+            "fallback": "Použije se, když není vyplněn cíl pro konkrétní důvod ukončení čekání."
           }
         }
       },
@@ -577,6 +590,14 @@
         "p_called_party_id": "P-Called-Party-ID",
         "custom_header": "Custom header",
         "fixed": "Fixed number"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Vyzvánět na všech telefonech",
+        "round_robin": "Střídání telefonů s pamětí",
+        "longest_idle": "Nejdéle nečinný telefon",
+        "ordered": "Nastavené pořadí s postupným voláním"
       }
     }
   },

@@ -440,7 +440,20 @@
             "retry_delay": "Retry delay (seconds)",
             "wrap_up": "Pause after a call (seconds)",
             "fallback": "Fallback destination",
-            "hold_media": "Hold audio URI"
+            "hold_media": "Hold audio URI",
+            "strategy": "Estratégia de distribuição",
+            "agent_order": "Ordem preferencial dos telefones (ordem de seleção)",
+            "auto_pause_after": "Pausar após tentativas sem atendimento (0 desativa)",
+            "fallback_full": "Destino alternativo quando a fila está cheia",
+            "fallback_timeout": "Destino alternativo após a espera máxima",
+            "fallback_no_agents": "Destino alternativo sem operadores disponíveis",
+            "fallback_disabled": "Destino alternativo quando a fila está desativada",
+            "fallback_removed": "Destino alternativo quando a fila é removida"
+          },
+          "data_description": {
+            "agent_order": "Selecione os telefones preferenciais na ordem em que devem tocar. Os demais membros vêm em seguida. Isso não altera a participação no grupo.",
+            "auto_pause_after": "Desativado em 0. Defina 3 para pausar após três tentativas com toque sem atendimento; ocupado, indisponível e cancelamentos não contam.",
+            "fallback": "Usado quando o destino específico para um motivo de saída está vazio."
           }
         }
       },
@@ -577,6 +590,14 @@
         "p_called_party_id": "P-Called-Party-ID",
         "custom_header": "Custom header",
         "fixed": "Fixed number"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Tocar em todos",
+        "round_robin": "Alternância com memória",
+        "longest_idle": "Telefone há mais tempo ocioso",
+        "ordered": "Ordem configurada com escalonamento"
       }
     }
   },

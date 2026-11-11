@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -297,7 +298,7 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
     assert intent.reason == "route_not_found"
 
 
-def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
+async def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from custom_components.voip_stack import pbx_runtime
@@ -351,7 +352,7 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch.setattr(trunk, "publish_bridge_projection", Mock())
     monkeypatch.setattr(trunk.sip_sdp, "offered_dtmf_formats", Mock(return_value=[]))
 
-    owned_task = Mock()
+    owned_task = asyncio.create_task(asyncio.sleep(0))
 
     def capture_task(_hass, coroutine):
         coroutine.close()
@@ -377,6 +378,7 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         for resource in session.resources
     )
     assert session.named_tasks[f"trunk_route:{invite.call_id}"] is owned_task
+    await owned_task
 
 
 def test_static_trunk_classifies_only_explicitly_allowed_sources():

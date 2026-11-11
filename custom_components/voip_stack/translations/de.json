@@ -440,7 +440,20 @@
             "retry_delay": "Retry delay (seconds)",
             "wrap_up": "Pause after a call (seconds)",
             "fallback": "Fallback destination",
-            "hold_media": "Hold audio URI"
+            "hold_media": "Hold audio URI",
+            "strategy": "Verteilstrategie",
+            "agent_order": "Bevorzugte Telefonreihenfolge (Auswahlreihenfolge)",
+            "auto_pause_after": "Nach unbeantworteten Anrufversuchen pausieren (0 deaktiviert)",
+            "fallback_full": "Ersatzziel bei voller Warteschlange",
+            "fallback_timeout": "Ersatzziel nach maximaler Wartezeit",
+            "fallback_no_agents": "Ersatzziel ohne verfügbare Mitarbeiter",
+            "fallback_disabled": "Ersatzziel bei deaktivierter Warteschlange",
+            "fallback_removed": "Ersatzziel bei entfernter Warteschlange"
+          },
+          "data_description": {
+            "agent_order": "Wählen Sie die bevorzugten Telefone in der gewünschten Klingelreihenfolge aus. Die übrigen Mitglieder folgen danach. Die Mitgliedschaft bleibt unverändert.",
+            "auto_pause_after": "Bei 0 deaktiviert. Mit 3 wird nach drei unbeantworteten Versuchen mit Klingeln pausiert; besetzte oder nicht erreichbare Telefone und Abbrüche zählen nicht.",
+            "fallback": "Wird verwendet, wenn für den jeweiligen Austrittsgrund kein eigenes Ziel angegeben ist."
           }
         }
       },
@@ -577,6 +590,14 @@
         "p_called_party_id": "P-Called-Party-ID",
         "custom_header": "Custom header",
         "fixed": "Fixed number"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Alle Telefone anrufen",
+        "round_robin": "Reihum mit gespeicherter Position",
+        "longest_idle": "Am längsten freies Telefon",
+        "ordered": "Festgelegte Reihenfolge mit Eskalation"
       }
     }
   },

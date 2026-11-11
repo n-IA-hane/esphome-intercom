@@ -87,6 +87,10 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_paging_authorization_ha.py
+  tests/test_owned_cleanup_ha.py
+  tests/test_queue_activity_ha.py
+  tests/test_native_route_window_ha.py
   tests/test_group_devices_ha.py
   tests/test_group_lifecycle_review_ha.py
   tests/test_queue_agent_blf_ha.py

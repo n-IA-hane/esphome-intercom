@@ -18,9 +18,8 @@ from homeassistant.core import HomeAssistant
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, external_call_denied, is_trunk_uri, trunk_available
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
-from .automation_routing import matches_call
-from .inbound_identity import identity_fields
+from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
+from .automation_routing import has_native_route_window
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -162,12 +161,12 @@ async def route_invite(
         if caller_roster_entry is not None
         else ""
     ).strip()
-    source_endpoint = (
-        endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
-    )
     identified_source = source_endpoint_id if not trunk_invite and (
         registered_source or caller_peer is not None or caller_is_known_roster_endpoint
     ) else ""
+    # Directory names describe a caller; only the verified ingress owns a phone.
+    source_endpoint_id = identified_source
+    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
     if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
         from .queue_agent import route_queue_agent_call
         return await route_queue_agent_call(runtime, invite, registry,
@@ -230,8 +229,9 @@ async def route_invite(
         address = transport.get_extra_info("sockname") if transport is not None else None
         if address and int(address[1]) == invite.source_port:
             identified_source = str(local_session.metadata.get("source_endpoint_id") or "")
-    if identified_source:
-        invite = replace(invite, identified_source_endpoint_id=identified_source)
+    source_endpoint_id = identified_source
+    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
+    invite = replace(invite, identified_source_endpoint_id=identified_source)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
 
@@ -312,15 +312,7 @@ async def route_invite(
         )
         if trunk_result is not None:
             return trunk_result
-    native_override = any(matches_call({
-        **identity_fields(invite),
-        "outbound_trunk_id": invite.outbound_trunk_id,
-        "caller": invite.caller,
-        "callee": decision.target or invite.target,
-        "destination": decision.entry.display_name if decision.entry is not None else invite.target,
-        "called_extension": invite.routing_target if trunk_invite else (decision.entry.extension if decision.entry is not None else invite.target),
-        "ingress": "trunk" if trunk_invite else "extension",
-    }, options) for options in registration_data(hass).route_trigger_filters.values())
+    native_override = has_native_route_window(hass, invite, decision, trunk_invite=trunk_invite)
     automation_route = await request_route_override(
         runtime=runtime,
         invite=invite,

@@ -29,7 +29,8 @@ async def queue_lab(trunks, monkeypatch):
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
     for endpoint in lab.runtime.endpoints.endpoints:
         lab.runtime.endpoints.update(endpoint.endpoint_id, availability="available")
-    manager = QueueManager(lab.hass, SimpleNamespace(runtime_data=lab.runtime))
+    manager = QueueManager(lab.hass, SimpleNamespace(runtime_data=lab.runtime,
+        entry_id=lab.hass.config_entries.async_entries("voip_stack")[0].entry_id))
     identity = "d5cf849db68449f49f03552eeab34511"
     manager.definitions[identity] = QueueDefinition(identity, "Reception", ("sip:bedroom0", "sip:bedroom1"))
     manager.policies[identity] = QueuePolicy(max_wait=5, ring_timeout=1, retry_delay=0.1, no_agent_wait=1, wrap_up=1)
@@ -305,3 +306,184 @@ async def test_runtime_shutdown_never_originates_the_waiting_call_fallback(queue
     await wait_until(lambda: lab.calls.get_session(client.dialog_ids.call_id) is None)
     assert not any(phone.invites for phone in lab.phones)
     assert not lab.manager.waiting and not lab.manager.reservations
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_queue_to_distinct_queue_commits_one_ticket_and_preserves_source_until_commit(queue_lab):
+    lab = queue_lab
+    other = "761571623e9d4d28aa518eac0fcb9512"
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
+    lab.manager.agent_states[other] = {"sip:bedroom0": "available"}
+    lab.roster.append(RosterEntry(f"queue:{other}", name="Support", extension="405", ha_bridge=True,
+        metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    old = lab.calls.resource_for(session.call_id, "queue")
+    original_media = old.media
+    task = await lab.calls.forward_call(call_id=session.call_id, destination="Support", on_failure="resume")
+    result = await asyncio.wait_for(asyncio.shield(task), 3)
+    assert result.status == "connected", result
+    assert old.detached and old.ticket.closed
+    await wait_for_bridge(lab, session.call_id)
+    assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+    assert original_media.closed.is_set()
+    assert len(lab.phones[0].invites) == 1
+    assert not lab.manager.waiting and not lab.manager.reservations
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("blocked", ["disabled", "full"])
+async def test_rejected_queue_transfer_leaves_original_ticket_media_and_claims_intact(queue_lab, blocked):
+    lab = queue_lab
+    other = "761571623e9d4d28aa518eac0fcb9512"
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.policies[other] = QueuePolicy(max_wait=5, max_waiting=1, enabled=blocked != "disabled")
+    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
+        metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
+    if blocked == "full":
+        lab.manager.enqueue(other, "other-waiting-call", 1)
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    original = lab.calls.resource_for(session.call_id, "queue")
+    media, ticket, claims = original.media, original.ticket, dict(session.endpoint_claims)
+    task = await lab.calls.forward_call(call_id=session.call_id, destination="Support", on_failure="resume")
+    result = await asyncio.wait_for(asyncio.shield(task), 2)
+    assert result.status == "failed_resumed", result
+    assert lab.calls.resource_for(session.call_id, "queue") is original
+    assert original.media is media and not media.closed.is_set() and not original.detached
+    assert not ticket.closed and tuple(lab.manager.waiting[lab.identity]) == (ticket,)
+    assert not lab.manager.staged_admissions and dict(session.endpoint_claims) == claims
+    assert not any(phone.invites for phone in lab.phones)
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_queue_disabled_after_staging_rolls_back_only_the_new_ticket(queue_lab, monkeypatch):
+    from custom_components.voip_stack.queue_call import QueueCall
+    lab = queue_lab
+    other = "761571623e9d4d28aa518eac0fcb9512"
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.policies[other] = QueuePolicy(max_wait=5)
+    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
+        metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    original = lab.calls.resource_for(session.call_id, "queue")
+    media, ticket, claims = original.media, original.ticket, dict(session.endpoint_claims)
+    staged, release = asyncio.Event(), asyncio.Event()
+    original_stop_music = QueueCall.stop_music
+    async def stop_music(application):
+        await original_stop_music(application)
+        if application is original and lab.manager.staged_admissions:
+            staged.set()
+            await release.wait()
+    monkeypatch.setattr(QueueCall, "stop_music", stop_music)
+    task = await lab.calls.forward_call(call_id=session.call_id, destination="Support", on_failure="resume")
+    try:
+        await asyncio.wait_for(staged.wait(), 2)
+        assert lab.calls.resource_for(session.call_id, "queue") is original
+        assert not ticket.closed and tuple(lab.manager.waiting[lab.identity]) == (ticket,)
+        assert not lab.manager.waiting.get(other)
+        assert original.media is media and not media.closed.is_set()
+        lab.manager.policies[other] = replace(lab.manager.policies[other], enabled=False)
+    finally:
+        release.set()
+    result = await asyncio.wait_for(asyncio.shield(task), 2)
+    assert result.status == "failed_resumed", result
+    assert lab.calls.resource_for(session.call_id, "queue") is original
+    assert original.media is media and not media.closed.is_set() and not original.detached
+    assert not ticket.closed and tuple(lab.manager.waiting[lab.identity]) == (ticket,)
+    assert not lab.manager.staged_admissions and not lab.manager.waiting.get(other)
+    assert dict(session.endpoint_claims) == claims
+    assert not any(resource.name.startswith("prepared_queue:") for resource in session.resources)
+    assert not any(phone.invites for phone in lab.phones)
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_round_robin_rings_one_phone_then_pauses_only_the_real_missed_offer(queue_lab):
+    lab = queue_lab
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], strategy="round_robin", auto_pause_after=1)
+    lab.phones[0].auto_answer = False
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+    assert not lab.phones[1].invites
+    assert tuple(lab.manager.reservations) == ("sip:bedroom0",)
+    assert not lab.runtime.endpoints.get("sip:bedroom1").active_call_id
+    await wait_for_bridge(lab, session.call_id)
+    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert len(lab.phones[0].invites) == len(lab.phones[1].invites) == 1
+    assert lab.manager.agent_states[lab.identity]["sip:bedroom0"] == "paused"
+    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["consecutive_misses"] == 1
+    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["pause_reason"] == "no_answer"
+    assert lab.manager.agent_stats[lab.identity]["sip:bedroom1"]["consecutive_misses"] == 0
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_ordered_strategy_uses_saved_order_and_never_claims_unoffered_phone(queue_lab):
+    lab = queue_lab
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], strategy="ordered",
+        agent_order=("sip:bedroom1", "sip:bedroom0"), auto_pause_after=1)
+    client, _audio = await dial_queue(lab)
+    session = await wait_for_bridge(lab, client.dialog_ids.call_id)
+    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert not lab.phones[0].invites and len(lab.phones[1].invites) == 1
+    assert not lab.runtime.endpoints.get("sip:bedroom0").active_call_id
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_caller_hangup_while_agent_rings_is_not_an_auto_pause_miss(queue_lab):
+    lab = queue_lab
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], strategy="round_robin", auto_pause_after=1)
+    lab.phones[0].auto_answer = False
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)
+    assert lab.manager.agent_states[lab.identity]["sip:bedroom0"] == "available"
+    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["consecutive_misses"] == 0
+    assert not lab.phones[1].invites
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("blocked", ["full", "disabled"])
+async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(queue_lab, blocked):
+    lab = queue_lab
+    changes = {"max_waiting": 1, "fallback_full": "bedroom1", "fallback_disabled": "bedroom1"}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], **changes)
+    if blocked == "full":
+        lab.manager.enqueue(lab.identity, "another-waiter", 1)
+    else:
+        lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], enabled=False)
+    lab.phones[1].auto_answer = False
+    client, _audio = await lab.caller()
+    result = await client.invite(target="401", remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
+    assert result == "ringing"
+    await asyncio.wait_for(lab.phones[1].invited.wait(), 2)
+    assert client.dialog is None
+    lab.phones[1].answer()
+    assert await client.wait_for_final(timeout=2) == "in_call"
+    session = await wait_for_bridge(lab, client.dialog_ids.call_id)
+    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert not lab.phones[0].invites
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 2)

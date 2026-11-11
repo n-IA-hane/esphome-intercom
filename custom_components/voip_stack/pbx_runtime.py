@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import inspect
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .call_registry import CallRuntimeApi, committed_operation
 from .call_state import CallStateSnapshot
@@ -32,6 +32,10 @@ from .endpoint_session import (
 )
 from .session_cleanup import async_wait_for_cleanup
 from .phone_endpoint import EndpointKind
+
+
+if TYPE_CHECKING:
+    from .call_forwarder import TransferResult
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -176,7 +180,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         self._shutdown_task: asyncio.Task[None] | None = None
         self.trunk_stop_task: asyncio.Task[Any] | None = None
         self.softphone_start_locks: dict[str, asyncio.Lock] = {}
-        self.forward_call: Any | None = None
+        self.forward_call: Callable[..., Awaitable[asyncio.Task[TransferResult]]] | None = None
         self.refer_call: Any | None = None
         self.start_ring_group_from_ha: Any | None = None
         self.ring_conference_members_from_ha: Any | None = None

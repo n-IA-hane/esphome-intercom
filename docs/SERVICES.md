@@ -30,9 +30,11 @@ call context and failure behavior for more complex sequences.
 | --- | --- | --- |
 | `voip_stack.set_phone_memberships` | `phone`, `field`, `value` | Set `ring_group` or `queues` on the selected phone. `value` accepts comma-separated names or a list; empty removes memberships. |
 | `voip_stack.set_phone_queues` | `phone`, `queues` | Queue-specific form of the same membership operation. New valid names create automatic queue devices. |
-| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` | Use `available`, `paused` or `logged_out` without changing membership. |
+| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` | Use `available`, `paused` or `logged_out` without changing membership; optional `reason` records the pause reason until the next state change. |
 | `voip_stack.get_queue_state` | `queue` | Return policy, waiting count and member availability; optional `phone` filters the members. |
-| `voip_stack.configure_queue` | `queue` | Update `enabled`, `max_waiting`, `max_wait`, `ring_timeout`, `no_agent_wait`, `retry_delay`, `wrap_up`, `fallback` or `hold_media`. |
+| `voip_stack.get_queue_activity` | `queue` | Read Recorder events with optional `since`, `until`, `limit` and `cursor`. |
+| `voip_stack.get_queue_metrics` | `queue` | Read admission-cohort metrics with optional `since` and `until`. |
+| `voip_stack.configure_queue` | `queue` | Update `enabled`, `max_waiting`, `max_wait`, `ring_timeout`, `no_agent_wait`, `retry_delay`, `wrap_up`, `fallback`, `hold_media`, `strategy`, `agent_order`, `auto_pause_after`, `fallback_full`, `fallback_timeout`, `fallback_no_agents`, `fallback_disabled` or `fallback_removed`. |
 | `voip_stack.announce` | `targets` and either TTS or media | Supply `message` with `tts_entity_id`, or `media`. Optional `language`, `options`, `answer_timeout`, `timeout` and `wait` control delivery. |
 | `voip_stack.stop_announcement` | `announcement_id` | Stop only that announcement; repeating the request is safe. |
 
@@ -41,6 +43,29 @@ Queue selectors accept a stable group ID, name or extension. Policy and full
 queue inspection require administrative access; phone operations respect its
 existing control permissions. Offline ESP membership changes remain pending
 until the native text control can confirm them.
+
+`strategy` accepts `ring_all` (default), `round_robin`, `longest_idle` or
+`ordered`. `agent_order` lists stable phone identities in preferred ringing
+order; other members follow, without changing membership. `auto_pause_after`
+is disabled at `0`. A positive value pauses the operator in this queue after
+that many consecutive offers that actually rang and timed out. Busy, offline,
+DND, cancellations and losing legs do not count; answering or setting the
+operator available clears the counter. Automatic pause records `reason: no_answer`.
+
+The specific exit destinations `fallback_full`, `fallback_timeout`,
+`fallback_no_agents`, `fallback_disabled` and `fallback_removed` inherit the
+common `fallback` when empty. They distinguish a full queue, maximum wait,
+no available operators, a disabled queue and a removed queue.
+
+Both history actions require administrative access and use Home Assistant
+Recorder. `since` and `until` accept ISO timestamps with timezones. The default
+window is the last 24 hours, with a maximum of 31 days. Activity defaults to
+`limit: 100` (maximum 1000); pass its returned `next_cursor` as `cursor` with
+the same queue and window to read the next page. Metrics count admissions in
+`[since, until)` and evaluate their outcomes as of `until`, separating pending,
+answered, abandoned, timed-out, transferred and rejected calls. Recorder
+retention and event exclusions apply; without Recorder, history is unavailable
+while calls continue to work.
 
 See [group devices and queues](GROUPS_AND_QUEUES.md) for limits, operator states
 and BLF keys. See [paging](PAGING.md) for announcement results and the requirements

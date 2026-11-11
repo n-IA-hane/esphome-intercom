@@ -10,8 +10,8 @@ from typing import ClassVar
 from .call_projection import publish_bridge_projection
 from .call_queues import get_queue_manager
 from .endpoint_lifecycle import call_registry
-from .endpoint_session import CleanupStage, TerminationIntent
-from .local_application import LocalCallApplication, attach_local_application
+from .endpoint_session import CleanupStage, TerminationIntent, SessionHandoff
+from .local_application import LocalCallApplication, ApplicationRef, attach_local_application
 from .roster import RosterEntry
 from .router import RouteAction, RouteDecision
 
@@ -75,23 +75,26 @@ class QueueCall(LocalCallApplication):
             if winner not in self.ticket.reserved:
                 winner = ""
             queue_id = self.ticket.queue_id
-            wrap_duration = (getattr(self.ticket, "policy", None) or self.policy_snapshot).wrap_up
-            self.manager.finish(self.ticket)
             if winner:
-                def begin_wrap_up(_reason):
-                    self.manager.start_wrap_up(queue_id, winner, duration=wrap_duration)
+                self.manager.connected(self.ticket, winner)
+                def begin_wrap_up(reason):
+                    self.manager.complete_conversation(self.ticket, winner, reason)
                 call_registry(self.hass).own_resource(
-                    self.session.call_id, f"queue_wrap_up:{self.session.call_id}", winner, begin_wrap_up,
+                    self.session.call_id, f"queue_conversation:{queue_id}:{self.ticket.entry_id}:{self.session.call_id}", winner, begin_wrap_up,
                     stage=CleanupStage.OBSERVER, generation=self.session.generation)
+            else:
+                self.manager.finish(self.ticket, reason="transferred")
             self.ticket.changed.set()
             return
-        self.manager.finish(self.ticket)
+        self.manager.finish(self.ticket, reason=reason)
 
     async def _fallback(self, policy, reason):
-        self.manager.finish(self.ticket)
-        if policy.fallback and self.session.live:
-            await call_registry(self.hass).forward_call(call_id=self.session.call_id,
-                destination=policy.fallback, on_failure="terminate")
+        fallback = policy.fallback_for(reason)
+        if fallback and self.session.live:
+            task = await call_registry(self.hass).forward_call(call_id=self.session.call_id,
+                destination=fallback, on_failure="terminate")
+            if task is not None:
+                await asyncio.shield(task)
         elif self.session.live:
             await call_registry(self.hass).terminate_call_wait(self.session.call_id, reason=reason)
 
@@ -135,11 +138,10 @@ class QueueCall(LocalCallApplication):
                         ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.name for endpoint in endpoints if endpoint]})
                     decision = RouteDecision(RouteAction.GROUP, target=definition.name, entry=entry)
                     try:
-                        await registry.forward_call(call_id=self.session.call_id, destination=definition.name,
+                        task = await registry.forward_call(call_id=self.session.call_id, destination=definition.name,
                             on_failure="resume", _resolved_decision=decision,
-                            _ring_timeout=min(policy.ring_timeout, self.ticket.deadline - now))
-                        from .runtime_data import call_runtime_artifacts
-                        task = call_runtime_artifacts(self.hass).task_for(self.session.call_id, "forward")
+                            _ring_timeout=min(policy.ring_timeout, self.ticket.deadline - now),
+                            _queue_offer=(self.manager, self.ticket))
                         if task is not None:
                             await asyncio.shield(task)
                     finally:
@@ -181,6 +183,23 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
     try:
         start_queue_application(runtime.hass, session, invite, decision.entry, runtime.local_ip)
     except ValueError:
+        policy = manager.policy(queue.queue_id)
+        reason = "queue_full" if policy.enabled else "queue_disabled"
+        manager.record_rejection(queue.queue_id, session.call_id, session.generation, reason)
+        fallback = policy.fallback_for(reason)
+        if fallback:
+            registry.transition(session.call_id, owner="router", state="ringing")
+            registry.set_pending_invite(session.call_id, invite)
+            app = QueueAdmissionCall(runtime.hass, session, invite, decision.entry, runtime.local_ip,
+                                     resource_key=f"queue_admission:{session.call_id}")
+            registry.own_resource(session.call_id, app.resource_name, app, app.close,
+                                  stage=CleanupStage.MEDIA, generation=session.generation)
+            async def route_fallback():
+                task = await registry.forward_call(call_id=session.call_id, destination=fallback, on_failure="terminate")
+                if task is not None:
+                    await asyncio.shield(task)
+            session.create_task(route_fallback(), name="queue-admission-forward")
+            return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
         return SipInviteResult(486, "Busy Here", to_tag="")
     return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
 
@@ -197,5 +216,62 @@ def start_queue_application(hass, session, invite, contact, local_ip, *, previou
     application = attach_local_application(QueueCall, hass, session, invite, contact, local_ip,
                                            previous=previous, local_source=local_source, ticket=ticket, manager=manager,
                                            policy_snapshot=manager.policy(queue_id))
-    application.waiter = session.create_task(application.run(), name="queue-waiter")
+    application.waiter = session.create_task(application.run(), name=f"queue-waiter:{queue_id}:{ticket.entry_id}")
     return application
+
+
+@dataclass(slots=True)
+class QueueAdmissionCall(LocalCallApplication):
+    """Retain an unanswered caller solely for an existing fallback route."""
+    owner: ClassVar[str] = "router"
+
+    async def close(self, _reason):
+        return None
+
+    async def resume(self):
+        self.require_current()
+
+
+async def transfer_queue_application(hass, session, invite, contact, local_ip, previous):
+    """Stage a distinct queue instance before committing its ticket and slot."""
+    registry = call_registry(hass)
+    manager = get_queue_manager(hass)
+    target = ApplicationRef("queue", contact.metadata["queue_id"])
+    if previous.ref == target:
+        raise ValueError("A call cannot re-enter the same queue")
+    ticket = manager.prepare_transfer(previous.ticket, target.identity)
+    key = f"prepared_queue:{target.identity}:{session.call_id}"
+    next_app = QueueCall(hass, session, invite, contact, local_ip,
+        media=previous.media, answered=previous.answered, playback=previous.playback,
+        local_source=previous.local_source, source_client=previous.source_client,
+        ticket=ticket, manager=manager, policy_snapshot=ticket.policy, resource_key=key)
+    resource = session.add_resource(key, next_app, lambda _reason: manager.rollback_transfer(ticket), stage=CleanupStage.MEDIA)
+    try:
+        await previous.stop_music()
+        session.ensure_live()
+        old = next(item for item in session.resources if item.name == previous.resource_name and item.value is previous)
+        if registry.resource_for(session.call_id, "queue") is not previous:
+            raise RuntimeError("The queue application changed during preparation")
+        with SessionHandoff(registry, session) as handoff:
+            handoff.preserve(old, "name")
+            handoff.preserve(resource, "name", "closer")
+            registry.transition(session.call_id, owner="queue", state="in_call" if previous.answered else "ringing",
+                                callee=contact.display_name, route_kind="queue")
+            manager.commit_transfer(previous.ticket, ticket, notify=False)
+            old.name = f"retired_queue:{previous.ref.identity}:{session.call_id}"
+            resource.name = f"queue:{session.call_id}"
+            resource.closer = next_app.close
+            previous.resource_key, next_app.resource_key = old.name, resource.name
+            previous.detached = True
+            previous.media = None
+            if next_app.media is not None:
+                next_app.media.on_dtmf = next_app.handle_dtmf
+        next_app.waiter = session.create_task(next_app.run(), name=f"queue-waiter:{target.identity}:{ticket.entry_id}")
+        previous.ticket.changed.set()
+        manager.publish_transfer(previous.ticket, ticket)
+        return next_app
+    except BaseException:
+        manager.rollback_transfer(ticket)
+        if session.live:
+            session.release_resource(key, value=next_app)
+        raise

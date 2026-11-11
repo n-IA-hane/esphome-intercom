@@ -3831,6 +3831,14 @@ class VoipStackCard extends HTMLElement {
       row.className = "softphone-group-row";
       const label = document.createElement("span");
       label.textContent = String(queue.name || "");
+      const reasons = Array.isArray(queue.unavailable_reasons) ? queue.unavailable_reasons : [];
+      const reasonLabels = {queue_disabled: "Disabled", paused: "Paused", logged_out: "Logged out",
+        offline: "Offline", dnd: "Do not disturb", busy: "Busy", reserved: "Reserved", wrap_up: "Wrap-up"};
+      if (reasons.length) label.textContent += ` · ${this._t(reasonLabels[reasons[0]] || reasons[0])}`;
+      label.title = [reasons.join(", "), queue.pause_reason,
+        queue.wrap_up_remaining > 0 ? `Wrap-up: ${Math.ceil(queue.wrap_up_remaining)}s` : "",
+        queue.reserved_queue_id ? `Reserved: ${queue.reserved_queue_id}` : "",
+        queue.consecutive_misses > 0 ? `Unanswered: ${queue.consecutive_misses}` : ""].filter(Boolean).join(" · ");
       const select = document.createElement("select");
       select.setAttribute("aria-label", String(queue.name || ""));
       for (const [state, text] of [["available", "Available"], ["paused", "Paused"], ["logged_out", "Logged out"]]) {

@@ -1073,17 +1073,17 @@ class VoipStackEngine extends EventTarget {
       throw new Error("No microphone audio track is available.");
     }
     const settings = track.getSettings?.() || {};
+    if (
+      generation !== this._microphoneSwitchGeneration ||
+      context !== this._audioContext ||
+      captureNode !== this._captureNode
+    ) {
+      stream.getTracks().forEach((item) => item.stop());
+      throw new Error("Microphone selection was superseded");
+    }
     if (!context || !captureNode) {
       stream.getTracks().forEach((item) => item.stop());
     } else {
-      if (
-        generation !== this._microphoneSwitchGeneration ||
-        context !== this._audioContext ||
-        captureNode !== this._captureNode
-      ) {
-        stream.getTracks().forEach((item) => item.stop());
-        throw new Error("Microphone selection was superseded");
-      }
       const source = context.createMediaStreamSource(stream);
       source.connect(captureNode);
       const previousSource = this._source;
@@ -1095,6 +1095,7 @@ class VoipStackEngine extends EventTarget {
     }
     if (remember) this._mediaDevices.commit("audioinput", deviceId, settings);
     else this._mediaDevices.setActive("audioinput", settings.deviceId || deviceId);
+    this.recordAutoAnswerMedia("audio", true);
     await this._mediaDevices.refresh();
     return this.mediaDeviceState;
   }

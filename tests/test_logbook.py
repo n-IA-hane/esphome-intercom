@@ -58,10 +58,11 @@ def test_registers_only_terminal_call_events(monkeypatch) -> None:
         ),
     )
 
-    assert len(registrations) == 1
+    assert len(registrations) == 2
     domain, event_type, describe = registrations[0]
     assert domain == DOMAIN
     assert event_type == SIP_CALL_ENDED_EVENT
+    assert registrations[1][:2] == (DOMAIN, const.QUEUE_EVENT)
     assert describe(
         SimpleNamespace(
             data={

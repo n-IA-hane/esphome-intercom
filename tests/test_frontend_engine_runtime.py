@@ -1777,6 +1777,9 @@ for (const frameMs of [2.5, 15, 32, 40]) {{
   }});
 }}
 assert.equal(model.parsePcmFormat("22050:s24le:2:20").sampleRate, 22050);
+assert.equal(model.parsePcmFormat("50000:s16le:1:1.1").frameMs, 1.1);
+assert.equal(model.pcmFrameSamples(50000, 1.1), 55);
+assert.throws(() => model.parsePcmFormat("50000:s16le:1:1.10000001"), /whole PCM frames/);
 for (const token of ["192001:s16le:1:20", "0:s16le:1:20", "16000.5:s16le:1:20", "48000:s16le:1:1001", "48000:s16le:1:0", "48000:s16le:1:NaN"]) {{
   assert.throws(() => model.parsePcmFormat(token));
 }}

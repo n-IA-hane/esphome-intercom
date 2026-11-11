@@ -174,3 +174,29 @@ def matches_call(payload: dict, options: dict) -> bool:
         }:
             return False
     return True
+
+
+def route_window_snapshot(invite, decision=None, *, trunk_invite=False, default_destination=""):
+    """Use the same original identity and route aliases at every ingress gate."""
+    from .inbound_identity import identity_fields
+
+    entry = getattr(decision, "entry", None)
+    target = str(getattr(decision, "target", "") or default_destination or invite.target)
+    routing_target = str(getattr(invite, "routing_target", "") or invite.target)
+    return {**identity_fields(invite),
+        "outbound_trunk_id": str(getattr(invite, "outbound_trunk_id", "") or ""),
+        "caller": invite.caller, "callee": target,
+        "destination": str(getattr(entry, "display_name", "") or target),
+        "called_extension": routing_target if trunk_invite else str(getattr(entry, "extension", "") or routing_target),
+        "ingress": "trunk" if trunk_invite else "extension"}
+
+
+def has_native_route_window(hass, invite, decision=None, *, trunk_invite=False, default_destination=""):
+    """An attached native trigger is an explicit, scoped initial-route request."""
+    from .const import DOMAIN
+
+    registration = getattr(hass, "data", {}).get(DOMAIN, {}).get("registration")
+    filters = getattr(registration, "route_trigger_filters", {})
+    snapshot = route_window_snapshot(invite, decision, trunk_invite=trunk_invite,
+                                     default_destination=default_destination)
+    return any(matches_call(snapshot, options) for options in filters.values())

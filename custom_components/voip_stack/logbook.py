@@ -14,7 +14,7 @@ from homeassistant.components.logbook import (
 )
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DOMAIN, SIP_CALL_ENDED_EVENT
+from .const import DOMAIN, SIP_CALL_ENDED_EVENT, QUEUE_EVENT
 
 from .entity_identity import shared_entity_ids
 
@@ -130,6 +130,16 @@ def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dic
 
 
 @callback
+def describe_queue_event(event):
+    """Describe the raw queue occurrence without querying Recorder."""
+    data = event.data
+    name = data.get("queue_name") or data.get("queue_id") or "Queue"
+    action = str(data.get("event_type") or "changed").replace("_", " ")
+    reason = str(data.get("outcome") or data.get("reason") or "").replace("_", " ")
+    return {"name": str(name), "message": action + (f": {reason}" if reason else ""), "icon": "mdi:account-clock"}
+
+
+@callback
 def async_describe_events(
     hass: HomeAssistant,
     async_describe_event: Callable[
@@ -145,3 +155,4 @@ def async_describe_events(
         return _describe_call(event.data, shared_entity_ids(hass)["call_event"])
 
     async_describe_event(DOMAIN, SIP_CALL_ENDED_EVENT, async_describe_call_event)
+    async_describe_event(DOMAIN, QUEUE_EVENT, describe_queue_event)

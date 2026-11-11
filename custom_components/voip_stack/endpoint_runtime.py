@@ -29,7 +29,7 @@ from .core.audio_format import (
     HA_SIP_PCM_TX_FORMATS,
 )
 from .assist_endpoint import AssistEndpoint
-from .call_forwarder import ForwardRuntime, async_forward_existing_call
+from .call_forwarder import ForwardRuntime, TransferResult, async_forward_existing_call
 from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
 )
@@ -467,8 +467,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         control_endpoint_id: str = "",
         _resolved_decision=None,
         _ring_timeout: float | None = None,
-    ) -> None:
-        await async_forward_existing_call(
+        _queue_offer=None,
+    ) -> asyncio.Task[TransferResult]:
+        return await async_forward_existing_call(
             ForwardRuntime(
                 hass=hass,
                 config=cfg,
@@ -491,6 +492,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             control_endpoint_id=control_endpoint_id,
             _resolved_decision=_resolved_decision,
             _ring_timeout=_ring_timeout,
+            _queue_offer=_queue_offer,
         )
 
     async def _run_trunk_inbound_route_guarded(
