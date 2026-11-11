@@ -195,13 +195,49 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
                 observed["send"].payload_type, 1, target_samples, 902, target_payload * 2)),
                 ("127.0.0.1", target_port))
+            # A receive preference of 10 ms is not a hard packet limit.
+            # Accumulate exactly the sent 20 ms, preserving sample and clock
+            # evidence whether the peer receives one packet or two.
+            frame_bytes = expected_return_rate // 100 * 2
+            reframed, received_bytes = [], 0
             async with asyncio.timeout(3):
-                reframed = [rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096)) for _ in range(2)]
-            if expected_return_rate == target_rate:
-                assert [packet.payload for packet in reframed] == [target_payload, target_payload]
-            else:
-                assert all(len(packet.payload) == expected_return_rate // 100 * 2 for packet in reframed)
-                assert all(max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 2900 for packet in reframed)
+                while received_bytes < frame_bytes * 2:
+                    packet = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                    reframed.append(packet)
+                    received_bytes += len(packet.payload)
+                sizes = [len(packet.payload) for packet in reframed]
+                assert sizes in ([frame_bytes * 2], [frame_bytes, frame_bytes])
+                if sdp.parse_sdp(uas.invite.remote_sdp)["maxptime"] == 10:
+                    assert sizes == [frame_bytes, frame_bytes]
+                pcm = b"".join(packet.payload for packet in reframed)
+                assert len(pcm) == frame_bytes * 2
+                elapsed_samples = 0
+                for index, packet in enumerate(reframed, 1):
+                    assert packet.payload_type == caller.dialog.recv_format.payload_type
+                    assert packet.ssrc == returned.ssrc
+                    assert packet.sequence == (returned.sequence + index) & 0xffff
+                    assert packet.timestamp == (returned.timestamp + frame_bytes // 2 + elapsed_samples) & 0xffffffff
+                    elapsed_samples += len(packet.payload) // 2
+                if expected_return_rate == target_rate:
+                    assert pcm == target_payload * 2
+                else:
+                    assert all(max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 2900 for packet in reframed)
+                # A distinct following frame detects a missing or duplicated tail,
+                # including an extra old packet still queued after accumulation.
+                marker = struct.pack(f"!{target_samples}h", *([-3000] * target_samples))
+                await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
+                    observed["send"].payload_type, 2, target_samples * 3, 902, marker)),
+                    ("127.0.0.1", target_port))
+                following = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                assert following.payload_type == caller.dialog.recv_format.payload_type
+                assert following.ssrc == returned.ssrc
+                assert following.sequence == (reframed[-1].sequence + 1) & 0xffff
+                assert following.timestamp == (returned.timestamp + frame_bytes // 2 * 3) & 0xffffffff
+                assert len(following.payload) == frame_bytes
+                if expected_return_rate == target_rate:
+                    assert following.payload == marker
+                else:
+                    assert all(value < -2900 for value in struct.unpack(f"!{len(following.payload)//2}h", following.payload)[-64:])
         assert caller.bye()
         await asyncio.wait_for(session.termination_started.wait(), 3)
         barrier = lab.calls.request_termination(session.call_id, session.termination_intent)

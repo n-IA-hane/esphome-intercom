@@ -451,6 +451,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     if pickup_path != "browser_service":
         relay = runtime.calls.resource_for(session.call_id, "relay")
         await wait_for(lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20)
+    await wait_for(lambda: "Call established" in caller.read())
     assert caller.read().count("Call established") == 1
     caller_state = await runtime.hass.services.async_call("voip_stack", "get_phone_state", {
         "device_id": "pickup-source-device",
