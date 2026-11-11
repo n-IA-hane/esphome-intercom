@@ -115,6 +115,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    from .physical_phone_entity import async_setup_physical_phone_sensors
+    await async_setup_physical_phone_sensors(hass, entry, async_add_entities)
     unified_sensor = VoipPhonebookSensor(hass)
     async_add_entities([unified_sensor], True)
     endpoint_manager = EndpointEntityManager(

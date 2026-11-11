@@ -87,6 +87,12 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_queue_select_ha.py
+  tests/test_sip_account_control_ha.py
+  tests/test_physical_phone_flow_ha.py
+  tests/test_physical_phone_runtime_ha.py
+  tests/test_physical_phone_entity_ha.py
+  tests/test_physical_phone_pnp_ha.py
   tests/test_paging_authorization_ha.py
   tests/test_owned_cleanup_ha.py
   tests/test_queue_activity_ha.py

@@ -15,7 +15,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def config_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    return next(iter(hass.config_entries.async_entries(DOMAIN)), None)
+    return next((entry for entry in hass.config_entries.async_entries(DOMAIN)
+                 if getattr(entry, "source", None) != "ignore"), None)
 
 
 def sip_account_dicts(hass: HomeAssistant) -> list[dict]:

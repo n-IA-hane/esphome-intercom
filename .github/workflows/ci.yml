@@ -32,6 +32,12 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Check out pinned optional phone catalog for interoperability tests
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: n-IA-hane/voip-stack-phone-profiles
+          ref: 97e538c8967526cd92dcbb0db2bf92a1e916b1ed
+          path: .test-deps/phone-profiles
       - name: Configure bounded official APT mirrors
         uses: ./.github/actions/configure-apt
       - name: Check out coordinated ESP component sources
@@ -65,6 +71,7 @@ jobs:
       - name: Run software suite
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/software.xml -ra -vv
+          VOIP_PHONE_PROFILE_CATALOG_PATH: ${{ github.workspace }}/.test-deps/phone-profiles
           AUDIO_STACK_REPO: ${{ github.workspace }}/../esphome-audio-stack
           AUDIO_LIBS_REPO: ${{ github.workspace }}/.test-deps/esp-audio-libs
         run: PYTHON=python scripts/test_suite.sh software-full --keep-going

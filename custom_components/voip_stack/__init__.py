@@ -91,7 +91,9 @@ from .websocket_api import (
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.EVENT,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
@@ -232,7 +234,9 @@ async def _handle_sip_hangup_service(call: ServiceCall) -> None:
         return
     if "expected_generation" in call.data:
         registry = call_registry(call.hass)
-        if not registry.is_generation_current(call_id, int(call.data["expected_generation"])):
+        expected = int(call.data["expected_generation"])
+        if (not registry.is_generation_current(call_id, expected)
+                and not registry.is_terminated(call_id, generation=expected)):
             raise ServiceValidationError("The selected call has ended or changed generation")
     await _control_phone(call, PhoneOperation.HANGUP)
 
@@ -820,6 +824,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     setup_provisioning(hass, entry)
     from .phone_services import async_setup_phone_services
     await async_setup_phone_services(hass, entry)
+    from .physical_phone_provisioning import async_reconcile_physical_phones
+    await async_reconcile_physical_phones(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -852,6 +858,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     await async_close_phone_services(hass)
     if runtime is not None and runtime.phone_provisioning is not None:
         await runtime.phone_provisioning.async_close()
+    if runtime is not None and runtime.physical_phones is not None:
+        await runtime.physical_phones.async_close()
+        runtime.physical_phones = None
     if runtime is not None and runtime.directory is not None:
         runtime.directory.close()
     await _async_shutdown_all(hass)

@@ -332,7 +332,8 @@ class VoipDeviceResolver:
         DeviceInfo identifies a node but does not describe its SIP listener.
         Never infer SIP port/transport or media formats from the API address.
         """
-        if not any(entry.domain == DOMAIN for entry in self.hass.config_entries.async_entries(DOMAIN)):
+        if not any(entry.domain == DOMAIN and getattr(entry, "source", None) != "ignore"
+                   for entry in self.hass.config_entries.async_entries(DOMAIN)):
             return {}
         from .core import sip
         from .store import manual_roster_entries
@@ -369,7 +370,7 @@ class VoipDeviceResolver:
         entity_registry = er.async_get(self.hass)
         device_registry = dr.async_get(self.hass)
         entry = next((item for item in self.hass.config_entries.async_entries(DOMAIN)
-                      if item.domain == DOMAIN), None)
+                      if item.domain == DOMAIN and getattr(item, "source", None) != "ignore"), None)
         provisioner = getattr(getattr(entry, "runtime_data", None), "phone_provisioning", None)
 
         # First pass: ESPHome device IDs owning a voip_state entity, plus

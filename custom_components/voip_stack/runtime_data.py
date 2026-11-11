@@ -104,6 +104,7 @@ class VoipStackRuntime:
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
     phone_provisioning: Any | None = None
+    physical_phones: Any | None = None
     directory: Any | None = None
     ldap_server: Any | None = None
     phone_services: Any | None = None
@@ -121,6 +122,7 @@ class VoipStackRegistration:
     initialized: bool = False
     audio_view: bool = False
     video_view: bool = False
+    physical_phone_view: bool = False
     assist_intents: bool = False
     route_trigger_filters: dict[object, dict] = field(default_factory=dict)
     unanswered_trigger_filters: dict[object, dict] = field(default_factory=dict)

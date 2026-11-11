@@ -152,7 +152,8 @@
           "user": "Impostazioni generali",
           "parking": "Parcheggio chiamate",
           "voicemail": "Voce della segreteria",
-          "phone_services": "Rubrica LDAP"
+          "phone_services": "Rubrica LDAP",
+          "phone_provisioning": "Provisioning telefoni fisici"
         }
       },
       "phone_services": {
@@ -167,6 +168,78 @@
           "tls": "TLS implicito (LDAPS)",
           "certificate": "Percorso certificato PEM",
           "private_key": "Percorso chiave privata PEM"
+        }
+      },
+      "phone_provisioning": {
+        "title": "Provisioning telefoni fisici",
+        "description": "Abilita il catalogo facoltativo e la configurazione dei telefoni fisici. Gli account SIP esistenti restano proprietari delle credenziali e delle chiamate. L’URL pubblico deve essere raggiungibile dai telefoni.",
+        "data": {
+          "enabled": "Abilita provisioning telefoni fisici",
+          "base_url": "URL di Home Assistant per i telefoni",
+          "allow_insecure_http": "Consenti HTTP su una rete locale fidata"
+        },
+        "data_description": {
+          "base_url": "Facoltativo. Lascia vuoto per usare l’URL configurato di Home Assistant. Usa HTTPS, salvo telefoni che richiedono HTTP locale."
+        }
+      },
+      "phone_discovered": {
+        "title": "Telefono rilevato: {name}",
+        "description": "Un telefono ha annunciato il MAC {mac} su {host}. Configuralo per scegliere un profilo verificato e associare account SIP esistenti, oppure usa Ignora per lasciarlo non configurato."
+      },
+      "phone_user": {
+        "title": "Telefono fisico",
+        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l’inventario non crea un secondo endpoint di chiamata.",
+        "data": {
+          "name": "Nome",
+          "mac": "Indirizzo MAC",
+          "profile_id": "Profilo del modello",
+          "host": "Host o indirizzo IP",
+          "area_id": "Area",
+          "person": "Persona",
+          "follow_ha_language": "Segui la lingua di Home Assistant",
+          "enabled": "Abilitato",
+          "update_profile": "Aggiorna il profilo fissato"
+        },
+        "data_description": {
+          "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
+          "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate."
+        }
+      },
+      "phone_language": {
+        "title": "Lingua alternativa del telefono",
+        "description": "Scegli una lingua supportata dal profilo. Questa scelta esplicita interrompe il collegamento alla lingua di Home Assistant.",
+        "data": {
+          "language": "Lingua supportata"
+        }
+      },
+      "phone_bindings": {
+        "title": "Linee e tasti programmabili",
+        "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware.",
+        "data": {
+          "lines": "Linee SIP",
+          "keys": "Tasti programmabili"
+        }
+      },
+      "phone_account": {
+        "title": "Crea account SIP per questa linea",
+        "description": "Usa l’editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
+        "data": {
+          "name": "Nome",
+          "extension": "Interno",
+          "username": "Nome utente SIP",
+          "password": "Password SIP",
+          "enabled": "Abilitato",
+          "dnd": "Non disturbare",
+          "ring_group": "Gruppo di chiamata",
+          "conference_group": "Gruppo conferenza",
+          "conference_ring": "Squilla per le conferenze",
+          "video_enabled": "Consenti negoziazione video",
+          "offline_policy": "Quando non registrato",
+          "offline_forward_target": "Destinazione inoltro",
+          "voicemail_enabled": "Abilita casella vocale"
+        },
+        "data_description": {
+          "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota."
         }
       }
     },
@@ -192,11 +265,48 @@
       "phone_service_base_dn_invalid": "Inserisci un DN base LDAP valido.",
       "phone_service_certificate_required": "Specifica sia il certificato sia la chiave privata per TLS.",
       "trunk_media_nat_invalid": "Scegli auto, direct o manual.",
-      "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide."
+      "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide.",
+      "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
+      "phone_provisioning_url_invalid": "Usa un URL HTTP o HTTPS senza credenziali incorporate, query o frammenti. HTTP richiede l’opzione esplicita per la rete locale.",
+      "phone_name_required": "Il nome del telefono è obbligatorio.",
+      "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
+      "phone_password_required": "La password SIP è obbligatoria.",
+      "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
+      "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
+      "mailbox_removal_failed": "Impossibile eliminare la casella. Ripristina l'accesso alla cartella dei media e riprova.",
+      "invalid_phone_mac": "Inserisci dodici cifre esadecimali del MAC, con due punti o trattini facoltativi.",
+      "invalid_phone_profile": "Scegli un profilo supportato e inserisci un nome.",
+      "invalid_phone_host": "Inserisci soltanto un nome host o un indirizzo IP.",
+      "invalid_phone_person": "Seleziona una entità persona.",
+      "invalid_phone_bindings": "Controlla le posizioni di linee e tasti e i relativi riferimenti.",
+      "invalid_phone_line": "Ogni linea richiede una posizione univoca e un account SIP esistente.",
+      "invalid_phone_key": "Ogni tasto richiede una posizione univoca e una linea inclusa.",
+      "invalid_phone_transport": "Scegli UDP, TCP o TLS.",
+      "phone_mac_exists": "Questo indirizzo MAC appartiene già a un telefono fisico configurato.",
+      "phone_profile_not_ready": "Questo profilo non è pronto per il provisioning. Scegli un altro profilo.",
+      "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
+      "phone_line_unsupported": "La posizione supera il limite di generazione del profilo oppure è duplicata.",
+      "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
+      "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
+      "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
+      "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
+      "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
+      "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
+      "phone_key_label_too_long": "L’etichetta supera il limite in byte del profilo. Accorciala.",
+      "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
-      "already_configured": "VoIP Stack è già configurato."
+      "already_configured": "VoIP Stack è già configurato.",
+      "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",
+      "phone_discovery_expired": "Questa rilevazione non è più attuale. Attendi un nuovo annuncio oppure aggiungi il telefono manualmente.",
+      "invalid_phone_discovery": "L’annuncio del telefono non è valido.",
+      "continue_phone_setup": "Continua nell’editor del telefono fisico.",
+      "phone_provisioning_disabled": "Il provisioning dei telefoni fisici è disabilitato.",
+      "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
+      "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
+      "single_instance_allowed": "È possibile configurare un solo PBX VoIP Stack.",
+      "phone_configured": "Telefono fisico configurato."
     }
   },
   "config_subentries": {
@@ -485,6 +595,110 @@
       "error": {
         "invalid_paging_group": "Gruppo annunci non valido o destinazione in conflitto."
       }
+    },
+    "physical_phone": {
+      "entry_type": "Telefono fisico",
+      "initiate_flow": {
+        "user": "Aggiungi telefono fisico"
+      },
+      "title": "Telefono SIP fisico",
+      "step": {
+        "user": {
+          "title": "Telefono fisico",
+          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l’inventario non crea un secondo endpoint di chiamata.",
+          "data": {
+            "name": "Nome",
+            "mac": "Indirizzo MAC",
+            "profile_id": "Profilo del modello",
+            "host": "Host o indirizzo IP",
+            "area_id": "Area",
+            "person": "Persona",
+            "follow_ha_language": "Segui la lingua di Home Assistant",
+            "enabled": "Abilitato",
+            "update_profile": "Aggiorna il profilo fissato"
+          },
+          "data_description": {
+            "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
+            "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate."
+          }
+        },
+        "language": {
+          "title": "Lingua alternativa del telefono",
+          "description": "Scegli una lingua supportata dal profilo. Questa scelta esplicita interrompe il collegamento alla lingua di Home Assistant.",
+          "data": {
+            "language": "Lingua supportata"
+          }
+        },
+        "bindings": {
+          "title": "Linee e tasti programmabili",
+          "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware.",
+          "data": {
+            "lines": "Linee SIP",
+            "keys": "Tasti programmabili"
+          }
+        },
+        "account": {
+          "title": "Crea account SIP per questa linea",
+          "description": "Usa l’editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
+          "data": {
+            "name": "Nome",
+            "extension": "Interno",
+            "username": "Nome utente SIP",
+            "password": "Password SIP",
+            "enabled": "Abilitato",
+            "dnd": "Non disturbare",
+            "ring_group": "Gruppo di chiamata",
+            "conference_group": "Gruppo conferenza",
+            "conference_ring": "Squilla per le conferenze",
+            "video_enabled": "Consenti negoziazione video",
+            "offline_policy": "Quando non registrato",
+            "offline_forward_target": "Destinazione inoltro",
+            "voicemail_enabled": "Abilita casella vocale"
+          },
+          "data_description": {
+            "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota."
+          }
+        }
+      },
+      "error": {
+        "phone_name_required": "Il nome del telefono è obbligatorio.",
+        "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
+        "phone_password_required": "La password SIP è obbligatoria.",
+        "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
+        "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
+        "mailbox_removal_failed": "Impossibile eliminare la casella. Ripristina l'accesso alla cartella dei media e riprova.",
+        "invalid_phone_mac": "Inserisci dodici cifre esadecimali del MAC, con due punti o trattini facoltativi.",
+        "invalid_phone_profile": "Scegli un profilo supportato e inserisci un nome.",
+        "invalid_phone_host": "Inserisci soltanto un nome host o un indirizzo IP.",
+        "invalid_phone_person": "Seleziona una entità persona.",
+        "invalid_phone_bindings": "Controlla le posizioni di linee e tasti e i relativi riferimenti.",
+        "invalid_phone_line": "Ogni linea richiede una posizione univoca e un account SIP esistente.",
+        "invalid_phone_key": "Ogni tasto richiede una posizione univoca e una linea inclusa.",
+        "invalid_phone_transport": "Scegli UDP, TCP o TLS.",
+        "phone_mac_exists": "Questo indirizzo MAC appartiene già a un telefono fisico configurato.",
+        "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
+        "phone_profile_not_ready": "Questo profilo non è pronto per il provisioning. Scegli un altro profilo.",
+        "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
+        "phone_line_unsupported": "La posizione supera il limite di generazione del profilo oppure è duplicata.",
+        "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
+        "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
+        "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
+        "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
+        "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
+        "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
+        "phone_key_label_too_long": "L’etichetta supera il limite in byte del profilo. Accorciala.",
+        "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
+      },
+      "abort": {
+        "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",
+        "phone_discovery_expired": "Questa rilevazione non è più attuale. Attendi un nuovo annuncio oppure aggiungi il telefono manualmente.",
+        "invalid_phone_discovery": "L’annuncio del telefono non è valido.",
+        "continue_phone_setup": "Continua nell’editor del telefono fisico.",
+        "phone_provisioning_disabled": "Il provisioning dei telefoni fisici è disabilitato.",
+        "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
+        "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
+        "reconfigure_successful": "Telefono fisico aggiornato."
+      }
     }
   },
   "selector": {
@@ -598,6 +812,56 @@
         "round_robin": "A rotazione con memoria",
         "longest_idle": "Libero da più tempo",
         "ordered": "Ordine configurato con escalation"
+      }
+    },
+    "physical_phone_lines": {
+      "fields": {
+        "slot": {
+          "name": "Posizione linea",
+          "overview_label": "Linea {value}"
+        },
+        "endpoint_id": {
+          "name": "Account SIP"
+        },
+        "transport": {
+          "name": "Trasporto SIP"
+        }
+      }
+    },
+    "physical_phone_keys": {
+      "fields": {
+        "slot": {
+          "name": "Posizione tasto",
+          "overview_label": "Tasto {value}"
+        },
+        "function": {
+          "name": "Funzione"
+        },
+        "line": {
+          "name": "Posizione linea"
+        },
+        "target": {
+          "name": "Telefono, coda o destinazione"
+        },
+        "label": {
+          "name": "Etichetta (vuota usa il nome risolto)"
+        }
+      }
+    },
+    "physical_phone_accounts": {
+      "options": {
+        "__create_account__": "Crea un account SIP"
+      }
+    },
+    "physical_phone_key_function": {
+      "options": {
+        "line": "Linea",
+        "speed_dial": "Chiamata rapida",
+        "blf": "Stato telefono (BLF)",
+        "queue_login": "Ingresso/uscita coda",
+        "queue_pause": "Pausa/riprendi coda",
+        "park": "Parcheggio chiamata",
+        "directory": "Rubrica"
       }
     }
   },
@@ -825,6 +1089,17 @@
           "held": "In attesa",
           "terminating": "Chiusura"
         }
+      },
+      "physical_phone_provisioning": {
+        "name": "Provisioning",
+        "state": {
+          "pending": "In attesa",
+          "waiting_idle": "In attesa della fine della chiamata",
+          "ready": "Configurazione pronta per il download",
+          "downloaded": "File scaricato",
+          "error": "Errore",
+          "disabled": "Disabilitato"
+        }
       }
     },
     "switch": {
@@ -861,6 +1136,24 @@
       },
       "trunk_ready": {
         "name": "Pronto"
+      }
+    },
+    "select": {
+      "queue_agent_state": {
+        "name": "Stato in coda di {phone}",
+        "state": {
+          "available": "Disponibile",
+          "paused": "In pausa",
+          "logged_out": "Uscito dalla coda"
+        }
+      }
+    },
+    "button": {
+      "physical_phone_provision": {
+        "name": "Prepara configurazione"
+      },
+      "physical_phone_rotate": {
+        "name": "Ruota credenziale di provisioning"
       }
     }
   },
@@ -1214,6 +1507,50 @@
         },
         "leg_id": {
           "name": "Ramo della chiamata"
+        }
+      }
+    },
+    "provision_phone": {
+      "name": "Prepara provisioning telefono",
+      "description": "Prepara la configurazione attuale per il download. Un file servito non conferma che il telefono lo abbia applicato.",
+      "fields": {
+        "device_id": {
+          "name": "Telefono fisico"
+        },
+        "phone_id": {
+          "name": "ID telefono fisico"
+        }
+      }
+    },
+    "get_phone_provisioning_state": {
+      "name": "Leggi stato provisioning telefono",
+      "description": "Leggi le revisioni preparata e scaricata. Soltanto un amministratore può richiedere esplicitamente l’URL privato di provisioning.",
+      "fields": {
+        "device_id": {
+          "name": "Telefono fisico"
+        },
+        "phone_id": {
+          "name": "ID telefono fisico"
+        },
+        "include_url": {
+          "name": "Includi URL privato di provisioning",
+          "description": "L’URL contiene una credenziale del dispositivo. Mantienilo privato."
+        }
+      }
+    },
+    "refresh_phone_profiles": {
+      "name": "Aggiorna catalogo profili telefoni",
+      "description": "Aggiorna il catalogo facoltativo. I telefoni esistenti mantengono la revisione fissata fino a un aggiornamento esplicito."
+    },
+    "rotate_phone_provisioning_token": {
+      "name": "Ruota credenziale provisioning telefono",
+      "description": "Invalida il vecchio URL privato di download. Configura il nuovo URL prima del prossimo download del telefono.",
+      "fields": {
+        "device_id": {
+          "name": "Telefono fisico"
+        },
+        "phone_id": {
+          "name": "ID telefono fisico"
         }
       }
     }

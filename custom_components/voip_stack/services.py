@@ -46,7 +46,8 @@ SEQUENCE = vol.All(vol.Coerce(int), vol.Range(min=0, max=2**31 - 1))
 
 
 async def async_register_services(hass: HomeAssistant, handlers: dict[str, object]) -> None:
-    phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT}
+    phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT,
+                             vol.Optional("line_id"): IDENTIFIER_TEXT}
     purge_schema = vol.Schema(
         {
             **phone_selector_fields,

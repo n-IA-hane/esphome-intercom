@@ -142,3 +142,5 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   device harness. It is not a production YAML component.
 
 For an offline or browsable copy, [build the documentation site](DOCUMENTATION_SITE.md).
+
+- [Managed physical SIP phones and optional provisioning](PHONE_PROVISIONING.md)

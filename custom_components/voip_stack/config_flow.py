@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
+    SOURCE_USER,
     ConfigEntry,
     ConfigFlow,
     ConfigSubentryFlow,
@@ -456,14 +457,20 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         from .paging_flow import PagingSubentryFlowHandler
         from .group_flow import GroupSubentryFlowHandler
 
-        return {PHONE_SUBENTRY_TYPE: PhoneSubentryFlowHandler, "contact": ContactSubentryFlowHandler,
+        result = {PHONE_SUBENTRY_TYPE: PhoneSubentryFlowHandler, "contact": ContactSubentryFlowHandler,
                 "trunk": TrunkSubentryFlowHandler, "paging": PagingSubentryFlowHandler,
                 "group": GroupSubentryFlowHandler}
+        from .physical_phone import PHYSICAL_PHONE_SUBENTRY_TYPE, provisioning_enabled
+        if provisioning_enabled(config_entry):
+            from .physical_phone_flow import PhysicalPhoneSubentryFlowHandler
+            result[PHYSICAL_PHONE_SUBENTRY_TYPE] = PhysicalPhoneSubentryFlowHandler
+        return result
 
     def _current_entry(self) -> ConfigEntry | None:
         if self.source == SOURCE_RECONFIGURE:
             return self._get_reconfigure_entry()
-        return next(iter(self._async_current_entries()), None)
+        return next((entry for entry in self._async_current_entries()
+                     if entry.source != "ignore"), None)
 
     def _current_entry_data(self) -> tuple[ConfigEntry | None, Mapping[str, Any]]:
         current_entry = self._current_entry()
@@ -499,7 +506,87 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None):
         """Reconfigure the existing VoIP Stack entry from HA's native menu."""
-        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services"])
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services", "phone_provisioning"])
+
+    async def async_step_phone_provisioning(self, user_input=None):
+        """Download an optional index only after explicit opt-in."""
+        from urllib.parse import urlsplit
+        from .physical_phone import CONF_PHONE_PROVISIONING
+        from .phone_profile_catalog import PhoneProfileCatalog
+        entry = self._current_entry()
+        if entry is None:
+            return self.async_abort(reason="configure_pbx_first")
+        values = dict(entry.data.get(CONF_PHONE_PROVISIONING, {}))
+        errors = {}
+        if user_input is not None:
+            values.update(user_input)
+            if values.get("enabled"):
+                url = str(values.get("base_url") or "")
+                parsed = urlsplit(url)
+                if url and (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                            or parsed.username or parsed.password or parsed.query or parsed.fragment
+                            or (parsed.scheme == "http" and not values.get("allow_insecure_http"))):
+                    errors["base"] = "phone_provisioning_url_invalid"
+                if not errors:
+                    try:
+                        await PhoneProfileCatalog(self.hass).async_manifest()
+                    except Exception:
+                        errors["base"] = "phone_catalog_unavailable"
+            if not errors:
+                return self.async_update_and_abort(entry,
+                    data_updates={CONF_PHONE_PROVISIONING: values}, reason="reconfigure_successful")
+        return self.async_show_form(step_id="phone_provisioning", errors=errors, data_schema=vol.Schema({
+            vol.Required("enabled", default=bool(values.get("enabled", False))): BooleanSelector(),
+            vol.Optional("base_url", default=values.get("base_url", "")): TextSelector(),
+            vol.Required("allow_insecure_http", default=bool(values.get("allow_insecure_http", False))): BooleanSelector(),
+        }))
+
+    async def async_step_integration_discovery(self, discovery_info):
+        """Native discovery card chains into the existing PBX's child editor."""
+        from .physical_phone import physical_phone_records, provisioning_enabled
+        from .runtime_data import runtime_data
+        candidate = discovery_info.get("discovery_candidate", {})
+        mac = str(candidate.get("mac") or "")
+        if not re.fullmatch(r"[0-9a-f]{12}", mac):
+            return self.async_abort(reason="invalid_phone_discovery")
+        await self.async_set_unique_id("physical_phone:" + mac)
+        self._abort_if_unique_id_configured()
+        entry = self._current_entry()
+        if entry is None or not provisioning_enabled(entry):
+            return self.async_abort(reason="configure_pbx_first")
+        if any(phone["mac"] == mac for phone in physical_phone_records(entry).values()):
+            return self.async_abort(reason="already_configured")
+        runtime = runtime_data(self.hass)
+        manager = runtime.physical_phones if runtime is not None else None
+        observed = manager.discovery.candidates.get(mac) if manager and manager.discovery else None
+        if observed is None:
+            return self.async_abort(reason="phone_discovery_expired")
+        self._physical_candidate = observed.setup_data()
+        self.context["title_placeholders"] = {"name": (observed.vendor + " " + observed.model).strip() or mac}
+        return await self.async_step_phone_discovered()
+
+    async def async_step_phone_discovered(self, user_input=None):
+        if user_input is not None:
+            from .physical_phone_flow import DiscoveredPhoneEditor
+            entry = self._current_entry()
+            self._phone_editor = DiscoveredPhoneEditor(self, entry)
+            return await self._phone_editor.async_step_user({"discovery_candidate": self._physical_candidate})
+        return self.async_show_form(step_id="phone_discovered", data_schema=vol.Schema({}),
+            description_placeholders={"name": (self._physical_candidate.get("vendor", "") + " "
+                + self._physical_candidate.get("model", "")).strip(),
+                "mac": self._physical_candidate["mac"], "host": self._physical_candidate["host"]})
+
+    async def async_step_phone_user(self, user_input=None):
+        return await self._phone_editor.async_step_user(user_input)
+
+    async def async_step_phone_language(self, user_input=None):
+        return await self._phone_editor.async_step_language(user_input)
+
+    async def async_step_phone_bindings(self, user_input=None):
+        return await self._phone_editor.async_step_bindings(user_input)
+
+    async def async_step_phone_account(self, user_input=None):
+        return await self._phone_editor.async_step_account(user_input)
 
     async def async_step_user(self, user_input=None):
         """Handle install/reconfigure of the single VoIP Stack entry.
@@ -509,6 +596,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         SIP/TCP like a normal SIP endpoint.
         """
         _current_entry, existing = self._current_entry_data()
+        if _current_entry is not None and self.source == SOURCE_USER:
+            return self.async_abort(reason="single_instance_allowed")
         defaults = {
             "sip_port": existing.get("sip_port", VOIP_STACK_SIP_PORT),
             "rtp_port": existing.get("rtp_port", VOIP_STACK_RTP_PORT),

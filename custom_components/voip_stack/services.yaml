@@ -376,6 +376,11 @@ decline:
       description: Select a specific call or customize its SIP rejection.
       collapsed: true
       fields:
+        line_id:
+          name: Physical phone line
+          description: Optional configured line slot when selecting a managed physical SIP phone.
+          selector:
+            text:
         call_id:
           name: Call ID
           required: false
@@ -738,6 +743,11 @@ hangup:
       description: Select a specific concurrent call.
       collapsed: true
       fields:
+        line_id:
+          name: Physical phone line
+          description: Optional configured line slot when selecting a managed physical SIP phone.
+          selector:
+            text:
         call_id:
           name: Call ID
           required: false
@@ -1881,3 +1891,55 @@ pickup:
           name: Call leg
           selector:
             text: {}
+
+provision_phone:
+  name: Prepare phone provisioning
+  description: Generate the selected physical phone configuration when its lines are idle. This does not reboot the phone.
+  fields:
+    device_id:
+      name: Physical phone
+      selector:
+        device:
+          integration: voip_stack
+    phone_id:
+      name: Physical phone ID
+      selector:
+        text:
+
+get_phone_provisioning_state:
+  name: Get phone provisioning state
+  description: Return desired and downloaded revisions. Only administrators can request the private provisioning URL.
+  fields:
+    device_id:
+      name: Physical phone
+      selector:
+        device:
+          integration: voip_stack
+    phone_id:
+      name: Physical phone ID
+      selector:
+        text:
+    include_url:
+      name: Include private provisioning URL
+      description: The returned URL contains a device credential. Keep it private.
+      default: false
+      selector:
+        boolean:
+
+refresh_phone_profiles:
+  name: Refresh phone profile catalog
+  description: Refresh the optional profile index. Existing phones keep their pinned profile revision until explicitly updated.
+
+rotate_phone_provisioning_token:
+  name: Rotate phone provisioning credential
+  description: Invalidate the previous download URL for a physical phone. Configure its new private URL before the next download.
+  fields:
+    device_id:
+      name: Physical phone
+      selector:
+        device:
+          integration: voip_stack
+    phone_id:
+      name: Physical phone ID
+      selector:
+        text:

@@ -206,3 +206,27 @@ The distribution semantics follow the established ideas documented in
 and [FreeSWITCH call queues](https://developer.signalwire.com/freeswitch/applications/call-queues/).
 Their settings are not copied into an extra PBX engine: HA endpoints, sessions,
 Recorder and the existing fork/reservation owners remain authoritative.
+
+## Native operator controls and exit classification
+
+Each queue device has a native Select entity for every configured member. Select
+`available`, `paused` or `logged_out` using the same authorized queue state action
+used by automation and BLF keys. Offline status, DND, reservation and remaining
+wrap-up are separate eligibility facts; changing login state does not remove the
+member from the queue. These controls update from the queue owner, without
+periodic polling.
+
+For queue login BLF, green means logged in (including paused) and red means
+logged out. A separate pause key is red while paused. Ordinary phone BLF is not
+changed by this convention.
+
+A successful fallback preserves its original exit cause, such as `queue_timeout`
+or `queue_no_agents`, in `reason` and `outcome`. The separate `disposition` states
+whether it was forwarded, ended, rejected or completed, and `destination`
+identifies a forwarded target. Thus a successful transfer does not erase why the
+caller left the queue. Existing historical records are not rewritten.
+
+Disabling a queue controls its admission policy. Its dial-plan address remains
+resolvable so `fallback_disabled` can run, including a transfer from another
+queue. A disabled queue without a fallback rejects admission without destroying
+a still-recoverable source application.
