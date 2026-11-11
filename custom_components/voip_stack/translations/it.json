@@ -451,7 +451,7 @@
             "fallback_removed": "Destinazione se rimossa"
           },
           "data_description": {
-            "agent_order": "Seleziona i telefoni nell’ordine di squillo desiderato. Gli altri membri seguono. Non cambia l’appartenenza.",
+            "agent_order": "Seleziona i telefoni nell'ordine di squillo desiderato. Gli altri membri seguono. Non cambia l'appartenenza.",
             "auto_pause_after": "0 disabilita. Imposta 3 per mettere in pausa dopo tre squilli senza risposta; occupato, offline e annullamenti non contano.",
             "fallback": "Usata quando la destinazione specifica della condizione è vuota."
           }

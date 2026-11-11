@@ -207,15 +207,22 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_ha_phone_forward_hands_off_the_existing_sip_dialog(self) -> None:
         forward = self.call_forwarder
-        run = forward[forward.index("async def _run_forward()") :]
+        worker = next(
+            node for node in ast.walk(ast.parse(forward))
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_perform_forward"
+        )
+        run = ast.get_source_segment(forward, worker)
         reservation_start = run.index(
             'reservation = (preanswered or {}).get("rtp_reservation")'
         )
-        browser_branch = run[
-            run.index(
-                "if decision.action is RouteAction.ANSWER_HA:"
-            ) : reservation_start
-        ]
+        browser = next(
+            node for node in ast.walk(worker)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "decision.action is RouteAction.ANSWER_HA"
+        )
+        browser_branch = ast.get_source_segment(forward, browser)
+        self.assertIn(browser_branch, run[:reservation_start])
+        self.assertIn("result = await _perform_forward()", forward)
 
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", forward)
         self.assertIn("runtime.route_resolver.logical_endpoint(", forward)
@@ -225,7 +232,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registry.release_endpoint_claim(", browser_branch)
         self.assertIn("runtime.defer_invite_to_softphone(", browser_branch)
         self.assertIn('last_sip_event="ROUTE_FORWARD"', browser_branch)
-        self.assertTrue(browser_branch.rstrip().endswith("return"))
+        defer = next(
+            node for node in ast.walk(browser)
+            if isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "runtime.defer_invite_to_softphone"
+        )
+        self.assertEqual(ast.unparse(defer.args[0]), "invite")
+        self.assertIsInstance(browser.body[-1], ast.Return)
+        self.assertEqual(
+            ast.dump(browser.body[-1].value),
+            ast.dump(ast.parse('TransferResult("ringing", destination)', mode="eval").body),
+        )
         self.assertNotIn("RtpPortReservation.allocate", browser_branch)
         self.assertNotIn("SipCallClient(", browser_branch)
         self.assertNotIn("registry.pending_invites.pop", browser_branch)
@@ -1614,7 +1631,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         runner = self.trunk_inbound_router
         collector = runner.index("selection = await collect_trunk_dtmf(")
         override = runner.index(
-            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window("
         )
         self.assertLess(collector, override)
         self.assertNotIn("route_future", runner[:override])
@@ -1717,7 +1734,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         runner = self.trunk_inbound_router
         cancellation = runner.index("if artifacts.trunk_closed:")
         automation = runner.index(
-            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window("
         )
         self.assertLess(cancellation, automation)
 
