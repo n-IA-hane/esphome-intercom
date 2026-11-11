@@ -222,25 +222,43 @@ async def test_live_sip_paging_group_sends_one_way_pcm_and_caller_bye_closes_eve
     assert len(owner.jobs) == 1
     job = next(iter(owner.jobs.values()))
     await wait_until(lambda: job.state == "playing")
-    samples = client.dialog.send_format.audio_format.nominal_frame_bytes // 2
-    for index in range(8):
-        packet = rtp.RtpPacket(client.dialog.send_format.payload_type, index,
-                               index * client.dialog.send_format.rtp_timestamp_step, 444, struct.pack(f"!{samples}h", *([2300] * samples)))
-        audio.sendto(rtp.build_packet(packet), (client.dialog.remote_rtp_host, client.dialog.remote_rtp_port))
-        await asyncio.sleep(float(client.dialog.send_format.frame_ms) / 1000)
-    for phone in lab.phones:
-        assert len(phone.invites) == 1
-        assert phone.invites[0].header("Answer-Mode") == "Auto"
-        assert b"a=sendonly\r\n" in phone.invites[0].body
-        async with asyncio.timeout(2):
-            while True:
-                raw, _ = await phone.audio.get()
-                packet = rtp.parse_packet(raw)
-                if any(packet.payload):
-                    assert set(struct.unpack(f"!{len(packet.payload) // 2}h", packet.payload)) == {2300}
-                    break
-    await client.terminate()
-    await wait_until(lambda: not owner.jobs)
+    from custom_components.voip_stack.endpoint_session import CleanupStage
+    source_session = lab.calls.get_session(client.dialog_ids.call_id)
+    cleanup_entered, release_cleanup = asyncio.Event(), asyncio.Event()
+    async def hold_source_cleanup(_reason):
+        cleanup_entered.set()
+        await release_cleanup.wait()
+    source_session.add_resource("test:source-cleanup-gate", release_cleanup, hold_source_cleanup,
+                                stage=CleanupStage.RESERVATION)
+    try:
+        samples = client.dialog.send_format.audio_format.nominal_frame_bytes // 2
+        for index in range(8):
+            packet = rtp.RtpPacket(client.dialog.send_format.payload_type, index,
+                                   index * client.dialog.send_format.rtp_timestamp_step, 444, struct.pack(f"!{samples}h", *([2300] * samples)))
+            audio.sendto(rtp.build_packet(packet), (client.dialog.remote_rtp_host, client.dialog.remote_rtp_port))
+            await asyncio.sleep(float(client.dialog.send_format.frame_ms) / 1000)
+        for phone in lab.phones:
+            assert len(phone.invites) == 1
+            assert phone.invites[0].header("Answer-Mode") == "Auto"
+            assert b"a=sendonly\r\n" in phone.invites[0].body
+            async with asyncio.timeout(2):
+                while True:
+                    raw, _ = await phone.audio.get()
+                    packet = rtp.parse_packet(raw)
+                    if any(packet.payload):
+                        assert set(struct.unpack(f"!{len(packet.payload) // 2}h", packet.payload)) == {2300}
+                        break
+        await client.terminate()
+        await asyncio.wait_for(cleanup_entered.wait(), 2)
+        assert not owner.jobs
+        # Child paging work has finished, but the source still owns its final
+        # resource/leg cleanup. Its termination event is the complete barrier.
+        assert lab.calls.get_session(source_session.call_id) is source_session
+        assert not source_session.terminated.is_set()
+    finally:
+        release_cleanup.set()
+        await client.terminate()
+        await asyncio.wait_for(source_session.terminated.wait(), 2)
     assert not lab.calls.sessions
     assert all(phone.bye.is_set() for phone in lab.phones)
     assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
