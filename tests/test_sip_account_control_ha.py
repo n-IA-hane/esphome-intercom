@@ -144,12 +144,16 @@ async def test_sip_control_rejects_wrong_endpoint_generation_acl_and_unsupported
     }, blocking=True)
     await asyncio.wait_for(session.terminated.wait(), 3)
     await lab.hass.services.async_call("voip_stack", "hangup", {
-        "device_id": device.id, "call_id": session.call_id,
+        "device_id": device.id, "call_id": session.call_id, "expected_generation": session.generation,
     }, blocking=True)
     assert {identity: lab.runtime.endpoints.get(identity).device_id for identity in logical_devices} == logical_devices
+    with pytest.raises(ServiceValidationError, match="generation"):
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": device.id, "call_id": session.call_id, "expected_generation": session.generation + 1,
+        }, blocking=True)
     with pytest.raises(ServiceValidationError):
         await lab.hass.services.async_call("voip_stack", "hangup", {
-            "device_id": "transfer_c", "call_id": session.call_id,
+            "device_id": "transfer_c", "call_id": session.call_id, "expected_generation": session.generation,
         }, blocking=True)
 
 
