@@ -266,14 +266,14 @@ def test_real13b_directional_offer_gates_independent_packet_time(independent):
         list(audio_format.HA_SIP_PCM_TX_FORMATS), list(audio_format.HA_SIP_PCM_RX_FORMATS))
     assert selected is not None
     assert (selected.send.sample_rate, selected.send.frame_ms) == (48000, 10)
-    # With independent timing HA now prefers RX16/10. The separate legacy
+    # With independent timing HA now prefers RX16/20. The separate legacy
     # branch still negotiates the captured peer's ordinary 10 ms packet time.
-    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, 10)
+    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, 20 if independent else 10)
     answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 40000,
         selected.send, selected.recv, remote_sdp=peer)
     assert "a=x-voip-stack-flow:96 send\r\n" in answer
     assert "a=x-voip-stack-flow:97 recv\r\n" in answer
-    assert "a=ptime:10\r\n" in answer
+    assert f"a=ptime:{20 if independent else 10}\r\n" in answer
 
 
 @pytest.mark.parametrize("independent", [False, True])

@@ -17,9 +17,9 @@ voip_stack:
     codecs:
       - codec: pcm
         tx:
-          # Prefer the explicit ESP-to-HA 16 kHz / 10 ms contract.
-          - {sample_rate: 16000, frame_ms: 10}
+          # Prefer 20 ms TX (50 packets/s); keep 10 ms as a compatible alternative.
           - {sample_rate: 16000, frame_ms: 20}
+          - {sample_rate: 16000, frame_ms: 10}
         rx:
           # Prefer 48 kHz from HA. At 20 ms this would exceed the payload budget.
           - {sample_rate: 48000, frame_ms: 10}
@@ -30,14 +30,15 @@ voip_stack:
 
 Lists express preferences, followed by explicitly supported alternatives.
 Home Assistant should send 48 kHz/10 ms toward this ESP and receive
-16 kHz/10 ms from it when both sides support that profile. The 16 kHz receive
+16 kHz/20 ms from it when both sides support that profile. The 16 kHz receive
 alternatives allow a compatible peer to avoid unnecessary transcoding.
 
 PCM mono S16 produces 960 audio bytes at 48 kHz/10 ms, 1920 bytes at
 48 kHz/20 ms, and 640 bytes at 16 kHz/20 ms. The default RTP payload budget is
-1200 bytes. The maintained HA/ESP PCM path uses 100 packets per second in both
-directions. The 20 ms alternatives remain available for compatible peers,
-including explicitly configured standard PBX codec profiles.
+1200 bytes. The preferred HA/ESP PCM path uses 100 packets per second from HA
+to the ESP and 50 packets per second from the ESP to HA. The 10 ms TX alternative
+remains available for compatible peers. Changing a preference does not remove
+other declared packet times or make the two directions use the same duration.
 
 TX and RX packet times are independent. SDP `ptime` describes the duration the
 sender of that SDP prefers to receive; it does not impose an identical duration

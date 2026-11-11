@@ -198,7 +198,7 @@ def test_optional_g722_comment_keeps_package_pcm_defaults(tmp_path: Path, profil
     pcm, g722 = codecs
     def shape(formats):
         return [(fmt['sample_rate'], fmt['frame_ms']) for fmt in formats]
-    assert shape(pcm['tx']) == [(16000, 10), (16000, 20)]
+    assert shape(pcm['tx']) == [(16000, 20), (16000, 10)]
     assert shape(pcm['rx']) == [(48000, 10), (16000, 20), (16000, 10)]
     assert shape(g722['tx']) == shape(g722['rx']) == [(16000, 20), (16000, 10)]
     assert all(fmt['pcm_format'] == 's16le' and fmt['channels'] == 1

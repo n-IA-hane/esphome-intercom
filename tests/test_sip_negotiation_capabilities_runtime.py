@@ -151,7 +151,7 @@ def test_peer_maxptime_limits_tx_without_narrowing_local_rx(preference, maximum)
     _assert_receiver_matches_advertised_bounds(offer, selected)
 
 
-def test_native_default_remains_48k_to_phone_16k_from_phone_at_10ms():
+def test_native_default_sends_48k_10ms_and_receives_16k_20ms():
     offer = (
         "v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Independent native peer\r\n"
         "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 110 111\r\n"
@@ -163,7 +163,7 @@ def test_native_default_remains_48k_to_phone_16k_from_phone_at_10ms():
     selected = _negotiate(offer)
     assert selected is not None
     assert (selected.send.sample_rate, selected.send.frame_ms) == (48000, 10)
-    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, 10)
+    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, 20)
 
 
 @pytest.mark.parametrize(

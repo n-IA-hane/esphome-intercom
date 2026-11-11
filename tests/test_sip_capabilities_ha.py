@@ -216,7 +216,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         dialog = lab.calls.sip_client_for(call_id).dialog
         record_property("wire_offer", offers[0])
         assert (dialog.send_format.sample_rate, dialog.send_format.frame_ms) == (48000, 10)
-        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 10)
+        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 20 if independent else 10)
         receiver = RtpAudioReceiver(dialog.recv_format, dialog.recv_formats)
         for count in ((160, 320) if independent else (160,)):
             samples = [1000, -2000] * (count // 2)
@@ -289,8 +289,8 @@ async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_vi
         answered = await response(200)
         invite, = accepted
         assert (invite.send_format.sample_rate, invite.send_format.frame_ms) == (48000, 10)
-        assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 10)
-        assert "a=ptime:10\r\n" in answered.body.decode()
+        assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 20 if independent else 10)
+        assert f"a=ptime:{20 if independent else 10}\r\n" in answered.body.decode()
         assert "m=video 0 RTP/AVP 102\r\n" in answered.body.decode()
         dialog_headers = [(key, value) for key, value in headers if key not in {"To", "CSeq", "Content-Type"}]
         dialog_headers.append(("To", answered.header("To")))
@@ -474,7 +474,7 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
         offer = await asyncio.wait_for(peer.invites.get(), 1)
         assert (b"a=x-voip-stack-flow:" in offer.body) == (outcome in {"known", "no-ptime"})
         assert caller.dialog.send_format.sample_rate == 16000
-        assert caller.dialog.send_format.frame_ms == 10
+        assert caller.dialog.send_format.frame_ms == 20
         assert caller.dialog.recv_format.frame_ms == 20
         caller.bye()
         await wait_until(lambda: not lab.calls.sessions)

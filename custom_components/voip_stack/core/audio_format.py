@@ -114,9 +114,10 @@ HA_SIP_PCM_TX_FORMATS = (
     *(fmt for fmt in HA_SIP_PCM_FORMATS if fmt != _HA_PREFERRED_PCM_TX_FORMAT),
 )
 # Receive preferences are independent of the outgoing codec/packet time.
-# HA sends 48 kHz/10 ms and receives 16 kHz/10 ms from an ESP phone.
+# HA sends 48 kHz/10 ms and prefers 16 kHz/20 ms from an ESP phone.
 # Keep every existing quantum for explicitly configured/negotiated peers.
 _HA_PREFERRED_PCM_RX_FORMATS = (
+    AudioFormat(16000, PcmFormat.S16LE, 1, 20),
     AudioFormat(16000, PcmFormat.S16LE, 1, 10),
     AudioFormat(48000, PcmFormat.S16LE, 1, 10),
 )
