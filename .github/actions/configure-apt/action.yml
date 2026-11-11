@@ -1,0 +1,49 @@
+name: Configure hosted Ubuntu APT
+description: Bound APT acquisition and prefer the existing official HTTPS mirrors.
+runs:
+  using: composite
+  steps:
+    - name: Configure and report effective APT mirrors and timeouts
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "${GITHUB_ACTIONS:-}" = true
+        test "${RUNNER_OS:-}" = Linux
+        test "${RUNNER_ARCH:-}" = X64
+        # Match actions/runner-images e06ccbf configure-apt.sh. This filename
+        # sorts after its zz-retries, so the verified bounds remain effective.
+        sudo tee /etc/apt/apt.conf.d/zz-voip-stack-network >/dev/null <<'EOF'
+        Acquire::Retries "1";
+        Acquire::http::Timeout "15";
+        Acquire::https::Timeout "15";
+        EOF
+        # Reorder only the three existing configure-apt-sources.sh mirrors.
+        # Package sources, suites, components and signing keys are untouched.
+        sudo python3 - <<'PY'
+        from pathlib import Path
+        import re
+
+        path = Path("/etc/apt/apt-mirrors.txt")
+        priorities = {
+            "https://archive.ubuntu.com/ubuntu/": 1,
+            "https://security.ubuntu.com/ubuntu/": 2,
+            "http://azure.archive.ubuntu.com/ubuntu/": 3,
+        }
+        lines = path.read_text().splitlines()
+        entries = []
+        for index, line in enumerate(lines):
+            fields = line.split()
+            if fields and fields[0] in priorities:
+                entries.append((index, fields))
+        if sorted(fields[0] for _, fields in entries) != sorted(priorities):
+            raise SystemExit("The hosted Ubuntu mirror list changed; refusing to add sources")
+        if any(len(fields) != 2 or not re.fullmatch(r"priority:\d+", fields[1]) for _, fields in entries):
+            raise SystemExit("Unexpected hosted Ubuntu mirror attributes")
+        for (index, _), (url, priority) in zip(entries, priorities.items()):
+            lines[index] = f"{url}\tpriority:{priority}"
+        path.write_text("\n".join(lines) + "\n")
+        PY
+        echo 'Effective APT acquisition configuration'
+        apt-config dump Acquire::Retries Acquire::http::Timeout Acquire::https::Timeout
+        echo 'Effective Ubuntu mirror list'
+        cat /etc/apt/apt-mirrors.txt

@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Configure bounded official APT mirrors
+        uses: ./.github/actions/configure-apt
       - name: Check out coordinated ESP component sources
         env:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
@@ -81,6 +83,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Configure bounded official APT mirrors
+        uses: ./.github/actions/configure-apt
       - name: Check out coordinated ESP component sources
         env:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
@@ -132,6 +136,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Configure bounded official APT mirrors
+        uses: ./.github/actions/configure-apt
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
@@ -171,6 +177,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Configure bounded official APT mirrors
+        uses: ./.github/actions/configure-apt
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
