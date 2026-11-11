@@ -368,3 +368,74 @@ async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_nam
     target=root.find('d:dialog/d:local/d:target',NS)
     assert target.attrib['uri']==client.dialog.remote_target_uri
     assert target.find('d:param',NS).attrib=={'pname':'+sip.rendering','pval':'no'}
+
+
+@pytest.mark.parametrize("gruu", [False, True])
+async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_target(lab, blf, monkeypatch, gruu):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    methods, _notifications, send = blf
+    source = PhoneEndpoint(endpoint_id="browser-casa", name="Casa", username="Casa",
+        device_id="browser-casa-device", kind="browser", availability="available")
+    lab.runtime.endpoints.register(source)
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    phone = lab.phones[0]
+    phone.auto_answer = False
+    initial = await methods.handle(subscribe(), ("127.0.0.3", 5060), "UDP", send)
+    assert initial.status == 200
+    call_id = ""
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "bedroom0",
+        }, blocking=True)
+        call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        client = lab.calls.sip_client_for(call_id)
+        assert client is not None and client.dialog is None and len(client.early_dialogs) == 1
+        request = subscribe(tag=initial.to_tag, cseq=2)
+        if gruu:
+            request = replace(request, uri="sip:101@127.0.0.1:5060;transport=udp;gr=watched-instance")
+        refreshed = await methods.handle(request, ("127.0.0.3", 5060), "UDP", send)
+        assert refreshed.status == 200
+        assert dict(refreshed.follow_up.headers)["Event"] == "dialog"
+        root = ElementTree.fromstring(refreshed.follow_up.body)
+        assert root.attrib["entity"] == request.uri
+        dialog = root.find("d:dialog", NS)
+        assert dialog.find("d:state", NS).text == "early"
+        wire = phone.invites[-1]
+        assert dialog.attrib["call-id"] == wire.header("Call-ID")
+        assert dialog.attrib["local-tag"] == "bedroom"
+        assert dialog.attrib["remote-tag"] == sip.extract_tag(wire.header("From"))
+        assert dialog.find("d:remote/d:identity", NS).text == sip.name_addr_uri(wire.header("From"))
+        assert dialog.find("d:remote/d:target", NS).attrib["uri"] == sip.name_addr_uri(wire.header("Contact"))
+    finally:
+        if call_id:
+            session = lab.calls.get_session(call_id)
+            await lab.hass.services.async_call("voip_stack", "hangup", {
+                "device_id": source.device_id, "call_id": call_id,
+            }, blocking=True)
+            await asyncio.wait_for(session.terminated.wait(), 2)
+    assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
+
+
+def test_dialog_fallback_peer_aor_does_not_inherit_watched_gruu():
+    from custom_components.voip_stack.dialog_info import DialogState, document
+
+    entity = "sip:430@127.0.0.1:5060;transport=udp;gr=watched-instance"
+    local = "sip:430@127.0.0.4:5060;gr=actual-phone-instance"
+    remote = "sip:Casa@127.0.0.1:5060;gr=actual-caller-instance"
+    state = DialogState("unwired", "early", "recipient", peer_user="Casa",
+                        local_target=local, remote_target=remote)
+    root = ElementTree.fromstring(document(entity, 0, (state,)))
+    assert root.attrib["entity"] == entity
+    peer = sip.parse_sip_uri(root.find("d:dialog/d:remote/d:identity", NS).text)
+    assert peer.user == "Casa" and "gr" not in dict(peer.params)
+    assert dict(peer.params)["transport"] == "udp"
+    assert root.find("d:dialog/d:local/d:target", NS).attrib["uri"] == local
+    assert root.find("d:dialog/d:remote/d:target", NS).attrib["uri"] == remote

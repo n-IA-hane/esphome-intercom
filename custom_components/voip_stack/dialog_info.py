@@ -107,15 +107,20 @@ def snapshot_all(runtime):
                     else str(session.metadata.get("bridge_dest_call_id") or "")
                 )
                 client = calls.sip_client_for(wire_id)
+                if (client is None and not source and session.owner == "ha_softphone"
+                        and session.route_kind == "direct"
+                        and not session.metadata.get("bridge_dest_call_id")
+                        and endpoint_id == (session.metadata.get("dest_endpoint_id")
+                                            or session.metadata.get("target_endpoint_id"))
+                        and endpoint_id in session.endpoint_claims):
+                    # A direct browser call owns one UAC leg under the session
+                    # ID, rather than a separate bridge destination dialog.
+                    direct = calls.sip_client_for(session.call_id)
+                    direct_key = getattr(direct, "dialog_ids", None)
+                    if direct_key is not None and direct_key.call_id == session.call_id:
+                        client, wire_id = direct, session.call_id
                 key = getattr(client, "dialog_ids", None)
                 contract = getattr(client, "dialog", None)
-                local_uri = remote_uri = local_target = remote_target = ""
-                if contract is not None:
-                    local_uri = str(getattr(contract, "local_uri", "") or "")
-                    remote_uri = str(getattr(contract, "remote_uri", "") or "")
-                    remote_target = str(
-                        getattr(contract, "remote_target_uri", "") or remote_uri
-                    )
                 early = getattr(client, "early_dialogs", {})
                 if (
                     key is not None
@@ -124,7 +129,21 @@ def snapshot_all(runtime):
                 ):
                     from .core.sip_dialog import DialogKey
 
-                    key = DialogKey(key.call_id, key.local_tag, next(iter(early)))
+                    remote_tag = next(iter(early))
+                    key = DialogKey(key.call_id, key.local_tag, remote_tag)
+                    contract = early[remote_tag]
+                local_uri = remote_uri = remote_target = ""
+                local_target = str(getattr(client, "_pending_contact_uri", "")
+                                   or getattr(client, "local_contact_uri", "") or "")
+                if contract is not None:
+                    local_uri = str(getattr(contract, "local_uri", "") or "")
+                    remote_uri = str(getattr(contract, "remote_uri", "") or "")
+                    remote_target = str(getattr(contract, "remote_target_uri", "") or remote_uri)
+                elif client is not None:
+                    # These are the actual strings sent in the existing
+                    # INVITE, without inventing a media contract or peer Contact.
+                    local_uri = str(getattr(client, "_pending_local_uri", "") or "")
+                    remote_uri = str(getattr(client, "_pending_remote_uri", "") or "")
                 if key is None and manager is not None:
                     key = manager.dialog_key(wire_id)
                     if key is not None:
@@ -139,7 +158,7 @@ def snapshot_all(runtime):
                 if not browser:
                     local_tag, remote_tag = remote_tag, local_tag
                     local_uri, remote_uri = remote_uri, local_uri
-                    local_target, remote_target = remote_target, ""
+                    local_target, remote_target = remote_target, local_target
                 state = leg.state if leg is not None else session.state
                 audio_direction = getattr(
                     contract,
@@ -280,7 +299,9 @@ def document(entity, version, states):
         if not remote_uri and item.peer_user:
             from dataclasses import replace
 
-            remote_uri = str(replace(sip.parse_sip_uri(entity), user=item.peer_user))
+            address = sip.parse_sip_uri(entity)
+            remote_uri = str(replace(address, user=item.peer_user,
+                params=tuple((key, value) for key, value in address.params if key.casefold() != "gr")))
         if remote_uri or item.remote_target:
             remote = ElementTree.SubElement(dialog, "remote")
             if remote_uri:

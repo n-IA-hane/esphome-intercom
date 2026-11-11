@@ -82,7 +82,9 @@ async def prepare_replacement(hass, invite, local_ip):
     from .call_transfer import _inbound_server
 
     runtime = require_runtime_data(hass)
-    if invite.replaces.early_only:
+    client = runtime.sip.sip_client_for(invite.replaces.call_id)
+    # RFC 3891 permits replacing an early dialog without the optional flag.
+    if invite.replaces.early_only or (client is not None and client.dialog is None):
         return await _prepare_early_pickup(hass, runtime, invite, local_ip)
     server, _uri = _inbound_server(runtime, invite.replaces.call_id)
     if server is None:
@@ -142,10 +144,22 @@ async def _prepare_early_pickup(hass, runtime, invite, local_ip):
     if (replaces.to_tag != client.dialog_ids.local_tag or replaces.from_tag not in client.early_dialogs):
         return SipInviteResult(481, "Call/Transaction Does Not Exist")
     leg = session.legs.get(replaces.call_id)
-    if leg is None or not leg.endpoint_id:
+    if leg is None:
         return SipInviteResult(481, "Call/Transaction Does Not Exist")
-    return await prepare_sip_pickup(hass, invite, leg.endpoint_id, local_ip,
-                                  call_id=session.call_id, generation=session.generation, leg_id=leg.leg_id)
+    target, leg_id = leg.endpoint_id, leg.leg_id
+    if (session.owner == "ha_softphone" and session.route_kind == "direct"
+            and not session.metadata.get("bridge_dest_call_id")
+            and replaces.call_id == session.call_id):
+        # A direct browser call owns one SIP leg and a separate callee claim.
+        target = str(session.metadata.get("dest_endpoint_id") or session.metadata.get("target_endpoint_id") or "")
+        if (not target or target == session.metadata.get("source_endpoint_id")
+                or target not in session.endpoint_claims):
+            return SipInviteResult(481, "Call/Transaction Does Not Exist")
+        leg_id = leg.leg_id if leg.endpoint_id == target else ""
+    if not target:
+        return SipInviteResult(481, "Call/Transaction Does Not Exist")
+    return await prepare_sip_pickup(hass, invite, target, local_ip,
+                                  call_id=session.call_id, generation=session.generation, leg_id=leg_id)
 
 
 async def _prepare_replacement_locked(hass, invite, local_ip, previous):

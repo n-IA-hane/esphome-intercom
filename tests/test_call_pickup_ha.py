@@ -684,7 +684,11 @@ async def test_sip_pickup_wins_a_ringing_group_without_redialing_caller(register
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
-async def test_early_replaces_matches_all_tags_before_picking_up(registered_phones, trunks):
+@pytest.mark.parametrize("early_only", [False, True])
+@pytest.mark.parametrize("browser_source", [False, True])
+async def test_early_replaces_matches_all_tags_before_picking_up(
+    registered_phones, trunks, early_only, browser_source, monkeypatch
+):
     import time
     from .test_refer_correlation import Peer
     from custom_components.voip_stack.core import sip
@@ -693,14 +697,43 @@ async def test_early_replaces_matches_all_tags_before_picking_up(registered_phon
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
     caller, _old, _unused = registered_phones
-    await asyncio.to_thread(caller.command, "/dial transfer_b")
+    if browser_source:
+        from unittest.mock import AsyncMock
+        from custom_components.voip_stack import softphone_originate
+        from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+        from custom_components.voip_stack.roster import dump_roster_json
+
+        source = PhoneEndpoint(endpoint_id="browser-replaces", name="Browser replaces",
+            device_id="browser-replaces-device", kind="browser", availability="available")
+        runtime.runtime.endpoints.register(source)
+        runtime.hass.states.async_set("sensor.voip_phonebook", "ready",
+            {"roster_json": dump_roster_json(runtime.roster)})
+        monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+        monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+        await runtime.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "transfer_b",
+        }, blocking=True)
+    else:
+        await asyncio.to_thread(caller.command, "/dial transfer_b")
     async with asyncio.timeout(4):
         while not any(s.state == "remote_ringing" for s in runtime.calls.sessions.values()):
             await asyncio.sleep(.01)
     session = next(iter(runtime.calls.sessions.values()))
-    client = runtime.calls.sip_client_for(runtime.calls.bridge_link_for(session.call_id))
+    client = runtime.calls.sip_client_for(runtime.calls.bridge_link_for(session.call_id) or session.call_id)
     assert len(client.early_dialogs) == 1
     remote_tag = next(iter(client.early_dialogs))
+    from xml.etree import ElementTree
+    from custom_components.voip_stack.dialog_info import document, snapshot
+
+    ns = {"d": "urn:ietf:params:xml:ns:dialog-info"}
+    notification = ElementTree.fromstring(document(
+        "sip:transfer_b@127.0.0.1", 0, snapshot(runtime.runtime, "transfer_b")))
+    watched = notification.find("d:dialog", ns)
+    assert watched.attrib["call-id"] == client.dialog_ids.call_id
+    assert watched.attrib["local-tag"] == remote_tag
+    assert watched.attrib["remote-tag"] == client.dialog_ids.local_tag
+    pickup_uri = watched.find("d:remote/d:target", ns).attrib["uri"]
+    pickup_identity = watched.find("d:remote/d:identity", ns).text
     transport, peer = await runtime.hass.loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
     port = transport.get_extra_info("sockname")[1]
     registrar = runtime.calls.component("registrar")
@@ -717,12 +750,13 @@ async def test_early_replaces_matches_all_tags_before_picking_up(registered_phon
         for index, tag in enumerate(("wrong-tag", client.dialog_ids.local_tag)):
             identity = f"early-pickup-{index}"
             headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{port};branch=z9hG4bKpick{index}"),
-                ("From", "<sip:pickup-test@127.0.0.1>;tag=picker"), ("To", "<sip:transfer_b@127.0.0.1>"),
+                ("From", "<sip:pickup-test@127.0.0.1>;tag=picker"), ("To", f"<{pickup_identity}>"),
                 ("Call-ID", identity), ("CSeq", "1 INVITE"), ("Contact", f"<sip:pickup-test@127.0.0.1:{port}>"),
                 ("Content-Type", "application/sdp"), ("Require", "replaces"),
-                ("Replaces", f"{client.dialog_ids.call_id};to-tag={tag};from-tag={remote_tag};early-only")]
+                ("Replaces", f"{client.dialog_ids.call_id};to-tag={tag};from-tag={remote_tag}"
+                 + (";early-only" if early_only else ""))]
             body = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 45000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=sendrecv\r\n"
-            transport.sendto(sip.build_request("INVITE", "sip:transfer_b@127.0.0.1", headers, body), target)
+            transport.sendto(sip.build_request("INVITE", pickup_uri, headers, body), target)
             while True:
                 response, address = await peer.receive()
                 if response.header("Call-ID") == identity and response.is_response and response.status_code >= 200:
