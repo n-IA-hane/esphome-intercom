@@ -1519,6 +1519,7 @@ def build_offer_directional(
     allow_directional_payloads: bool = False,
     independent_audio_ptime: bool = False,
     codec_policy=None,
+    local_capabilities=None,
 ) -> str:
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
@@ -1718,6 +1719,18 @@ def build_offer_directional(
         if receive_packet_times and audio_direction != "sendonly"
         else packet_time
     )
+    if local_capabilities is not None and not explicit_rtp_formats and audio_direction != "sendonly":
+        # Preference quanta do not limit the receiver. RFC 8866 maxptime is
+        # media-wide, so every advertised receiving codec must fit its budget.
+        receive_bounds = [
+            local_capabilities.max_receive_packet_ms(receiver)
+            for fmt in rtp_formats
+            if (receiver := _local_receive_match(
+                [fmt], receive_capabilities, local_capabilities=local_capabilities
+            )) is not None
+        ]
+        if receive_bounds:
+            max_packet_time = min(receive_bounds)
     if explicit_rtp_formats and audio_direction != "sendonly":
         # maxptime is media-wide. Every advertised receiving mapping must fit,
         # rather than inheriting the largest duration from a different rate.

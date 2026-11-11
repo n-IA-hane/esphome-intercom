@@ -2302,6 +2302,7 @@ class SipCallClient:
                 allow_directional_payloads=self.allow_directional_audio_payloads,
                 independent_audio_ptime=self.independent_audio_ptime,
                 codec_policy=self.codec_policy,
+                local_capabilities=HA_AUDIO_CAPABILITIES,
                 video_port=self.local_video_rtp_port,
                 video_format=self.video_format,
                 video_formats=self.video_formats,

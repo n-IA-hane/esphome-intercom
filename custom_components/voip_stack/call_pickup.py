@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from homeassistant.exceptions import ServiceValidationError
 
 from .endpoint_session import CallToken, CleanupStage
-from .call_scope import has_ringing_destination
+from .call_scope import call_belongs_to_endpoint, has_ringing_destination
 from .call_state import CallPrecondition
 from .runtime_data import require_runtime_data, sip_endpoint_manager
 from .sip_listener import SipInviteResult
@@ -91,7 +91,7 @@ async def pickup_browser(call, endpoint, target):
         if (not claim.authorizes_browser_answer(session, endpoint.endpoint_id)
                 or runtime.sip.resource_for(session.call_id, "pickup") is not claim
                 or session.owner not in {"ha_softphone", "local_bridge"}
-                or endpoint.endpoint_id not in session.endpoint_claims):
+                or not call_belongs_to_endpoint(runtime.sip, session.call_id, endpoint.endpoint_id)):
             raise ServiceValidationError("The ringing call changed before pickup")
         claim.claimed = True
         answer = ServiceCall(
