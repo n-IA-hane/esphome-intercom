@@ -67,6 +67,16 @@ async def async_hangup_browser_call(
 
     routes = pending_routes(hass)
     if call_id and call_id in routes:
+        session = registry.get_session(call_id)
+        if (session is not None
+                and session.metadata.get("source_endpoint_id") == endpoint_id
+                and session.endpoint_claims.get(endpoint_id) == "source"):
+            await EndpointTerminationHandler(hass).terminate(
+                call_id,
+                TerminationIntent(TerminalReason.LOCAL_HANGUP.value,
+                                  initiator=TerminationInitiator.LOCAL_USER),
+            )
+            return
         future = routes[call_id].get("future")
         if future is not None and future.done():
             take_pending_route(hass, call_id)

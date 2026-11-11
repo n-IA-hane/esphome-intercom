@@ -465,6 +465,139 @@ async def test_caller_hangup_while_agent_rings_is_not_an_auto_pause_miss(queue_l
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("tcp_udp_fallback", [False, True])
+async def test_dashboard_hangup_cancels_queue_sip_offers_and_releases_every_owner(queue_lab, monkeypatch, tcp_udp_fallback):
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    lab = queue_lab
+    source = PhoneEndpoint(endpoint_id="browser-test", name="Test" + (" source" * 12 if tcp_udp_fallback else ""), username="Test",
+        device_id="browser-test-device", kind=EndpointKind.BROWSER, availability="available")
+    lab.runtime.endpoints.register(source)
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    for phone in lab.phones:
+        phone.auto_answer = False
+        original_respond = phone.respond
+        def observe_response(request, address, status, body=b"", *, phone=phone, original_respond=original_respond):
+            if status == 180:
+                print("Independent peer180:", {"call_id": request.header("Call-ID"),
+                    "via": request.header("Via"), "udp_source": address})
+            original_respond(request, address, status, body)
+        monkeypatch.setattr(phone, "respond", observe_response)
+    session = None
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "Reception",
+        }, blocking=True)
+        call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        session = lab.calls.get_session(call_id)
+        assert session is not None
+        await asyncio.wait_for(asyncio.gather(*(phone.invited.wait() for phone in lab.phones)), 2)
+        invite_counts = [len(phone.invites) for phone in lab.phones]
+        print("Offered clients:", [(leg.sip_call_id, leg.dialog.signaling_transport,
+            leg.dialog._received_provisional) for leg in session.legs.values() if leg.dialog is not None])
+        for phone in lab.phones:
+            phone.invited.clear()
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": source.device_id, "call_id": call_id,
+        }, blocking=True)
+        print("Dashboard hangup observed:", {
+            "session_live": session.live, "owner": session.owner,
+            "source_claim": lab.runtime.endpoints.get(source.endpoint_id).active_call_id,
+            "invites_before": invite_counts, "invites_after": [len(phone.invites) for phone in lab.phones],
+            "cancels": [sum(request.method == "CANCEL" for request in phone.requests) for phone in lab.phones],
+            "waiting": len(lab.manager.waiting), "reservations": len(lab.manager.reservations),
+            "tasks": list(session.named_tasks),
+        })
+        await asyncio.wait_for(session.terminated.wait(), 2)
+        assert all(any(request.method == "CANCEL" for request in phone.requests) for phone in lab.phones)
+        # Watch the independent peers for a complete former offer window after
+        # the session barrier, so an accidentally resumed queue cannot redial.
+        for invited in await asyncio.gather(*(asyncio.wait_for(phone.invited.wait(),
+                lab.manager.policies[lab.identity].ring_timeout) for phone in lab.phones), return_exceptions=True):
+            assert isinstance(invited, TimeoutError)
+        assert [len(phone.invites) for phone in lab.phones] == invite_counts
+        assert not lab.manager.waiting and not lab.manager.reservations
+        assert not lab.calls.sessions and not session.tasks
+        assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+        assert not lab.runtime.rtp_port_pool.get("used")
+    finally:
+        if session is not None and session.live:
+            await lab.calls.terminate_call_wait(session.call_id, reason="test_cleanup")
+        if session is not None:
+            await asyncio.wait_for(session.terminated.wait(), 2)
+            print("Explicit owner cleanup:", {"sessions": len(lab.calls.sessions),
+                "waiting": len(lab.manager.waiting), "reservations": len(lab.manager.reservations),
+                "tasks": len(session.tasks),
+                "claims": [endpoint.endpoint_id for endpoint in lab.runtime.endpoints.endpoints if endpoint.active_call_id]})
+            assert not lab.calls.sessions and not session.tasks
+            assert not lab.manager.waiting and not lab.manager.reservations
+            assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("operation", ["hangup", "decline"])
+async def test_browser_queue_candidate_rejects_only_its_offer_and_sip_sibling_can_answer(queue_lab, monkeypatch, operation):
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    lab = queue_lab
+    source = PhoneEndpoint(endpoint_id="browser-source", name="Test", username="Test",
+        device_id="browser-source-device", kind=EndpointKind.BROWSER, availability="available")
+    candidate = PhoneEndpoint(endpoint_id="browser-candidate", name="Candidate", username="Candidate",
+        device_id="browser-candidate-device", kind=EndpointKind.BROWSER, availability="available")
+    for endpoint in (source, candidate):
+        lab.runtime.endpoints.register(endpoint)
+    lab.runtime.softphone_presence[candidate.endpoint_id] = 1
+    lab.roster.append(RosterEntry("Candidate", metadata={"local_ha": True,
+        "endpoint_id": candidate.endpoint_id, "endpoint_kind": "browser"}))
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
+        members=("sip:bedroom0", candidate.endpoint_id))
+    lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    phone = lab.phones[0]
+    phone.auto_answer = False
+    session = None
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "Reception",
+        }, blocking=True)
+        call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        session = lab.calls.get_session(call_id)
+        await asyncio.wait_for(phone.invited.wait(), 2)
+        await wait_until(lambda: lab.runtime.softphones.get(candidate.endpoint_id, {}).get("state") == "ringing")
+        await lab.hass.services.async_call("voip_stack", operation, {
+            "device_id": candidate.device_id, "call_id": call_id,
+        }, blocking=True)
+        assert session.live and not session.terminated.is_set()
+        assert lab.runtime.endpoints.get(source.endpoint_id).active_call_id == call_id
+        assert not lab.runtime.endpoints.get(candidate.endpoint_id).active_call_id
+        assert lab.manager.waiting
+        assert not any(request.method == "CANCEL" for request in phone.requests)
+        assert len(phone.invites) == 1
+        phone.answer()
+        session = await wait_for_bridge(lab, call_id)
+        assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": source.device_id, "call_id": call_id,
+        }, blocking=True)
+        await asyncio.wait_for(session.terminated.wait(), 2)
+        assert phone.bye.is_set()
+        assert not lab.calls.sessions and not session.tasks
+        assert not lab.manager.waiting and not lab.manager.reservations
+        assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+    finally:
+        if session is not None and session.live:
+            await lab.calls.terminate_call_wait(session.call_id, reason="test_cleanup")
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("blocked", ["full", "disabled"])
 async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(queue_lab, blocked):
     lab = queue_lab
