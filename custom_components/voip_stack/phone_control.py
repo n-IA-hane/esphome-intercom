@@ -185,6 +185,67 @@ class BrowserPhoneAdapter:
         )
 
 
+class SipAccountPhoneAdapter:
+    """Hang up or decline HA-owned dialogs.
+
+    Answer and originate remain unsupported without a verified device control
+    capability; SIP registration alone does not provide either operation.
+    """
+
+    async def originate(self, phone, request, *, call):
+        raise _unsupported(phone, PhoneOperation.ORIGINATE)
+
+    async def control(self, phone, operation, request, *, call):
+        from .dial_fork import ForkAnswerGate
+        from .endpoint_lifecycle import call_registry
+        from .endpoint_session import TerminationIntent, TerminationInitiator
+        from .endpoint_termination import EndpointTerminationHandler
+        from .runtime_data import endpoint_directory
+
+        registry = call_registry(call.hass)
+        endpoint = endpoint_directory(call.hass).get(phone.endpoint_id)
+        call_id = request.call_id or str(getattr(endpoint, "active_call_id", "") or "")
+        expected = call.data.get("expected_generation")
+        if call_id and registry.is_terminated_for_endpoint(call_id, phone.endpoint_id):
+            if expected is not None and not registry.is_terminated(call_id, generation=int(expected)):
+                raise ServiceValidationError("The selected call has ended or changed generation")
+            return PhoneActionResult(operation=operation, phone=phone, call_id=call_id, state="idle")
+        session = registry.get_session(call_id) if call_id else None
+        if session is None or not session.live:
+            raise ServiceValidationError("Select an active PBX call belonging to this phone")
+        if expected is not None and session.generation != int(expected):
+            raise ServiceValidationError("The selected call has ended or changed generation")
+        token = session.token
+        fork = registry.resource_for(session.call_id, "fork_answer")
+        attempts = [attempt for attempt in fork.attempts if attempt.endpoint_id == phone.endpoint_id] if isinstance(fork, ForkAnswerGate) else []
+        if phone.endpoint_id not in session.endpoint_claims:
+            if attempts and not any(leg.endpoint_id == phone.endpoint_id and not leg.closed for leg in session.legs.values()):
+                return PhoneActionResult(operation=operation, phone=phone, call_id=session.call_id, state="idle")
+            raise ServiceValidationError("The selected call belongs to another phone endpoint")
+        source = session.endpoint_claims[phone.endpoint_id] == "source"
+        legs = [leg for leg in session.legs.values() if leg.endpoint_id == phone.endpoint_id and not leg.closed]
+        connected = any(leg.state == "in_call" or leg.phase in {"answered", "held"}
+            or (leg.dialog is not None and getattr(leg.dialog, "dialog", None) is not None) for leg in legs)
+        candidates = [leg for leg in legs if any(attempt.client is leg.dialog for attempt in attempts)]
+        reason = request.reason or ("local_hangup" if operation is PhoneOperation.HANGUP else "declined")
+        if operation is PhoneOperation.DECLINE:
+            status = int(call.data.get("status") or 603)
+            reason = str(call.data.get("decline_reason") or "").strip() or {
+                486: "busy", 487: "cancelled", 603: "declined",
+            }.get(status, reason)
+        if not source and not connected and candidates:
+            if len(candidates) != 1:
+                raise ServiceValidationError("Select an unambiguous SIP leg")
+            await registry.close_leg(session.call_id, candidates[0].leg_id, reason=reason)
+            if registry.get_session(session.call_id, generation=token.generation) is session and session.live:
+                registry.release_endpoint_claim(session.call_id, phone.endpoint_id)
+        else:
+            intent = TerminationIntent(reason, initiator=TerminationInitiator.LOCAL_USER)
+            if operation is PhoneOperation.DECLINE and not session.answer_committed:
+                intent = TerminationIntent.final_response(reason, status, TerminationInitiator.LOCAL_USER)
+            await EndpointTerminationHandler(call.hass).terminate(session.call_id, intent)
+        return PhoneActionResult(operation=operation, phone=phone, call_id=session.call_id, state="idle")
+
 class EspHomePhoneAdapter:
     """Control a physical ESPHome phone through native API actions."""
 
@@ -296,6 +357,7 @@ class PhoneAdapterRegistry:
         self._adapters: dict[EndpointKind, PhoneAdapter] = {
             EndpointKind.BROWSER: BrowserPhoneAdapter(),
             EndpointKind.ESPHOME: EspHomePhoneAdapter(),
+            EndpointKind.SIP_ACCOUNT: SipAccountPhoneAdapter(),
         }
 
     async def originate(
@@ -386,10 +448,26 @@ class PhoneAdapterRegistry:
         endpoint = self._endpoints.resolve(selector)
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
-                return self._endpoint_handle(endpoint, frozenset())
+                return self._endpoint_handle(endpoint, frozenset({PhoneOperation.HANGUP, PhoneOperation.DECLINE}))
             if endpoint.kind.is_softphone:
                 capabilities = ALL_PHONE_OPERATIONS
                 return self._endpoint_handle(endpoint, capabilities)
+
+        for entry in self._hass.config_entries.async_entries(DOMAIN):
+            runtime = getattr(entry, "runtime_data", None)
+            if getattr(runtime, "endpoints", None) is not self._endpoints:
+                continue
+            from .physical_phone import physical_phone_for_device, physical_line_endpoint
+            physical = physical_phone_for_device(self._hass, entry, selector)
+            if physical is not None:
+                try:
+                    endpoint = physical_line_endpoint(runtime, physical,
+                        line_id=str(call.data.get("line_id") or ""), call_id=str(call.data.get("call_id") or ""))
+                except ValueError as error:
+                    raise ServiceValidationError("Select an unambiguous SIP line using line_id or call_id") from error
+                if endpoint.kind is not EndpointKind.SIP_ACCOUNT:
+                    raise ServiceValidationError("Physical phone lines must bind configured SIP accounts")
+                return self._endpoint_handle(endpoint, frozenset({PhoneOperation.HANGUP, PhoneOperation.DECLINE}))
 
         device = await async_resolve_source_device(
             self._hass,
