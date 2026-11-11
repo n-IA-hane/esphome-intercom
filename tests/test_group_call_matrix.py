@@ -612,7 +612,8 @@ class GroupCallMatrixTest(unittest.TestCase):
         )
 
         self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
-        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 20))
+        self.assertIn(audio_format(16000, "s16le", 1, 10), recv)
         self.assertIn(audio_format(32000, "s16le", 1, 10), recv)
         self.assertIn(audio_format(8000, "s16le", 1, 20), send)
         self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
@@ -626,7 +627,8 @@ class GroupCallMatrixTest(unittest.TestCase):
         )
 
         self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
-        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 10))
+        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 20))
+        self.assertIn(audio_format(16000, "s16le", 1, 10), recv)
         self.assertIn(audio_format(8000, "s16le", 1, 20), send)
         self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
 
