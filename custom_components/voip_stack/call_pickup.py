@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 
 from homeassistant.exceptions import ServiceValidationError
 
-from .endpoint_session import CleanupStage
+from .endpoint_session import CallToken, CleanupStage
 from .call_scope import has_ringing_destination
 from .call_state import CallPrecondition
 from .runtime_data import require_runtime_data, sip_endpoint_manager
@@ -16,6 +16,12 @@ from .sip_listener import SipInviteResult
 class PickupClaim:
     endpoint_id: str
     claimed: bool = False
+    token: CallToken | None = None
+
+    def authorizes_browser_answer(self, session, endpoint_id):
+        """One session-owned pickup authorizes only its selected phone."""
+        return (self.token is not None and session.owns(self.token)
+                and self.endpoint_id == endpoint_id)
 
 
 @dataclass(slots=True)
@@ -68,35 +74,49 @@ async def pickup_browser(call, endpoint, target):
         return await _pickup_group_phone(call, endpoint, session)
     if runtime.sip.forward_call is None:
         raise ServiceValidationError("Call forwarding is unavailable")
-    await runtime.sip.forward_call(
-        call_id=session.call_id,
-        destination=endpoint.name,
-        on_failure="resume",
-        precondition=CallPrecondition.capture(session),
-    )
-    task = runtime.sip.task_for(session.call_id, "forward")
-    if task is not None:
+    if runtime.sip.resource_for(session.call_id, "pickup") is not None:
+        raise ServiceValidationError("This call is already being picked up")
+    claim = PickupClaim(endpoint.endpoint_id, token=session.token)
+    resource_name = f"pickup:{session.call_id}"
+    runtime.sip.own_resource(session.call_id, resource_name, claim, lambda _reason: None,
+        stage=CleanupStage.OBSERVER, generation=claim.token.generation)
+    try:
+        task = await runtime.sip.forward_call(
+            call_id=session.call_id,
+            destination=endpoint.name,
+            on_failure="resume",
+            precondition=CallPrecondition.capture(session),
+        )
         await task
-    if not session.live or session.owner not in {"ha_softphone", "local_bridge"}:
-        raise ServiceValidationError("The ringing call changed before pickup")
-    answer = ServiceCall(
-        call.hass,
-        "voip_stack",
-        "answer",
-        {
-            "device_id": endpoint.device_id,
-            "call_id": session.call_id,
-            "media_client_id": str(call.data.get("media_client_id") or ""),
-        },
-        context=call.context,
-    )
-    command = await async_resolve_browser_call_command(
-        call.hass, answer, endpoint_id=endpoint.endpoint_id, endpoint=endpoint
-    )
-    await async_answer_browser_call(call.hass, answer, command)
-    from .call_projection import publish_bridge_projection
-    publish_bridge_projection(call.hass, session, event_type="picked_up", route_kind="pickup")
-    return session
+        if (not claim.authorizes_browser_answer(session, endpoint.endpoint_id)
+                or runtime.sip.resource_for(session.call_id, "pickup") is not claim
+                or session.owner not in {"ha_softphone", "local_bridge"}
+                or endpoint.endpoint_id not in session.endpoint_claims):
+            raise ServiceValidationError("The ringing call changed before pickup")
+        claim.claimed = True
+        answer = ServiceCall(
+            call.hass,
+            "voip_stack",
+            "answer",
+            {
+                "device_id": endpoint.device_id,
+                "call_id": session.call_id,
+                "expected_generation": claim.token.generation,
+                "media_client_id": str(call.data.get("media_client_id") or ""),
+            },
+            context=call.context,
+        )
+        command = await async_resolve_browser_call_command(
+            call.hass, answer, endpoint_id=endpoint.endpoint_id, endpoint=endpoint
+        )
+        await async_answer_browser_call(call.hass, answer, command)
+        from .call_projection import publish_bridge_projection
+        publish_bridge_projection(call.hass, session, event_type="picked_up", route_kind="pickup")
+        return session
+    finally:
+        if session.live:
+            runtime.sip.release_resource(session.call_id, resource_name, value=claim,
+                                        generation=claim.token.generation)
 
 
 async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", generation=None, leg_id=""):
@@ -167,7 +187,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
         return SipInviteResult(488, "Not Acceptable Here")
     fork_gate = registry.resource_for(session.call_id, "fork_answer")
     fork_answer = None
-    claim = PickupClaim(picker)
+    claim = PickupClaim(picker, token=session.token)
     resource_name = f"pickup:{session.call_id}"
     reservation = None
     relay = None

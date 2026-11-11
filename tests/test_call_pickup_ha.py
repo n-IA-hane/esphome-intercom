@@ -540,6 +540,17 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
         monkeypatch.setattr(
             softphone_originate, "_resolve_target_device", AsyncMock(return_value=None)
         )
+        from custom_components.voip_stack.call_pickup import PickupClaim
+        transfers = []
+        forward = runtime.calls.forward_call
+        async def observe_forward(**kwargs):
+            claim = runtime.calls.resource_for(session.call_id, "pickup")
+            assert isinstance(claim, PickupClaim)
+            assert claim.token == session.token and claim.endpoint_id == "browser-picker"
+            task = await forward(**kwargs)
+            transfers.append(task)
+            return task
+        monkeypatch.setattr(runtime.calls, "forward_call", observe_forward)
         await runtime.hass.services.async_call(
             "voip_stack",
             "call",
@@ -554,6 +565,8 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
             runtime.runtime.endpoints.get("browser-picker").active_call_id
             == session.call_id
         )
+        assert len(transfers) == 1 and transfers[0].result().status == "ringing"
+        assert runtime.calls.resource_for(session.call_id, "pickup") is None
     else:
         await asyncio.to_thread(picker.dial, "pickup.transfer_b")
     await wait_for(lambda: session.state == "in_call")
@@ -1141,3 +1154,19 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
         await asyncio.gather(*commands, return_exceptions=True)
         for peer in registered_phones:
             await asyncio.to_thread(peer.command, "/hangupall")
+
+
+@pytest.mark.parametrize("call_id,generation,endpoint_id,terminal,expected", [
+    ("selected-call", 7, "picker", False, True),
+    ("other-call", 7, "picker", False, False),
+    ("selected-call", 8, "picker", False, False),
+    ("selected-call", 7, "other-picker", False, False),
+    ("selected-call", 7, "picker", True, False),
+])
+def test_browser_pickup_authorization_requires_exact_call_token_and_phone(call_id, generation, endpoint_id, terminal, expected):
+    from custom_components.voip_stack.call_pickup import PickupClaim
+    from custom_components.voip_stack.endpoint_session import CallToken, EndpointCallSession, SessionPhase
+    session = EndpointCallSession(call_id, generation,
+        phase=SessionPhase.TERMINATING if terminal else SessionPhase.RINGING)
+    claim = PickupClaim("picker", token=CallToken("selected-call", 7))
+    assert claim.authorizes_browser_answer(session, endpoint_id) is expected

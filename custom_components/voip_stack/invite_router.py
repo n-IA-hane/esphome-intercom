@@ -231,7 +231,8 @@ async def route_invite(
             identified_source = str(local_session.metadata.get("source_endpoint_id") or "")
     source_endpoint_id = identified_source
     source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
-    invite = replace(invite, identified_source_endpoint_id=identified_source)
+    if invite.identified_source_endpoint_id != identified_source:
+        invite = replace(invite, identified_source_endpoint_id=identified_source)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
 

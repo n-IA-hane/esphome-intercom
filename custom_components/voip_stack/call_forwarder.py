@@ -630,8 +630,13 @@ async def async_forward_existing_call(
         parked_audio_socket = None
         from .parking import ParkingCall
         from .local_call_media import LocalCallMedia
-        pickup_claim = application.parked.claim if isinstance(application, ParkingCall) else None
-        browser_pickup = pickup_claim is not None and pickup_claim.current
+        def local_answer_authorized(endpoint_id):
+            from .call_pickup import PickupClaim
+            directed = registry.resource_for(call_id, "pickup")
+            if isinstance(directed, PickupClaim) and directed.authorizes_browser_answer(session, endpoint_id):
+                return True
+            parked = application.parked.claim if isinstance(application, ParkingCall) else None
+            return parked is not None and parked.current and parked.parked.session is session
         parked_media = (application.media if isinstance(application, ParkingCall)
             and isinstance(application.media, LocalCallMedia)
             and application.media.video_relay is not None
@@ -692,7 +697,7 @@ async def async_forward_existing_call(
                     raise RuntimeError("target Home Assistant phone is busy")
                 if endpoint.availability is EndpointAvailability.UNAVAILABLE:
                     raise RuntimeError("target Home Assistant phone is disabled")
-                if application is not None and application.media is not None and not browser_pickup:
+                if application is not None and application.media is not None and not local_answer_authorized(endpoint.endpoint_id):
                     from .browser_application_handoff import forward_application_to_browser
                     await forward_application_to_browser(runtime, registry, session, invite, endpoint, application,
                                                          timeout=_ring_timeout or 30)
@@ -702,7 +707,7 @@ async def async_forward_existing_call(
                         await application.release_media_for_forward()
                     local_source.redirect_browser(endpoint.endpoint_id)
                     await retire_application(pending_browser=True)
-                    return
+                    return TransferResult("ringing", destination)
                 session_id = registry.resolve_session_id(call_id)
                 claims = registry.endpoint_claims_for(session_id)
                 target_was_claimed = endpoint.endpoint_id in claims
@@ -750,7 +755,7 @@ async def async_forward_existing_call(
                             role="destination",
                         )
                     raise
-                return
+                return TransferResult("ringing", destination)
 
             if decision.action is RouteAction.PARKING:
                 from .parking import start_parking_application
@@ -1089,7 +1094,7 @@ async def async_forward_existing_call(
                         TerminalReason.CANCELLED.value,
                         keep_endpoint_id=winner.endpoint_id,
                     )
-                    if application is not None and application.media is not None and not browser_pickup:
+                    if application is not None and application.media is not None and not local_answer_authorized(winner.endpoint_id):
                         from .browser_application_handoff import forward_application_to_browser
                         endpoint = endpoint_registry.get(winner.endpoint_id)
                         if endpoint is None:
@@ -1107,7 +1112,7 @@ async def async_forward_existing_call(
                             accept_video=bool(browser_decision.get("accept_video", True)),
                         )
                         reservation.release()
-                        return
+                        return TransferResult("connected", destination)
                     registry.upsert(
                         call_id,
                         state=CallState.RINGING.value,
@@ -1150,7 +1155,7 @@ async def async_forward_existing_call(
                         reservation.release()
                     if winner.pickup:
                         publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
-                    return
+                    return TransferResult("connected", destination)
 
                 registry.take_pending_route(call_id)
                 _settle_browser_candidates(

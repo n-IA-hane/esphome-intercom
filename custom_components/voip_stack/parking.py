@@ -830,8 +830,7 @@ async def pickup_phone_call(call, endpoint, slot):
     try:
         if registry.forward_call is None:
             raise ParkingError("Call forwarding is unavailable")
-        await registry.forward_call(call_id=session.call_id, destination=endpoint.name, on_failure="resume")
-        task = registry.task_for(session.call_id, "forward")
+        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.name, on_failure="resume")
         if task is not None:
             try:
                 async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):

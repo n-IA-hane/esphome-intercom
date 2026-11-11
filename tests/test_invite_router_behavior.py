@@ -183,7 +183,7 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     runtime.is_ha_target = Mock(return_value=False)
     runtime.get_trunk_config = Mock(return_value={"trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
     runtime.inbound_route_decision = Mock(side_effect=lambda invite, *_: initial if invite.routing_target == "601" else selected_fallback)
-    monkeypatch.setattr(invite_router, "registration_data", lambda h: SimpleNamespace(route_trigger_filters={}))
+    runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     request = AsyncMock(return_value=AutomationRoute(action="decline"))
     monkeypatch.setattr(invite_router, "request_route_override", request)
     monkeypatch.setattr(invite_router, "automation_rejection", lambda **kw: SipInviteResult(603, "Decline", to_tag=""))
@@ -220,7 +220,7 @@ async def test_restricted_registered_caller_cannot_egress_after_route_override(m
     registry = SimpleNamespace(component=lambda _: None, artifact_items=lambda _: iter(()), get_session=lambda _: None,
                                sip_client_for=lambda _: None)
     monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
-    monkeypatch.setattr(invite_router, "registration_data", lambda _: SimpleNamespace(route_trigger_filters={}))
+    runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     monkeypatch.setattr(invite_router, "request_route_override", AsyncMock(return_value=SimpleNamespace(
         action="forward" if override else "", destination="441234567890" if override else "",
     )))
