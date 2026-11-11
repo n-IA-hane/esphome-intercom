@@ -17,28 +17,37 @@ runs:
         Acquire::http::Timeout "15";
         Acquire::https::Timeout "15";
         EOF
-        # Reorder only the three existing configure-apt-sources.sh mirrors.
-        # Package sources, suites, components and signing keys are untouched.
+        # Canonical's DNS outage also affects its official archive mirrors.
+        # Use the independent Kernel Archives HTTPS mirror for signed Ubuntu
+        # content; package sources, suites, components and keys stay unchanged.
         sudo python3 - <<'PY'
         from pathlib import Path
         import re
 
         path = Path("/etc/apt/apt-mirrors.txt")
         priorities = {
-            "https://archive.ubuntu.com/ubuntu/": 1,
-            "https://security.ubuntu.com/ubuntu/": 2,
-            "http://azure.archive.ubuntu.com/ubuntu/": 3,
+            "https://mirrors.edge.kernel.org/ubuntu/": 1,
+            "https://archive.ubuntu.com/ubuntu/": 2,
+            "https://security.ubuntu.com/ubuntu/": 3,
+            "http://azure.archive.ubuntu.com/ubuntu/": 4,
         }
         lines = path.read_text().splitlines()
         entries = []
         for index, line in enumerate(lines):
             fields = line.split()
-            if fields and fields[0] in priorities:
+            if fields and not fields[0].startswith("#"):
+                if fields[0] not in priorities:
+                    raise SystemExit("Unexpected Ubuntu mirror URI")
                 entries.append((index, fields))
-        if sorted(fields[0] for _, fields in entries) != sorted(priorities):
+        original = set(priorities) - {"https://mirrors.edge.kernel.org/ubuntu/"}
+        if sorted(fields[0] for _, fields in entries) not in (sorted(original), sorted(priorities)):
             raise SystemExit("The hosted Ubuntu mirror list changed; refusing to add sources")
         if any(len(fields) != 2 or not re.fullmatch(r"priority:\d+", fields[1]) for _, fields in entries):
             raise SystemExit("Unexpected hosted Ubuntu mirror attributes")
+        if len(entries) == 3:
+            index = entries[-1][0] + 1
+            lines.insert(index, "")
+            entries.append((index, []))
         for (index, _), (url, priority) in zip(entries, priorities.items()):
             lines[index] = f"{url}\tpriority:{priority}"
         path.write_text("\n".join(lines) + "\n")
