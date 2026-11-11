@@ -1,5 +1,23 @@
 # Reference
 
+## Group and announcement actions
+
+The membership actions are `voip_stack.set_phone_memberships` (`phone`, `field`,
+`value`) and `voip_stack.set_phone_queues` (`phone`, `queues`). They edit the
+phone's existing configuration, including queued delivery to an offline ESP.
+
+Use `voip_stack.set_queue_agent_state` with `queue`, `phone` and `state` to log
+in, pause or log out. `voip_stack.get_queue_state` returns policy and member
+availability. `voip_stack.configure_queue` changes the existing queue's waiting,
+ringing, retry, wrap-up and fallback settings. These actions do not register or
+unregister the phone.
+
+`voip_stack.announce` delivers one TTS message or audio file to `targets` and
+returns per-target outcomes. `voip_stack.stop_announcement` accepts the returned
+`announcement_id`. See [actions](SERVICES.md#group-membership-operators-and-paging),
+[queue setup](GROUPS_AND_QUEUES.md) and [paging](PAGING.md) for complete fields,
+defaults and examples.
+
 ## ESP `voip_stack`
 
 ```yaml

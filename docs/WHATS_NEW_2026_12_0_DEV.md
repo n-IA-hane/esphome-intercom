@@ -1,4 +1,6 @@
-# 2026.12.0-dev: Your PBX should be nervous.
+# Your PBX should be nervous.
+
+2026.12.0-dev development preview.
 
 After updating VoIP Stack at the company where I work, I started looking at our
 FreeSWITCH installation a little differently. More and more of what I needed

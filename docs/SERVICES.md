@@ -24,6 +24,28 @@ timeout. Use a [call automation](AUTOMATION_DIALPLAN.md) when the result depends
 on time, presence or keypad input. The reference below explains exact fields,
 call context and failure behavior for more complex sequences.
 
+## Group membership, operators and paging
+
+| Action | Required fields | Behavior |
+| --- | --- | --- |
+| `voip_stack.set_phone_memberships` | `phone`, `field`, `value` | Set `ring_group` or `queues` on the selected phone. `value` accepts comma-separated names or a list; empty removes memberships. |
+| `voip_stack.set_phone_queues` | `phone`, `queues` | Queue-specific form of the same membership operation. New valid names create automatic queue devices. |
+| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` | Use `available`, `paused` or `logged_out` without changing membership. |
+| `voip_stack.get_queue_state` | `queue` | Return policy, waiting count and member availability; optional `phone` filters the members. |
+| `voip_stack.configure_queue` | `queue` | Update `enabled`, `max_waiting`, `max_wait`, `ring_timeout`, `no_agent_wait`, `retry_delay`, `wrap_up`, `fallback` or `hold_media`. |
+| `voip_stack.announce` | `targets` and either TTS or media | Supply `message` with `tts_entity_id`, or `media`. Optional `language`, `options`, `answer_timeout`, `timeout` and `wait` control delivery. |
+| `voip_stack.stop_announcement` | `announcement_id` | Stop only that announcement; repeating the request is safe. |
+
+Phone selectors accept a VoIP endpoint identity, device ID or unambiguous name.
+Queue selectors accept a stable group ID, name or extension. Policy and full
+queue inspection require administrative access; phone operations respect its
+existing control permissions. Offline ESP membership changes remain pending
+until the native text control can confirm them.
+
+See [group devices and queues](GROUPS_AND_QUEUES.md) for limits, operator states
+and BLF keys. See [paging](PAGING.md) for announcement results and the requirements
+for unattended speakerphone or browser playback.
+
 ## Phone state and pickup
 
 ### `voip_stack.get_phone_state`

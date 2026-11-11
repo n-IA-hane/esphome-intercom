@@ -141,6 +141,8 @@ def _command():
     registry = SimpleNamespace(
         sessions={},
         resolve_session_id=lambda call_id: call_id,
+        # These ordinary inbound calls own no browser paging application.
+        resource_for=Mock(return_value=None),
     )
     return SimpleNamespace(
         endpoint_id="kitchen",
@@ -169,11 +171,13 @@ def test_ring_group_answer_is_submitted_to_fork_controller(softphone_answer) -> 
     routes = {"call-1": {"future": object()}}
     softphone_answer.pending_routes = Mock(return_value=routes)
     softphone_answer.set_pending_route_decision = Mock()
+    command = _command()
 
     asyncio.run(
-        softphone_answer.async_answer_browser_call(hass, call, _command())
+        softphone_answer.async_answer_browser_call(hass, call, command)
     )
 
+    command.registry.resource_for.assert_called_once_with("call-1", "browser_paging")
     softphone_answer.set_pending_route_decision.assert_called_once_with(
         hass,
         {
@@ -196,6 +200,7 @@ def test_late_phone_answer_cannot_take_over_an_application(softphone_answer, own
             SimpleNamespace(), SimpleNamespace(data={}), command,
         ))
     softphone_answer.bind_service_call_controller.assert_not_called()
+    command.registry.resource_for.assert_called_once_with("call-1", "browser_paging")
 
 
 def test_generic_forward_owner_rejects_direct_answer(softphone_answer) -> None:
@@ -210,8 +215,10 @@ def test_generic_forward_owner_rejects_direct_answer(softphone_answer) -> None:
     )
     call = SimpleNamespace(data={}, context=object())
     softphone_answer.pending_routes = Mock(return_value={})
+    command = _command()
 
     with pytest.raises(_ServiceValidationError, match="being forwarded"):
         asyncio.run(
-            softphone_answer.async_answer_browser_call(hass, call, _command())
+            softphone_answer.async_answer_browser_call(hass, call, command)
         )
+    command.registry.resource_for.assert_called_once_with("call-1", "browser_paging")

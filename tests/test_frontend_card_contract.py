@@ -500,8 +500,12 @@ class FrontendCardContractTest(unittest.TestCase):
             hangup.index("await voipStackEngine.terminateSoftphoneCall"),
         )
         self.assertNotIn('void voipStackEngine.close("hangup")', hangup)
+        self.assertLess(auto_answer.index("const callId ="), auto_answer.index("await "))
         self.assertIn("this._sessionCallId() !== callId", auto_answer)
-        self.assertIn("await this._answer({ callId, videoPermission })", auto_answer)
+        self.assertIn("softphoneAction && isPagingAutoAnswer(this._softphoneSnapshot)", auto_answer)
+        self.assertIn("await this._answer({ callId, videoPermission,", auto_answer)
+        self.assertIn("...(pagingAutoAnswer ? { sendVideo: false } : {})", auto_answer)
+        self.assertNotRegex(auto_answer, r"this\._autoAnswer\s*=")
 
     def test_video_answer_preflights_camera_and_auto_answer_uses_page_check(self) -> None:
         answer = _method_body(self.source, "async _answer")
