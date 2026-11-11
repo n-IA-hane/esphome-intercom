@@ -148,10 +148,12 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             assert relay.left_decoder is not None and relay.right_encoder is not None
             assert relay.left_to_right is not None
         if expected_return_rate == target_rate and not relay.right_to_left_passthrough:
-            # Unknown peers retain legal 20 ms codec fallbacks in HA's offer.
-            # A 10 ms caller therefore needs the existing packet reframer,
-            # while both PCM contracts remain identical (no sample conversion).
-            assert relay.right_to_left.src == relay.right_to_left.dst
+            # Equal PCM geometry needs only packet reframing when the final
+            # receive and transmit contracts choose different nominal quanta.
+            src, dst = relay.right_to_left.src, relay.right_to_left.dst
+            assert (src.sample_rate, src.pcm_format, src.channels) == (dst.sample_rate, dst.pcm_format, dst.channels)
+            assert src == relay.right.inbound_rtp_format.audio_format
+            assert dst == relay.left.outbound_rtp_format.audio_format
         # Both final SDP contracts must agree with media and the UAS dialog.
         endpoint = sip_endpoint_manager(lab.hass)
         uas = next(server.active_dialogs[session.call_id] for server in
@@ -159,7 +161,8 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         assert uas.invite.send_format.sample_rate == caller.dialog.recv_format.sample_rate
         assert uas.invite.recv_format.sample_rate == caller.dialog.send_format.sample_rate
         if caller_discovery is not None:
-            assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 10
+            assert caller.dialog.send_format.frame_ms == 20
+            assert caller.dialog.recv_format.frame_ms == 10
             assert sdp.parse_sdp(uas.invite.remote_sdp)["maxptime"] == 10
         source_samples = source_rate // 100
         source_payload = struct.pack(f"!{source_samples}h", *([2000] * source_samples))

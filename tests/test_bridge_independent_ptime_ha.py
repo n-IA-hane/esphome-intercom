@@ -23,7 +23,7 @@ def test_actual_options_profile_retains_receiver_preference_across_bridge(indepe
     assert selected is not None
     assert (selected.send.sample_rate, selected.send.frame_ms) == (48000, 10)
     # HA's receive default is independent of the target's preference below.
-    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, 10)
+    assert (selected.recv.sample_rate, selected.recv.frame_ms) == (16000, expected_ms)
     metadata = {
         "sip_capabilities_known": True,
         "sdp_features": ["directional_audio_v1"] + (["independent_audio_ptime_v1"] if independent else []),

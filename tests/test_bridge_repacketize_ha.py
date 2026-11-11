@@ -25,7 +25,7 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize(("source_rate", "destination_rate", "offer_tx10"), [
     (16000, 48000, False), (48000, 48000, False), (16000, 16000, False),
     (16000, 48000, True),
-], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx", "peer16k20-or10-prefers10"])
+], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx", "peer16k20-or10-allows10"])
 async def test_bridge_repacketizes_source_return_without_changing_destination(
     trunks, monkeypatch, source_rate, destination_rate, offer_tx10,
 ):
@@ -81,7 +81,7 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
     # Fixed20 cases exercise the 20->10 bridge regardless of HA preference.
-    # The alternative case keeps20 first in the catalog but permits HA's10ms RX.
+    # The alternative case still sends valid10ms packets, even when HA prefers20.
     offered_ms = 20 if source_rate == 16000 else 10
     source_ms = 10 if offer_tx10 else offered_ms
     caller = SipCallClient(
@@ -130,33 +130,42 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
             # its actual budget. Actual 20 ms packets remain valid even when
             # the HA caller's nominal transmit interval follows the answer.
             answer_format = sdp.parse_sdp(observed["source_answer"])
-            assert answer_format["ptime"] == 10
+            assert answer_format["ptime"] == 20
             assert answer_format["maxptime"] >= source_ms == 20
             assert caller.dialog.send_format.frame_ms == answer_format["ptime"]
             assert caller.dialog.recv_format.frame_ms == 10
-            assert observed["source"].recv_format.frame_ms == 10
+            assert observed["source"].recv_format.frame_ms == 20
             assert observed["source"].recv_format.max_frame_ms >= 20
-            # The same shared bridge preserves the former20ms receive
-            # preference too. Only the listener's preference changed.
+            # An explicitly retained10ms receiver still works. Only the
+            # listener's default preference changed.
             previous_source = replace(observed["original_source"], recv_format=replace(
-                observed["original_source"].recv_format, frame_ms=20))
+                observed["original_source"].recv_format, frame_ms=10))
             previous = real_select(previous_source, observed["destination"])
             assert previous.send_format.frame_ms == 10
-            assert previous.recv_format.frame_ms == 20
+            assert previous.recv_format.frame_ms == 10
             previous_answer = sdp.build_answer_directional(
                 "127.0.0.1", "127.0.0.1", 40000, previous.send_format,
                 previous.recv_format, remote_sdp=previous.remote_sdp)
-            assert sdp.parse_sdp(previous_answer)["ptime"] == 20
+            assert sdp.parse_sdp(previous_answer)["ptime"] == 10
             assert sdp.parse_sdp(previous_answer)["maxptime"] >= 20
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
         samples = source_rate * source_ms // 1000
-        forward = struct.pack(f"!{samples}h", *(index - 300 for index in range(samples)))
-        await lab.hass.loop.sock_sendto(audio, rtp.build_packet(rtp.RtpPacket(
-            caller.dialog.send_format.payload_type, 0, 0, 901, forward,
-        )), (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
+        # Rate conversion consumes complete negotiated input frames. Supply
+        # consecutive short packets until one is complete, retaining the10ms
+        # wire case rather than silently replacing it with a20ms packet.
+        quantum = observed["source"].recv_format.audio_format.nominal_frame_samples
+        packet_count = max(1, (quantum + samples - 1) // samples)
+        total_samples = samples * packet_count
+        forward = struct.pack(f"!{total_samples}h", *(index - 300 for index in range(total_samples)))
+        for index in range(packet_count):
+            payload = forward[index * samples * 2:(index + 1) * samples * 2]
+            await lab.hass.loop.sock_sendto(audio, rtp.build_packet(rtp.RtpPacket(
+                caller.dialog.send_format.payload_type, index, index * samples, 901, payload,
+            )), (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
         async with asyncio.timeout(2):
-            forwarded = [rtp.parse_packet((await target.audio.get())[0]) for _ in range(source_ms // 10)]
+            forwarded = [rtp.parse_packet((await target.audio.get())[0])
+                         for _ in range(packet_count * source_ms // 10)]
         backwards = struct.pack("!320h", *(index - 100 for index in range(320)))
         target_port = int(re.search(rb"m=audio (\d+)", target.last_request.body)[1])
         await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(

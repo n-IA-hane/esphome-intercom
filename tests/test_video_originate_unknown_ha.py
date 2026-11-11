@@ -428,7 +428,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         assert (caller.dialog.video_format is not None) is has_video
         assert caller.dialog.send_format.sample_rate == 16000
         assert caller.dialog.recv_format.sample_rate == 48000
-        assert caller.dialog.send_format.frame_ms == caller.dialog.recv_format.frame_ms == 10
+        assert caller.dialog.send_format.frame_ms == 20
+        assert caller.dialog.recv_format.frame_ms == 10
         relay = lab.calls.resource_for(call_id, 'relay')
         if has_video:
             assert caller.dialog.local_video_direction == direction

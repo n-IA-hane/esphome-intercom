@@ -21,7 +21,7 @@ def ws3_sdp_binary(tmp_path_factory):
     audio = resolved['voip_stack']['audio']
     assert [codec['codec'] for codec in audio['codecs']] == ['pcm']
     pcm = audio['codecs'][0]
-    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['tx']] == [(16000, 10), (16000, 20)]
+    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['tx']] == [(16000, 20), (16000, 10)]
     assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['rx']] == [(48000, 10), (16000, 20), (16000, 10)]
 
     fixture_path = NATIVE / 'tests/test_sdp_receive_payloads.py'

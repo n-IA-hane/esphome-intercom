@@ -1118,7 +1118,7 @@ async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypa
         source_transport = original.transport
         assert original.invite.video_format is None and original.video_relay is None
         # HA's receive preference selects caller TX independently of caller RX.
-        assert source.dialog.send_format.audio_format == AudioFormat(16000, frame_ms=10)
+        assert source.dialog.send_format.audio_format == AudioFormat(16000, frame_ms=20)
         assert source.dialog.recv_format.audio_format == AudioFormat(48000, frame_ms=10)
         result = await picker.invite(target="701", remote_host="127.0.0.1", remote_sip_port=port, timeout=3)
         if result == "ringing":

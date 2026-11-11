@@ -96,7 +96,7 @@ def test_rtp_discovery_hints_cannot_remove_local_codec_alternatives(known):
     assert profile.send_rtp_formats[0].wire_token().endswith("L16/48000/1/10ms")
     assert profile.recv_rtp_formats[0].wire_token().endswith("L16/16000/1/32ms")
     assert profile.send_formats[0].wire_token() == "48000:s16le:1:10"
-    assert profile.recv_formats[0].wire_token() == "16000:s16le:1:10"
+    assert profile.recv_formats[0].wire_token() == "16000:s16le:1:20"
     assert endpoint_routing.sip_target_offer_common_audio(None, SimpleNamespace(metadata=metadata))
 
 
@@ -119,7 +119,7 @@ def test_empty_discovery_keeps_local_directional_preferences():
                 "L16", 48000, 1, 10)
     assert (profile.recv_rtp_formats[0].encoding, profile.recv_rtp_formats[0].sample_rate,
             profile.recv_rtp_formats[0].channels, profile.recv_rtp_formats[0].frame_ms) == (
-                "L16", 16000, 1, 10)
+                "L16", 16000, 1, 20)
 
 
 def test_esphome_extension_is_the_authoritative_request_uri_user(

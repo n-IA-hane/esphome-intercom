@@ -128,12 +128,12 @@ def test_options_derives_one_way_role_without_inventing_packet_time(direction, m
     assert caps["sip_audio_tx_formats"] == caps["sip_audio_rx_formats"] == []
 
 
-def test_ha_pcm_preferences_keep_requested_cadence_and_optional_twenty_ms():
+def test_ha_pcm_preferences_keep_twenty_ms_receive_and_optional_ten_ms():
     from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS
 
     assert HA_SIP_PCM_TX_FORMATS[0].wire_token() == "48000:s16le:1:10"
-    assert HA_SIP_PCM_RX_FORMATS[0].wire_token() == "16000:s16le:1:10"
-    assert any(fmt.sample_rate == 16000 and fmt.frame_ms == 20 for fmt in HA_SIP_PCM_RX_FORMATS)
+    assert HA_SIP_PCM_RX_FORMATS[0].wire_token() == "16000:s16le:1:20"
+    assert any(fmt.sample_rate == 16000 and fmt.frame_ms == 10 for fmt in HA_SIP_PCM_RX_FORMATS)
 
 
 def test_unusable_optional_video_does_not_erase_audio_capabilities():
