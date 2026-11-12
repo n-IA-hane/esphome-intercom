@@ -578,6 +578,7 @@ class SipCallClient:
         self._terminated_invite_branches: set[str] = set()
         self.on_info_dtmf: Callable[[str], None] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
+        self.on_provisional_media: Callable[[SipDialog], Awaitable[PreparedDialogMediaUpdate | None]] | None = None
         self.on_connected_identity: Callable[[str, str], None] | None = None
         self.on_refer: ReferHandler | None = None
         self._invite_cseq = self.dialog_ids.cseq
@@ -2639,6 +2640,7 @@ class SipCallClient:
             _LOGGER.info("SIP RX %s %s from %s:%s", msg.status_code, msg.reason, addr[0], addr[1])
             if msg.status_code is not None and 100 <= msg.status_code < 200:
                 remote_tag = sip.extract_tag(msg.header("To"))
+                previous_early = self.early_dialogs.get(remote_tag)
                 if msg.status_code > 100 and remote_tag:
                     self.early_dialogs.setdefault(remote_tag, None)
                 received_provisional = True
@@ -2646,6 +2648,17 @@ class SipCallClient:
                 if not await self._ack_reliable_provisional(msg, addr):
                     self.request_cancel()
                     return "prack_failed"
+                if (msg.status_code > 100 and msg.body and msg.header("Content-Type").split(";", 1)[0].strip().lower() == "application/sdp"
+                        and "100rel" not in sip.option_tags(msg, "Require")):
+                    self._commit_200_ok(msg, target, remote_host, int(remote_sip_port),
+                        request_uri, local_uri, remote_uri, provisional=True)
+                candidate = self.early_dialogs.get(remote_tag)
+                if (candidate is not None and self.on_provisional_media is not None
+                        and (previous_early is None or not self._same_dialog_media(previous_early, candidate))):
+                    proposal = await self.on_provisional_media(candidate)
+                    if proposal is not None and not await apply_remote_offer_media(proposal.commit, proposal.rollback):
+                        self.request_cancel()
+                        return "media_update_failed"
                 if self._cancel_requested and not self._cancel_sent:
                     self._send_cancel()
                 if _is_invite_progress_response(msg.status_code):
@@ -4732,7 +4745,8 @@ class SipCallClient:
         )
         candidate.session_timer.configure(session_timer, local_role="uac", now=now)
         _LOGGER.info(
-            "SIP 200 OK media selected call_id=%s tx=%s rx=%s answer=[%s]",
+            "SIP %s media selected call_id=%s tx=%s rx=%s answer=[%s]",
+            "provisional" if provisional else "200 OK",
             self.dialog_ids.call_id,
             selected.send.wire_token(),
             selected.recv.wire_token(),

@@ -871,6 +871,28 @@ class SipRtpRelay:
         self.forwarded += 1
         return True
 
+    def prime_silence(self, side: str) -> bool:
+        """Open the negotiated RTP path once, using its own encoder and clock."""
+        if side not in {"left", "right"}:
+            raise ValueError("invalid RTP relay side")
+        peer = self.left if side == "left" else self.right
+        encoder = self.left_encoder if side == "left" else self.right_encoder
+        if not peer.can_receive or peer.connection_held:
+            return False
+        if encoder is None:
+            encoder = RtpPayloadEncoder(peer.outbound_rtp_format,
+                send_formats=peer.outbound_rtp_formats, match_received_codec=peer.match_received_codec)
+            setattr(self, f"{side}_encoder", encoder)
+        payload = encoder.encode(bytes(encoder.input_format.nominal_frame_bytes))
+        fmt = encoder.fmt
+        rtp.use_audio_clock(peer, fmt.rtp_clock_rate)
+        packet = rtp.build_packet(rtp.RtpPacket(fmt.payload_type, peer.sequence, peer.timestamp, peer.ssrc, payload))
+        if not self._send_audio_packet(side, packet):
+            return False
+        peer.sequence = rtp.next_sequence(peer.sequence)
+        peer.timestamp = rtp.next_timestamp(peer.timestamp, fmt.rtp_timestamp_step)
+        return True
+
     def _release_ports(self) -> None:
         """Return the reserved RTP pair exactly once."""
 

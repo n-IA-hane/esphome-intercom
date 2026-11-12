@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
 from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
+from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..config import trunk_identity_uri as _trunk_identity_uri
 from ..const import (
     CONF_SIP_VIDEO,
@@ -66,8 +67,11 @@ from ..sip_bridge import (
     bridge_source_audio,
     build_pending_invite_video_relay,
     video_bridge_offer_formats,
+    invite_rtp_peer,
+    dialog_rtp_peer,
 )
-from ..sip_client import SIP_TIMER_B, SipCallClient
+from ..sip_client import SIP_TIMER_B, SipCallClient, PreparedDialogMediaUpdate
+from ..sip_rtp_bridge import SipRtpRelay
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -445,6 +449,64 @@ async def route_sip_bridge(
         if video_relay is not None:
             await video_relay.stop()
         return SipInviteResult(487, "Request Terminated", to_tag="")
+    early_relay = None
+    early_answer_sdp = ""
+
+    async def prepare_provisional_media(candidate):
+        # Video keeps its existing final-answer negotiation. This adapter
+        # prepares only the audio contract already offered by the caller.
+        if invite.video_format is not None or candidate.video_format is not None:
+            return None
+        previous = early_relay
+        relay = previous or SipRtpRelay(left=invite_rtp_peer(invite), right=dialog_rtp_peer(candidate),
+            left_port=source_relay_port, right_port=dest_relay_port,
+            debug=bool(cfg.get("debug_mode", False)))
+        prior_peer = relay.right
+        update = relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(candidate)) if previous is not None else None
+
+        def require_current():
+            session = registry.get_session(invite.call_id, generation=call_generation)
+            if session is None or not session.live or client.dialog is not None:
+                raise RuntimeError("provisional media call owner changed")
+            if previous is not None and registry.resource_for(invite.call_id, "relay") is not relay:
+                raise RuntimeError("provisional relay owner changed")
+
+        async def commit():
+            nonlocal early_relay, early_answer_sdp
+            require_current()
+            if previous is None:
+                bridge_ports.bind_audio_sockets()
+                bridge_ports.transfer_audio_sockets(relay)
+                registry.attach_relay(invite.call_id, relay)
+                early_relay = relay
+                await relay.start()
+                require_current()
+            elif update is not None:
+                update()
+            answer = build_answer_directional(local_ip, local_ip, source_relay_port,
+                invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp,
+                dtmf=first_offered_dtmf_format(invite.remote_sdp))
+            if not runtime.send_final_response(hass, invite.call_id, 183, "Session Progress", answer_sdp=answer):
+                raise RuntimeError("source no longer accepts provisional media")
+            early_answer_sdp = answer
+            relay.prime_silence("right")
+
+        async def rollback():
+            nonlocal early_relay
+            if previous is None:
+                await relay.stop()
+                session = registry.get_session(invite.call_id, generation=call_generation)
+                if session is not None and session.live and registry.resource_for(invite.call_id, "relay") is relay:
+                    registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=relay)
+                if early_relay is relay:
+                    early_relay = None
+            elif (registry.is_generation_current(invite.call_id, call_generation)
+                    and registry.resource_for(invite.call_id, "relay") is relay):
+                relay.prepare_peer_reconfiguration("right", prior_peer)()
+
+        return PreparedDialogMediaUpdate(commit, rollback)
+
+    client.on_provisional_media = prepare_provisional_media
     registry.attach_sip_client(invite.call_id, client.dialog_ids.call_id, client,
         state=CallState.CALLING.value,
         trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
@@ -559,7 +621,7 @@ async def route_sip_bridge(
             if video_relay is not None:
                 await video_relay.stop()
             return
-        if not bridge_to_trunk:
+        if not bridge_to_trunk and early_relay is None:
             invite = bridge_source_audio(invite, client.dialog)
             session.artifacts.caller_invite = invite
         winner = OutboundLeg(
@@ -591,6 +653,7 @@ async def route_sip_bridge(
                     release_port_pairs=(bridge_ports.ports,),
                     detach_reservations=reservations,
                     enable_video_transcoding=video_transcoding_enabled,
+                    retained_relay=early_relay,
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,
@@ -706,9 +769,9 @@ async def route_sip_bridge(
                 direction="incoming",
                 route_kind=decision.action.value,
                 sip_uri=str(decision_uri),
-                sip_status_code=180,
+                sip_status_code=183 if early_answer_sdp else 180,
                 last_sip_event="SIP_RESPONSE",
             )
-    return SipInviteResult(180 if result in {"ringing", "in_call"} else 100,
-                           "Ringing" if result in {"ringing", "in_call"} else "Trying",
-                           to_tag="", defer_final=True)
+    return SipInviteResult(183 if early_answer_sdp else 180 if result in {"ringing", "in_call"} else 100,
+                           "Session Progress" if early_answer_sdp else "Ringing" if result in {"ringing", "in_call"} else "Trying",
+                           answer_sdp=early_answer_sdp, to_tag="", defer_final=True)

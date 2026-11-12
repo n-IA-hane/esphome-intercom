@@ -257,6 +257,7 @@ class _PendingInvite:
     answer_sdp: str = ""
     decline_reason: str = ""
     cancelled: bool = False
+    reliable_rseq: int = 0
     expiry_task: asyncio.Task[None] | None = None
     final_task: asyncio.Task[None] | None = None
     final_retransmissions: int = 0
@@ -290,6 +291,7 @@ class _ReliableProvisional:
     answer_sdp: str = ""
     task: asyncio.Task[None] | None = None
     deferred_final: _DeferredInviteFinal | None = None
+    deferred_progress: _DeferredInviteFinal | None = None
 
 
 @dataclass(slots=True)
@@ -952,11 +954,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     ) -> bool:
         """Send and own one RFC 3262 provisional transaction."""
 
+        pending.reliable_rseq = pending.reliable_rseq + 1 if pending.reliable_rseq else secrets.randbelow(0x7FFFFFFE) + 1
         reliable = _ReliableProvisional(
             request=pending.request,
             addr=pending.addr,
             to_tag=pending.to_tag,
-            rseq=secrets.randbelow(0x7FFFFFFE) + 1,
+            rseq=pending.reliable_rseq,
             response_status=pending.status,
             response_reason=pending.reason,
             answer_sdp=pending.answer_sdp,
@@ -2617,9 +2620,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             if prack_result is not None and updated is not None:
                 notify_media_commit(prack_result.on_committed, updated)
+            if reliable.deferred_progress is not None:
+                progress = reliable.deferred_progress
+                self.send_final_response(call_id, progress.status, progress.reason,
+                    answer_sdp=progress.answer_sdp, decline_reason=progress.decline_reason)
             if reliable.deferred_final is not None:
                 final = reliable.deferred_final
-                self._send_final_response_now(
+                self.send_final_response(
                     call_id,
                     final.status,
                     final.reason,
@@ -3303,30 +3310,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             if result.defer_final:
                 pending.to_tag = to_tag
-                pending.status = int(result.status)
-                pending.reason = str(result.reason)
-                pending.answer_sdp = answer_sdp
-                pending.decline_reason = result.decline_reason
-                reliable = (
-                    101 <= int(result.status) < 200
-                    and (
-                        sip.supports_option(request, "100rel")
-                        or "100rel" in sip.option_tags(request, "Require")
-                    )
-                )
-                if reliable:
-                    self._send_reliable_provisional(call_id, pending)
-                else:
-                    body = answer_sdp.encode("utf-8") if answer_sdp else b""
-                    self._send_response(
-                        request,
-                        addr,
-                        result.status,
-                        result.reason,
-                        body=body,
-                        to_tag=to_tag,
-                    )
-                self._arm_pending_expiry(call_id, pending)
+                self._send_pending_progress(call_id, pending, result.status, result.reason,
+                    answer_sdp=answer_sdp, decline_reason=result.decline_reason)
                 return
 
             pending.to_tag = to_tag
@@ -3413,6 +3398,30 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     await self.on_terminated(call_id, "media_update_failed")
             raise
 
+    def _send_pending_progress(self, call_id, pending, status, reason, *, answer_sdp="", decline_reason="") -> bool:
+        """Publish one progress response through the pending INVITE owner."""
+        rewritten = (sdp.rewrite_sdp_origin(answer_sdp, pending.local_sdp_session_id,
+            pending.local_sdp_session_version) if answer_sdp else "")
+        if pending.status == int(status) and pending.reason == str(reason) and pending.answer_sdp == rewritten:
+            if pending.expiry_task is None:
+                self._arm_pending_expiry(call_id, pending)
+            return True
+        reliable = self._reliable_provisionals.get(call_id)
+        if reliable is not None:
+            reliable.deferred_progress = _DeferredInviteFinal(int(status), str(reason), str(answer_sdp),
+                str(decline_reason), "", "")
+            return True
+        pending.status, pending.reason = int(status), str(reason)
+        pending.answer_sdp = rewritten
+        pending.decline_reason = decline_reason
+        use_reliable = (101 <= int(status) < 200 and (
+            sip.supports_option(pending.request, "100rel") or "100rel" in sip.option_tags(pending.request, "Require")))
+        sent = (self._send_reliable_provisional(call_id, pending) if use_reliable else
+            self._send_response(pending.request, pending.addr, int(status), str(reason),
+                body=pending.answer_sdp.encode(), to_tag=pending.to_tag, decline_reason=decline_reason))
+        self._arm_pending_expiry(call_id, pending)
+        return sent
+
     def send_final_response(
         self,
         call_id: str,
@@ -3424,10 +3433,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         connected_identity_name: str = "",
         connected_identity_user: str = "",
     ) -> bool:
+        if int(status) < 200:
+            pending = self.pending_invites.get(call_id)
+            return pending is not None and self._send_pending_progress(call_id, pending, status, reason,
+                answer_sdp=answer_sdp, decline_reason=decline_reason)
         reliable = self._reliable_provisionals.get(call_id)
         if (
             reliable is not None
-            and reliable.answer_sdp
+            and (reliable.answer_sdp or (
+                reliable.deferred_progress is not None
+                and reliable.deferred_progress.answer_sdp
+            ))
             and 200 <= int(status) < 300
         ):
             reliable.deferred_final = _DeferredInviteFinal(
