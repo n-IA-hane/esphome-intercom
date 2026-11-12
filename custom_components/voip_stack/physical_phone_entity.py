@@ -70,7 +70,7 @@ class PhysicalPhoneEntity:
         phone = physical_phone_records(self.entry).get(self.phone_id)
         if phone is not None:
             vendor, model = phone["profile_id"].split("/", 1)
-            self._attr_device_info.update(name=phone["name"], manufacturer=vendor.title(), model=model)
+            self._attr_device_info.update({"name": phone["name"], "manufacturer": vendor.title(), "model": model})
         if self.entity_id is not None:
             self.async_write_ha_state()
 

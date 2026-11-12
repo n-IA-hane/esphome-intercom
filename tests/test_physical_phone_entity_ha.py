@@ -1,6 +1,9 @@
 """Physical provisioning entities use the existing owner and authorized actions."""
 
 import json
+import asyncio
+from datetime import timedelta
+import logging
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -12,6 +15,18 @@ from .test_managed_phones_ha import phone_lab as phone_lab, custom_integration_p
 from .test_physical_phone_runtime_ha import add, phone
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.fixture
+def ha11_device_info():
+    class DeviceInfoMapping(dict):
+        # HA2026.11 _DeviceInfoMapping.update takes one positional mapping:
+        # homeassistant/helpers/device_registry.py, lines227-231.
+        def update(self, other):
+            for key, value in other.items():
+                self[key] = value
+
+    return DeviceInfoMapping
 
 
 @pytest.fixture
@@ -141,3 +156,35 @@ async def test_physical_buttons_use_real_admin_service_and_context_without_bypas
     await rotate.async_press()
     assert lab.entry.subentries[lab.subentry.subentry_id].data["provisioning_token"] != previous
     assert "provisioning_token" not in (rotate.extra_state_attributes or {})
+
+
+async def test_full_sensor_setup_with_ha11_device_info_keeps_phonebook_loaded(physical_entities, monkeypatch, ha11_device_info):
+    from homeassistant.helpers.entity_platform import EntityPlatform
+    from custom_components.voip_stack import physical_phone_entity, sensor
+    lab = physical_entities
+    monkeypatch.setattr(physical_phone_entity, "DeviceInfo", ha11_device_info)
+    monkeypatch.setattr(sensor, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+    platform = EntityPlatform(hass=lab.hass, logger=logging.getLogger(__name__), domain="sensor",
+        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
+    platform.config_entry = lab.entry
+    tasks = []
+
+    def add_entities(rows, update_before_add=False, **kwargs):
+        tasks.append(asyncio.create_task(platform.async_add_entities(rows, update_before_add, **kwargs)))
+
+    try:
+        await sensor.async_setup_entry(lab.hass, lab.entry, add_entities)
+        await asyncio.gather(*tasks)
+        await lab.hass.async_block_till_done()
+        book = lab.hass.states.get("sensor.voip_phonebook")
+        assert book is not None and book.state not in {"unknown", "unavailable"}
+        assert "roster_json" in book.attributes
+        assert lab.runtime.phonebook_sensor is not None
+        physical = [entity for entity in platform.entities.values()
+            if isinstance(entity, physical_phone_entity.PhysicalPhoneProvisioningSensor)]
+        assert len(physical) == 1 and physical[0].available
+        assert physical[0].device_info["name"] == lab.inventory["name"]
+    finally:
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await platform.async_reset()
