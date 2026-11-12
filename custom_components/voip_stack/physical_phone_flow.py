@@ -292,7 +292,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     "slot": {"required": True, "selector": SelectSelector({"options": line_slots})},
                     "endpoint_id": {"required": True, "selector": SelectSelector({"options": account_choices,
                         "translation_key": "physical_phone_accounts"})},
-                    "transport": {"default": "udp", "selector": SelectSelector({"options": ["udp", "tcp", "tls"]})},
+                    "transport": {"selector": SelectSelector({"options": ["udp", "tcp", "tls"]})},
                 }}),
             vol.Required("keys", default=self._draft.get("keys", [])): ObjectSelector({
                 "multiple": True, "label_field": "label", "description_field": "function",
@@ -300,7 +300,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     "slot": {"required": True, "selector": SelectSelector({"options": [str(item["slot"]) for item in caps.get("key_slots", [])]})},
                     "function": {"required": True, "selector": SelectSelector({"options": functions,
                         "translation_key": "physical_phone_key_function"})},
-                    "line": {"required": True, "default": "1", "selector": SelectSelector({"options": line_slots})},
+                    "line": {"required": True, "selector": SelectSelector({"options": line_slots})},
                     "target": {"selector": SelectSelector({"options": targets, "custom_value": True})},
                     "label": {"selector": TextSelector()},
                 }}),

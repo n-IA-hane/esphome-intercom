@@ -64,7 +64,7 @@ async def test_reconfigure_has_separate_resource_panels(lab, custom_integrations
     entry = config_entry(lab.hass)
     menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id})
     assert menu["type"] == "menu"
-    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services"}
+    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services", "phone_provisioning"}
     form = await lab.hass.config_entries.flow.async_configure(menu["flow_id"], {"next_step_id": "parking"})
     assert form["step_id"] == "parking" and "enabled" not in form["data_schema"]({})
 

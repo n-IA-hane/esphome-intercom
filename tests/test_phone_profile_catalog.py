@@ -98,6 +98,22 @@ def test_all_real_bundles_root_and_mit_reference_render_identical_bytes(real_ass
     assert no_language > 0
 
 
+def test_real_bundles_accept_actual_minimal_context_with_ldap_disabled(real_assets):
+    _, manifest, reference, _ = real_assets
+    # The runtime legitimately emits directory={} when LDAP is disabled. Do not
+    # pre-normalize this input in the test, or StrictUndefined regressions hide.
+    raw = {"physical": {"name": "Fixture", "mac": "020000000001"}, "directory": {},
+           "lines": [{"slot": 1, "username": "fixture480", "password": "fixture-only",
+                      "server": "192.0.2.10", "port": 5060, "transport": "udp"}]}
+    for metadata in manifest["profiles"]:
+        if metadata["status"] != "software_validated":
+            continue
+        _, profile, templates = decoded(real_assets, metadata["id"])
+        expected = reference.render(profile, templates, raw)
+        actual, _ = phone_profile.render_phone_bundle(profile, templates, raw)
+        assert actual == expected, metadata["id"]
+
+
 @pytest.mark.parametrize("field", ["username", "password", "server", "display_name"])
 def test_real_cfg_control_character_injection_is_rejected_by_both_renderers(real_assets, field):
     _, profile, templates = decoded(real_assets, "yealink/t46s")

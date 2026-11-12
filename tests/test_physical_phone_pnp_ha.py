@@ -14,14 +14,13 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_missing_ipv4_discovery_is_nonfatal_and_releases_partial_resources(trunks, monkeypatch, hass_client):
+async def test_missing_ipv4_discovery_is_nonfatal_and_releases_partial_resources(trunks, monkeypatch):
     from custom_components.voip_stack import physical_phone_provisioning as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
     lab = trunks
     entry = lab.hass.config_entries.async_entries("voip_stack")[0]
     original = lab.runtime.sip
     assert await async_setup_component(lab.hass, "http", {})
-    await hass_client()
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "phone_provisioning": {"enabled": True}})
     monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=HomeAssistantError("No source IPv4")))
     try:
@@ -42,7 +41,7 @@ async def test_missing_ipv4_discovery_is_nonfatal_and_releases_partial_resources
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("path", ["pbx", "discovery"])
-async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transport(trunks, monkeypatch, hass_client, path):
+async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transport(trunks, monkeypatch, path):
     from custom_components.voip_stack import physical_phone_provisioning as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
     from homeassistant.components import network
@@ -53,7 +52,6 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
     udp = endpoint.udp_server.transport
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
     assert await async_setup_component(lab.hass, "http", {})
-    await hass_client()
     monkeypatch.setattr(network, "async_get_source_ip", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(PhoneDiscovery, "_start_flow", AsyncMock())
     transport, peer = await lab.hass.loop.create_datagram_endpoint(lambda: Peer("001122334455"), local_addr=("127.0.0.4", 0))
@@ -94,13 +92,12 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_disable_during_discovery_start_does_not_attach_late_callbacks(trunks, monkeypatch, hass_client):
+async def test_disable_during_discovery_start_does_not_attach_late_callbacks(trunks, monkeypatch):
     from custom_components.voip_stack import physical_phone_provisioning as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
     lab = trunks
     entry = lab.hass.config_entries.async_entries("voip_stack")[0]
     assert await async_setup_component(lab.hass, "http", {})
-    await hass_client()
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def start(_discovery):

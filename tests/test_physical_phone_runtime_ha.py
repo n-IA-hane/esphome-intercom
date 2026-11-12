@@ -1,6 +1,6 @@
 """Opt-in inventory, delivery ownership and genuine SIP discovery contracts."""
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from homeassistant.components.http import KEY_HASS
@@ -10,6 +10,16 @@ from homeassistant.helpers import device_registry as dr
 from .test_managed_phones_ha import phone_lab as phone_lab, custom_integration_path as custom_integration_path
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.fixture
+def disable_http_server(request):
+    """Keep HA's default HTTP mocks except for the real lifecycle oracle."""
+    if getattr(request, "param", False):
+        yield
+    else:
+        with patch("homeassistant.components.http.HomeAssistantHTTP.async_bind"), patch("homeassistant.components.http.HomeAssistantHTTP.start"):
+            yield
 
 
 def phone(**overrides):
@@ -184,12 +194,11 @@ async def test_context_supports_profiles_without_language_and_preserves_supporte
     await manager.async_close()
 
 
-async def test_start_reconcile_and_disable_cancel_one_worker_and_keep_ordinary_sip_owner(phone_lab, monkeypatch, hass_client):
+async def test_start_reconcile_and_disable_cancel_one_worker_and_keep_ordinary_sip_owner(phone_lab, monkeypatch, socket_enabled):
     from custom_components.voip_stack import physical_phone_provisioning as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
     from homeassistant.setup import async_setup_component
     assert await async_setup_component(phone_lab.hass, "http", {})
-    await hass_client()
     data = phone()
     sub = add(phone_lab, data)
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
@@ -215,6 +224,50 @@ async def test_start_reconcile_and_disable_cancel_one_worker_and_keep_ordinary_s
     await module.async_reconcile_physical_phones(phone_lab.hass, phone_lab.entry)
     assert phone_lab.runtime.sip is original and phone_lab.runtime.physical_phones is None
     assert not phone_lab.hass.services.has_service("voip_stack", "provision_phone")
+
+
+@pytest.mark.parametrize("disable_http_server", [True], indirect=True)
+async def test_provisioning_opt_in_after_real_http_start_serves_only_current_owner(phone_lab, monkeypatch, socket_enabled, unused_tcp_port, disable_http_server):
+    from aiohttp import ClientSession
+    from homeassistant.setup import async_setup_component
+    from custom_components.voip_stack import physical_phone_provisioning as module
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    lab = phone_lab
+    data = phone()
+    add(lab, data)
+    original_sip = lab.runtime.sip
+    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("no multicast")))
+    monkeypatch.setattr(module.PhysicalPhoneProvisioner, "async_prepare", AsyncMock())
+    assert await async_setup_component(lab.hass, "http", {
+        "http": {"server_host": ["127.0.0.1"], "server_port": unused_tcp_port}})
+    # HA's server lifecycle permits late views; raw TestServer freezes its router.
+    await lab.hass.http.start()
+    url = f"http://127.0.0.1:{unused_tcp_port}/api/voip_stack/phone_provisioning/{data['phone_id']}/{data['provisioning_token']}/phone.cfg"
+    try:
+        async with ClientSession() as client:
+            async with client.get(url) as response:
+                assert response.status == 404
+            assert lab.runtime.physical_phones is None
+            lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+                "phone_provisioning": {"enabled": True}})
+            await module.async_reconcile_physical_phones(lab.hass, lab.entry)
+            await lab.hass.async_block_till_done()
+            manager = lab.runtime.physical_phones
+            manager.files[data["phone_id"]] = {"phone.cfg": b"fixture-config"}
+            async with client.get(url) as response:
+                assert response.status == 200 and await response.read() == b"fixture-config"
+            lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+                "phone_provisioning": {"enabled": False}})
+            await module.async_reconcile_physical_phones(lab.hass, lab.entry)
+            async with client.get(url) as response:
+                assert response.status == 404
+            assert lab.runtime.sip is original_sip and lab.runtime.physical_phones is None
+            assert not manager.files and not manager._unsubscribers
+    finally:
+        if lab.runtime.physical_phones is not None:
+            await lab.runtime.physical_phones.async_close()
+            lab.runtime.physical_phones = None
+        await lab.hass.http.stop()
 
 
 async def test_existing_sip_application_admits_only_opted_in_discovery_before_account_auth(phone_lab):
