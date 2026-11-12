@@ -129,6 +129,36 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
     state.reload.assert_not_awaited()
 
 
+async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_flow):
+    from custom_components.voip_stack.physical_phone import normalize_physical_phone
+    from custom_components.voip_stack.physical_phone_flow import PhysicalPhoneSubentryFlowHandler
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    from custom_components.voip_stack.sip_registrar import SipAccount
+
+    state = physical_flow
+    form = await submit(state, await start(state), identity())
+    tls_bindings = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "tls"}])
+    with pytest.raises(InvalidData):
+        await submit(state, form, tls_bindings)
+    selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
+    transport = selectors["lines"].serialize()["selector"]["object"]["fields"]["transport"]
+    assert transport["selector"]["select"]["options"] == ["udp", "tcp"]
+    with pytest.raises(ValueError, match="invalid_phone_transport"):
+        PhysicalPhoneSubentryFlowHandler()._canonical_bindings(tls_bindings)
+    assert not any(item.subentry_type == "physical_phone" for item in state.lab.entry.subentries.values())
+
+    # Stored/imported data must pass the same guard before generating credentials.
+    data = normalize_physical_phone({**identity(), **tls_bindings})
+    endpoint = state.lab.runtime.endpoints.get("sip:front")
+    state.lab.registrar.update_accounts([SipAccount(endpoint.username, endpoint.name, "fixture-secret")])
+    manager = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
+    try:
+        with pytest.raises(ValueError, match="invalid_phone_transport"):
+            await manager.async_context(data, state.catalog.profiles[PROFILE][0])
+    finally:
+        await manager.async_close()
+
+
 async def test_discovery_source_user_data_is_initialization_and_token_stays_private(physical_flow):
     state = physical_flow
     form = await start(state, data={"discovery_candidate": {

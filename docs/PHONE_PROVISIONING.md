@@ -38,7 +38,7 @@ logical endpoint device associations are preserved.
 The native line editor supports adding, modifying, deleting and reordering rows.
 An account can be created from the editor using the existing SIP account setup.
 Draft accounts are committed only after the complete phone configuration passes
-validation. Removing a physical phone does not delete the logical SIP accounts.
+validation. Managed line transport choices match the PBX UDP/TCP listeners. Removing a physical phone does not delete the logical SIP accounts.
 
 **Follow Home Assistant language** uses the instance language. Otherwise select
 one of the model profile's supported languages. Profiles without a verified

@@ -22,7 +22,7 @@ from .phone_endpoint import EndpointKind
 from .phone_profile import resolve_phone_keys, resolve_phone_language
 from .phone_profile_catalog import PhoneProfileCatalog
 from .physical_phone import (
-    KEY_FUNCTIONS, PHYSICAL_PHONE_SUBENTRY_TYPE, normalize_physical_phone, physical_phone_records,
+    KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, normalize_physical_phone, physical_phone_records,
     provisioning_enabled,
 )
 
@@ -215,7 +215,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         for raw in raw_lines:
             line = {"slot": _slot(raw.get("slot")), "endpoint_id": str(raw.get("endpoint_id") or ""),
                     "transport": str(raw.get("transport") or "udp").lower()}
-            if line["transport"] not in {"udp", "tcp", "tls"}:
+            if line["transport"] not in PHYSICAL_LINE_TRANSPORTS:
                 raise ValueError("invalid_phone_transport")
             lines.append(line)
         for raw in raw_keys:
@@ -292,7 +292,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     "slot": {"required": True, "selector": SelectSelector({"options": line_slots})},
                     "endpoint_id": {"required": True, "selector": SelectSelector({"options": account_choices,
                         "translation_key": "physical_phone_accounts"})},
-                    "transport": {"selector": SelectSelector({"options": ["udp", "tcp", "tls"]})},
+                    "transport": {"selector": SelectSelector({"options": list(PHYSICAL_LINE_TRANSPORTS)})},
                 }}),
             vol.Required("keys", default=self._draft.get("keys", [])): ObjectSelector({
                 "multiple": True, "label_field": "label", "description_field": "function",

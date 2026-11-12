@@ -8,6 +8,7 @@ import secrets
 from uuid import uuid4
 
 PHYSICAL_PHONE_SUBENTRY_TYPE = "physical_phone"
+PHYSICAL_LINE_TRANSPORTS = ("udp", "tcp")
 CONF_PHONE_PROVISIONING = "phone_provisioning"
 PHONE_PROVISIONING_CHANGED = "voip_stack.physical_phone_changed"
 KEY_FUNCTIONS = frozenset({"line", "speed_dial", "blf", "queue_login", "queue_pause", "park", "directory"})

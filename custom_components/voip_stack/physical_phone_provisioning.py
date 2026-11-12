@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .physical_phone import (
     CONF_PHONE_PROVISIONING,
+    PHYSICAL_LINE_TRANSPORTS,
     PHONE_PROVISIONING_CHANGED,
     physical_phone_records,
     provisioning_enabled,
@@ -172,7 +173,7 @@ class PhysicalPhoneProvisioner:
             if account is None or not account.enabled or not 1 <= int(binding["slot"]) <= int(caps["max_lines"]):
                 raise ValueError("phone_line_unsupported")
             transport = str(binding.get("transport") or "udp").lower()
-            if transport not in {"udp", "tcp", "tls"}:
+            if transport not in PHYSICAL_LINE_TRANSPORTS:
                 raise ValueError("invalid_phone_transport")
             lines.append({"slot": int(binding["slot"]), "username": account.username,
                 "auth_username": account.username, "password": account.password,
