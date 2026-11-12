@@ -1046,3 +1046,81 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         if worker is not None:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("caller_kind", ["browser", "sip"])
+@pytest.mark.parametrize("other_agent", ["logged_out", "busy", "reserved"])
+async def test_caller_member_does_not_mask_no_agents_but_other_busy_members_do(queue_lab, monkeypatch, caller_kind, other_agent):
+    """Per-call absence excludes its caller, without treating other busy agents as absent."""
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    lab = queue_lab
+    source_id = "source"
+    source = None
+    if caller_kind == "browser":
+        source = PhoneEndpoint(endpoint_id="browser-empty-caller", name="Browser caller", device_id="device-empty-caller",
+            kind=EndpointKind.BROWSER, availability="available")
+        source_id = source.endpoint_id
+        lab.runtime.endpoints.register(source)
+        lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+        monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+        monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=(source_id, "sip:bedroom0"))
+    lab.manager.agent_states[lab.identity] = {source_id: "available", "sip:bedroom0": "logged_out" if other_agent == "logged_out" else "available"}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
+        max_wait=2, no_agent_wait=0.1, retry_delay=0.05, fallback_no_agents="bedroom1")
+    other_session = other_ticket = None
+    if other_agent in {"busy", "reserved"}:
+        other_session = lab.calls.upsert("other-owned-call", state="in_call", owner="bridge")
+        if other_agent == "busy":
+            lab.calls.claim_endpoint(other_session.call_id, "sip:bedroom0", role="destination")
+        else:
+            other_id = "eafcd6396efa4be7ad63e052992dce36"
+            lab.manager.definitions[other_id] = QueueDefinition(other_id, "Other queue", ("sip:bedroom0",))
+            lab.manager.policies[other_id] = QueuePolicy(max_wait=5)
+            lab.manager.agent_states[other_id] = {"sip:bedroom0": "available"}
+            other_ticket = lab.manager.enqueue(other_id, other_session.call_id, other_session.generation)
+            assert lab.manager.claim_turn(other_ticket) == ("sip:bedroom0",)
+    session = client = None
+    try:
+        if source is not None:
+            await lab.hass.services.async_call("voip_stack", "call", {"device_id": source.device_id, "destination": "Reception"}, blocking=True)
+            call_id = lab.runtime.endpoints.require(source_id).active_call_id
+        else:
+            client, _audio = await dial_queue(lab)
+            call_id = client.dialog_ids.call_id
+        session = lab.calls.get_session(call_id)
+        assert session.metadata["source_endpoint_id"] == source_id
+        caller = next(row for row in lab.manager.get_state(lab.identity)["members"] if row["phone"] == source_id)
+        assert caller["state"] == "available" and caller["online"] and caller["busy"]
+        assert not lab.manager.eligible(lab.identity, call_id=call_id)
+        if other_agent == "logged_out":
+            await asyncio.wait_for(lab.phones[1].invited.wait(), 0.5)
+            await wait_for_bridge(lab, call_id)
+            exit_event, = [event for event in lab.queue_events if event["event_type"] == "exited" and event.get("call_id") == call_id]
+            assert exit_event["reason"] == "queue_no_agents"
+            assert exit_event["outcome"] == "no_agents"
+            assert exit_event["disposition"] == "forwarded" and exit_event["destination"] == "bedroom1"
+        else:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(lab.phones[1].invited.wait(), 0.3)
+            assert session.live and session.owner == "queue"
+            assert not [event for event in lab.queue_events if event["event_type"] == "exited" and event.get("call_id") == call_id]
+        assert not lab.phones[0].invites
+    finally:
+        if session is not None:
+            if source is not None:
+                await lab.hass.services.async_call("voip_stack", "hangup", {"device_id": source.device_id, "call_id": session.call_id}, blocking=True)
+            else:
+                await client.terminate()
+            await asyncio.wait_for(session.terminated.wait(), 2)
+        if other_ticket is not None:
+            lab.manager.finish(other_ticket)
+        if other_session is not None:
+            await lab.calls.terminate_call_wait(other_session.call_id, reason="test_done")
+        assert not lab.calls.sessions
+        assert not lab.manager.waiting and not lab.manager.reservations
+        assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)

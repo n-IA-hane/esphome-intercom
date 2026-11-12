@@ -108,6 +108,7 @@ ha_tests=(
   tests/test_paging_ha.py
   tests/test_browser_paging_ha.py
   tests/test_queue_call_ha.py
+  tests/test_queue_baresip_ha.py
   tests/test_phone_routing_ha.py
   tests/test_phone_settings_ha.py
   tests/test_phone_policy_runtime_ha.py

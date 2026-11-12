@@ -125,7 +125,9 @@ class QueueCall(LocalCallApplication):
                     await self._fallback(policy, "queue_disabled" if not policy.enabled else "queue_timeout")
                     return
                 state = self.manager.get_state(definition.queue_id)
-                online_agents = any(member["state"] == "available" and member["online"] for member in state["members"])
+                source_endpoint_id = self.session.metadata.get("source_endpoint_id", "")
+                online_agents = any(member["phone"] != source_endpoint_id
+                    and member["state"] == "available" and member["online"] for member in state["members"])
                 if online_agents:
                     no_agent_since = None
                 elif no_agent_since is None:
