@@ -91,6 +91,89 @@ async def wait_for_bridge(lab, call_id):
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("source_kind", ["sip", "browser"])
+async def test_answered_queue_caller_never_confirms_an_unanswered_sip_candidate(queue_lab, monkeypatch, source_kind):
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import call_forwarder, softphone_originate
+    from custom_components.voip_stack.phone_state import phone_states, phone_state_dto, phone_state_observer
+    from custom_components.voip_stack.roster import dump_roster_json
+    lab = queue_lab
+    for phone in lab.phones:
+        phone.auto_answer = False
+    prepared, release = asyncio.Event(), asyncio.Event()
+    original_prepare = call_forwarder.async_prepare_group_candidates
+
+    async def hold_after_real_candidate_claims(*args, **kwargs):
+        await original_prepare(*args, **kwargs)
+        prepared.set()
+        await release.wait()
+
+    monkeypatch.setattr(call_forwarder, "async_prepare_group_candidates", hold_after_real_candidate_claims)
+    caller = None
+    source = None
+    session = None
+    updates = []
+    unsubscribe = phone_state_observer(lab.hass).subscribe(updates.append, kind="projection")
+    try:
+        if source_kind == "sip":
+            caller, _audio = await dial_queue(lab)
+            call_id = caller.dialog_ids.call_id
+        else:
+            source = PhoneEndpoint(endpoint_id="browser-projection", name="Test", username="Test",
+                device_id="browser-projection-device", kind=EndpointKind.BROWSER, availability="available")
+            lab.runtime.endpoints.register(source)
+            lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+            monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+            monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+            await lab.hass.services.async_call("voip_stack", "call", {
+                "device_id": source.device_id, "destination": "Reception",
+            }, blocking=True)
+            call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        session = lab.calls.get_session(call_id)
+        await asyncio.wait_for(prepared.wait(), 2)
+        assert session.answer_committed and session.state == "in_call"
+        assert "sip:bedroom0" in session.endpoint_claims
+        assert not any(leg.endpoint_id == "sip:bedroom0" for leg in session.legs.values())
+        assert not lab.phones[0].invites
+        source_projection = phone_states(lab.hass)[session.metadata["source_endpoint_id"]]
+        assert any(call["state"] == "confirmed" for call in source_projection["calls"])
+        delivered = [phone_state_dto(update.phones["sip:bedroom0"], peer_readable=lambda _identity: True)
+            for update in updates if "sip:bedroom0" in update.phones]
+        assert delivered and not any(call["state"] == "confirmed" for phone in delivered for call in phone["calls"]), delivered
+        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
+        assert projected["calls"] and projected["calls"][0]["state"] in {"trying", "proceeding"}, projected
+        assert projected["calls"][0]["pickup_available"] is False
+        release.set()
+        await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+        await wait_until(lambda: any(leg.endpoint_id == "sip:bedroom0" and leg.state == "remote_ringing"
+            for leg in session.legs.values()))
+        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
+        assert projected["state"] == "ringing" and projected["calls"][0]["state"] == "early"
+        assert projected["calls"][0]["id"] == call_id
+        assert projected["calls"][0]["leg_id"] and projected["calls"][0]["pickup_available"] is True
+        leg = next(leg for leg in session.legs.values() if leg.endpoint_id == "sip:bedroom0")
+        assert leg.dialog.dialog is None and leg.dialog.last_sip_status_code == 180
+        lab.phones[0].answer()
+        await wait_for_bridge(lab, call_id)
+        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
+        assert projected["calls"][0]["state"] == "confirmed" and leg.dialog.dialog is not None
+    finally:
+        release.set()
+        if session is not None and session.live:
+            await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+        if caller is not None:
+            await caller.terminate()
+        elif session is not None and session.live:
+            await lab.hass.services.async_call("voip_stack", "hangup", {
+                "device_id": source.device_id, "call_id": session.call_id,
+            }, blocking=True)
+        if session is not None:
+            await asyncio.wait_for(session.terminated.wait(), 2)
+        unsubscribe()
+    assert not lab.calls.sessions and not lab.manager.waiting and not lab.manager.reservations
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_queue_ringall_commits_one_agent_media_and_wraps_only_after_hangup(queue_lab):
     lab = queue_lab
     lab.phones[1].auto_answer = False

@@ -1,5 +1,18 @@
 # Reference
 
+## Physical phone provisioning
+
+Administrative actions `voip_stack.provision_phone`,
+`voip_stack.get_phone_provisioning_state` and
+`voip_stack.rotate_phone_provisioning_token` select a physical phone through
+`device_id` or `phone_id`. The state action accepts optional `include_url`
+(default `false`) to return its private download URL. The administrative
+`voip_stack.refresh_phone_profiles` action takes no fields and refreshes the
+catalog while preserving existing profile pins. Provisioning must be enabled.
+See the [action reference](SERVICES.md#physical-phone-provisioning) and
+[setup guide](PHONE_PROVISIONING.md). A downloaded file is not proof that the
+phone applied its settings.
+
 ## Group and announcement actions
 
 The membership actions are `voip_stack.set_phone_memberships` (`phone`, `field`,

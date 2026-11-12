@@ -881,3 +881,24 @@ See [Record a conversation](CALL_RECORDING.md) for examples and media scope.
 
 `voip_stack.delete_recording` accepts the same `device_id` and `recording_id`
 and removes the recording together with its metadata.
+
+## Physical phone provisioning
+
+These actions require administrative access and enabled phone provisioning.
+Select a configured physical phone with `device_id` or `phone_id`, except when
+refreshing the catalog.
+
+- `voip_stack.provision_phone` queues configuration preparation, waiting until
+  the bound lines are idle. It does not reboot or reset the phone.
+- `voip_stack.get_phone_provisioning_state` returns desired and downloaded
+  revisions. Optional `include_url` defaults to `false`; `true` also returns
+  the private `provisioning_url`, which contains a device credential.
+- `voip_stack.refresh_phone_profiles` takes no fields and refreshes the catalog
+  index. Existing phones keep their pinned profile revision.
+- `voip_stack.rotate_phone_provisioning_token` invalidates the phone's previous
+  download URL and queues preparation with a new credential. Retrieve and
+  configure the replacement URL before the next download.
+
+`downloaded` means HA served a file; it does not prove the phone applied its
+settings. See [physical phone provisioning](PHONE_PROVISIONING.md) for setup,
+manual URL configuration and state meanings.

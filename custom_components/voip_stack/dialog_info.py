@@ -160,6 +160,9 @@ def snapshot_all(runtime):
                     local_uri, remote_uri = remote_uri, local_uri
                     local_target, remote_target = remote_target, local_target
                 state = leg.state if leg is not None else session.state
+                if (leg is None and not source and contract is None
+                        and session.endpoint_claims.get(endpoint_id) == "group_candidate"):
+                    state = "calling"
                 audio_direction = getattr(
                     contract,
                     "local_audio_direction" if browser else "remote_audio_direction",

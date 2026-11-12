@@ -172,14 +172,14 @@
       },
       "phone_provisioning": {
         "title": "Provisioning telefoni fisici",
-        "description": "Abilita il catalogo facoltativo e la configurazione dei telefoni fisici. Gli account SIP esistenti restano proprietari delle credenziali e delle chiamate. L’URL pubblico deve essere raggiungibile dai telefoni.",
+        "description": "Abilita il catalogo facoltativo e la configurazione dei telefoni fisici. Gli account SIP esistenti restano proprietari delle credenziali e delle chiamate. L'URL pubblico deve essere raggiungibile dai telefoni.",
         "data": {
           "enabled": "Abilita provisioning telefoni fisici",
           "base_url": "URL di Home Assistant per i telefoni",
           "allow_insecure_http": "Consenti HTTP su una rete locale fidata"
         },
         "data_description": {
-          "base_url": "Facoltativo. Lascia vuoto per usare l’URL configurato di Home Assistant. Usa HTTPS, salvo telefoni che richiedono HTTP locale."
+          "base_url": "Facoltativo. Lascia vuoto per usare l'URL configurato di Home Assistant. Usa HTTPS, salvo telefoni che richiedono HTTP locale."
         }
       },
       "phone_discovered": {
@@ -188,7 +188,7 @@
       },
       "phone_user": {
         "title": "Telefono fisico",
-        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l’inventario non crea un secondo endpoint di chiamata.",
+        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata.",
         "data": {
           "name": "Nome",
           "mac": "Indirizzo MAC",
@@ -222,7 +222,7 @@
       },
       "phone_account": {
         "title": "Crea account SIP per questa linea",
-        "description": "Usa l’editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
+        "description": "Usa l'editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
         "data": {
           "name": "Nome",
           "extension": "Interno",
@@ -267,7 +267,7 @@
       "trunk_media_nat_invalid": "Scegli auto, direct o manual.",
       "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide.",
       "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
-      "phone_provisioning_url_invalid": "Usa un URL HTTP o HTTPS senza credenziali incorporate, query o frammenti. HTTP richiede l’opzione esplicita per la rete locale.",
+      "phone_provisioning_url_invalid": "Usa un URL HTTP o HTTPS senza credenziali incorporate, query o frammenti. HTTP richiede l'opzione esplicita per la rete locale.",
       "phone_name_required": "Il nome del telefono è obbligatorio.",
       "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
       "phone_password_required": "La password SIP è obbligatoria.",
@@ -292,7 +292,7 @@
       "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
       "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
       "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
-      "phone_key_label_too_long": "L’etichetta supera il limite in byte del profilo. Accorciala.",
+      "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
       "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
     },
     "abort": {
@@ -300,8 +300,8 @@
       "already_configured": "VoIP Stack è già configurato.",
       "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",
       "phone_discovery_expired": "Questa rilevazione non è più attuale. Attendi un nuovo annuncio oppure aggiungi il telefono manualmente.",
-      "invalid_phone_discovery": "L’annuncio del telefono non è valido.",
-      "continue_phone_setup": "Continua nell’editor del telefono fisico.",
+      "invalid_phone_discovery": "L'annuncio del telefono non è valido.",
+      "continue_phone_setup": "Continua nell'editor del telefono fisico.",
       "phone_provisioning_disabled": "Il provisioning dei telefoni fisici è disabilitato.",
       "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
       "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
@@ -605,7 +605,7 @@
       "step": {
         "user": {
           "title": "Telefono fisico",
-          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l’inventario non crea un secondo endpoint di chiamata.",
+          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata.",
           "data": {
             "name": "Nome",
             "mac": "Indirizzo MAC",
@@ -639,7 +639,7 @@
         },
         "account": {
           "title": "Crea account SIP per questa linea",
-          "description": "Usa l’editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
+          "description": "Usa l'editor degli account PBX esistente. Il nuovo account resta in questa bozza finché la configurazione completa del telefono fisico non viene confermata.",
           "data": {
             "name": "Nome",
             "extension": "Interno",
@@ -686,14 +686,14 @@
         "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
         "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
         "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
-        "phone_key_label_too_long": "L’etichetta supera il limite in byte del profilo. Accorciala.",
+        "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
         "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
       },
       "abort": {
         "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",
         "phone_discovery_expired": "Questa rilevazione non è più attuale. Attendi un nuovo annuncio oppure aggiungi il telefono manualmente.",
-        "invalid_phone_discovery": "L’annuncio del telefono non è valido.",
-        "continue_phone_setup": "Continua nell’editor del telefono fisico.",
+        "invalid_phone_discovery": "L'annuncio del telefono non è valido.",
+        "continue_phone_setup": "Continua nell'editor del telefono fisico.",
         "phone_provisioning_disabled": "Il provisioning dei telefoni fisici è disabilitato.",
         "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
         "phone_language_unsupported": "La lingua richiesta non è supportata. Scegli una lingua alternativa supportata.",
@@ -1524,7 +1524,7 @@
     },
     "get_phone_provisioning_state": {
       "name": "Leggi stato provisioning telefono",
-      "description": "Leggi le revisioni preparata e scaricata. Soltanto un amministratore può richiedere esplicitamente l’URL privato di provisioning.",
+      "description": "Leggi le revisioni preparata e scaricata. Soltanto un amministratore può richiedere esplicitamente l'URL privato di provisioning.",
       "fields": {
         "device_id": {
           "name": "Telefono fisico"
@@ -1534,7 +1534,7 @@
         },
         "include_url": {
           "name": "Includi URL privato di provisioning",
-          "description": "L’URL contiene una credenziale del dispositivo. Mantienilo privato."
+          "description": "L'URL contiene una credenziale del dispositivo. Mantienilo privato."
         }
       }
     },

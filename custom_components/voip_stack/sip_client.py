@@ -1792,6 +1792,7 @@ class SipCallClient:
             contact_uri=self._pending_contact_uri or self._pending_local_uri,
             content_type=("application/sdp" if self._pending_invite_body else None),
             transport=self.signaling_transport,
+            via_sent_by=(self.local_ip, self.local_sip_port),
             local_display_name=self.local_name,
             remote_display_name=self._pending_target_display,
         )
@@ -2005,6 +2006,7 @@ class SipCallClient:
                 route_set=route_set,
                 contact_uri=self._pending_contact_uri or local_uri,
                 transport=self.signaling_transport,
+                via_sent_by=(self.local_ip, self.local_sip_port),
                 local_display_name=self.local_name,
                 remote_display_name=self._pending_target_display,
                 extra_headers=(
@@ -3170,6 +3172,7 @@ class SipCallClient:
                                 route_set=usage.route_set if usage else dialog.route_set,
                                 contact_uri=self._pending_contact_uri or (usage.local_uri if usage else dialog.local_uri),
                                 transport=self.signaling_transport,
+                                via_sent_by=(self.local_ip, self.local_sip_port),
                                 local_display_name=self.local_name,
                                 remote_display_name=self._dialog_remote_display_name,
                                 extra_headers=(*extra_headers, *authorization.items()),
@@ -4090,6 +4093,7 @@ class SipCallClient:
                         route_set=current.route_set,
                         contact_uri=self._pending_contact_uri or current.local_uri,
                         transport=self.signaling_transport,
+                        via_sent_by=(self.local_ip, self.local_sip_port),
                         local_display_name=self.local_name,
                         remote_display_name=self._dialog_remote_display_name,
                         content_type="application/sdp",
@@ -4795,6 +4799,7 @@ class SipCallClient:
                 route_set=route_set,
                 contact_uri=self._pending_contact_uri or local_uri,
                 transport=self.signaling_transport,
+                via_sent_by=(self.local_ip, self.local_sip_port),
                 local_display_name=self.local_name,
                 remote_display_name=self._dialog_remote_display_name,
                 content_type="application/sdp" if body else "",
@@ -4857,6 +4862,7 @@ class SipCallClient:
             method="ACK",
             contact_uri=self._pending_contact_uri or local_uri,
             transport=self.signaling_transport,
+            via_sent_by=(self.local_ip, self.local_sip_port),
             local_display_name=self.local_name,
             remote_display_name=sip.name_addr_display_name(msg.header("To")),
         )
@@ -4895,6 +4901,7 @@ class SipCallClient:
                 route_set=route_set,
                 contact_uri=self._pending_contact_uri or local_uri,
                 transport=self.signaling_transport,
+                via_sent_by=(self.local_ip, self.local_sip_port),
                 local_display_name=self.local_name,
                 remote_display_name=self._dialog_remote_display_name,
             )
@@ -5028,6 +5035,7 @@ class SipCallClient:
             method="CANCEL",
             contact_uri=self._pending_contact_uri or self._pending_local_uri,
             transport=self.signaling_transport,
+            via_sent_by=(self.local_ip, self.local_sip_port),
             local_display_name=self.local_name,
             remote_display_name=self._pending_target_display,
         )

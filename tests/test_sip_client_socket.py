@@ -2729,6 +2729,76 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stream_writer.closed)
         self.assertTrue(client._closed)
 
+    async def test_udp_via_routes_provisional_and_cancel_independently_of_contact(self) -> None:
+        for supports_rport in (False, True):
+            with self.subTest(supports_rport=supports_rport):
+                received = []
+                misrouted = []
+                acked = asyncio.Event()
+
+                class MainListener(asyncio.DatagramProtocol):
+                    def datagram_received(self, data, addr):
+                        misrouted.append(sip.parse_message(data))
+
+                class Peer(asyncio.DatagramProtocol):
+                    def connection_made(self, transport):
+                        self.transport = transport
+                        self.invite = None
+
+                    def respond(self, request, addr, status, reason):
+                        via = sip.parse_via(request.header("Via"))
+                        destination = (via.host, via.port)
+                        via_value = request.header("Via")
+                        if supports_rport:
+                            destination = addr
+                            via_value = via_value.replace(";rport", f";rport={addr[1]}")
+                            via_value += f";received={addr[0]}"
+                        headers = [(name, request.header(name)) for name in ("From", "Call-ID", "CSeq")]
+                        headers.extend((("Via", via_value), ("To", request.header("To") + ";tag=peer")))
+                        self.transport.sendto(sip.build_response(status, reason, headers), destination)
+
+                    def datagram_received(self, data, addr):
+                        request = sip.parse_message(data)
+                        received.append((request, addr))
+                        if request.method == "INVITE":
+                            self.invite = request
+                            self.respond(request, addr, 180, "Ringing")
+                        elif request.method == "CANCEL":
+                            self.respond(request, addr, 200, "OK")
+                            self.respond(self.invite, addr, 487, "Request Terminated")
+                        elif request.method == "ACK":
+                            acked.set()
+
+                loop = asyncio.get_running_loop()
+                main, _ = await loop.create_datagram_endpoint(MainListener, local_addr=("127.0.0.1", 0))
+                peer_transport, _ = await loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
+                main_port = main.get_extra_info("sockname")[1]
+                client = sip_client.SipCallClient(local_ip="127.0.0.1", local_name="HA",
+                    local_sip_port=main_port, local_rtp_port=41000)
+                client.local_contact_uri = f"sip:HA@127.0.0.1:{main_port};transport=udp"
+                try:
+                    result = await client.invite(target="peer", remote_host="127.0.0.1",
+                        remote_sip_port=peer_transport.get_extra_info("sockname")[1], timeout=1)
+                    self.assertEqual(result, "ringing")
+                    invite, source = received[0]
+                    self.assertEqual(sip.parse_sip_uri(invite.header("Contact")).port, main_port)
+                    self.assertEqual(sip.parse_via(invite.header("Via")).port, source[1])
+                    self.assertNotEqual(source[1], main_port)
+                    await client.close()
+                    await asyncio.wait_for(acked.wait(), 1)
+                    self.assertEqual([request.method for request, _ in received], ["INVITE", "CANCEL", "ACK"])
+                    self.assertTrue(all(sip.parse_via(request.header("Via")).port == source[1]
+                                        for request, _ in received))
+                    self.assertEqual(received[1][0].header("Via"), invite.header("Via"))
+                    self.assertEqual(client._invite_task.result(), "cancelled")
+                    self.assertFalse(misrouted)
+                    self.assertIsNone(client.transport)
+                    self.assertTrue(client._closed)
+                finally:
+                    await client.close()
+                    peer_transport.close()
+                    main.close()
+
     async def test_close_completes_deferred_cancel_before_closing_transport(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
