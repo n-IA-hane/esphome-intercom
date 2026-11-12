@@ -708,7 +708,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return False
         queue = self._dialog_queues.get(((str(addr[0]), int(addr[1])), message.header("Call-ID")))
         if queue is not None:
-            put_drop_oldest(queue, data)
+            put_drop_oldest(queue, (data, (str(addr[0]), int(addr[1]))) if self.signaling_transport == "UDP" else data)
             return True
         if message.is_response:
             try:
@@ -742,8 +742,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         task.add_done_callback(self._request_task_done)
         return True
 
-    def open_reused_dialog(self, addr: tuple[str, int], call_id: str, *, flow_active):
-        """Lease this socket and authenticated next hop to one dialog reader."""
+    def open_reused_dialog(self, addr: tuple[str, int], call_id: str, *, flow_active, routed=False):
+        """Lease this socket to one reader, optionally following routed targets."""
         key = (addr, call_id)
         transport = self.transport
         if (transport is None or not call_id or key in self._dialog_queues
@@ -753,11 +753,26 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._dialog_queues[key] = queue
         self._reused_dialog_keys[queue] = {key}
 
-        def send(raw):
+        def send(raw, destination=None):
             if (self.transport is not transport or self._dialog_queues.get(key) is not queue
                     or not flow_active()):
                 return False
-            return self._send(raw, addr)
+            destination = addr if destination is None else destination
+            if destination != addr:
+                try:
+                    usage_id = sip.parse_message(raw).header("Call-ID")
+                except sip.SipError:
+                    return False
+                if self._dialog_queues.get((addr, usage_id)) is not queue:
+                    return False
+                target_key = (destination, usage_id)
+                current = self._dialog_queues.get(target_key)
+                if (not routed or (current is not None and current is not queue)
+                        or (current is None and len(self._dialog_queues) >= _MAX_REUSED_UDP_USAGES)):
+                    return False
+                self._dialog_queues[target_key] = queue
+                self._reused_dialog_keys[queue].add(target_key)
+            return self._send(raw, destination)
 
         return send, queue
 
@@ -775,7 +790,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
         def close():
             release()
-            keys.discard((addr, usage_id))
+            for key in tuple(keys):
+                if key[1] == usage_id:
+                    if self._dialog_queues.get(key) is queue:
+                        self._dialog_queues.pop(key, None)
+                    keys.discard(key)
 
         return close
 

@@ -111,10 +111,10 @@ async def wire_lab(trunks):
             phone.transport.close()
 
 
-async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True, cseq=1):
+async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True, cseq=1, contact_uri=""):
     phone = phone or wire.a
     uri = f"sip:127.0.0.1:{wire.listener[1]}"
-    contact = f"<{sip.SipUri(username, *phone.address)}>"
+    contact = f"<{contact_uri or sip.SipUri(username, *phone.address)}>"
     if outbound:
         contact += ';+sip.instance="<urn:uuid:11111111-2222-3333-4444-555555555555>";reg-id=1'
 
@@ -159,9 +159,23 @@ async def test_public_call_service_keeps_selected_outbound_flow_but_ordinary_con
     destination = wire.a if outbound else wire.b
     ack, address = await destination.receive("ACK")
     assert ack.uri == str(sip.SipUri("wire", *wire.b.address))
-    if outbound:
-        assert address == wire.listener
+    assert address == wire.listener
     assert not [request for request in (wire.b if outbound else wire.a).requests if request.method == "ACK"]
+    client = wire.lab.calls.sip_client_for(token["call_id"])
+    assert await client.send_dtmf_info("5", timeout=1)
+    info, info_address = await destination.receive("INFO")
+    assert info.uri == ack.uri and info_address == wire.listener
+    usage_id = "usage-" + client.dialog_ids.call_id
+    close_usage = client.bind_signaling_usage(usage_id)
+    request = sip.build_request("OPTIONS", ack.uri, [
+        (name, usage_id if name == "Call-ID" else "1 OPTIONS" if name == "CSeq" else ack.header(name))
+        for name in ("Via", "From", "To", "Call-ID", "CSeq")])
+    assert client._send_dialog_request(request, *destination.address)
+    await destination.receive("OPTIONS")
+    listener = wire.manager.udp_server.endpoint
+    assert (destination.address, usage_id) in listener._dialog_queues
+    close_usage()
+    assert not any(key[1] == usage_id for key in listener._dialog_queues)
     await wire.lab.hass.services.async_call("voip_stack", "hangup", {
         "call_id": token["call_id"], "expected_generation": token["generation"],
     }, blocking=True, context=context)
@@ -172,6 +186,78 @@ async def test_public_call_service_keeps_selected_outbound_flow_but_ordinary_con
     assert not wire.lab.calls.sessions
     assert wire.registrar.registered_contacts("outbound-phone")
     assert wire.manager.udp_server.transport is not None
+
+
+async def test_ordinary_registered_phone_uses_listener_for_provisional_and_cancel(wire_lab, monkeypatch):
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    wire = wire_lab
+    await register_phone(wire, outbound=False)
+    wire.lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="browser", name="Browser",
+        device_id="device-browser", kind=EndpointKind.BROWSER, availability="available"))
+    wire.lab.hass.states.async_set("sensor.voip_phonebook", "4", {"roster_json": dump_roster_json(wire.lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    original = wire.a.datagram_received
+    pending = None
+
+    def respond(request, status, reason, *, sender=None, tag="fixed-registrar-peer", wrong_branch=False):
+        headers = [(name, request.header(name)) for name in ("Via", "From", "Call-ID", "CSeq")]
+        if wrong_branch:
+            headers[0] = ("Via", headers[0][1].replace(sip.parse_via(headers[0][1]).branch, "z9hG4bK-foreign"))
+        headers.append(("To", request.header("To") + ";tag=" + tag))
+        # Independent peer routes all responses to its configured registrar.
+        (sender or wire.a).transport.sendto(sip.build_response(status, reason, headers), wire.listener)
+
+    def receive(raw, address):
+        nonlocal pending
+        request = sip.parse_message(raw)
+        if request.method not in {"INVITE", "CANCEL", "ACK"}:
+            return original(raw, address)
+        wire.a.messages.put_nowait((request, address))
+        wire.a.requests.append(request)
+        if request.method == "INVITE":
+            pending = request
+            respond(request, 180, "Ringing", tag="wrong-branch", wrong_branch=True)
+            respond(request, 180, "Ringing", sender=wire.b, tag="foreign-source")
+            respond(request, 100, "Trying")
+            respond(request, 180, "Ringing")
+        elif request.method == "CANCEL":
+            respond(request, 200, "OK")
+            respond(pending, 487, "Request Terminated")
+
+    monkeypatch.setattr(wire.a, "datagram_received", receive)
+    context = Context()
+    calling = asyncio.create_task(wire.lab.hass.services.async_call("voip_stack", "call", {
+        "device_id": "device-browser", "destination": "outbound-phone",
+    }, blocking=True, context=context))
+    try:
+        invite, address = await wire.a.receive("INVITE")
+        await asyncio.wait_for(asyncio.shield(calling), 2)
+        client = wire.lab.calls.sip_client_for(invite.header("Call-ID"))
+        assert client._received_provisional and client.last_sip_status_code == 180
+        assert set(client.early_dialogs) == {"fixed-registrar-peer"}
+        assert address == wire.listener
+        assert sip.parse_via(invite.header("Via")).port == wire.listener[1]
+        assert not wire.registrar.registered_contacts("outbound-phone")[0].outbound
+        await wire.lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": "device-browser", "call_id": invite.header("Call-ID"),
+        }, blocking=True, context=context)
+        cancel, _ = await wire.a.receive("CANCEL")
+        await wire.a.receive("ACK")
+        assert cancel.header("Via") == invite.header("Via")
+        assert not wire.lab.calls.sessions
+        assert not wire.manager.udp_server.endpoint._dialog_queues
+        assert set(wire.lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+        assert wire.manager.udp_server.transport is not None
+    finally:
+        for session in tuple(wire.lab.calls.sessions.values()):
+            await wire.lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
+        if not calling.done():
+            calling.cancel()
+        await asyncio.gather(calling, return_exceptions=True)
 
 
 @pytest.mark.parametrize("ingress", ["browser", "inbound-bridge"])
@@ -231,11 +317,12 @@ async def test_selected_outbound_binding_reaches_browser_and_inbound_factories(w
 
 @pytest.mark.parametrize("invalid", ["binding-removed", "registrar-replaced", "wrong-contact", "wrong-account", "account-revoked",
     "binding-expired", "binding-aba", "binding-rebound"])
-async def test_stale_or_mismatched_outbound_selection_cannot_borrow_listener(wire_lab, invalid):
+@pytest.mark.parametrize("outbound", [False, True])
+async def test_stale_or_mismatched_outbound_selection_cannot_borrow_listener(wire_lab, invalid, outbound):
     wire = wire_lab
-    binding = await register_phone(wire)
+    binding = await register_phone(wire, outbound=outbound)
     uri = sip.parse_sip_uri(binding.contact_uri)
-    selected = wire.registrar.select_outbound_flow(binding.username, uri)
+    selected = wire.registrar.select_outbound_flow(binding.username, uri, allow_ordinary=not outbound)
     assert selected is not None
     if invalid == "binding-removed":
         wire.registrar.remove_registration(binding.username)
@@ -243,9 +330,11 @@ async def test_stale_or_mismatched_outbound_selection_cannot_borrow_listener(wir
         binding.expires_at = time.time() - 1
     elif invalid == "binding-aba":
         wire.registrar.remove_registration(binding.username)
-        await register_phone(wire, cseq=3)
+        await register_phone(wire, cseq=3, outbound=outbound)
     elif invalid == "binding-rebound":
-        await register_phone(wire, phone=wire.b, cseq=3)
+        # Ordinary Contacts are independent bindings; rebind the same URI.
+        await register_phone(wire, phone=wire.b, cseq=3, outbound=outbound,
+            contact_uri=binding.contact_uri if not outbound else "")
     elif invalid == "account-revoked":
         wire.registrar.update_accounts([replace(account, enabled=False)
             for account in wire.registrar.accounts.values()])

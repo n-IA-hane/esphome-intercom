@@ -17,6 +17,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from .test_trunk_calls_ha import lab as lab, trunks as trunks
 from .test_sip_capabilities_ha import wait_until
+from .test_udp_outbound_flow_ha import wire_lab as wire_lab, register_phone
 
 pytestmark = pytest.mark.ha
 
@@ -88,6 +89,127 @@ async def wait_for_bridge(lab, call_id):
     session = lab.calls.get_session(call_id)
     assert session is not None and session.owner == "bridge"
     return session
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("inject_unmatched", [False, True], ids=["ordinary-registrar", "ignore-foreign-branch-and-source"])
+async def test_public_browser_queue_call_uses_main_udp_for_provisional_and_complete_cancel(queue_lab, wire_lab, monkeypatch, inject_unmatched):
+    from dataclasses import asdict
+    from homeassistant.config_entries import ConfigSubentry
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.phone_state import phone_states, phone_state_dto
+    from custom_components.voip_stack.roster import dump_roster_json
+    from custom_components.voip_stack.group_config import normalize_group_data
+    lab, wire = queue_lab, wire_lab
+    assert wire.lab is not None and wire.lab.runtime is lab.runtime
+    entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+    lab.manager.entry = entry
+    group = normalize_group_data({"kind": "queue", "name": "Reception", "extension": "401",
+        "policy": asdict(lab.manager.policies[lab.identity])}, identity=lab.identity)
+    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="group",
+        title=group["name"], unique_id=f"group:{lab.identity}", data=group))
+    peer = PhoneEndpoint(endpoint_id="outbound-phone", name="Wire phone", username="outbound-phone",
+        kind=EndpointKind.SIP_ACCOUNT, availability="available", queues=("Reception",))
+    lab.runtime.endpoints.register(peer)
+    lab.manager.refresh()
+    await register_phone(wire, outbound=False)
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=(peer.endpoint_id,))
+    lab.manager.agent_states[lab.identity] = {peer.endpoint_id: "available"}
+    source = PhoneEndpoint(endpoint_id="browser-queue-wire", name="Test", username="Test",
+        device_id="browser-queue-wire-device", kind=EndpointKind.BROWSER, availability="available")
+    lab.runtime.endpoints.register(source)
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    original_receive = wire.a.datagram_received
+    main_transport = wire.manager.udp_server.transport
+    requests = []
+    pending = None
+
+    def respond(request, status, reason, *, sender=None, tag="queue-wire-peer", wrong_branch=False):
+        headers = [(name, request.header(name)) for name in ("Via", "From", "Call-ID", "CSeq")]
+        if wrong_branch:
+            branch = sip.parse_via(headers[0][1]).branch
+            headers[0] = ("Via", headers[0][1].replace(branch, "z9hG4bK-unrelated"))
+        headers.append(("To", request.header("To") + ";tag=" + tag))
+        # An ordinary independent phone sends responses to its configured PBX,
+        # regardless of the source port on the received INVITE.
+        (sender or wire.a).transport.sendto(sip.build_response(status, reason, headers), wire.listener)
+
+    def receive(raw, address):
+        nonlocal pending
+        request = sip.parse_message(raw)
+        if request.method not in {"INVITE", "CANCEL", "ACK"}:
+            return original_receive(raw, address)
+        requests.append(request)
+        wire.a.requests.append(request)
+        wire.a.messages.put_nowait((request, address))
+        if request.method == "INVITE":
+            pending = request
+            if inject_unmatched:
+                respond(request, 180, "Ringing", tag="wrong-branch", wrong_branch=True)
+                respond(request, 180, "Ringing", sender=wire.b, tag="foreign-source")
+            respond(request, 100, "Trying")
+            respond(request, 180, "Ringing")
+        elif request.method == "CANCEL":
+            respond(request, 200, "OK")
+            respond(pending, 487, "Request Terminated")
+
+    monkeypatch.setattr(wire.a, "datagram_received", receive)
+    session = None
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "Reception",
+        }, blocking=True)
+        call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        session = lab.calls.get_session(call_id)
+        invite, address = await wire.a.receive("INVITE")
+        await wait_until(lambda: any(leg.endpoint_id == peer.endpoint_id and leg.state == "remote_ringing"
+            for leg in session.legs.values()))
+        leg = next(leg for leg in session.legs.values() if leg.endpoint_id == peer.endpoint_id)
+        client = leg.dialog
+        assert session.answer_committed and client.dialog is None
+        assert client._received_provisional and client.last_sip_status_code == 180
+        assert set(client.early_dialogs) == {"queue-wire-peer"}
+        via = sip.parse_via(invite.header("Via"))
+        assert address == wire.listener and (via.host, via.port) == wire.listener
+        assert not wire.registrar.registered_contacts("outbound-phone")[0].outbound
+        snapshot = phone_states(lab.hass)
+        caller = phone_state_dto(snapshot[source.endpoint_id], peer_readable=lambda _identity: True)
+        recipient = phone_state_dto(snapshot[peer.endpoint_id], peer_readable=lambda _identity: True)
+        assert any(row["state"] == "confirmed" for row in caller["calls"])
+        assert recipient["calls"][0]["state"] == "early"
+        assert recipient["calls"][0]["id"] == call_id
+        assert recipient["calls"][0]["leg_id"] == invite.header("Call-ID")
+        assert recipient["calls"][0]["pickup_available"] is True
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": source.device_id, "call_id": call_id,
+        }, blocking=True)
+        await asyncio.wait_for(session.terminated.wait(), 2)
+        cancel, cancel_address = await wire.a.receive("CANCEL")
+        ack, ack_address = await wire.a.receive("ACK")
+        assert cancel_address == ack_address == wire.listener
+        assert cancel.header("Call-ID") == ack.header("Call-ID") == invite.header("Call-ID")
+        assert cancel.header("Via") == ack.header("Via") == invite.header("Via")
+        assert cancel.header("CSeq").split()[0] == ack.header("CSeq").split()[0] == invite.header("CSeq").split()[0]
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(lab.manager.policies[lab.identity].ring_timeout + 0.1):
+                await wire.a.receive("INVITE")
+        assert sum(request.method == "INVITE" for request in requests) == 1
+        assert not lab.calls.sessions and not session.tasks
+        assert not lab.manager.waiting and not lab.manager.reservations
+        assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+        assert not wire.manager.udp_server.endpoint._dialog_queues
+        assert not wire.manager.udp_server.endpoint._reused_dialog_keys
+        assert set(lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
+        assert wire.manager.udp_server.transport is main_transport and not main_transport.is_closing()
+        assert wire.registrar.registered_contacts("outbound-phone")
+    finally:
+        if session is not None and session.live:
+            await lab.calls.request_termination(session.call_id, TerminationIntent("test_cleanup"))
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

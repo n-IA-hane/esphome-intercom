@@ -56,6 +56,7 @@ class AuthenticatedOutboundFlow:
     contact_uri: str
     generation: str
     flow_key: tuple
+    outbound: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,15 +458,15 @@ class SipRegistrar:
             )
         )
 
-    def select_outbound_flow(self, username: str, uri: sip.SipUri) -> AuthenticatedOutboundFlow | None:
+    def select_outbound_flow(self, username: str, uri: sip.SipUri, *, allow_ordinary=False) -> AuthenticatedOutboundFlow | None:
         """Select only the resolved account's exact authenticated UDP Contact."""
         account = self.accounts.get(username.casefold())
         if account is None or not account.enabled:
             return None
         for binding in self.registered_contacts(account.username):
-            if binding.outbound and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
+            if (binding.outbound or allow_ordinary) and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
                 return AuthenticatedOutboundFlow(self, binding.username, binding.contact_uri,
-                    binding.capability_generation, binding.flow_key)
+                    binding.capability_generation, binding.flow_key, binding.outbound)
         return None
 
     def resolve_outbound_flow(self, selected: AuthenticatedOutboundFlow) -> SipRegistration | None:
@@ -476,7 +477,7 @@ class SipRegistrar:
         if account is None or not account.enabled:
             return None
         return next((binding for binding in self.registered_contacts(selected.username)
-            if binding.outbound and binding.transport.upper() == "UDP"
+            if binding.outbound == selected.outbound and binding.transport.upper() == "UDP"
             and binding.capability_generation == selected.generation
             and binding.contact_uri == selected.contact_uri and binding.flow_key == selected.flow_key), None)
 

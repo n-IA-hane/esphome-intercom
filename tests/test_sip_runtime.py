@@ -340,8 +340,8 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         selected = object()
         calls = []
         registrar = SimpleNamespace(
-            select_outbound_flow=lambda username, uri: (
-                calls.append((username, uri)) or selected
+            select_outbound_flow=lambda username, uri, *, allow_ordinary=False: (
+                calls.append((username, uri, allow_ordinary)) or selected
             )
         )
         hass = SimpleNamespace(data={DOMAIN: {"sip_registrar": registrar}})
@@ -353,7 +353,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
             selected,
         )
-        self.assertEqual(calls, [("registered-phone", uri)])
+        self.assertEqual(calls, [("registered-phone", uri, True)])
         self.assertIsNone(sip_runtime.select_registered_outbound_flow(
             SimpleNamespace(data={DOMAIN: {}}), uri,
             entry=SimpleNamespace(id="registered-phone"),

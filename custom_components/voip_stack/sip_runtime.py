@@ -189,7 +189,7 @@ def select_registered_outbound_flow(hass, uri, *, entry=None, peer=None):
     registrar = sip_registrar(hass)
     if not username or uri_transport(uri).upper() != "UDP" or registrar is None:
         return None
-    return registrar.select_outbound_flow(username, uri)
+    return registrar.select_outbound_flow(username, uri, allow_ordinary=True)
 
 
 def enable_reused_signaling_flow(
@@ -202,6 +202,9 @@ def enable_reused_signaling_flow(
     selected_flow=None,
 ) -> bool:
     """Use a selected authenticated UDP flow or the existing TCP connection.
+
+    Ordinary registered Contacts borrow the UDP source socket while retaining
+    standard dialog routing. RFC 5626 bindings retain their fixed next hop.
 
     A registered endpoint behind NAT commonly advertises an unreachable
     Contact.  The registrar therefore normalizes TCP contacts to the observed
@@ -223,20 +226,23 @@ def enable_reused_signaling_flow(
             raise ConnectionError("Selected SIP outbound listener is not running")
         if server.transport is None:
             raise ConnectionError("Selected SIP outbound UDP socket is unavailable")
-        address = (binding.source_host, binding.source_port)
+        address = ((binding.source_host, binding.source_port) if selected_flow.outbound
+                   else (uri.host, int(uri.port or default_sip_port)))
 
         def flow_active():
             # REGISTER expiry/rebind does not rewrite an existing dialog.
             return (sip_registrar(hass) is registrar and sip_endpoint_manager(hass) is manager
                 and getattr(getattr(manager, "udp_server", None), "endpoint", None) is server)
 
-        reuse = server.open_reused_dialog(address, client.dialog_ids.call_id, flow_active=flow_active)
+        reuse = server.open_reused_dialog(address, client.dialog_ids.call_id, flow_active=flow_active,
+            routed=not selected_flow.outbound)
         if reuse is None:
             raise ConnectionError("Selected SIP outbound dialog could not acquire its flow")
         send, responses = reuse
         client.use_reused_signaling_flow(send=send, responses=responses,
             close=lambda: server.close_reused_dialog(address, client.dialog_ids.call_id, queue=responses),
-            udp_next_hop=address)
+            udp_next_hop=address if selected_flow.outbound else None,
+            udp_send_to=send if not selected_flow.outbound else None)
         client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])
         client.bind_signaling_usage = lambda usage_id: server.bind_reused_usage(address,
             client.dialog_ids.call_id, usage_id)
