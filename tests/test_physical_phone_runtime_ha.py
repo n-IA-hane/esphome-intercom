@@ -34,6 +34,23 @@ def add(lab, data):
     return sub
 
 
+def cached_profile():
+    """Replace only the external catalog, keeping the production renderer."""
+    return ({"vendor": "fanvil", "capabilities": {"max_lines": 1, "key_slots": [],
+        "functions": ["sip_account"], "languages": {}},
+        "outputs": [{"path": "{mac}.cfg", "template": "templates/config.jinja2", "format": "cfg"}]},
+        {"templates/config.jinja2":
+            "sip.username={{ lines[0].username }}\nsip.password={{ lines[0].password }}\n"})
+
+
+def register_cached_account(lab):
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:first", name="First",
+        kind=EndpointKind.SIP_ACCOUNT, username="first"))
+    lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password")])
+
+
 async def test_default_off_does_not_create_catalog_or_services_or_discovery(phone_lab, monkeypatch):
     from custom_components.voip_stack import physical_phone_provisioning as module
     construct = Mock(side_effect=AssertionError("Opt-out performed IO"))
@@ -68,6 +85,7 @@ async def test_inventory_edit_keeps_identity_token_and_binding_ownership():
 async def test_prepare_waits_for_idle_and_drops_stale_async_result(phone_lab, monkeypatch):
     from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.sip_registrar import SipAccount
     data = phone()
     sub = add(phone_lab, data)
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
@@ -80,6 +98,7 @@ async def test_prepare_waits_for_idle_and_drops_stale_async_result(phone_lab, mo
     await manager.async_prepare(data)
     assert manager.states[data["phone_id"]]["state"] == "waiting_idle"
     manager.catalog.async_profile.assert_not_awaited()
+    phone_lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password")])
     phone_lab.runtime.endpoints.release_call(endpoint.endpoint_id, "busy")
     profile = {"outputs": [{"path": "{mac}.cfg", "format": "cfg"}]}
     manager.catalog.async_profile.return_value = (profile, {})
@@ -93,25 +112,17 @@ async def test_prepare_waits_for_idle_and_drops_stale_async_result(phone_lab, mo
     await manager.async_close()
 
 
-async def test_delivery_authentication_busy_guard_and_no_false_applied_status(phone_lab):
-    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
-    data = phone()
-    add(phone_lab, data)
-    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
-        "phone_provisioning": {"enabled": True}})
-    manager = PhysicalPhoneProvisioner(phone_lab.hass, phone_lab.entry)
-    phone_lab.runtime.physical_phones = manager
-    manager.store = Mock()
-    manager.files[data["phone_id"]] = {"001122334455.cfg": b"private-password"}
-    manager.states[data["phone_id"]] = {"desired_revision": "one", "state": "ready"}
+async def test_delivery_authentication_busy_guard_and_no_false_applied_status(cached_physical_config):
+    fixture = cached_physical_config
+    manager, data = fixture.manager, fixture.data
+    revision = manager.public_state(data["phone_id"])["desired_revision"]
     assert await manager.async_file(data["phone_id"], "bad-token", "001122334455.cfg") is None
     assert await manager.async_file(data["phone_id"], "invalid-\u00e8", "001122334455.cfg") is None
     assert await manager.async_file(data["phone_id"], data["provisioning_token"], "source/original") is None
-    assert await manager.async_file(data["phone_id"], data["provisioning_token"], "001122334455.cfg") == b"private-password"
+    assert await manager.async_file(data["phone_id"], data["provisioning_token"], "001122334455.cfg") == b"sip.username=first\nsip.password=fixture-only-password\n"
     state = manager.public_state(data["phone_id"])
-    assert state["state"] == "downloaded" and state["downloaded_revision"] == "one"
-    assert "applied" not in state and "private-password" not in str(state) and data["provisioning_token"] not in str(state)
-    await manager.async_close()
+    assert state["state"] == "downloaded" and state["downloaded_revision"] == revision
+    assert "applied" not in state and "fixture-only-password" not in str(state) and data["provisioning_token"] not in str(state)
 
 
 async def test_http_uses_ha_app_key_and_never_serves_bundle_sources(phone_lab):
@@ -156,14 +167,13 @@ async def test_pnp_is_only_candidate_and_never_claims_an_authenticated_endpoint(
     assert discovery.candidates == {}
 
 
-async def test_disabling_provisioning_releases_owner_files_and_cache_but_preserves_associations(phone_lab):
-    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner, async_reconcile_physical_phones
-    data = phone()
-    add(phone_lab, data)
-    manager = PhysicalPhoneProvisioner(phone_lab.hass, phone_lab.entry)
-    phone_lab.runtime.physical_phones = manager
-    manager.files[data["phone_id"]] = {"config": b"password"}
+async def test_disabling_provisioning_releases_owner_files_and_cache_but_preserves_associations(cached_physical_config):
+    from custom_components.voip_stack.physical_phone_provisioning import async_reconcile_physical_phones
+    fixture = cached_physical_config
+    phone_lab, data, manager = fixture.lab, fixture.data, fixture.manager
     manager.catalog.async_clear = AsyncMock()
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
+        "phone_provisioning": {"enabled": False}})
     await async_reconcile_physical_phones(phone_lab.hass, phone_lab.entry)
     assert phone_lab.runtime.physical_phones is None and manager.files == {}
     manager.catalog.async_clear.assert_awaited_once()
@@ -232,17 +242,19 @@ async def test_provisioning_opt_in_after_real_http_start_serves_only_current_own
     from homeassistant.setup import async_setup_component
     from custom_components.voip_stack import physical_phone_provisioning as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from custom_components.voip_stack.phone_profile_catalog import PhoneProfileCatalog
     lab = phone_lab
     data = phone()
     add(lab, data)
+    register_cached_account(lab)
     original_sip = lab.runtime.sip
     monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("no multicast")))
-    monkeypatch.setattr(module.PhysicalPhoneProvisioner, "async_prepare", AsyncMock())
+    monkeypatch.setattr(PhoneProfileCatalog, "async_profile", AsyncMock(return_value=cached_profile()))
     assert await async_setup_component(lab.hass, "http", {
         "http": {"server_host": ["127.0.0.1"], "server_port": unused_tcp_port}})
     # HA's server lifecycle permits late views; raw TestServer freezes its router.
     await lab.hass.http.start()
-    url = f"http://127.0.0.1:{unused_tcp_port}/api/voip_stack/phone_provisioning/{data['phone_id']}/{data['provisioning_token']}/phone.cfg"
+    url = f"http://127.0.0.1:{unused_tcp_port}/api/voip_stack/phone_provisioning/{data['phone_id']}/{data['provisioning_token']}/001122334455.cfg"
     try:
         async with ClientSession() as client:
             async with client.get(url) as response:
@@ -253,9 +265,8 @@ async def test_provisioning_opt_in_after_real_http_start_serves_only_current_own
             await module.async_reconcile_physical_phones(lab.hass, lab.entry)
             await lab.hass.async_block_till_done()
             manager = lab.runtime.physical_phones
-            manager.files[data["phone_id"]] = {"phone.cfg": b"fixture-config"}
             async with client.get(url) as response:
-                assert response.status == 200 and await response.read() == b"fixture-config"
+                assert response.status == 200 and await response.read() == b"sip.username=first\nsip.password=fixture-only-password\n"
             lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
                 "phone_provisioning": {"enabled": False}})
             await module.async_reconcile_physical_phones(lab.hass, lab.entry)
@@ -310,3 +321,119 @@ async def test_ignored_discovery_metadata_is_never_the_pbx_configuration_owner(h
     pbx = MockConfigEntry(domain="voip_stack", source="user", data={"sip_port": 5060})
     pbx.add_to_hass(hass)
     assert config_entry(hass) is pbx
+
+
+@pytest.fixture
+async def cached_physical_config(phone_lab):
+    """Prepare genuine renderer output before testing a later authorization change."""
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+
+    lab = phone_lab
+    data = phone()
+    subentry = add(lab, data)
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_provisioning": {"enabled": True, "base_url": "https://ha.example.test"}})
+    register_cached_account(lab)
+    manager = PhysicalPhoneProvisioner(lab.hass, lab.entry)
+    lab.runtime.physical_phones = manager
+    manager.store = Mock()
+    manager.catalog.async_profile = AsyncMock(return_value=cached_profile())
+    await manager.async_prepare(data)
+    filename = "001122334455.cfg"
+    initial = await manager.async_file(data["phone_id"], data["provisioning_token"], filename)
+    assert b"sip.username=first" in initial
+    try:
+        yield SimpleNamespace(lab=lab, manager=manager, data=data, subentry=subentry, filename=filename)
+    finally:
+        await manager.async_close()
+
+
+async def test_disabled_phone_denies_cached_delivery_before_reconcile_worker(cached_physical_config):
+    state = cached_physical_config
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry,
+        data={**state.data, "enabled": False})
+    # No reconcile/worker turn: authorization must reflect the current inventory.
+    assert await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename) is None
+
+
+async def test_transient_profile_failure_keeps_valid_file_without_hiding_error(cached_physical_config):
+    state = cached_physical_config
+    before = state.manager.public_state(state.data["phone_id"])
+    state.manager.catalog.async_profile.side_effect = OSError("fixture catalog temporarily unavailable")
+    state.manager.schedule({state.data["phone_id"]})
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.public_state(state.data["phone_id"])["state"] == "error"
+    delivered = await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename)
+    assert delivered == b"sip.username=first\nsip.password=fixture-only-password\n"
+    after = state.manager.public_state(state.data["phone_id"])
+    assert after["state"] == "error" and after["error"] == "OSError"
+    assert after["desired_revision"] == before["desired_revision"]
+    assert after["downloaded_revision"] == before["downloaded_revision"]
+
+
+async def test_revoked_bound_account_cannot_serve_last_known_good_credentials(cached_physical_config):
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    state = cached_physical_config
+    state.lab.registrar.update_accounts([SipAccount("first", "First",
+        "fixture-only-password", enabled=False)])
+    # This is an owner revocation, not a transient template/network failure.
+    state.manager._account_changed({"first"})
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.public_state(state.data["phone_id"])["state"] == "error"
+    assert await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename) is None
+
+
+async def test_password_rotation_during_render_cannot_publish_old_credentials(cached_physical_config, monkeypatch):
+    import asyncio
+    from custom_components.voip_stack.physical_phone_provisioning import render_phone_bundle
+    from custom_components.voip_stack.sip_registrar import SipAccount
+
+    state = cached_physical_config
+    started, resume = asyncio.Event(), asyncio.Event()
+    original_executor = state.lab.hass.async_add_executor_job
+
+    async def held_executor(target, *args):
+        if target is render_phone_bundle:
+            started.set()
+            await resume.wait()
+        return await original_executor(target, *args)
+
+    monkeypatch.setattr(state.lab.hass, "async_add_executor_job", held_executor)
+    prepare = state.lab.hass.async_create_task(state.manager.async_prepare(state.data))
+    try:
+        await started.wait()
+        state.lab.registrar.update_accounts([SipAccount("first", "First", "rotated-fixture-password")])
+    finally:
+        resume.set()
+        await prepare
+    assert await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename) is None
+    await state.manager.async_prepare(state.data)
+    delivered = await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename)
+    assert delivered == b"sip.username=first\nsip.password=rotated-fixture-password\n"
+    assert b"fixture-only-password" not in delivered
+    current = state.manager.public_state(state.data["phone_id"])
+    assert current["state"] == "downloaded" and current["error"] == ""
+
+
+async def test_changed_binding_cannot_serve_previous_enabled_account_credentials(cached_physical_config):
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.sip_registrar import SipAccount
+
+    state = cached_physical_config
+    state.lab.registrar.update_accounts([
+        SipAccount("first", "First", "fixture-only-password"),
+        SipAccount("second", "Second", "second-fixture-password"),
+    ])
+    state.lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:second", name="Second",
+        kind=EndpointKind.SIP_ACCOUNT, username="second"))
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry,
+        data={**state.data, "lines": [{"slot": "1", "endpoint_id": "sip:second"}]})
+    assert state.lab.registrar.accounts["first"].enabled
+    assert state.lab.registrar.accounts["second"].enabled
+    assert await state.manager.async_file(state.data["phone_id"],
+        state.data["provisioning_token"], state.filename) is None

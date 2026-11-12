@@ -58,7 +58,7 @@ class AssetCatalog:
 
 @pytest.fixture
 def physical_flow(phone_lab, monkeypatch):
-    from custom_components.voip_stack import physical_phone_flow, phone_profile_catalog
+    from custom_components.voip_stack import physical_phone_flow
     from custom_components.voip_stack.phone_config import (
         _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry,
     )
@@ -76,7 +76,6 @@ def physical_flow(phone_lab, monkeypatch):
     sync_registry_from_entry(lab.hass, lab.entry)
     catalog = AssetCatalog()
     monkeypatch.setattr(physical_phone_flow, "PhoneProfileCatalog", lambda _hass: catalog)
-    monkeypatch.setattr(phone_profile_catalog, "PhoneProfileCatalog", lambda _hass: catalog)
     reload_entry = AsyncMock()
     monkeypatch.setattr(lab.hass.config_entries, "async_reload", reload_entry)
     return SimpleNamespace(lab=lab, catalog=catalog, reload=reload_entry)

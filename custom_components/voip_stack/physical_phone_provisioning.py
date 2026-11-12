@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import secrets
 import time
 from urllib.parse import urlsplit
@@ -40,6 +41,15 @@ def provisioning_base_url(hass, entry):
 def phone_provisioning_url(hass, entry, phone):
     return (provisioning_base_url(hass, entry) + "/api/voip_stack/phone_provisioning/"
             + phone["phone_id"] + "/" + phone["provisioning_token"] + "/")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PreparedPhoneFiles:
+    """Rendered bytes and the configuration/account lifetimes that own them."""
+
+    phone: dict
+    authentication: tuple
+    files: dict[str, bytes]
 
 
 class PhysicalPhoneProvisioner:
@@ -152,6 +162,21 @@ class PhysicalPhoneProvisioner:
                    for binding in phone["lines"]
                    if (endpoint := self.runtime.endpoints.get(binding["endpoint_id"])) is not None)
 
+    def authentication_owner(self, phone):
+        registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
+        if registrar is None:
+            return None
+        owners = []
+        for binding in phone["lines"]:
+            endpoint = self.runtime.endpoints.get(binding["endpoint_id"])
+            if endpoint is None or str(endpoint.kind) != "sip_account":
+                return None
+            generation = registrar.authentication_generation(endpoint.username)
+            if generation is None:
+                return None
+            owners.append((endpoint.endpoint_id, endpoint.username.casefold(), generation))
+        return tuple(owners) if owners else None
+
     async def async_context(self, phone, profile):
         from homeassistant.components import network
         from ldap3.utils.dn import escape_rdn
@@ -221,16 +246,20 @@ class PhysicalPhoneProvisioner:
             state.update(state="waiting_idle")
             self._changed(identity)
             return
+        authentication = self.authentication_owner(phone)
+        if authentication is None:
+            raise ValueError("phone_registrar_or_account_unavailable")
         profile, templates = await self.catalog.async_profile(phone["profile_id"], commit=phone.get("catalog_commit", ""))
         context = await self.async_context(phone, profile)
         files, revision = await self.hass.async_add_executor_job(render_phone_bundle, profile, templates, context)
-        if not self.owned() or physical_phone_records(self.entry).get(identity) != phone:
+        if (not self.owned() or physical_phone_records(self.entry).get(identity) != phone
+                or self.authentication_owner(phone) != authentication):
             return
         if self.busy(phone):
             state.update(state="waiting_idle")
             self._changed(identity)
             return
-        self.files[identity] = files
+        self.files[identity] = PreparedPhoneFiles(phone, authentication, files)
         state.update(state="downloaded" if state.get("downloaded_revision") == revision else "ready",
                      desired_revision=revision, error="", profile_id=phone["profile_id"],
                      language_code=context["physical"]["language_code"],
@@ -242,15 +271,21 @@ class PhysicalPhoneProvisioner:
         if not self.owned():
             return None
         phone = physical_phone_records(self.entry).get(identity)
-        if phone is None or not secrets.compare_digest(phone["provisioning_token"].encode(), token.encode()):
+        if (phone is None or not phone.get("enabled", True)
+                or not secrets.compare_digest(phone["provisioning_token"].encode(), token.encode())):
             return None
         if self.busy(phone):
             return None
-        data = self.files.get(identity, {}).get(filename)
+        prepared = self.files.get(identity)
+        if (prepared is None or prepared.phone != phone
+                or prepared.authentication != self.authentication_owner(phone)):
+            return None
+        data = prepared.files.get(filename)
         if data is None:
             return None
         state = self.states.setdefault(identity, {})
-        state.update(state="downloaded", downloaded_revision=state.get("desired_revision"), last_download=time.time())
+        state.update(state="error" if state.get("error") else "downloaded",
+                     downloaded_revision=state.get("desired_revision"), last_download=time.time())
         self.store.async_delay_save(lambda: self.states, 1)
         self._changed(identity)
         return data
