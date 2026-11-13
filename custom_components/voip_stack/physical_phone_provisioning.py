@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
 import secrets
 import time
 from urllib.parse import urlsplit
@@ -44,11 +48,63 @@ def phone_provisioning_url(hass, entry, phone):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RenderDependencies:
+    """Immutable inputs, with account generations in place of credentials."""
+
+    phone: tuple
+    authentication: tuple
+    profile: str
+    context: tuple
+    shared_services: tuple
+    footprint: tuple
+
+
+def _freeze(value):
+    if isinstance(value, dict):
+        return tuple((str(key), _freeze(item)) for key, item in sorted(value.items())
+                     if str(key).casefold() not in {"password", "auth_password"})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _declared_slots(phone):
+    return {"keys": sorted({str(key["slot"]) for key in phone.get("keys", ())}),
+            "lines": {str(line["slot"]): [str(line["endpoint_id"])] for line in phone.get("lines", ())}}
+
+
+def _stored_footprint(path, identity):
+    saved = json.loads(Path(path).read_text(encoding="utf-8"))
+    return saved.get("data", {}).get(identity, {}).get("managed_slots")
+
+
+def validate_slot_removal(previous, proposed, profile, footprint=None):
+    """Validate administrative removal against only the slots HA already owns."""
+    owned = footprint if footprint is not None else _declared_slots(previous or proposed)
+    active = _declared_slots(proposed)
+    retired = {"keys": sorted(set(owned.get("keys", ())) - set(active["keys"])),
+               "lines": sorted(set(owned.get("lines", {})) - set(active["lines"]))}
+    caps = profile["capabilities"]
+    if ((previous and previous.get("mac") != proposed.get("mac") and any(owned.values()))
+            or owned.get("mac", proposed.get("mac")) != proposed.get("mac")):
+        raise ValueError("phone_owned_mac_change_unsupported")
+    declared_keys = {str(item["slot"]) for item in caps.get("key_slots", ())}
+    if (set(owned.get("keys", ())) - declared_keys
+            or any(not str(slot).isdigit() or not 1 <= int(slot) <= int(caps["max_lines"])
+                   for slot in owned.get("lines", {}))):
+        raise ValueError("phone_retired_slot_unsupported")
+    for kind, capability in (("keys", "clear_keys"), ("lines", "disable_lines")):
+        if retired[kind] and caps.get(capability) is not True:
+            raise ValueError("phone_" + capability + "_unsupported")
+    return retired
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class PreparedPhoneFiles:
     """Rendered bytes and the configuration/account lifetimes that own them."""
 
-    phone: dict
-    authentication: tuple
+    dependencies: RenderDependencies
+    profile: dict
     files: dict[str, bytes]
 
 
@@ -74,7 +130,7 @@ class PhysicalPhoneProvisioner:
 
     async def async_start(self):
         from homeassistant.helpers.storage import Store
-        self.store = Store(self.hass, 1, f"voip_stack.physical_phones.{self.entry.entry_id}")
+        self.store = Store(self.hass, 1, f"voip_stack.physical_phones.{self.entry.entry_id}", atomic_writes=True)
         saved = await self.store.async_load()
         if not self.owned():
             return
@@ -85,6 +141,7 @@ class PhysicalPhoneProvisioner:
             CALL_EVENT, lambda _event: self._wake_idle()))
         self._unsubscribers.append(self.hass.bus.async_listen(
             "core_config_updated", self._language_changed))
+        self._unsubscribers.append(self.runtime.endpoints.subscribe(lambda _event: self.schedule()))
         if self.runtime.directory is not None:
             self._unsubscribers.append(self.runtime.directory.subscribe(lambda: self.schedule()))
         from .physical_phone_discovery import PhoneDiscovery
@@ -114,8 +171,8 @@ class PhysicalPhoneProvisioner:
 
     @callback
     def _language_changed(self, event):
-        self.schedule({identity for identity, phone in physical_phone_records(self.entry).items()
-                       if phone.get("follow_ha_language", True)})
+        # The same HA event also changes automatic internal/external URL choices.
+        self.schedule()
 
     @callback
     def _wake_idle(self):
@@ -154,13 +211,106 @@ class PhysicalPhoneProvisioner:
             self.files.pop(identity, None)
         changed = {identity for identity, phone in records.items() if self._records.get(identity) != phone}
         self._records = records
+        for identity, phone in records.items():
+            prepared = self.files.get(identity)
+            if identity in changed or prepared is None:
+                continue
+            try:
+                current, _context = await self._capture(phone, prepared.profile,
+                    profile_digest=prepared.dependencies.profile)
+            except Exception:
+                changed.add(identity)
+            else:
+                if current != prepared.dependencies:
+                    changed.add(identity)
         self.schedule(changed)
         self._changed("")
 
-    def busy(self, phone):
-        return any(endpoint is not None and endpoint.active_call_id
-                   for binding in phone["lines"]
-                   if (endpoint := self.runtime.endpoints.get(binding["endpoint_id"])) is not None)
+    def busy(self, phone, *, previous=None):
+        identities = {line["endpoint_id"] for line in phone["lines"]}
+        for footprint in (self._footprint(phone), previous or {}):
+            for references in footprint.get("lines", {}).values():
+                identities.update(references)
+        return any(endpoint is not None and endpoint.active_call_id for identity in identities
+                   if (endpoint := self.runtime.endpoints.get(identity)) is not None)
+
+    def _footprint(self, phone):
+        saved = self.states.get(phone["phone_id"], {}).get("managed_slots", {})
+        if not isinstance(saved, dict):
+            saved = {}
+        keys = saved.get("keys", ())
+        lines = saved.get("lines", {})
+        result = {"mac": saved.get("mac", phone["mac"]),
+                  "keys": sorted({slot for slot in keys if isinstance(slot, str) and slot.isascii()
+                                  and slot.isdigit() and str(int(slot)) == slot and 0 < int(slot) <= 256})
+                  if isinstance(keys, (list, tuple)) else [], "lines": {}}
+        if isinstance(lines, dict):
+            for slot, references in lines.items():
+                if (isinstance(slot, str) and slot.isascii() and slot.isdigit()
+                        and str(int(slot)) == slot and 0 < int(slot) <= 64
+                        and isinstance(references, (list, tuple))):
+                    result["lines"][slot] = sorted({ref for ref in references
+                        if isinstance(ref, str) and ref and len(ref) <= 512})
+        return result
+
+    def _proposed_footprint(self, phone):
+        saved, declared = self._footprint(phone), _declared_slots(phone)
+        saved["keys"] = sorted(set(saved["keys"]) | set(declared["keys"]))
+        for slot, references in declared["lines"].items():
+            # A slot deliberately reused by HA belongs to its new binding.
+            saved["lines"][slot] = references
+        return saved
+
+    def validate_inventory_change(self, proposed, profile):
+        current = physical_phone_records(self.entry).get(proposed["phone_id"])
+        state = self.states.get(proposed["phone_id"], {})
+        return validate_slot_removal(current, proposed, profile,
+            self._footprint(proposed) if "managed_slots" in state else None)
+
+    async def _capture(self, phone, profile, *, profile_digest=None):
+        authentication = self.authentication_owner(phone)
+        if authentication is None:
+            raise ValueError("phone_registrar_or_account_unavailable")
+        footprint = self._proposed_footprint(phone)
+        context = await self.async_context(phone, profile)
+        context["retired"] = validate_slot_removal(phone, phone, profile, footprint)
+        requested, applied, epoch = self._directory_service()
+        # Server certificate paths and account passwords are not snapshot data.
+        fields = ("enabled", "ldap_port", "base_dn", "tls", "allow_anonymous")
+        shared = ({"requested": {key: requested[key] for key in fields},
+                   "applied": {key: applied[key] for key in fields} if applied is not None else None, "epoch": epoch}
+                  if "ldap" in profile["capabilities"].get("functions", ()) else {})
+        digest = profile_digest or hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()
+        return RenderDependencies(_freeze(phone), authentication, digest, _freeze(context),
+                                  _freeze(shared), _freeze(footprint)), context
+
+    def _directory_service(self):
+        from .phone_services import settings
+        requested = settings(self.entry)
+        controller = self.runtime.phone_provisioning
+        applied = getattr(controller, "_directory_config", None) if controller is not None else None
+        epoch = getattr(controller, "_directory_epoch", "") if controller is not None else ""
+        return requested, applied if controller is not None else requested, epoch
+
+    async def _persist_footprint(self, identity):
+        """Commit on our one Store; HA logs write failures without raising them."""
+        snapshot = deepcopy(self.states)
+        expected = snapshot.get(identity, {}).get("managed_slots")
+
+        async def commit():
+            await self.store.async_save(snapshot)
+            actual = await self.hass.async_add_executor_job(_stored_footprint, self.store.path, identity)
+            if actual != expected:
+                raise ValueError("phone_footprint_not_persisted")
+
+        # The scoped commit settles before rollback, including its executor
+        # write. Cancellation cannot release Store's lock over a running write.
+        task = self.hass.async_create_task(commit(), "voip-physical-phone-store-commit")
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     def authentication_owner(self, phone):
         registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
@@ -180,7 +330,6 @@ class PhysicalPhoneProvisioner:
     async def async_context(self, phone, profile):
         from homeassistant.components import network
         from ldap3.utils.dn import escape_rdn
-        from .phone_services import settings
 
         cfg = self.runtime.transport_config
         host = cfg.get("advertise_host") or await network.async_get_source_ip(
@@ -219,8 +368,11 @@ class PhysicalPhoneProvisioner:
                 elif not phone["follow_ha_language"]:
                     raise
         directory = {}
-        config = settings(self.entry)
-        if config["enabled"] and "ldap" in caps.get("functions", ()) and phone.get("directory_enabled", True):
+        requested, config, _epoch = self._directory_service()
+        ldap_requested = requested["enabled"] and "ldap" in caps.get("functions", ()) and phone.get("directory_enabled", True)
+        if ldap_requested and config is None:
+            raise ValueError("phone_directory_service_unavailable")
+        if ldap_requested and config["enabled"]:
             first = lines[0]
             directory["ldap"] = {"host": host, "port": config["ldap_port"],
                 "base_dn": config["base_dn"], "bind_dn": f"uid={escape_rdn(first['username'])},ou=accounts,{config['base_dn']}",
@@ -249,23 +401,71 @@ class PhysicalPhoneProvisioner:
         authentication = self.authentication_owner(phone)
         if authentication is None:
             raise ValueError("phone_registrar_or_account_unavailable")
+        prepared = self.files.get(identity)
+        if (prepared is not None and _freeze(phone) == prepared.dependencies.phone
+                and not state.get("error")):
+            current, _context = await self._capture(phone, prepared.profile,
+                profile_digest=prepared.dependencies.profile)
+            if current == prepared.dependencies:
+                available = "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
+                if state.get("state") != available:
+                    state["state"] = available
+                    self._changed(identity)
+                return
         profile, templates = await self.catalog.async_profile(phone["profile_id"], commit=phone.get("catalog_commit", ""))
-        context = await self.async_context(phone, profile)
+        profile_digest = hashlib.sha256(json.dumps({"profile": profile, "templates": templates},
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        dependencies, context = await self._capture(phone, profile, profile_digest=profile_digest)
+        prepared = self.files.get(identity)
+        if prepared is not None and prepared.dependencies == dependencies and not state.get("error"):
+            available = "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
+            if state.get("state") != available:
+                state["state"] = available
+                self._changed(identity)
+            return
         files, revision = await self.hass.async_add_executor_job(render_phone_bundle, profile, templates, context)
+        current, _current_context = await self._capture(phone, profile, profile_digest=profile_digest)
         if (not self.owned() or physical_phone_records(self.entry).get(identity) != phone
-                or self.authentication_owner(phone) != authentication):
+                or self.authentication_owner(phone) != authentication or current != dependencies):
             return
         if self.busy(phone):
             state.update(state="waiting_idle")
             self._changed(identity)
             return
-        self.files[identity] = PreparedPhoneFiles(phone, authentication, files)
-        state.update(state="downloaded" if state.get("downloaded_revision") == revision else "ready",
-                     desired_revision=revision, error="", profile_id=phone["profile_id"],
-                     language_code=context["physical"]["language_code"],
-                     file_formats={output["path"].replace("{mac}", phone["mac"]): output["format"]
-                                   for output in profile["outputs"]})
-        self._changed(identity)
+        old_footprint = self._footprint(phone)
+        footprint = self._proposed_footprint(phone)
+        previous_footprint = state.get("managed_slots")
+        footprint_attempted, published = False, False
+        try:
+            if previous_footprint != footprint:
+                footprint_attempted = True
+                state["managed_slots"] = footprint
+                await self._persist_footprint(identity)
+                current, _current_context = await self._capture(phone, profile, profile_digest=profile_digest)
+                if (not self.owned() or physical_phone_records(self.entry).get(identity) != phone
+                        or current != dependencies):
+                    return
+            if self.busy(phone, previous=old_footprint):
+                state.update(state="waiting_idle")
+                self._changed(identity)
+                return
+            self.files[identity] = PreparedPhoneFiles(dependencies, deepcopy(profile), files)
+            state.update(state="downloaded" if state.get("downloaded_revision") == revision else "ready",
+                         desired_revision=revision, error="", profile_id=phone["profile_id"],
+                         language_code=context["physical"]["language_code"],
+                         file_formats={output["path"].replace("{mac}", phone["mac"]): output["format"]
+                                       for output in profile["outputs"]})
+            published = True
+            self._changed(identity)
+        finally:
+            if footprint_attempted and not published:
+                # A cancelled/stale candidate must not acquire slots it never
+                # made available. Store serializes this rollback with its write.
+                if previous_footprint is None:
+                    state.pop("managed_slots", None)
+                else:
+                    state["managed_slots"] = previous_footprint
+                await self._persist_footprint(identity)
 
     async def async_file(self, identity, token, filename):
         if not self.owned():
@@ -277,8 +477,17 @@ class PhysicalPhoneProvisioner:
         if self.busy(phone):
             return None
         prepared = self.files.get(identity)
-        if (prepared is None or prepared.phone != phone
-                or prepared.authentication != self.authentication_owner(phone)):
+        if prepared is None:
+            return None
+        try:
+            current, _context = await self._capture(phone, prepared.profile,
+                                                   profile_digest=prepared.dependencies.profile)
+        except Exception:
+            self.schedule({identity})
+            return None
+        if (not self.owned() or physical_phone_records(self.entry).get(identity) != phone
+                or current != prepared.dependencies or self.busy(phone)):
+            self.schedule({identity})
             return None
         data = prepared.files.get(filename)
         if data is None:
@@ -293,6 +502,7 @@ class PhysicalPhoneProvisioner:
     def public_state(self, identity):
         phone = physical_phone_records(self.entry).get(identity)
         value = dict(self.states.get(identity, {}))
+        value.pop("managed_slots", None)
         if phone is not None:
             registrar = self.runtime.sip.component("registrar") if self.runtime.sip else None
             value["lines"] = [{"slot": line["slot"], "endpoint_id": line["endpoint_id"],

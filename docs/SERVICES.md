@@ -222,6 +222,18 @@ reference. `trunk_id` can select another configured line for the forwarded
 destination. The original `answer_timeout` remains the total answer deadline
 and is not restarted by forwarding.
 
+The failure policy covers routing preflight as well as a destination that rings
+and fails. Once an operation has accepted a valid, authorized source call,
+an unknown destination, unavailable line or routing loop produces a failed
+transfer result and applies `resume`, `terminate` or `busy` to that source.
+Invalid action arguments, stale call guards, non-forwardable sources and denied
+permissions remain action errors and do not terminate a valid existing call.
+
+Forwarding can replace a pending SIP destination after a 183 with audio. The
+caller keeps its negotiated media contract and port ownership during the move;
+the retired destination cannot change the replacement through late responses.
+If `resume` needs the retired destination again, a new SIP transaction is used.
+
 See [Automation Dial Plan](AUTOMATION_DIALPLAN.md) for complete examples.
 
 ### `voip_stack.transfer`

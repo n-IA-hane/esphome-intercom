@@ -455,7 +455,7 @@ async def test_registered_sip_caller_receives_default_trunk_early_media(trunks, 
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("mode", ["cancel", "final", "bodyless", "changed", "late-reliable", "late-queued-final"])
+@pytest.mark.parametrize("mode", ["cancel", "final", "bodyless", "changed", "late-reliable", "late-queued-final", "forward", "forward-bare", "forward-group", "forward-late", "forward-cancel", "forward-resume", "forward-denied", "forward-stage-failure", "forward-queue", "forward-browser"])
 async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(trunks, monkeypatch, mode):
     """A provider behind symmetric RTP withholds its announcement until HA sends."""
     from dataclasses import replace
@@ -496,11 +496,12 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
     provider.auto_answer = False
     ids = sip.SipDialogIds(call_id=sip.make_call_id("early-nat"), local_tag=sip.make_tag())
     tone = b"\xaa" * 160
-    next_tone = b"\x55" * 160
+    next_tone = b"\x2a" * 160
     target = str(sip.SipUri("External", *listener))
     local = str(sip.SipUri("early-nat", *caller.address))
     current_request = None
     media_task = None
+    browser_task = None
     nat_opened = asyncio.Event()
     final_ack = asyncio.Event()
     priming = []
@@ -539,11 +540,25 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
         if request.method != "INVITE":
             if request.method == "ACK":
                 final_ack.set()
+            if mode == "forward-late" and request.method == "CANCEL":
+                provider.requests.append(request)
+                provider.respond(request, address, 200)
+                respond(183, body=answer_sdp(changed_audio.getsockname()[1]))
+                respond(200, body=answer_sdp(changed_audio.getsockname()[1]))
+                return
             return original(raw, address)
         provider.requests.append(request)
         provider.invites.append(request)
         provider.last_request, provider.remote = request, address
         current_request = request
+        if mode == "forward-resume" and len(provider.invites) > 1:
+            respond(200, body=answer_sdp(provider.rtp_socket.getsockname()[1]))
+            provider.invited.set()
+            return
+        if mode == "forward-bare":
+            respond(183)
+            provider.invited.set()
+            return
         if mode.startswith("late-"):
             respond(180)
         else:
@@ -581,6 +596,13 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
     try:
         await register_phone(SimpleNamespace(lab=lab, registrar=registrar, listener=listener, a=caller),
             username="early-nat", outbound=False)
+        if mode.startswith("forward"):
+            from custom_components.voip_stack import call_forwarder
+            from custom_components.voip_stack.endpoint_routing import roster_from_peers
+            projected = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+            source = next(row for row in projected if (row.metadata or {}).get("endpoint_id") == "sip:early-nat")
+            lab.roster[:] = [row for row in lab.roster if row.id != "early-nat"] + [source]
+            monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: lab.roster)
         offer = ("v=0\r\no=- 2 1 IN IP4 127.0.0.2\r\ns=Caller\r\n"
             "c=IN IP4 127.0.0.2\r\nt=0 0\r\n"
             f"m=audio {audio.getsockname()[1]} RTP/AVP 8\r\n"
@@ -606,22 +628,27 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                             queued, _ = await caller.receive()
                             assert not (queued.status_code == 200 and queued.header("CSeq") == "1 INVITE")
                 acknowledge_progress(first)
-        early = await source_response(183)
-        if mode.startswith("late-"):
-            assert int(early.header("RSeq")) == int(first.header("RSeq")) + 1
-        assert early.body and early.header("RSeq")
-        await asyncio.wait_for(nat_opened.wait(), 2)
-        await media_task
-        packet = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
-        assert packet.payload_type == 8 and packet.payload == tone
+        early = await source_response(180 if mode == "forward-bare" else 183)
+        packet = None
+        if mode == "forward-bare":
+            assert not early.body
+        else:
+            if mode.startswith("late-"):
+                assert int(early.header("RSeq")) == int(first.header("RSeq")) + 1
+            assert early.body and early.header("RSeq")
+            await asyncio.wait_for(nat_opened.wait(), 2)
+            await media_task
+            packet = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
+            assert packet.payload_type == 8 and packet.payload == tone
+            assert struct.unpack("<160h", __import__("audioop").alaw2lin(packet.payload, 2)) == (32256,) * 160
         session = lab.calls.get_session(ids.call_id)
         client = lab.calls.sip_client_for(current_request.header("Call-ID"))
         relay = lab.calls.resource_for(ids.call_id, "relay")
-        assert relay is not None
+        assert (relay is not None) == (mode != "forward-bare")
         if mode != "late-queued-final":
             assert client.dialog is None and not session.answer_committed
         assert len(provider.invites) == 1 and not lab.phones[1].invites
-        ports = (relay.left_port, relay.right_port)
+        ports = (relay.left_port, relay.right_port) if relay is not None else None
         generation = session.generation
         if mode == "cancel":
             cancel = [(name, value if name != "CSeq" else "1 CANCEL") for name, value in invite_headers
@@ -634,6 +661,225 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
             await asyncio.wait_for(session.terminated.wait(), 3)
             assert any(request.method == "CANCEL" for request in provider.requests)
             assert any(request.method == "ACK" for request in provider.requests)
+        elif mode.startswith("forward"):
+            replacement = lab.phones[1]
+            replacement_receive = replacement.datagram_received
+
+            def replacement_answer(request, address, status=200):
+                headers = [(name, request.header(name)) for name in ("Via", "From", "Call-ID", "CSeq")]
+                headers.extend((("To", request.header("To") + ";tag=replacement"),
+                    ("Contact", f"<sip:bedroom1@127.0.0.1:{replacement.transport.get_extra_info('sockname')[1]}>")))
+                body = answer_sdp(replacement.rtp_socket.getsockname()[1]) if status == 200 else b""
+                if body:
+                    headers.append(("Content-Type", "application/sdp"))
+                replacement.transport.sendto(sip.build_response(status, "OK" if status == 200 else "Busy Here", headers, body), address)
+
+            def receive_replacement(raw, address):
+                request = sip.parse_message(raw)
+                if mode == "forward-cancel" and request.method == "CANCEL":
+                    replacement.requests.append(request)
+                    replacement.respond(request, address, 200)
+                    replacement_answer(replacement.last_request, address)
+                    return
+                if request.method != "INVITE":
+                    return replacement_receive(raw, address)
+                replacement.requests.append(request)
+                replacement.invites.append(request)
+                replacement.last_request, replacement.remote = request, address
+                replacement.invited.set()
+                if mode == "forward-cancel":
+                    replacement.respond(request, address, 180)
+                else:
+                    replacement_answer(request, address, 486 if mode == "forward-resume" else 200)
+
+            monkeypatch.setattr(replacement, "datagram_received", receive_replacement)
+            destination = "bedroom1"
+            if mode == "forward-queue":
+                from custom_components.voip_stack.call_queues import QueueManager, QueueDefinition, QueuePolicy
+                from custom_components.voip_stack.group_config import normalize_group_data
+                from homeassistant.config_entries import ConfigSubentry
+                entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+                queue_id = "fd8aba0b247840e898892f90ff83be4b"
+                manager = QueueManager(lab.hass, entry)
+                policy = QueuePolicy(max_wait=5, no_agent_wait=5)
+                manager.definitions[queue_id] = QueueDefinition(queue_id, "Media queue", ("sip:bedroom1",), "405")
+                manager.policies[queue_id] = policy
+                manager.agent_states[queue_id] = {"sip:bedroom1": "paused"}
+                lab.runtime.queues = manager
+                lab.runtime.endpoints.update("sip:bedroom1", queues=("Media queue",))
+                data = normalize_group_data({"kind": "queue", "name": "Media queue", "extension": "405",
+                    "origin": "manual", "policy": {"max_wait": 5, "no_agent_wait": 5}}, identity=queue_id)
+                lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="group",
+                    title="Media queue", unique_id="group:" + queue_id, data=data))
+                lab.roster.extend(manager.roster_entries())
+                destination = "Media queue"
+            if mode == "forward-browser":
+                endpoint = PhoneEndpoint(endpoint_id="early-browser", name="Early browser", device_id="early-browser-device",
+                    kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf"}))
+                lab.runtime.endpoints.register(endpoint)
+                lab.roster.append(RosterEntry(endpoint.name, ha_bridge=True,
+                    metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
+                destination = endpoint.name
+            if mode == "forward-group":
+                lab.roster.append(RosterEntry("Replacement group", ha_bridge=True,
+                    metadata={"group_type": "ring", "members": ["bedroom1"]}))
+                destination = "Replacement group"
+            if mode == "forward-stage-failure":
+                original_add = session.add_resource
+                previous_link = lab.calls.bridge_link_for(ids.call_id)
+                previous_reservation = next(resource.value for resource in session.resources
+                    if resource.name.startswith("pending_bridge_media:"))
+                def fail_retirement(name, *args, **kwargs):
+                    if name.startswith("retired_destination:"):
+                        raise RuntimeError("injected retirement failure")
+                    return original_add(name, *args, **kwargs)
+                monkeypatch.setattr(session, "add_resource", fail_retirement)
+                with pytest.raises(RuntimeError, match="injected retirement failure"):
+                    await lab.hass.services.async_call("voip_stack", "forward", {
+                        "device_id": "sip:early-nat", "call_id": ids.call_id,
+                        "destination": destination, "on_failure": "resume",
+                    }, blocking=True)
+                assert session.live and session.owner == "bridge" and session.state == "remote_ringing"
+                assert lab.calls.bridge_link_for(ids.call_id) == previous_link
+                assert lab.calls.sip_client_for(previous_link) is client and not previous_reservation.released
+                assert lab.calls.resource_for(ids.call_id, "relay") is relay
+                assert lab.calls.resource_for(ids.call_id, "preanswered") is None
+                assert not any(request.method == "CANCEL" for request in provider.requests)
+                await lab.hass.loop.sock_sendto(provider.rtp_socket,
+                    rtp.build_packet(rtp.RtpPacket(8, 12, 1920, 0x12345678, next_tone)), ("127.0.0.1", relay.right_port))
+                after = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
+                assert after.payload == next_tone and after.ssrc == packet.ssrc
+                return
+            if mode == "forward-denied":
+                from custom_components.voip_stack.trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
+                lab.runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = ["sip:early-nat"]
+                with pytest.raises(ServiceValidationError):
+                    await lab.hass.services.async_call("voip_stack", "forward", {
+                        "device_id": "sip:early-nat", "call_id": ids.call_id,
+                        "destination": "External", "on_failure": "terminate",
+                    }, blocking=True)
+                assert session.live and session.generation == generation
+                assert lab.calls.resource_for(ids.call_id, "relay") is relay
+                assert not any(request.method == "CANCEL" for request in provider.requests)
+                await lab.hass.loop.sock_sendto(provider.rtp_socket,
+                    rtp.build_packet(rtp.RtpPacket(8, 12, 1920, 0x12345678, next_tone)), ("127.0.0.1", relay.right_port))
+                after = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
+                assert after.payload == next_tone and after.ssrc == packet.ssrc
+                return
+            await lab.hass.services.async_call("voip_stack", "forward", {
+                "device_id": "sip:early-nat", "call_id": ids.call_id,
+                "destination": destination, "on_failure": "resume" if mode == "forward-resume" else "terminate",
+            }, blocking=True)
+            if mode == "forward-browser":
+                from aiohttp import WSMsgType
+                from custom_components.voip_stack import audio_ws, audio_ws_view
+                async with asyncio.timeout(2):
+                    while session.metadata.get("endpoint_id") != endpoint.endpoint_id:
+                        await asyncio.sleep(0)
+                await lab.hass.services.async_call("voip_stack", "answer", {
+                    "device_id": endpoint.device_id, "call_id": ids.call_id,
+                    "media_client_id": "early-browser-owner"}, blocking=True)
+                final = await source_response(200)
+                assert final.body == early.body
+                transport.sendto(sip.build_request("ACK", target, sip.dialog_headers(
+                    request_uri=target, local_uri=local, remote_uri=target, contact_uri=local,
+                    dialog=replace(ids, remote_tag=sip.extract_tag(final.header("To"))), method="ACK")), listener)
+                active = audio_ws_view._active_softphone_media_session(lab.hass, endpoint.endpoint_id)
+                assert active.local_rtp_port == ports[0] and active.rtp_source.ssrc == packet.ssrc
+                assert lab.calls.resource_for(ids.call_id, "relay") is None
+                assert relay._stop_requested and relay.left_transport is None and relay.right_transport is None
+                assert session.generation == generation and session.owner == "ha_softphone" and not replacement.invites
+                class Browser:
+                    def __init__(self):
+                        self.audio, self.messages = asyncio.Queue(), asyncio.Queue()
+                        self.ready = asyncio.Event()
+                    def force_close(self): pass
+                    def __aiter__(self): return self
+                    async def __anext__(self): return await self.messages.get()
+                    async def send_json(self, _value): self.ready.set()
+                    async def send_bytes(self, value): await self.audio.put(value)
+                browser = Browser()
+                browser_task = asyncio.create_task(audio_ws_view._run_audio_session(
+                    lab.hass, browser, active, endpoint_id=endpoint.endpoint_id))
+                await asyncio.wait_for(browser.ready.wait(), 2)
+                frame = struct.pack("<160h", *([4096] * 160))
+                for _ in range(5):
+                    browser.messages.put_nowait(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
+                async with asyncio.timeout(2):
+                    while True:
+                        after = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 2048))
+                        pcm = struct.unpack("<160h", __import__("audioop").alaw2lin(after.payload, 2))
+                        if set(pcm) == {4224}:
+                            break
+                assert after.ssrc == packet.ssrc
+                # Both directions still use the caller's original SDP contract.
+                await lab.hass.loop.sock_sendto(audio,
+                    rtp.build_packet(rtp.RtpPacket(8, 30, 4800, 0xABCDEF99, tone)), ("127.0.0.1", ports[0]))
+                received = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 2))
+                assert set(struct.unpack("<160h", received)) == {32256}
+            elif mode == "forward-queue":
+                final = await source_response(200)
+                assert final.body == early.body
+                transport.sendto(sip.build_request("ACK", target, sip.dialog_headers(
+                    request_uri=target, local_uri=local, remote_uri=target, contact_uri=local,
+                    dialog=replace(ids, remote_tag=sip.extract_tag(final.header("To"))), method="ACK")), listener)
+                media = lab.calls.resource_for(ids.call_id, "relay")
+                assert session.owner == "queue" and media is not relay
+                assert media.local_rtp_port == ports[0] and media.rtp_source.ssrc == packet.ssrc
+                assert sum(resource.name == f"relay:{ids.call_id}" for resource in session.resources) == 1
+                assert not replacement.invites
+                async def application_tone():
+                    for _ in range(5):
+                        yield struct.pack("<160h", *([4096] * 160))
+                await media.play_pcm_stream(application_tone(), source_format=media.invite.send_format.audio_format)
+                async with asyncio.timeout(2):
+                    while True:
+                        after = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 2048))
+                        pcm = struct.unpack("<160h", __import__("audioop").alaw2lin(after.payload, 2))
+                        if set(pcm) == {4224}:
+                            break
+                assert after.ssrc == packet.ssrc and set(pcm) == {4224}
+            elif mode == "forward-cancel":
+                await asyncio.wait_for(replacement.invited.wait(), 2)
+                cancel = [(name, value if name != "CSeq" else "1 CANCEL") for name, value in invite_headers
+                    if name in {"Via", "From", "To", "Call-ID", "CSeq", "Max-Forwards"}]
+                transport.sendto(sip.build_request("CANCEL", target, cancel), listener)
+                cancelled = await source_response(487)
+                ack = [(name, cancelled.header("To") if name == "To" else "1 ACK" if name == "CSeq" else value)
+                       for name, value in cancel]
+                transport.sendto(sip.build_request("ACK", target, ack), listener)
+                await asyncio.wait_for(session.terminated.wait(), 3)
+                assert not session.answer_committed
+                assert any(request.method == "CANCEL" for request in replacement.requests)
+                assert any(request.method == "ACK" for request in replacement.requests)
+                assert any(request.method == "BYE" for request in replacement.requests)
+            else:
+                final = await source_response(200)
+                if mode != "forward-bare":
+                    assert final.body == early.body
+                transport.sendto(sip.build_request("ACK", target, sip.dialog_headers(
+                    request_uri=target, local_uri=local, remote_uri=target, contact_uri=local,
+                    dialog=replace(ids, remote_tag=sip.extract_tag(final.header("To"))), method="ACK")), listener)
+                assert session.generation == generation and session.answer_committed
+                active_relay = lab.calls.resource_for(ids.call_id, "relay")
+                if relay is not None:
+                    assert active_relay is relay and (relay.left_port, relay.right_port) == ports
+                relay = active_relay
+                assert sum(resource.name == f"relay:{ids.call_id}" for resource in session.resources) == 1
+                source_socket = provider.rtp_socket if mode == "forward-resume" else replacement.rtp_socket
+                assert relay.right.port == source_socket.getsockname()[1]
+                await lab.hass.loop.sock_sendto(source_socket,
+                    rtp.build_packet(rtp.RtpPacket(8, 21, 3360, 0xDEADBEEF, next_tone)), ("127.0.0.1", relay.right_port))
+                after = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
+                assert after.payload == next_tone
+                assert struct.unpack("<160h", __import__("audioop").alaw2lin(after.payload, 2)) == (-32256,) * 160
+                if packet is not None:
+                    assert after.ssrc == packet.ssrc
+                if mode == "forward-late":
+                    await asyncio.wait_for(provider.bye.wait(), 2)
+                    assert any(request.method == "ACK" for request in provider.requests)
+                if mode == "forward-resume":
+                    assert len(provider.invites) == 2
         else:
             final_port = changed_audio.getsockname()[1] if mode == "changed" else provider.rtp_socket.getsockname()[1]
             if mode != "late-queued-final":
@@ -669,12 +915,17 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
         barrier = lab.calls.request_termination(ids.call_id, TerminationIntent("test_done"))
         if barrier is not None:
             await barrier
+        if browser_task is not None:
+            browser_task.cancel()
+            await asyncio.gather(browser_task, return_exceptions=True)
         if media_task is not None:
             media_task.cancel()
             await asyncio.gather(media_task, return_exceptions=True)
         transport.close()
         audio.close()
         changed_audio.close()
+        if mode == "forward-queue" and lab.runtime.queues is not None:
+            await lab.runtime.queues.close()
         assert not lab.calls.sessions
         assert set(lab.runtime.rtp_port_pool.get("used", ())) == baseline_ports
         assert all(client.ready and not client._outbound_dialogs for client in sip_trunks(lab.hass).values())

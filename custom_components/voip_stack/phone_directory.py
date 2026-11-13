@@ -2,12 +2,30 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from hashlib import sha256
 import logging
 
 from .roster import RosterEntry, RosterError, normalize_roster_key
 
 _LOGGER = logging.getLogger(__name__)
 _PRIVATE_FIELDS = {"password", "auth_password", "secret", "token", "pin", "pin_hash", "authorization"}
+
+
+def contact_key_reference(entry):
+    """A configured contact is callable, but is never a phone/BLF principal."""
+    if (entry.metadata.get("endpoint_kind", "contact") != "contact"
+            or entry.metadata.get("virtual_endpoint") or entry.metadata.get("group_type")
+            or entry.metadata.get("local_ha") or not (entry.number or entry.address or entry.sip_uri)):
+        return None
+    return "contact:" + str(entry.id)
+
+
+def contact_dial_target(entry):
+    reference = contact_key_reference(entry)
+    if reference is None:
+        raise ValueError("invalid_phone_key_target")
+    # A bounded SIP user keeps the stable directory identity on small DSS keys.
+    return "contact+" + sha256(reference.casefold().encode()).hexdigest()[:20]
 
 
 def public_metadata(value):
@@ -45,6 +63,18 @@ class PhoneDirectory:
 
     def snapshot(self) -> tuple[RosterEntry, ...]:
         return tuple(self._copy(entry) for entry in self._entries.values())
+
+    def programmable_contacts(self):
+        return tuple(self._copy(entry) for entry in self._entries.values()
+                     if entry.enabled and contact_key_reference(entry) is not None)
+
+    def key_contact(self, reference):
+        wanted = str(reference).casefold()
+        matches = [entry for entry in self._entries.values()
+                   if str(contact_key_reference(entry) or "").casefold() == wanted]
+        if len(matches) > 1:
+            raise ValueError("invalid_phone_key_target")
+        return self._copy(matches[0]) if matches and matches[0].enabled else None
 
     def get(self, identity) -> RosterEntry | None:
         entry = self._entries.get(self._key(identity))

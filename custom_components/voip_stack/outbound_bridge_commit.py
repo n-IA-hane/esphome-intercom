@@ -31,6 +31,7 @@ from .sip_bridge import (
 )
 from .sip_runtime import send_final_response
 from .softphone_termination import async_terminate_sip_bridge_session
+from .pending_sip_destination import RetainedSourceMedia
 
 if TYPE_CHECKING:
     from .endpoint_session import EndpointCallSession
@@ -76,7 +77,7 @@ class BridgeCommitData:
     local_endpoint_id: str = ""
     source_client: Any | None = None
     prepared_media: Any | None = None
-    retained_relay: Any | None = None
+    retained_media: RetainedSourceMedia | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,8 +214,9 @@ async def async_commit_outbound_bridge(
             _require_current()
 
         failure_reason = TerminalReason.TRANSPORT_UNREACHABLE.value
-        if data.retained_relay is not None:
-            relay = data.retained_relay
+        if data.retained_media is not None:
+            data.retained_media.validate(registry)
+            relay = data.retained_media.relay
             if registry.resource_for(invite.call_id, "relay") is not relay or client.dialog is None:
                 raise RuntimeError("early bridge media owner changed")
             relay_adopted = True
@@ -279,7 +281,7 @@ async def async_commit_outbound_bridge(
             session.add_resource(f"retired_local_media:{id(old_media):x}", old_media,
                 lambda _reason: old_media.stop(), stage=CleanupStage.MEDIA)
             registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=old_media)
-        if data.retained_relay is None:
+        if data.retained_media is None:
             registry.attach_relay(invite.call_id, relay)
         relay_adopted = True
         if data.prepared_media is not None and data.prepared_media.video_update is not None:

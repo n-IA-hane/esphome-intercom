@@ -200,10 +200,16 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
                                      resource_key=f"queue_admission:{session.call_id}")
             registry.own_resource(session.call_id, app.resource_name, app, app.close,
                                   stage=CleanupStage.MEDIA, generation=session.generation)
+            token = session.token
             async def route_fallback():
-                task = await registry.forward_call(call_id=session.call_id, destination=fallback, on_failure="terminate")
-                if task is not None:
-                    await asyncio.shield(task)
+                from homeassistant.exceptions import ServiceValidationError
+                try:
+                    task = await registry.forward_call(call_id=session.call_id, destination=fallback, on_failure="terminate")
+                    if task is not None:
+                        await asyncio.shield(task)
+                except ServiceValidationError:
+                    if session.owns(token):
+                        raise
             session.create_task(route_fallback(), name="queue-admission-forward")
             return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
         return SipInviteResult(486, "Busy Here", to_tag="")

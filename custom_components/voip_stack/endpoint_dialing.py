@@ -41,6 +41,7 @@ from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_for
 from .sip_client import SipCallClient
 
 if TYPE_CHECKING:
+    from .pending_sip_destination import RetainedSourceMedia
     from .peer import Peer
     from .roster import RosterEntry
     from .sip_listener import SipInvite
@@ -63,6 +64,7 @@ class OutboundLegPolicy:
     use_trunk_flow: bool = False
     allow_video: bool = True
     trunk_id: str = ""
+    retained_source_media: RetainedSourceMedia | None = None
 
 
 @dataclass(slots=True)
@@ -179,7 +181,13 @@ class EndpointDialer:
         ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None
         try:
-            ports.bind_audio_sockets(ports=(ports.ports[local_rtp_port_index],))
+            if policy.retained_source_media is not None:
+                from .endpoint_lifecycle import call_registry
+                policy.retained_source_media.validate(call_registry(self.hass))
+                if ports is not policy.retained_source_media.reservation:
+                    raise RuntimeError("retained caller reservation changed before dial")
+            else:
+                ports.bind_audio_sockets(ports=(ports.ports[local_rtp_port_index],))
             remote_tx_formats = peer_audio_formats(
                 peer_target,
                 "tx_formats",

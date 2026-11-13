@@ -13,6 +13,18 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.fixture
+def hass_storage():
+    """Use genuine Store I/O for the durable ownership contract in this module."""
+    return {}
+
+
+@pytest.fixture
+def hass_config_dir(hass_tmp_config_dir):
+    """Keep genuine Store writes isolated from the installed test fixture tree."""
+    return hass_tmp_config_dir
+
+
+@pytest.fixture
 def disable_http_server(request):
     """Keep HA's default HTTP mocks except for the real lifecycle oracle."""
     if getattr(request, "param", False):
@@ -100,7 +112,8 @@ async def test_prepare_waits_for_idle_and_drops_stale_async_result(phone_lab, mo
     manager.catalog.async_profile.assert_not_awaited()
     phone_lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password")])
     phone_lab.runtime.endpoints.release_call(endpoint.endpoint_id, "busy")
-    profile = {"outputs": [{"path": "{mac}.cfg", "format": "cfg"}]}
+    profile = {"capabilities": {"max_lines": 1, "key_slots": []},
+        "outputs": [{"path": "{mac}.cfg", "format": "cfg"}]}
     manager.catalog.async_profile.return_value = (profile, {})
     async def context(*_args):
         phone_lab.hass.config_entries.async_update_subentry(phone_lab.entry, sub, data={**data, "name": "New revision"})
@@ -327,6 +340,7 @@ async def test_ignored_discovery_metadata_is_never_the_pbx_configuration_owner(h
 async def cached_physical_config(phone_lab):
     """Prepare genuine renderer output before testing a later authorization change."""
     from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    from homeassistant.helpers.storage import Store
 
     lab = phone_lab
     data = phone()
@@ -336,7 +350,8 @@ async def cached_physical_config(phone_lab):
     register_cached_account(lab)
     manager = PhysicalPhoneProvisioner(lab.hass, lab.entry)
     lab.runtime.physical_phones = manager
-    manager.store = Mock()
+    manager.store = Store(lab.hass, 1, "voip_stack.physical_phones." + lab.entry.entry_id, atomic_writes=True)
+    manager.store.async_save = AsyncMock(wraps=manager.store.async_save)
     manager.catalog.async_profile = AsyncMock(return_value=cached_profile())
     await manager.async_prepare(data)
     filename = "001122334455.cfg"
@@ -348,6 +363,453 @@ async def cached_physical_config(phone_lab):
         await manager.async_close()
 
 
+@pytest.fixture
+async def dependency_config(cached_physical_config):
+    state = cached_physical_config
+    profile, templates = cached_profile()
+    profile["capabilities"]["functions"].extend(["provision", "ldap"])
+    templates["templates/config.jinja2"] += (
+        "provision={{ provisioning.url }}\nldap_port={{ directory.ldap.port }}\n")
+    state.manager.catalog.async_profile.return_value = profile, templates
+    state.data = {**state.data, "catalog_commit": "b" * 40}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    state.profile, state.templates = profile, templates
+    return state
+
+
+@pytest.mark.parametrize("dependency", ["url", "ldap_port"])
+async def test_shared_configuration_callback_regenerates_unchanged_phone(dependency_config, dependency):
+    from custom_components.voip_stack.physical_phone_provisioning import async_reconcile_physical_phones
+    state = dependency_config
+    data = dict(state.lab.entry.data)
+    if dependency == "url":
+        data["phone_provisioning"] = {**data["phone_provisioning"], "base_url": "https://new.example.test"}
+        expected = b"provision=https://new.example.test/"
+    else:
+        data["phone_services"] = {"enabled": True, "ldap_port": 2389}
+        expected = b"ldap_port=2389"
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data=data)
+    await async_reconcile_physical_phones(state.lab.hass, state.lab.entry)
+    await state.lab.hass.async_block_till_done()
+    delivered = await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+    assert expected in delivered
+
+
+@pytest.mark.parametrize("dependency", ["url", "ldap_port"])
+async def test_shared_change_invalidates_delivery_before_worker(dependency_config, dependency):
+    state = dependency_config
+    data = dict(state.lab.entry.data)
+    if dependency == "url":
+        data["phone_provisioning"] = {**data["phone_provisioning"], "base_url": "https://new.example.test"}
+    else:
+        data["phone_services"] = {"enabled": True, "ldap_port": 2389}
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data=data)
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+
+
+async def test_global_change_while_render_waits_drops_stale_bytes(dependency_config, monkeypatch):
+    import asyncio
+    from dataclasses import replace
+    from custom_components.voip_stack.physical_phone_provisioning import render_phone_bundle
+    state = dependency_config
+    state.lab.runtime.endpoints.upsert(replace(state.lab.runtime.endpoints.get("sip:first"), name="Changed First"))
+    entered, resume = asyncio.Event(), asyncio.Event()
+    original = state.lab.hass.async_add_executor_job
+
+    async def held(target, *args):
+        if target is render_phone_bundle:
+            entered.set()
+            await resume.wait()
+        return await original(target, *args)
+
+    monkeypatch.setattr(state.lab.hass, "async_add_executor_job", held)
+    previous = state.manager.files[state.data["phone_id"]]
+    task = state.lab.hass.async_create_task(state.manager.async_prepare(state.data))
+    try:
+        await entered.wait()
+        state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+            "phone_services": {"enabled": True, "ldap_port": 2389}})
+    finally:
+        resume.set()
+        await task
+    assert state.manager.files[state.data["phone_id"]] is previous
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+
+
+async def test_dependency_snapshot_is_immutable_secret_free_and_coalesces_identical_inputs(dependency_config):
+    from dataclasses import FrozenInstanceError
+    state = dependency_config
+    prepared = state.manager.files[state.data["phone_id"]]
+    assert "fixture-only-password" not in str(prepared.dependencies.context)
+    with pytest.raises(FrozenInstanceError):
+        prepared.dependencies.profile = "replacement"
+    saves = state.manager.store.async_save.await_count
+    for _ in range(3):
+        await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.files[state.data["phone_id"]] is prepared
+    assert state.manager.store.async_save.await_count == saves
+
+
+async def test_unchanged_callback_skips_catalog_but_global_change_still_renders(dependency_config):
+    from custom_components.voip_stack.physical_phone_provisioning import async_reconcile_physical_phones
+    state = dependency_config
+    count = state.manager.catalog.async_profile.await_count
+    state.manager._language_changed(SimpleNamespace(data={"unrelated": True}))
+    state.manager.schedule()
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.catalog.async_profile.await_count == count
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": True, "base_url": "https://next.example.test"}})
+    await async_reconcile_physical_phones(state.lab.hass, state.lab.entry)
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.catalog.async_profile.await_count == count + 1
+    body = await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+    assert b"provision=https://next.example.test/" in body
+
+
+@pytest.fixture
+async def managed_slot_config(cached_physical_config):
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    state = cached_physical_config
+    state.lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password"),
+        SipAccount("second", "Second", "second-fixture-password")])
+    state.lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:second", name="Second",
+        kind=EndpointKind.SIP_ACCOUNT, username="second"))
+    data = {**state.data, "lines": [*state.data["lines"], {"slot": "2", "endpoint_id": "sip:second"}],
+            "keys": [{"slot": "1", "line": "1", "function": "speed_dial", "target": "00123", "label": "Desk"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=data)
+    profile, _ = cached_profile()
+    profile["capabilities"].update(max_lines=2, clear_keys=True, disable_lines=True,
+        functions=["sip_account", "speed_dial"], key_slots=[{"slot": str(slot), "functions": ["speed_dial"],
+            "max_value_bytes": 31, "max_label_bytes": 31} for slot in range(1, 4)])
+    templates = {"templates/config.jinja2": """{% for line in lines %}line{{ line.slot }}.enabled=1
+{% endfor %}{% for slot in retired['lines'] %}line{{ slot }}.enabled=0
+{% endfor %}{% for key in keys %}key{{ key.slot }}={{ key.dial_target }}
+{% endfor %}{% for slot in retired['keys'] %}key{{ slot }}=
+{% endfor %}"""}
+    state.manager.catalog.async_profile.return_value = profile, templates
+    await state.manager.async_prepare(data)
+    state.data, state.profile, state.templates = data, profile, templates
+    return state
+
+
+async def test_retired_slots_clear_only_owned_values_and_remain_owned_after_download(managed_slot_config):
+    state = managed_slot_config
+    removed = {**state.data, "keys": [], "lines": state.data["lines"][:1]}
+    assert state.manager.validate_inventory_change(removed, state.profile) == {"keys": ["1"], "lines": ["2"]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=removed)
+    await state.manager.async_prepare(removed)
+    first = await state.manager.async_file(removed["phone_id"], removed["provisioning_token"], state.filename)
+    assert b"key1=\n" in first and b"line2.enabled=0" in first
+    assert b"key2=" not in first and b"key3=" not in first
+    await state.manager.async_prepare(removed)
+    assert await state.manager.async_file(removed["phone_id"], removed["provisioning_token"], state.filename) == first
+    footprint = state.manager.states[removed["phone_id"]]["managed_slots"]
+    assert footprint == {"mac": state.data["mac"], "keys": ["1"],
+                         "lines": {"1": ["sip:first"], "2": ["sip:second"]}}
+
+
+async def test_retired_line_busy_guard_includes_previous_endpoint(managed_slot_config):
+    state = managed_slot_config
+    removed = {**state.data, "keys": [], "lines": state.data["lines"][:1]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=removed)
+    state.lab.runtime.endpoints.claim_call("sip:second", "old-owned-call")
+    await state.manager.async_prepare(removed)
+    assert state.manager.public_state(removed["phone_id"])["state"] == "waiting_idle"
+    assert await state.manager.async_file(removed["phone_id"], removed["provisioning_token"], state.filename) is None
+    state.lab.runtime.endpoints.release_call("sip:second", "old-owned-call")
+    await state.manager.async_prepare(removed)
+    assert b"line2.enabled=0" in await state.manager.async_file(removed["phone_id"], removed["provisioning_token"], state.filename)
+
+
+@pytest.mark.parametrize("capability,error", [("clear_keys", "phone_clear_keys_unsupported"),
+                                            ("disable_lines", "phone_disable_lines_unsupported")])
+async def test_unsupported_slot_retirement_is_rejected_before_inventory_commit(managed_slot_config, capability, error):
+    from copy import deepcopy
+    state = managed_slot_config
+    profile = deepcopy(state.profile)
+    profile["capabilities"][capability] = False
+    removed = {**state.data, "keys": [], "lines": state.data["lines"][:1]}
+    with pytest.raises(ValueError, match=error):
+        state.manager.validate_inventory_change(removed, profile)
+
+
+async def test_footprint_write_must_finish_before_new_file_is_published(managed_slot_config):
+    import asyncio
+    state = managed_slot_config
+    changed = {**state.data, "keys": [*state.data["keys"],
+        {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+    entered, resume = asyncio.Event(), asyncio.Event()
+    original_save = state.manager.store.async_save
+
+    async def save(_data):
+        entered.set()
+        await resume.wait()
+        await original_save(_data)
+
+    state.manager.store.async_save = AsyncMock(side_effect=save)
+    before = state.manager.files[changed["phone_id"]]
+    task = state.lab.hass.async_create_task(state.manager.async_prepare(changed))
+    try:
+        await entered.wait()
+        assert state.manager.files[changed["phone_id"]] is before
+    finally:
+        resume.set()
+        await task
+    assert state.manager.files[changed["phone_id"]] is not before
+    assert b"key2=00456" in await state.manager.async_file(changed["phone_id"], changed["provisioning_token"], state.filename)
+
+
+async def test_retirement_survives_real_store_restart_without_inventing_unknown_slots(managed_slot_config, monkeypatch):
+    from homeassistant.helpers.storage import Store
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    state = managed_slot_config
+    await state.manager.async_close()
+    manager = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
+    state.lab.runtime.physical_phones = manager
+    manager.store = Store(state.lab.hass, 1, "voip_stack.physical_phones." + state.lab.entry.entry_id)
+    manager.catalog.async_profile = AsyncMock(return_value=(state.profile, state.templates))
+    await manager.async_prepare(state.data)
+    durable = await manager.store.async_load()
+    assert durable[state.data["phone_id"]]["managed_slots"]["keys"] == ["1"]
+    removed = {**state.data, "keys": [], "lines": state.data["lines"][:1]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=removed)
+    await manager.async_prepare(removed)
+    await manager.async_close()
+    restored = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
+    state.lab.runtime.physical_phones = restored
+    restored.catalog.async_profile = AsyncMock(return_value=(state.profile, state.templates))
+    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("fixture no multicast")))
+    try:
+        await restored.async_start()
+        await state.lab.hass.async_block_till_done()
+        body = await restored.async_file(removed["phone_id"], removed["provisioning_token"], state.filename)
+        assert b"key1=\n" in body and b"line2.enabled=0" in body
+        assert b"key2=" not in body and b"key3=" not in body
+        assert restored.busy(removed) is False
+        state.lab.runtime.endpoints.claim_call("sip:second", "restored-old-line")
+        assert await restored.async_file(removed["phone_id"], removed["provisioning_token"], state.filename) is None
+        state.lab.runtime.endpoints.release_call("sip:second", "restored-old-line")
+    finally:
+        await restored.async_close()
+
+
+async def test_failed_footprint_write_cannot_claim_or_publish_new_slot(managed_slot_config):
+    state = managed_slot_config
+    changed = {**state.data, "keys": [*state.data["keys"],
+        {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+    before = state.manager.files[changed["phone_id"]]
+    state.manager.store.async_save.side_effect = OSError("fixture disk failure")
+    with pytest.raises(OSError, match="fixture disk failure"):
+        await state.manager.async_prepare(changed)
+    assert state.manager.files[changed["phone_id"]] is before
+    assert state.manager.states[changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+
+
+async def test_real_store_write_error_cannot_publish_unpersisted_ownership(managed_slot_config, monkeypatch):
+    from homeassistant.helpers.storage import Store
+    from homeassistant.util.file import WriteError
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    state = managed_slot_config
+    await state.manager.async_close()
+    manager = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
+    state.lab.runtime.physical_phones = manager
+    manager.store = Store(state.lab.hass, 1, "voip_stack.physical_phones." + state.lab.entry.entry_id)
+    manager.catalog.async_profile = AsyncMock(return_value=(state.profile, state.templates))
+    await manager.async_prepare(state.data)
+    before = manager.files[state.data["phone_id"]]
+    changed = {**state.data, "keys": [*state.data["keys"],
+        {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+
+    def failed_write(*_args):
+        raise WriteError("fixture actual Store write failure")
+
+    monkeypatch.setattr(manager.store, "_write_prepared_data", failed_write)
+    try:
+        try:
+            await manager.async_prepare(changed)
+        except (ValueError, OSError):
+            pass
+        assert manager.files[changed["phone_id"]] is before
+    finally:
+        await manager.async_close()
+
+
+async def test_cancel_during_real_executor_write_settles_before_rollback(managed_slot_config, monkeypatch):
+    import asyncio
+    import json
+    from pathlib import Path
+    from threading import Event
+    state = managed_slot_config
+    changed = {**state.data, "keys": [*state.data["keys"],
+        {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+    entered, release, writes = asyncio.Event(), Event(), []
+    original = state.manager.store._write_prepared_data
+
+    def held_write(mode, payload):
+        writes.append(True)
+        if len(writes) == 1:
+            state.lab.hass.loop.call_soon_threadsafe(entered.set)
+            if not release.wait(5):
+                raise RuntimeError("fixture executor write was not released")
+        original(mode, payload)
+
+    monkeypatch.setattr(state.manager.store, "_write_prepared_data", held_write)
+    before = state.manager.files[changed["phone_id"]]
+    task = state.lab.hass.async_create_task(state.manager.async_prepare(changed))
+    try:
+        await entered.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert len(writes) == 1 and not task.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert len(writes) >= 2
+    assert state.manager.files[changed["phone_id"]] is before
+    saved = await state.lab.hass.async_add_executor_job(
+        lambda: json.loads(Path(state.manager.store.path).read_text()))
+    assert saved["data"][changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+
+
+@pytest.mark.parametrize("abort", ["owner_change", "cancel"])
+async def test_aborted_footprint_commit_rolls_back_unpublished_claim(managed_slot_config, abort):
+    import asyncio
+    from copy import deepcopy
+    state = managed_slot_config
+    changed = {**state.data, "keys": [*state.data["keys"],
+        {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+    entered, resume, writes = asyncio.Event(), asyncio.Event(), []
+    original_save = state.manager.store.async_save
+
+    async def save(data):
+        writes.append(deepcopy(data))
+        if len(writes) == 1:
+            entered.set()
+            await resume.wait()
+        await original_save(data)
+
+    state.manager.store.async_save = AsyncMock(side_effect=save)
+    before = state.manager.files[changed["phone_id"]]
+    task = state.lab.hass.async_create_task(state.manager.async_prepare(changed))
+    try:
+        await entered.wait()
+        if abort == "owner_change":
+            state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+        else:
+            task.cancel()
+    finally:
+        resume.set()
+        if abort == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            await task
+    assert state.manager.files[changed["phone_id"]] is before
+    assert state.manager.states[changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+    assert writes[-1][changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+
+
+async def test_applied_ldap_port_and_epoch_are_delivery_dependencies(dependency_config):
+    state = dependency_config
+    config = {"enabled": True, "ldap_port": 4389, "base_dn": "ou=phonebook,dc=voip",
+              "tls": False, "allow_anonymous": False}
+    # This is the existing ESP/LDAP controller contract, not another server.
+    state.lab.runtime.phone_provisioning = SimpleNamespace(_directory_config=config,
+        _directory_epoch="fixture-first-listener", async_close=AsyncMock())
+    await state.manager.async_prepare(state.data)
+    body = await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+    assert b"ldap_port=4389" in body
+    state.lab.runtime.phone_provisioning._directory_epoch = "fixture-next-listener"
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+    state.lab.runtime.phone_provisioning._directory_config = None
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("change", ["source_ip", "language", "line_display_name"])
+async def test_actual_render_context_change_invalidates_delivery(dependency_config, monkeypatch, change):
+    from dataclasses import replace
+    from homeassistant.components import network
+    state = dependency_config
+    profile = state.profile
+    profile["capabilities"]["languages"] = {"en": "en", "it": "it"}
+    state.data = {**state.data, "catalog_commit": "c" * 40}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    await state.manager.async_prepare(state.data)
+    if change == "source_ip":
+        state.lab.runtime.transport_config["advertise_host"] = ""
+        monkeypatch.setattr(network, "async_get_source_ip", AsyncMock(return_value="127.0.0.9"))
+    elif change == "language":
+        state.lab.hass.config.language = "it" if state.lab.hass.config.language != "it" else "en"
+    else:
+        state.lab.runtime.endpoints.upsert(replace(state.lab.runtime.endpoints.get("sip:first"), name="New display"))
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("change", ["mac", "smaller_profile"])
+async def test_owned_slots_cannot_be_lost_by_mac_or_profile_edit(managed_slot_config, change):
+    from copy import deepcopy
+    state = managed_slot_config
+    proposed, profile = deepcopy(state.data), deepcopy(state.profile)
+    if change == "mac":
+        proposed["mac"] = "001122334466"
+        error = "phone_owned_mac_change_unsupported"
+    else:
+        profile["capabilities"]["key_slots"] = []
+        error = "phone_retired_slot_unsupported"
+    with pytest.raises(ValueError, match=error):
+        state.manager.validate_inventory_change(proposed, profile)
+
+
+async def test_restarted_inventory_cannot_transfer_retired_slots_to_another_mac(managed_slot_config):
+    from copy import deepcopy
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    state = managed_slot_config
+    saved = deepcopy(state.manager.states)
+    await state.manager.async_close()
+    changed = {**state.data, "mac": "001122334466", "keys": [], "lines": state.data["lines"][:1]}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
+    restored = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
+    restored.states = saved
+    restored.store = SimpleNamespace(async_save=AsyncMock())
+    restored.catalog.async_profile = AsyncMock(return_value=(state.profile, state.templates))
+    state.lab.runtime.physical_phones = restored
+    try:
+        with pytest.raises(ValueError, match="phone_owned_mac_change_unsupported"):
+            await restored.async_prepare(changed)
+        assert not restored.files
+    finally:
+        await restored.async_close()
+
+
+async def test_unchanged_cached_file_becomes_available_after_busy_ends(cached_physical_config):
+    state = cached_physical_config
+    prepared = state.manager.files[state.data["phone_id"]]
+    state.lab.runtime.endpoints.claim_call("sip:first", "busy-current-line")
+    await state.manager.async_prepare(state.data)
+    assert state.manager.public_state(state.data["phone_id"])["state"] == "waiting_idle"
+    state.lab.runtime.endpoints.release_call("sip:first", "busy-current-line")
+    await state.manager.async_prepare(state.data)
+    assert state.manager.files[state.data["phone_id"]] is prepared
+    assert state.manager.public_state(state.data["phone_id"])["state"] == "downloaded"
+
+
 async def test_disabled_phone_denies_cached_delivery_before_reconcile_worker(cached_physical_config):
     state = cached_physical_config
     state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry,
@@ -357,12 +819,23 @@ async def test_disabled_phone_denies_cached_delivery_before_reconcile_worker(cac
         state.data["provisioning_token"], state.filename) is None
 
 
-async def test_transient_profile_failure_keeps_valid_file_without_hiding_error(cached_physical_config):
+async def test_transient_profile_failure_keeps_valid_file_without_hiding_error(cached_physical_config, monkeypatch):
+    from homeassistant.components import network
     state = cached_physical_config
     before = state.manager.public_state(state.data["phone_id"])
+    # A transient source-IP failure records a genuine error while the cached
+    # context is otherwise unchanged. Recovery must retry even identical input.
+    state.lab.runtime.transport_config["advertise_host"] = ""
+    monkeypatch.setattr(network, "async_get_source_ip", AsyncMock(side_effect=OSError("fixture temporary route failure")))
+    state.manager.schedule({state.data["phone_id"]})
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.public_state(state.data["phone_id"])["state"] == "error"
+    monkeypatch.setattr(network, "async_get_source_ip", AsyncMock(return_value="127.0.0.1"))
+    count = state.manager.catalog.async_profile.await_count
     state.manager.catalog.async_profile.side_effect = OSError("fixture catalog temporarily unavailable")
     state.manager.schedule({state.data["phone_id"]})
     await state.lab.hass.async_block_till_done()
+    assert state.manager.catalog.async_profile.await_count == count + 1
     assert state.manager.public_state(state.data["phone_id"])["state"] == "error"
     delivered = await state.manager.async_file(state.data["phone_id"],
         state.data["provisioning_token"], state.filename)
@@ -388,10 +861,12 @@ async def test_revoked_bound_account_cannot_serve_last_known_good_credentials(ca
 
 async def test_password_rotation_during_render_cannot_publish_old_credentials(cached_physical_config, monkeypatch):
     import asyncio
+    from dataclasses import replace
     from custom_components.voip_stack.physical_phone_provisioning import render_phone_bundle
     from custom_components.voip_stack.sip_registrar import SipAccount
 
     state = cached_physical_config
+    state.lab.runtime.endpoints.upsert(replace(state.lab.runtime.endpoints.get("sip:first"), name="Renamed First"))
     started, resume = asyncio.Event(), asyncio.Event()
     original_executor = state.lab.hass.async_add_executor_job
 

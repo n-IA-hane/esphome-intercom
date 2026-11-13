@@ -289,11 +289,15 @@
       "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
       "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
       "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
-      "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
+      "invalid_phone_key_target": "Scegli un telefono o un contatto di rubrica per la chiamata rapida, oppure inserisci un numero supportato. I contatti esterni non possono usare BLF.",
       "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
       "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
       "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
-      "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
+      "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati.",
+      "phone_clear_keys_unsupported": "Il profilo non ha un comando verificato per eliminare i tasti gestiti. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
+      "phone_disable_lines_unsupported": "Il profilo non ha un comando verificato per disabilitare le linee gestite. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
+      "phone_owned_mac_change_unsupported": "Questo telefono ha già posizioni gestite. Per un MAC diverso aggiungi un altro telefono fisico.",
+      "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -683,11 +687,15 @@
         "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
         "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
         "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
-        "invalid_phone_key_target": "Scegli un telefono esistente o inserisci un numero supportato per la chiamata rapida.",
+        "invalid_phone_key_target": "Scegli un telefono o un contatto di rubrica per la chiamata rapida, oppure inserisci un numero supportato. I contatti esterni non possono usare BLF.",
         "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
         "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
         "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
-        "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
+        "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati.",
+        "phone_clear_keys_unsupported": "Il profilo non ha un comando verificato per eliminare i tasti gestiti. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
+        "phone_disable_lines_unsupported": "Il profilo non ha un comando verificato per disabilitare le linee gestite. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
+        "phone_owned_mac_change_unsupported": "Questo telefono ha già posizioni gestite. Per un MAC diverso aggiungi un altro telefono fisico.",
+        "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili."
       },
       "abort": {
         "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",

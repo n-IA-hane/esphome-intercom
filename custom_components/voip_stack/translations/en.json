@@ -289,11 +289,15 @@
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
       "phone_queue_membership_required": "The selected line must belong to that queue.",
-      "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+      "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-      "invalid_phone_configuration": "Check the phone configuration and selected references."
+      "invalid_phone_configuration": "Check the phone configuration and selected references.",
+      "phone_clear_keys_unsupported": "This profile has no verified command to remove managed keys. The change was not saved. Update the profile when support is available.",
+      "phone_disable_lines_unsupported": "This profile has no verified command to retire managed lines. The change was not saved. Update the profile when support is available.",
+      "phone_owned_mac_change_unsupported": "This phone already has managed positions. Add a separate physical phone for a different MAC address.",
+      "phone_retired_slot_unsupported": "The selected profile cannot preserve all previously managed positions. Keep the current profile until those positions can be handled."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -683,11 +687,15 @@
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
         "phone_queue_membership_required": "The selected line must belong to that queue.",
-        "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+        "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "phone_clear_keys_unsupported": "This profile has no verified command to remove managed keys. The change was not saved. Update the profile when support is available.",
+        "phone_disable_lines_unsupported": "This profile has no verified command to retire managed lines. The change was not saved. Update the profile when support is available.",
+        "phone_owned_mac_change_unsupported": "This phone already has managed positions. Add a separate physical phone for a different MAC address.",
+        "phone_retired_slot_unsupported": "The selected profile cannot preserve all previously managed positions. Keep the current profile until those positions can be handled."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",

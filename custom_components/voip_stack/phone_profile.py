@@ -37,6 +37,13 @@ def resolve_phone_language(profile, requested):
 
 def _key_target(runtime, key, endpoint_id):
     function, target = key["function"], key.get("target", "")
+    if str(target).casefold().startswith("contact:"):
+        from .phone_directory import contact_dial_target
+        directory = getattr(runtime, "directory", None)
+        entry = directory.key_contact(target) if directory is not None else None
+        if function != "speed_dial" or entry is None:
+            raise ValueError("invalid_phone_key_target")
+        return [contact_dial_target(entry)]
     if function in {"queue_login", "queue_pause"}:
         queue = runtime.queues.resolve(target) if runtime.queues else None
         if queue is None or endpoint_id not in queue.members:
@@ -73,7 +80,11 @@ def resolve_phone_keys(runtime, phone, profile):
             raise ValueError("phone_key_target_too_long")
         queue = runtime.queues.resolve(key["target"]) if key["function"] in {"queue_login", "queue_pause"} else None
         endpoint = runtime.endpoints.resolve(key.get("target", ""))
-        label = key.get("label") or getattr(queue, "name", "") or getattr(endpoint, "name", "") or key["function"]
+        directory = getattr(runtime, "directory", None)
+        contact = (directory.key_contact(key.get("target", ""))
+                   if directory is not None and str(key.get("target", "")).casefold().startswith("contact:") else None)
+        label = (key.get("label") or getattr(queue, "name", "") or getattr(endpoint, "name", "")
+                 or (contact.display_name if contact is not None else "") or key["function"])
         if len(label.encode()) > int(cap.get("max_label_bytes", 31)):
             raise ValueError("phone_key_label_too_long")
         result.append({**key, "line": int(key["line"]), "label": label, "dial_target": target,
@@ -92,6 +103,11 @@ def normalized_context(context: dict) -> dict:
     p.setdefault("language_code", "")
     c.setdefault("lines", [])
     c.setdefault("keys", [])
+    retired = c.setdefault("retired", {})
+    if not isinstance(retired, dict) or set(retired) - {"keys", "lines"}:
+        raise ValueError("invalid_retired_slots")
+    for kind in ("keys", "lines"):
+        retired.setdefault(kind, [])
     for line in c["lines"]:
         for key, default in {
             "auth_username": "",
@@ -185,6 +201,21 @@ def validate_context(profile: dict, context: dict) -> dict:
             raise ValueError("only the dialog event package is mapped")
         if key["pickup_target"] and profile["vendor"] != "yealink":
             raise ValueError("separate pickup target is not mapped for this subset")
+    for kind, feature, allowed, active in (
+        ("keys", "clear_keys", set(key_caps), seen),
+        ("lines", "disable_lines", {str(slot) for slot in range(1, caps["max_lines"] + 1)},
+         {str(slot) for slot in slots}),
+    ):
+        retired = c["retired"][kind]
+        if (not isinstance(retired, list)
+                or any(not isinstance(slot, str) or not re.fullmatch(r"[1-9][0-9]*", slot)
+                       or slot not in allowed for slot in retired)
+                or len(set(retired)) != len(retired)):
+            raise ValueError(f"invalid_retired_{kind}")
+        if set(retired) & active:
+            raise ValueError(f"retired_{kind}_still_active")
+        if retired and caps.get(feature, False) is not True:
+            raise ValueError(f"profile_{feature}_unsupported")
     if c["physical"]["language"] not in ("", *caps["languages"].values()):
         raise ValueError("language has no declared vendor mapping")
     if c["directory"]["ldap"]["host"] and "ldap" not in caps["functions"]:

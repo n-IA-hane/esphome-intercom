@@ -59,6 +59,7 @@ from ..outbound_bridge_commit import (
     BridgeCommitPolicy,
     async_commit_outbound_bridge,
 )
+from ..pending_sip_destination import RetainedSourceMedia
 from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts, sip_trunk
 from ..trunk_signaling import reuse_registered_trunk_flow
@@ -452,7 +453,14 @@ async def route_sip_bridge(
     early_relay = None
     early_answer_sdp = ""
 
+    def owns_provisional_media(session):
+        leg = session.legs.get(client.dialog_ids.call_id) if session is not None else None
+        return bool(session is not None and session.live and leg is not None and leg.dialog is client)
+
     async def prepare_provisional_media(candidate):
+        current = registry.get_session(invite.call_id, generation=call_generation)
+        if not owns_provisional_media(current):
+            return None
         # Video keeps its existing final-answer negotiation. This adapter
         # prepares only the audio contract already offered by the caller.
         if invite.video_format is not None or candidate.video_format is not None:
@@ -466,7 +474,7 @@ async def route_sip_bridge(
 
         def require_current():
             session = registry.get_session(invite.call_id, generation=call_generation)
-            if session is None or not session.live or client.dialog is not None:
+            if not owns_provisional_media(session) or client.dialog is not None:
                 raise RuntimeError("provisional media call owner changed")
             if previous is not None and registry.resource_for(invite.call_id, "relay") is not relay:
                 raise RuntimeError("provisional relay owner changed")
@@ -494,6 +502,9 @@ async def route_sip_bridge(
         async def rollback():
             nonlocal early_relay
             if previous is None:
+                if (registry.resource_for(invite.call_id, "relay") is relay
+                        and not owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):
+                    return
                 await relay.stop()
                 session = registry.get_session(invite.call_id, generation=call_generation)
                 if session is not None and session.live and registry.resource_for(invite.call_id, "relay") is relay:
@@ -501,7 +512,8 @@ async def route_sip_bridge(
                 if early_relay is relay:
                     early_relay = None
             elif (registry.is_generation_current(invite.call_id, call_generation)
-                    and registry.resource_for(invite.call_id, "relay") is relay):
+                    and registry.resource_for(invite.call_id, "relay") is relay
+                    and owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):
                 relay.prepare_peer_reconfiguration("right", prior_peer)()
 
         return PreparedDialogMediaUpdate(commit, rollback)
@@ -653,7 +665,9 @@ async def route_sip_bridge(
                     release_port_pairs=(bridge_ports.ports,),
                     detach_reservations=reservations,
                     enable_video_transcoding=video_transcoding_enabled,
-                    retained_relay=early_relay,
+                    retained_media=(RetainedSourceMedia(session.token, early_relay, bridge_ports,
+                        invite, invite.initial_response_sent, client.dialog_ids.call_id)
+                        if early_relay is not None else None),
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,

@@ -90,6 +90,7 @@ ha_tests=(
   tests/test_queue_select_ha.py
   tests/test_sip_account_control_ha.py
   tests/test_physical_phone_flow_ha.py
+  tests/test_physical_phone_contacts_ha.py
   tests/test_physical_phone_runtime_ha.py
   tests/test_physical_phone_entity_ha.py
   tests/test_physical_phone_pnp_ha.py

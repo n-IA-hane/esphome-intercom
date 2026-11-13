@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: n-IA-hane/voip-stack-phone-profiles
-          ref: c686cb5f0a1f4dcc4976a3943fb9813da2622a65
+          ref: cbc4950e752e2b2e5afebb36eabae1e226399528
           path: .test-deps/phone-profiles
       - name: Configure bounded official APT mirrors
         uses: ./.github/actions/configure-apt

@@ -128,6 +128,52 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
     state.reload.assert_not_awaited()
 
 
+async def test_editor_selects_external_contact_created_through_the_contact_flow(physical_flow):
+    state = physical_flow
+    created = await state.lab.hass.config_entries.subentries.async_init(
+        (state.lab.entry.entry_id, "contact"), context={"source": SOURCE_USER})
+    created = await submit(state, created, {"type": "contact"})
+    created = await submit(state, created, {"name": "External client", "number": "003905512345"})
+    assert created["type"] == "create_entry"
+    reference = "contact:" + created["data"]["id"]
+    form = await submit(state, await start(state), identity())
+    selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
+    options = selectors["keys"].serialize()["selector"]["object"]["fields"]["target"]["selector"]["select"]["options"]
+    assert {"value": reference, "label": "External client"} in options
+    complete = await submit(state, form, bindings(keys=[{"slot": "1", "line": "1",
+        "function": "speed_dial", "target": reference, "label": ""}]))
+    assert complete["type"] == "create_entry"
+    assert complete["data"]["keys"][0]["target"] == reference
+
+
+@pytest.mark.parametrize("kind,capability", [("keys", "clear_keys"), ("lines", "disable_lines")])
+async def test_removal_is_saved_only_when_the_selected_profile_can_clear_it(physical_flow, kind, capability):
+    state = physical_flow
+    initial = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
+                              {"slot": "2", "endpoint_id": "sip:office", "transport": "udp"}])
+    form = await submit(state, await start(state), identity())
+    result = await submit(state, form, initial)
+    item = next(row for row in state.lab.entry.subentries.values()
+                if row.subentry_type == "physical_phone" and row.data["phone_id"] == result["data"]["phone_id"])
+    replacement = deepcopy(initial)
+    replacement[kind] = [] if kind == "keys" else initial["lines"][:1]
+    for supported in (False, True):
+        state.catalog.profiles[PROFILE][0]["capabilities"][capability] = supported
+        form = await state.lab.hass.config_entries.subentries.async_init(
+            (state.lab.entry.entry_id, "physical_phone"),
+            context={"source": "reconfigure", "subentry_id": item.subentry_id})
+        form = await submit(state, form, identity(update_profile=supported))
+        updated = await submit(state, form, replacement)
+        if supported:
+            assert updated["type"] == "abort" and updated["reason"] == "reconfigure_successful"
+            assert state.lab.entry.subentries[item.subentry_id].data[kind] == replacement[kind]
+        else:
+            assert updated["type"] == "form"
+            assert updated["errors"]["base"] == "phone_" + capability + "_unsupported"
+            assert state.lab.entry.subentries[item.subentry_id].data[kind] == initial[kind]
+            state.lab.hass.config_entries.subentries.async_abort(updated["flow_id"])
+
+
 async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_flow):
     from custom_components.voip_stack.physical_phone import normalize_physical_phone
     from custom_components.voip_stack.physical_phone_flow import PhysicalPhoneSubentryFlowHandler

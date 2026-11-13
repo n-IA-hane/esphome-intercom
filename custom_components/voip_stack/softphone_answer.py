@@ -218,6 +218,17 @@ async def async_answer_browser_call(
     parked_media = (parking.media if isinstance(parking, ParkingCall)
         and isinstance(parking.media, LocalCallMedia) and parking.media.video_relay is not None
         and registry.resource_for(call_id, "relay") is parking.media else None)
+    retained = (registry.resource_for(call_id, "preanswered") or {}).get("retained_source_media")
+    if retained is not None:
+        async def complete_retained(reason):
+            registry.request_termination(call_id, TerminationIntent(reason),
+                generation=retained.token.generation)
+        media = await retained.adopt_for_application(hass, registry, complete_retained)
+        # As for parking pickup, the browser takes over the same port and clock
+        # after the local receiver's existing cleanup barrier has drained.
+        await media.stop()
+        registry.release_resource(call_id, f"relay:{call_id}", value=media,
+            generation=retained.token.generation)
     preanswered = (registry.resource_for(call_id, "preanswered") if parked_media is not None
                    else registry.take_media(call_id, provisional=True))
     from .core.sdp import (

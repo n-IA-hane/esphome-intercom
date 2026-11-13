@@ -2,10 +2,73 @@
 
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from homeassistant.exceptions import ServiceValidationError
 
-from .endpoint_session import CleanupStage
+from .endpoint_session import CallToken, CleanupStage, SessionHandoff
+
+if TYPE_CHECKING:
+    from .media_ports import RtpPortReservation
+    from .sip_rtp_bridge import SipRtpRelay
+    from .sip_listener import SipInvite
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedSourceMedia:
+    """One session-owned caller contract, including provisional bridge media."""
+
+    token: CallToken
+    relay: "SipRtpRelay"
+    reservation: "RtpPortReservation"
+    caller_invite: "SipInvite"
+    final_response_sent: bool
+    destination_id: str
+
+    def validate(self, registry):
+        session = registry.get_session(self.token.call_id, generation=self.token.generation)
+        if (session is None or not session.live or self.reservation.released
+                or registry.resource_for(self.token.call_id, "relay") is not self.relay
+                or self.reservation.ports != (self.relay.left_port, self.relay.right_port)
+                or self.relay.left_transport is None or self.relay.right_transport is None
+                or self.relay.left_transport.is_closing() or self.relay.right_transport.is_closing()):
+            raise RuntimeError("retained caller media owner changed")
+        return session
+
+    async def adopt_for_application(self, hass, registry, on_complete):
+        """Move the current caller transport through the established parking adapter."""
+        from .local_media_bridge import adopt_relay_for_application
+
+        session = self.validate(registry)
+        relay = self.relay
+        transport = relay.left_transport
+        protocol = transport.get_protocol()
+        media = None
+        retired_name = f"retired_relay:{id(relay):x}"
+        try:
+            with SessionHandoff(registry, session) as handoff:
+                handoff.preserve(relay, "left_transport", "video_relay", "_on_release", "_stop_requested")
+                media = adopt_relay_for_application(hass, relay, "left", self.caller_invite,
+                    self.reservation, on_complete)
+                media.release_reservation_on_stop = False
+                session.release_resource(f"relay:{session.call_id}", value=relay)
+                session.add_resource(retired_name, relay, lambda _reason: relay.stop(), stage=CleanupStage.MEDIA)
+                registry.attach_relay(session.call_id, media)
+        except BaseException:
+            if media is not None:
+                transport.set_protocol(protocol)
+                media.transport = None
+                media.video_relay = None
+                await media.stop()
+            raise
+        registry.update_media(session.call_id, provisional=True,
+            retained_source_media=None, audio_rtp_source=media.rtp_source)
+        # Closing the old B-leg cannot close the transport just moved to media.
+        await relay.stop()
+        registry.release_resource(session.call_id, retired_name, value=relay,
+            generation=self.token.generation)
+        session.ensure_live(self.token)
+        return media
 
 
 @dataclass(slots=True)
@@ -18,8 +81,12 @@ class PendingSipDestination:
     client: object
     endpoint_id: str
     original_name: str
+    original_owner: str = ""
+    original_state: str = ""
+    original_route_kind: str = ""
     retired: bool = False
     cleanup_task: object = None
+    retained_media: RetainedSourceMedia | None = None
 
     @classmethod
     def capture(cls, hass, registry, session):
@@ -54,6 +121,7 @@ class PendingSipDestination:
                 or ""
             ),
             session.callee,
+            original_owner=session.owner, original_state=session.state, original_route_kind=session.route_kind,
         )
 
     def validate(self):
@@ -69,34 +137,53 @@ class PendingSipDestination:
     async def retire(self):
         self.validate()
         registry, session = self.registry, self.session
-        session.update_metadata(
-            policy_endpoint_ids=tuple(
-                sorted(
-                    set(
-                        (
-                            *session.endpoint_claims,
-                            *session.metadata.get("policy_endpoint_ids", ()),
+        pending_media = [resource for resource in session.resources
+                         if resource.name.startswith("pending_bridge_media:")]
+        relay = registry.resource_for(session.call_id, "relay")
+        # Cut over reversible inventory before cancelling or closing any owner.
+        with SessionHandoff(registry, session) as handoff:
+            handoff.preserve(self, "retained_media", "retired")
+            for resource in pending_media:
+                if self.invite.initial_response_sent or relay is not None:
+                    handoff.preserve(resource.value, "released", "_audio_sockets")
+                    reservation = resource.value.transfer()
+                    retained = (RetainedSourceMedia(session.token, relay, reservation, self.invite,
+                        self.invite.initial_response_sent, self.destination_id) if relay is not None else None)
+                    registry.attach_media(session.call_id, {
+                        "rtp_reservation": reservation,
+                        "local_rtp_port": reservation.ports[0],
+                        "final_response_sent": self.invite.initial_response_sent,
+                        "retained_source_media": retained,
+                    }, provisional=True)
+                    self.retained_media = retained
+            session.update_metadata(
+                policy_endpoint_ids=tuple(
+                    sorted(
+                        set(
+                            (
+                                *session.endpoint_claims,
+                                *session.metadata.get("policy_endpoint_ids", ()),
+                            )
                         )
                     )
                 )
             )
-        )
+            leg = registry.remove_leg(session.call_id, self.destination_id)
+            registry.forget_bridge_link(session.call_id)
+            retired_name = f"retired_destination:{self.destination_id}"
+            if leg is not None:
+                session.add_resource(retired_name, leg, leg.close, stage=CleanupStage.LEG)
+            self.retired = True
+            session.update_metadata(
+                dest_endpoint_id="",
+                target_endpoint_id="",
+                endpoint_id=str(session.metadata.get("source_endpoint_id") or ""),
+            )
+            if leg is not None:
+                leg.endpoint_id = self.endpoint_id
         watcher = registry.cancel_task(
             session.call_id, f"client_watcher:{self.destination_id}"
         )
-        leg = registry.remove_leg(session.call_id, self.destination_id)
-        registry.forget_bridge_link(session.call_id)
-        retired_name = f"retired_destination:{self.destination_id}"
-        if leg is not None:
-            session.add_resource(retired_name, leg, leg.close, stage=CleanupStage.LEG)
-        self.retired = True
-        session.update_metadata(
-            dest_endpoint_id="",
-            target_endpoint_id="",
-            endpoint_id=str(session.metadata.get("source_endpoint_id") or ""),
-        )
-        if leg is not None:
-            leg.endpoint_id = self.endpoint_id
 
         async def drain():
             try:
@@ -120,25 +207,18 @@ class PendingSipDestination:
         )
         # The old transaction keeps its own leg/endpoint ownership. Its network
         # timeout must not delay ringing the replacement or answering voicemail.
-        for resource in tuple(session.resources):
-            if resource.name.startswith("pending_bridge_media:"):
-                if self.invite.initial_response_sent:
-                    reservation = resource.value.transfer()
-                    ports = reservation.ports
-                    registry.attach_media(
-                        session.call_id,
-                        {
-                            "rtp_reservation": reservation,
-                            "local_rtp_port": ports[0],
-                            "final_response_sent": True,
-                        },
-                        provisional=True,
-                    )
-                await resource.close("forwarded")
-                if session.live:
-                    registry.release_resource(
-                        session.call_id, resource.name, value=resource.value
-                    )
+        for resource in pending_media:
+            await resource.close("forwarded")
+            if session.live:
+                registry.release_resource(session.call_id, resource.name, value=resource.value)
+
+    def restore_preparation(self):
+        """Undo only the caller projection while its original leg still owns SIP."""
+        if (not self.retired and self.session.live
+                and self.registry.sip_client_for(self.destination_id) is self.client
+                and self.client.dialog is None):
+            self.registry.transition(self.session.call_id, owner=self.original_owner,
+                state=self.original_state, callee=self.original_name, route_kind=self.original_route_kind)
 
     def resume(self):
         if not self.retired or not self.session.live:

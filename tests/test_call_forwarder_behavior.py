@@ -175,11 +175,17 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
 async def test_forbidden_external_forward_preserves_current_call(monkeypatch, direct_uri):
     from unittest.mock import AsyncMock
     from custom_components.voip_stack import runtime_data
+    from custom_components.voip_stack.endpoint_session import EndpointCallSession, SessionPhase
     from custom_components.voip_stack.router import RouteAction, RouteDecision
 
     invite = object()
     registry = _registry(invite=invite)
-    registry.get_session = lambda _: SimpleNamespace(metadata={"source_endpoint_id": "sip:restricted"}, live=True, owner="ha_softphone", state="ringing")
+    session = EndpointCallSession("call-1", 1, phase=SessionPhase.RINGING)
+    session.owner = "ha_softphone"
+    session.metadata.update(source_endpoint_id="sip:restricted")
+    registry.get_session = lambda _: session
+    registry.transition = Mock(side_effect=AssertionError("permission failure changed the source"))
+    before = (session.revision, dict(session.metadata), session.state, session.owner)
     runtime = _runtime()
     runtime.config["external_call_blocked_endpoints"] = ["sip:restricted"]
     runtime.route_resolver.route.return_value = RouteDecision(
@@ -195,14 +201,16 @@ async def test_forbidden_external_forward_preserves_current_call(monkeypatch, di
     monkeypatch.setattr(call_forwarder, "_registered_roster_entries", lambda _: [])
     monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
     monkeypatch.setattr(runtime_data, "sip_trunk", lambda _: None)
-    artifacts = Mock(side_effect=AssertionError("must reject before claiming or cancelling route"))
-    monkeypatch.setattr(call_forwarder, "call_runtime_artifacts", artifacts)
+    artifacts = SimpleNamespace(task_for=Mock(return_value=None), artifacts_for=Mock(return_value=session.artifacts))
+    monkeypatch.setattr(call_forwarder, "call_runtime_artifacts", lambda _: artifacts)
     with pytest.raises(ServiceValidationError) as caught:
         await call_forwarder.async_forward_existing_call(
             runtime, call_id="call-1", destination="441234567890",
         )
     assert caught.value.translation_key == "external_calls_disabled"
-    artifacts.assert_not_called()
+    assert (session.revision, dict(session.metadata), session.state, session.owner) == before
+    assert not session.artifacts.forward_claim and not session.tasks and not session.named_tasks
+    registry.transition.assert_not_called()
     runtime.prepare_outbound_leg.assert_not_called()
     assert registry.artifact_for("call-1", "pending_invite") is invite
 

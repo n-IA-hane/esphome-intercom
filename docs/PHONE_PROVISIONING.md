@@ -50,9 +50,31 @@ when available.
 
 The native key editor provides functions supported by the selected profile:
 line, speed dial, internal BLF, queue login/logout, queue pause and parking.
-Key destinations use stable endpoint or queue references. Number changes are
-resolved when generating the configuration. Targets and labels must fit the
-profile's byte limits; they are never silently truncated.
+Key destinations use stable endpoint, queue or directory-contact references.
+External contacts are available for speed dial, not BLF. Their keys follow the
+contact's canonical directory route after renaming or changing its number,
+without copying another address book into the phone configuration. A contact
+with a SIP destination keeps that same routing priority. Free dial numbers
+remain available. Targets and labels must fit the profile's byte limits; they
+are never silently truncated.
+
+Removing a managed key means clearing it on the phone, not just omitting it
+from the next file. Successfully prepared configurations claim only their
+declared key/line positions. Those positions are recorded persistently before
+files become available. A removed position stays managed and empty until it is
+assigned again through HA. Positions never managed by this integration are
+omitted and preserved. Managed line retirement waits for calls on the former
+binding as well as calls on the current bindings.
+
+Clearing requires the selected profile's explicit `clear_keys` or
+`disable_lines` capability. If absent, the editor refuses the removal before
+saving; update the profile when a supported revision becomes available. No
+global overwrite or reset is used. During upgrade, existing declared positions
+form the initial managed set; previously deleted positions cannot be inferred.
+Replacing a physical MAC requires a separate adoption, and changing profiles
+cannot silently discard positions already managed. Removing the entire physical
+inventory device stops management; it does not reset that phone or delete its
+logical SIP accounts.
 
 Queue keys require that their selected line is already a queue member. Logging
 out preserves membership. For queue login BLF, idle/green means logged in,
@@ -97,6 +119,11 @@ invalidates an old private URL; obtain and configure its replacement afterward.
 ## State and evidence
 
 The physical phone device exposes provisioning state and administrative buttons.
+Prepared files are tied to the current phone, account lifetimes, model bundle,
+effective language, provisioning origin, SIP/LDAP settings and resolved keys.
+Changing a shared setting schedules only affected configurations and prevents
+delivery of the old bytes; it does not reload the SIP transport. A render that
+finishes after its dependencies change cannot replace the current files.
 `ready` means generated files are available. `downloaded` means a file was served.
 `waiting_idle` means an associated line is in use. A successful download does not
 prove every setting was applied.

@@ -129,9 +129,11 @@ SIP domain, replacing `<groupid>` with the queue's stable group ID:
 
 These controls resolve the authenticated calling/subscribing phone. They do
 not accept another agent's identity and require that phone to belong to the
-queue. The existing dialog-info BLF projection reports the login key active
-while logged in, including paused, and the pause key active while paused.
-Physical key colors and lamp behavior depend on the SIP phone's BLF settings.
+queue. The login resource reports SIP dialog state `terminated` while logged in
+(including paused) and `confirmed` while logged out. The pause resource reports
+`confirmed` while paused and `terminated` otherwise. Common BLF settings show
+terminated as green and confirmed as red; the physical colors depend on the
+phone's lamp policy. Ordinary call BLF keeps its normal call-state meaning.
 
 The local automated tests cover HA configuration, synchronization, service and
 dialog-info contracts. They do not establish physical lamp behavior or acoustic
@@ -216,9 +218,9 @@ wrap-up are separate eligibility facts; changing login state does not remove the
 member from the queue. These controls update from the queue owner, without
 periodic polling.
 
-For queue login BLF, green means logged in (including paused) and red means
-logged out. A separate pause key is red while paused. Ordinary phone BLF is not
-changed by this convention.
+The queue login and pause resources use the SIP states documented in
+[SIP keys and BLF](#sip-keys-and-blf). On phones using the common green/red
+mapping, logged-in is green, logged-out is red and a paused pause-key is red.
 
 A successful fallback preserves its original exit cause, such as `queue_timeout`
 or `queue_no_agents`, in `reason` and `outcome`. The separate `disposition` states

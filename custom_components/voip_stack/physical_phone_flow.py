@@ -227,6 +227,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
     def _validation_runtime(self):
         from .endpoint_registry import EndpointRegistry
         from .group_config import group_members, group_records
+        from .contact_config import contact_dicts
+        from .phone_directory import PhoneDirectory
+        from .roster import parse_roster_json
 
         runtime = getattr(self._get_entry(), "runtime_data", None)
         configured = EndpointRegistry()
@@ -243,7 +246,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     members=frozenset(group_members(self.hass, self._get_entry(), record)))
                     for identity, record in group_records(self._get_entry(), "queue").items()}
             queues = SimpleNamespace(resolve=lambda ref: rows.get(str(ref)))
-        return SimpleNamespace(endpoints=endpoints, queues=queues)
+        directory = PhoneDirectory(parse_roster_json(contact_dicts(self._get_entry())))
+        return SimpleNamespace(endpoints=endpoints, queues=queues, directory=directory)
 
     def _validate_phone(self):
         data = {**self._previous(), **normalize_physical_phone(self._draft, previous=self._previous())}
@@ -263,10 +267,24 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 if queue is not None:
                     key["target"] = queue.queue_id
             elif function in {"speed_dial", "blf"}:
-                endpoint = runtime.endpoints.resolve(target)
-                if endpoint is not None:
-                    key["target"] = endpoint.endpoint_id
+                if str(target).casefold().startswith("contact:"):
+                    from .phone_directory import contact_key_reference
+                    contact = runtime.directory.key_contact(target)
+                    if function != "speed_dial" or contact is None:
+                        raise ValueError("invalid_phone_key_target")
+                    key["target"] = contact_key_reference(contact)
+                else:
+                    endpoint = runtime.endpoints.resolve(target)
+                    if endpoint is not None:
+                        key["target"] = endpoint.endpoint_id
         resolve_phone_keys(runtime, data, self._profile)
+        from .physical_phone_provisioning import validate_slot_removal
+        owner = getattr(getattr(self._get_entry(), "runtime_data", None), "physical_phones", None)
+        validator = getattr(owner, "validate_inventory_change", None)
+        if validator is not None:
+            validator(data, self._profile)
+        else:
+            validate_slot_removal(self._previous(), data, self._profile)
         return data
 
     def _binding_schema(self):
@@ -285,6 +303,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         from .group_config import group_records
         targets.extend({"value": identity, "label": row["name"]}
                        for identity, row in group_records(self._get_entry(), "queue").items())
+        from .phone_directory import contact_key_reference
+        targets.extend({"value": contact_key_reference(contact), "label": contact.display_name}
+                       for contact in self._validation_runtime().directory.programmable_contacts())
         return vol.Schema({
             vol.Required("lines", default=self._draft.get("lines", [])): ObjectSelector({
                 "multiple": True, "label_field": "slot", "description_field": "endpoint_id",

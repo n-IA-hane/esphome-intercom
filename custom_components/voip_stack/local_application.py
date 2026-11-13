@@ -129,20 +129,25 @@ class LocalCallApplication:
                 generation=self.session.generation,
             )
 
-        media = LocalCallMedia(
-            self.hass,
-            invite=self.invite,
-            local_rtp_port=reservation.ports[0],
-            reservation=reservation,
-            on_complete=complete,
-            rtp_source=(preanswered or {}).get("audio_rtp_source"),
-        )
+        retained = (preanswered or {}).get("retained_source_media")
+        if retained is not None:
+            media = await retained.adopt_for_application(self.hass, registry, complete)
+        else:
+            media = LocalCallMedia(
+                self.hass,
+                invite=self.invite,
+                local_rtp_port=reservation.ports[0],
+                reservation=reservation,
+                on_complete=complete,
+                rtp_source=(preanswered or {}).get("audio_rtp_source"),
+            )
         media.on_dtmf = self.handle_dtmf
         media.private_dtmf = getattr(self, "private_dtmf", False)
         try:
             await media.start()
             self.require_current()
-            registry.attach_relay(self.session.call_id, media)
+            if retained is None:
+                registry.attach_relay(self.session.call_id, media)
             self.media = media
             if self.source_client is not None:
                 bind_application_source_dialog(self)

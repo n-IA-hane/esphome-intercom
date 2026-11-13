@@ -10,6 +10,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 
 from .config import (
     trunk_config as _get_trunk_config,
@@ -126,7 +127,67 @@ class TransferResult:
     reason: str = ""
 
 
+class _ForwardRouteFailure(Exception):
+    """A route failure after request/source validation, before its worker."""
+
+    def __init__(self, error):
+        self.error = error
+        super().__init__(str(error))
+
+
+def _route_preflight(operation):
+    try:
+        return operation()
+    except ServiceValidationError as error:
+        raise _ForwardRouteFailure(error) from error
+
+
+def _routing_service_error(*args, **kwargs):
+    return _ForwardRouteFailure(_service_error(*args, **kwargs))
+
+
 async def async_forward_existing_call(
+    runtime: ForwardRuntime,
+    *,
+    call_id: str,
+    destination: str,
+    on_failure: str = "resume",
+    expected_state: str = "",
+    expected_sequence: int = 0,
+    initial_selection: bool = False,
+    trunk_id: str = "",
+    precondition: CallPrecondition | None = None,
+    control_endpoint_id: str = "",
+    _resolved_decision=None,
+    _ring_timeout: float | None = None,
+    _queue_offer=None,
+) -> asyncio.Task[TransferResult]:
+    """Apply route policy after admission, preserving request/source errors."""
+    arguments = locals().copy()
+    arguments.pop("runtime")
+    identity = str(call_id or "").strip()
+    policy = str(on_failure or "resume").strip().lower()
+    if not identity or not str(destination or "").strip() or policy not in {"resume", "terminate", "busy"}:
+        return await _prepare_forward_existing_call(runtime, **arguments)
+    registry = _call_registry(runtime.hass)
+    session_id = registry.resolve_session_id(identity)
+    session = registry.get_session(session_id)
+    token = session.token if session is not None else None
+    try:
+        return await _prepare_forward_existing_call(runtime, **arguments)
+    except _ForwardRouteFailure as failure:
+        if session is None or token is None or not session.owns(token) or registry.get_session(session_id) is not session:
+            raise failure.error from failure
+        reason = str(getattr(failure.error, "translation_key", "") or "transport_unreachable")
+        if policy != "resume":
+            await async_abort_route(RouteAbortContext(runtime.hass, registry, session_id, consume_source=True),
+                RouteAbortIntent(reason, policy))
+        async def completed():
+            return TransferResult("failed_resumed" if policy == "resume" else "ended", destination, reason)
+        return create_runtime_task(runtime.hass, completed())
+
+
+async def _prepare_forward_existing_call(
     runtime: ForwardRuntime,
     *,
     call_id: str,
@@ -199,7 +260,7 @@ async def async_forward_existing_call(
             "on_failure": on_failure, "trunk_id": trunk_id,
         })
         return submitted_result("started")
-    route_resolver = runtime.route_resolver.for_call(call_id, trunk_id=trunk_id)
+    route_resolver = None
     if _resolved_decision is not None and _resolved_decision.action is not RouteAction.GROUP:
         raise ValueError("Internal queue attempts require a resolved ring group")
     if _ring_timeout is not None and not 0 < float(_ring_timeout) <= 120:
@@ -248,6 +309,7 @@ async def async_forward_existing_call(
         bridge = local_softphone_bridge(hass)
         local_call = bridge.get_call(call_id) if bridge is not None else None
         if local_call is not None:
+            route_resolver = runtime.route_resolver.for_call(call_id, trunk_id=trunk_id)
             peers = await _async_build_peer_snapshot(hass)
             _validate_snapshot()
             if bridge.get_call(call_id) != local_call:
@@ -308,19 +370,6 @@ async def async_forward_existing_call(
                 f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
                 "call_not_forwardable", call_id=call_id,
             )
-    if cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
-        # Reject before cancelling an existing ringing attempt or claiming its
-        # route. The normal generation checks below still guard this await.
-        try:
-            access_peers = await _async_build_peer_snapshot(hass)
-            access_roster = _roster_from_peers(
-                hass, access_peers, _registered_roster_entries(hass)
-            )
-            _check_external_route(route_resolver.route(destination, access_roster))
-        except BaseException:
-            if local_source is not None:
-                local_source.resume()
-            raise
     artifacts = call_runtime_artifacts(hass)
     call_artifacts = artifacts.artifacts_for(call_id)
     if call_artifacts is None:
@@ -348,6 +397,23 @@ async def async_forward_existing_call(
                 "call_forwarding",
                 call_id=call_id,
             )
+    if call_artifacts.forward_claim and (current_forward is None or current_forward.done()):
+        raise _service_error(f"call_id {call_id} is already being forwarded", "call_forwarding", call_id=call_id)
+    # Only a validated forwardable source may apply policy to route selection.
+    route_resolver = _route_preflight(lambda: runtime.route_resolver.for_call(call_id, trunk_id=trunk_id))
+    if cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+        # Reject before cancelling an existing ringing attempt or claiming its
+        # route. The normal generation checks below still guard this await.
+        try:
+            access_peers = await _async_build_peer_snapshot(hass)
+            access_roster = _roster_from_peers(
+                hass, access_peers, _registered_roster_entries(hass)
+            )
+            _check_external_route(_route_preflight(lambda: route_resolver.route(destination, access_roster)))
+        except BaseException:
+            if local_source is not None:
+                local_source.resume()
+            raise
     # Reject concurrent owners before discovery, then finish preparation before
     # retiring the previous leg and changing our own committed topology.
     peers = await _async_build_peer_snapshot(hass)
@@ -377,12 +443,19 @@ async def async_forward_existing_call(
                 "call_changed_during_operation",
                 call_id=call_id,
             )
+        if native_destination is not None:
+            native_destination.validate()
+        if current_application() is not application:
+            raise _service_error("The local application changed during preparation",
+                                 "call_changed_during_operation", call_id=call_id)
+        if application is not None:
+            application.require_current()
         roster_entries = _roster_from_peers(
             hass,
             peers,
             _registered_roster_entries(hass),
         )
-        decision = _resolved_decision or route_resolver.route(destination, roster_entries)
+        decision = _resolved_decision or _route_preflight(lambda: route_resolver.route(destination, roster_entries))
         rejected_queues = set()
         while decision.action is RouteAction.QUEUE and decision.entry is not None:
             from .call_queues import QueueExit, get_queue_manager
@@ -396,14 +469,14 @@ async def async_forward_existing_call(
             if rejection is None:
                 break
             if queue_id in rejected_queues or len(rejected_queues) >= 8 - len(context.route_history if context else ()):
-                raise _service_error(f"call_id {call_id} exceeded 8 routing hops", "route_hop_limit_exceeded",
+                raise _routing_service_error(f"call_id {call_id} exceeded 8 routing hops", "route_hop_limit_exceeded",
                     call_id=call_id, limit=8)
             rejected_queues.add(queue_id)
             queues.record_rejection(queue_id, call_id, registry.get_session(call_id).generation, rejection.cause)
             if not rejection.destination:
                 break
             destination = rejection.destination
-            decision = route_resolver.route(destination, roster_entries)
+            decision = _route_preflight(lambda: route_resolver.route(destination, roster_entries))
             if application is not None and application.owner == "queue" and application.ticket.exit is not None:
                 departure = application.ticket.exit
                 application.ticket.exit = QueueExit(departure.cause, departure.disposition, destination)
@@ -418,13 +491,13 @@ async def async_forward_existing_call(
                 target_browser_endpoint is None
                 or not target_browser_endpoint.kind.is_softphone
             ):
-                raise _service_error(
+                raise _routing_service_error(
                     f"destination {destination} is not a configured Home Assistant phone",
                     "destination_not_ha_phone",
                     destination=destination,
                 )
         if decision.action is RouteAction.REJECT:
-            raise _service_error(
+            raise _routing_service_error(
                 f"destination {destination} is not a forwardable SIP dial-plan target",
                 "destination_not_forwardable",
                 destination=destination,
@@ -440,7 +513,7 @@ async def async_forward_existing_call(
             )
             != GROUP_TYPE_RING
         ):
-            raise _service_error(
+            raise _routing_service_error(
                 "forwarding an already-ringing call is currently limited to ring groups",
                 "forward_ring_group_only",
             )
@@ -578,6 +651,8 @@ async def async_forward_existing_call(
         call_artifacts.forward_claim = False
         if local_source is not None:
             local_source.resume()
+        if native_destination is not None and not native_destination.retired:
+            native_destination.restore_preparation()
         if native_destination is not None and native_destination.retired and session.live:
             if on_failure == "resume":
                 native_destination.resume()
@@ -644,6 +719,7 @@ async def async_forward_existing_call(
         )
 
     async def _perform_forward() -> TransferResult | None:
+        nonlocal invite
         client = None
         reservation = None
         reservation_from_preanswer = False
@@ -711,6 +787,10 @@ async def async_forward_existing_call(
 
         try:
             preanswered = registry.resource_for(call_id, "preanswered")
+            retained_media = (preanswered or {}).get("retained_source_media")
+            if retained_media is not None:
+                retained_media.validate(registry)
+                invite = retained_media.caller_invite
             if decision.action is RouteAction.ANSWER_HA:
                 endpoint = target_browser_endpoint
                 if endpoint is None or not endpoint.kind.is_softphone:
@@ -926,6 +1006,9 @@ async def async_forward_existing_call(
                             else frozenset()
                         ),
                     )
+                    if retained_media is not None:
+                        for attempt in attempts:
+                            attempt.client.local_rtp_port = retained_media.reservation.ports[1]
                 except Exception:
                     await _abort_group(
                         TerminalReason.PROTOCOL_ERROR.value,
@@ -1194,6 +1277,9 @@ async def async_forward_existing_call(
                 dest_relay_port = winner.ports.ports[1]
                 source_ports = reservation.ports
                 winner_ports = winner.ports.ports
+                if retained_media is not None:
+                    dest_relay_port = retained_media.reservation.ports[1]
+                    winner.ports.release()
                 response_already_sent = _source_dialog_is_answered(preanswered)
                 connected_party = str(winner.member or "").strip()
 
@@ -1210,13 +1296,14 @@ async def async_forward_existing_call(
                         source_relay_port=source_relay_port,
                         dest_relay_port=dest_relay_port,
                         local_ip=local_ip,
-                        release_port_pairs=(source_ports, winner_ports),
-                        detach_reservations=(reservation, winner.ports),
+                        release_port_pairs=((source_ports,) if retained_media is not None else (source_ports, winner_ports)),
+                        detach_reservations=((reservation,) if retained_media is not None else (reservation, winner.ports)),
                         enable_video_transcoding=bool(
                             cfg.get(CONF_VIDEO_TRANSCODING, False)
                         ),
                         local_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
                         source_client=application.source_client if application is not None else None,
+                        retained_media=retained_media,
                     ),
                     BridgeCommitPolicy(
                         route_kind=GROUP_TYPE_RING,
@@ -1409,6 +1496,7 @@ async def async_forward_existing_call(
                     use_trunk_flow=bridge_to_trunk,
                     trunk_id=selected_trunk_id if bridge_to_trunk else "",
                     allow_video=forward_video_enabled,
+                    retained_source_media=retained_media,
                 ),
             )
             if direct_winner is None:
@@ -1526,6 +1614,7 @@ async def async_forward_existing_call(
                     local_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
                     source_client=application.source_client if application is not None else None,
                     prepared_media=prepared_media,
+                    retained_media=retained_media,
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,

@@ -674,7 +674,6 @@ async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_q
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_disabled_queue_fallback_cycle_rejects_before_retiring_original_application(queue_lab):
-    from homeassistant.exceptions import ServiceValidationError
     lab = queue_lab
     for identity, name, fallback in (("closed-b", "Closed B", "Closed C"), ("closed-c", "Closed C", "Closed B")):
         lab.manager.definitions[identity] = QueueDefinition(identity, name, ("sip:bedroom0",))
@@ -687,8 +686,9 @@ async def test_disabled_queue_fallback_cycle_rejects_before_retiring_original_ap
     session = lab.calls.get_session(client.dialog_ids.call_id)
     original = lab.calls.resource_for(session.call_id, "queue")
     media, claims = original.media, dict(session.endpoint_claims)
-    with pytest.raises(ServiceValidationError, match="routing hops"):
-        await lab.calls.forward_call(call_id=session.call_id, destination="Closed B", on_failure="resume")
+    task = await lab.calls.forward_call(call_id=session.call_id, destination="Closed B", on_failure="resume")
+    outcome = await task
+    assert outcome.status == "failed_resumed" and outcome.reason == "route_hop_limit_exceeded"
     assert original.media is media and not media.closed.is_set() and not original.detached
     assert lab.calls.resource_for(session.call_id, "queue") is original
     assert dict(session.endpoint_claims) == claims
@@ -962,6 +962,96 @@ async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(que
     assert rejected[0]["destination"] == "bedroom1"
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("blocked", ["full", "disabled"])
+@pytest.mark.parametrize("fallback", ["missing-target", "Reception"])
+async def test_queue_admission_preflight_failure_ends_unanswered_source(queue_lab, blocked, fallback):
+    lab = queue_lab
+    policy = replace(lab.manager.policies[lab.identity], max_waiting=1,
+        fallback_full=fallback, fallback_disabled=fallback, enabled=blocked != "disabled")
+    lab.manager.policies[lab.identity] = policy
+    other = lab.manager.enqueue(lab.identity, "existing-waiter", 1) if blocked == "full" else None
+    lab.roster[:] = [row for row in lab.roster if row.metadata.get("virtual_endpoint") != "queue"] + lab.manager.roster_entries()
+    client, _audio = await lab.caller()
+    session = None
+    try:
+        progress = await client.invite(target="401", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=2)
+        session = lab.calls.get_session(client.dialog_ids.call_id)
+        final = await client.wait_for_final(timeout=.5) if progress == "ringing" else progress
+        assert final not in {"ringing", "timeout", "in_call"}
+        assert client.last_sip_status_code >= 300 and client.dialog is None
+        if session is not None:
+            await asyncio.wait_for(session.terminated.wait(), 2)
+            assert not session.answer_committed and not session.tasks
+        assert not lab.calls.sessions and not lab.calls.endpoint_claims_snapshot()
+        assert not lab.calls.relays_snapshot() and not lab.runtime.rtp_port_pool.get("used")
+    finally:
+        if session is not None and session.live:
+            from custom_components.voip_stack.endpoint_session import TerminationIntent
+            await lab.calls.request_termination(session.call_id, TerminationIntent("test_cleanup"))
+        if other is not None:
+            lab.manager.finish(other)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("policy", ["resume", "terminate", "busy"])
+async def test_forward_preflight_policy_retains_or_ends_confirmed_source(queue_lab, policy):
+    lab = queue_lab
+    lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    observer = asyncio.create_task(client.wait_for_dialog_termination(timeout=.7))
+    try:
+        task = await lab.calls.forward_call(call_id=session.call_id, destination="missing-target", on_failure=policy)
+        outcome = await asyncio.shield(task)
+        assert outcome.status == ("failed_resumed" if policy == "resume" else "ended")
+        if policy == "resume":
+            assert session.live and session.owner == "queue" and client.dialog is not None
+            observer.cancel()
+        else:
+            assert await observer == "remote_hangup"
+            await asyncio.wait_for(session.terminated.wait(), 2)
+            assert not lab.calls.sessions and not lab.calls.endpoint_claims_snapshot()
+    finally:
+        observer.cancel()
+        await asyncio.gather(observer, return_exceptions=True)
+        await client.terminate()
+        if session.live:
+            from custom_components.voip_stack.endpoint_session import TerminationIntent
+            await lab.calls.request_termination(session.call_id, TerminationIntent("test_cleanup"))
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_nonforwardable_source_with_bad_trunk_is_not_terminated(queue_lab):
+    from homeassistant.exceptions import ServiceValidationError
+    lab = queue_lab
+    client, audio = await lab.caller()
+    state = await client.invite(target="bedroom0", remote_host="127.0.0.1",
+        remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=2)
+    if state == "ringing":
+        state = await client.wait_for_final(timeout=2)
+    assert state == "in_call"
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    relay = lab.calls.resource_for(session.call_id, "relay")
+    token = session.token
+    try:
+        with pytest.raises(ServiceValidationError):
+            await lab.calls.forward_call(call_id=session.call_id, destination="bedroom1",
+                trunk_id="missing-trunk", on_failure="terminate")
+        assert session.owns(token) and client.dialog is not None
+        assert lab.calls.resource_for(session.call_id, "relay") is relay
+        assert not lab.phones[0].bye.is_set() and not lab.phones[1].invites
+        packet = rtp.build_packet(rtp.RtpPacket(relay.right.inbound_rtp_format.payload_type, 1, 320, 0x1234,
+            struct.pack("!320h", *([1234] * 320))))
+        await lab.hass.loop.sock_sendto(lab.phones[0].rtp_socket, packet, ("127.0.0.1", relay.right_port))
+        returned = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 4096), 1))
+        assert struct.unpack("!320h", returned.payload) == (1234,) * 320
+    finally:
+        await client.terminate()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
