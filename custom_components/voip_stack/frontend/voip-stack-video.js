@@ -41,6 +41,105 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   });
 }
 
+// Safari/WebKit and Firefox do not implement MediaStreamTrackProcessor. Pull
+// VideoFrames from a hidden <video> element instead and expose the same
+// read()/cancel() surface as a ReadableStreamDefaultReader. Frames that arrive
+// while no read() is pending are dropped, so latency cannot accumulate.
+async function createVideoElementFrameReader(stream, framerate) {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("muted", "");
+  Object.assign(video.style, {
+    position: "fixed",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    pointerEvents: "none",
+    left: "0",
+    top: "0",
+  });
+  video.srcObject = stream;
+  document.body.appendChild(video);
+  let cancelled = false;
+  let waiter = null;
+  let callbackId = null;
+  let timer = null;
+  let lastTime = -1;
+  const useRvfc = typeof video.requestVideoFrameCallback === "function";
+  const finish = (result) => {
+    const resolve = waiter;
+    waiter = null;
+    if (resolve) resolve(result);
+  };
+  const emit = (mediaTime) => {
+    if (cancelled || !waiter) return;
+    if (!(video.readyState >= 2)) return;
+    let frame;
+    try {
+      const seconds = Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
+      const timestamp = Number.isFinite(seconds) && seconds > 0
+        ? Math.round(seconds * 1e6)
+        : Math.round(performance.now() * 1000);
+      frame = new VideoFrame(video, { timestamp });
+    } catch (_) {
+      return;
+    }
+    finish({ value: frame, done: false });
+  };
+  const armRvfc = () => {
+    if (cancelled) return;
+    callbackId = video.requestVideoFrameCallback((_now, metadata) => {
+      callbackId = null;
+      emit(metadata?.mediaTime);
+      armRvfc();
+    });
+  };
+  const cleanup = () => {
+    cancelled = true;
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+    if (callbackId !== null) {
+      try { video.cancelVideoFrameCallback?.(callbackId); } catch (_) {}
+      callbackId = null;
+    }
+    try { video.pause(); } catch (_) {}
+    video.srcObject = null;
+    try { video.remove(); } catch (_) {}
+    finish({ done: true });
+  };
+  try {
+    await video.play();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  if (useRvfc) {
+    armRvfc();
+  } else {
+    const intervalMs = Math.max(10, Math.round(1000 / Math.max(1, framerate || 15)));
+    timer = setInterval(() => {
+      const time = video.currentTime;
+      if (time === lastTime) return;
+      lastTime = time;
+      emit(time);
+    }, intervalMs);
+  }
+  return {
+    read() {
+      if (cancelled) return Promise.resolve({ done: true });
+      return new Promise((resolve) => {
+        waiter = resolve;
+      });
+    },
+    cancel() {
+      cleanup();
+      return Promise.resolve();
+    },
+  };
+}
+
 export class VoipStackVideo extends EventTarget {
   constructor() {
     super();
@@ -1017,8 +1116,13 @@ export class VoipStackVideo extends EventTarget {
     deviceId,
   ) {
     const send = this._mediaContract("send");
+    const hasTrackProcessor = typeof MediaStreamTrackProcessor !== "undefined";
+    const hasVideoElementCapture =
+      typeof VideoFrame !== "undefined" &&
+      typeof document !== "undefined" &&
+      typeof document.createElement === "function";
     if (
-      typeof MediaStreamTrackProcessor === "undefined" ||
+      !(hasTrackProcessor || hasVideoElementCapture) ||
       !navigator.mediaDevices?.getUserMedia ||
       (send.encoding === "JPEG" && typeof Worker === "undefined") ||
       (send.encoding !== "JPEG" && typeof VideoEncoder === "undefined")
@@ -1100,8 +1204,12 @@ export class VoipStackVideo extends EventTarget {
         });
         encoder.configure(support.config || encoderConfig);
       }
-      const processor = new MediaStreamTrackProcessor({ track });
-      reader = processor.readable.getReader();
+      if (hasTrackProcessor) {
+        const processor = new MediaStreamTrackProcessor({ track });
+        reader = processor.readable.getReader();
+      } else {
+        reader = await createVideoElementFrameReader(stream, framerate);
+      }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
