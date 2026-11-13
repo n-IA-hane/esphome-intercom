@@ -45,7 +45,8 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
 // VideoFrames from a hidden <video> element instead and expose the same
 // read()/cancel() surface as a ReadableStreamDefaultReader. Frames that arrive
 // while no read() is pending are dropped, so latency cannot accumulate.
-async function createVideoElementFrameReader(stream, framerate, target = {}) {
+async function createVideoElementFrameReader(stream, framerate) {
+  let target = {};
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
@@ -151,6 +152,11 @@ async function createVideoElementFrameReader(stream, framerate, target = {}) {
     }, intervalMs);
   }
   return {
+    // Upright (display-oriented) size, known once playback has started.
+    size: video.videoWidth > 0 && video.videoHeight > 0
+      ? { width: video.videoWidth, height: video.videoHeight }
+      : null,
+    setTarget(next) { target = next || {}; },
     read() {
       if (cancelled) return Promise.resolve({ done: true });
       return new Promise((resolve) => {
@@ -1196,7 +1202,24 @@ export class VoipStackVideo extends EventTarget {
       console.warn("voip-stack-video[diag]: getUserMedia ok", { t: Math.round(performance.now()) });
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error("No browser camera track available");
-      const settings = track.getSettings();
+      let settings = track.getSettings();
+      if (!hasTrackProcessor) {
+        reader = await createVideoElementFrameReader(
+          stream,
+          Number(settings.frameRate) || 15,
+        );
+        // getSettings() can report the unrotated sensor size while the video
+        // element (and therefore our frames) is upright. Configure the encoder
+        // with the orientation we will actually feed it, otherwise WebCodecs
+        // rescales the frames and the picture looks stretched.
+        const size = reader.size;
+        if (
+          size &&
+          (size.height > size.width) !== (Number(settings.height) > Number(settings.width))
+        ) {
+          settings = { ...settings, width: settings.height, height: settings.width };
+        }
+      }
       const {
         width,
         height,
@@ -1260,8 +1283,7 @@ export class VoipStackVideo extends EventTarget {
         const processor = new MediaStreamTrackProcessor({ track });
         reader = processor.readable.getReader();
       } else {
-        reader = await createVideoElementFrameReader(stream, framerate, { width, height });
-        console.warn("voip-stack-video[diag]: fallback reader ready", { t: Math.round(performance.now()) });
+        reader.setTarget({ width, height });
       }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");

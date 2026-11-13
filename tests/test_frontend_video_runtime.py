@@ -1704,6 +1704,9 @@ for (const useRvfc of [true, false]) {{
   // the frame must keep the upright orientation instead of being rotated.
   assert.equal(frames[0].width, 360);
   assert.equal(frames[0].height, 640);
+  const configure = workers[0].messages.find(([m]) => m.type === "configure_jpeg_encoder")[0];
+  assert.equal(configure.width, 360, "encoder must be configured with the upright size");
+  assert.equal(configure.height, 640);
 
   await sender._cleanupSender();
   assert.equal(track.stopped, true);
