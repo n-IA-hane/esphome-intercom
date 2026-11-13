@@ -727,6 +727,7 @@ export class VoipStackVideo extends EventTarget {
       throw new Error("SIP video requires a secure browser context");
     }
     const generation = ++this._generation;
+    console.warn("voip-stack-video[diag]: start()", { t: Math.round(performance.now()), callId });
     this._callId = callId;
     this._endpointId = endpointId;
     this._cameraEnabled = Boolean(statePayload?.send_video);
@@ -786,7 +787,13 @@ export class VoipStackVideo extends EventTarget {
         helloReject(error);
       };
     });
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.warn("voip-stack-video[diag]: websocket onclose", {
+        t: Math.round(performance.now()),
+        current: this._ws === ws,
+        code: event?.code,
+        reason: event?.reason,
+      });
       const error = new Error("SIP video WebSocket closed before negotiation");
       openedReject(error);
       helloReject(error);
@@ -869,6 +876,10 @@ export class VoipStackVideo extends EventTarget {
 
   async _applyMediaUpdate(negotiated, ws, callId) {
     if (this._ws !== ws || this._callId !== callId) return;
+    console.warn("voip-stack-video[diag]: media update", {
+      t: Math.round(performance.now()),
+      restart_required: Boolean(negotiated?.restart_required),
+    });
     if (negotiated?.restart_required) {
       // The server cannot replace an FFmpeg/direct RTP topology underneath a
       // live owner. Release the old media socket first, then reconnect using
@@ -1021,12 +1032,24 @@ export class VoipStackVideo extends EventTarget {
   }
 
   _senderSetupIsCurrent(generation, switchGeneration) {
-    return (
+    const current = (
       generation === this._generation &&
       switchGeneration === this._senderSwitchGeneration &&
       this._cameraEnabled &&
       this._cameraAllowed
     );
+    if (!current) {
+      console.warn("voip-stack-video[diag]: sender setup NOT current", {
+        generation,
+        nowGeneration: this._generation,
+        switchGeneration,
+        nowSwitchGeneration: this._senderSwitchGeneration,
+        cameraEnabled: this._cameraEnabled,
+        cameraAllowed: this._cameraAllowed,
+        t: Math.round(performance.now()),
+      });
+    }
+    return current;
   }
 
   _cameraCaptureContract(deviceId = this._cameraDeviceId) {
@@ -1134,6 +1157,10 @@ export class VoipStackVideo extends EventTarget {
     let reader = null;
     let prepared = false;
     try {
+      console.warn("voip-stack-video[diag]: prepareSender begin", {
+        t: Math.round(performance.now()),
+        hasTrackProcessor,
+      });
       const captureContract = this._cameraCaptureContract(deviceId);
       stream = await navigator.mediaDevices.getUserMedia({
         video: captureContract.constraints,
@@ -1142,6 +1169,7 @@ export class VoipStackVideo extends EventTarget {
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
+      console.warn("voip-stack-video[diag]: getUserMedia ok", { t: Math.round(performance.now()) });
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error("No browser camera track available");
       const settings = track.getSettings();
@@ -1209,6 +1237,7 @@ export class VoipStackVideo extends EventTarget {
         reader = processor.readable.getReader();
       } else {
         reader = await createVideoElementFrameReader(stream, framerate);
+        console.warn("voip-stack-video[diag]: fallback reader ready", { t: Math.round(performance.now()) });
       }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
@@ -1702,6 +1731,10 @@ export class VoipStackVideo extends EventTarget {
   }
 
   async close() {
+    console.warn("voip-stack-video[diag]: close() called", {
+      t: Math.round(performance.now()),
+      stack: new Error().stack,
+    });
     const generation = ++this._generation;
     // Do not let a camera prompt or codec probe from an old dialog serialize
     // media updates belonging to the next WebSocket/call.
