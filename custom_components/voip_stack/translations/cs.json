@@ -293,7 +293,11 @@
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-      "invalid_phone_configuration": "Check the phone configuration and selected references."
+      "invalid_phone_configuration": "Check the phone configuration and selected references.",
+      "phone_clear_keys_unsupported": "Tento profil nemá ověřený příkaz pro odstranění spravovaných tlačítek. Změna nebyla uložena. Jakmile bude podpora dostupná, aktualizujte profil.",
+      "phone_disable_lines_unsupported": "Tento profil nemá ověřený příkaz pro deaktivaci spravovaných linek. Změna nebyla uložena. Jakmile bude podpora dostupná, aktualizujte profil.",
+      "phone_owned_mac_change_unsupported": "Tento telefon již má spravované pozice. Pro jinou adresu MAC přidejte samostatný fyzický telefon.",
+      "phone_retired_slot_unsupported": "Vybraný profil nemůže zachovat všechny dříve spravované pozice. Ponechte aktuální profil, dokud nebude možné tyto pozice spravovat."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -687,7 +691,11 @@
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "phone_clear_keys_unsupported": "Tento profil nemá ověřený příkaz pro odstranění spravovaných tlačítek. Změna nebyla uložena. Jakmile bude podpora dostupná, aktualizujte profil.",
+        "phone_disable_lines_unsupported": "Tento profil nemá ověřený příkaz pro deaktivaci spravovaných linek. Změna nebyla uložena. Jakmile bude podpora dostupná, aktualizujte profil.",
+        "phone_owned_mac_change_unsupported": "Tento telefon již má spravované pozice. Pro jinou adresu MAC přidejte samostatný fyzický telefon.",
+        "phone_retired_slot_unsupported": "Vybraný profil nemůže zachovat všechny dříve spravované pozice. Ponechte aktuální profil, dokud nebude možné tyto pozice spravovat."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",

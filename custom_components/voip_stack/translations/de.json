@@ -293,7 +293,11 @@
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-      "invalid_phone_configuration": "Check the phone configuration and selected references."
+      "invalid_phone_configuration": "Check the phone configuration and selected references.",
+      "phone_clear_keys_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Entfernen verwalteter Tasten. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
+      "phone_disable_lines_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Deaktivieren verwalteter Leitungen. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
+      "phone_owned_mac_change_unsupported": "Dieses Telefon hat bereits verwaltete Positionen. Füge für eine andere MAC-Adresse ein separates physisches Telefon hinzu.",
+      "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -687,7 +691,11 @@
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "phone_clear_keys_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Entfernen verwalteter Tasten. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
+        "phone_disable_lines_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Deaktivieren verwalteter Leitungen. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
+        "phone_owned_mac_change_unsupported": "Dieses Telefon hat bereits verwaltete Positionen. Füge für eine andere MAC-Adresse ein separates physisches Telefon hinzu.",
+        "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",

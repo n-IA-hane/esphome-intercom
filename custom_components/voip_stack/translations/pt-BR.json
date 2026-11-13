@@ -293,7 +293,11 @@
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-      "invalid_phone_configuration": "Check the phone configuration and selected references."
+      "invalid_phone_configuration": "Check the phone configuration and selected references.",
+      "phone_clear_keys_unsupported": "Este perfil não tem um comando verificado para remover as teclas gerenciadas. A alteração não foi salva. Atualize o perfil quando o suporte estiver disponível.",
+      "phone_disable_lines_unsupported": "Este perfil não tem um comando verificado para desativar as linhas gerenciadas. A alteração não foi salva. Atualize o perfil quando o suporte estiver disponível.",
+      "phone_owned_mac_change_unsupported": "Este telefone já tem posições gerenciadas. Para um endereço MAC diferente, adicione outro telefone físico.",
+      "phone_retired_slot_unsupported": "O perfil selecionado não pode preservar todas as posições gerenciadas anteriormente. Mantenha o perfil atual até que essas posições possam ser gerenciadas."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -687,7 +691,11 @@
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "phone_clear_keys_unsupported": "Este perfil não tem um comando verificado para remover as teclas gerenciadas. A alteração não foi salva. Atualize o perfil quando o suporte estiver disponível.",
+        "phone_disable_lines_unsupported": "Este perfil não tem um comando verificado para desativar as linhas gerenciadas. A alteração não foi salva. Atualize o perfil quando o suporte estiver disponível.",
+        "phone_owned_mac_change_unsupported": "Este telefone já tem posições gerenciadas. Para um endereço MAC diferente, adicione outro telefone físico.",
+        "phone_retired_slot_unsupported": "O perfil selecionado não pode preservar todas as posições gerenciadas anteriormente. Mantenha o perfil atual até que essas posições possam ser gerenciadas."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
