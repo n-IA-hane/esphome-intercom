@@ -379,6 +379,99 @@ async def dependency_config(cached_physical_config):
     return state
 
 
+@pytest.fixture
+async def timezone_config(cached_physical_config):
+    state = cached_physical_config
+    profile, templates = cached_profile()
+    profile["capabilities"]["time_zones"] = {
+        "Europe/Rome": {"code": 4, "name": "UTC+1", "dst_type": 1, "dst_location": 13},
+        "UTC": {"code": 0, "name": "UTC", "dst_type": 0, "dst_location": 0},
+    }
+    templates["templates/config.jinja2"] += (
+        "{% if clock %}zone={{ physical.time_zone }} code={{ clock.code }} dst={{ clock.dst_type }}\n{% endif %}")
+    state.lab.hass.config.time_zone = "Europe/Rome"
+    state.manager.catalog.async_profile.return_value = profile, templates
+    state.data = {**state.data, "catalog_commit": "d" * 40}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    context = await state.manager.async_context(state.data, profile)
+    assert context["physical"]["time_zone"] == "Europe/Rome"
+    await state.manager.async_prepare(state.data)
+    return state
+
+
+async def test_ha_timezone_update_event_invalidates_and_regenerates_only_supported_clock(timezone_config):
+    from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
+    state = timezone_config
+    before = state.manager.files[state.data["phone_id"]]
+    count = state.manager.catalog.async_profile.await_count
+    unsubscribe = state.lab.hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, state.manager._language_changed)
+    try:
+        await state.lab.hass.config.async_update(time_zone="UTC")
+        await state.lab.hass.async_block_till_done()
+        body = await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+        assert b"zone=UTC code=0 dst=0" in body and b"Europe/Rome" not in body
+        assert state.manager.files[state.data["phone_id"]] is not before
+        assert state.manager.catalog.async_profile.await_count == count + 1
+        state.lab.hass.bus.async_fire(EVENT_CORE_CONFIG_UPDATE, {"unrelated": True})
+        await state.lab.hass.async_block_till_done()
+        assert state.manager.catalog.async_profile.await_count == count + 1
+    finally:
+        unsubscribe()
+
+
+async def test_timezone_change_during_render_discards_stale_clock(timezone_config, monkeypatch):
+    import asyncio
+    from dataclasses import replace
+    from custom_components.voip_stack.physical_phone_provisioning import render_phone_bundle
+    state = timezone_config
+    state.lab.runtime.endpoints.upsert(replace(state.lab.runtime.endpoints.get("sip:first"), name="Changed First"))
+    entered, resume = asyncio.Event(), asyncio.Event()
+    original = state.lab.hass.async_add_executor_job
+
+    async def held(target, *args):
+        if target is render_phone_bundle:
+            entered.set()
+            await resume.wait()
+        return await original(target, *args)
+
+    monkeypatch.setattr(state.lab.hass, "async_add_executor_job", held)
+    before = state.manager.files[state.data["phone_id"]]
+    task = state.lab.hass.async_create_task(state.manager.async_prepare(state.data))
+    try:
+        await entered.wait()
+        state.lab.hass.config.time_zone = "UTC"
+    finally:
+        resume.set()
+        await task
+    assert state.manager.files[state.data["phone_id"]] is before
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    await state.lab.hass.async_block_till_done()
+    assert b"zone=UTC code=0 dst=0" in await state.manager.async_file(
+        state.data["phone_id"], state.data["provisioning_token"], state.filename)
+
+
+@pytest.mark.parametrize("declared", [False, True])
+async def test_legacy_or_unmapped_timezone_preserves_existing_projection(cached_physical_config, declared):
+    state = cached_physical_config
+    profile, templates = cached_profile()
+    if declared:
+        profile["capabilities"]["time_zones"] = {"Europe/Rome": {"code": 4, "name": "UTC+1"}}
+    state.lab.hass.config.language = "it"
+    state.lab.hass.config.time_zone = "Pacific/Auckland"
+    state.data = {**state.data, "catalog_commit": "e" * 40}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    state.manager.catalog.async_profile.return_value = profile, templates
+    assert (await state.manager.async_context(state.data, profile))["physical"]["time_zone"] == ""
+    await state.manager.async_prepare(state.data)
+    before = state.manager.files[state.data["phone_id"]]
+    state.lab.hass.config.time_zone = "Asia/Tokyo"
+    state.manager._language_changed(SimpleNamespace(data={"time_zone": "Asia/Tokyo"}))
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.files[state.data["phone_id"]] is before
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) == (
+        b"sip.username=first\nsip.password=fixture-only-password\n")
+
+
 @pytest.mark.parametrize("dependency", ["url", "ldap_port"])
 async def test_shared_configuration_callback_regenerates_unchanged_phone(dependency_config, dependency):
     from custom_components.voip_stack.physical_phone_provisioning import async_reconcile_physical_phones

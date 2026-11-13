@@ -46,6 +46,16 @@ language parameter leave that setting untouched. An unsupported instance locale
 does not block unrelated line/key updates; an already supported language is kept
 when available.
 
+Profiles with a verified `time_zones` mapping also inherit the instance's IANA
+time zone when generating their configuration. The X3U Pro mapping supports
+`Europe/Rome`, `UTC` and `Etc/UTC`. Rome uses the standard UTC+1 base with the
+phone's automatic daylight-saving mode for Italy, rather than fixing today's
+summer or winter offset. The phone applies these settings on its next
+provisioning download. Changing HA's time zone invalidates prepared files through
+the existing configuration listener. Unsupported zones or profiles leave the
+phone's clock configuration untouched. NTP servers, synchronization settings and
+date/time display formats remain independently configured on the phone.
+
 ## Keys and directory
 
 The native key editor provides functions supported by the selected profile:

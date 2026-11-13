@@ -367,6 +367,12 @@ class PhysicalPhoneProvisioner:
                     language_code, language = resolve_phone_language(profile, previous)
                 elif not phone["follow_ha_language"]:
                     raise
+        time_zone = ""
+        time_zones = caps.get("time_zones", {})
+        if isinstance(time_zones, dict) and time_zones:
+            requested_time_zone = getattr(self.hass.config, "time_zone", "")
+            if requested_time_zone in time_zones:
+                time_zone = requested_time_zone
         directory = {}
         requested, config, _epoch = self._directory_service()
         ldap_requested = requested["enabled"] and "ldap" in caps.get("functions", ()) and phone.get("directory_enabled", True)
@@ -381,7 +387,8 @@ class PhysicalPhoneProvisioner:
                 "number_filter": "(|(telephonenumber=%)(mobile=%))",
                 "name_attributes": "cn", "number_attributes": "telephonenumber mobile"}
         return {"physical": {"name": phone["name"], "mac": phone["mac"],
-                             "language": language, "language_code": language_code},
+                             "language": language, "language_code": language_code,
+                             "time_zone": time_zone},
                 "lines": lines, "keys": resolve_phone_keys(self.runtime, phone, profile),
                 "directory": directory, "provisioning": {"url": phone_provisioning_url(self.hass, self.entry, phone)
                     if "provision" in caps.get("functions", ()) else ""}}

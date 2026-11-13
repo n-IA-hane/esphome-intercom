@@ -23,6 +23,37 @@ phone_profile = _load_module("phone_profile")
 catalog_module = _load_module("phone_profile_catalog")
 
 
+@pytest.mark.parametrize("zone", ["Europe/Rome", "UTC", ""])
+def test_clock_is_owned_only_by_the_declared_profile_mapping(zone):
+    mapping = {"Europe/Rome": {"code": 4, "name": "UTC+1", "dst_type": 1, "dst_location": 13},
+               "UTC": {"code": 0, "name": "UTC", "dst_type": 0, "dst_location": 0}}
+    profile = {"vendor": "fanvil", "capabilities": {"max_lines": 1, "key_slots": [],
+        "languages": {}, "functions": [], "time_zones": mapping}}
+    context = {"physical": {"name": "Fixture", "mac": "020000000001", "time_zone": zone},
+               "clock": {"code": 999, "name": "caller must not override the profile"}}
+    result = phone_profile.validate_context(profile, context)
+    assert result["clock"] == mapping.get(zone, {})
+    assert context["clock"]["code"] == 999
+    if zone:
+        result["clock"]["name"] = "changed copy"
+        assert mapping[zone]["name"] != "changed copy"
+    legacy = deepcopy(context)
+    legacy["physical"].pop("time_zone")
+    assert phone_profile.validate_context(profile, legacy)["clock"] == {}
+    assert phone_profile.normalized_context(legacy)["physical"]["time_zone"] == ""
+
+
+def test_clock_mapping_rejects_unsupported_zone_and_control_strings():
+    profile = {"vendor": "fanvil", "capabilities": {"max_lines": 1, "key_slots": [],
+        "languages": {}, "functions": [], "time_zones": {"Europe/Rome": {"code": 4, "name": "bad\nfield"}}}}
+    context = {"physical": {"name": "Fixture", "mac": "020000000001", "time_zone": "Europe/Rome"}}
+    with pytest.raises(ValueError, match="control character"):
+        phone_profile.validate_context(profile, context)
+    context["physical"]["time_zone"] = "unknown/zone"
+    with pytest.raises(ValueError):
+        phone_profile.validate_context(profile, context)
+
+
 @pytest.fixture(scope="module")
 def real_assets():
     location = os.environ.get("VOIP_PHONE_PROFILE_CATALOG_PATH")
