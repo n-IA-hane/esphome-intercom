@@ -80,6 +80,56 @@ def test_registers_only_terminal_call_events(monkeypatch) -> None:
     }
 
 
+def phone_call(state="early", *, leg="first", direction="initiator", call_id="call-one", generation=1):
+    return {"call_id": call_id, "generation": generation, "state": state, "direction": direction,
+            "leg_id": leg, "peer_name": "Mobile", "peer_user": "3511234567"}
+
+
+def test_account_activity_logs_one_calling_phase_for_multiple_contacts():
+    phone = {"name": "Desk", "calls": [phone_call(), phone_call(leg="second")]}
+    event = {"endpoint_id": "sip:desk", "previous": {"name": "Desk", "calls": []}, "phone": phone,
+             "call": {"call_id": "call-one", "generation": 1, "dialed_target": "3511234567"}}
+    entries = logbook._account_activity(event)
+    assert len(entries) == 1 and entries[0]["name"] == "Desk"
+    assert entries[0]["message"] == "Calling 3511234567"
+    event["previous"] = {"name": "Desk", "calls": [phone_call()]}
+    assert logbook._account_activity(event) == []
+
+
+def test_account_answer_has_the_committed_winner_not_the_first_contact():
+    event = {"endpoint_id": "sip:desk", "previous": {"name": "Desk", "calls": [phone_call()]},
+             "phone": {"name": "Desk", "calls": [phone_call("confirmed", leg="winner")]},
+             "call": {"call_id": "call-one", "generation": 1, "answered_by": "Living room phone"}}
+    assert logbook._account_activity(event)[0]["message"] == "Answered by Living room phone"
+
+
+def test_account_incoming_activity_identifies_the_caller_not_its_own_account():
+    event = {"phone": {"name": "Desk", "calls": [phone_call(direction="recipient")]},
+             "previous": {"calls": []}, "call": {"call_id": "call-one", "generation": 1,
+                 "caller": "3511234567", "callee": "Desk"}}
+    assert logbook._account_activity(event)[0]["message"] == "Incoming call from 3511234567"
+
+
+def test_account_failure_uses_only_the_same_call_status_and_reason():
+    event = {"endpoint_id": "sip:desk", "previous": {"name": "Desk", "calls": [phone_call()]},
+             "phone": {"name": "Desk", "calls": []}, "call": {
+                 "call_id": "call-one", "generation": 1, "type": "failed", "state": "failed",
+                 "reason": "busy", "sip_status_code": 486, "pbx_phase": "terminated"}}
+    assert logbook._account_activity(event)[0]["message"] == "Call failed · busy · SIP 486"
+    event["call"]["call_id"] = "another-call"
+    assert logbook._account_activity(event) == []
+    event["call"].update(call_id="call-one", generation=2)
+    assert logbook._account_activity(event) == []
+
+
+def test_account_noncall_changes_and_handoff_do_not_create_terminal_failures():
+    assert logbook._account_activity({"phone": {"name": "Desk", "dnd": True, "calls": []}, "previous": {"calls": []}}) == []
+    event = {"previous": {"name": "Desk", "calls": [phone_call("confirmed")]},
+             "phone": {"name": "Desk", "calls": []},
+             "call": {"call_id": "call-one", "generation": 1, "state": "in_call", "reason": "forwarded"}}
+    assert logbook._account_activity(event) == []
+
+
 def test_missed_call_prefers_the_answered_endpoint_name() -> None:
     entry = logbook._describe_call(
         {

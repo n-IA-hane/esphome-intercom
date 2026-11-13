@@ -13,6 +13,7 @@ const {
   audioModeLabel,
   normaliseAudioMode,
   normaliseCardConfig,
+  supportsHaClient,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 
 class VoipStackCardEditor extends HTMLElement {
@@ -242,22 +243,22 @@ class VoipStackCardEditor extends HTMLElement {
     els.modeInfo.textContent = this._t(phonebookMode
       ? "Scrollable view of the shared VoIP phonebook."
       : softphoneMode
-        ? "Home Assistant phone: bind this card to one logical phone, or leave it unselected for the preferred phone."
+        ? "Use any authorized SIP account. Leave unselected to use the preferred account."
         : "ESP mirror card: mirrors one ESP endpoint and presses that ESP's own call, answer and hangup controls.");
     els.deviceGroup.classList.toggle("hidden", phonebookMode);
     els.deviceLabel.textContent = this._t(softphoneMode
-      ? "Home Assistant phone"
+      ? "SIP account"
       : "VoIP Device");
 
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = this._t(softphoneMode
-      ? "Preferred Home Assistant phone"
+      ? "Preferred SIP account"
       : "-- Select device --");
     const newOptions = [placeholder];
     const selectableDevices = this._devices.filter((device) =>
       softphoneMode
-        ? this._isSoftphoneDevice(device) && !!device.device_id
+        ? this._isSoftphoneDevice(device) && device.can_control !== false && !!device.device_id
         : !this._isSoftphoneDevice(device));
     const configuredDeviceId = String(
       this._config.device_id || this._config.entity_id || "",
@@ -288,18 +289,18 @@ class VoipStackCardEditor extends HTMLElement {
       els.deviceInfo.textContent = this._t("Loading...");
     } else if (selectableDevices.length === 0) {
       els.deviceInfo.textContent = this._t(softphoneMode
-        ? "No additional HA softphones found; the preferred or sole phone will be used."
+        ? "No SIP accounts found."
         : "No devices found");
     } else if (configuredMissingPhone) {
       els.deviceInfo.textContent = this._t(
-        "The configured Home Assistant phone no longer exists. Select another phone or use the preferred phone.");
+        "The configured SIP account no longer exists. Select another account or use the preferred account.");
     } else if (selectedDevice) {
       els.deviceInfo.textContent = softphoneMode
         ? `Phone: ${selectedDevice.name || selectedDevice.device_id}`
         : `Audio: ${this._normaliseAudioMode(selectedDevice.audio_mode).replace("_", " ")}`;
     } else {
       els.deviceInfo.textContent = this._t(softphoneMode
-        ? "Omit the selection to use the preferred Home Assistant phone."
+        ? "Leave unselected to use the preferred SIP account."
         : "Required for ESP mirror mode.");
     }
 
@@ -326,11 +327,7 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   _isSoftphoneDevice(device) {
-    const type = String(
-      device?.endpoint_type || device?.type || device?.kind || "",
-    ).toLowerCase();
-    return !!device?.softphone || !!device?.endpoint_id &&
-      ["browser", "ha_softphone", "home_assistant", "softphone"].includes(type);
+    return supportsHaClient(device);
   }
 
   _deviceChanged(deviceId) {

@@ -123,8 +123,16 @@ def compose_directory_entries(hass, peers, registered):
             identity = metadata.get("endpoint_id") or (
                 "service:assist_pipeline" if service == "assist_pipeline" else f"service:{service}:{row.id}")
         elif isinstance(endpoint, PhoneEndpoint):
+            from .account_runtime import account_has_ha_binding
+
             kind, identity = endpoint.kind.value, endpoint.endpoint_id
             metadata.update(account_id="ha", availability=endpoint.availability.value)
+            if endpoint.supports_ha_client:
+                bound = endpoint.kind.is_softphone or account_has_ha_binding(hass, identity)
+                # A bare account routes to the deferred HA offer; one with
+                # Contacts is composed by the common fork instead.
+                metadata.update(ha_client_supported=True, ha_binding=bound,
+                                local_ha=bound and not bool(metadata.get("sip_contacts")))
         else:
             # Explicit static phone metadata may declare its account context.
             # Unknown contacts never become phones because of a URI or label.

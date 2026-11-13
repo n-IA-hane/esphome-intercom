@@ -12,6 +12,7 @@ from .const import HA_PEER_FALLBACK_NAME
 from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
+    ha_client_endpoint,
 )
 from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
@@ -38,14 +39,14 @@ def service_browser_endpoint(
             "phone_selection_required",
         )
     endpoint_id = endpoint.endpoint_id
-    if endpoint is not None and not endpoint.kind.is_softphone:
+    view = ha_client_endpoint(endpoint)
+    if view is None:
         if strict or device_id:
             raise _service_error(
                 "The selected Device is not a Home Assistant browser phone",
                 "phone_not_browser",
             )
-        endpoint = None
-    return endpoint_id, endpoint
+    return endpoint_id, view
 
 
 def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):

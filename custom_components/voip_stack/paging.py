@@ -137,8 +137,10 @@ class PagingJob:
         if endpoint is None:
             self.results[identity] = {"status": "skipped", "reason": "removed"}
             return DialOutcome(DialDisposition.UNAVAILABLE)
+        from .account_dialing import account_uses_ha_only
+        browser = account_uses_ha_only(self.manager.hass, endpoint)
         disposition = endpoint_preflight_disposition(endpoint, call_id=self.session.call_id,
-                                                     browser=endpoint.kind.is_softphone)
+                                                     browser=browser)
         if disposition is not None:
             self.results[endpoint.endpoint_id] = {"status": "skipped", "reason": disposition.value}
             return DialOutcome(disposition)
@@ -147,7 +149,7 @@ class PagingJob:
         data = {"destination": endpoint.name, "answer_timeout": self.data["answer_timeout"]}
         call = ServiceCall(self.manager.hass, "voip_stack", "call", data, context=self.call.context)
         try:
-            if endpoint.kind.is_softphone:
+            if browser:
                 token = await self.manager.originate_browser(self, endpoint)
             else:
                 token = await async_originate_application_call(

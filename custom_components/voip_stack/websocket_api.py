@@ -18,6 +18,7 @@ from .config import transport_config as current_transport_config
 from .authorization import (
     media_controller_status,
     require_websocket_endpoint_read,
+    require_websocket_endpoint_control,
     require_websocket_read,
     websocket_can_control_endpoint,
 )
@@ -345,7 +346,7 @@ def _ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     store = stores.setdefault(key, {"dnd": False})
     store.setdefault("endpoint_id", key)
     endpoint = endpoint_directory(hass).get(key)
-    if endpoint is not None and endpoint.kind.is_softphone:
+    if endpoint is not None and endpoint.supports_ha_client:
         store.setdefault("device_id", endpoint.device_id)
         store.setdefault("local_name", endpoint.name)
     return store
@@ -365,9 +366,8 @@ def _browser_endpoint(hass: HomeAssistant, endpoint_id: object):
     registry = _endpoint_registry(hass)
     selector = str(endpoint_id or "").strip()
     endpoint = registry.get(selector) if registry is not None and selector else None
-    if endpoint is not None and endpoint.kind.is_softphone:
-        return endpoint
-    return None
+    from .phone_endpoint import ha_client_endpoint
+    return ha_client_endpoint(endpoint)
 
 
 @callback
@@ -375,6 +375,7 @@ def _update_browser_presence(
     hass: HomeAssistant,
     endpoint_id: str,
     delta: int,
+    *, publish: bool = True,
 ) -> None:
     """Track browser media clients independently of logical phone availability."""
     endpoint_id = _endpoint_store_id(endpoint_id)
@@ -386,7 +387,7 @@ def _update_browser_presence(
     else:
         counts.pop(endpoint_id, None)
 
-    if previous != current:
+    if previous != current and publish:
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
 
@@ -601,7 +602,7 @@ async def _async_save_ha_softphone_store(hass: HomeAssistant, endpoint_id: str) 
     runtime = _ha_softphone_store(hass, endpoint_id)
     groups = _ha_softphone_groups(hass, endpoint_id)
     persisted = {
-        CONF_PHONE_DND: bool(runtime.get("dnd", False)),
+        CONF_PHONE_DND: _ha_softphone_dnd(hass, endpoint_id),
         CONF_PHONE_AUTO_ANSWER: _ha_softphone_auto_answer(hass, endpoint_id),
         CONF_PHONE_SEND_VIDEO: _ha_softphone_send_video(hass, endpoint_id),
         CONF_PHONE_EXTENSION: _ha_softphone_extension(hass, endpoint_id),
@@ -622,7 +623,8 @@ async def _async_save_ha_softphone_store(hass: HomeAssistant, endpoint_id: str) 
 
 
 def _ha_softphone_dnd(hass: HomeAssistant, endpoint_id: str) -> bool:
-    return bool(_ha_softphone_store(hass, endpoint_id).get("dnd"))
+    endpoint = _endpoint_registry(hass).get(endpoint_id)
+    return bool(endpoint is not None and endpoint.dnd)
 
 
 _MEDIA_COUNTER_KEYS = (
@@ -884,10 +886,67 @@ def _sip_runtime_snapshot(
     return data
 
 
+def _account_browser_media(runtime, registry, endpoint_id, call_id):
+    """Read an existing media capability; a native SIP dialog is not one."""
+    if not call_id:
+        return False
+    from .endpoint_session import LegPhase
+    session = registry.get_session(registry.resolve_session_id(call_id))
+    if session is None or not session.live:
+        return False
+    browser_legs = [leg for leg in session.legs.values() if leg.role == "ha_softphone" and leg.endpoint_id == endpoint_id]
+    live_browser_legs = [leg for leg in browser_legs if leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}]
+    if browser_legs and not live_browser_legs:
+        return False
+    media = (registry.resource_for(call_id, f"softphone_media_endpoint:{endpoint_id}")
+             or registry.resource_for(call_id, "softphone_media"))
+    if isinstance(media, dict) and media.get("endpoint_id") == endpoint_id:
+        return True
+    local_bridge = getattr(runtime, "local_bridge", None)
+    local = local_bridge.get_call(call_id) if local_bridge is not None else None
+    if local is not None and endpoint_id in {local.caller_endpoint_id, local.callee_endpoint_id}:
+        return True
+    return bool(live_browser_legs)
+
+
+def _account_shared_projection(hass, endpoint):
+    if endpoint is None or endpoint.kind is not EndpointKind.SIP_ACCOUNT:
+        return None
+    from .phone_state import phone_states
+    from homeassistant.exceptions import ServiceValidationError
+    try:
+        # A commit may precede the observer's queued refresh. Read its same
+        # pure projection from current legs so a losing browser cannot linger.
+        return phone_states(hass).get(endpoint.endpoint_id)
+    except ServiceValidationError:
+        return None
+
+
 def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
     endpoint_id = _endpoint_store_id(endpoint_id)
-    store = _ha_softphone_store(hass, endpoint_id)
-    endpoint = _browser_endpoint(hass, endpoint_id)
+    store = dict(_ha_softphone_store(hass, endpoint_id))
+    endpoint = _endpoint_registry(hass).get(endpoint_id)
+    projection = _account_shared_projection(hass, endpoint)
+    if projection is not None and projection["calls"]:
+        selected = next((call for call in projection["calls"] if call["call_id"] == store.get("call_id")), projection["calls"][0])
+        identity = selected["call_id"]
+        if identity != store.get("call_id") or not _account_browser_media(require_runtime_data(hass), call_registry(hass), endpoint_id, identity):
+            current = call_registry(hass).get_session(identity)
+            incoming = selected["direction"] == "recipient"
+            store.update(call_id=identity, state=projection["state"], sip_state=projection["state"],
+                direction="incoming" if incoming else "outgoing", peer_name=selected["peer_name"],
+                caller=current.caller if current is not None else "", callee=current.callee if current is not None else "")
+    elif projection is not None and store.get("state") in {"calling", "connecting", "ringing", "remote_ringing", "answering", "in_call", "terminating"}:
+        from .endpoint_session import LegPhase
+        registry = call_registry(hass)
+        current = registry.get_session(registry.resolve_session_id(str(store.get("call_id") or "")))
+        participates = current is not None and current.live and (
+            endpoint_id in current.endpoint_claims or any(leg.endpoint_id == endpoint_id
+                and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED} for leg in current.legs.values()))
+        if not participates and not _account_browser_media(require_runtime_data(hass), registry, endpoint_id, store.get("call_id")):
+            # The registry has retired this account's call. A stale presentation
+            # cache cannot resurrect it; retain the old ID for terminal ordering.
+            store.update(state=projection["state"], sip_state=projection["state"])
     entry_runtime = runtime_data(hass)
     from .parking_config import parking_settings
     parking = parking_settings(hass)
@@ -964,6 +1023,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
                   and session.metadata.get("application") == "browser_paging"
                   and session.metadata.get("endpoint_id") == endpoint_id
                   and str(store.get("call_id") or "") == session.call_id)
+    can_attach_media = _account_browser_media(entry_runtime, registry, endpoint_id, str(call_id or "")) if entry_runtime is not None else False
     event_context = registry.event_context(str(call_id or ""))
     video_active = bool(store.get("video_active", False))
     video_offered = bool(store.get("video_offered", False))
@@ -1019,6 +1079,11 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
             and endpoint.availability is not EndpointAvailability.UNAVAILABLE
         ),
         "connected_cards": connected_cards,
+        "ha_client_supported": bool(endpoint is not None and endpoint.supports_ha_client),
+        "can_attach_media": can_attach_media,
+        "media_is_local": can_attach_media,
+        "owns_media": False,
+        "media_owner": "available" if can_attach_media else "other",
         "capabilities": (
             sorted(endpoint.capabilities) if endpoint is not None else ["audio", "dtmf"]
         ),
@@ -1388,6 +1453,7 @@ def _ha_softphone_device(
         "host": "",
         "sip_transport": "udp+tcp",
         "softphone": True,
+        "ha_client_supported": True,
         "voicemail": dict(state.get("voicemail") or {}),
         "ha_softphone": state,
     }
@@ -1400,7 +1466,7 @@ def _ha_softphone_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     devices = [
         _ha_softphone_device(hass, endpoint.endpoint_id)
         for endpoint in registry.endpoints
-        if endpoint.kind.is_softphone
+        if endpoint.supports_ha_client
     ]
     return devices
 
@@ -1533,14 +1599,14 @@ def _endpoint_id_from_selector(
 
     for device in _values(device_id):
         endpoint = registry.by_device_id(device) if registry is not None else None
-        if endpoint is None or not endpoint.kind.is_softphone:
+        if endpoint is None or not endpoint.supports_ha_client:
             unresolved.append(device)
             continue
         selected_ids.add(endpoint.endpoint_id)
 
     for entity in _values(entity_id):
         endpoint = _by_current_entity_id(entity)
-        if endpoint is None or not endpoint.kind.is_softphone:
+        if endpoint is None or not endpoint.supports_ha_client:
             unresolved.append(entity)
             continue
         selected_ids.add(endpoint.endpoint_id)
@@ -1549,7 +1615,7 @@ def _endpoint_id_from_selector(
         resolved_id = _endpoint_store_id(explicit)
         if registry is not None:
             endpoint = registry.get(resolved_id)
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
                 raise ValueError(f"Unknown Home Assistant phone endpoint: {explicit}")
             # EndpointRegistry lookup is case-insensitive; every downstream
             # store, event and presence key must nevertheless use the stable
@@ -1589,6 +1655,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_ha_softphone_state)
     websocket_api.async_register_command(hass, websocket_list_devices)
     websocket_api.async_register_command(hass, websocket_resolve_device)
+    websocket_api.async_register_command(hass, websocket_ha_popup_binding)
+    websocket_api.async_register_command(hass, websocket_set_ha_popup_binding)
 
 
 @websocket_api.websocket_command({vol.Required("type"): WS_TYPE_SUBSCRIBE_PHONE_STATES})
@@ -1761,13 +1829,40 @@ def websocket_subscribe_ha_softphone_state(
 
     unsubscribe_state = hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state)
     if publishes_presence:
-        _update_browser_presence(hass, requested_endpoint, 1)
+        _update_browser_presence(hass, requested_endpoint, 1, publish=False)
+    from .phone_state import phone_state_observer
+    from homeassistant.exceptions import ServiceValidationError
+    @callback
+    def forward_projection(change, _context=None):
+        if change.get("endpoint_id") == requested_endpoint:
+            state = _ha_softphone_state(hass, requested_endpoint)
+            previous_calls = (change.get("previous") or {}).get("calls", ())
+            occurrence = change.get("call") or {}
+            if not (change.get("phone") or {}).get("calls") and state["state"] in {"idle", "unavailable"}:
+                ended = next((call for call in previous_calls if call["call_id"] == occurrence.get("call_id")),
+                             previous_calls[0] if len(previous_calls) == 1 else None)
+                if ended is not None:
+                    # A native SIP participant has no browser runtime cache.
+                    # Scope its complete idle snapshot to the actual prior call
+                    # so the frontend can retain its stale-terminal guards.
+                    state["call_id"] = ended["call_id"]
+                    state["generation"] = ended["generation"]
+                    if occurrence.get("call_id") == ended["call_id"]:
+                        state["sequence"] = occurrence.get("sequence", state["sequence"])
+                        state["revision"] = occurrence.get("revision", state["revision"])
+            connection.send_event(msg_id, state)
+    try:
+        unsubscribe_projection = phone_state_observer(hass).subscribe(forward_projection)
+    except ServiceValidationError:
+        def unsubscribe_projection():
+            return None
     released = False
 
     @callback
     def unsubscribe() -> None:
         nonlocal released
         unsubscribe_state()
+        unsubscribe_projection()
         if released:
             return
         released = True
@@ -1776,6 +1871,7 @@ def websocket_subscribe_ha_softphone_state(
 
     connection.subscriptions[msg_id] = unsubscribe
     connection.send_result(msg_id)
+    connection.send_event(msg_id, _ha_softphone_state(hass, requested_endpoint))
 
 
 @websocket_api.websocket_command(
@@ -1825,7 +1921,8 @@ async def websocket_ha_softphone_state(
             endpoint_id,
             str(getattr(connection.user, "id", "") or ""),
         )
-        state["media_owner"] = "other" if controller_status == "other" else owner_status
+        state["media_owner"] = "other" if not state["can_attach_media"] or controller_status == "other" else owner_status
+        state["owns_media"] = state["can_attach_media"] and state["media_owner"] == "self"
     connection.send_result(msg["id"], state)
 
 
@@ -1839,10 +1936,20 @@ async def websocket_list_devices(
     from .entity_identity import shared_entity_ids
 
     require_websocket_read(hass, connection)
+    devices = []
+    for device in [*_ha_softphone_devices(hass), *(await _get_voip_devices(hass))]:
+        endpoint = _endpoint_registry(hass).get(device.get("endpoint_id"))
+        if endpoint is not None:
+            try:
+                require_websocket_endpoint_read(hass, connection, endpoint)
+            except Unauthorized:
+                continue
+            device["can_control"] = websocket_can_control_endpoint(hass, connection, endpoint)
+        devices.append(device)
     connection.send_result(
         msg["id"],
         {
-            "devices": [*_ha_softphone_devices(hass), *(await _get_voip_devices(hass))],
+            "devices": devices,
             "entity_ids": shared_entity_ids(hass),
         },
     )
@@ -1861,7 +1968,7 @@ async def websocket_resolve_device(
     device_id = str(msg.get("device_id") or "")
     registry = _endpoint_registry(hass)
     endpoint = registry.by_device_id(device_id) if registry is not None else None
-    if endpoint is not None and endpoint.kind.is_softphone:
+    if endpoint is not None and endpoint.supports_ha_client:
         require_websocket_endpoint_read(hass, connection, endpoint)
         connection.send_result(
             msg["id"],
@@ -1873,3 +1980,36 @@ async def websocket_resolve_device(
             connection.send_result(msg["id"], {"device": device})
             return
     connection.send_result(msg["id"], {"device": None})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "voip_stack/ha_popup_binding",
+    vol.Required("binding_id"): vol.Match(r"^[A-Za-z0-9._~-]{16,128}$")})
+@callback
+def websocket_ha_popup_binding(hass, connection, msg):
+    require_websocket_read(hass, connection)
+    owner = require_runtime_data(hass).ha_bindings
+    connection.send_result(msg["id"], owner.popup_binding(connection.user.id, msg["binding_id"]) if owner is not None else None)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "voip_stack/set_ha_popup_binding",
+    vol.Required("binding_id"): vol.Match(r"^[A-Za-z0-9._~-]{16,128}$"),
+    vol.Required("endpoint_id"): str, vol.Required("enabled"): bool})
+@websocket_api.async_response
+async def websocket_set_ha_popup_binding(hass, connection, msg):
+    require_websocket_read(hass, connection)
+    owner = require_runtime_data(hass).ha_bindings
+    if owner is None:
+        connection.send_error(msg["id"], "not_ready", "HA client associations are unavailable")
+        return
+    endpoint = _endpoint_registry(hass).get(msg["endpoint_id"])
+    if endpoint is not None:
+        require_websocket_endpoint_control(hass, connection, endpoint)
+    elif msg["enabled"]:
+        connection.send_error(msg["id"], "unknown_endpoint", "Select an existing SIP account")
+        return
+    try:
+        value = await owner.async_set_popup_binding(connection.user.id, msg["binding_id"], msg["endpoint_id"], msg["enabled"])
+    except ValueError as error:
+        connection.send_error(msg["id"], "invalid_format", str(error))
+        return
+    connection.send_result(msg["id"], value)

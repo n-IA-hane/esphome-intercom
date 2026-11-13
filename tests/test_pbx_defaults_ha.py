@@ -38,7 +38,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
     })
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == 0
     assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav"}
     assert entry.data["voicemail"] == {"tts_entity_id": "tts.existing", "language": "it"}
     assert entry.data["esphome_mailboxes"]["esp"]["enabled"]

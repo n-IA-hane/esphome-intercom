@@ -93,7 +93,8 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
                            ("Family", "group"), ("Assist", "service"), ("Door action", "service"),
                            ("External", "contact")):
             assert rows[name]["metadata"]["endpoint_kind"] == kind
-        assert rows["Casa"]["metadata"]["availability"] == "available"
+        # This fixture declares no saved HA association or SIP registration.
+        assert rows["Casa"]["metadata"]["availability"] == "offline"
         assert not lab.runtime.softphone_presence
         assert rows["QA"]["metadata"]["availability"] == "offline"
         assert rows["Family"]["metadata"]["members"] == ["Casa", "qa"]

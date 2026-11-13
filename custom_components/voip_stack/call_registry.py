@@ -592,7 +592,7 @@ class CallRuntimeApi:
                 continue
             if directory is not None and hasattr(directory, "get"):
                 endpoint = directory.get(candidate)
-                if endpoint is None or not endpoint.kind.is_softphone:
+                if endpoint is None or not endpoint.supports_ha_client:
                     continue
             endpoint_id = candidate
             break

@@ -35,6 +35,20 @@ to existing logical SIP phones/accounts. One physical phone can have several
 lines, and a logical account can be used by several physical phones. Existing
 logical endpoint device associations are preserved.
 
+Account assignment is optional during adoption. An unassigned phone is labelled
+accordingly and can be assigned later from either its Lines editor or the SIP
+account's Associated physical phones selector. See
+[one account and its clients](ACCOUNTS_AND_CLIENTS.md).
+
+The account editor and physical phone editor change the same line list. Choose
+the slot explicitly; an occupied slot cannot silently replace another account.
+Reassign or remove keys that use a line before removing that association.
+Removing the last line keeps the physical inventory and private URL, invalidates
+old account-bearing output and prepares only hardware settings and owned line
+disables, without SIP or LDAP account passwords. It does not delete or disable
+the shared account. A profile without the required disable capability refuses
+that removal before saving.
+
 The native line editor supports adding, modifying, deleting and reordering rows.
 An account can be created from the editor using the existing SIP account setup.
 Draft accounts are committed only after the complete phone configuration passes
@@ -68,6 +82,33 @@ with a SIP destination keeps that same routing priority. Free dial numbers
 remain available. Targets and labels must fit the profile's byte limits; they
 are never silently truncated.
 
+### Parking monitor and action
+
+Choose the function and target independently in the physical phone's key editor:
+
+| Function | Example target with default PBX settings | Purpose |
+| --- | --- | --- |
+| **Monitor/retrieve parking** (`park`) | `701` | Monitor an existing parking slot and call that slot to retrieve its conversation. |
+| **Park current call** (`park_call`) | `700` | Ask the phone to park its established conversation through the configured parking access number. |
+
+If parking numbers were changed, use those configured values. A key target is
+never automatically rewritten between an access number and a slot. A monitor
+key is not an instruction to transfer the current conversation. Existing saved
+`park` keys retain their original monitor/retrieve semantics.
+
+For Fanvil source profiles, both are Memory Key Type1 on the selected line, but
+their configuration values differ: `701@1/bc` is BLF New Call for the slot on
+line1; `700@1/c` is the explicit Call Park action. These are generated profile
+values, not new SIP URIs to type into an automation. Other models expose the
+action only when their profile declares it. Model/firmware keypress behavior
+requires separate physical qualification.
+
+To move a handset conversation to its associated HA card, park it and dial the
+reported slot from that card using the same account. See
+[parking and pickup](USER_GUIDE.md#parking-and-picking-up-calls).
+
+### Managed positions and queue keys
+
 Removing a managed key means clearing it on the phone, not just omitting it
 from the next file. Successfully prepared configurations claim only their
 declared key/line positions. Those positions are recorded persistently before
@@ -94,6 +135,21 @@ is confirmed/red while paused. Other BLF resources keep their usual meanings.
 When LDAP phone services are enabled, the same directory and account
 authentication are used. See [LDAP on desk phones](LDAP_PHONES.md).
 No separate address-book database is created.
+
+## Account DND synchronization
+
+DND is one account policy shared by its handsets and HA cards. Profiles declaring
+`dnd_sync` enable the phone's per-line feature synchronization. The current X3U
+Pro source projection enables `FeatureSync`; the PBX handles authenticated
+`as-feature-event` subscriptions, explicit DND ON/OFF requests and state NOTIFY
+updates through the existing SIP event owner. A request for another account or
+an unauthenticated source cannot change that policy.
+
+Support is limited to the declared model/protocol subset. Software interop does
+not qualify the physical handset's DND button, and a `486` or `603` call response
+never changes persistent account DND. Profiles without this capability preserve
+the handset's local behavior. Browser Auto Answer remains a browser preference,
+independent of hardware auto-answer and the per-call announcement request.
 
 ## Discovery and delivery
 

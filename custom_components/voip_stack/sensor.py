@@ -170,7 +170,9 @@ class PhoneEndpointCallStateSensor(SensorEntity):
             getattr(self, "_linked_entity_id", None),
         )
         self._linked_entity_id = self.entity_id
-        if enum_value(self.endpoint.kind) == "browser":
+        runtime = runtime_data(self.hass)
+        if (self.endpoint.supports_ha_client and runtime is not None
+                and runtime.endpoints is self.registry):
             self._apply_call_payload(
                 _ha_softphone_state(self.hass, self.endpoint.endpoint_id)
             )

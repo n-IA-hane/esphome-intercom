@@ -299,6 +299,16 @@ const DE = {
 };
 
 const IT = {
+  "SIP account": "Account SIP",
+  "Preferred SIP account": "Account SIP preferito",
+  "Use any authorized SIP account. Leave unselected to use the preferred account.": "Usa un account SIP autorizzato. Senza selezione viene usato quello preferito.",
+  "No SIP accounts found.": "Nessun account SIP trovato.",
+  "The configured SIP account no longer exists. Select another account or use the preferred account.": "L'account SIP configurato non esiste più. Seleziona un altro account o usa quello preferito.",
+  "Leave unselected to use the preferred SIP account.": "Lascia vuoto per usare l'account SIP preferito.",
+  "Select an existing SIP account.": "Seleziona un account SIP esistente.",
+  "The selected SIP account is unavailable.": "L'account SIP selezionato non è disponibile.",
+  "End the current call before changing the browser account.": "Termina la chiamata prima di cambiare account nel browser.",
+  "Associates this browser with an existing SIP account. The association is saved in Home Assistant. X, Esc and Back minimize an active call. Audio still requires browser permission.": "Associa questo browser a un account SIP esistente. L'associazione viene salvata in Home Assistant. X, Esc e Indietro riducono la chiamata. L'audio richiede il permesso del browser.",
   "Queues": "Code",
   "Available": "Disponibile",
   "Paused": "In pausa",

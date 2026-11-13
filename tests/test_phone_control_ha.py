@@ -106,7 +106,8 @@ async def test_esphome_originate_uses_native_action_and_canonical_response(
     assert response["call"]["destination"] == "P4"
 
 
-async def test_sip_account_fails_by_capability_without_browser_resolution() -> None:
+async def test_sip_account_originate_uses_ephemeral_ha_view(monkeypatch) -> None:
+    from custom_components.voip_stack import phone_control
     endpoint = _endpoint(
         endpoint_id="sip:zoiper",
         device_id="device-zoiper",
@@ -118,17 +119,14 @@ async def test_sip_account_fails_by_capability_without_browser_resolution() -> N
     hass = MagicMock()
     call = _call(hass, device_id=endpoint.device_id, destination="P4")
 
-    with pytest.raises(ServiceValidationError) as raised:
-        await PhoneAdapterRegistry(hass, endpoints).originate(
-            call,
-            OriginateRequest(destination="P4"),
-        )
-
-    assert raised.value.translation_key == "phone_operation_not_supported"
-    assert raised.value.translation_placeholders == {
-        "phone": "Zoiper",
-        "operation": "originate",
-    }
+    originate = AsyncMock()
+    monkeypatch.setattr(phone_control, "async_originate_browser_call", originate)
+    monkeypatch.setattr(phone_control, "_ha_softphone_state", lambda *_: {"call_id": "account-call", "state": "calling"})
+    result = await PhoneAdapterRegistry(hass, endpoints).originate(call, OriginateRequest(destination="P4"))
+    assert result.call_id == "account-call"
+    view = originate.await_args.kwargs["browser_endpoint"]
+    assert view.endpoint_id == endpoint.endpoint_id and view.kind is EndpointKind.BROWSER
+    assert endpoints.get(endpoint.endpoint_id) is endpoint and endpoint.kind is EndpointKind.SIP_ACCOUNT
 
 
 async def test_browser_originate_uses_the_same_result_type(

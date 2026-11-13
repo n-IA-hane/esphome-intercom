@@ -2,7 +2,7 @@
 const VERSION = new URL(import.meta.url).searchParams.get("v") || "dev";
 const [
   { voipStackEngine: engine },
-  { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration },
+  { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration, supportsHaClient },
   { voipStackTranslate: translate },
 ] = await Promise.all([
   import(`./voip-stack-engine.js?v=${encodeURIComponent(VERSION)}`),
@@ -11,6 +11,8 @@ const [
 ]);
 const DIALOG = "voip-stack-phone-dialog";
 const PREFERENCE = "voip_stack_popup_phone";
+const newBindingId = () => "browser-" + Array.from(crypto.getRandomValues(new Uint8Array(16)),
+  value => value.toString(16).padStart(2, "0")).join("");
 const ACTIVE = new Set(["ringing", "incoming", "calling", "in_call"]);
 const activeCall = state => !!state?.call_id && ACTIVE.has(state.state) && state.enabled !== false;
 const node = (tag, text = "") => Object.assign(document.createElement(tag), { textContent: text });
@@ -129,7 +131,7 @@ export class VoipStackPopup extends HTMLElement {
     this._hangup.onclick = () => this.terminate();
     this._mini.append(this._reopen, this._hangup);
     this.shadowRoot.append(style, this._mini);
-    this._ready = () => this.syncPreference(true);
+    this._ready = () => { this._bindingServerSynced = null; this.syncPreference(true); };
     this._modalClosed = () => this.restoreMiniHost();
     this._answerLink = () => {
       this.syncPreference();
@@ -163,7 +165,7 @@ export class VoipStackPopup extends HTMLElement {
       // The old identity-only record was an explicit opt-in. Missing, corrupt
       // or explicitly disabled records never inherit a cached enabled value.
       const enabled = Object.hasOwn(saved, "enabled") ? saved.enabled === true : !!device_id && !!endpoint_id;
-      return { device_id, endpoint_id, enabled };
+      return { device_id, endpoint_id, enabled, binding_id: typeof saved.binding_id === "string" ? saved.binding_id : "" };
     } catch (_) { return null; }
   }
   syncPreference(resolve = false) {
@@ -173,7 +175,7 @@ export class VoipStackPopup extends HTMLElement {
       this.release(); // Presentation only; the existing page engine keeps owned media.
       window.dispatchEvent(new CustomEvent("voip-stack-popup-preference-changed"));
     }
-    if (resolve && this.receivingPopups && this._connection) {
+    if (resolve && this.binding && this._connection) {
       engine.configure(this._hass);
       void this.resolveBinding();
     }
@@ -188,42 +190,87 @@ export class VoipStackPopup extends HTMLElement {
     if (this._connection === hass?.connection) { if (this.receivingPopups) engine.configure(hass); return; }
     this._connection?.removeEventListener?.("ready", this._ready);
     this._connection = hass?.connection;
+    this._bindingServerSynced = null;
     this._connection?.addEventListener?.("ready", this._ready);
     this.syncPreference(true);
   }
   async listPhones() {
     const result = await this._hass.callWS({ type: "voip_stack/list_devices" });
-    return (result?.devices || []).filter(phone => phone.softphone === true && phone.device_id && phone.endpoint_id);
+    return (result?.devices || []).filter(phone => supportsHaClient(phone) && phone.can_control !== false && phone.device_id && phone.endpoint_id);
+  }
+  async persistBinding(binding) {
+    const connection = this._connection;
+    const request = { type: "voip_stack/set_ha_popup_binding", binding_id: binding.binding_id,
+      endpoint_id: binding.endpoint_id, enabled: binding.enabled };
+    const write = (this._bindingWrites || Promise.resolve()).catch(() => {}).then(() => {
+      if (connection !== this._connection) throw new Error("Home Assistant connection changed.");
+      return this._hass.callWS(request);
+    });
+    this._bindingWrites = write;
+    return write;
   }
   async resolveBinding() {
     this.syncPreference();
-    if (!this.receivingPopups || !this._connection) return;
+    if (!this.binding?.endpoint_id || !this._connection) return;
+    if (this._resolvingBinding) return this._resolvingBinding;
+    this._resolvingBinding = this._resolveBinding().finally(() => { this._resolvingBinding = null; });
+    return this._resolvingBinding;
+  }
+  async _resolveBinding() {
+    if (!this.binding.binding_id) {
+      localStorage.setItem(PREFERENCE, JSON.stringify({ ...this.binding, binding_id: newBindingId() }));
+      this.syncPreference();
+    }
     const binding = this.binding;
     const connection = this._connection;
+    const key = JSON.stringify([binding.binding_id, binding.endpoint_id, binding.enabled]);
     try {
+      if (this._bindingServerSynced !== key) {
+        const server = await this._hass.callWS({ type: "voip_stack/ha_popup_binding", binding_id: binding.binding_id });
+        if (binding !== this.binding || connection !== this._connection) return;
+        if (binding.enabled && server?.enabled === false) {
+          localStorage.setItem(PREFERENCE, JSON.stringify({ ...binding, enabled: false }));
+          this.syncPreference();
+          return;
+        }
+        if (!server || server.endpoint_id !== binding.endpoint_id || server.enabled !== binding.enabled) {
+          await this.persistBinding(binding);
+          if (binding !== this.binding || connection !== this._connection) return;
+        }
+        this._bindingServerSynced = key;
+      }
+      if (!binding.enabled) return;
       const phones = await this.listPhones();
       this.syncPreference();
       if (binding !== this.binding || connection !== this._connection) return;
-      const phone = phones.find(item => item.device_id === binding?.device_id && item.endpoint_id === binding?.endpoint_id);
-      if (!phone) { this.release(); this.error = "The selected Home Assistant phone is unavailable."; return; }
+      const phone = phones.find(item => item.device_id === binding.device_id && item.endpoint_id === binding.endpoint_id);
+      if (!phone) { this.release(); this.error = "The selected SIP account is unavailable."; return; }
       this.phone = phone;
       if (this._unsubscribe) return;
       engine.configure(this._hass);
       this._unsubscribe = engine.subscribeSoftphoneState(state => this.onState(state), { device_id: phone.device_id });
     } catch (error) { this.error = error?.message || String(error); }
   }
-  bindPhone(phone, enabled) {
+  async bindPhone(phone, enabled) {
     this.syncPreference();
     const selected = phone || this.binding;
-    const next = { device_id: selected?.device_id || "", endpoint_id: selected?.endpoint_id || "", enabled: !!enabled };
-    if (enabled && (!next.device_id || !next.endpoint_id)) throw new Error("Select an existing Home Assistant phone.");
-    if ((next?.endpoint_id !== this.binding?.endpoint_id) && activeCall(this.state)) {
-      throw new Error("End the current call before changing the browser phone.");
+    const next = { device_id: selected?.device_id || "", endpoint_id: selected?.endpoint_id || "", enabled: !!enabled,
+      binding_id: this.binding?.binding_id || newBindingId() };
+    if (enabled && (!next.device_id || !next.endpoint_id)) throw new Error("Select an existing SIP account.");
+    if ((next.endpoint_id !== this.binding?.endpoint_id) && activeCall(this.state)) {
+      throw new Error("End the current call before changing the browser account.");
     }
-    // Keep the selected phone even when disabled. Only an explicit user Save
-    // changes this browser preference; HA reconnect never creates an opt-in.
-    localStorage.setItem(PREFERENCE, JSON.stringify(next));
-    if (enabled) engine.unlockRingtone();
+    // Opt-out is immediate locally, including while the server is unreachable.
+    if (!enabled) {
+      localStorage.setItem(PREFERENCE, JSON.stringify(next));
+      this.syncPreference();
+    }
+    if (next.endpoint_id) await this.persistBinding(next);
+    if (enabled) {
+      localStorage.setItem(PREFERENCE, JSON.stringify(next));
+      engine.unlockRingtone();
+    }
+    this._bindingServerSynced = null;
     this.syncPreference(true);
   }
   onState(state) {
@@ -332,12 +379,12 @@ export class VoipStackPopupSettings extends HTMLElement {
     this._message = node("p"); this._message.setAttribute("role", "status");
     this._form.append(selectLabel, enabledLabel, this._notice, this._save, this._message);
     this.shadowRoot.append(style, this._title, this._form);
-    this._form.onsubmit = event => {
+    this._form.onsubmit = async event => {
       event.preventDefault();
       const phone = this._phones?.find(item => item.device_id === this._select.value);
       try {
-        if (this._enabled.checked && !phone) throw new Error("Select an existing Home Assistant phone.");
-        globalThis.__voipStackPopup.bindPhone(phone, this._enabled.checked);
+        if (this._enabled.checked && !phone) throw new Error("Select an existing SIP account.");
+        await globalThis.__voipStackPopup.bindPhone(phone, this._enabled.checked);
         this._message.className = ""; this._message.textContent = translate(this._hass, "Saved");
       } catch (error) { this._message.className = "error"; this._message.textContent = translate(this._hass, error?.message || String(error)); }
     };
@@ -354,7 +401,7 @@ export class VoipStackPopupSettings extends HTMLElement {
     this._title.textContent = translate(value, "Call popups");
     this._selectText.textContent = translate(value, "Home Assistant phone");
     this._enabledText.textContent = ` ${translate(value, "Receive call popups on this device")}`;
-    this._notice.textContent = translate(value, "Uses an existing softphone without a card. This choice is saved in this app/browser. X, Esc and Back minimize an active call. Audio still requires browser permission.");
+    this._notice.textContent = translate(value, "Associates this browser with an existing SIP account. The association is saved in Home Assistant. X, Esc and Back minimize an active call. Audio still requires browser permission.");
     this._save.textContent = translate(value, "Save");
     if (this._select.options[0]) this._select.options[0].textContent = translate(value, "-- Select phone --");
     if (this._connection === value?.connection) return;

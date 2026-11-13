@@ -642,7 +642,7 @@ class ConferenceRoom:
         target: str = "",
     ) -> None:
         endpoint = endpoint_directory(self.hass).get(endpoint_id)
-        if endpoint is None or not endpoint.kind.is_softphone:
+        if endpoint is None or not endpoint.supports_ha_client:
             raise ValueError(f"endpoint {endpoint_id!r} is not a browser phone")
         self._ha_softphone_announced[call_id] = endpoint_id
         registry = call_registry(self.hass)
@@ -680,7 +680,7 @@ class ConferenceRoom:
             if not endpoint_id:
                 continue
             endpoint = endpoint_registry.get(endpoint_id)
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
                 continue
             session = registry.get_session(softphone_call_id)
             if session is None:
@@ -895,7 +895,7 @@ class ConferenceManager:
             for endpoint_id in endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is None or (
-                    not endpoint.kind.is_softphone
+                    not endpoint.supports_ha_client
                     or endpoint.dnd
                     or endpoint.availability
                     is not EndpointAvailability.AVAILABLE
@@ -943,7 +943,7 @@ class ConferenceManager:
             for endpoint_id in ring_endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is None or (
-                    not endpoint.kind.is_softphone
+                    not endpoint.supports_ha_client
                     or endpoint.dnd
                     or endpoint.availability
                     is not EndpointAvailability.AVAILABLE

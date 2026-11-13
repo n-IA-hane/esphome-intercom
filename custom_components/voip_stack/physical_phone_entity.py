@@ -82,7 +82,7 @@ class PhysicalPhoneProvisioningSensor(PhysicalPhoneEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = "physical_phone_provisioning"
     _attr_icon = "mdi:phone-settings"
-    _attr_options = ["pending", "waiting_idle", "ready", "downloaded", "error", "disabled"]
+    _attr_options = ["pending", "unassigned", "waiting_idle", "ready", "downloaded", "error", "disabled"]
 
     def __init__(self, hass, entry, phone_id):
         super().__init__(hass, entry, phone_id, "provisioning")

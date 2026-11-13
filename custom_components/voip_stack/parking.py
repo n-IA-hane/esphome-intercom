@@ -821,7 +821,8 @@ async def pickup_phone_call(call, endpoint, slot):
     hass = call.hass
     registry = call_registry(hass)
     lot = get_parking_lot(hass)
-    claim = lot.claim(slot, f"browser:{call.context.id}:{endpoint.endpoint_id}")
+    claim = lot.claim(slot, f"browser:{call.context.id}:{endpoint.endpoint_id}",
+        browser_endpoint_id=endpoint.endpoint_id if endpoint.kind.is_softphone else "")
     session = claim.parked.session
     application = registry.resource_for(session.call_id, "parking")
     if application is None or endpoint.endpoint_id in session.endpoint_claims:
@@ -830,7 +831,13 @@ async def pickup_phone_call(call, endpoint, slot):
     try:
         if registry.forward_call is None:
             raise ParkingError("Call forwarding is unavailable")
-        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.name, on_failure="resume")
+        resolved = {}
+        if endpoint.kind.is_softphone:
+            resolved["_resolved_decision"] = RouteDecision(RouteAction.ANSWER_HA,
+                target=endpoint.name, entry=RosterEntry(endpoint.name,
+                    metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
+        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.name,
+            on_failure="resume", **resolved)
         if task is not None:
             try:
                 async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):

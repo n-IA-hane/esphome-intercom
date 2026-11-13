@@ -256,7 +256,7 @@ async def async_setup_mailboxes(hass, entry):
         from .websocket_api import _publish_ha_softphone_state, _ha_softphone_store
 
         endpoint = runtime.endpoints.get(str(event.data.get("endpoint_id") or ""))
-        if endpoint is not None and endpoint.kind.is_softphone:
+        if endpoint is not None and endpoint.supports_ha_client:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
 
@@ -307,6 +307,6 @@ async def async_refresh_mailbox_state(hass):
             or any(child.data.get("voicemail", {}).get("enabled") for child in phone_subentries(entry))):
         await get_archive(hass)
     for endpoint in runtime.endpoints.endpoints:
-        if endpoint.kind.is_softphone:
+        if endpoint.supports_ha_client:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)

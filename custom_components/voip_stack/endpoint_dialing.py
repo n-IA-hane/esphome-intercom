@@ -127,7 +127,12 @@ class EndpointDialer:
         endpoint = self.route_resolver.logical_endpoint(member, peers, entries)
         if endpoint is None and self.route_resolver.is_ha_target(member):
             endpoint = preferred_browser_phone(self.hass)
-        if endpoint is None or not endpoint.kind.is_softphone:
+        from .account_runtime import account_has_ha_binding
+
+        if endpoint is None or not (endpoint.kind.is_softphone or (
+            endpoint.supports_ha_client
+            and account_has_ha_binding(self.hass, endpoint.endpoint_id)
+        )):
             return None
         return BrowserLeg(
             member=member,

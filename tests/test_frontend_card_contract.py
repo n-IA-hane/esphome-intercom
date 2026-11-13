@@ -809,7 +809,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("const selectableDevices = this._devices.filter", editor)
         self.assertIn("this._isSoftphoneDevice(device)", editor)
         self.assertNotIn("newConfig.endpoint_id = selected.endpoint_id", editor)
-        self.assertIn("Preferred Home Assistant phone", editor)
+        self.assertIn("Preferred SIP account", editor)
         self.assertIn("normaliseCardConfig(config)", editor)
         self.assertIn("const configuredMissingPhone = softphoneMode", editor)
         self.assertIn("Missing phone:", editor)

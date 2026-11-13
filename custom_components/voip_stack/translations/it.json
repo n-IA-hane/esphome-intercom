@@ -188,12 +188,11 @@
       },
       "phone_user": {
         "title": "Telefono fisico",
-        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata.",
+        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata. Fonte: {profile_source}. Revisione fissata: {profile_pin}. Stato: {profile_status}. Scaricato non significa applicato.",
         "data": {
           "name": "Nome",
           "mac": "Indirizzo MAC",
           "profile_id": "Profilo del modello",
-          "host": "Host o indirizzo IP",
           "area_id": "Area",
           "person": "Persona",
           "follow_ha_language": "Segui la lingua di Home Assistant",
@@ -203,6 +202,17 @@
         "data_description": {
           "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
           "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Suggerimento di rete avanzato",
+            "data": {
+              "host": "Host o IP indicativo (facoltativo)"
+            },
+            "data_description": {
+              "host": "Lascia vuoto per discovery o DHCP. È un suggerimento di rete, non una prova di registrazione o disponibilità."
+            }
+          }
         }
       },
       "phone_language": {
@@ -214,7 +224,7 @@
       },
       "phone_bindings": {
         "title": "Linee e tasti programmabili",
-        "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware.",
+        "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware. Puoi salvare senza linee e associare gli account SIP in seguito.",
         "data": {
           "lines": "Linee SIP",
           "keys": "Tasti programmabili"
@@ -297,7 +307,10 @@
       "phone_clear_keys_unsupported": "Il profilo non ha un comando verificato per eliminare i tasti gestiti. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
       "phone_disable_lines_unsupported": "Il profilo non ha un comando verificato per disabilitare le linee gestite. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
       "phone_owned_mac_change_unsupported": "Questo telefono ha già posizioni gestite. Per un MAC diverso aggiungi un altro telefono fisico.",
-      "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili."
+      "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili.",
+      "phone_not_found": "Il telefono fisico non esiste più.",
+      "phone_line_occupied": "Questa linea fisica è già assegnata a un altro account.",
+      "phone_line_has_keys": "Riassegna o rimuovi i tasti che usano questa linea prima di eliminare l'associazione."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -315,14 +328,14 @@
   },
   "config_subentries": {
     "phone": {
-      "entry_type": "Telefono",
+      "entry_type": "Account SIP",
       "initiate_flow": {
-        "user": "Aggiungi telefono"
+        "user": "Aggiungi account SIP"
       },
-      "title": "Endpoint telefonico",
+      "title": "Account SIP",
       "step": {
         "user": {
-          "title": "Aggiungi telefono",
+          "title": "Aggiungi account SIP",
           "description": "Crea un altro softphone browser di Home Assistant oppure un account SIP standard. Tutti i telefoni condividono lo stesso listener SIP e pool RTP.",
           "data": {
             "kind": "Tipo di telefono"
@@ -368,10 +381,16 @@
             "video_enabled": "Consenti negoziazione video",
             "offline_policy": "Quando non registrato",
             "offline_forward_target": "Destinazione inoltro",
-            "voicemail_enabled": "Abilita casella vocale"
+            "voicemail_enabled": "Abilita casella vocale",
+            "physical_bindings": "Telefoni fisici associati",
+            "auto_answer": "Risposta automatica nel browser",
+            "send_video": "Invia video dal browser",
+            "migration_bindings": "Associazioni HA ereditate"
           },
           "data_description": {
-            "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota."
+            "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota.",
+            "auto_answer": "Risponde automaticamente quando un browser collegato dispone del permesso microfono.",
+            "send_video": "Invia per impostazione predefinita la videocamera del browser quando il video è negoziato e il permesso è disponibile."
           }
         },
         "reconfigure": {
@@ -384,11 +403,16 @@
         "phone_password_required": "La password SIP è obbligatoria.",
         "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
         "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
-        "mailbox_removal_failed": "Impossibile eliminare la casella. Ripristina l'accesso alla cartella dei media e riprova."
+        "mailbox_removal_failed": "Impossibile eliminare la casella. Ripristina l'accesso alla cartella dei media e riprova.",
+        "phone_not_found": "Il telefono fisico non esiste più.",
+        "phone_line_occupied": "Questa linea fisica è già assegnata a un altro account.",
+        "phone_line_has_keys": "Riassegna o rimuovi i tasti che usano questa linea prima di eliminare l'associazione.",
+        "invalid_phone_configuration": "Controlla la configurazione del telefono e i riferimenti selezionati."
       },
       "abort": {
         "reconfigure_successful": "Telefono riconfigurato.",
-        "already_configured": "Questo telefono esiste già."
+        "already_configured": "Questo telefono esiste già.",
+        "phone_configured": "Account SIP configurato."
       }
     },
     "contact": {
@@ -609,12 +633,11 @@
       "step": {
         "user": {
           "title": "Telefono fisico",
-          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata.",
+          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata. Fonte: {profile_source}. Revisione fissata: {profile_pin}. Stato: {profile_status}. Scaricato non significa applicato.",
           "data": {
             "name": "Nome",
             "mac": "Indirizzo MAC",
             "profile_id": "Profilo del modello",
-            "host": "Host o indirizzo IP",
             "area_id": "Area",
             "person": "Persona",
             "follow_ha_language": "Segui la lingua di Home Assistant",
@@ -624,6 +647,17 @@
           "data_description": {
             "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
             "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Suggerimento di rete avanzato",
+              "data": {
+                "host": "Host o IP indicativo (facoltativo)"
+              },
+              "data_description": {
+                "host": "Lascia vuoto per discovery o DHCP. È un suggerimento di rete, non una prova di registrazione o disponibilità."
+              }
+            }
           }
         },
         "language": {
@@ -635,7 +669,7 @@
         },
         "bindings": {
           "title": "Linee e tasti programmabili",
-          "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware.",
+          "description": "Aggiungi, modifica, elimina o trascina le righe per riordinarle. Le posizioni sono univoche e iniziano da 1. Il profilo genera al massimo {max_lines} linee e {max_keys} tasti; questi limiti di generazione non descrivono tutte le capacità hardware. Puoi salvare senza linee e associare gli account SIP in seguito.",
           "data": {
             "lines": "Linee SIP",
             "keys": "Tasti programmabili"
@@ -695,7 +729,10 @@
         "phone_clear_keys_unsupported": "Il profilo non ha un comando verificato per eliminare i tasti gestiti. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
         "phone_disable_lines_unsupported": "Il profilo non ha un comando verificato per disabilitare le linee gestite. La modifica non è stata salvata. Aggiorna il profilo quando sarà disponibile il supporto.",
         "phone_owned_mac_change_unsupported": "Questo telefono ha già posizioni gestite. Per un MAC diverso aggiungi un altro telefono fisico.",
-        "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili."
+        "phone_retired_slot_unsupported": "Il profilo scelto non può conservare tutte le posizioni già gestite. Mantieni il profilo attuale finché queste posizioni non sono gestibili.",
+        "phone_not_found": "Il telefono fisico non esiste più.",
+        "phone_line_occupied": "Questa linea fisica è già assegnata a un altro account.",
+        "phone_line_has_keys": "Riassegna o rimuovi i tasti che usano questa linea prima di eliminare l'associazione."
       },
       "abort": {
         "configure_pbx_first": "Configura prima il PBX e abilita il provisioning dei telefoni fisici.",
@@ -868,8 +905,16 @@
         "blf": "Stato telefono (BLF)",
         "queue_login": "Ingresso/uscita coda",
         "queue_pause": "Pausa/riprendi coda",
-        "park": "Parcheggio chiamata",
-        "directory": "Rubrica"
+        "park": "Monitora/recupera parcheggio",
+        "directory": "Rubrica",
+        "park_call": "Parcheggia chiamata"
+      }
+    },
+    "account_physical_bindings": {
+      "fields": {
+        "phone_id": "Telefono fisico",
+        "slot": "Posizione linea",
+        "transport": "Trasporto"
       }
     }
   },
@@ -1106,7 +1151,8 @@
           "ready": "Configurazione pronta per il download",
           "downloaded": "File scaricato",
           "error": "Errore",
-          "disabled": "Disabilitato"
+          "disabled": "Disabilitato",
+          "unassigned": "Da associare"
         }
       }
     },
@@ -1561,6 +1607,10 @@
           "name": "ID telefono fisico"
         }
       }
+    },
+    "reload_card_associations": {
+      "name": "Rileggi associazioni delle card",
+      "description": "Rilegge le configurazioni delle dashboard salvate in storage e YAML per aggiornare le associazioni agli account. Non ricarica il PBX e non avvia polling. Solo amministratori."
     }
   }
 }

@@ -824,7 +824,7 @@ async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
     reload_entry.assert_not_awaited()
 
 
-async def test_new_entry_bootstraps_one_normal_named_browser_phone(
+async def test_new_entry_bootstraps_one_normal_named_account(
     hass: HomeAssistant,
 ) -> None:
     from custom_components.voip_stack.phone_config import (
@@ -841,8 +841,10 @@ async def test_new_entry_bootstraps_one_normal_named_browser_phone(
     created = async_bootstrap_browser_phone(hass, entry)
 
     assert created is not None
-    assert created.data[CONF_PHONE_ENDPOINT_ID].startswith("browser:")
-    assert created.data[CONF_PHONE_KIND] == "browser"
+    assert created.data[CONF_PHONE_ENDPOINT_ID].startswith("sip:")
+    assert created.data[CONF_PHONE_KIND] == "sip_account"
+    assert created.data["username"] and created.data["password"]
+    assert not created.data.get("ha_bindings")
     assert created.data[CONF_PHONE_NAME] == "Casa"
     assert async_bootstrap_browser_phone(hass, entry) is None
     assert len(entry.subentries) == 1
@@ -859,7 +861,7 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 6
+    assert entry.version == 7 and entry.minor_version == 0
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
 
@@ -1130,7 +1132,7 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
     )
 
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 6 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == 0
     assert dict(entry.data) == {"sip_port": 5060}
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None

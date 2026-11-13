@@ -313,6 +313,10 @@ class PhysicalPhoneProvisioner:
             raise
 
     def authentication_owner(self, phone):
+        # An unassigned physical inventory owns only credential-free hardware
+        # settings and its recorded retirement slots, through the same secret URL.
+        if not phone["lines"]:
+            return ()
         registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
         if registrar is None:
             return None
@@ -332,10 +336,10 @@ class PhysicalPhoneProvisioner:
         from ldap3.utils.dn import escape_rdn
 
         cfg = self.runtime.transport_config
-        host = cfg.get("advertise_host") or await network.async_get_source_ip(
-            self.hass, target_ip=phone.get("host") or "224.0.1.75")
+        host = cfg.get("advertise_host") or (await network.async_get_source_ip(
+            self.hass, target_ip=phone.get("host") or "224.0.1.75") if phone["lines"] else "")
         registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
-        if registrar is None:
+        if registrar is None and phone["lines"]:
             raise ValueError("phone_registrar_unavailable")
         lines = []
         caps = profile["capabilities"]
@@ -375,7 +379,7 @@ class PhysicalPhoneProvisioner:
                 time_zone = requested_time_zone
         directory = {}
         requested, config, _epoch = self._directory_service()
-        ldap_requested = requested["enabled"] and "ldap" in caps.get("functions", ()) and phone.get("directory_enabled", True)
+        ldap_requested = bool(lines) and requested["enabled"] and "ldap" in caps.get("functions", ()) and phone.get("directory_enabled", True)
         if ldap_requested and config is None:
             raise ValueError("phone_directory_service_unavailable")
         if ldap_requested and config["enabled"]:
@@ -414,7 +418,7 @@ class PhysicalPhoneProvisioner:
             current, _context = await self._capture(phone, prepared.profile,
                 profile_digest=prepared.dependencies.profile)
             if current == prepared.dependencies:
-                available = "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
+                available = "unassigned" if not phone["lines"] else "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
                 if state.get("state") != available:
                     state["state"] = available
                     self._changed(identity)
@@ -425,7 +429,7 @@ class PhysicalPhoneProvisioner:
         dependencies, context = await self._capture(phone, profile, profile_digest=profile_digest)
         prepared = self.files.get(identity)
         if prepared is not None and prepared.dependencies == dependencies and not state.get("error"):
-            available = "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
+            available = "unassigned" if not phone["lines"] else "downloaded" if state.get("downloaded_revision") == state.get("desired_revision") else "ready"
             if state.get("state") != available:
                 state["state"] = available
                 self._changed(identity)
@@ -457,7 +461,7 @@ class PhysicalPhoneProvisioner:
                 self._changed(identity)
                 return
             self.files[identity] = PreparedPhoneFiles(dependencies, deepcopy(profile), files)
-            state.update(state="downloaded" if state.get("downloaded_revision") == revision else "ready",
+            state.update(state="unassigned" if not phone["lines"] else "downloaded" if state.get("downloaded_revision") == revision else "ready",
                          desired_revision=revision, error="", profile_id=phone["profile_id"],
                          language_code=context["physical"]["language_code"],
                          file_formats={output["path"].replace("{mac}", phone["mac"]): output["format"]
@@ -500,7 +504,7 @@ class PhysicalPhoneProvisioner:
         if data is None:
             return None
         state = self.states.setdefault(identity, {})
-        state.update(state="error" if state.get("error") else "downloaded",
+        state.update(state="error" if state.get("error") else "unassigned" if not phone["lines"] else "downloaded",
                      downloaded_revision=state.get("desired_revision"), last_download=time.time())
         self.store.async_delay_save(lambda: self.states, 1)
         self._changed(identity)

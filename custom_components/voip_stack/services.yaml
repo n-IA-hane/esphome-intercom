@@ -1930,6 +1930,10 @@ refresh_phone_profiles:
   name: Refresh phone profile catalog
   description: Refresh the optional profile index. Existing phones keep their pinned profile revision until explicitly updated.
 
+reload_card_associations:
+  name: Reload card associations
+  description: Reread saved storage and YAML dashboard configurations to update account associations. Does not reload the PBX or start polling. Administrators only.
+
 rotate_phone_provisioning_token:
   name: Rotate phone provisioning credential
   description: Invalidate the previous download URL for a physical phone. Configure its new private URL before the next download.

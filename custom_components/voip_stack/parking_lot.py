@@ -28,11 +28,17 @@ class PickupClaim:
     lot: "ParkingLot"
     parked: ParkedCall
     call_id: str
+    browser_endpoint_id: str = ""
 
     @property
     def current(self):
         return (self.lot.calls.get(self.parked.slot) is self.parked
                 and self.parked.claim is self and self.parked.session.live)
+
+    def authorizes_browser_answer(self, session, endpoint_id):
+        return (self.current and self.parked.session is session
+                and bool(self.browser_endpoint_id)
+                and self.browser_endpoint_id == endpoint_id)
 
     def rollback(self):
         if self.current:
@@ -78,17 +84,17 @@ class ParkingLot:
         self.changed()
         return parked
 
-    def claim(self, slot: str, call_id: str) -> PickupClaim:
+    def claim(self, slot: str, call_id: str, *, browser_endpoint_id: str = "") -> PickupClaim:
         parked = self.calls.get(slot)
         if parked is None or not parked.session.live:
             raise ParkingError("No call is parked in that slot")
         if not call_id:
             raise ParkingError("Pickup needs its own call identity")
         if parked.claim is not None:
-            if parked.claim.call_id == call_id:
+            if parked.claim.call_id == call_id and parked.claim.browser_endpoint_id == browser_endpoint_id:
                 return parked.claim
             raise ParkingError("Another phone is already picking up this call")
-        claim = PickupClaim(self, parked, call_id)
+        claim = PickupClaim(self, parked, call_id, browser_endpoint_id)
         parked.claim = claim
         parked.changed.set()
         self.changed()

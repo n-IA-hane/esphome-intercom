@@ -71,7 +71,7 @@ Use this when one phone should ring while another joins only on demand.
 Auto-answer is a separate per-phone policy. For a browser member to ring
 physically or auto-answer, its receiving HA frontend must be active with media
 permissions and a card loaded or, in the preview, global popups enabled. See
-[browser-phone availability](USER_GUIDE.md#browser-phone-availability).
+[account availability](USER_GUIDE.md#account-availability-and-closed-browsers).
 
 ## Declaring groups
 

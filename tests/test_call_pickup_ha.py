@@ -442,7 +442,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
             runtime.runtime.endpoints.update("transfer_c", device_id="picker-device")
         await runtime.hass.services.async_call("voip_stack", "pickup", {
             "device_id": "picker-device", "target_device_id": "browser-device",
-            "media_client_id": "test-browser-picker",
+            **({"media_client_id": "test-browser-picker"} if pickup_path == "browser_service" else {}),
         }, blocking=True, return_response=True)
     assert (
         runtime.calls.get_session(session.call_id) is session

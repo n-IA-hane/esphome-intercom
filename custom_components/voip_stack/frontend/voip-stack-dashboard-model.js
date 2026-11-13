@@ -57,7 +57,7 @@ export function ownerDeviceInfo(devices, phones, deviceId) {
   if (!device) return null;
   const phone = [...phones.values()].find((entry) => entry.device_id === deviceId);
   const kind = phone?.kind || device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome");
-  if (!["browser", "ha_softphone", "esphome"].includes(kind)) return null;
+  if (!["browser", "ha_softphone", "sip_account", "esphome"].includes(kind)) return null;
   return { ...device, ...phone, kind, softphone: kind !== "esphome", calls: phone?.calls || [] };
 }
 

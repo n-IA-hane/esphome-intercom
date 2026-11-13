@@ -18,7 +18,7 @@ from homeassistant.setup import async_setup_component
 from custom_components.voip_stack.announcement_media import async_audio_stream
 from custom_components.voip_stack.core import rtp
 
-from .test_automation_originate_ha import lab as lab, dial, sequence
+from .test_automation_originate_ha import lab as lab, dial, sequence, assert_call_resources_released
 from .test_automation_call import application as application, service
 
 pytestmark = pytest.mark.ha
@@ -84,7 +84,7 @@ async def test_file_after_answer_then_bye_and_redial(lab, media_file, delayed, i
         assert bytes(received) == expected
         assert phone.bye_at - last >= .18
         assert not lab.calls.sessions
-        assert not lab.runtime.softphones
+        assert_call_resources_released(lab)
         assert all(not ep.active_call_id for ep in lab.runtime.endpoints.endpoints)
 
 

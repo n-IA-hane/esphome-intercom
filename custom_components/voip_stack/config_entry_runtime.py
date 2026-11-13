@@ -119,7 +119,7 @@ def _only_browser_camera_send_changed(previous: tuple, current: tuple) -> bool:
             return False
         if old == new:
             continue
-        if old.get(CONF_PHONE_KIND) != EndpointKind.BROWSER.value:
+        if old.get(CONF_PHONE_KIND) not in {EndpointKind.BROWSER.value, EndpointKind.SIP_ACCOUNT.value}:
             return False
         if (
             {key: value for key, value in old.items() if key != CONF_PHONE_SEND_VIDEO}
@@ -204,13 +204,13 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         previous_browser_ids = {
             endpoint.endpoint_id
             for endpoint in tuple(getattr(runtime.endpoints, "endpoints", ()))
-            if endpoint.kind.is_softphone
+            if endpoint.supports_ha_client
         }
         sync_registry_from_entry(hass, entry)
         for subentry in phone_subentries(entry):
             endpoint_id = str(subentry.data.get("endpoint_id") or "").strip()
             endpoint = runtime.endpoints.get(endpoint_id) if endpoint_id else None
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
                 continue
             await _async_load_ha_softphone_store(
                 hass,
@@ -221,7 +221,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         current_browser_ids = {
             endpoint.endpoint_id
             for endpoint in tuple(runtime.endpoints.endpoints)
-            if endpoint.kind.is_softphone
+            if endpoint.supports_ha_client
         }
         removed_browser_ids = previous_browser_ids - current_browser_ids
         presence = runtime.softphone_presence
@@ -232,6 +232,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         registrar = sip_registrar(hass)
         if registrar is not None:
             registrar.update_accounts(sip_accounts(hass))
+        from .account_runtime import recompute_account_availability
+        recompute_account_availability(hass)
 
     if contacts_changed:
         hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (

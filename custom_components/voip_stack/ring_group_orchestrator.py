@@ -120,9 +120,19 @@ async def run_ring_group_call(
     )
     ha_origin = origin_endpoint is not None
     call_ingress = "trunk" if invite.received_via_trunk else "extension"
+    route_kind = str(entry.metadata.get("route_kind") or GROUP_TYPE_RING)
     members = _unique_group_members(entry.metadata.get("members"))
     try:
-        ring_policy = RingPolicy.from_metadata(entry.metadata)
+        account_id = str(entry.metadata.get("account_fork") or "")
+        if account_id:
+            endpoint = endpoint_registry.get(account_id)
+            if endpoint is None:
+                raise ValueError("account disappeared before dialing")
+            # The account's existing no-answer controller owns its policy.
+            # An absent policy does not invent the ring-group's 30 s deadline.
+            ring_policy = RingPolicy(overall_timeout=float("inf"))
+        else:
+            ring_policy = RingPolicy.from_metadata(entry.metadata)
     except (TypeError, ValueError) as err:
         _LOGGER.error(
             "SIP ring group has invalid policy call_id=%s group=%s: %s",
@@ -173,7 +183,7 @@ async def run_ring_group_call(
         call_id=invite.call_id,
         caller=invite.caller,
         callee=entry.display_name,
-        route_kind=GROUP_TYPE_RING,
+        route_kind=route_kind,
     )
 
     def _settle_browser_candidates(state, reason, **kwargs) -> None:
@@ -191,7 +201,7 @@ async def run_ring_group_call(
                 call_id=invite.call_id,
                 reason=reason,
                 origin="self",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 last_sip_event=event,
                 sip_status_code=status,
             )
@@ -281,7 +291,7 @@ async def run_ring_group_call(
             browser_legs,
             invite=invite,
             callee=entry.display_name,
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             origin_endpoint_id=(origin_endpoint_id if ha_origin else ""),
             source_endpoint_id=source_endpoint_id,
             origin_media_client_id=origin_media_client_id,
@@ -313,7 +323,7 @@ async def run_ring_group_call(
             call_id=invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             origin="remote",
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             last_sip_event="SIP_RESPONSE",
             sip_status_code=480,
         )
@@ -430,6 +440,7 @@ async def run_ring_group_call(
                 if browser_winner and isinstance(winner, BrowserLeg)
                 else ""
             ),
+            retain_claim_endpoint_id=winner_endpoint_id if not browser_winner else "",
         )
         if winner is pickup_gate:
             _take_pending_route(hass, invite.call_id)
@@ -448,7 +459,7 @@ async def run_ring_group_call(
                 call_id=invite.call_id,
                 reason=terminal_reason,
                 origin="remote",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=status_code,
             )
@@ -547,7 +558,7 @@ async def run_ring_group_call(
                     owner="ha_softphone",
                     caller=invite.caller,
                     callee=entry.display_name,
-                    route_kind=GROUP_TYPE_RING,
+                    route_kind=route_kind,
                     endpoint_id=winner.endpoint_id,
                     dest_endpoint_id=winner.endpoint_id,
                     media_client_id=winner_media_client_id,
@@ -573,7 +584,7 @@ async def run_ring_group_call(
                 selected_tx_rtp_format=invite.send_format.wire_token(),
                 selected_rx_rtp_format=invite.recv_format.wire_token(),
                 audio_mode="full_duplex",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
             )
@@ -593,7 +604,7 @@ async def run_ring_group_call(
                 selected_rx_rtp_format=invite.recv_format.wire_token(),
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
             )
             if winner.pickup:
                 publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
@@ -613,7 +624,7 @@ async def run_ring_group_call(
                 call_id=invite.call_id,
                 reason=TerminalReason.PROTOCOL_ERROR.value,
                 origin="self",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=500,
             )
@@ -649,7 +660,7 @@ async def run_ring_group_call(
                 local_endpoint_id=origin_endpoint_id,
             ),
             BridgeCommitPolicy(
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 caller=invite.caller,
                 callee=dialed_target,
                 connected_party=connected_party,
@@ -659,7 +670,7 @@ async def run_ring_group_call(
                 local_source=ha_origin,
                 consume_pending_source=source_reservation is not None,
                 response_already_sent=bool(preanswered.get("final_response_sent", False)),
-                answer_owner="ha_softphone",
+                answer_owner="ha_softphone" if ha_origin else "bridge",
                 endpoint_id=origin_endpoint_id if ha_origin else "",
                 source_endpoint_id=source_endpoint_id,
                 dest_endpoint_id=winner.endpoint_id,
@@ -682,7 +693,7 @@ async def run_ring_group_call(
             selected_rx_rtp_format=invite.recv_format.wire_token(),
             sip_status_code=200,
             last_sip_event="SIP_RESPONSE",
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             sip_uri=str(winner.uri),
         )
         if ha_origin:
@@ -705,7 +716,7 @@ async def run_ring_group_call(
                 selected_tx_rtp_format=invite.recv_format.wire_token(),
                 selected_rx_rtp_format=invite.send_format.wire_token(),
                 audio_mode="full_duplex",
-                route_kind=GROUP_TYPE_RING,
+                route_kind=route_kind,
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
                 sip_uri=str(winner.uri),

@@ -194,7 +194,7 @@ async def test_directory_structure_changes_with_camera_still_refresh(
         {"send_video": True},
     ],
 )
-async def test_sip_account_changes_never_take_browser_exemption(hass, camera, change):
+async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_does_not(hass, camera, change):
     phone_config._add_phone_subentry(
         hass,
         camera.entry,
@@ -212,7 +212,10 @@ async def test_sip_account_changes_never_take_browser_exemption(hass, camera, ch
     camera.refresh.reset_mock()
     phone_config.update_phone_subentry(hass, camera.entry, "sip:desk", change)
     await asyncio.wait_for(camera.completed.wait(), 1)
-    camera.refresh.assert_awaited_once_with(hass)
+    if set(change) == {"send_video"}:
+        camera.refresh.assert_not_awaited()
+    else:
+        camera.refresh.assert_awaited_once_with(hass)
 
 
 async def test_camera_change_keeps_parent_reconciliations(hass, camera, monkeypatch):

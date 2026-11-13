@@ -114,6 +114,11 @@ export function softphoneSnapshotSupersedes(current, next) {
   const currentState = String(current.state || "").toLowerCase();
   const nextState = String(next.state || "").toLowerCase();
   const terminal = TERMINAL_CALL_STATES.has(nextState);
+  const currentGeneration = Number(current.generation || 0);
+  const nextGeneration = Number(next.generation || 0);
+  if (currentCallId === nextCallId && currentGeneration > 0 && nextGeneration > 0 && currentGeneration !== nextGeneration) {
+    return nextGeneration > currentGeneration;
+  }
   if (
     currentCallId
     && ACTIVE_CALL_STATES.has(currentState)
@@ -257,6 +262,12 @@ export function formatVideoFailureReason(reason) {
       return reason ? String(reason).replaceAll("_", " ") : "";
   }
 }
+export function supportsHaClient(device = {}) {
+  const kind = String(device.kind || device.endpoint_type || device.type || "").toLowerCase();
+  return device.ha_client_supported === true || device.softphone === true ||
+    ["sip_account", "browser", "ha_softphone", "home_assistant", "softphone"].includes(kind);
+}
+
 export function normaliseCardConfig(rawConfig = {}) {
   const config = { ...rawConfig };
   delete config.endpoint_id;

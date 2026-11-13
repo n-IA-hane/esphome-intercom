@@ -11,7 +11,7 @@ PHYSICAL_PHONE_SUBENTRY_TYPE = "physical_phone"
 PHYSICAL_LINE_TRANSPORTS = ("udp", "tcp")
 CONF_PHONE_PROVISIONING = "phone_provisioning"
 PHONE_PROVISIONING_CHANGED = "voip_stack.physical_phone_changed"
-KEY_FUNCTIONS = frozenset({"line", "speed_dial", "blf", "queue_login", "queue_pause", "park", "directory"})
+KEY_FUNCTIONS = frozenset({"line", "speed_dial", "blf", "queue_login", "queue_pause", "park", "park_call", "directory"})
 
 
 def provisioning_enabled(entry) -> bool:
@@ -38,7 +38,7 @@ def normalize_physical_phone(data, *, previous=None):
         raise ValueError("invalid_phone_profile")
     lines = deepcopy(data.get("lines") or [])
     keys = deepcopy(data.get("keys") or [])
-    if not isinstance(lines, list) or not lines or len(lines) > 64 or not isinstance(keys, list) or len(keys) > 256:
+    if not isinstance(lines, list) or len(lines) > 64 or not isinstance(keys, list) or len(keys) > 256:
         raise ValueError("invalid_phone_bindings")
     slots = set()
     for line in lines:
@@ -126,3 +126,74 @@ def physical_line_endpoint(runtime, phone, *, line_id="", call_id=""):
     if len(endpoints) != 1:
         raise ValueError("phone_line_selection_required")
     return endpoints[0]
+
+
+def account_physical_bindings(entry, endpoint_id):
+    """Return the inverse view of canonical physical lines, never another store."""
+    return [{"phone_id": phone["phone_id"], "slot": line["slot"],
+             "transport": str(line.get("transport") or "udp")}
+            for phone in physical_phone_records(entry).values() for line in phone["lines"]
+            if line["endpoint_id"] == endpoint_id]
+
+
+def account_physical_bindings_selector(entry):
+    from homeassistant.helpers.selector import ObjectSelector, SelectSelector
+
+    return ObjectSelector({"multiple": True, "label_field": "phone_id",
+        "translation_key": "account_physical_bindings", "fields": {
+            "phone_id": {"required": True, "selector": SelectSelector({"options": [
+                {"value": identity, "label": phone["name"]}
+                for identity, phone in physical_phone_records(entry).items()]})},
+            "slot": {"required": True, "selector": SelectSelector({"options": [str(i) for i in range(1, 65)]})},
+            "transport": {"selector": SelectSelector({"options": list(PHYSICAL_LINE_TRANSPORTS)})},
+        }})
+
+
+async def async_prepare_account_bindings(hass, entry, endpoint_id, rows, account_data=None):
+    """Validate every affected inventory draft before the account editor writes."""
+    from .physical_phone_flow import PhysicalPhoneSubentryFlowHandler, _slot
+    from .phone_profile_catalog import PhoneProfileCatalog
+
+    if not isinstance(rows, list) or len(rows) > 512:
+        raise ValueError("invalid_phone_bindings")
+    records, selected, seen = physical_phone_records(entry), {}, set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {"phone_id", "slot", "transport"}:
+            raise ValueError("invalid_phone_bindings")
+        identity, slot = str(row.get("phone_id") or ""), _slot(row.get("slot"))
+        transport = str(row.get("transport") or "udp").lower()
+        if identity not in records:
+            raise ValueError("phone_not_found")
+        if transport not in PHYSICAL_LINE_TRANSPORTS or (identity, slot) in seen:
+            raise ValueError("invalid_phone_bindings")
+        seen.add((identity, slot))
+        selected.setdefault(identity, []).append({"slot": slot, "endpoint_id": endpoint_id, "transport": transport})
+    owner = getattr(getattr(entry, "runtime_data", None), "physical_phones", None)
+    catalog = getattr(owner, "catalog", None) or PhoneProfileCatalog(hass)
+    prepared = []
+    for subentry in physical_phone_subentries(entry):
+        phone = dict(subentry.data)
+        if phone["phone_id"] not in selected and not any(line["endpoint_id"] == endpoint_id for line in phone["lines"]):
+            continue
+        retained = [dict(line) for line in phone["lines"] if line["endpoint_id"] != endpoint_id]
+        additions = selected.get(phone["phone_id"], [])
+        if {line["slot"] for line in retained} & {line["slot"] for line in additions}:
+            raise ValueError("phone_line_occupied")
+        lines = sorted([*retained, *additions], key=lambda line: int(line["slot"]))
+        if any(key["line"] not in {line["slot"] for line in lines} for key in phone["keys"]):
+            raise ValueError("phone_line_has_keys")
+        editor = PhysicalPhoneSubentryFlowHandler()
+        editor.hass, editor._current = hass, subentry
+        editor._get_entry = lambda: entry
+        editor._draft = {**phone, "lines": lines}
+        if account_data is not None:
+            editor._accounts[endpoint_id] = dict(account_data)
+        editor._profile, _templates = await catalog.async_profile(phone["profile_id"], commit=phone.get("catalog_commit", ""))
+        prepared.append((subentry, editor._validate_phone()))
+    return tuple(prepared)
+
+
+def apply_account_bindings(hass, entry, prepared):
+    """Publish prevalidated physical drafts without an intervening await."""
+    for subentry, data in prepared:
+        hass.config_entries.async_update_subentry(entry, subentry, data=data, title=data["name"])

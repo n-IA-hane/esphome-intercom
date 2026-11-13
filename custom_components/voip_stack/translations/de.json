@@ -188,12 +188,11 @@
       },
       "phone_user": {
         "title": "Physical phone",
-        "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint.",
+        "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Quelle: {profile_source}. Festgelegte Revision: {profile_pin}. Status: {profile_status}. Heruntergeladen bedeutet nicht angewendet.",
         "data": {
           "name": "Name",
           "mac": "MAC address",
           "profile_id": "Phone model profile",
-          "host": "Host or IP address",
           "area_id": "Area",
           "person": "Person",
           "follow_ha_language": "Follow Home Assistant language",
@@ -203,6 +202,17 @@
         "data_description": {
           "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
           "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Erweiterter Netzwerkhinweis",
+            "data": {
+              "host": "Host oder IP-Hinweis (optional)"
+            },
+            "data_description": {
+              "host": "Für Erkennung oder DHCP leer lassen. Dies ist ein Netzwerkhinweis, kein Nachweis der Registrierung oder Verfügbarkeit."
+            }
+          }
         }
       },
       "phone_language": {
@@ -214,7 +224,7 @@
       },
       "phone_bindings": {
         "title": "Lines and programmable keys",
-        "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability.",
+        "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Sie können ohne Leitungen speichern und SIP-Konten später zuordnen.",
         "data": {
           "lines": "SIP lines",
           "keys": "Programmable keys"
@@ -297,7 +307,10 @@
       "phone_clear_keys_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Entfernen verwalteter Tasten. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
       "phone_disable_lines_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Deaktivieren verwalteter Leitungen. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
       "phone_owned_mac_change_unsupported": "Dieses Telefon hat bereits verwaltete Positionen. Füge für eine andere MAC-Adresse ein separates physisches Telefon hinzu.",
-      "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden."
+      "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden.",
+      "phone_not_found": "Das physische Telefon existiert nicht mehr.",
+      "phone_line_occupied": "Diese physische Leitung ist bereits einem anderen Konto zugeordnet.",
+      "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -315,14 +328,14 @@
   },
   "config_subentries": {
     "phone": {
-      "entry_type": "Telefon",
+      "entry_type": "SIP-Konto",
       "initiate_flow": {
-        "user": "Telefon hinzufügen"
+        "user": "SIP-Konto hinzufügen"
       },
-      "title": "Telefonendpunkt",
+      "title": "SIP-Konto",
       "step": {
         "user": {
-          "title": "Telefon hinzufügen",
+          "title": "SIP-Konto hinzufügen",
           "description": "Erstellen Sie ein weiteres Home Assistant-Browser-Softphone oder ein Standard-SIP-Konto. Jedes Telefon nutzt denselben SIP-Listener und RTP-Pool.",
           "data": {
             "kind": "Telefontyp"
@@ -368,10 +381,16 @@
             "video_enabled": "Videoverhandlung zulassen",
             "offline_policy": "Wenn nicht registriert",
             "offline_forward_target": "Ziel weiterleiten",
-            "voicemail_enabled": "Mailbox aktivieren"
+            "voicemail_enabled": "Mailbox aktivieren",
+            "physical_bindings": "Zugeordnete physische Telefone",
+            "auto_answer": "Automatische Annahme im Browser",
+            "send_video": "Video aus dem Browser senden",
+            "migration_bindings": "Übernommene HA-Zuordnungen"
           },
           "data_description": {
-            "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox."
+            "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox.",
+            "auto_answer": "Automatische Antwort, wenn ein angeschlossener Browser über eine Mikrofonberechtigung verfügt.",
+            "send_video": "Senden Sie standardmäßig eine angeschlossene Browserkamera, wenn Video ausgehandelt wird und die Erlaubnis verfügbar ist."
           }
         },
         "reconfigure": {
@@ -384,11 +403,16 @@
         "phone_password_required": "Ein SIP-Passwort ist erforderlich.",
         "phone_forward_target_required": "Für die Weiterleitungsrichtlinie ist ein Weiterleitungsziel erforderlich.",
         "phone_alias_conflict": "Der Name, die Durchwahl oder der Benutzername wird bereits von einem anderen Telefon verwendet.",
-        "mailbox_removal_failed": "Die Mailbox konnte nicht gelöscht werden. Stellen Sie den Zugriff auf das Medienverzeichnis wieder her und versuchen Sie es erneut."
+        "mailbox_removal_failed": "Die Mailbox konnte nicht gelöscht werden. Stellen Sie den Zugriff auf das Medienverzeichnis wieder her und versuchen Sie es erneut.",
+        "phone_not_found": "Das physische Telefon existiert nicht mehr.",
+        "phone_line_occupied": "Diese physische Leitung ist bereits einem anderen Konto zugeordnet.",
+        "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen.",
+        "invalid_phone_configuration": "Check the phone configuration and selected references."
       },
       "abort": {
         "reconfigure_successful": "Telefon erfolgreich neu konfiguriert.",
-        "already_configured": "Dieses Telefon existiert bereits."
+        "already_configured": "Dieses Telefon existiert bereits.",
+        "phone_configured": "SIP-Konto konfiguriert."
       }
     },
     "contact": {
@@ -609,12 +633,11 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint.",
+          "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Quelle: {profile_source}. Festgelegte Revision: {profile_pin}. Status: {profile_status}. Heruntergeladen bedeutet nicht angewendet.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "host": "Host or IP address",
             "area_id": "Area",
             "person": "Person",
             "follow_ha_language": "Follow Home Assistant language",
@@ -624,6 +647,17 @@
           "data_description": {
             "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
             "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Erweiterter Netzwerkhinweis",
+              "data": {
+                "host": "Host oder IP-Hinweis (optional)"
+              },
+              "data_description": {
+                "host": "Für Erkennung oder DHCP leer lassen. Dies ist ein Netzwerkhinweis, kein Nachweis der Registrierung oder Verfügbarkeit."
+              }
+            }
           }
         },
         "language": {
@@ -635,7 +669,7 @@
         },
         "bindings": {
           "title": "Lines and programmable keys",
-          "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability.",
+          "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Sie können ohne Leitungen speichern und SIP-Konten später zuordnen.",
           "data": {
             "lines": "SIP lines",
             "keys": "Programmable keys"
@@ -695,7 +729,10 @@
         "phone_clear_keys_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Entfernen verwalteter Tasten. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
         "phone_disable_lines_unsupported": "Dieses Profil hat keinen geprüften Befehl zum Deaktivieren verwalteter Leitungen. Die Änderung wurde nicht gespeichert. Aktualisiere das Profil, sobald die Unterstützung verfügbar ist.",
         "phone_owned_mac_change_unsupported": "Dieses Telefon hat bereits verwaltete Positionen. Füge für eine andere MAC-Adresse ein separates physisches Telefon hinzu.",
-        "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden."
+        "phone_retired_slot_unsupported": "Das ausgewählte Profil kann nicht alle bisher verwalteten Positionen beibehalten. Behalte das aktuelle Profil, bis diese Positionen unterstützt werden.",
+        "phone_not_found": "Das physische Telefon existiert nicht mehr.",
+        "phone_line_occupied": "Diese physische Leitung ist bereits einem anderen Konto zugeordnet.",
+        "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
@@ -868,8 +905,16 @@
         "blf": "Phone status (BLF)",
         "queue_login": "Queue login/logout",
         "queue_pause": "Queue pause/resume",
-        "park": "Call parking",
-        "directory": "Directory"
+        "park": "Parkplatz überwachen/Anruf übernehmen",
+        "directory": "Directory",
+        "park_call": "Aktuellen Anruf parken"
+      }
+    },
+    "account_physical_bindings": {
+      "fields": {
+        "phone_id": "Physisches Telefon",
+        "slot": "Leitungsposition",
+        "transport": "Transport"
       }
     }
   },
@@ -1106,7 +1151,8 @@
           "ready": "Configuration ready for download",
           "downloaded": "File downloaded",
           "error": "Error",
-          "disabled": "Disabled"
+          "disabled": "Disabled",
+          "unassigned": "Nicht zugeordnet"
         }
       }
     },
@@ -1561,6 +1607,10 @@
           "name": "Physical phone ID"
         }
       }
+    },
+    "reload_card_associations": {
+      "name": "Kartenzuordnungen neu einlesen",
+      "description": "Liest gespeicherte Dashboard-Konfigurationen aus dem Speicher und YAML erneut ein und aktualisiert Kontozuordnungen. Lädt die PBX nicht neu und startet keine regelmäßigen Abfragen. Nur für Administratoren."
     }
   }
 }

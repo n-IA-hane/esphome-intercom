@@ -315,7 +315,7 @@ microphone permission before it can answer automatically. Its receiving HA
 frontend must be active, with a card loaded or, in the preview, global call
 popups enabled for that phone. Opening a receiving view can therefore be the
 moment it answers a waiting call. The logical phone's availability alone does
-not supply audio. See [browser-phone availability](USER_GUIDE.md#browser-phone-availability).
+not supply audio. See [account availability](USER_GUIDE.md#account-availability-and-closed-browsers).
 
 ### `voip_stack.set_send_video`
 
@@ -914,3 +914,13 @@ refreshing the catalog.
 `downloaded` means HA served a file; it does not prove the phone applied its
 settings. See [physical phone provisioning](PHONE_PROVISIONING.md) for setup,
 manual URL configuration and state meanings.
+
+## Saved card associations
+
+`voip_stack.reload_card_associations` takes no fields and requires administrative
+access. It reloads saved dashboard declarations, including YAML dashboards, and
+recomputes account availability from those declarations and current SIP
+registrations. It does not reload the PBX or interrupt calls. Storage dashboard
+edits already trigger reconciliation through HA events; this action provides an
+explicit reload after changing a YAML file. See
+[accounts and clients](ACCOUNTS_AND_CLIENTS.md).

@@ -39,6 +39,7 @@ const [
     formatVideoFailureReason,
     normaliseAudioMode,
     normaliseCardConfig,
+    supportsHaClient,
     normaliseTransport,
     mirroredEndpointPeerLabel,
     reasonKey,
@@ -676,6 +677,7 @@ class VoipStackCard extends HTMLElement {
 
   _ensureHaSoftphoneAudioPath(snapshot = {}) {
     if (!this._isSoftphoneController()) return;
+    if (snapshot.can_attach_media === false) return;
     if (String(snapshot.state || "").toLowerCase() !== "in_call") return;
     // Hangup deliberately closes the local media socket before the backend
     // snapshot becomes idle. Engine cleanup emits synchronously, so without
@@ -1271,7 +1273,7 @@ class VoipStackCard extends HTMLElement {
   _isConfiguredSoftphone() {
     if (this._isHaSoftphoneMode()) return true;
     const device = this._activeDeviceInfo || this._availableDevices.find(d => this._deviceMatchesConfig(d));
-    return !!device?.softphone;
+    return supportsHaClient(device);
   }
 
   _isEspUnavailable() {
@@ -2139,7 +2141,8 @@ class VoipStackCard extends HTMLElement {
     }
     if (els.recordBtn) {
       const recording = this._softphoneSnapshot?.recording;
-      els.recordBtn.hidden = !softphoneMode || !this.config?.show_recording_controls || this._softphoneSnapshot?.state !== "in_call";
+      els.recordBtn.hidden = !softphoneMode || !this.config?.show_recording_controls ||
+        this._softphoneSnapshot?.state !== "in_call" || !this._ownsSoftphoneMedia();
       els.recordBtn.disabled = !!this._recordingBusy || !!recording?.finishing || (!!recording?.active && !recording?.owned);
       els.recordBtn.textContent = this._t(recording?.finishing ? "Finishing recording" : recording?.active ? "Stop recording" : "Record call");
       els.recordBtn.setAttribute("aria-pressed", String(!!recording?.active));
@@ -2629,7 +2632,7 @@ class VoipStackCard extends HTMLElement {
       if (softphoneAction) {
         return await this._startHaSoftphoneCall(deviceInfo, operationId, destination, options);
       }
-      if (deviceInfo?.softphone) {
+      if (supportsHaClient(deviceInfo)) {
         throw new Error("Set card mode to Home Assistant softphone to call from HA");
       }
       if (!deviceInfo?.host) throw new Error("Device not available");

@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
-from .phone_endpoint import EndpointKind, PhoneEndpoint
+from .phone_endpoint import PhoneEndpoint
 
 if TYPE_CHECKING:
     from .device_resolver import VoipDeviceResolver
@@ -73,6 +73,7 @@ class VoipStackRuntime:
     trunk_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     archive_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     preferred_phone_device_id: str = ""
+    ha_bindings: Any | None = None
     debug_mode: bool = False
     media_capture: bool = False
     sip: SipEndpointRuntime | None = None
@@ -176,16 +177,21 @@ def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
 
 
 def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
-    """Return the explicitly preferred, or sole, browser phone."""
+    """Return the preferred account, historical default, or sole HA-bound one."""
 
     runtime = require_runtime_data(hass)
     endpoint = runtime.endpoints.by_device_id(runtime.preferred_phone_device_id)
-    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+    if endpoint is not None and endpoint.supports_ha_client:
         return endpoint
+    from .phone_endpoint import DEFAULT_ENDPOINT_ID
+    initial = runtime.endpoints.get(DEFAULT_ENDPOINT_ID)
+    if initial is not None and initial.supports_ha_client:
+        return initial
+    from .account_runtime import account_has_ha_binding
     candidates = tuple(
         item
         for item in runtime.endpoints.endpoints
-        if item.kind is EndpointKind.BROWSER
+        if item.supports_ha_client and account_has_ha_binding(hass, item.endpoint_id)
     )
     return candidates[0] if len(candidates) == 1 else None
 
@@ -199,7 +205,7 @@ def browser_phone(hass: HomeAssistant, endpoint_id: str = "") -> PhoneEndpoint |
     endpoint = endpoint_directory(hass).get(selector)
     return (
         endpoint
-        if endpoint is not None and endpoint.kind.is_softphone
+        if endpoint is not None and endpoint.supports_ha_client
         else None
     )
 

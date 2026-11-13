@@ -157,7 +157,10 @@ async def async_prepare_group_candidates(
                     )
                 continue
             result.browser_legs.append(browser_leg)
-            continue
+            # A logical account may offer both HA and SIP. The HA candidate
+            # must not hide its registered Contacts or acquire a second claim.
+            if endpoint is None or endpoint.kind.is_softphone:
+                continue
         logical_endpoint = (
             runtime.logical_endpoint_for_member(member, peers, roster_entries)
             if runtime.logical_endpoint_for_member is not None
@@ -188,7 +191,10 @@ async def async_prepare_group_candidates(
             roster_entries,
             policy=ring_policy or RingPolicy(),
             exclude_endpoint_id=source_endpoint_id,
-        ) or (None,)
+        )
+        if not targets and browser_leg is not None:
+            continue
+        targets = targets or (None,)
         for contact_order, target in enumerate(targets):
             if len(result.attempts) >= MAX_GROUP_ATTEMPTS:
                 if detailed_preflight:

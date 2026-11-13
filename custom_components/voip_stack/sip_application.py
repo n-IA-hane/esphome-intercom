@@ -50,6 +50,7 @@ class SipApplicationMethods:
     endpoint_unsubscribe: Callable[[], None] | None = None
     parking_unsubscribe: Callable[[], None] | None = None
     queue_unsubscribe: Callable[[], None] | None = None
+    feature_unsubscribe: Callable[[], None] | None = None
     notifiers: dict[int, "SipEventSubscription"] = field(default_factory=dict)
     coalesced_notifications: int = 0
     rejected_subscriptions: int = 0
@@ -117,6 +118,8 @@ class SipApplicationMethods:
         if request.method == "PUBLISH":
             return self._publish(request, account.username)
         if request.method == "SUBSCRIBE":
+            if request.header("Event").partition(";")[0].strip().casefold() == "as-feature-event":
+                return await self._feature_subscribe(request, addr, transport, account, follow_up_sender)
             mailbox_id = ""
             dialog_endpoint_id = ""
             event = request.header("Event").partition(";")[0].strip().lower()
@@ -189,6 +192,53 @@ class SipApplicationMethods:
                 self.presence_unsubscribe = phone_state_observer(self.hass).subscribe(self._presence_changed)
             return result
         return SipRequestResult(405, "Method Not Allowed")
+
+    async def _feature_subscribe(self, request, addr, transport, account, sender):
+        from .runtime_data import endpoint_directory
+        from .sip_feature_sync import CONTENT_TYPE, requested_dnd
+        from .switch import async_set_endpoint_dnd
+
+        directory = endpoint_directory(self.hass)
+        endpoint = directory.by_username(account.username)
+        try:
+            target = sip.parse_sip_uri(request.uri).user
+            addressed = directory.resolve(target)
+        except (ValueError, sip.SipError):
+            return SipRequestResult(400, "Bad Request")
+        if endpoint is None:
+            return SipRequestResult(404, "Not Found")
+        if target.casefold() != account.username.casefold() and (addressed is None or addressed.endpoint_id != endpoint.endpoint_id):
+            return SipRequestResult(403, "Forbidden")
+        enabled = None
+        if request.body:
+            if request.header("Content-Type").partition(";")[0].strip().casefold() != CONTENT_TYPE:
+                return SipRequestResult(415, "Unsupported Media Type")
+            try:
+                if _publication_expires(request.header("Expires")) == 0:
+                    raise ValueError("unsubscribe cannot set a feature")
+                enabled = requested_dnd(request.body, account.username)
+            except PermissionError:
+                return SipRequestResult(403, "Forbidden")
+            except (TypeError, ValueError):
+                return SipRequestResult(400, "Bad Request")
+        result = self._subscribe(request, addr, account.username, sender,
+            transport=transport, feature_endpoint_id=endpoint.endpoint_id)
+        if result.status != 200:
+            return result
+        if enabled is not None:
+            await async_set_endpoint_dnd(self.hass, endpoint.endpoint_id, enabled)
+            subscription = self.subscriptions[_subscription_key(request)]
+            result = self._notification_result(subscription, expires=max(0, int(subscription.expires_at - time.time())))
+            result = replace(result, follow_up_scheduler=lambda: self._schedule_notification(subscription, result))
+        if self.feature_unsubscribe is None and any(item.event == "as-feature-event" for item in self.subscriptions.values()):
+            self.feature_unsubscribe = directory.subscribe(self._feature_changed)
+        return result
+
+    @callback
+    def _feature_changed(self, event):
+        if event.previous is not None and event.previous.dnd == event.endpoint.dnd:
+            return
+        self._notify_subscribers(event.endpoint.username, event="as-feature-event")
 
     def _owned_unsubscribe(self, request, addr, transport, sender):
         """Contact removal does not revoke an established event dialog's cleanup."""
@@ -409,15 +459,15 @@ class SipApplicationMethods:
         addr: tuple[str, int],
         subscriber: str,
         follow_up_sender: "SipFollowUpSender | None",
-        *, mailbox_id: str = "", dialog_endpoint_id: str = "", transport: str = "",
+        *, mailbox_id: str = "", dialog_endpoint_id: str = "", transport: str = "", feature_endpoint_id: str = "",
     ) -> SipRequestResult:
         """Create, refresh or terminate one RFC 6665 presence subscription."""
 
         event = request.header("Event").partition(";")[0].strip().lower()
-        if event not in {"presence", "message-summary", "dialog"}:
+        if event not in {"presence", "message-summary", "dialog", "as-feature-event"}:
             return SipRequestResult(489, "Bad Event")
         content_type = {"presence": "application/pidf+xml", "message-summary": "application/simple-message-summary",
-                        "dialog": "application/dialog-info+xml"}[event]
+                        "dialog": "application/dialog-info+xml", "as-feature-event": "application/x-as-feature-event+xml"}[event]
         accepted = request.header("Accept")
         if accepted and not any(item.split(";", 1)[0].strip().lower() in {content_type, "application/*", "*/*"}
                                 for item in accepted.split(",")):
@@ -443,7 +493,7 @@ class SipApplicationMethods:
             return SipRequestResult(404, "Not Found")
         publisher = presence_endpoint.username if presence_endpoint is not None and presence_endpoint.username else target
         target_account = self.registrar.accounts.get(publisher.casefold())
-        if event != "dialog" and ((target_account is None and presence_endpoint is None)
+        if event not in {"dialog", "as-feature-event"} and ((target_account is None and presence_endpoint is None)
                                   or (target_account is not None and not target_account.enabled)):
             return SipRequestResult(404, "Not Found")
 
@@ -483,6 +533,7 @@ class SipApplicationMethods:
             mailbox_id=mailbox_id,
             dialog_endpoint_id=dialog_endpoint_id,
             presence_endpoint_id=presence_endpoint.endpoint_id if presence_endpoint is not None else "",
+            feature_endpoint_id=feature_endpoint_id,
             dialog_filter=dialog_filter,
             dialog_version=current.dialog_version if current is not None else 0,
             target=target,
@@ -540,6 +591,12 @@ class SipApplicationMethods:
             body = document(subscription.request.uri, subscription.dialog_version, states)
             subscription.dialog_snapshot = states
             content_type = "application/dialog-info+xml"
+        elif subscription.event == "as-feature-event":
+            from .runtime_data import endpoint_directory
+            from .sip_feature_sync import CONTENT_TYPE, dnd_document
+            endpoint = endpoint_directory(self.hass).get(subscription.feature_endpoint_id)
+            body = dnd_document(subscription.request.uri, bool(endpoint and endpoint.dnd))
+            content_type = CONTENT_TYPE
         elif subscription.event == "message-summary":
             from dataclasses import replace
 
@@ -733,6 +790,9 @@ class SipApplicationMethods:
         self._release_dialog_observers_if_unused()
 
     def _release_dialog_observers_if_unused(self):
+        if self.feature_unsubscribe is not None and not any(item.event == "as-feature-event" for item in self.subscriptions.values()):
+            self.feature_unsubscribe()
+            self.feature_unsubscribe = None
         if (self.presence_unsubscribe is not None
                 and not any(item.presence_endpoint_id for item in (self.subscriptions or {}).values())):
             self.presence_unsubscribe()
@@ -1121,7 +1181,7 @@ class SipApplicationMethods:
             self.mailbox_unsubscribe()
             self.mailbox_unsubscribe = None
         self.mailbox_archive = None
-        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe", "queue_unsubscribe"):
+        for name in ("dialog_unsubscribe", "presence_unsubscribe", "endpoint_unsubscribe", "parking_unsubscribe", "queue_unsubscribe", "feature_unsubscribe"):
             if (unsubscribe := getattr(self, name)) is not None:
                 unsubscribe()
                 setattr(self, name, None)
@@ -1186,6 +1246,7 @@ class SipEventSubscription:
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""
     presence_endpoint_id: str = ""
+    feature_endpoint_id: str = ""
     dialog_filter: tuple[str, str, str] = ("", "", "")
     dialog_version: int = 0
     dialog_snapshot: tuple = ()

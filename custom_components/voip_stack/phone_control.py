@@ -16,7 +16,7 @@ from .esphome_actions import (
     async_resolve_source_device,
     has_action,
 )
-from .phone_endpoint import EndpointKind, PhoneEndpoint
+from .phone_endpoint import EndpointKind, PhoneEndpoint, ha_client_endpoint
 from .service_endpoints import async_require_phone_service_control
 from .softphone_originate import async_originate_browser_call
 from .softphone_answer import async_answer_browser_call
@@ -402,7 +402,7 @@ class PhoneAdapterRegistry:
     ) -> PhoneHandle:
         """Resolve and authorize one local phone through the common boundary."""
 
-        phone = await self._resolve_source(call)
+        phone = await self._resolve_source(call, operation)
         if operation is not None and not phone.supports(operation):
             raise _unsupported(phone, operation)
         if phone.kind is EndpointKind.ESPHOME:
@@ -428,18 +428,26 @@ class PhoneAdapterRegistry:
             )
         return phone
 
-    async def _resolve_source(self, call: ServiceCall) -> PhoneHandle:
+    def set_preferred_phone_device_id(self, device_id: str) -> None:
+        """Update the derived default without persisting another account list."""
+        self._preferred_phone_device_id = str(device_id or "")
+
+    async def _resolve_source(self, call: ServiceCall, operation=None) -> PhoneHandle:
         selector = str(call.data.get("device_id") or "").strip()
         if not selector:
             selector = self._preferred_phone_device_id
         if not selector:
-            candidates = tuple(
-                endpoint
-                for endpoint in self._endpoints.endpoints
-                if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
-            )
-            if len(candidates) == 1:
-                selector = candidates[0].device_id
+            from .runtime_data import preferred_browser_phone, runtime_data
+            if runtime_data(self._hass) is not None:
+                preferred = preferred_browser_phone(self._hass)
+                if preferred is not None:
+                    selector = preferred.device_id
+            else:
+                # Standalone legacy browser registries have no SIP/account
+                # association owner. Do not guess among ordinary SIP accounts.
+                legacy = [item for item in self._endpoints.endpoints if item.kind is EndpointKind.BROWSER]
+                if len(legacy) == 1:
+                    selector = legacy[0].device_id
         if not selector:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -448,6 +456,14 @@ class PhoneAdapterRegistry:
         endpoint = self._endpoints.resolve(selector)
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
+                from .runtime_data import runtime_data
+                from .websocket_api import _account_browser_media
+                runtime = runtime_data(self._hass)
+                call_id = str(call.data.get("call_id") or endpoint.active_call_id or "")
+                media = bool(runtime is not None and runtime.sip is not None
+                    and _account_browser_media(runtime, runtime.sip, endpoint.endpoint_id, call_id))
+                if operation in {PhoneOperation.ORIGINATE, PhoneOperation.ANSWER} or media:
+                    return self._endpoint_handle(ha_client_endpoint(endpoint), ALL_PHONE_OPERATIONS)
                 return self._endpoint_handle(endpoint, frozenset({PhoneOperation.HANGUP, PhoneOperation.DECLINE}))
             if endpoint.kind.is_softphone:
                 capabilities = ALL_PHONE_OPERATIONS

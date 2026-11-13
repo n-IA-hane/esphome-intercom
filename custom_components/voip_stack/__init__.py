@@ -52,7 +52,6 @@ from .peer_snapshot import (
 )
 from .phone_endpoint import (
     DEFAULT_ENDPOINT_ID,
-    EndpointKind,
 )
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
@@ -167,6 +166,14 @@ async def async_migrate_entry(
         data.pop("parking_enabled", None)
         data.pop("voicemail_enabled", None)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=4)
+    if config_entry.version < 7:
+        from .phone_config import migrate_browser_accounts
+        try:
+            migrate_browser_accounts(hass, config_entry)
+        except (ValueError, TypeError, KeyError):
+            _LOGGER.error("Cannot migrate VoIP accounts: account configuration or route namespace is invalid")
+            return False
+        hass.config_entries.async_update_entry(config_entry, version=7, minor_version=0)
     return True
 
 
@@ -174,23 +181,23 @@ _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
 
 
-def _preferred_phone_device_id(endpoint_registry, configured_device_id: str) -> str:
+def _preferred_phone_device_id(endpoint_registry, configured_device_id: str, *, ha_bound_endpoint_ids=()) -> str:
     """Resolve the persisted phone or migrate the historical initial phone."""
 
     selected = endpoint_registry.by_device_id(configured_device_id)
-    if selected is not None and selected.kind is EndpointKind.BROWSER:
+    if selected is not None and selected.supports_ha_client:
         return selected.device_id
     initial = endpoint_registry.get(DEFAULT_ENDPOINT_ID)
     if (
         initial is not None
-        and initial.kind is EndpointKind.BROWSER
+        and initial.supports_ha_client
         and initial.device_id
     ):
         return initial.device_id
     browsers = tuple(
         endpoint
         for endpoint in endpoint_registry.endpoints
-        if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
+        if endpoint.supports_ha_client and endpoint.device_id and endpoint.endpoint_id in ha_bound_endpoint_ids
     )
     return browsers[0].device_id if len(browsers) == 1 else ""
 
@@ -703,6 +710,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         data = dict(entry.data)
         data[CONF_INITIAL_PHONE_CREATED] = True
         hass.config_entries.async_update_entry(entry, data=data)
+    from .phone_config import migrate_browser_accounts
+    migrate_browser_accounts(hass, entry)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
     for configured_endpoint in tuple(endpoint_registry.endpoints):
         async_ensure_endpoint_device(
@@ -786,7 +795,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):
         endpoint = endpoint_registry.get(str(subentry.data.get("endpoint_id") or ""))
-        if endpoint is None or not endpoint.kind.is_softphone:
+        if endpoint is None or not endpoint.supports_ha_client:
             continue
         await _async_load_ha_softphone_store(
             hass,
@@ -812,6 +821,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             f"Failed to bind SIP port {cfg['sip_port']}. Another SIP "
             "endpoint may already be listening on that port."
         )
+    from .account_runtime import recompute_account_availability
+    from .ha_bindings import HaCardBindings
+
+    def bindings_changed(identities):
+        runtime = entry.runtime_data
+        recompute_account_availability(hass, identities)
+        selected = _preferred_phone_device_id(runtime.endpoints,
+            str(entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""),
+            ha_bound_endpoint_ids={endpoint.endpoint_id for endpoint in runtime.endpoints.endpoints
+                if runtime.ha_bindings is not None and runtime.ha_bindings.has_binding(endpoint.endpoint_id)})
+        runtime.preferred_phone_device_id = selected
+        runtime.phones.set_preferred_phone_device_id(selected)
+
+    entry.runtime_data.ha_bindings = HaCardBindings(hass, entry, entry.runtime_data, bindings_changed)
+    await entry.runtime_data.ha_bindings.async_start()
+    recompute_account_availability(hass)
+    bindings_changed(frozenset())
     await _async_start_sip_trunk(hass)
     from .paging import async_setup_paging
 
@@ -829,6 +855,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    from .logbook import async_setup_account_activity
+    async_setup_account_activity(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     _register_runtime_shutdown(hass, entry)
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
@@ -850,6 +878,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
+    if runtime is not None and runtime.ha_bindings is not None:
+        bindings, runtime.ha_bindings = runtime.ha_bindings, None
+        await bindings.async_close()
     queues = runtime.queues if runtime is not None else None
     if queues is not None:
         queues.closed = True

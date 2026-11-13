@@ -1,5 +1,11 @@
 # Reference
 
+## Saved card associations
+
+The administrative `voip_stack.reload_card_associations` action takes no fields.
+It reloads saved storage and YAML dashboard declarations without reloading the
+PBX or interrupting calls. See [accounts and clients](ACCOUNTS_AND_CLIENTS.md).
+
 ## Physical phone provisioning
 
 Administrative actions `voip_stack.provision_phone`,

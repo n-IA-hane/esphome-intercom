@@ -39,19 +39,12 @@ async def async_set_endpoint_dnd(
             {CONF_PHONE_DND: bool(enabled)},
         )
 
-    if str(getattr(endpoint.kind, "value", endpoint.kind)) == "browser":
-        from .websocket_api import (
-            _async_save_ha_softphone_store,
-            _ha_softphone_store,
-            _publish_ha_softphone_state,
-        )
-
-        _ha_softphone_store(hass, endpoint_id)["dnd"] = bool(enabled)
-        await _async_save_ha_softphone_store(hass, endpoint_id)
-        _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
     current = registry.get(endpoint_id)
     if current is not None and bool(current.dnd) != bool(enabled):
         registry.update(endpoint_id, dnd=bool(enabled))
+    if endpoint.supports_ha_client:
+        from .websocket_api import _publish_ha_softphone_state
+        _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
 
 async def async_setup_entry(
@@ -74,7 +67,7 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         PhoneEndpointConferenceRingSwitch,
-        predicate=lambda endpoint: endpoint.kind.is_softphone,
+        predicate=lambda endpoint: endpoint.supports_ha_client,
     )
     conference_manager.async_setup()
     register_endpoint_entity_manager(
@@ -91,7 +84,7 @@ async def async_setup_entry(
             entry,
             async_add_entities,
             entity_class,
-            predicate=lambda endpoint: endpoint.kind.is_softphone,
+            predicate=lambda endpoint: endpoint.supports_ha_client,
         )
         preference_manager.async_setup()
         register_endpoint_entity_manager(

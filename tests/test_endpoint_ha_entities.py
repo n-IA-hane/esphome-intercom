@@ -128,7 +128,7 @@ def test_virtual_phone_device_is_service_owned_by_voip_stack() -> None:
     assert info["identifiers"] == {
         ("voip_stack", "phone_endpoint:kitchen")
     }
-    assert info["model"] == endpoint_device.BROWSER_PHONE_DEVICE_MODEL
+    assert info["model"] == endpoint_device.SIP_ACCOUNT_DEVICE_MODEL
     assert info["configuration_url"] == "homeassistant://voip-stack-popup?endpoint_id=kitchen"
     assert endpoint_device.endpoint_device_info(_endpoint(endpoint_id="browser:one/two"))[
         "configuration_url"
@@ -141,7 +141,7 @@ def test_sip_account_uses_same_generic_device_model() -> None:
     )
     assert info is not None
     assert info["model"] == endpoint_device.SIP_ACCOUNT_DEVICE_MODEL
-    assert "configuration_url" not in info
+    assert info["configuration_url"] == "homeassistant://voip-stack-popup?endpoint_id=kitchen"
     assert "mobotix" not in repr(info).lower()
     assert "zoiper" not in repr(info).lower()
 
@@ -579,6 +579,7 @@ def test_sip_account_dnd_is_persisted_without_transport_hook(monkeypatch) -> Non
     )
     entry = object()
     persisted: list[tuple[object, object, str, dict[str, bool]]] = []
+    published = []
     fake_phone_config = types.ModuleType(f"{PKG_NAME}.phone_config")
     fake_phone_config.CONF_PHONE_DND = "dnd"
     fake_phone_config.update_phone_subentry = (
@@ -588,10 +589,17 @@ def test_sip_account_dnd_is_persisted_without_transport_hook(monkeypatch) -> Non
     )
     fake_store = types.ModuleType(f"{PKG_NAME}.store")
     fake_store.config_entry = lambda _hass: entry
+    fake_websocket = types.ModuleType(f"{PKG_NAME}.websocket_api")
+    # This unit owns the persistence boundary; the real HA/WS suite owns state
+    # serialization. SIP accounts now legitimately publish that same view.
+    fake_websocket._publish_ha_softphone_state = lambda received_hass, *, endpoint_id: published.append(
+        (received_hass, endpoint_id, registry.require(endpoint_id).dnd)
+    )
     monkeypatch.setitem(
         sys.modules, f"{PKG_NAME}.phone_config", fake_phone_config
     )
     monkeypatch.setitem(sys.modules, f"{PKG_NAME}.store", fake_store)
+    monkeypatch.setitem(sys.modules, f"{PKG_NAME}.websocket_api", fake_websocket)
     monkeypatch.setattr(
         endpoint_switch,
         "endpoint_directory",
@@ -602,6 +610,7 @@ def test_sip_account_dnd_is_persisted_without_transport_hook(monkeypatch) -> Non
 
     assert persisted == [(hass, entry, "kitchen", {"dnd": True})]
     assert registry.require("kitchen").dnd is True
+    assert published == [(hass, "kitchen", True)]
 
 
 def test_endpoint_reconfigure_refreshes_device_and_entity(monkeypatch) -> None:

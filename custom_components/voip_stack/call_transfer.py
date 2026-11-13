@@ -279,7 +279,8 @@ async def async_transfer_call(
         if target is not None and (target.dnd or target.active_call_id):
             return SipTransferResult(False, 486, "busy")
         retained = current.callee_endpoint_id if request.endpoint_id == current.caller_endpoint_id else current.caller_endpoint_id
-        if target is None or not target.kind.is_softphone:
+        from .account_dialing import account_uses_ha_only
+        if not account_uses_ha_only(hass, target):
             return await _transfer_local_source(hass, runtime, session, current, retained, request.destination)
         if not browser_endpoint_can_ring(target):
             return SipTransferResult(False, 480, "unavailable")

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+
+
 
 from .call_projection import (
     observe_phone_leg_projection,
@@ -18,6 +22,37 @@ from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_release_pending_fork(hass, registry, call_id, decision):
+    """Retire fork branches before the next route may claim their accounts."""
+    route = registry.artifact_for(call_id, "pending_route")
+    if route is None or not route.get("ring_group_endpoint_ids"):
+        return False
+    session = registry.get_session(call_id)
+    if session is None or not session.live:
+        raise ServiceValidationError("The call ended before routing")
+    token = session.token
+    previous = route.get("forward_handoff")
+    if previous is not None and not previous.done():
+        raise ServiceValidationError("The ringing call is already being forwarded")
+    handoff = asyncio.get_running_loop().create_future()
+    route["forward_handoff"] = handoff
+    try:
+        set_pending_route_decision(hass, {**decision, "call_id": call_id, "action": "forward"})
+        await asyncio.wait_for(handoff, timeout=5.0)
+        session.ensure_live(token)
+        previous = registry.task_for(call_id, "forward")
+        if previous is not None and previous is not asyncio.current_task() and not previous.done():
+            await asyncio.gather(previous, return_exceptions=True)
+        session.ensure_live(token)
+    except BaseException:
+        if route.get("forward_handoff") is handoff:
+            route.pop("forward_handoff", None)
+        if not handoff.done():
+            handoff.cancel()
+        raise
+    return True
 
 
 def ensure_ring_group_phone_not_declined(route: dict, endpoint_id: str) -> None:

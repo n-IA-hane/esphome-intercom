@@ -475,8 +475,8 @@ async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mai
         unsub_saved()
 
 
-@pytest.mark.parametrize("kind", ["browser", "sip_account"])
-async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrations, kind):
+@pytest.mark.parametrize("credentials", ["generated", "explicit"])
+async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrations, credentials):
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
@@ -484,9 +484,11 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "user"},
     )
-    form = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {"kind": kind})
+    # The native account editor opens directly. Former browser receivers use
+    # this same account form, with generated credentials when left unspecified.
+    assert form["step_id"] == "sip_account"
     values = {"name": "Study", "extension": "202", "voicemail_enabled": True}
-    if kind == "sip_account":
+    if credentials == "explicit":
         values.update(username="study", password="test-only")
         invalid = await lab.hass.config_entries.subentries.async_configure(
             form["flow_id"], form["data_schema"]({**values, "username": "invalid user"}),
@@ -497,7 +499,10 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"](values))
     assert result["type"] == "create_entry"
     created = next(item for item in entry.subentries.values() if item.title == "Study")
+    assert created.data["kind"] == "sip_account"
     assert created.data["voicemail"] == {"enabled": True}
+    from custom_components.voip_stack.mailbox import mailbox_settings
+    assert mailbox_settings(lab.hass, created.data["endpoint_id"]) == {"enabled": True}
 
 
 async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, custom_integrations):
@@ -546,6 +551,25 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
     ))
     setup_phone_policy_events(lab.hass, entry)
     lab.phones[0].auto_answer = False
+    # This fixture has independent UDP phones, but no listener/REGISTER setup.
+    # Declare their valid input bindings in the real registrar owner: changing
+    # routing policy must not leave an unregistered account falsely AVAILABLE.
+    # Full wire REGISTER is covered by the shared-account call witnesses.
+    from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar, SipRegistration
+    registrar = SipRegistrar(enabled=True, local_ip="127.0.0.1", local_sip_port=5099,
+        accounts=[SipAccount(f"bedroom{index}", f"bedroom{index}", "fixture-only") for index in range(2)])
+    for index, phone in enumerate(lab.phones):
+        name = f"bedroom{index}"
+        host, port = phone.transport.get_extra_info("sockname")
+        registrar.registrations[name] = SipRegistration(
+            name, f"sip:{name}@{host}:{port}", host, port, "UDP", 9999999999,
+        )
+    lab.calls.adopt_component("registrar", registrar)
+    # There is no listening signaling socket in browser_lab to lend to a UAC.
+    # Keep this fixture's independent UDP clients; live registered-flow reuse
+    # is qualified by the socket/registered-phone suites instead.
+    from custom_components.voip_stack import sip_runtime
+    monkeypatch.setattr(sip_runtime, "select_registered_outbound_flow", lambda *_args, **_kwargs: None)
     for identity in ("browser", "sip:bedroom0", "sip:bedroom1"):
         endpoint = lab.runtime.endpoints.require(identity)
         _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={

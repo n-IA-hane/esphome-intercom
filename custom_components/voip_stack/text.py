@@ -42,7 +42,7 @@ _SETTINGS = (
 
 
 def _is_browser_phone(endpoint) -> bool:
-    return endpoint.kind.is_softphone
+    return endpoint.supports_ha_client
 
 
 async def async_setup_entry(

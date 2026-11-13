@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
@@ -63,22 +61,8 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
             set_pending_route_decision(hass, data)
             return
 
-        # The ring-group coordinator owns all candidate legs until it observes
-        # this reroute and completes their teardown. Do not let the next route
-        # claim the same logical endpoints before that barrier commits.
-        handoff = asyncio.get_running_loop().create_future()
-        route["forward_handoff"] = handoff
-        set_pending_route_decision(hass, data)
-        try:
-            await asyncio.wait_for(handoff, timeout=5.0)
-        except TimeoutError as err:
-            raise ServiceValidationError(
-                f"ring-group route for call_id {selected_call_id} "
-                "did not release ownership"
-            ) from err
-        previous = call_runtime_artifacts(hass).task_for(selected_call_id, "forward")
-        if previous is not None and not previous.done():
-            await asyncio.gather(previous, return_exceptions=True)
+        # Fork handoff belongs to the common forward operation, including
+        # internal no-answer policies that do not enter through this service.
 
     callback = call_runtime_artifacts(hass).forward_call
     if callback is None:

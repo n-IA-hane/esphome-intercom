@@ -390,7 +390,7 @@ timer. In the preview, an enabled browser phone remains logically available
 while its frontend is closed. The availability condition does not prove that
 its browser can play or capture audio. Use a no-answer trigger to allow time
 for a receiving client to answer before forwarding; see
-[browser-phone availability](USER_GUIDE.md#browser-phone-availability).
+[account availability](USER_GUIDE.md#account-availability-and-closed-browsers).
 
 For a keypad menu, select the input result and the key to match. This condition
 matches key `1` received by the preceding input-wait action:

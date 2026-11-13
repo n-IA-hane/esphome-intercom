@@ -656,7 +656,7 @@ class VoipStackEngine extends EventTarget {
           softphoneStateMatches(state, this._softphoneSubscriberSelectors.get(listener) || {}))) return;
     const callId = String(state.call_id || "");
     const sync = async () => {
-      if (state.state === "in_call" && callId === owned && state.media_owner !== "other") {
+      if (state.state === "in_call" && callId === owned && state.media_owner !== "other" && state.can_attach_media !== false) {
         let microphoneAntiAlias = true;
         try {
           microphoneAntiAlias = localStorage.getItem(
@@ -875,7 +875,7 @@ class VoipStackEngine extends EventTarget {
   _mediaAttachOwnedByOther(snapshot, callId) {
     if (!snapshot) return false;
     return (
-      String(snapshot.media_owner || "") === "other" &&
+      (snapshot.can_attach_media === false || String(snapshot.media_owner || "") === "other") &&
       String(snapshot.call_id || "") === String(callId || "") &&
       ACTIVE_SOFTPHONE_STATES.has(String(snapshot.state || "").toLowerCase())
     );
@@ -1607,7 +1607,8 @@ class VoipStackEngine extends EventTarget {
   }
 
   _dashboardIsBrowser(owner) {
-    return Boolean(owner?.softphone || owner?.kind === "browser" || owner?.endpoint_type === "browser");
+    return Boolean(owner?.ha_client_supported || owner?.softphone ||
+      ["browser", "sip_account"].includes(owner?.kind || owner?.endpoint_type));
   }
 
   _browserPhoneInfo(owner) {

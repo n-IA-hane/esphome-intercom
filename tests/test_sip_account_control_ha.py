@@ -126,7 +126,9 @@ async def test_sip_control_rejects_wrong_endpoint_generation_acl_and_unsupported
         await lab.hass.services.async_call("voip_stack", "answer", {
             "device_id": "transfer_b", "call_id": session.call_id,
         }, blocking=True)
-    assert denied.value.translation_key == "phone_operation_not_supported"
+    # The common account supports HA answering, but this native SIP dialog
+    # is already answered and has no pending HA offer to accept.
+    assert denied.value.translation_key == "call_not_ringing"
     assert session.live
     # Generic physical inventory resolves a registered line, not a vendor HTTP
     # endpoint. Its second configured line must never be guessed for this call.
@@ -139,6 +141,12 @@ async def test_sip_control_rejects_wrong_endpoint_generation_acl_and_unsupported
     device = next(device for device in dr.async_entries_for_config_entry(dr.async_get(lab.hass), entry.entry_id)
         if ("voip_stack", "physical_phone:" + physical["phone_id"]) in device.identifiers)
     logical_devices = {identity: lab.runtime.endpoints.get(identity).device_id for identity in ("transfer_b", "transfer_c")}
+    with pytest.raises(ServiceValidationError) as hardware_denied:
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": device.id, "call_id": session.call_id,
+        }, blocking=True)
+    assert hardware_denied.value.translation_key == "phone_operation_not_supported"
+    assert session.live
     await lab.hass.services.async_call("voip_stack", "hangup", {
         "device_id": device.id, "call_id": session.call_id,
     }, blocking=True)

@@ -64,6 +64,8 @@ async def pickup_browser(call, endpoint, target):
     from homeassistant.core import ServiceCall
     from .softphone_answer import async_answer_browser_call
     from .softphone_commands import async_resolve_browser_call_command
+    from .roster import RosterEntry
+    from .router import RouteAction, RouteDecision
 
     runtime, target_endpoint, session = ringing_target(call.hass, target,
         call_id=str(call.data.get("call_id") or ""), generation=call.data.get("expected_generation"),
@@ -86,6 +88,9 @@ async def pickup_browser(call, endpoint, target):
             destination=endpoint.name,
             on_failure="resume",
             precondition=CallPrecondition.capture(session),
+            _resolved_decision=RouteDecision(RouteAction.ANSWER_HA, target=endpoint.name,
+                entry=RosterEntry(endpoint.name,
+                    metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id})),
         )
         await task
         if (not claim.authorizes_browser_answer(session, endpoint.endpoint_id)
@@ -432,7 +437,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             local_source.pause()
             local_source.commit()
         else:
-            if fork_gate is None and target_endpoint.kind.is_softphone:
+            if fork_gate is None and target_endpoint.supports_ha_client:
                 _release_ha_softphone_claim(
                     hass,
                     session.call_id,
@@ -588,8 +593,13 @@ async def async_pickup_call(call):
     from .parking import get_parking_lot, pickup_phone_call
 
     runtime = require_runtime_data(call.hass)
-    phone = await runtime.phones.resolve_source(call)
+    from .phone_control import PhoneOperation
+    phone = await runtime.phones.resolve_source(call,
+        PhoneOperation.ORIGINATE if call.data.get("media_client_id") else None)
     endpoint = runtime.endpoints.require(phone.endpoint_id)
+    if phone.kind.is_softphone:
+        from .phone_endpoint import ha_client_endpoint
+        endpoint = ha_client_endpoint(endpoint)
     slot = str(call.data.get("slot") or "")
     target = str(call.data.get("target_device_id") or "")
     if bool(slot) == bool(target):

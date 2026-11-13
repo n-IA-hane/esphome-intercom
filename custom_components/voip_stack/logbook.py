@@ -70,6 +70,113 @@ def _route_destination(data: Mapping[str, Any]) -> str:
     return ""
 
 
+def _sip_code(data):
+    """Read a result only from this call occurrence, never global diagnostics."""
+    value = data.get("sip_status_code")
+    if isinstance(value, bool):
+        return ""
+    try:
+        code = int(value)
+    except (ValueError, TypeError):
+        return ""
+    return f" · SIP {code}" if 100 <= code <= 699 else ""
+
+
+def _logical_calls(phone):
+    result = {}
+    for row in (phone or {}).get("calls", ()):
+        call_id = str(row.get("call_id") or "")
+        if not call_id or row.get("state") == "terminated":
+            continue
+        key = (call_id, row.get("generation", 0))
+        phase = "answered" if row.get("state") == "confirmed" else "calling" if row.get("direction") == "initiator" else "ringing"
+        current = result.get(key)
+        if current is None or phase == "answered":
+            result[key] = (phase, row)
+    return result
+
+
+def _account_activity(data):
+    """Derive one logical phase per account without remembering Contact events."""
+    before, after = _logical_calls(data.get("previous")), _logical_calls(data.get("phone"))
+    account = data.get("phone") or data.get("previous") or {}
+    name = str(account.get("name") or "SIP account")
+    occurrence = data.get("call") or {}
+    occurrence_key = (str(occurrence.get("call_id") or ""), occurrence.get("generation", 0))
+    entries = []
+    for key, (phase, row) in after.items():
+        if key in before and before[key][0] == phase:
+            continue
+        details = occurrence if key == occurrence_key else {}
+        if phase == "answered":
+            winner = _party(details, "answered_by", "connected_party")
+            message = f"Answered by {winner}" if winner else "Call answered"
+        else:
+            target = (_party(details, "dialed_target", "called_number", "callee") if phase == "calling"
+                      else _party(details, "caller")) or _party(row, "peer_user", "peer_name")
+            message = ("Calling " if phase == "calling" else "Incoming call from ") + (target or "unknown party")
+        entries.append({LOGBOOK_ENTRY_NAME: name, LOGBOOK_ENTRY_MESSAGE: message, "phase": phase})
+    terminal = (str(occurrence.get("type") or "") in {"ended", "failed", "missed"}
+                or str(occurrence.get("pbx_phase") or "") in {"terminating", "terminated"})
+    if terminal and occurrence_key in before and occurrence_key not in after:
+        entries.append({LOGBOOK_ENTRY_NAME: name, LOGBOOK_ENTRY_MESSAGE: _account_terminal_message(occurrence), "phase": "terminal"})
+    return entries
+
+
+def _account_terminal_message(occurrence):
+    failed = occurrence.get("type") in {"failed", "missed"} or occurrence.get("state") in {"failed", "error", "declined"}
+    message = "Call failed" if failed else "Call ended"
+    reason = str(occurrence.get("terminal_reason") or occurrence.get("reason") or "").strip()
+    if reason:
+        message += " · " + reason.replace("_", " ")
+    message += _sip_code(occurrence)
+    winner = _party(occurrence, "answered_by", "connected_party")
+    return message + (" · Answered by " + winner if winner else "")
+
+
+@callback
+def async_setup_account_activity(hass, entry):
+    """Use the existing Recorder/Logbook stream with this entry's callback owner."""
+    from homeassistant.components.logbook import async_log_entry
+    from homeassistant.helpers import entity_registry as er
+    from .phone_state import PHONE_STATE_CHANGED
+    from .runtime_data import runtime_data
+
+    owner = entry.runtime_data
+    def publish(endpoint, message, context):
+        entity_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN,
+            f"phone_endpoint_{endpoint.endpoint_id}_call_state")
+        async_log_entry(hass, endpoint.name, message, domain=DOMAIN, entity_id=entity_id, context=context)
+
+    @callback
+    def changed(event):
+        if runtime_data(hass) is not owner:
+            return
+        endpoint_id = event.data.get("endpoint_id", "")
+        endpoint = owner.endpoints.get(endpoint_id)
+        if endpoint is None or not endpoint.supports_ha_client:
+            return
+        for item in _account_activity(event.data):
+            # The existing one-per-call terminal occurrence is authoritative,
+            # including failures before any live phone dialog became visible.
+            if item["phase"] != "terminal":
+                publish(endpoint, item[LOGBOOK_ENTRY_MESSAGE], event.context)
+
+    @callback
+    def ended(event):
+        if runtime_data(hass) is not owner or not event.data.get("call_id"):
+            return
+        participants = set(event.data.get("participant_endpoint_ids") or ())
+        participants.update(str(event.data.get(key) or "") for key in (
+            "endpoint_id", "source_endpoint_id", "dest_endpoint_id", "target_endpoint_id"))
+        for identity in participants:
+            endpoint = owner.endpoints.get(identity)
+            if endpoint is not None and endpoint.supports_ha_client:
+                publish(endpoint, _account_terminal_message(event.data), event.context)
+    entry.async_on_unload(hass.bus.async_listen(PHONE_STATE_CHANGED, changed))
+    entry.async_on_unload(hass.bus.async_listen(SIP_CALL_ENDED_EVENT, ended))
+
+
 def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dict[str, str]:
     """Build one durable summary from the terminal event payload."""
 
@@ -120,6 +227,10 @@ def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dic
         message = f"{caller} called {destination}"
         if duration:
             message += f" · {duration}"
+    message += _sip_code(data)
+    winner = _party(data, "answered_by")
+    if winner and winner != destination:
+        message += " · Answered by " + winner
 
     return {
         LOGBOOK_ENTRY_NAME: "VoIP Stack",

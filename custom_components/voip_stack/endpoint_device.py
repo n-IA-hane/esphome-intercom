@@ -65,9 +65,7 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
     """
     if not is_managed_endpoint(endpoint):
         return None
-    model = BROWSER_PHONE_DEVICE_MODEL
-    if enum_value(endpoint.kind) == "sip_account":
-        model = SIP_ACCOUNT_DEVICE_MODEL
+    model = SIP_ACCOUNT_DEVICE_MODEL
     info = DeviceInfo(
         identifiers={(DOMAIN, endpoint_device_identifier(endpoint.endpoint_id))},
         name=endpoint.name,
@@ -76,7 +74,7 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
         sw_version=INTEGRATION_VERSION,
         entry_type=DeviceEntryType.SERVICE,
     )
-    if enum_value(endpoint.kind) == "browser":
+    if endpoint.supports_ha_client:
         info["configuration_url"] = (
             "homeassistant://voip-stack-popup?endpoint_id="
             f"{quote(endpoint.endpoint_id, safe='')}"

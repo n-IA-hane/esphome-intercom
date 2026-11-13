@@ -46,6 +46,20 @@ SEQUENCE = vol.All(vol.Coerce(int), vol.Range(min=0, max=2**31 - 1))
 
 
 async def async_register_services(hass: HomeAssistant, handlers: dict[str, object]) -> None:
+    async def reload_card_associations(call):
+        """Re-read saved dashboards, including YAML, without reloading calls."""
+        from homeassistant.exceptions import ServiceValidationError
+        from .runtime_data import runtime_data
+
+        await async_require_service_admin(hass, call)
+        runtime = runtime_data(hass)
+        if runtime is None or runtime.ha_bindings is None:
+            raise ServiceValidationError("VoIP Stack account associations are not ready")
+        await runtime.ha_bindings.async_reload()
+
+    hass.services.async_register(
+        DOMAIN, "reload_card_associations", reload_card_associations, schema=vol.Schema({})
+    )
     phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT,
                              vol.Optional("line_id"): IDENTIFIER_TEXT}
     purge_schema = vol.Schema(

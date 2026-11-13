@@ -146,7 +146,10 @@ async def _async_resolve_browser_destination(
         return route, target, None
     endpoint_id = str((route.entry.metadata or {}).get("endpoint_id") or "").strip()
     endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
-    if endpoint is None or not endpoint.kind.is_softphone:
+    if endpoint is not None and not endpoint.kind.is_softphone:
+        from .phone_endpoint import ha_client_endpoint
+        endpoint = ha_client_endpoint(endpoint)
+    if endpoint is None:
         return route, target, None
     if endpoint.endpoint_id == source_endpoint_id:
         raise _service_error(
@@ -355,6 +358,8 @@ async def async_originate_browser_call(
     use_trunk = route.action is RouteAction.TRUNK and trunk_ready
     if route.action is RouteAction.TRUNK and not use_trunk:
         raise trunk_selection.unavailable_error()
+    from .account_dialing import account_dial_decision
+    route = account_dial_decision(hass, route)
     if route.action is RouteAction.GROUP and route.entry is not None:
         group_type = str((route.entry.metadata or {}).get("group_type") or "")
         if group_type == "ring":

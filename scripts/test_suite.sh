@@ -176,6 +176,16 @@ ha_tests=(
   tests/test_browser_phone_policy_ha.py
   tests/test_browser_answer_noanswer_race_ha.py
   tests/test_browser_logical_availability_ha.py
+  tests/test_account_consolidation_ha.py
+  tests/test_account_physical_bindings_ha.py
+  tests/test_account_dialing_ha.py
+  tests/test_canonical_account_calls_ha.py
+  tests/test_ha_bindings_ha.py
+  tests/test_sip_feature_sync_ha.py
+  tests/test_account_logbook_ha.py
+  tests/test_shared_account_fork_ha.py
+  tests/test_shared_account_policy_ha.py
+  tests/test_canonical_account_parking_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_bridge_independent_ptime_ha.py
   tests/test_bridge_repacketize_ha.py

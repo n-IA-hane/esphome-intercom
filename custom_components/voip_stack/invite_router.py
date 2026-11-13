@@ -474,6 +474,17 @@ async def route_invite(
     ):
         return invalid_target
     if not force_ha_softphone:
+        from .account_dialing import account_dial_decision
+
+        account_decision = account_dial_decision(hass, decision)
+        if account_decision is not decision:
+            return await route_local_group(
+                runtime=runtime, invite=invite, decision=account_decision,
+                peers=peers, roster_entries=roster_entries,
+                source_endpoint=source_endpoint, source_endpoint_id=source_endpoint_id,
+                registry=registry,
+            )
+    if not force_ha_softphone:
         route_session = registry.ensure_session(invite.call_id, event_only=True)
         if rejected_route := reject_route_decision(
             hass=hass,

@@ -174,6 +174,20 @@ async def async_forward_existing_call(
     session = registry.get_session(session_id)
     token = session.token if session is not None else None
     try:
+        pending = registry.artifact_for(identity, "pending_route")
+        if pending is not None and pending.get("ring_group_endpoint_ids"):
+            # Admission is validated before relinquishing the receiving leg.
+            # The barrier transfers this same generation, so subsequent checks
+            # use its committed state rather than the retired branch sequence.
+            validate_call_snapshot(
+                registry, identity, expected_state=expected_state,
+                expected_sequence=expected_sequence, precondition=precondition,
+                endpoint_id=control_endpoint_id,
+            )
+            from .route_decisions import async_release_pending_fork
+            if await async_release_pending_fork(runtime.hass, registry, identity, arguments):
+                arguments.update(expected_state="", expected_sequence=0,
+                    precondition=CallPrecondition.capture(session), control_endpoint_id="")
         return await _prepare_forward_existing_call(runtime, **arguments)
     except _ForwardRouteFailure as failure:
         if session is None or token is None or not session.owns(token) or registry.get_session(session_id) is not session:
@@ -261,8 +275,23 @@ async def _prepare_forward_existing_call(
         })
         return submitted_result("started")
     route_resolver = None
+    resolved_pickup_claim = None
+    def validate_resolved_pickup():
+        from .parking import ParkingCall
+        from .call_pickup import PickupClaim
+        parked = registry.resource_for(call_id, "parking")
+        directed = registry.resource_for(call_id, "pickup")
+        endpoint_id = str((_resolved_decision.entry.metadata if _resolved_decision.entry else {}).get("endpoint_id") or "")
+        claim = (directed if isinstance(directed, PickupClaim)
+            else parked.parked.claim if isinstance(parked, ParkingCall) else None)
+        if (claim is None or (resolved_pickup_claim is not None and claim is not resolved_pickup_claim)
+                or not claim.authorizes_browser_answer(registry.get_session(call_id), endpoint_id)):
+            raise ValueError("A resolved HA pickup requires its current pickup claim and exact endpoint")
+        return claim
     if _resolved_decision is not None and _resolved_decision.action is not RouteAction.GROUP:
-        raise ValueError("Internal queue attempts require a resolved ring group")
+        if _resolved_decision.action is not RouteAction.ANSWER_HA or _queue_offer is not None:
+            raise ValueError("Internal queue attempts require a resolved ring group")
+        resolved_pickup_claim = validate_resolved_pickup()
     if _ring_timeout is not None and not 0 < float(_ring_timeout) <= 120:
         raise ValueError("Internal ring timeout must be positive and at most 120 seconds")
     if _resolved_decision is None and context is not None and len(context.route_history) >= 8:
@@ -326,7 +355,7 @@ async def _prepare_forward_existing_call(
             if (
                 decision.action is RouteAction.ANSWER_HA
                 and target is not None
-                and target.kind.is_softphone
+                and target.supports_ha_client
             ):
                 from .pbx_routing import browser_endpoint_can_ring
 
@@ -456,6 +485,8 @@ async def _prepare_forward_existing_call(
             _registered_roster_entries(hass),
         )
         decision = _resolved_decision or _route_preflight(lambda: route_resolver.route(destination, roster_entries))
+        if resolved_pickup_claim is not None:
+            validate_resolved_pickup()
         rejected_queues = set()
         while decision.action is RouteAction.QUEUE and decision.entry is not None:
             from .call_queues import QueueExit, get_queue_manager
@@ -481,6 +512,8 @@ async def _prepare_forward_existing_call(
                 departure = application.ticket.exit
                 application.ticket.exit = QueueExit(departure.cause, departure.disposition, destination)
         _check_external_route(decision)
+        from .account_dialing import account_dial_decision
+        decision = account_dial_decision(hass, decision)
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
@@ -489,13 +522,16 @@ async def _prepare_forward_existing_call(
             )
             if (
                 target_browser_endpoint is None
-                or not target_browser_endpoint.kind.is_softphone
+                or not target_browser_endpoint.supports_ha_client
             ):
                 raise _routing_service_error(
                     f"destination {destination} is not a configured Home Assistant phone",
                     "destination_not_ha_phone",
                     destination=destination,
                 )
+            if resolved_pickup_claim is not None and not resolved_pickup_claim.authorizes_browser_answer(
+                    registry.get_session(call_id), target_browser_endpoint.endpoint_id):
+                raise ValueError("The resolved HA pickup endpoint changed")
         if decision.action is RouteAction.REJECT:
             raise _routing_service_error(
                 f"destination {destination} is not a forwardable SIP dial-plan target",
@@ -736,7 +772,7 @@ async def _prepare_forward_existing_call(
             if isinstance(directed, PickupClaim) and directed.authorizes_browser_answer(session, endpoint_id):
                 return True
             parked = application.parked.claim if isinstance(application, ParkingCall) else None
-            return parked is not None and parked.current and parked.parked.session is session
+            return parked is not None and parked.authorizes_browser_answer(session, endpoint_id)
         parked_media = (application.media if isinstance(application, ParkingCall)
             and isinstance(application.media, LocalCallMedia)
             and application.media.video_relay is not None
@@ -792,8 +828,10 @@ async def _prepare_forward_existing_call(
                 retained_media.validate(registry)
                 invite = retained_media.caller_invite
             if decision.action is RouteAction.ANSWER_HA:
+                if resolved_pickup_claim is not None:
+                    validate_resolved_pickup()
                 endpoint = target_browser_endpoint
-                if endpoint is None or not endpoint.kind.is_softphone:
+                if endpoint is None or not endpoint.supports_ha_client:
                     raise RuntimeError("target Home Assistant phone disappeared")
                 if endpoint.dnd:
                     raise RuntimeError("target Home Assistant phone is in DND")
@@ -1270,6 +1308,7 @@ async def _prepare_forward_existing_call(
                 _settle_browser_candidates(
                     CallState.CANCELLED.value,
                     TerminalReason.CANCELLED.value,
+                    retain_claim_endpoint_id=winner.endpoint_id,
                 )
 
                 client = winner.client

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant.config_entries import ConfigSubentry, ConfigSubentryFlow, SOURCE_USER
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers.selector import (
     AreaSelector, BooleanSelector, EntitySelector, ObjectSelector,
     SelectSelector, TextSelector,
@@ -105,6 +106,11 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             return self.async_abort(reason="phone_catalog_unavailable")
         if user_input is not None:
             self._draft.update({key: value for key, value in user_input.items() if key in _IDENTITY_FIELDS})
+            if "advanced" in user_input:
+                advanced = user_input["advanced"]
+                if not isinstance(advanced, dict):
+                    return self.async_show_form(step_id="user", errors={"base": "invalid_phone_host"})
+                self._draft["host"] = advanced.get("host", self._draft.get("host", ""))
             try:
                 name = str(self._draft.get("name") or "").strip()
                 mac = re.sub(r"[:-]", "", str(self._draft.get("mac") or "")).lower()
@@ -166,7 +172,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             vol.Required("mac", default=values.get("mac", "")): TextSelector(),
             vol.Required("profile_id", **({"default": default_profile} if default_profile else {})):
                 SelectSelector({"options": choices}),
-            vol.Optional("host", default=values.get("host", "")): TextSelector(),
+            vol.Optional("advanced"): section(vol.Schema({
+                vol.Optional("host", default=values.get("host", "")): TextSelector(),
+            }), {"collapsed": True}),
             vol.Optional("area_id", **({"default": values["area_id"]} if values.get("area_id") else {})): AreaSelector(),
             vol.Optional("person", **({"default": values["person"]} if values.get("person") else {})): EntitySelector({"domain": "person"}),
             vol.Required("follow_ha_language", default=values.get("follow_ha_language", True)): BooleanSelector(),
@@ -174,7 +182,11 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         }
         if self._current is not None:
             fields[vol.Optional("update_profile", default=False)] = BooleanSelector()
-        return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields))
+        selected_profile = next((item for item in profiles if item["id"] == values.get("profile_id")), {})
+        return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields),
+            description_placeholders={"profile_pin": self._manifest_commit,
+                "profile_status": str(selected_profile.get("status", "")),
+                "profile_source": str(manifest.get("upstream", {}).get("repository", "fusionpbx/fusionpbx"))})
 
     async def async_step_language(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):

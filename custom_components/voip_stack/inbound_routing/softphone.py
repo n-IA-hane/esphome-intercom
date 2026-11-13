@@ -49,6 +49,9 @@ def _resolve_browser_target(
     require_browser_kind: bool,
 ) -> BrowserRouteTarget | None:
     endpoint = target_endpoint
+    if endpoint is not None and not endpoint.kind.is_softphone:
+        from ..phone_endpoint import ha_client_endpoint
+        endpoint = ha_client_endpoint(endpoint)
     if require_browser_kind and (
         endpoint is None or not endpoint.kind.is_softphone
     ):

@@ -34,7 +34,7 @@ class VoipStackDashboardCardEditor extends HTMLElement {
       if (this._hass?.connection !== connection) return;
       this._devices = (response?.devices || []).filter((device) => {
         const kind = String(device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome"));
-        return device.device_id && ["browser", "ha_softphone", "esphome"].includes(kind);
+        return device.device_id && ["browser", "ha_softphone", "sip_account", "esphome"].includes(kind);
       });
       this._loaded = true;
       this._error = "";

@@ -147,7 +147,7 @@ async def async_originate_browser_paging(job, endpoint):
     runtime = require_runtime_data(hass)
     registry = call_registry(hass)
     current = runtime.endpoints.get(endpoint.endpoint_id)
-    if current is None or not current.kind.is_softphone:
+    if current is None or not current.supports_ha_client:
         raise ServiceValidationError("The paging browser no longer exists")
     if not int(runtime.softphone_presence.get(current.endpoint_id, 0)):
         raise ServiceValidationError("The paging browser is offline")

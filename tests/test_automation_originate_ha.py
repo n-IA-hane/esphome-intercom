@@ -18,6 +18,32 @@ from custom_components.voip_stack.core import rtp, sip
 pytestmark = pytest.mark.ha
 
 
+def assert_call_resources_released(lab):
+    """Account snapshots may remain; live call and media ownership may not."""
+    from custom_components.voip_stack.runtime_diagnostics import runtime_resource_snapshot
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state
+    from custom_components.voip_stack.phone_state import phone_states
+
+    resources = runtime_resource_snapshot(lab.calls, rtp_port_pool=lab.runtime.rtp_port_pool,
+        call_artifacts=lab.calls, browser_media=lab.runtime.media, runtime_tasks=lab.runtime.tasks)
+    assert resources["call_scoped_quiescent"], resources
+    assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+    for endpoint_id, cached in lab.runtime.softphones.items():
+        endpoint = lab.runtime.endpoints.require(endpoint_id)
+        assert endpoint.supports_ha_client
+        state = _ha_softphone_state(lab.hass, endpoint_id)
+        assert state["state"] in {"idle", "unavailable"}, (
+            f"{endpoint_id}: cache={cached.get('state')} public={state.get('state')} "
+            f"call_id={state.get('call_id')} can_attach_media={state.get('can_attach_media')} "
+            f"call_scoped_quiescent={resources['call_scoped_quiescent']}"
+        )
+        call_id = cached.get("call_id") or cached.get("last_terminal_call_id")
+        if call_id:
+            assert lab.calls.is_terminated(lab.calls.resolve_session_id(call_id))
+        assert phone_states(lab.hass)[endpoint_id]["calls"] == []
+        assert state["can_attach_media"] is False
+
+
 class Phone(asyncio.DatagramProtocol):
     def __init__(self, rtp_socket):
         self.rtp_socket = rtp_socket
@@ -290,7 +316,7 @@ async def test_ordinary_script_calls_then_speaks_and_hangs_up(lab, monkeypatch, 
             assert not lab.phones[0].invites
         assert not any(session.live for session in lab.calls.sessions.values())
         assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
-        assert not lab.runtime.softphones
+        assert_call_resources_released(lab)
     finally:
         await script.async_stop()
         await asyncio.gather(task, return_exceptions=True)
@@ -776,7 +802,7 @@ async def test_two_scripts_speak_and_hang_up_their_own_call_without_ids(lab, mon
                 voiced.append(payload)
         assert b''.join(voiced) == b'\x01\x80' * 960
     assert not lab.calls.sessions
-    assert not lab.runtime.softphones
+    assert_call_resources_released(lab)
 
 
 async def test_implicit_action_never_falls_back_to_another_execution(lab, monkeypatch):

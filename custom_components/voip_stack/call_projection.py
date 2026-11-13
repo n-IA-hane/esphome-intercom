@@ -83,7 +83,15 @@ class CallStatePublisher:
         endpoint_ids.update(endpoint for scope, endpoint in deliveries if scope == "phone")
         for endpoint_id in endpoint_ids:
             endpoint = runtime.endpoints.get(endpoint_id)
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
+                continue
+            if not endpoint.kind.is_softphone and not any(
+                leg.endpoint_id == endpoint_id and leg.role == "ha_softphone"
+                and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                for leg in session.legs.values()
+            ):
+                # Native SIP accounts are projected by PhoneStateObserver.
+                # Only an actual HA transport needs the browser media store.
                 continue
             if deliveries.get(("phone", endpoint_id)) == snapshot:
                 continue

@@ -12,6 +12,7 @@ pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
 
 BOOTSTRAP = """async () => {
           window.services=[]; window.streams=[]; window.contexts=0; window.mics=0;
+          window.popupBindings={}; window.bindingRequests=[];
           const Context=window.AudioContext;
           window.AudioContext=class extends Context {constructor(...args){super(...args);contexts++;}};
           navigator.mediaDevices={enumerateDevices:async()=>[],addEventListener(){},
@@ -27,6 +28,8 @@ BOOTSTRAP = """async () => {
             return()=>{record.active=false;};
           };
           connection.sendMessagePromise=async request=>{
+            if(request.type==='voip_stack/ha_popup_binding'){bindingRequests.push(request);return popupBindings[request.binding_id]||null;}
+            if(request.type==='voip_stack/set_ha_popup_binding'){bindingRequests.push(request);return popupBindings[request.binding_id]={...request};}
             if(request.type==='voip_stack/list_devices')return {devices:[phone],entity_ids:{}};
             if(request.type==='voip_stack/ha_softphone_state')return current;
             throw Error('Unexpected WS request '+request.type);
@@ -386,9 +389,10 @@ def test_cold_without_card_persistence_and_shared_owner(popup_page):
     enable(page)
     assert page.evaluate("mics") == 0
     assert page.evaluate("contexts") == 1  # Existing engine ringtone, unlocked by opt-in.
-    assert page.evaluate("JSON.parse(localStorage.voip_stack_popup_phone)") == {
-        "device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True
-    }
+    saved = page.evaluate("JSON.parse(localStorage.voip_stack_popup_phone)")
+    binding_id = saved.pop("binding_id")
+    assert binding_id.startswith("browser-")
+    assert saved == {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True}
     incoming(page)
     page.evaluate("""() => {
       const card=document.createElement('voip-stack-card');
@@ -403,13 +407,13 @@ def test_cold_without_card_persistence_and_shared_owner(popup_page):
     assert page.evaluate("visibleCard._sessionCallId()===__voipStackPopup.dialog._phone._sessionCallId()")
     assert page.evaluate("getComputedStyle(__voipStackPopup.dialog._phone._els.destRow).display") == "none"
     assert page.evaluate("getComputedStyle(__voipStackPopup.dialog._phone._els.callBtn).display") == "none"
-    # Changing HA navigation and HA auth context does not create a user->phone map.
+    # Navigation/auth context does not replace the account or browser binding ID.
     page.evaluate("""() => {
       history.pushState({},'', '/config/devices');hass={...hass,user:{id:'another-user',is_admin:true}};
       for(const consumer of root.consumers)consumer.hass=hass;
     }""")
     assert page.evaluate("__voipStackPopup.binding.endpoint_id") == "browser:desk"
-    assert page.evaluate("Object.keys(JSON.parse(localStorage.voip_stack_popup_phone)).sort()") == ["device_id", "enabled", "endpoint_id"]
+    assert page.evaluate("Object.keys(JSON.parse(localStorage.voip_stack_popup_phone)).sort()") == ["binding_id", "device_id", "enabled", "endpoint_id"]
     assert page.evaluate("services") == []
 
 
@@ -450,7 +454,9 @@ def test_saved_phone_bootstraps_after_reopen_without_a_card(popup_page):
     page.wait_for_function("streams.some(s=>s.active&&s.request.type==='voip_stack/subscribe_ha_softphone_state')")
     assert page.locator("voip-stack-card").count() == 0
     assert page.locator("voip-stack-popup button:visible").count() == 0
-    assert page.evaluate("__voipStackPopup.binding") == {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True}
+    saved = page.evaluate("__voipStackPopup.binding")
+    assert saved.pop("binding_id").startswith("browser-")
+    assert saved == {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": True}
     incoming(page, "incoming-after-reopen")
     assert page.evaluate("__voipStackPopup.state.call_id") == "incoming-after-reopen"
     assert page.evaluate("mics") == 0
@@ -460,7 +466,8 @@ def test_optout_keeps_phone_and_survives_restart_pageshow_and_reload(popup_page)
     page = popup_page
     enable(page)
     page.evaluate("__voipStackPopup.bindPhone(phone,false)")
-    expected = {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": False}
+    expected = {"device_id": "desk-device", "endpoint_id": "browser:desk", "enabled": False,
+        "binding_id": page.evaluate("__voipStackPopup.binding.binding_id")}
     assert page.evaluate("JSON.parse(localStorage.voip_stack_popup_phone)") == expected
     page.evaluate("hass.connection.dispatchEvent(new Event('ready'));window.dispatchEvent(new PageTransitionEvent('pageshow'))")
     page.wait_for_timeout(40)
@@ -523,7 +530,7 @@ def test_disabled_popup_does_not_block_scoped_notification_on_mounted_card(popup
     page = popup_page
     page.evaluate("""async () => {
       await import('/voip-stack-card.js');
-      __voipStackPopup.bindPhone(phone,false);
+      await __voipStackPopup.bindPhone(phone,false);
       const card=document.createElement('voip-stack-card');
       card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
       root.shadowRoot.append(card);window.visibleCard=card;
@@ -735,3 +742,60 @@ def test_popup_labels_follow_existing_italian_catalogue(popup_page):
     page.get_by_role("button", name="Minimizza chiamata").click()
     assert page.get_by_role("button", name="Riapri chiamata").count() == 1
     assert page.get_by_role("button", name="Riaggancia chiamata").count() == 1
+
+
+def test_sip_popup_binding_is_server_declared_and_stable_without_media(popup_page):
+    page = popup_page
+    assert page.evaluate("bindingRequests") == []
+    page.evaluate("phone={...phone,softphone:false,kind:'sip_account',ha_client_supported:true}")
+    enable(page)
+    binding = page.evaluate("JSON.parse(localStorage.getItem('voip_stack_popup_phone'))")
+    assert binding["binding_id"].startswith("browser-")
+    assert page.evaluate("popupBindings[__voipStackPopup.binding.binding_id].enabled") is True
+    writes = page.evaluate("bindingRequests.filter(r=>r.type==='voip_stack/set_ha_popup_binding').length")
+    page.evaluate("hass.connection.dispatchEvent(new Event('ready'))")
+    page.wait_for_function("__voipStackPopup._bindingServerSynced!==null")
+    assert page.evaluate("__voipStackPopup.binding.binding_id") == binding["binding_id"]
+    assert page.evaluate("bindingRequests.filter(r=>r.type==='voip_stack/set_ha_popup_binding').length") == writes
+    assert page.evaluate("mics") == 0
+
+
+def test_legacy_disabled_preference_never_inherits_server_optin(popup_page):
+    page = popup_page
+    page.evaluate("""() => {
+      localStorage.setItem('voip_stack_popup_phone',JSON.stringify({device_id:phone.device_id,
+        endpoint_id:phone.endpoint_id,enabled:false}));
+      __voipStackPopup.syncPreference(true);
+    }""")
+    page.wait_for_function("__voipStackPopup._bindingServerSynced!==null")
+    assert page.evaluate("__voipStackPopup.binding.enabled") is False
+    assert page.evaluate("popupBindings[__voipStackPopup.binding.binding_id].enabled") is False
+    assert page.evaluate("!__voipStackPopup._unsubscribe && mics===0")
+
+
+def test_server_popup_optout_is_respected_on_reconnect(popup_page):
+    page = popup_page
+    enable(page)
+    page.evaluate("""() => {
+      popupBindings[__voipStackPopup.binding.binding_id].enabled=false;
+      hass.connection.dispatchEvent(new Event('ready'));
+    }""")
+    page.wait_for_function("__voipStackPopup.binding.enabled===false")
+    assert page.evaluate("!__voipStackPopup._unsubscribe")
+    assert page.evaluate("popupBindings[__voipStackPopup.binding.binding_id].enabled") is False
+
+
+def test_sip_call_is_shared_observation_without_browser_capture(popup_page):
+    page = popup_page
+    page.evaluate("""async () => {
+      phone={...phone,softphone:false,kind:'sip_account',ha_client_supported:true};
+      await import('/voip-stack-card.js');
+      const card=window.observerCard=document.createElement('voip-stack-card');
+      card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+      root.shadowRoot.append(card);
+    }""")
+    page.wait_for_function("observerCard._softphoneSnapshot?.endpoint_id===phone.endpoint_id")
+    page.evaluate("push({state:'in_call',direction:'outgoing',call_id:'native-call',can_attach_media:false,media_is_local:false,media_owner:'other'})")
+    page.wait_for_function("observerCard._softphoneSnapshot?.call_id==='native-call'")
+    assert page.evaluate("mics===0 && !__voipStackEngine.active")
+    assert page.get_by_role("button", name="Hang up call", exact=True).is_visible()

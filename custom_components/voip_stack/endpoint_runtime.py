@@ -207,22 +207,12 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
-        from .phone_endpoint import EndpointAvailability
+        from .account_runtime import recompute_account_availability
 
         endpoint_registry = endpoint_directory(hass)
         endpoint = endpoint_registry.by_username(username)
-        if (
-            endpoint is not None
-            and endpoint.availability is not EndpointAvailability.UNAVAILABLE
-        ):
-            endpoint_registry.update(
-                endpoint.endpoint_id,
-                availability=(
-                    EndpointAvailability.AVAILABLE
-                    if registered
-                    else EndpointAvailability.OFFLINE
-                ),
-            )
+        if endpoint is not None:
+            recompute_account_availability(hass, endpoint.endpoint_id)
         create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
     accounts = _sip_accounts(hass)
@@ -629,6 +619,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         local_name = browser_endpoint.name
         endpoint_device_id = browser_endpoint.device_id
         group_name = str(entry.name or entry.id or "")
+        route_kind = str(entry.metadata.get("route_kind") or GROUP_TYPE_RING)
         # A timestamp is not a dialog identifier: two phones can start in the
         # same millisecond.  Use cryptographic entropy just like the normal SIP
         # client path so concurrent HA callers cannot alias one registry entry.
@@ -669,7 +660,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             owner="ha_softphone",
             caller=local_name,
             callee=group_name,
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             endpoint_id=endpoint_id,
             session_device_id=endpoint_device_id,
             source_endpoint_id=endpoint_id,
@@ -707,7 +698,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             leg_id=origin_leg_id,
             peer_name=group_name,
             direction="outgoing",
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             sip_status_code=180,
             last_sip_event="LOCAL_RING_GROUP",
         )

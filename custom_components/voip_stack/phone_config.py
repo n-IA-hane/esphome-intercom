@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import replace
 import logging
 from types import MappingProxyType
@@ -34,7 +35,7 @@ from .phone_endpoint import (
     OfflinePolicy,
     PhoneEndpoint,
 )
-from .sip_registrar import account_from_mapping, normalize_username
+from .sip_registrar import account_from_mapping, generate_password, normalize_username
 from .runtime_data import runtime_data
 from .phone_policy import DestinationKind, PhoneDestination, PhonePolicy
 from .phone_queue_membership import normalize_phone_queues
@@ -143,23 +144,80 @@ def async_bootstrap_browser_phone(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> ConfigSubentry | None:
-    """Create the first normal browser phone exactly once for a new entry."""
+    """Create the first canonical account exactly once for a new entry."""
     if any(
-        item.data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value
+        item.data.get(CONF_PHONE_KIND) in {EndpointKind.BROWSER.value, EndpointKind.SIP_ACCOUNT.value}
         for item in phone_subentries(entry)
     ):
         return None
     data = browser_phone_data(
         hass,
         entry,
-        endpoint_id=new_browser_endpoint_id(),
+        endpoint_id=new_sip_account_endpoint_id(),
     )
+    data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
+    data[CONF_PHONE_USERNAME] = _new_account_username(entry, data[CONF_PHONE_ENDPOINT_ID])
+    validate_sip_account_namespace(entry, [*map(lambda sub: dict(sub.data), phone_subentries(entry)), data])
+    data[CONF_PHONE_PASSWORD] = generate_password()
     return _add_phone_subentry(
         hass,
         entry,
         data=data,
         title=str(data[CONF_PHONE_NAME]),
     )
+
+
+def _new_account_username(entry, endpoint_id, *, used=()):
+    from .contact_config import contact_dicts
+    from .roster import normalize_roster_key
+    import re
+    rows = [sub.data for sub in phone_subentries(entry)] + contact_dicts(entry)
+    occupied = {normalize_roster_key(str(row.get(field) or ""))
+                for row in rows for field in ("id", "name", "extension", "username", "number")}
+    occupied.update(normalize_roster_key(str(value)) for value in used)
+    base = "ha_" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(endpoint_id))[:48]
+    for suffix in range(len(occupied) + 2):
+        candidate = base if not suffix else base + "_" + str(suffix + 1)
+        if normalize_roster_key(candidate) not in occupied:
+            return normalize_username(candidate)
+    raise ValueError("No unique account username available")
+
+
+def migrate_browser_accounts(hass, entry):
+    """Stage the whole future namespace before the first identity-preserving write."""
+    updates = []
+    future = []
+    used = []
+    converted = set()
+    for subentry in phone_subentries(entry):
+        data = deepcopy(dict(subentry.data))
+        if data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value:
+            identity = str(data[CONF_PHONE_ENDPOINT_ID])
+            data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
+            username = str(data.get(CONF_PHONE_USERNAME) or "").strip()
+            data[CONF_PHONE_USERNAME] = normalize_username(username) if username else _new_account_username(entry, identity, used=used)
+            used.append(data[CONF_PHONE_USERNAME])
+            raw_bindings = data.get("ha_bindings") or []
+            if not isinstance(raw_bindings, (list, tuple)):
+                raise ValueError("Invalid configured HA associations")
+            bindings = list(raw_bindings)
+            reference = {"source": "migration", "reference": "legacy_ha_phone:" + identity}
+            if not any(isinstance(row, Mapping) and row.get("source") == reference["source"]
+                       and row.get("reference") == reference["reference"] for row in bindings):
+                bindings.append(reference)
+            data["ha_bindings"] = bindings
+            endpoint_from_data(entry, data)
+            updates.append((subentry, data))
+            converted.add(identity)
+        future.append(data)
+    if not updates:
+        return
+    validate_sip_account_namespace(entry, future, replacing_endpoint_ids=converted)
+    for _subentry, data in updates:
+        if not data.get(CONF_PHONE_PASSWORD):
+            data[CONF_PHONE_PASSWORD] = generate_password()
+    for subentry, data in updates:
+        hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
 
 def sip_account_phone_data(
@@ -465,7 +523,7 @@ def async_setup_endpoint_registry(
             return
         pending_removals.discard(endpoint_id)
         removed = registry.remove(endpoint_id)
-        if removed.kind.is_softphone:
+        if removed.supports_ha_client:
             # An endpoint removed while busy stays alive until its terminal
             # transition.  By then the config-entry update that initiated the
             # removal has already run, so clear page-presence bookkeeping here
@@ -565,10 +623,12 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             else:
                 pending_removals.discard(endpoint.endpoint_id)
                 removed = registry.remove(endpoint.endpoint_id)
-                if removed.kind.is_softphone:
+                if removed.supports_ha_client:
                     _clear_browser_runtime(
                         presence, runtime.softphones, removed.endpoint_id
                     )
+    from .account_runtime import recompute_account_availability
+    recompute_account_availability(hass)
 
 
 def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]]:
@@ -598,6 +658,7 @@ def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]
 def validate_sip_account_namespace(
     entry: ConfigEntry,
     account_data: Iterable[Mapping[str, Any]],
+    *, replacing_endpoint_ids=(),
 ) -> None:
     """Validate a complete future SIP-account set against the dial plan.
 
@@ -621,6 +682,7 @@ def validate_sip_account_namespace(
         subentry.data
         for subentry in phone_subentries(entry)
         if subentry.data.get(CONF_PHONE_KIND) != EndpointKind.SIP_ACCOUNT.value
+        and str(subentry.data.get(CONF_PHONE_ENDPOINT_ID) or "") not in replacing_endpoint_ids
     )
     assist_extension = str(entry.data.get(CONF_ASSIST_EXTENSION) or "").strip()
     if entry.data.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist_extension:
@@ -682,6 +744,13 @@ def replace_sip_account_subentries(
         username = str(data[CONF_PHONE_USERNAME]).casefold()
         previous = existing.get(username)
         if previous is not None:
+            # Account APIs own credential/registrar fields, not unrelated
+            # client preferences, declared HA associations or future metadata.
+            managed = {key: data[key] for key in (
+                CONF_PHONE_KIND, CONF_PHONE_NAME, CONF_PHONE_EXTENSION, CONF_PHONE_USERNAME,
+                CONF_PHONE_PASSWORD, CONF_PHONE_ENABLED, CONF_PHONE_RING_GROUP,
+                CONF_PHONE_CONFERENCE_GROUP, CONF_PHONE_CONFERENCE_RING)}
+            data = {**deepcopy(dict(previous.data)), **managed}
             # A native subentry reconfigure may have changed the username
             # while retaining the opaque endpoint identity. Legacy account
             # services must never silently rename the HA device/entities.

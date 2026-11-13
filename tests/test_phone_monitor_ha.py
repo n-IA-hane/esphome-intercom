@@ -332,7 +332,9 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         assert initial["kind"] == "snapshot" and initial["revision"] == 1
         assert len(initial["phones"]) == 1
         phone = initial["phones"][0]
-        assert phone["state"] == "idle" and phone["availability"] == "available"
+        # A newly bootstrapped account has neither SIP Contacts nor a saved HA
+        # card association. Snapshot readiness is independent of reachability.
+        assert phone["state"] == "unavailable" and phone["availability"] == "offline"
         assert not entry.runtime_data.softphone_presence
         assert await voip_stack.async_unload_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -348,7 +350,8 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         assert new_snapshot["revision"] == 1
         restored, = new_snapshot["phones"]
         assert (restored["endpoint_id"], restored["device_id"], restored["state"]) == (
-            phone["endpoint_id"], phone["device_id"], "idle")
+            phone["endpoint_id"], phone["device_id"], "unavailable")
+        assert restored["availability"] == "offline"
         assert not entry.runtime_data.softphone_presence
         observer = phone_state_observer(hass)
         assert len(observer.projection_listeners) == 1

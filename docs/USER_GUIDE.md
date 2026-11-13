@@ -2,8 +2,9 @@
 
 This guide describes the normal VoIP Stack workflow from installation to the
 first local, SIP and trunk calls, then explains the everyday PBX controls.
-ESP hardware is optional: you can start with a browser phone and ordinary SIP
-phones. For the difference between a phone, card, contact and trunk, see
+ESP hardware is optional: you can use Home Assistant cards and ordinary SIP
+phones on the same account. For the difference between an account, client,
+contact and trunk, see [accounts and clients](ACCOUNTS_AND_CLIENTS.md) and
 [basic concepts](CONCEPTS.md).
 
 ## Find the task you need
@@ -42,10 +43,10 @@ an update. The [changelog](../CHANGELOG.md) retains release history.
 6. Set **Advertise host** only when automatic detection does not produce an
    address reachable by every phone.
 
-The first setup creates one ordinary Home Assistant browser phone. Its default
-name comes from the Home Assistant location name, for example `Casa`. It is a
-real logical phone, not a temporary setup object, and can receive calls even
-before more phones are added.
+The first setup creates one SIP account. Its default name comes from the Home
+Assistant location name, for example `Casa`. Save a card associated with this
+account or register a SIP client to make it available for incoming calls.
+Another card or handset on that account does not create another extension.
 
 ## Add the dashboard phone
 
@@ -69,7 +70,7 @@ visual editor. The compact `custom:voip-stack-card` has three modes:
 
 | Mode | Select | Media owner |
 | --- | --- | --- |
-| `ha_softphone` | An existing logical HA phone | The answering browser or Companion session |
+| `ha_softphone` | An existing SIP account | The answering browser or Companion session |
 | `esp_mirror` | An existing physical ESPHome phone | The ESP phone |
 | `phonebook` | Shared directory, without another phone | No separate media session |
 
@@ -91,23 +92,32 @@ Select a contact from a phone's card to use it as the destination.
 
 ![Shared phonebook with demo room phones and a door station](images/phone-cards/phonebook.png)
 
-### Browser-phone availability
+<a id="browser-phone-availability"></a>
 
-An enabled Home Assistant phone keeps its extension available when its cards
-are closed. Incoming calls can ring logically, run call automations and follow
-the phone's no-answer rule. Open a card during ringing to answer the same call;
+### Account availability and closed browsers
+
+An enabled account is available when it has a valid SIP registration or a
+configured HA association, such as a saved card. Closing the browser does not
+remove that association. An account with neither is offline; opening an unsaved
+card preview is not a persistent association. Incoming calls can ring logically,
+run call automations and follow the account's no-answer rule. Open a card during
+ringing to answer the same call;
 the answering browser supplies its microphone and speaker with the normal
 permissions. Opening a card does not re-enable a disabled phone.
 
 Browser audio and auto-answer still need a running receiving HA frontend,
 with a card loaded or the optional global popup enabled. A logical phone alone
-cannot supply a microphone or answer calls by itself.
+cannot supply a microphone or answer calls by itself. A card opened while a SIP
+handset is talking observes the same account call without taking its media.
+After editing a YAML dashboard, use **Reload card associations** to reread its
+saved configuration without reloading the PBX. Existing saved `ha_softphone`,
+`card_mode` and `device_id` values remain valid.
 
 ### Receive calls over other Home Assistant views
 
 The **2026.11.1-dev** preview includes optional global call popups for an
-existing HA browser phone. This is a browser setting, not another card type
-or another phone to provision.
+existing account. This associates the HA client with that account, rather than
+creating another card type or another phone to provision.
 
 1. Open the intended phone under **Settings > Devices & services > VoIP Stack**
    and choose **Visit** on its Device page. Alternatively, open the phone
@@ -394,21 +404,24 @@ The public actions are:
 | `voip_stack.set_auto_answer` | Persist Auto Answer for an HA phone |
 | `voip_stack.set_send_video` | Persist default camera transmission |
 
-## Add more Home Assistant phones
+<a id="add-more-home-assistant-phones"></a>
 
-Open **Settings > Devices & services > VoIP Stack > Add phone > Home Assistant
-browser phone**.
+## Add more accounts
 
-Create one phone per independent place or browser session, for example:
+Open **Settings > Devices & services > VoIP Stack > Add SIP account**.
+
+Create an account for each independent extension or queue agent, for example:
 
 - `Casa`, extension `666`;
 - `Test`, extension `667`;
 - `Reception`, extension `200`.
 
-Each phone receives its own Device, call state, DND, Auto Answer, extension,
-groups and video settings. Bind each card to the intended Device. Two cards in
-one browser tab do not create two physical microphones or cameras, so use a
-separate browser or Companion session for simultaneous independent media.
+Each account receives its own Device, call state, DND, extension, groups and
+mailbox. Associate physical phones through **Associated physical phones**, with
+an explicit line position, and bind HA cards to the same account Device.
+Browser Auto Answer and Send Video remain HA client preferences; they do not
+change a handset's hardware auto-answer configuration. Several clients of one
+account share its policies and compete for the same incoming conversation.
 
 Numeric extensions must be unique across HA phones, SIP accounts, ESPHome
 phones, manual contacts and Assist. If discovery introduces a duplicate,
@@ -422,7 +435,7 @@ explicit SIP addresses remain usable while you resolve the conflict.
 ## Register a SIP client or IP phone
 
 1. Enable the local registrar in **VoIP Stack > Configure**.
-2. Create an account through **Add phone > SIP account**, or use the
+2. Create an account through **Add SIP account**, or use the
    `voip_stack.create_account` action.
 3. Configure the SIP client with the Home Assistant advertise host, SIP port,
    username and generated password.
@@ -430,8 +443,9 @@ explicit SIP addresses remain usable while you resolve the conflict.
 
 The account supplies a persistent phone identity in the preview directory.
 Its active REGISTER Contact binding supplies the current SIP destination;
-registration expiry makes that route unavailable without deleting the account,
-extension, mailbox or directory identity. See the [directory contract](PHONEBOOK_PROTOCOL.md).
+registration expiry removes that SIP route without deleting the account,
+extension, mailbox or directory identity. A configured HA association can still
+keep the account available. See the [directory contract](PHONEBOOK_PROTOCOL.md).
 Generated account passwords are returned by the account-management action and
 are not placed in entity state.
 
@@ -706,6 +720,13 @@ slot to retrieve it. Do not transfer it to 700 again. HA's slots are separate
 from another PBX's own parking extensions; a trunk must route those numbers to
 HA if they are used from the other PBX.
 
+A handset and card belonging to the same account can use this sequence too:
+park the conversation, then call its reported slot from the other client.
+The remote party stays in the parked call while the account's old client
+releases its line. A provisioned **Monitor/retrieve parking** key watches a slot;
+it is different from the profile's explicit **Park current call** action. See
+[physical phone keys](PHONE_PROVISIONING.md#parking-monitor-and-action).
+
 ### Answer a phone that is still ringing
 
 Choose **VoIP Stack: Pick up call** in the HA action editor:
@@ -745,6 +766,36 @@ The [recording guide](CALL_RECORDING.md) describes file access, automation event
 and supported call paths. Recording is optional and off until requested.
 
 ## Make an announcement without a browser
+
+For a single TTS announcement to one or more accounts or saved paging groups,
+choose **VoIP Stack: Announce**. Select up to sixteen targets and either a TTS
+provider plus a message, or an audio file from the media picker. Busy targets
+are skipped. The default answer window is 5 seconds and the total limit is
+120 seconds. A recipient must support and permit the requested auto-answer or
+answer within that window. A closed browser has no speaker for an announcement,
+even when its saved association keeps the account logically available.
+
+This example assumes the existing account `Reception` and a configured TTS
+entity `tts.piper`; select your own account/group and provider in the editor:
+
+```yaml
+action: voip_stack.announce
+data:
+  targets:
+    - Reception
+  tts_entity_id: tts.piper
+  message: "A delivery has arrived at reception."
+  answer_timeout: 5
+  timeout: 120
+  wait: true
+```
+
+`wait: true` waits for playback and recipient cleanup. To continue the automation
+while an announcement runs, use `wait: false` and a `response_variable`, then
+pass its `announcement_id` to `voip_stack.stop_announcement` when needed. Do not
+supply a TTS message and a media file in the same request.
+
+### Chain several messages in one call
 
 An Automation contact can originate an audio call from the HA backend. No
 microphone, open card or ESP caller is required.

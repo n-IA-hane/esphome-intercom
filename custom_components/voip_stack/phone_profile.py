@@ -50,7 +50,7 @@ def _key_target(runtime, key, endpoint_id):
             raise ValueError("phone_queue_membership_required")
         prefix = "queue-login+" if function == "queue_login" else "queue-pause+"
         return [(prefix + part) for part in (queue.extension, queue.name, queue.queue_id) if part]
-    if function == "park":
+    if function in {"park", "park_call"}:
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", target):
             raise ValueError("invalid_parking_target")
         return [target]
@@ -88,7 +88,7 @@ def resolve_phone_keys(runtime, phone, profile):
         if len(label.encode()) > int(cap.get("max_label_bytes", 31)):
             raise ValueError("phone_key_label_too_long")
         result.append({**key, "line": int(key["line"]), "label": label, "dial_target": target,
-                       "subscription_target": target, "event_package": "dialog" if key["function"]
+                       "subscription_target": "" if key["function"] == "park_call" else target, "event_package": "dialog" if key["function"]
                        in {"blf", "queue_login", "queue_pause", "park"} else "",
                        "pickup_target": ""})
     return result
@@ -159,6 +159,7 @@ def validate_context(profile: dict, context: dict) -> dict:
         raise ValueError("time zone has no declared vendor mapping")
     # Vendor clock data is owned by the verified profile, never by the caller.
     c["clock"] = deepcopy(time_zones[time_zone]) if time_zone else {}
+    c["dnd_sync"] = caps.get("dnd_sync") is True
 
     def strings(value) -> None:
         if isinstance(value, str) and any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
@@ -229,6 +230,8 @@ def validate_context(profile: dict, context: dict) -> dict:
         raise ValueError("language has no declared vendor mapping")
     if c["directory"]["ldap"]["host"] and "ldap" not in caps["functions"]:
         raise ValueError("LDAP is not mapped for this subset")
+    if not c["lines"] and c["directory"]["ldap"]["host"]:
+        raise ValueError("unassigned hardware configuration cannot include LDAP credentials")
     if c["provisioning"]["url"] and "provision" not in caps["functions"]:
         raise ValueError("provisioning URL is not mapped for this subset")
     return c
