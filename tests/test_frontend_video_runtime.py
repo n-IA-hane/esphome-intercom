@@ -1588,6 +1588,8 @@ for (const useRvfc of [true, false]) {{
       this.style = {{}};
       this.attrs = {{}};
       this.readyState = 4;
+      this.videoWidth = 360; // upright portrait, as WebKit reports on iPhone
+      this.videoHeight = 640;
       this.currentTime = 0;
       this.paused = true;
       this.removed = false;
@@ -1609,9 +1611,22 @@ for (const useRvfc of [true, false]) {{
     stop() {{ this.stopped = true; }},
   }};
   const frames = [];
+  class FakeCanvas {{
+    constructor() {{
+      this.width = 0;
+      this.height = 0;
+      this.drawn = [];
+    }}
+    getContext() {{
+      return {{ drawImage: (...args) => {{ this.drawn = [args]; }} }};
+    }}
+  }}
   class FakeVideoFrame {{
     constructor(src, init) {{
-      assert.ok(src instanceof FakeVideo);
+      assert.ok(src instanceof FakeCanvas, "frames must come from the orientation-correct canvas");
+      assert.equal(src.drawn.length, 1);
+      this.width = src.width;
+      this.height = src.height;
       this.timestamp = init.timestamp;
       this.closed = 0;
       frames.push(this);
@@ -1627,7 +1642,14 @@ for (const useRvfc of [true, false]) {{
     }},
     WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
     EncodedVideoChunk: class {{ constructor(init) {{ Object.assign(this, init); }} }},
-    document: {{ createElement: (tag) => {{ assert.equal(tag, "video"); return new FakeVideo(); }}, body }},
+    document: {{
+      createElement: (tag) => {{
+        if (tag === "canvas") return new FakeCanvas();
+        assert.equal(tag, "video");
+        return new FakeVideo();
+      }},
+      body,
+    }},
     VideoFrame: FakeVideoFrame,
     navigator: {{ mediaDevices: {{ async getUserMedia() {{
       return {{ getVideoTracks: () => [track], getTracks: () => [track] }};
@@ -1678,6 +1700,10 @@ for (const useRvfc of [true, false]) {{
   }}
   assert.ok(workers[0].messages.some(([m]) => m.type === "encode_jpeg"), `frame reached encoder (rvfc=${{useRvfc}})`);
   assert.equal(frames[0].timestamp, 100000);
+  // Track settings were landscape 640x360 but the upright video is portrait:
+  // the frame must keep the upright orientation instead of being rotated.
+  assert.equal(frames[0].width, 360);
+  assert.equal(frames[0].height, 640);
 
   await sender._cleanupSender();
   assert.equal(track.stopped, true);

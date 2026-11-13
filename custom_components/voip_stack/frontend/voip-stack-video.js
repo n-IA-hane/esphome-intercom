@@ -45,7 +45,7 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
 // VideoFrames from a hidden <video> element instead and expose the same
 // read()/cancel() surface as a ReadableStreamDefaultReader. Frames that arrive
 // while no read() is pending are dropped, so latency cannot accumulate.
-async function createVideoElementFrameReader(stream, framerate) {
+async function createVideoElementFrameReader(stream, framerate, target = {}) {
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
@@ -62,6 +62,15 @@ async function createVideoElementFrameReader(stream, framerate) {
   });
   video.srcObject = stream;
   document.body.appendChild(video);
+  // VideoFrame(<video>) returns the raw sensor orientation on WebKit (iPhone
+  // frames arrive rotated 90 degrees) while drawImage() honours the rotation
+  // used to display the video, so route frames through a canvas.
+  let canvas = null;
+  let context2d = null;
+  try {
+    canvas = document.createElement("canvas");
+    context2d = canvas.getContext("2d", { alpha: false });
+  } catch (_) {}
   let cancelled = false;
   let waiter = null;
   let callbackId = null;
@@ -82,7 +91,22 @@ async function createVideoElementFrameReader(stream, framerate) {
       const timestamp = Number.isFinite(seconds) && seconds > 0
         ? Math.round(seconds * 1e6)
         : Math.round(performance.now() * 1000);
-      frame = new VideoFrame(video, { timestamp });
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      if (context2d && sourceWidth > 0 && sourceHeight > 0) {
+        const targetWidth = Number(target.width) || 0;
+        const targetHeight = Number(target.height) || 0;
+        const sameOrientation = targetWidth > 0 && targetHeight > 0 &&
+          (sourceHeight > sourceWidth) === (targetHeight > targetWidth);
+        const width = sameOrientation ? targetWidth : sourceWidth & ~1;
+        const height = sameOrientation ? targetHeight : sourceHeight & ~1;
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        context2d.drawImage(video, 0, 0, width, height);
+        frame = new VideoFrame(canvas, { timestamp });
+      } else {
+        frame = new VideoFrame(video, { timestamp });
+      }
     } catch (_) {
       return;
     }
@@ -1236,7 +1260,7 @@ export class VoipStackVideo extends EventTarget {
         const processor = new MediaStreamTrackProcessor({ track });
         reader = processor.readable.getReader();
       } else {
-        reader = await createVideoElementFrameReader(stream, framerate);
+        reader = await createVideoElementFrameReader(stream, framerate, { width, height });
         console.warn("voip-stack-video[diag]: fallback reader ready", { t: Math.round(performance.now()) });
       }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
