@@ -286,7 +286,7 @@ jobs:
           --output "test-results/${{ matrix.build_dir }}-coordinated-sources.json"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.14.2"
+          python-version: "3.14"
       - name: Install official ESPHome and composition helper dependency
         run: python -m pip install esphome==2026.10.0 pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Compile and link ${{ matrix.label }}
@@ -364,7 +364,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.14.2"
+          python-version: "3.14"
       - name: Install the reported official ESPHome version
         run: python -m pip install esphome==2026.10.2
       - name: Copy the public WS3 Audio profile without source overrides
