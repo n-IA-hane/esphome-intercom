@@ -8,6 +8,20 @@
   context has no `MediaStreamTrackProcessor`. Preserve the existing encoder and
   media ownership paths. Thanks to [Cybul3000](https://github.com/n-IA-hane/esphome-intercom/pull/163)
   for the contribution and Safari, iOS and Firefox checks.
+- Detect camera encoders that greatly exceed their requested bitrate and try
+  the supported software configuration without changing the negotiated codec.
+  Thanks to [Matt Sullivan](https://github.com/n-IA-hane/esphome-intercom/pull/158)
+  for the contribution and Android tablet measurements.
+- Keep fallback camera timestamps monotonic, preserve image proportions during
+  rotation, and cancel pending playback when its sender is retired. Capture
+  callbacks run only while the encoder is waiting for a frame.
+
+### Account controls
+
+- Keep DND feature subscriptions synchronized when a phone addresses its
+  account by extension instead of its SIP username.
+- Finish resolving the latest popup account after an older pending lookup,
+  without requiring a page reload or a second selection.
 
 Rolling development preview, recovered incrementally from stable `2026.11.0`.
 Existing PBX functions, including parking, pickup, voicemail,

@@ -238,7 +238,7 @@ class SipApplicationMethods:
     def _feature_changed(self, event):
         if event.previous is not None and event.previous.dnd == event.endpoint.dnd:
             return
-        self._notify_subscribers(event.endpoint.username, event="as-feature-event")
+        self._notify_subscribers(event.endpoint.endpoint_id, event="as-feature-event")
 
     def _owned_unsubscribe(self, request, addr, transport, sender):
         """Contact removal does not revoke an established event dialog's cleanup."""
@@ -873,8 +873,16 @@ class SipApplicationMethods:
             if subscription.expires_at <= now:
                 self._end_subscription(subscription)
                 continue
-            watched = self._presence_publisher(subscription) if event == "presence" else subscription.target
-            if subscription.event != event or watched.casefold() != target.casefold():
+            if subscription.event != event:
+                continue
+            # The accepted feature dialog owns an account, independently of
+            # which of its public SIP aliases addressed the subscription.
+            if event == "as-feature-event":
+                matches = subscription.feature_endpoint_id == target
+            else:
+                watched = self._presence_publisher(subscription) if event == "presence" else subscription.target
+                matches = watched.casefold() == target.casefold()
+            if not matches:
                 continue
             result = self._notification_result(
                 subscription,

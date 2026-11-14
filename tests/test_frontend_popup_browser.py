@@ -106,6 +106,36 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+def test_changed_popup_account_resolves_after_previous_request_finishes(popup_page):
+    """Saving B while A is resolving must subscribe to B without another event."""
+    page = popup_page
+    page.evaluate("""async () => {
+      window.secondPhone={...phone,name:'Second',device_id:'second-device',endpoint_id:'sip:second'};
+      const original=hass.callWS;
+      let delayed=false;
+      hass.callWS=request=>{
+        if(request.type==='voip_stack/list_devices')return Promise.resolve({devices:[phone,secondPhone],entity_ids:{}});
+        if(request.type==='voip_stack/ha_popup_binding'&&!delayed){
+          delayed=true;
+          return new Promise(resolve=>{window.finishFirstBinding=resolve;});
+        }
+        return original(request);
+      };
+      await __voipStackPopup.bindPhone(phone,true);
+    }""")
+    page.wait_for_function("typeof finishFirstBinding==='function'")
+    page.evaluate("async()=>{await __voipStackPopup.bindPhone(secondPhone,true);}")
+    page.evaluate("""()=>{
+      current={...current,device_id:secondPhone.device_id,endpoint_id:secondPhone.endpoint_id};
+      finishFirstBinding(null);
+    }""")
+    page.wait_for_function("""__voipStackPopup.phone?.endpoint_id===secondPhone.endpoint_id &&
+      streams.some(s=>s.active&&s.request.type==='voip_stack/subscribe_ha_softphone_state'&&s.request.device_id===secondPhone.device_id)""")
+    assert page.evaluate("JSON.parse(localStorage.getItem('voip_stack_popup_phone')).endpoint_id") == "sip:second"
+    assert page.evaluate("streams.filter(s=>s.active&&s.request.type==='voip_stack/subscribe_ha_softphone_state').length") == 1
+    assert page.evaluate("mics") == 0
+
+
 def test_shared_phone_terminal_resyncs_passive_browser_without_reload(popup_page):
     """Real cards/engines, two page contexts, backend ACK-only endpoint stream."""
     first = popup_page

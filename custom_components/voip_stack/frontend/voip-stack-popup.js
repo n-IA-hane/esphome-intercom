@@ -213,7 +213,18 @@ export class VoipStackPopup extends HTMLElement {
     this.syncPreference();
     if (!this.binding?.endpoint_id || !this._connection) return;
     if (this._resolvingBinding) return this._resolvingBinding;
-    this._resolvingBinding = this._resolveBinding().finally(() => { this._resolvingBinding = null; });
+    this._resolvingBinding = (async () => {
+      let binding, connection;
+      do {
+        binding = this.binding;
+        connection = this._connection;
+        if (!binding?.endpoint_id || !connection) break;
+        await this._resolveBinding();
+        // Discarding an obsolete result must still service the selection
+        // saved while its request was pending. The existing owner drains only
+        // the latest selection, without parallel resolutions or a retry timer.
+      } while (binding !== this.binding || connection !== this._connection);
+    })().finally(() => { this._resolvingBinding = null; });
     return this._resolvingBinding;
   }
   async _resolveBinding() {

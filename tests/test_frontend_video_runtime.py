@@ -1793,7 +1793,7 @@ for (const useRvfc of [true, false]) {{
       this.drawn = [];
     }}
     getContext() {{
-      return {{ drawImage: (...args) => {{ this.drawn = [args]; }} }};
+      return {{ fillRect() {{}}, drawImage: (...args) => {{ this.drawn = [args]; }} }};
     }}
   }}
   class FakeVideoFrame {{

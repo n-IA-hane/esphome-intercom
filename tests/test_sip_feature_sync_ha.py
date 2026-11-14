@@ -38,7 +38,7 @@ async def features(phone_lab):
     from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistration
 
     lab = phone_lab
-    data = sip_account_phone_data({"username": "alice", "password": "fixture-password", "display_name": "Alice"}, endpoint_id="sip:alice")
+    data = sip_account_phone_data({"username": "alice", "password": "fixture-password", "display_name": "Alice", "extension": "301"}, endpoint_id="sip:alice")
     _add_phone_subentry(lab.hass, lab.entry, data=data, title="Alice")
     sync_registry_from_entry(lab.hass, lab.entry)
     lab.registrar.update_accounts([SipAccount("alice", "Alice", "fixture-password"), SipAccount("bob", "Bob", "fixture-bob")])
@@ -54,17 +54,18 @@ async def features(phone_lab):
     await app.stop()
 
 
-async def test_phone_and_ha_dnd_share_one_state_and_subscription(features):
+@pytest.mark.parametrize("target", ["alice", "301"])
+async def test_phone_and_ha_dnd_share_one_state_and_subscription(features, target):
     from custom_components.voip_stack.switch import async_set_endpoint_dnd
     from custom_components.voip_stack.phone_config import phone_subentry_by_endpoint_id
 
     lab, app, sender, sent = features
-    result = await app.handle(request(), ("127.0.0.2", 5060), "UDP", sender)
+    result = await app.handle(request(target=target), ("127.0.0.2", 5060), "UDP", sender)
     assert result.status == 200
     result.follow_up_scheduler()
     await lab.hass.async_block_till_done()
     assert ET.fromstring(sent[-1].follow_up.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
-    result = await app.handle(request(enabled=True, cseq=2, tag=result.to_tag), ("127.0.0.2", 5060), "UDP", sender)
+    result = await app.handle(request(target=target, enabled=True, cseq=2, tag=result.to_tag), ("127.0.0.2", 5060), "UDP", sender)
     assert result.status == 200
     result.follow_up_scheduler()
     await lab.hass.async_block_till_done()
@@ -131,7 +132,8 @@ async def test_unsubscribe_releases_feature_observer_and_owned_timer(features):
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_listener(wire_lab):
+@pytest.mark.parametrize("target_user", ["outbound-phone", "301"])
+async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_listener(wire_lab, target_user):
     from custom_components.voip_stack.core import sip
     from custom_components.voip_stack.phone_config import _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry
     from custom_components.voip_stack.store import config_entry
@@ -140,12 +142,12 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
     wire = wire_lab
     entry = config_entry(wire.lab.hass)
     data = sip_account_phone_data({"username": "outbound-phone", "password": "fixture-only-password",
-        "display_name": "Feature phone"}, endpoint_id="sip:feature-phone")
+        "display_name": "Feature phone", "extension": "301"}, endpoint_id="sip:feature-phone")
     _add_phone_subentry(wire.lab.hass, entry, data=data, title="Feature phone")
     sync_registry_from_entry(wire.lab.hass, entry)
     await register_phone(wire, outbound=False, discover=False)
     phone, user, call_id = wire.a, "outbound-phone", "feature-sync-wire"
-    target = f"sip:{user}@127.0.0.1:{wire.listener[1]}"
+    target = f"sip:{target_user}@127.0.0.1:{wire.listener[1]}"
     def send(sequence, *, tag="", value=None, expires=300):
         headers = [("Via", f"SIP/2.0/UDP {phone.address[0]}:{phone.address[1]};branch=z9hG4bKfeature{sequence};rport"),
             ("From", f"<sip:{user}@127.0.0.1>;tag=feature-phone"),

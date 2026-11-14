@@ -81,11 +81,10 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   });
 }
 
-// Safari/WebKit and Firefox do not implement MediaStreamTrackProcessor. Pull
-// VideoFrames from a hidden <video> element instead and expose the same
-// read()/cancel() surface as a ReadableStreamDefaultReader. Frames that arrive
-// while no read() is pending are dropped, so latency cannot accumulate.
-async function createVideoElementFrameReader(stream, framerate) {
+// Use the same reader contract when this context has no track processor.
+// Each pending read arms at most one callback; a slow encoder cannot build
+// a queue of captured frames or keep an otherwise idle timer running.
+function createVideoElementFrameReader(stream, framerate) {
   let target = {};
   const video = document.createElement("video");
   video.muted = true;
@@ -93,77 +92,70 @@ async function createVideoElementFrameReader(stream, framerate) {
   video.setAttribute("playsinline", "");
   video.setAttribute("muted", "");
   Object.assign(video.style, {
-    position: "fixed",
-    width: "1px",
-    height: "1px",
-    opacity: "0",
-    pointerEvents: "none",
-    left: "0",
-    top: "0",
+    position: "fixed", width: "1px", height: "1px", opacity: "0",
+    pointerEvents: "none", left: "0", top: "0",
   });
   video.srcObject = stream;
   document.body.appendChild(video);
-  // VideoFrame(<video>) returns the raw sensor orientation on WebKit (iPhone
-  // frames arrive rotated 90 degrees) while drawImage() honours the rotation
-  // used to display the video, so route frames through a canvas.
-  let canvas = null;
-  let context2d = null;
-  try {
-    canvas = document.createElement("canvas");
-    context2d = canvas.getContext("2d", { alpha: false });
-  } catch (_) {}
-  let cancelled = false;
-  let waiter = null;
-  let callbackId = null;
-  let timer = null;
-  let lastTime = -1;
+  const canvas = document.createElement("canvas");
+  const context2d = canvas.getContext("2d", { alpha: false });
+  let cancelled = false, waiter = null, callbackId = null, timer = null;
+  let rejectStartup = null, lastTime = -1, lastTimestamp = -1;
+  const intervalMs = Math.max(10, Math.round(1000 / Math.max(1, framerate || 15)));
   const useRvfc = typeof video.requestVideoFrameCallback === "function";
   const finish = (result) => {
     const resolve = waiter;
     waiter = null;
-    if (resolve) resolve(result);
+    resolve?.(result);
   };
   const emit = (mediaTime) => {
-    if (cancelled || !waiter) return;
-    if (!(video.readyState >= 2)) return;
-    let frame;
+    if (cancelled || !waiter || !(video.readyState >= 2)) return;
     try {
       const seconds = Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
-      const timestamp = Number.isFinite(seconds) && seconds > 0
-        ? Math.round(seconds * 1e6)
-        : Math.round(performance.now() * 1000);
-      const sourceWidth = video.videoWidth;
-      const sourceHeight = video.videoHeight;
-      if (context2d && sourceWidth > 0 && sourceHeight > 0) {
-        const targetWidth = Number(target.width) || 0;
-        const targetHeight = Number(target.height) || 0;
-        const sameOrientation = targetWidth > 0 && targetHeight > 0 &&
-          (sourceHeight > sourceWidth) === (targetHeight > targetWidth);
-        const width = sameOrientation ? targetWidth : sourceWidth & ~1;
-        const height = sameOrientation ? targetHeight : sourceHeight & ~1;
-        if (canvas.width !== width) canvas.width = width;
-        if (canvas.height !== height) canvas.height = height;
-        context2d.drawImage(video, 0, 0, width, height);
-        frame = new VideoFrame(canvas, { timestamp });
-      } else {
-        frame = new VideoFrame(video, { timestamp });
-      }
-    } catch (_) {
-      return;
-    }
-    finish({ value: frame, done: false });
+      // Zero is a valid first media timestamp. Mixing it with performance.now()
+      // made the next frame jump backwards to a different clock origin.
+      const candidate = Number.isFinite(seconds) && seconds >= 0
+        ? Math.round(seconds * 1e6) : Math.max(0, lastTimestamp + intervalMs * 1000);
+      const timestamp = Math.max(lastTimestamp + 1, candidate);
+      const sourceWidth = video.videoWidth, sourceHeight = video.videoHeight;
+      if (!(sourceWidth > 0 && sourceHeight > 0) || !context2d) return;
+      const width = Math.max(2, (Number(target.width) || sourceWidth) & ~1);
+      const height = Math.max(2, (Number(target.height) || sourceHeight) & ~1);
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      // drawImage honours display orientation. Letterbox a later rotation or
+      // aspect change instead of stretching it into the negotiated geometry.
+      const scale = Math.min(width / sourceWidth, height / sourceHeight);
+      const drawnWidth = sourceWidth * scale, drawnHeight = sourceHeight * scale;
+      context2d.fillStyle = "black";
+      context2d.fillRect(0, 0, width, height);
+      context2d.drawImage(video, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+      const frame = new VideoFrame(canvas, { timestamp });
+      lastTimestamp = timestamp;
+      finish({ value: frame, done: false });
+    } catch (_) { /* Retry only while the existing read is pending. */ }
   };
-  const armRvfc = () => {
-    if (cancelled) return;
-    callbackId = video.requestVideoFrameCallback((_now, metadata) => {
-      callbackId = null;
-      emit(metadata?.mediaTime);
-      armRvfc();
-    });
+  const onVideoFrame = (_now, metadata) => {
+    callbackId = null;
+    emit(metadata?.mediaTime);
+    arm();
+  };
+  const onTimer = () => {
+    timer = null;
+    const time = video.currentTime;
+    if (time !== lastTime) { lastTime = time; emit(time); }
+    arm();
+  };
+  const arm = () => {
+    if (cancelled || !waiter || callbackId !== null || timer !== null) return;
+    if (useRvfc) callbackId = video.requestVideoFrameCallback(onVideoFrame);
+    else timer = setTimeout(onTimer, intervalMs);
   };
   const cleanup = () => {
+    if (cancelled) return;
     cancelled = true;
-    if (timer !== null) clearInterval(timer);
+    rejectStartup?.(new Error("Camera frame reader cancelled"));
+    if (timer !== null) clearTimeout(timer);
     timer = null;
     if (callbackId !== null) {
       try { video.cancelVideoFrameCallback?.(callbackId); } catch (_) {}
@@ -174,39 +166,32 @@ async function createVideoElementFrameReader(stream, framerate) {
     try { video.remove(); } catch (_) {}
     finish({ done: true });
   };
-  try {
-    await video.play();
-  } catch (error) {
-    cleanup();
-    throw error;
-  }
-  if (useRvfc) {
-    armRvfc();
-  } else {
-    const intervalMs = Math.max(10, Math.round(1000 / Math.max(1, framerate || 15)));
-    timer = setInterval(() => {
-      const time = video.currentTime;
-      if (time === lastTime) return;
-      lastTime = time;
-      emit(time);
-    }, intervalMs);
-  }
   return {
-    // Upright (display-oriented) size, known once playback has started.
-    size: video.videoWidth > 0 && video.videoHeight > 0
-      ? { width: video.videoWidth, height: video.videoHeight }
-      : null,
+    async start() {
+      let timeout;
+      try {
+        await Promise.race([
+          video.play(),
+          new Promise((_resolve, reject) => {
+            rejectStartup = reject;
+            timeout = setTimeout(() => reject(new Error("Camera playback did not start")), CODEC_SETUP_TIMEOUT_MS);
+          }),
+        ]);
+        if (cancelled) throw new Error("Camera frame reader cancelled");
+      } catch (error) { cleanup(); throw error; }
+      finally { clearTimeout(timeout); rejectStartup = null; }
+    },
+    get size() {
+      return video.videoWidth > 0 && video.videoHeight > 0
+        ? { width: video.videoWidth, height: video.videoHeight } : null;
+    },
     setTarget(next) { target = next || {}; },
     read() {
       if (cancelled) return Promise.resolve({ done: true });
-      return new Promise((resolve) => {
-        waiter = resolve;
-      });
+      if (waiter) return Promise.reject(new Error("Camera frame read already pending"));
+      return new Promise((resolve) => { waiter = resolve; arm(); });
     },
-    cancel() {
-      cleanup();
-      return Promise.resolve();
-    },
+    cancel() { cleanup(); return Promise.resolve(); },
   };
 }
 
@@ -1170,6 +1155,8 @@ export class VoipStackVideo extends EventTarget {
   }
 
   async _replaceSender(codec, generation, deviceId, exact) {
+    this._senderSetupReader?.cancel();
+    this._senderSetupReader = null;
     const switchGeneration = ++this._senderSwitchGeneration;
     const senderGeneration = ++this._senderSerial;
     let setup = this._prepareSender(
@@ -1275,21 +1262,18 @@ export class VoipStackVideo extends EventTarget {
       if (!track) throw new Error("No browser camera track available");
       let settings = track.getSettings();
       if (!hasTrackProcessor) {
-        reader = await createVideoElementFrameReader(
+        reader = createVideoElementFrameReader(
           stream,
           Number(settings.frameRate) || 15,
         );
+        this._senderSetupReader = reader;
+        await reader.start();
         // getSettings() can report the unrotated sensor size while the video
         // element (and therefore our frames) is upright. Configure the encoder
         // with the orientation we will actually feed it, otherwise WebCodecs
         // rescales the frames and the picture looks stretched.
         const size = reader.size;
-        if (
-          size &&
-          (size.height > size.width) !== (Number(settings.height) > Number(settings.width))
-        ) {
-          settings = { ...settings, width: settings.height, height: settings.width };
-        }
+        if (size) settings = { ...settings, ...size };
       }
       const {
         width,
@@ -1390,6 +1374,7 @@ export class VoipStackVideo extends EventTarget {
         settings,
       };
     } finally {
+      if (this._senderSetupReader === reader) this._senderSetupReader = null;
       if (!prepared) {
         if (reader) await reader.cancel().catch(() => {});
         if (encoder && encoder.state !== "closed") encoder.close();
@@ -1940,6 +1925,8 @@ export class VoipStackVideo extends EventTarget {
     this._senderSwitchGeneration++;
     this._senderGeneration = ++this._senderSerial;
     this._senderSetupPromise = null;
+    this._senderSetupReader?.cancel();
+    this._senderSetupReader = null;
     const resources = this._takeSenderResources();
     this._cameraSettings = {};
     this._canSend = false;
