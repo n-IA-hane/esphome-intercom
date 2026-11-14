@@ -1,6 +1,13 @@
 # Changelog
 
-## 2026.11.1-dev
+## 2026.12.0-dev
+
+### Browser camera frame sources
+
+- Supply camera frames through a muted video element when the current browser
+  context has no `MediaStreamTrackProcessor`. Preserve the existing encoder and
+  media ownership paths. Thanks to [Cybul3000](https://github.com/n-IA-hane/esphome-intercom/pull/163)
+  for the contribution and Safari, iOS and Firefox checks.
 
 Rolling development preview, recovered incrementally from stable `2026.11.0`.
 Existing PBX functions, including parking, pickup, voicemail,
