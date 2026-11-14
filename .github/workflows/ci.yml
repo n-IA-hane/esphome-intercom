@@ -167,7 +167,7 @@ jobs:
           echo "$RUNNER_TEMP/browser-bin" >> "$GITHUB_PATH"
       - name: Check call controls and decoded video in Chromium
         env:
-          PYTEST_ADDOPTS: --junitxml=test-results/browser.xml -ra
+          PYTEST_ADDOPTS: --junitxml=test-results/browser.xml -ra -vv -o faulthandler_timeout=15
         run: PYTHON=python scripts/test_suite.sh browser --keep-going
       - name: Require executed browser tests
         run: python scripts/check_test_results.py test-results/browser.xml

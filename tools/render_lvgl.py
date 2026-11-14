@@ -12,6 +12,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -96,6 +97,44 @@ def find_id(config, domain, name):
         if isinstance(ha, dict):
             source.append(ha.get("conference_ring", {}))
     return next((node for node in nodes(source) if str(node.get("id")) == name and len(node) > 1), None)
+
+
+def number_owner_traits(config, owner):
+    """Replace hardware with its Number contract, never with its view's ticks.
+
+    Validated template/VoIP Numbers carry their bounds in the declaration.
+    Audio Stack supplies these traits in number.py::to_code instead; these
+    explicit host hardware fixtures follow that producer's public contract.
+    """
+    declaration = find_id(config, "number", owner)
+    if declaration is None:
+        raise ValueError(f"No production Number declaration for {owner!r}")
+    keys = ("min_value", "max_value", "step")
+    if all(key in declaration for key in keys):
+        values = [float(declaration[key]) for key in keys]
+    else:
+        values = None
+        for block in config.get("number", []):
+            if block.get("platform") != "esp_audio_stack":
+                continue
+            role = next((key for key in ("master_volume", "mic_gain", "input_pga", "reference_pga")
+                         if isinstance(block.get(key), dict) and str(block[key].get("id")) == owner), None)
+            if role == "master_volume":
+                values = [0.0, 100.0, 5.0]
+            elif role == "mic_gain":
+                values = [float(declaration["min_value"]), float(declaration["max_value"]), 1.0]
+            elif role in ("input_pga", "reference_pga"):
+                if "_hardware_gain_es8311" not in block:
+                    raise ValueError(f"Number {owner!r} needs the validated hardware codec traits")
+                values = [0.0, 36.0, 6.0] if block["_hardware_gain_es8311"] else [0.0, 37.5, 0.5]
+            if values is not None:
+                break
+        if values is None:
+            raise ValueError(f"Unknown production Number traits for {owner!r}")
+    low, high, step = values
+    if not all(math.isfinite(value) for value in values) or high < low or step <= 0:
+        raise ValueError(f"Invalid production Number traits for {owner!r}")
+    return dict(zip(keys, values)) | {"unit_of_measurement": declaration.get("unit_of_measurement", "")}
 
 
 def overlay_policy(config):
@@ -192,7 +231,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         lvgl = next(item for item in lvgl if any(str(p.get("id")) == page_id for p in item.get("pages", [])))
     page = copy.deepcopy(next(p for p in lvgl["pages"] if str(p.get("id")) == page_id))
     page_hash = hashlib.sha256(yaml_util.dump(page).encode()).hexdigest()
-    microphone = next((node for node in nodes(page) if str(node.get("id", "")) == "ui_mic_vol_slider"), None)
+    microphone = next((node for name in ("ui_input_gain_slider", "ui_mic_vol_slider")
+                       for node in nodes(page) if str(node.get("id", "")) == name), None)
     microphone_owner = None
     if microphone is not None:
         owners = [name for name in references(microphone) if find_id(config, "number", name)]
@@ -325,13 +365,12 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         host["ui_fixture"]["conference_ring_id"] = "voip_conference_ring"
     for owner in sorted(required):
         if find_id(config, "number", owner):
-            slider = next((node for node in nodes(page) if node.get("min_value") is not None
-                           and owner in references(node)), {})
-            low, high = float(slider.get("min_value", 0)), float(slider.get("max_value", 100))
+            traits = number_owner_traits(config, owner)
+            low, high = traits["min_value"], traits["max_value"]
             value = high if owner == "master_volume" else min(high, max(low, 12.0))
             host.setdefault("number", []).append({
-                "platform": "template", "id": owner, "min_value": low, "max_value": high,
-                "step": 1, "initial_value": value, "optimistic": False,
+                "platform": "template", "id": owner, **traits,
+                "initial_value": value, "optimistic": False,
                 "update_interval": "never",
                 "set_action": [{"lambda": Lambda("id(ui_owner_writes)++; if (id(ui_accept_writes)) id(" + owner + ").publish_state(x);")}],
             })
@@ -396,22 +435,26 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     # These are host data owners, so none of the following can play audio.
     probe = r'''
       if (id(ui_owner_writes) != 0) { fprintf(stderr,"UI_PROBE open wrote owner\n"); ::exit(41); }
+      // Independent vectors for the real Master Number: percent 0..100, step 5.
+      if (id(master_volume).traits.get_min_value()!=0 || id(master_volume).traits.get_max_value()!=100 ||
+          id(master_volume).traits.get_step()!=5) ::exit(40);
       id(master_volume).publish_state(17.0f);
-      if (lv_slider_get_value(id(ui_speaker_vol_slider)) != 17 || id(ui_owner_writes) != 0) ::exit(42);
-      lv_slider_set_value(id(ui_speaker_vol_slider), 73, LV_ANIM_OFF);
+      if (lv_slider_get_value(id(ui_speaker_vol_slider)) != 3 || id(ui_owner_writes) != 0 ||
+          strcmp(lv_label_get_text(id(ui_speaker_value_label)), "Master volume: 17 %") != 0) ::exit(42);
+      lv_slider_set_value(id(ui_speaker_vol_slider), 15, LV_ANIM_OFF);
       lv_obj_send_event(id(ui_speaker_vol_slider), LV_EVENT_RELEASED, nullptr);
-      if (id(ui_owner_writes) != 1 || id(master_volume).state != 73) ::exit(43);
+      if (id(ui_owner_writes) != 1 || id(master_volume).state != 75) ::exit(43);
       lv_obj_add_state(id(ui_speaker_vol_slider), LV_STATE_PRESSED);
-      lv_slider_set_value(id(ui_speaker_vol_slider), 46, LV_ANIM_OFF);
-      id(master_volume).publish_state(12.0f);
-      if (lv_slider_get_value(id(ui_speaker_vol_slider)) != 46 || id(ui_owner_writes) != 1) ::exit(44);
+      lv_slider_set_value(id(ui_speaker_vol_slider), 9, LV_ANIM_OFF);
+      id(master_volume).publish_state(10.0f);
+      if (lv_slider_get_value(id(ui_speaker_vol_slider)) != 9 || id(ui_owner_writes) != 1) ::exit(44);
       lv_obj_remove_state(id(ui_speaker_vol_slider), LV_STATE_PRESSED);
       lv_obj_send_event(id(ui_speaker_vol_slider), LV_EVENT_RELEASED, nullptr);
-      if (id(ui_owner_writes) != 2 || id(master_volume).state != 46) ::exit(45);
+      if (id(ui_owner_writes) != 2 || id(master_volume).state != 45) ::exit(45);
       id(ui_accept_writes) = false;
-      lv_slider_set_value(id(ui_speaker_vol_slider), 91, LV_ANIM_OFF);
+      lv_slider_set_value(id(ui_speaker_vol_slider), 18, LV_ANIM_OFF);
       lv_obj_send_event(id(ui_speaker_vol_slider), LV_EVENT_RELEASED, nullptr);
-      if (id(ui_owner_writes) != 3 || id(master_volume).state != 46 || lv_slider_get_value(id(ui_speaker_vol_slider)) != 46) ::exit(46);
+      if (id(ui_owner_writes) != 3 || id(master_volume).state != 45 || lv_slider_get_value(id(ui_speaker_vol_slider)) != 9) ::exit(46);
       id(ui_accept_writes) = true;
       id(master_volume).publish_state(100.0f);
       printf("UI_PROBE owner_sync=pass user_write=pass drag=pass reject=pass\n");
@@ -472,6 +515,22 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
         capture.extend([{"script.execute": "compute_layout_metrics"}, {"script.execute": "ui_phone_geometry"}])
         pointer_code = r'''
           esphome::ui_fixture::PointerProbe input(lv_display_get_default());
+          const unsigned owner_writes=id(ui_owner_writes);
+          lv_screen_load(id(main_page)->obj);
+          id(master_volume).publish_state(25.0f);
+          if(lv_slider_get_value(id(ui_speaker_vol_slider))!=20 || id(ui_owner_writes)!=owner_writes) ::exit(112);
+          lv_screen_load(id(SETTINGS_PAGE)->obj);input.pump(40);
+          if(lv_slider_get_value(id(ui_speaker_vol_slider))!=5 || id(ui_owner_writes)!=owner_writes) ::exit(113);
+          lv_obj_scroll_to_y(id(settings_page_wrapper),40,LV_ANIM_ON);
+          if(!lv_obj_is_scrolling(id(settings_page_wrapper))) ::exit(114);
+          id(master_volume).publish_state(30.0f);
+          if(lv_slider_get_value(id(ui_speaker_vol_slider))!=5 || id(ui_owner_writes)!=owner_writes) ::exit(115);
+          input.pump(500);
+          if(lv_obj_is_scrolling(id(settings_page_wrapper)) || lv_slider_get_value(id(ui_speaker_vol_slider))!=6 ||
+             id(ui_owner_writes)!=owner_writes) ::exit(116);
+          lv_obj_scroll_to_y(id(settings_page_wrapper),0,LV_ANIM_OFF);input.pump(40);
+          id(master_volume).publish_state(100.0f);
+          printf("UI_PROBE hidden_deferred=pass screen_loaded=pass scroll_deferred=pass scroll_end=pass writes=0\n");
           struct Trace {const char *name;bool matrix;};
           Trace trace_data[]={{"digits",true},{"call",false},{"dialer",false}};
           lv_obj_t *trace_objects[]={id(call_dial_row_123)->obj,id(call_dial_call_btn),id(call_dialer_page)->obj};
@@ -631,21 +690,23 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             printf("UI_POINTER slider=%s knob=pass extension=pass track_rejected=pass pad=%d\n",names[index++],pad);
           }
           MICROPHONE_PROBE_START
-          for(int requested:{24,lv_slider_get_max_value(id(ui_mic_vol_slider))}) {
-            id(mic_gain).publish_state(static_cast<float>(requested));input.pump(40);
+          for(float requested:{24.0f,id(mic_gain).traits.get_max_value()}) {
+            id(mic_gain).publish_state(requested);input.pump(40);
             lv_obj_update_layout(id(SETTINGS_PAGE)->obj);
             lv_area_t area,viewport;lv_obj_get_coords(id(ui_mic_vol_slider),&area);lv_obj_get_coords(id(settings_page_wrapper),&viewport);
             int offset=(area.y1+area.y2-viewport.y1-viewport.y2)/2;
             lv_obj_scroll_to_y(id(settings_page_wrapper),lv_obj_get_scroll_y(id(settings_page_wrapper))+offset,LV_ANIM_OFF);input.pump(40);
             lv_obj_update_layout(id(SETTINGS_PAGE)->obj);lv_obj_get_coords(id(ui_mic_vol_slider),&area);
             int low=lv_slider_get_min_value(id(ui_mic_vol_slider)),high=lv_slider_get_max_value(id(ui_mic_vol_slider));
-            int x=area.x1+(int64_t(area.x2-area.x1)*(requested-low))/(high-low);
+            int tick=lv_slider_get_value(id(ui_mic_vol_slider));
+            int x=area.x1+(int64_t(area.x2-area.x1)*(tick-low))/(high-low);
             int y=(area.y1+area.y2)/2;
             auto pressed=input.watch(id(ui_mic_vol_slider),LV_EVENT_PRESSED);auto before=input.count(pressed);
             input.tap(x,y);if(input.count(pressed)!=before+1) ::exit(74);
-            id(mic_gain).publish_state(static_cast<float>(requested));input.pump(40);lv_obj_update_layout(id(SETTINGS_PAGE)->obj);
+            id(mic_gain).publish_state(requested);input.pump(40);lv_obj_update_layout(id(SETTINGS_PAGE)->obj);
             lv_obj_get_coords(id(ui_mic_vol_slider),&area);lv_obj_get_coords(id(settings_page_wrapper),&viewport);
-            x=area.x1+(int64_t(area.x2-area.x1)*(requested-low))/(high-low);
+            tick=lv_slider_get_value(id(ui_mic_vol_slider));
+            x=area.x1+(int64_t(area.x2-area.x1)*(tick-low))/(high-low);
             int bottom=area.y2;lv_point_t point{x,bottom+1};
             while(point.y<viewport.y2 && lv_obj_hit_test(id(ui_mic_vol_slider),&point)){bottom=point.y;point.y++;}
             point.y=bottom-1;
@@ -653,7 +714,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             bool mute_before=id(speaker_mute).state;before=input.count(pressed);
             input.tap(point.x,point.y);
             if(input.count(pressed)!=before+1 || id(speaker_mute).state!=mute_before) ::exit(76);
-            printf("UI_POINTER mic_value=%d knob=pass extended_topmost=pass no_switch_overlap=pass extent=%d\n",requested,bottom-area.y2);
+            printf("UI_POINTER mic_value=%g knob=pass extended_topmost=pass no_switch_overlap=pass extent=%d\n",double(requested),bottom-area.y2);
+            printf("UI_POINTER microphone_caption=%s\n",lv_label_get_text(id(MICROPHONE_LABEL)));
           }
           MICROPHONE_PROBE_END
           lv_area_t toggle,viewport;lv_obj_get_coords(id(ui_speaker_mute_sw),&toggle);lv_obj_get_coords(id(settings_page_wrapper),&viewport);
@@ -671,13 +733,18 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             lambda match: match[1].replace("id(mic_gain)", f"id({microphone_owner})") if microphone_owner
                 else 'printf("UI_POINTER microphone_control=absent\\n");', pointer_code, flags=re.S)
         pointer_code = pointer_code.replace("MICROPHONE_MIDPOINT",
-            f'id({microphone_owner}).publish_state((lv_slider_get_min_value(id(ui_mic_vol_slider)) + '
-            'lv_slider_get_max_value(id(ui_mic_vol_slider))) / 2.0f); '
+            f'id({microphone_owner}).publish_state((id({microphone_owner}).traits.get_min_value() + '
+            f'id({microphone_owner}).traits.get_max_value()) / 2.0f); '
             f'printf("UI_POINTER microphone_owner={microphone_owner} '
-            f'minimum={int(microphone["min_value"])} maximum={int(microphone["max_value"])}\\n");'
+            f'minimum=%g maximum=%g\\n", double(id({microphone_owner}).traits.get_min_value()), '
+            f'double(id({microphone_owner}).traits.get_max_value()));'
             if microphone_owner else "")
         pointer_code = pointer_code.replace("MICROPHONE_NAME", '"mic",' if microphone_owner else "")
         pointer_code = pointer_code.replace("MICROPHONE_SLIDER", "id(ui_mic_vol_slider)," if microphone_owner else "")
+        if microphone_owner:
+            pointer_code = pointer_code.replace("id(ui_mic_vol_slider)", f'id({microphone["id"]})')
+            pointer_code = pointer_code.replace("MICROPHONE_LABEL", "ui_input_gain_value_label"
+                if str(microphone["id"]) == "ui_input_gain_slider" else "ui_mic_value_label")
         pointer_code = pointer_code.replace("PLAYBACK_NAME", '"playback",' if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYER_MIDPOINT", "id(speaker_media_player).volume=0.5f;id(speaker_media_player).publish_state();" if host.get("media_player") else "")
         pointer_code = pointer_code.replace("PLAYBACK_SLIDER", "id(ui_playback_vol_slider)," if host.get("media_player") else "")

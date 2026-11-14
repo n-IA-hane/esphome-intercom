@@ -12,7 +12,7 @@ from PIL import Image
 import pytest
 
 from tests.test_lvgl_settings_composition import expanded_scene
-from tools.render_lvgl import find_id, yaml_input
+from tools.render_lvgl import find_id, number_owner_traits, yaml_input
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +35,28 @@ def test_owner_lookup_uses_declaration_instead_of_an_earlier_script_reference():
     assert find_id({"script": [reference]}, "script", "draw_display") is None
 
 
+def test_host_number_traits_follow_validated_producers_instead_of_slider_placeholders():
+    config = {"number": [
+        {"platform": "esp_audio_stack", "master_volume": {"id": "master", "unit_of_measurement": "%"}},
+        {"platform": "esp_audio_stack", "_hardware_gain_es8311": True,
+         "input_pga": {"id": "es8311", "unit_of_measurement": "dB"}},
+        {"platform": "esp_audio_stack", "_hardware_gain_es8311": False,
+         "reference_pga": {"id": "es7210", "unit_of_measurement": "dB"}},
+        {"platform": "esp_audio_stack", "mic_gain": {"id": "post", "min_value": -12, "max_value": 24}},
+        {"platform": "template", "id": "custom", "min_value": 2, "max_value": 5, "step": 0.25},
+    ], "lvgl": {"widgets": [{"slider": {"min_value": 0, "max_value": 1}}]}}
+    expected = {"master": (0, 100, 5), "es8311": (0, 36, 6), "es7210": (0, 37.5, 0.5),
+                "post": (-12, 24, 1), "custom": (2, 5, 0.25)}
+    for owner, traits in expected.items():
+        actual = number_owner_traits(config, owner)
+        assert tuple(actual[key] for key in ("min_value", "max_value", "step")) == traits
+    assert number_owner_traits(config, "master")["unit_of_measurement"] == "%"
+    assert number_owner_traits(config, "es8311")["unit_of_measurement"] == "dB"
+    config["number"].append({"platform": "unknown", "id": "unsupported"})
+    with pytest.raises(ValueError, match="Unknown production Number traits"):
+        number_owner_traits(config, "unsupported")
+
+
 @pytest.mark.parametrize("scene,size", [("spot240", 240), ("box360-aec", 360)])
 def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene, size):
     document = expanded_scene(scene, "full")
@@ -55,22 +77,27 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     assert len(report["snapshots"]) == 3
     log = (output / "run.log").read_text()
     assert "UI_PROBE owner_sync=pass user_write=pass drag=pass reject=pass" in log
+    assert "UI_PROBE hidden_deferred=pass screen_loaded=pass scroll_deferred=pass scroll_end=pass writes=0" in log
     assert "UI_PROBE overlay_restore=pass" in log
     assert "UI_POINTER source_dialer_gestures=pass suppressed_commands=pass positive_digit_tap=pass" in log
     assert "UI_BOOT registry=1 first_valid=1" in log
     assert "UI_POINTER ordered_navigation=pass bounded_ends=pass real_registry=pass" in log
     assert "UI_POINTER options_body_scroll=pass navigation_suppressed=pass" in log
     assert "UI_POINTER in_call_gesture=pass hangup_suppressed=pass positive_hangup_tap=pass" in log
-    for name in ("master", "playback", *(["mic"] if scene == "spot240" else [])):
+    for name in ("master", "playback", "mic"):
         assert f"UI_POINTER slider={name} knob=pass extension=pass track_rejected=pass" in log
     assert "UI_POINTER passive_row_child_switch=pass writes=1" in log
+    assert "id: ui_mic_vol_slider" not in (output / "host.yaml").read_text()
     if scene == "spot240":
         assert "UI_POINTER microphone_owner=microphone_pga minimum=0 maximum=36" in log
         for value in (24, 36):
             assert f"UI_POINTER mic_value={value} knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+        assert "UI_POINTER microphone_caption=Microphone gain (pre-AFE): 36 dB" in log
     else:
-        assert "UI_POINTER microphone_control=absent" in log
-        assert "UI_POINTER slider=mic " not in log
+        assert "UI_POINTER microphone_owner=microphone_pga minimum=0 maximum=37.5" in log
+        for value in (24, 37.5):
+            assert f"UI_POINTER mic_value={value} knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+        assert "UI_POINTER microphone_caption=Microphone input gain: 37.5 dB" in log
     assert report["production_overlay_policy_sha256"]
     assert report["production_page_selector_sha256"]
     assert report["production_settings_registry_boot_sha256"]
