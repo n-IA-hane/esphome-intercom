@@ -1325,6 +1325,178 @@ assert.equal(wire.length, sentBeforeStaleCallback);
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_hardware_camera_encoder_over_bitrate_falls_back_to_software() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
+const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
+const warnings = [];
+const context = vm.createContext({{
+  EventTarget,
+  performance,
+  console: {{ ...console, warn: (message) => warnings.push(String(message)) }},
+  Blob,
+  URL,
+  setTimeout,
+  clearTimeout,
+  CustomEvent: class CustomEvent extends Event {{
+    constructor(type, init) {{ super(type); this.detail = init?.detail; }}
+  }},
+  WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
+}});
+const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async () => modelModule,
+}});
+await module.link((specifier) => {{
+  throw new Error(`unexpected static import: ${{specifier}}`);
+}});
+await module.evaluate();
+const Video = module.namespace.VoipStackVideo;
+
+const track = {{
+  getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
+  stop() {{}},
+}};
+context.navigator = {{
+  mediaDevices: {{
+    async getUserMedia() {{
+      return {{ getVideoTracks: () => [track], getTracks: () => [track] }};
+    }},
+  }},
+}};
+context.MediaStreamTrackProcessor = class {{
+  constructor() {{
+    // The camera never delivers a frame; the test drives encoder output.
+    this.readable = {{ getReader: () => ({{
+      read: () => new Promise(() => {{}}),
+      cancel: async () => {{}},
+    }}) }};
+  }}
+}};
+const encoders = [];
+let softwareSupported = true;
+context.VideoEncoder = class {{
+  static async isConfigSupported(config) {{
+    const supported = config.hardwareAcceleration !== "prefer-software" || softwareSupported;
+    return {{ supported, config }};
+  }}
+  constructor(init) {{
+    this.init = init;
+    this.state = "unconfigured";
+    this.encodeQueueSize = 0;
+    this.configs = [];
+    encoders.push(this);
+  }}
+  configure(config) {{ this.configs.push(config); this.state = "configured"; }}
+  close() {{ this.state = "closed"; }}
+}};
+
+async function startSender() {{
+  const sender = new Video();
+  sender._generation = 3;
+  sender._cameraAllowed = true;
+  sender._cameraEnabled = true;
+  sender._negotiated = {{
+    can_send: true,
+    can_receive: false,
+    send: {{ codec: "vp8", encoding: "VP8", clock_rate: 90000, payload_type: 104 }},
+  }};
+  sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
+  await sender._replaceSender("vp8", 3, "", false);
+  return [sender, encoders.at(-1)];
+}}
+// Emit 15 fps output for a little over 2 s, with frames of laterBytes after
+// the first second, and return how many chunks went out before the encoder
+// was flagged.
+function emit(encoder, bytes, laterBytes = bytes) {{
+  const warned = warnings.length;
+  let flaggedAfter = null;
+  for (let i = 0; i <= 31; i++) {{
+    encoder.init.output({{
+      type: i === 0 ? "key" : "delta",
+      byteLength: i > 15 ? laterBytes : bytes,
+      timestamp: Math.round(i * 1000000 / 15),
+      copyTo(target) {{ target.fill(0); }},
+    }});
+    if (flaggedAfter === null && warnings.length > warned) flaggedAfter = i + 1;
+  }}
+  return flaggedAfter;
+}}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// A hardware encoder at ~16 Mbit/s against a 600 kbit/s target must be
+// switched to software and emit a key frame next. Its first two 135 KB delta
+// frames exceed the 150 KB allowed in the first half second, so it is caught
+// on the third chunk.
+const [overshooting, hardware] = await startSender();
+assert.equal(hardware.configs[0].hardwareAcceleration, "prefer-hardware");
+overshooting._forceCameraKeyFrame = false;
+assert.equal(emit(hardware, 135000), 3);
+await settle();
+assert.equal(hardware.configs.length, 2);
+assert.equal(hardware.configs[1].hardwareAcceleration, "prefer-software");
+assert.equal(hardware.configs[1].bitrate, 600000);
+assert.equal(overshooting._forceCameraKeyFrame, true);
+assert.match(warnings.at(-1), /switching to software encoding/);
+emit(hardware, 135000);
+await settle();
+assert.equal(hardware.configs.length, 2);
+
+// An encoder that starts on target and overshoots later is caught once its
+// total passes 4 times the target over the time elapsed: 60 KB delta frames
+// from 1 s take it past that at 1.4 s, on the 22nd chunk.
+const [, late] = await startSender();
+assert.equal(emit(late, 5000, 60000), 22);
+await settle();
+assert.equal(late.configs.length, 2);
+
+// An encoder moderately over its target, here by 25%, is left alone,
+// including a large first key frame.
+const [, nearTarget] = await startSender();
+nearTarget.init.output({{
+  type: "key", byteLength: 60000, timestamp: 0, copyTo(target) {{ target.fill(0); }},
+}});
+assert.equal(emit(nearTarget, 6250), null);
+await settle();
+assert.equal(nearTarget.configs.length, 1);
+
+// Without a software encoder, keep the hardware one rather than lose video.
+softwareSupported = false;
+const [, noSoftware] = await startSender();
+emit(noSoftware, 135000);
+await settle();
+assert.equal(noSoftware.configs.length, 1);
+assert.equal(noSoftware.state, "configured");
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--experimental-vm-modules",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_jpeg_worker_uses_offscreen_canvas_and_transfers_complete_frame() -> None:
     script = f"""
 import fs from "fs";
