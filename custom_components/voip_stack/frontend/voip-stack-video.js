@@ -26,6 +26,13 @@ const MAX_DECODE_QUEUE_FRAMES = 8;
 const CODEC_SETUP_TIMEOUT_MS = 3000;
 const MEDIA_CLEANUP_TIMEOUT_MS = 500;
 const JPEG_CAMERA_QUALITY = 0.72;
+const CAMERA_BITRATE = 600000;
+// EncoderRateGuard watches a camera encoder's first 2s of output for more
+// than 4 times its target rate, totalling at least 0.5s worth of data at
+// that rate.
+const ENCODER_RATE_WINDOW_SECONDS = 2;
+const ENCODER_RATE_MIN_WINDOW_SECONDS = 0.5;
+const ENCODER_OVERSHOOT_FACTOR = 4;
 
 class VideoFrameCadence {
   constructor() {
@@ -72,6 +79,45 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   ]).finally(() => {
     if (timer && cancel) cancel(timer);
   });
+}
+
+// Some Android hardware encoders ignore the configured bitrate on camera
+// frames and send many times the target, which backs slower network paths up.
+// Flag the encoder as soon as its delta frames exceed 4 times the target,
+// since everything sent before the switch delays live video.
+class EncoderRateGuard {
+  constructor(targetBitrate) {
+    this.targetBitrate = targetBitrate;
+    // Bits per second of delta frames when the encoder was flagged.
+    this.measuredBitrate = null;
+    this.overTarget = false;
+    this.done = false;
+    this.deltaBytes = 0;
+    this.startUs = null;
+  }
+
+  // Process each encoded chunk until the encoder is flagged or the window ends.
+  addChunk(chunk) {
+    if (this.done) return;
+    const timestamp = Number(chunk.timestamp || 0);
+    if (this.startUs === null) this.startUs = timestamp;
+    const elapsedSeconds = (timestamp - this.startUs) / 1000000;
+    // Key frames are large on any encoder, so only monitor delta frames.
+    if (chunk.type !== "key") this.deltaBytes += chunk.byteLength;
+    // Trigger only once delta frames total at least 0.5s worth at 4 times the
+    // target, so a normal encoder's first few frames can't trip it.
+    const windowSeconds = Math.max(elapsedSeconds, ENCODER_RATE_MIN_WINDOW_SECONDS);
+    const allowedBytes =
+      this.targetBitrate / 8 * ENCODER_OVERSHOOT_FACTOR * windowSeconds;
+    if (this.deltaBytes > allowedBytes) {
+      // Log the rate actually sent, not the rate over the minimum window.
+      this.measuredBitrate = this.deltaBytes * 8 / Math.max(elapsedSeconds, 0.001);
+      this.overTarget = true;
+      this.done = true;
+    } else if (elapsedSeconds >= ENCODER_RATE_WINDOW_SECONDS) {
+      this.done = true;
+    }
+  }
 }
 
 export class VoipStackVideo extends EventTarget {
@@ -1116,14 +1162,19 @@ export class VoipStackVideo extends EventTarget {
           () => this._senderSetupIsCurrent(generation, switchGeneration),
         );
       } else {
-        const encoderConfig = await this._supportedConfig(VideoEncoder, {
+        const baseConfig = {
           codec,
           width,
           height,
           framerate,
-          bitrate: 600000,
+          bitrate: CAMERA_BITRATE,
           ...(send.encoding === "H264" ? { avc: { format: "annexb" } } : {}),
-        }, send.encoding === "H264");
+        };
+        const encoderConfig = await this._supportedConfig(
+          VideoEncoder,
+          baseConfig,
+          send.encoding === "H264",
+        );
         if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
           throw new Error("SIP video session was superseded or camera transmission was disabled");
         }
@@ -1134,13 +1185,25 @@ export class VoipStackVideo extends EventTarget {
         if (!support?.supported) {
           throw new Error(`Browser cannot encode negotiated SIP video ${codec}`);
         }
+        const configured = support.config || encoderConfig;
+        let rateGuard = configured.hardwareAcceleration === "prefer-software"
+          ? null
+          : new EncoderRateGuard(CAMERA_BITRATE);
         encoder = new VideoEncoder({
-          output: (chunk) => this._sendEncodedChunk(
-            chunk,
-            generation,
-            senderGeneration,
-            encoder,
-          ),
+          output: (chunk) => {
+            rateGuard?.addChunk(chunk);
+            if (rateGuard?.overTarget) {
+              void this._fallBackToSoftwareEncoder(
+                encoder,
+                this._encoderCandidates(baseConfig, send.encoding === "H264")[1],
+                rateGuard.measuredBitrate,
+                generation,
+                senderGeneration,
+              );
+              rateGuard = null;
+            }
+            this._sendEncodedChunk(chunk, generation, senderGeneration, encoder);
+          },
           error: () => {
             if (
               generation !== this._generation ||
@@ -1151,7 +1214,7 @@ export class VoipStackVideo extends EventTarget {
             this._emit();
           },
         });
-        encoder.configure(support.config || encoderConfig);
+        encoder.configure(configured);
       }
       const processor = new MediaStreamTrackProcessor({ track });
       reader = processor.readable.getReader();
@@ -1188,7 +1251,18 @@ export class VoipStackVideo extends EventTarget {
     // decoder until the next IDR. Our bounded encode queue still drops raw
     // frames before admission, which preserves a valid encoded dependency
     // chain without allowing latency to grow.
-    const candidates = realtimeHardware
+    for (const candidate of this._encoderCandidates(base, realtimeHardware)) {
+      try {
+        const support = await codecClass.isConfigSupported(candidate);
+        if (support?.supported) return support.config || candidate;
+      } catch (_) {}
+    }
+    return base;
+  }
+
+  // Hardware first, then software, then the browser's choice.
+  _encoderCandidates(base, realtimeHardware = false) {
+    return realtimeHardware
       ? [
           { ...base, hardwareAcceleration: "prefer-hardware", latencyMode: "realtime" },
           { ...base, hardwareAcceleration: "prefer-software", latencyMode: "quality" },
@@ -1199,13 +1273,28 @@ export class VoipStackVideo extends EventTarget {
           { ...base, hardwareAcceleration: "prefer-software", latencyMode: "realtime" },
           { ...base, latencyMode: "realtime" },
         ];
-    for (const candidate of candidates) {
-      try {
-        const support = await codecClass.isConfigSupported(candidate);
-        if (support?.supported) return support.config || candidate;
-      } catch (_) {}
+  }
+
+  // Reconfigure a camera encoder that EncoderRateGuard caught far over its
+  // bitrate. The next frame is a key frame, so receivers resync cleanly.
+  async _fallBackToSoftwareEncoder(encoder, config, bitrate, generation, senderGeneration) {
+    console.warn(
+      `voip-stack-video: camera encoder sent ${Math.round(bitrate / 1000)} kbit/s ` +
+      `for a ${CAMERA_BITRATE / 1000} kbit/s target, switching to software encoding`,
+    );
+    try {
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (
+        !support?.supported ||
+        !this._senderIsCurrent(generation, senderGeneration) ||
+        this._encoder !== encoder ||
+        encoder.state !== "configured"
+      ) return;
+      encoder.configure(support.config || config);
+      this._forceCameraKeyFrame = true;
+    } catch (_) {
+      // Keep the hardware encoder: too much video beats no video.
     }
-    return base;
   }
 
   async _encodeCamera(
