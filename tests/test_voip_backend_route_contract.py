@@ -301,7 +301,49 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
         self.assertIn('call.data.get("device_id")', body)
         self.assertIn("registry.by_device_id(device_id)", body)
-        self.assertIn("not endpoint.kind.is_softphone", body)
+        function = ast.parse(body).body[0]
+        adapter = next(
+            node for node in function.body if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "ha_client_endpoint"
+        )
+        self.assertEqual([ast.unparse(arg) for arg in adapter.value.args], ["endpoint"])
+        adapted_name = adapter.targets[0].id
+        identity = next(
+            node for node in function.body if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Attribute)
+            and ast.unparse(node.value) == "endpoint.endpoint_id"
+        )
+        self.assertLess(function.body.index(identity), function.body.index(adapter))
+        self.assertEqual(
+            [ast.unparse(value) for value in function.body[-1].value.elts],
+            [identity.targets[0].id, adapted_name],
+        )
+        unsupported = next(
+            node for node in function.body if isinstance(node, ast.If)
+            and ast.dump(node.test) == ast.dump(ast.parse(f"{adapted_name} is None", mode="eval").body)
+        )
+        self.assertTrue(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "_service_error"
+            and len(node.args) > 1 and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "phone_not_browser"
+            for node in ast.walk(unsupported)
+        ))
+        # A service gets an adapter view without registering a second identity
+        # or rewriting the canonical endpoint's transport kind.
+        self.assertFalse(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "registry"
+            and node.func.attr in {"register", "upsert", "update"}
+            for node in ast.walk(function)
+        ))
+        self.assertFalse(any(
+            isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name) and node.value.id == "endpoint"
+            for node in ast.walk(function)
+        ))
         self.assertNotIn('call.data.get("entity_id")', body)
         self.assertNotIn('call.data.get("endpoint_id")', body)
         self.assertNotIn("source_device_id", body)

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import fields
 import importlib.util
 from pathlib import Path
 import sys
@@ -34,8 +34,8 @@ class ServiceValidationError(ValueError):
         self.translation_placeholders = translation_placeholders
 
 
-def _load_endpoint_kind():
-    """Use the production endpoint contract instead of copying its enum."""
+def _load_endpoint_contract():
+    """Use the pure production endpoint model and its HA transport adapter."""
     package_name = "_service_endpoint_kind_contract"
     package = types.ModuleType(package_name)
     package.__path__ = [str(PKG_DIR)]
@@ -45,20 +45,12 @@ def _load_endpoint_kind():
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
-    return module.EndpointKind
+    return module
 
 
-EndpointKind = _load_endpoint_kind()
-
-
-@dataclass
-class PhoneEndpoint:
-    endpoint_id: str
-    name: str
-    kind: EndpointKind
-    device_id: str = ""
-    entity_ids: frozenset[str] = frozenset()
-    capabilities: frozenset[str] = frozenset()
+_ENDPOINT_CONTRACT = _load_endpoint_contract()
+EndpointKind = _ENDPOINT_CONTRACT.EndpointKind
+PhoneEndpoint = _ENDPOINT_CONTRACT.PhoneEndpoint
 
 
 class _Registry:
@@ -105,6 +97,7 @@ def _load_service_endpoints(
     phone_endpoint.DEFAULT_ENDPOINT_ID = "default"
     phone_endpoint.EndpointKind = EndpointKind
     phone_endpoint.PhoneEndpoint = PhoneEndpoint
+    phone_endpoint.ha_client_endpoint = _ENDPOINT_CONTRACT.ha_client_endpoint
     runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
     runtime_data.endpoint_directory = lambda hass: hass.data.get(
         "voip_stack", {}
@@ -179,13 +172,13 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "default",
             "Dashboard",
             EndpointKind.BROWSER,
-            "ha-softphone",
+            device_id="ha-softphone",
         )
         esp = PhoneEndpoint(
             "esphome:kitchen",
             "Kitchen",
             EndpointKind.ESPHOME,
-            "esp-device",
+            device_id="esp-device",
         )
         self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(browser, esp)
 
@@ -219,7 +212,7 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "default",
             "Dashboard",
             EndpointKind.BROWSER,
-            "ha-softphone",
+            device_id="ha-softphone",
         )
         self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(browser)
 
@@ -256,19 +249,19 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "default",
             "Dashboard",
             EndpointKind.BROWSER,
-            "ha-softphone",
+            device_id="ha-softphone",
         )
         account = PhoneEndpoint(
             "account:office",
             "Office",
             EndpointKind.SIP_ACCOUNT,
-            "account-device",
+            device_id="account-device",
         )
         esp = PhoneEndpoint(
             "esphome:kitchen",
             "Kitchen",
             EndpointKind.ESPHOME,
-            "esp-device",
+            device_id="esp-device",
         )
         self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(
             browser,
@@ -296,6 +289,41 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             raised.exception.translation_key,
             "phone_not_integration_owned",
         )
+
+    async def test_account_selector_uses_ephemeral_ha_view_and_exact_permissions(self) -> None:
+        account = PhoneEndpoint(
+            "account:desk", "Desk", EndpointKind.SIP_ACCOUNT,
+            extension="480", username="desk", device_id="desk-device",
+            entity_ids=frozenset({"sensor.desk_call_state"}),
+            capabilities=frozenset({"audio", "video", "dtmf"}),
+            availability="available", dnd=True, send_video=True,
+            active_call_id="current-call",
+            offline_policy="forward", offline_forward_target="old-transport-target",
+        )
+        registry = _Registry(account)
+        self.hass.data["voip_stack"]["endpoint_registry"] = registry
+        call = _Call(device_id="desk-device")
+
+        endpoint_id, view = self.module.service_browser_endpoint(self.hass, call, strict=True)
+
+        self.assertEqual(endpoint_id, account.endpoint_id)
+        self.assertIsNot(view, account)
+        self.assertEqual(view.kind, EndpointKind.BROWSER)
+        self.assertEqual(view.offline_policy, _ENDPOINT_CONTRACT.OfflinePolicy.UNAVAILABLE)
+        self.assertEqual(view.offline_forward_target, "")
+        for field in fields(account):
+            if field.name not in {"kind", "offline_policy", "offline_forward_target"}:
+                with self.subTest(field=field.name):
+                    self.assertEqual(getattr(view, field.name), getattr(account, field.name))
+        self.assertIs(registry.get(endpoint_id), account)
+        self.assertEqual(len(registry.endpoints), 1)
+        self.assertEqual(account.kind, EndpointKind.SIP_ACCOUNT)
+        self.assertEqual(account.offline_forward_target, "old-transport-target")
+        self.assertEqual(self.module.service_configured_endpoint(self.hass, call), (endpoint_id, account))
+
+        await self.module.async_require_phone_service_control(self.hass, call, endpoint=view)
+        self.require_endpoint.assert_awaited_once_with(self.hass, call, view)
+        self.require_entities.assert_not_awaited()
 
     def test_configured_selector_requires_an_available_phone(self) -> None:
         with self.assertRaisesRegex(
@@ -326,7 +354,7 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "default",
             "Dashboard",
             EndpointKind.BROWSER,
-            "ha-softphone",
+            device_id="ha-softphone",
         )
         self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(browser)
         self.assertEqual(
@@ -390,7 +418,7 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "default",
             "Dashboard",
             EndpointKind.BROWSER,
-            "ha-softphone",
+            device_id="ha-softphone",
         )
         device = {
             "device_id": "esp-device",
@@ -418,7 +446,7 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "esphome:kitchen",
             "Kitchen",
             EndpointKind.ESPHOME,
-            "esp-device",
+            device_id="esp-device",
         )
         self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(esp)
 
