@@ -41,6 +41,135 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   });
 }
 
+// Safari/WebKit and Firefox do not implement MediaStreamTrackProcessor. Pull
+// VideoFrames from a hidden <video> element instead and expose the same
+// read()/cancel() surface as a ReadableStreamDefaultReader. Frames that arrive
+// while no read() is pending are dropped, so latency cannot accumulate.
+async function createVideoElementFrameReader(stream, framerate) {
+  let target = {};
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("muted", "");
+  Object.assign(video.style, {
+    position: "fixed",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    pointerEvents: "none",
+    left: "0",
+    top: "0",
+  });
+  video.srcObject = stream;
+  document.body.appendChild(video);
+  // VideoFrame(<video>) returns the raw sensor orientation on WebKit (iPhone
+  // frames arrive rotated 90 degrees) while drawImage() honours the rotation
+  // used to display the video, so route frames through a canvas.
+  let canvas = null;
+  let context2d = null;
+  try {
+    canvas = document.createElement("canvas");
+    context2d = canvas.getContext("2d", { alpha: false });
+  } catch (_) {}
+  let cancelled = false;
+  let waiter = null;
+  let callbackId = null;
+  let timer = null;
+  let lastTime = -1;
+  const useRvfc = typeof video.requestVideoFrameCallback === "function";
+  const finish = (result) => {
+    const resolve = waiter;
+    waiter = null;
+    if (resolve) resolve(result);
+  };
+  const emit = (mediaTime) => {
+    if (cancelled || !waiter) return;
+    if (!(video.readyState >= 2)) return;
+    let frame;
+    try {
+      const seconds = Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
+      const timestamp = Number.isFinite(seconds) && seconds > 0
+        ? Math.round(seconds * 1e6)
+        : Math.round(performance.now() * 1000);
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      if (context2d && sourceWidth > 0 && sourceHeight > 0) {
+        const targetWidth = Number(target.width) || 0;
+        const targetHeight = Number(target.height) || 0;
+        const sameOrientation = targetWidth > 0 && targetHeight > 0 &&
+          (sourceHeight > sourceWidth) === (targetHeight > targetWidth);
+        const width = sameOrientation ? targetWidth : sourceWidth & ~1;
+        const height = sameOrientation ? targetHeight : sourceHeight & ~1;
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        context2d.drawImage(video, 0, 0, width, height);
+        frame = new VideoFrame(canvas, { timestamp });
+      } else {
+        frame = new VideoFrame(video, { timestamp });
+      }
+    } catch (_) {
+      return;
+    }
+    finish({ value: frame, done: false });
+  };
+  const armRvfc = () => {
+    if (cancelled) return;
+    callbackId = video.requestVideoFrameCallback((_now, metadata) => {
+      callbackId = null;
+      emit(metadata?.mediaTime);
+      armRvfc();
+    });
+  };
+  const cleanup = () => {
+    cancelled = true;
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+    if (callbackId !== null) {
+      try { video.cancelVideoFrameCallback?.(callbackId); } catch (_) {}
+      callbackId = null;
+    }
+    try { video.pause(); } catch (_) {}
+    video.srcObject = null;
+    try { video.remove(); } catch (_) {}
+    finish({ done: true });
+  };
+  try {
+    await video.play();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  if (useRvfc) {
+    armRvfc();
+  } else {
+    const intervalMs = Math.max(10, Math.round(1000 / Math.max(1, framerate || 15)));
+    timer = setInterval(() => {
+      const time = video.currentTime;
+      if (time === lastTime) return;
+      lastTime = time;
+      emit(time);
+    }, intervalMs);
+  }
+  return {
+    // Upright (display-oriented) size, known once playback has started.
+    size: video.videoWidth > 0 && video.videoHeight > 0
+      ? { width: video.videoWidth, height: video.videoHeight }
+      : null,
+    setTarget(next) { target = next || {}; },
+    read() {
+      if (cancelled) return Promise.resolve({ done: true });
+      return new Promise((resolve) => {
+        waiter = resolve;
+      });
+    },
+    cancel() {
+      cleanup();
+      return Promise.resolve();
+    },
+  };
+}
+
 export class VoipStackVideo extends EventTarget {
   constructor() {
     super();
@@ -1017,8 +1146,13 @@ export class VoipStackVideo extends EventTarget {
     deviceId,
   ) {
     const send = this._mediaContract("send");
+    const hasTrackProcessor = typeof MediaStreamTrackProcessor !== "undefined";
+    const hasVideoElementCapture =
+      typeof VideoFrame !== "undefined" &&
+      typeof document !== "undefined" &&
+      typeof document.createElement === "function";
     if (
-      typeof MediaStreamTrackProcessor === "undefined" ||
+      !(hasTrackProcessor || hasVideoElementCapture) ||
       !navigator.mediaDevices?.getUserMedia ||
       (send.encoding === "JPEG" && typeof Worker === "undefined") ||
       (send.encoding !== "JPEG" && typeof VideoEncoder === "undefined")
@@ -1040,7 +1174,24 @@ export class VoipStackVideo extends EventTarget {
       }
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error("No browser camera track available");
-      const settings = track.getSettings();
+      let settings = track.getSettings();
+      if (!hasTrackProcessor) {
+        reader = await createVideoElementFrameReader(
+          stream,
+          Number(settings.frameRate) || 15,
+        );
+        // getSettings() can report the unrotated sensor size while the video
+        // element (and therefore our frames) is upright. Configure the encoder
+        // with the orientation we will actually feed it, otherwise WebCodecs
+        // rescales the frames and the picture looks stretched.
+        const size = reader.size;
+        if (
+          size &&
+          (size.height > size.width) !== (Number(settings.height) > Number(settings.width))
+        ) {
+          settings = { ...settings, width: settings.height, height: settings.width };
+        }
+      }
       const {
         width,
         height,
@@ -1100,8 +1251,12 @@ export class VoipStackVideo extends EventTarget {
         });
         encoder.configure(support.config || encoderConfig);
       }
-      const processor = new MediaStreamTrackProcessor({ track });
-      reader = processor.readable.getReader();
+      if (hasTrackProcessor) {
+        const processor = new MediaStreamTrackProcessor({ track });
+        reader = processor.readable.getReader();
+      } else {
+        reader.setTarget({ width, height });
+      }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
