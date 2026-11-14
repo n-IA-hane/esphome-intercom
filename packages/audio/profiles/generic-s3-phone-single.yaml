@@ -1,4 +1,6 @@
 # Physical audio for the standalone phone. Playback adapters are selected as a compatible set.
+substitutions:
+  audio_mic_channel: left
 esp_audio_stack:
   task_core: 1
   i2s_lrclk_pin: ${i2s_lrclk_pin}
@@ -8,6 +10,7 @@ esp_audio_stack:
   sample_rate: 48000
   output_sample_rate: 16000
   slot_bit_width: 32
+  mic_channel: ${audio_mic_channel}
   correct_dc_offset: true
   processor_id: aec_processor
   aec_reference: previous_frame

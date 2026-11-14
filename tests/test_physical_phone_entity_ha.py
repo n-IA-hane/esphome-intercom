@@ -78,6 +78,7 @@ async def test_physical_entities_follow_subentry_owner_state_and_never_publish_p
     assert sensor.native_value == "pending"
     lab.manager.states[lab.inventory["phone_id"]] = {"state": "downloaded", "desired_revision": "a" * 64,
         "downloaded_revision": "a" * 64, "last_download": 1234.0, "error": "TimeoutError",
+        "apply_status": "requested", "apply_error": "",
         "url": "https://private.invalid/token", "password": "never-publish", "provisioning_token": "private-token",
         "files": {"account.cfg": "Authorization: private"}}
     lab.manager._changed(lab.inventory["phone_id"])
@@ -85,6 +86,7 @@ async def test_physical_entities_follow_subentry_owner_state_and_never_publish_p
     assert sensor.native_value == "downloaded"
     attributes = sensor.extra_state_attributes
     assert attributes["desired_revision"] == "a" * 64
+    assert attributes["apply_status"] == "requested" and attributes["apply_error"] == ""
     assert attributes["lines"][0]["device_registration_verified"] is False
     rendered = json.dumps(attributes)
     assert not any(word in rendered for word in ("private", "password", "Authorization", "https://", "provisioning_token", "files"))
@@ -111,6 +113,42 @@ async def test_physical_entities_follow_subentry_owner_state_and_never_publish_p
         assert entity.available
 
 
+@pytest.mark.parametrize(("status", "error"), [
+    ("pending", ""), ("waiting_idle", ""), ("not_qualified", ""), ("manual", ""),
+    ("requesting", ""), ("requested", ""), ("error", "phone_apply_authentication_failed"),
+])
+async def test_physical_apply_attributes_observe_owner_without_claiming_adoption(physical_entities, status, error):
+    from custom_components.voip_stack.physical_phone_entity import PhysicalPhoneProvisioningSensor
+
+    lab = physical_entities
+    state = {"state": "ready", "apply_status": status, "apply_error": error}
+    lab.manager.states[lab.inventory["phone_id"]] = dict(state)
+    sensor = PhysicalPhoneProvisioningSensor(lab.hass, lab.entry, lab.inventory["phone_id"])
+    attributes = sensor.extra_state_attributes
+    assert attributes["apply_status"] == status and attributes["apply_error"] == error
+    assert sensor.native_value == "ready"
+    assert "applied" not in attributes and "device_applied" not in attributes
+    assert lab.manager.states[lab.inventory["phone_id"]] == state
+
+
+@pytest.mark.parametrize(("status", "error"), [
+    ("applied", "Authorization: private-token"),
+    ("https://private.invalid/token", "phone_apply_private_token"),
+    ({"password": "private"}, {"body": "private"}),
+])
+async def test_physical_apply_attributes_reject_unknown_or_private_values(physical_entities, status, error):
+    from custom_components.voip_stack.physical_phone_entity import PhysicalPhoneProvisioningSensor
+
+    lab = physical_entities
+    lab.manager.states[lab.inventory["phone_id"]] = {"state": "ready", "apply_status": status,
+        "apply_error": error, "apply_vendor_body": "private", "admin_password": "private"}
+    sensor = PhysicalPhoneProvisioningSensor(lab.hass, lab.entry, lab.inventory["phone_id"])
+    attributes = sensor.extra_state_attributes
+    assert sensor.native_value == "ready"
+    assert "apply_status" not in attributes and "apply_error" not in attributes
+    assert "private" not in json.dumps(attributes)
+
+
 async def test_physical_entities_can_enable_late_and_remove_on_feature_disable(physical_entities):
     from custom_components.voip_stack import physical_phone_entity
     lab = physical_entities
@@ -135,6 +173,31 @@ async def test_physical_entities_can_enable_late_and_remove_on_feature_disable(p
     lab.manager._changed("")
     await lab.hass.async_block_till_done()
     added[0].async_remove.assert_awaited_once_with(force_remove=True)
+
+
+async def test_device_metadata_distinguishes_pbx_and_hardware_without_renaming(physical_entities):
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.voip_stack.event import VoipStackCallEvent
+    from custom_components.voip_stack.physical_phone import sync_physical_phone_devices
+
+    lab = physical_entities
+    devices = dr.async_get(lab.hass)
+    identifier = ("voip_stack", "physical_phone:" + lab.inventory["phone_id"])
+    before = devices.async_get_device_by_identifier(identifier, lab.entry.entry_id)
+    assert before is not None
+    devices.async_update_device(before.id, name_by_user="Personal desk name")
+    sync_physical_phone_devices(lab.hass, lab.entry)
+    after = devices.async_get_device_by_identifier(identifier, lab.entry.entry_id)
+    assert after.id == before.id and after.name_by_user == "Personal desk name"
+    assert after.name == lab.inventory["name"]
+    assert after.manufacturer == "Fanvil" and after.model == "X3U Pro"
+    assert after.config_entry_id == before.config_entry_id
+    assert after.config_subentry_id == before.config_subentry_id
+
+    pbx = VoipStackCallEvent(lab.hass, lab.entry).device_info
+    assert pbx["identifiers"] == {("voip_stack", lab.entry.entry_id)}
+    assert pbx["name"] == lab.entry.title
+    assert pbx["manufacturer"] == "VoIP Stack" and pbx["model"] == "PBX"
 
 
 async def test_physical_buttons_use_real_admin_service_and_context_without_bypassing_permissions(physical_entities, hass_admin_user, hass_read_only_user):

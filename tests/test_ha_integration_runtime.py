@@ -705,6 +705,7 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
     from custom_components.voip_stack.phone_endpoint import (
         EndpointAvailability,
         EndpointKind,
+        PhoneEndpoint,
     )
     from custom_components.voip_stack.repairs import (
         MEDIA_CAPTURE_ISSUE_ID,
@@ -719,8 +720,8 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
         trunk_config={},
         endpoints=SimpleNamespace(
             endpoints=(
-                SimpleNamespace(
-                    kind=EndpointKind.ESPHOME, sip_uri_user="esp-health", name="ESP health", extension="",
+                PhoneEndpoint(
+                    endpoint_id="esphome:health", kind=EndpointKind.ESPHOME, username="esp-health", name="ESP health", extension="",
                     availability=EndpointAvailability.AVAILABLE,
                 ),
             )
@@ -828,7 +829,7 @@ async def test_new_entry_bootstraps_one_normal_named_account(
     hass: HomeAssistant,
 ) -> None:
     from custom_components.voip_stack.phone_config import (
-        CONF_PHONE_ENDPOINT_ID,
+        phone_endpoint_id,
         CONF_PHONE_KIND,
         CONF_PHONE_NAME,
         async_bootstrap_browser_phone,
@@ -841,7 +842,7 @@ async def test_new_entry_bootstraps_one_normal_named_account(
     created = async_bootstrap_browser_phone(hass, entry)
 
     assert created is not None
-    assert created.data[CONF_PHONE_ENDPOINT_ID].startswith("sip:")
+    assert phone_endpoint_id(created) == "sip:" + created.subentry_id
     assert created.data[CONF_PHONE_KIND] == "sip_account"
     assert created.data["username"] and created.data["password"]
     assert not created.data.get("ha_bindings")
@@ -861,7 +862,7 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 7 and entry.minor_version == 0
+    assert entry.version == 7 and entry.minor_version == 1
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
 
@@ -1132,7 +1133,7 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
     )
 
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 0
+    assert entry.version == 7 and entry.minor_version == 1
     assert dict(entry.data) == {"sip_port": 5060}
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
@@ -1165,12 +1166,12 @@ async def test_duplicate_extension_repair_names_conflicts_and_clears(hass):
 async def test_flow_namespace_includes_discovered_esphome_extensions(hass):
     from custom_components.voip_stack.config_flow import _entry_route_mappings
     from custom_components.voip_stack.config_validation import route_namespace_conflicts
-    from custom_components.voip_stack.phone_endpoint import EndpointKind
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     entry.runtime_data = SimpleNamespace(endpoints=SimpleNamespace(endpoints=(
-        SimpleNamespace(kind=EndpointKind.ESPHOME, sip_uri_user="ball", name="Spotpear", extension="1000"),
+        PhoneEndpoint(endpoint_id="esphome:ball", kind=EndpointKind.ESPHOME, username="ball", name="Spotpear", extension="1000"),
     )))
     mappings = _entry_route_mappings(entry, {}, include_assist=False)
     assert route_namespace_conflicts(candidate_routes=("1000",), existing=mappings)

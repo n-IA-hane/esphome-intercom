@@ -56,8 +56,9 @@ def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]
             registry = er.async_get(hass)
             entity_ids.update(
                 str(item.entity_id)
-                for item in registry.entities.values()
-                if str(getattr(item, "device_id", "") or "") == device_id
+                for item in er.async_entries_for_device(
+                    registry, device_id, include_disabled_entities=True
+                )
             )
         except (AttributeError, ImportError):
             pass

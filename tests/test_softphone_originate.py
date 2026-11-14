@@ -84,6 +84,9 @@ def softphone_originate(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions)
 
     dependencies = {
+        # Transport-fork policy is qualified with the real HA runtime separately.
+        "account_dialing": {"account_dial_decision": lambda _hass, decision: decision},
+        "directory_runtime": {"routing_snapshot": lambda runtime: list(runtime.directory.snapshot())},
         "entity_identity": {"phonebook_state": lambda hass: hass.states.get("sensor.voip_phonebook")},
         "trunk_selection": {
             "select_call_trunk": lambda hass, **_kwargs: SimpleNamespace(
@@ -142,6 +145,8 @@ def softphone_originate(monkeypatch):
             "EndpointBusyError": type("EndpointBusyError", (Exception,), {})
         },
         "endpoint_routing": {
+            "EndpointRouteResolver": lambda hass, _ip, _port, **options: SimpleNamespace(
+                route=lambda target, entries: module.ha_router_decision(hass, target, entries, **options)),
             "ha_router_decision": Mock(),
             "peer_video_codec": lambda _peer, entry: getattr(entry, "metadata", {}).get("sip_video_codec")
                 or ("" if getattr(entry, "metadata", {}).get("capabilities") else None),
@@ -261,6 +266,10 @@ def softphone_originate(monkeypatch):
 
 
 def _call(hass, **data):
+    if not hasattr(hass, "runtime"):
+        hass.runtime = SimpleNamespace()
+    if not hasattr(hass.runtime, "directory"):
+        hass.runtime.directory = SimpleNamespace(snapshot=lambda: ())
     return SimpleNamespace(hass=hass, data=data, context=object())
 
 

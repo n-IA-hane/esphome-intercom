@@ -793,15 +793,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("await async_set_ha_softphone_settings(", preference)
         self.assertIn("**{preference: enabled}", preference)
 
-        websocket = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
-        ).read_text()
-        settings = _function_body(websocket, "async_set_ha_softphone_settings")
-        self.assertIn('store["auto_answer"] = bool(auto_answer)', settings)
-        self.assertIn('store["send_video"] = bool(send_video)', settings)
-        self.assertIn(
-            "await _async_save_ha_softphone_store(hass, endpoint_id)", settings
-        )
+        # Partial persistence and stale projections are exercised through the
+        # real entities in test_account_settings_transactions_ha.py.
 
     def test_video_bridge_projects_destination_h264_level_to_source_leg(self) -> None:
         routing_sources = (

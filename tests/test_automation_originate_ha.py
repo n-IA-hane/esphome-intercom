@@ -142,6 +142,7 @@ async def lab(hass, monkeypatch, socket_enabled):
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
     from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
@@ -189,7 +190,7 @@ async def lab(hass, monkeypatch, socket_enabled):
     runtime = VoipStackRuntime(
         transport_config={"sip_port": 5099, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1"},
         assist_config={}, trunk_config={}, endpoints=endpoints,
-        phones=PhoneAdapterRegistry(hass, endpoints), sip=calls,
+        phones=PhoneAdapterRegistry(hass, endpoints), sip=calls, directory=PhoneDirectory(roster),
     )
     entry.runtime_data = runtime
     monkeypatch.setattr(module, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))

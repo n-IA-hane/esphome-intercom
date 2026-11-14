@@ -24,12 +24,16 @@ SCENES = {
     "p4-landscape": ("yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml", {}),
     "p4-portrait": ("yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml", {}),
 }
+PHONE_SCENES = {
+    "p4-phone-jpeg": ("yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml", {}),
+    "p4-phone-h264": ("yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml", {}),
+}
 VARIANTS = ("full", "no-voip", "no-wake", "display-only", "voice-display")
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(240)]
 
 
 def scene_features(scene, variant):
-    original = yaml_util.load_yaml(ROOT / SCENES[scene][0])
+    original = yaml_util.load_yaml(ROOT / {**SCENES, **PHONE_SCENES}[scene][0])
     full = list(original["substitutions"]["firmware_features"])
     if "display" not in full:
         full.append("display")
@@ -46,9 +50,9 @@ def scene_features(scene, variant):
 @lru_cache(maxsize=None)
 def expanded_scene(scene, variant):
     with tempfile.TemporaryDirectory(prefix="lvgl-settings-contract-") as directory:
-        config = device_config(Path(directory), scene_features(scene, variant), SCENES[scene][0])
+        config = device_config(Path(directory), scene_features(scene, variant), {**SCENES, **PHONE_SCENES}[scene][0])
         value = yaml_util.load_yaml(config)
-        value["substitutions"].update(SCENES[scene][1])
+        value["substitutions"].update({**SCENES, **PHONE_SCENES}[scene][1])
         config.write_text(yaml_util.dump(value))
         result = subprocess.run(
             [sys.executable, "-m", "esphome", "config", str(config)],
@@ -73,7 +77,7 @@ def widget_nodes(value):
 
 
 def page_and_controls(config):
-    pages = [page for page in config["lvgl"]["pages"] if str(page.get("id", "")).startswith("settings_")]
+    pages = [page for page in config["lvgl"]["pages"] if str(page.get("id", "")).startswith("settings_") or page.get("id") == "videophone_settings_page"]
     assert len(pages) == 1
     page = pages[0]
     return page, {str(node["id"]): node for _, node in widget_nodes(page) if "id" in node}
@@ -115,17 +119,26 @@ def test_settings_match_compiled_capabilities(scene, variant):
     has_wake = "micro_wake_word" in config
     afe = config.get("esp_afe")
     mono_afe = afe is not None and int(afe.get("mic_num", 1)) == 1
-    ids = {str(node["id"]) for node in nodes(config) if "id" in node}
+    effective = {key: value for key, value in config.items() if key != "substitutions"}
+    ids = {str(node["id"]) for node in nodes(effective) if "id" in node}
+    assert not re.search(r"\bid\(\s*\)", text(effective)), (scene, "empty owner reference")
+    assert ("ns_switch" in ids) is mono_afe
+    assert ("agc_switch" in ids) is mono_afe
     owners = {
         "ui_auto_answer_sw": (has_voip, "auto_answer_switch"),
         "ui_dnd_sw": (has_voip, "dnd_switch"),
         "ui_conference_ring_sw": (has_voip, "phone"),
         "ui_playback_vol_slider": (has_player, "speaker_media_player"),
         "ui_wake_word_sw": (has_wake, "wake_word_switch"),
-        "ui_ns_sw": (mono_afe, "ns_switch"),
-        "ui_agc_sw": (mono_afe, "agc_switch"),
-        "ui_vad_sw": (afe is not None, "vad_switch"),
+        "ui_ns_sw": ("ns_switch" in ids, "ns_switch"),
+        "ui_agc_sw": ("agc_switch" in ids, "agc_switch"),
+        "ui_vad_sw": ("vad_switch" in ids, "vad_switch"),
         "ui_video_send_sw": ("voip_video_send" in ids, "voip_video_send"),
+        "ui_mic_vol_slider": ("mic_gain" in ids, "mic_gain"),
+        "ui_input_gain_slider": ("microphone_pga" in ids, "microphone_pga"),
+        "ui_reference_gain_slider": ("reference_pga" in ids, "reference_pga"),
+        "ui_voip_gain_slider": ("voip_tx_gain" in ids, "voip_tx_gain"),
+        "ui_camera_jpeg_quality_slider": ("p4_camera_jpeg_quality" in ids, "p4_camera_jpeg_quality"),
     }
     for widget, (enabled, owner) in owners.items():
         assert (widget in controls) is enabled, (scene, variant, widget)
@@ -190,6 +203,31 @@ def test_settings_match_compiled_capabilities(scene, variant):
             assert str(speakers["tts_speaker_input"]["output_speaker"]) == "hw_speaker"
 
 
+@pytest.mark.parametrize("scene", PHONE_SCENES)
+def test_standalone_p4_options_reuse_real_owner_bindings_and_jpeg_quality(scene):
+    config = expanded_scene(scene, "full")
+    page, controls = page_and_controls(config)
+    assert page["id"] == "videophone_settings_page"
+    assert "videophone_page" in {p["id"] for p in config["lvgl"]["pages"]}
+    effective = {key: value for key, value in config.items() if key != "substitutions"}
+    ids = {str(node["id"]) for node in nodes(effective) if "id" in node}
+    assert not re.search(r"\bid\(\s*\)", text(effective)), (scene, "empty owner reference")
+    for widget, owner in [("ui_mic_vol_slider", "mic_gain"),
+                          ("ui_input_gain_slider", "microphone_pga"),
+                          ("ui_reference_gain_slider", "reference_pga")]:
+        assert widget in controls and owner in ids and owner in text(controls[widget])
+    assert ("ui_camera_jpeg_quality_slider" in controls) is (scene == "p4-phone-jpeg")
+    assert "ui_voip_gain_slider" not in controls and "voip_tx_gain" not in ids
+    for unsupported in ("ui_ns_sw", "ui_agc_sw", "ui_vad_sw", "ui_aec_mode_dd"):
+        assert unsupported not in controls
+    assert "ui_aec_sw" in controls and "ui_dnd_sw" in controls
+    assert "on_scroll" not in page
+    sync = [item for item in config["script"] if str(item.get("id", "")).startswith("settings_sync")]
+    assert "traits.get_step()" in text(sync)
+    assert "lv_obj_is_scrolling" in text(sync)
+    assert not any(action in text(sync) for action in ("number.set", "call.perform()", "set_runtime_jpeg_quality"))
+
+
 @pytest.mark.parametrize("scene", ["spot240", "box360-afe-independent", "p4-landscape"])
 def test_options_header_has_one_centered_title_and_swipe_exit(scene):
     config = expanded_scene(scene, "full")
@@ -251,9 +289,9 @@ def test_round_initial_navigation_uses_only_compiled_views(scene, variant):
 
 @pytest.mark.parametrize("scene", ["spot240", "box360-aec"])
 def test_round_bootstrap_is_present_in_generated_cpp(tmp_path, scene):
-    config = device_config(tmp_path, scene_features(scene, "full"), SCENES[scene][0])
+    config = device_config(tmp_path, scene_features(scene, "full"), {**SCENES, **PHONE_SCENES}[scene][0])
     document = yaml_util.load_yaml(config)
-    document["substitutions"].update(SCENES[scene][1])
+    document["substitutions"].update({**SCENES, **PHONE_SCENES}[scene][1])
     document["esphome"] = {"build_path": str(tmp_path / "build")}
     unique = tmp_path / ("navigation-" + scene + ".yaml")
     unique.write_text(yaml_util.dump(document))

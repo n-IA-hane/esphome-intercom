@@ -5,6 +5,8 @@
 # packages/esp_afe/*_entities.yaml instead, because AEC is controlled by AFE.
 # =============================================================================
 
+substitutions:
+  settings_aec_switch_id: aec_switch
 switch:
   - platform: esp_audio_stack
     aec:

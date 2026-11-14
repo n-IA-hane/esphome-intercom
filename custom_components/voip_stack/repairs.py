@@ -14,6 +14,21 @@ ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
 _PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
 
 
+def async_sync_phone_identity_issue(hass, entry, error=None) -> None:
+    """Expose an inconsistent identity without guessing or rewriting either ID."""
+    issue_id = "phone_identity_conflict_" + entry.entry_id
+    if error is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
+        is_persistent=False, severity=ir.IssueSeverity.ERROR,
+        translation_key="phone_identity_conflict", translation_placeholders={
+            "phone": str(getattr(error, "phone", entry.title)),
+            "canonical": str(getattr(error, "canonical", "")),
+            "legacy": str(getattr(error, "legacy", "")),
+        })
+
+
 def async_sync_runtime_issues(hass: HomeAssistant) -> None:
     """Expose private media capture while enabled and clear stale warnings."""
 

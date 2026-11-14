@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
-from .physical_phone import PHONE_PROVISIONING_CHANGED, physical_phone_records, physical_phone_subentries, provisioning_enabled
+from .physical_phone import PHONE_PROVISIONING_CHANGED, physical_phone_id, physical_phone_model, physical_phone_records, physical_phone_subentries, provisioning_enabled
 
 
 async def async_setup_physical_phone_entities(hass, entry, async_add_entities, factory):
@@ -37,7 +37,7 @@ async def async_setup_physical_phone_entities(hass, entry, async_add_entities, f
         for identity in records:
             if identity not in entities:
                 rows = entities[identity] = factory(hass, entry, identity)
-                subentry = next(item for item in physical_phone_subentries(entry) if item.data["phone_id"] == identity)
+                subentry = next(item for item in physical_phone_subentries(entry) if physical_phone_id(item) == identity)
                 async_add_entities(rows, config_subentry_id=subentry.subentry_id)
             else:
                 for entity in entities[identity]:
@@ -69,8 +69,9 @@ class PhysicalPhoneEntity:
     def apply_record(self):
         phone = physical_phone_records(self.entry).get(self.phone_id)
         if phone is not None:
-            vendor, model = phone["profile_id"].split("/", 1)
-            self._attr_device_info.update({"name": phone["name"], "manufacturer": vendor.title(), "model": model})
+            vendor = phone["profile_id"].split("/", 1)[0]
+            self._attr_device_info.update({"name": phone["name"], "manufacturer": vendor.title(),
+                                          "model": physical_phone_model(phone["profile_id"])})
         if self.entity_id is not None:
             self.async_write_ha_state()
 
@@ -108,6 +109,16 @@ class PhysicalPhoneProvisioningSensor(PhysicalPhoneEntity, SensorEntity):
             result["last_download"] = value
         if isinstance(value := state.get("error"), str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}(?:Error|Exception)", value):
             result["error"] = value
+        if isinstance(value := state.get("apply_status"), str) and value in {
+            "pending", "waiting_idle", "not_qualified", "manual", "requesting", "requested", "error",
+        }:
+            result["apply_status"] = value
+        if isinstance(value := state.get("apply_error"), str) and value in {
+            "", "phone_apply_target_unverified", "phone_apply_unsupported", "phone_apply_credentials_required",
+            "phone_apply_authentication_failed", "phone_apply_http_error", "phone_apply_response_invalid",
+            "phone_apply_identity_mismatch", "phone_apply_provisioning_not_configured",
+        }:
+            result["apply_error"] = value
         if isinstance(value := state.get("language_code"), str) and re.fullmatch(r"[a-zA-Z0-9_-]{0,24}", value):
             result["language_code"] = value
         result["lines"] = [{"slot": line["slot"], "endpoint_id": line["endpoint_id"],

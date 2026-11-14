@@ -16,7 +16,7 @@ from .config import (
     trunk_config as _get_trunk_config,
     trunk_identity_uri as _trunk_identity_uri,
 )
-from .call_projection import publish_bridge_projection
+from .call_projection import publish_bridge_projection, stage_bridge_presentation
 from .call_state import CallPrecondition, validate_call_snapshot
 from .const import (
     CONF_SIP_VIDEO,
@@ -74,7 +74,7 @@ from .phonebook_runtime import registered_roster_entries as _registered_roster_e
 from .ring_group import (
     settle_browser_candidates as _settle_ring_browser_candidates,
 )
-from .ring_group_fork import build_ring_group_fork, group_leg_observer, run_owned_ring_group_fork
+from .ring_group_fork import account_offer_outcome, build_ring_group_fork, group_leg_observer, run_owned_ring_group_fork
 from .router import RouteAction
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied
 from .route_abort import (
@@ -512,8 +512,10 @@ async def _prepare_forward_existing_call(
                 departure = application.ticket.exit
                 application.ticket.exit = QueueExit(departure.cause, departure.disposition, destination)
         _check_external_route(decision)
-        from .account_dialing import account_dial_decision
+        from .account_dialing import account_call_plan, account_dial_decision
         decision = account_dial_decision(hass, decision)
+        account_plan = account_call_plan(decision.entry) if decision.action is RouteAction.GROUP else None
+        decision_route_kind = account_plan.route_kind if account_plan else decision.action.value
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
@@ -642,12 +644,14 @@ async def _prepare_forward_existing_call(
                     state=CallState.IN_CALL.value if application and application.answered else CallState.CONNECTING.value,
                     owner="router",
                     callee=destination,
-                    route_kind=decision.action.value,
+                    route_kind=decision_route_kind,
                     expected_revision=session.revision,
                     expected_owner=session.owner,
                     automation_resume_ha=ha_claimed,
                     **({"outbound_trunk_id": decision.trunk_id} if getattr(decision, "trunk_id", "") else {}),
-                    **({"dest_endpoint_id": str((decision.entry.metadata if decision.entry else {}).get("endpoint_id") or ""),
+                    **({"dest_endpoint_id": account_plan.endpoint_id,
+                        "target_endpoint_id": account_plan.endpoint_id} if account_plan else
+                       {"dest_endpoint_id": str((decision.entry.metadata if decision.entry else {}).get("endpoint_id") or ""),
                         "target_endpoint_id": str((decision.entry.metadata if decision.entry else {}).get("endpoint_id") or "")}
                        if local_source is not None else {}),
                 )
@@ -657,6 +661,9 @@ async def _prepare_forward_existing_call(
                         "call_changed_during_operation",
                         call_id=call_id,
                     )
+                stage_bridge_presentation(claimed, peer_name=destination,
+                    direction="outgoing" if local_source is not None else "incoming",
+                    route_source="automation", event_type="forwarding", last_sip_event="ROUTE_FORWARD")
         else:
             route_already_claimed = False
         if native_destination is not None:
@@ -671,18 +678,6 @@ async def _prepare_forward_existing_call(
                 destination=destination,
                 endpoint_id=session_endpoint_id,
             )
-        if not route_already_claimed:
-            if session is not None:
-                publish_bridge_projection(
-                    hass,
-                    session,
-                    peer_name=destination,
-                    direction="outgoing" if local_source is not None else "incoming",
-                    route_source="automation",
-                    route_kind=decision.action.value,
-                    event_type="forwarding",
-                    last_sip_event="ROUTE_FORWARD",
-                )
     except BaseException:
         call_artifacts.forward_claim = False
         if local_source is not None:
@@ -987,6 +982,9 @@ async def _prepare_forward_existing_call(
                 attempts = candidates.attempts
                 browser_legs = candidates.browser_legs
                 endpoint_registry = endpoint_directory(hass)
+                group_route_kind = account_plan.route_kind if account_plan else GROUP_TYPE_RING
+                if account_plan and endpoint_registry.get(account_plan.endpoint_id) is None:
+                    raise RuntimeError("account disappeared before forwarding")
 
                 settle_group = partial(
                     _settle_ring_browser_candidates,
@@ -996,7 +994,7 @@ async def _prepare_forward_existing_call(
                     call_id=call_id,
                     caller=invite.caller,
                     callee=entry.display_name,
-                    route_kind=GROUP_TYPE_RING,
+                    route_kind=group_route_kind,
                 )
 
                 def _settle_browser_candidates(state, reason, **kwargs) -> None:
@@ -1032,7 +1030,8 @@ async def _prepare_forward_existing_call(
                         local_name=invite.caller or _ha_peer_name(hass),
                         ring_policy=(RingPolicy(overall_timeout=_ring_timeout,
                                                 step_timeout=_ring_timeout)
-                                     if _resolved_decision is not None and _ring_timeout is not None else None),
+                                     if _resolved_decision is not None and _ring_timeout is not None
+                                     else account_plan.ring_policy if account_plan else None),
                         source_endpoint_id=str(
                             (session.metadata if session is not None else {}).get(
                                 "source_endpoint_id"
@@ -1095,7 +1094,7 @@ async def _prepare_forward_existing_call(
                         owner="router",
                         caller=invite.caller,
                         callee=entry.display_name,
-                        route_kind=GROUP_TYPE_RING,
+                        route_kind=group_route_kind,
                         ring_endpoint_ids=tuple(
                             leg.endpoint_id for leg in browser_legs
                         ),
@@ -1103,7 +1102,7 @@ async def _prepare_forward_existing_call(
                     for browser_leg in browser_legs:
                         runtime.publish_pending_ringing(
                             invite,
-                            route_kind=GROUP_TYPE_RING,
+                            route_kind=group_route_kind,
                             endpoint_id=browser_leg.endpoint_id,
                             endpoint_device_id=browser_leg.device_id,
                             callee=entry.display_name,
@@ -1116,7 +1115,7 @@ async def _prepare_forward_existing_call(
                         state=CallState.REMOTE_RINGING.value,
                         caller=invite.caller,
                         callee=entry.display_name,
-                        route_kind=GROUP_TYPE_RING,
+                        route_kind=group_route_kind,
                     )
                     if ringing_session is not None:
                         publish_bridge_projection(
@@ -1125,12 +1124,13 @@ async def _prepare_forward_existing_call(
                             peer_name=entry.display_name,
                             direction="outgoing" if local_source is not None else "incoming",
                             route_source="automation",
-                            route_kind=GROUP_TYPE_RING,
+                            route_kind=group_route_kind,
                             last_sip_event="SIP_RESPONSE",
                         )
 
                 base_leg_state = group_leg_observer(hass, registry, authoritative_session)
                 offers = {}
+                branch_results = {}
                 def offer_start(endpoint_id, *, rang=False):
                     if _queue_offer is None or not endpoint_id:
                         return
@@ -1149,8 +1149,10 @@ async def _prepare_forward_existing_call(
                     base_leg_state(outbound, state)
                     if state in {"calling", "remote_ringing"}:
                         offer_start(outbound.endpoint_id, rang=state == "remote_ringing")
-                    elif state != "closed":
-                        offer_end(outbound.endpoint_id, state)
+                    elif state != "closed" and _queue_offer is not None:
+                        branch_results.setdefault(outbound.endpoint_id, {})[
+                            outbound.client.dialog_ids.call_id
+                        ] = state
                 for browser_leg in browser_legs:
                     offer_start(browser_leg.endpoint_id, rang=True)
                 (
@@ -1165,7 +1167,6 @@ async def _prepare_forward_existing_call(
                     preflight_failures=[],
                     on_ringing=_publish_group_ringing,
                     on_leg_state=leg_state,
-                    **({"ring_timeout": _ring_timeout} if _ring_timeout is not None else {}),
                 )
                 fork_result = None
                 pickup_gate = winner = None
@@ -1175,7 +1176,9 @@ async def _prepare_forward_existing_call(
                         invite=invite, attempts=attempts, browser_legs=browser_legs, on_leg_state=leg_state,
                         commit_winner=lambda _candidate, _outcome: registry.is_generation_current(
                             call_id, call_generation),
-                        **({"overall_timeout": _ring_timeout} if _ring_timeout is not None else {}),
+                        **({"overall_timeout": _ring_timeout} if _ring_timeout is not None else
+                           {"overall_timeout": account_plan.ring_policy.overall_timeout,
+                            "step_timeout": account_plan.ring_policy.step_timeout} if account_plan else {}),
                     )
                 except asyncio.CancelledError:
                     await _abort_group(
@@ -1193,12 +1196,27 @@ async def _prepare_forward_existing_call(
                         winner = candidate_payloads.get(fork_result.winner.candidate_id)
                     winning_leg = pickup_gate.current.payload if winner is pickup_gate and pickup_gate is not None else winner
                     winner_id = str(getattr(winning_leg, "endpoint_id", "") or "")
-                    missing = "timeout" if fork_result is not None and fork_result.outcome.disposition is DialDisposition.TIMEOUT else "cancelled"
                     for endpoint_id in offers:
-                        if endpoint_id == winner_id and isinstance(winning_leg, BrowserLeg):
-                            # The existing media-ready commit owns a browser answer.
+                        if endpoint_id == winner_id:
+                            # QueueCall.connected owns the media-ready answer,
+                            # for SIP and HA transports of the same account.
                             continue
-                        offer_end(endpoint_id, "in_call" if endpoint_id == winner_id else missing)
+                        if winner_id or fork_result is None or fork_result.outcome.disposition in {
+                            DialDisposition.CANCELLED, DialDisposition.SOURCE_CANCELLED, DialDisposition.REROUTE,
+                        }:
+                            outcome = "cancelled"
+                        else:
+                            results = branch_results.get(endpoint_id, {})
+                            # Owner close withdraws an unanswered future; it is
+                            # not an agent's busy/decline decision.
+                            pending_browser = ((not browser_route_future.done() or browser_route_future.cancelled())
+                                and any(leg.endpoint_id == endpoint_id for leg in browser_legs))
+                            pending_sip = (fork_result.outcome.disposition is DialDisposition.TIMEOUT
+                                and any(attempt.endpoint_id == endpoint_id
+                                    and attempt.client.dialog_ids.call_id not in results for attempt in attempts))
+                            outcome = account_offer_outcome(list(results.values()),
+                                pending=pending_browser or pending_sip)
+                        offer_end(endpoint_id, outcome)
 
                 if winner is pickup_gate:
                     if pickup_gate.current.payload is None:
@@ -1219,6 +1237,8 @@ async def _prepare_forward_existing_call(
                         CallState.IDLE.value,
                         "forwarded",
                     )
+                    if not reservation_from_preanswer:
+                        reservation.release()
                     handoff = route.get("forward_handoff")
                     if handoff is not None and not handoff.done():
                         handoff.set_result(dict(reroute_decision))
@@ -1266,7 +1286,7 @@ async def _prepare_forward_existing_call(
                         owner="ha_softphone",
                         caller=invite.caller,
                         callee=entry.display_name,
-                        route_kind=GROUP_TYPE_RING,
+                        route_kind=group_route_kind,
                         endpoint_id=winner.endpoint_id,
                         session_device_id=winner.device_id,
                     )
@@ -1345,7 +1365,7 @@ async def _prepare_forward_existing_call(
                         retained_media=retained_media,
                     ),
                     BridgeCommitPolicy(
-                        route_kind=GROUP_TYPE_RING,
+                        route_kind=group_route_kind,
                         caller=invite.caller,
                         callee=entry.display_name,
                         connected_party=connected_party,
@@ -1370,7 +1390,7 @@ async def _prepare_forward_existing_call(
                     raise RuntimeError(TerminalReason.CANCELLED.value)
                 await retire_application()
                 if local_source is not None:
-                    local_source.connected(connected_party, GROUP_TYPE_RING)
+                    local_source.connected(connected_party, group_route_kind)
                 if session is not None:
                     publish_bridge_projection(
                         hass,
@@ -1381,7 +1401,7 @@ async def _prepare_forward_existing_call(
                         answered_by=connected_party,
                         direction="outgoing" if local_source is not None else "incoming",
                         route_source="automation",
-                        route_kind=GROUP_TYPE_RING,
+                        route_kind=group_route_kind,
                         sip_status_code=200,
                         last_sip_event="SIP_RESPONSE",
                         sip_uri=str(winner.uri),
@@ -1481,6 +1501,10 @@ async def _prepare_forward_existing_call(
                 ).get("endpoint_id")
                 or ""
             ).strip()
+            # Directory contacts/services have stable IDs too, but only a
+            # real logical phone can own an EndpointRegistry claim.
+            target_route_endpoint = endpoint_directory(hass).get(target_route_endpoint_id)
+            target_route_endpoint_id = target_route_endpoint.endpoint_id if target_route_endpoint is not None else ""
             forward_video_enabled = bool(
                 (preanswered is None or parked_media is not None)
                 and cfg.get(CONF_SIP_VIDEO, False)

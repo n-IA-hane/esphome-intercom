@@ -1,5 +1,5 @@
 """Validate the existing JPEG runtime setter and its optional settings widget."""
-from tests.native_profile import text
+from tests.native_profile import by_id, text
 from tests.test_lvgl_settings_composition import expanded_scene, page_and_controls
 
 
@@ -16,9 +16,17 @@ def test_p4_jpeg_quality_uses_existing_camera_owner():
     assert camera["jpeg_quality"] == 10 and camera["max_framerate"] == 10
     _, widgets = page_and_controls(config)
     slider = widgets["ui_camera_jpeg_quality_slider"]
-    assert (slider["min_value"], slider["max_value"]) == (1, 63)
+    # This disabled boot range is replaced by ticks from the existing Number.
+    assert (slider["min_value"], slider["max_value"]) == (0, 1)
+    assert slider["state"]["disabled"] is True
     assert "on_release" in slider and "on_change" not in slider
     assert "p4_camera_jpeg_quality" in text(slider["on_release"])
+    assert "settings_sync_camera_quality" in text(slider["on_release"])
+    sync = text(by_id(config["script"], "settings_sync_camera_quality"))
+    assert "p4_camera_jpeg_quality" in sync
+    assert all(trait in sync for trait in ("get_min_value()", "get_max_value()", "get_step()"))
+    assert "has_state()" in sync and "lv_slider_set_range" in sync
+    assert "make_call" not in sync
 
 
 def test_jpeg_control_is_absent_without_the_p4_jpeg_camera():

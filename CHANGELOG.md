@@ -18,10 +18,90 @@
 
 ### Account controls
 
+- Update existing HA phones to shared SIP accounts in place, preserving their
+  extensions, dashboards, devices, entity names, preferences and credentials.
+  New records use native HA subentry identities; migration validates the full
+  namespace and reports conflicting saved identities through Repairs.
+- Validate account edits before saving and persist only the requested fields.
+  Concurrent preference changes no longer restore stale extensions or groups.
+  An account name retained by a terminating call cannot be recreated until its
+  aliases are released, without leaving an unusable saved account behind.
+- Preserve the account's no-answer policy and ringing deadline when SIP phones
+  and HA clients share it, including forwarding and late browser answers.
+  A busy SIP terminal no longer ends the whole queue offer while HA can answer;
+  queue outcomes, missed responses and automatic pause follow the account result.
+- Keep the preferred HA account out of unrelated trunk calls, so an outgoing
+  call does not make another extension appear busy.
 - Keep DND feature subscriptions synchronized when a phone addresses its
   account by extension instead of its SIP username.
+- Accept opaque CSTA device references, including the terminal MAC sent by
+  Fanvil DND controls. Keep authorization on the authenticated SIP account and
+  addressed endpoint, with explicit foreign SIP references still rejected.
 - Finish resolving the latest popup account after an older pending lookup,
   without requiring a page reload or a second selection.
+- Share the initial account snapshot through the existing page subscription,
+  removing duplicate startup requests. Read-only cards receive their control
+  capability and do not probe microphones or automatically answer calls.
+- Keep an unrelated trunk's last SIP failure out of another account's status.
+  Reuse native device/entity lookup and removal, and update configured HA
+  associations from configuration changes rather than rescanning on call events.
+
+### Managed desk phones
+
+- Adopt a discovered or manually entered physical phone in one native HA form,
+  with an optional existing SIP account. Advanced properties, line assignments
+  and key ordering have separate controls; account and physical-phone entries
+  are labelled distinctly.
+- Choose associated phone lines from the selected model's real capabilities.
+  Reorder keys through their explicit physical positions, preserving unmanaged
+  slots. Share the key-function contract between resolution and rendering,
+  including the action that parks the current call without a BLF subscription.
+- Prepare and request configuration application through the existing worker
+  for qualified profiles with administrator credentials and an idle phone.
+  Preparation, file delivery and an accepted application request remain
+  separate observations. Unqualified models retain their manual application
+  path; no browser runtime or periodic resynchronization task is added to HA.
+- Qualify automatic configuration application for Fanvil X3U Pro firmware
+  2.12.20, including physical BLF key reordering without a manual provisioning
+  command or reboot. Existing phones need the updated pinned catalog profile.
+- Expose the application request status and safe error codes on the existing
+  provisioning sensor, without treating an accepted request as device adoption.
+- Label native HA configuration rows explicitly and show readable phone and
+  PBX models while preserving customized account and device names.
+- Preserve LDAP transport mode in provisioning and reject modes the selected
+  model cannot configure. Reuse verified cached profiles without rewriting
+  them and publish new cache files through unique atomic temporary files.
+- Keep provisioning optional: editing an account while it is disabled does
+  not download phone profiles. Redact administrative credentials and private
+  provisioning tokens from diagnostic exports.
+
+### On-device settings
+
+- Show the microphone, AEC-reference and call-transmission gain controls that
+  the selected profile actually provides. The display and Home Assistant use
+  the same controls, including their fractional steps and hardware limits.
+- Share supported audio controls and camera JPEG quality with the P4
+  VoIP-only Options screen. Profiles without a JPEG camera do not present a
+  camera encoding control.
+- Keep display updates event-driven and avoid rewriting unchanged control
+  values. On-device changes require rebuilding the corresponding firmware.
+
+### Coordinated ESP firmware
+
+- Correct DC-filter overflow, idle master-volume alias updates and packed
+  PCM sample alignment in the coordinated Audio and VoIP components.
+- Compact queued Runtime Controller updates and use fixed circular queues
+  while preserving event order, reentrancy limits and feature gates.
+  These device changes require rebuilding and uploading ESP firmware;
+  updating the HA integration alone does not install them.
+
+### Generic I2S microphone wiring
+
+- Expose `audio_mic_channel: left/right` consistently in the generic single-bus,
+  dual-bus and native-I2S microphone profiles. Preserve each profile's existing
+  default and select the same input for Voice Assistant, wake word and VoIP.
+  Thanks to [apaneiro](https://github.com/n-IA-hane/esphome-intercom/issues/162)
+  for the report.
 
 Rolling development preview, recovered incrementally from stable `2026.11.0`.
 Existing PBX functions, including parking, pickup, voicemail,

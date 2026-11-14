@@ -215,8 +215,8 @@ class PagingJob:
                 async def play():
                     async with aclosing(chunks()) as stream:
                         await media.play_pcm_stream(stream)
-                playback = asyncio.create_task(play())
-                closed = asyncio.create_task(media.closed.wait())
+                playback = self.session.create_task(play(), name=f"paging-playback:{endpoint_id}")
+                closed = self.session.create_task(media.closed.wait(), name=f"paging-closed:{endpoint_id}")
                 try:
                     done, _ = await asyncio.wait((playback, closed), return_when=asyncio.FIRST_COMPLETED)
                     if closed in done:
@@ -241,7 +241,7 @@ class PagingJob:
             queue, consumer = consumers[endpoint_id]
             if consumer.done():
                 return
-            pending = asyncio.create_task(queue.put(chunk))
+            pending = self.session.create_task(queue.put(chunk), name=f"paging-enqueue:{endpoint_id}")
             try:
                 await asyncio.wait((pending, consumer), return_when=asyncio.FIRST_COMPLETED)
             finally:
@@ -250,14 +250,14 @@ class PagingJob:
 
         for endpoint_id in tuple(self.calls):
             queue = asyncio.Queue(maxsize=_FANOUT_CHUNKS)
-            consumers[endpoint_id] = (queue, asyncio.create_task(consume(endpoint_id, queue), name=f"voip-page-output-{endpoint_id}"))
+            consumers[endpoint_id] = (queue, self.session.create_task(consume(endpoint_id, queue), name=f"voip-page-output-{endpoint_id}"))
         async def wait_for_outputs():
             await asyncio.gather(*(task for _queue, task in consumers.values()))
-        outputs_ended = asyncio.create_task(wait_for_outputs())
+        outputs_ended = self.session.create_task(wait_for_outputs(), name="paging-output-complete")
         try:
             async with aclosing(self._chunks()) as chunks:
                 while True:
-                    next_chunk = asyncio.create_task(anext(chunks))
+                    next_chunk = self.session.create_task(anext(chunks), name="paging-next-chunk")
                     try:
                         done, _ = await asyncio.wait((next_chunk, outputs_ended), return_when=asyncio.FIRST_COMPLETED)
                         if outputs_ended in done:

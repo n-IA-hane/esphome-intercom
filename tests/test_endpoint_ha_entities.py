@@ -28,11 +28,13 @@ def _install_ha_fakes() -> None:
         types.ModuleType("homeassistant.components.switch"),
     )
     switch_component.SwitchEntity = type("SwitchEntity", (), {})
+    switch_component.SwitchEntityDescription = lambda **kwargs: types.SimpleNamespace(**kwargs)
     text_component = sys.modules.setdefault(
         "homeassistant.components.text",
         types.ModuleType("homeassistant.components.text"),
     )
     text_component.TextEntity = type("TextEntity", (), {})
+    text_component.TextEntityDescription = lambda **kwargs: types.SimpleNamespace(**kwargs)
     text_component.TextMode = types.SimpleNamespace(TEXT="text")
     helpers = sys.modules.setdefault(
         "homeassistant.helpers", types.ModuleType("homeassistant.helpers")
@@ -496,20 +498,16 @@ def test_browser_phone_setting_entities_share_the_service_settings_writer(
     fake_websocket.async_set_ha_softphone_settings = async_set_ha_softphone_settings
     monkeypatch.setitem(sys.modules, f"{PKG_NAME}.websocket_api", fake_websocket)
 
-    setting = endpoint_text._PhoneTextSetting(
-        "ring_group", "phone_endpoint_ring_group", "mdi:phone-ring", 255
-    )
+    setting = next(item for item in endpoint_text._SETTINGS if item.key == "ring_group")
     text_entity = endpoint_text.PhoneEndpointSettingText(
         None, endpoint, registry, setting=setting
     )
-    assert text_entity._attr_icon == "mdi:phone-ring"
     text_entity.hass = object()
     asyncio.run(text_entity.async_set_value("Home, Upstairs"))
 
     conference_switch = endpoint_switch.PhoneEndpointConferenceRingSwitch(
         None, endpoint, registry
     )
-    assert conference_switch._attr_icon == "mdi:phone-in-talk"
     conference_switch.hass = text_entity.hass
     asyncio.run(conference_switch.async_turn_on())
 

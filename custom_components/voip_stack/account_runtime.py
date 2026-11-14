@@ -17,7 +17,7 @@ def account_has_ha_binding(hass, endpoint_id):
 @callback
 def recompute_account_availability(hass, endpoint_id=None):
     """Re-read current contacts and saved bindings; callbacks are only signals."""
-    from .phone_config import phone_subentries
+    from .phone_config import phone_endpoint_id, phone_subentries
     runtime = runtime_data(hass)
     if runtime is None:
         return
@@ -31,7 +31,7 @@ def recompute_account_availability(hass, endpoint_id=None):
                   if getattr(entry, "runtime_data", None) is runtime), None)
     if entry is None:
         return
-    configured = {str(sub.data.get("endpoint_id") or ""): sub.data for sub in phone_subentries(entry)}
+    configured = {phone_endpoint_id(sub): sub.data for sub in phone_subentries(entry)}
     registrar = runtime.sip.component("registrar") if runtime.sip is not None else None
     for endpoint in runtime.endpoints.endpoints:
         if not endpoint.supports_ha_client or (selected is not None and endpoint.endpoint_id not in selected):

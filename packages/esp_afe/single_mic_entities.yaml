@@ -10,6 +10,10 @@
 # =============================================================================
 
 substitutions:
+  settings_aec_switch_id: aec_switch
+  settings_ns_switch_id: ns_switch
+  settings_agc_switch_id: agc_switch
+  settings_vad_switch_id: vad_switch
   afe_aec_restore_mode: ALWAYS_ON
   afe_ns_restore_mode: RESTORE_DEFAULT_ON
   afe_agc_restore_mode: RESTORE_DEFAULT_ON

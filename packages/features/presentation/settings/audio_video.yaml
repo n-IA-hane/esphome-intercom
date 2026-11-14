@@ -1,57 +1,34 @@
 # Audio, processing and voice controls retain their existing owners.
 # Only user events write owners; programmatic updates use separate LVGL events.
+defaults:
+  settings_microphone_gain_id: ${ settings_microphone_gain_id | default('') }
+  settings_microphone_gain_label: ${ settings_microphone_gain_label | default('Software microphone gain') }
+  settings_input_gain_id: ${ settings_input_gain_id | default('') }
+  settings_input_gain_label: ${ settings_input_gain_label | default('Microphone input gain') }
+  settings_reference_gain_id: ${ settings_reference_gain_id | default('') }
+  settings_reference_gain_label: ${ settings_reference_gain_label | default('AEC reference gain') }
+  settings_voip_gain_id: ${ settings_voip_gain_id | default('') }
+  _settings_numbers: !include number_controls.yaml
 substitutions:
-  settings_microphone_gain_id: mic_gain
-  settings_microphone_gain_label: Microphone gain
-  _settings_has_mic_gain: ${ settings_microphone_gain_id != "mic_gain" or firmware_audio_backend == "native" or not _fw_voice }
-  _settings_speaker_widgets:
-    - label:
-        width: ${_settings_control_width}
-        text: !lambda |-
-          char text[64];
-          snprintf(text, sizeof(text), "Master volume: %.0f%%", static_cast<double>(id(master_volume).state));
-          return std::string(text);
-        text_align: LEFT
-        text_color: 16777215
-        text_font: ${_settings_font}
-        long_mode: WRAP
-        id: ui_speaker_value_label
-    - slider:
-        id: ui_speaker_vol_slider
-        width: ${_settings_control_width}
-        height: ${settings_slider_height}
-        ext_click_area: ${_settings_slider_touch_pad}
-        margin_bottom: ${_settings_slider_touch_pad}
-        min_value: 0
-        max_value: 100
-        adv_hittest: true
-        on_release:
-          - number.set:
-              id: master_volume
-              value: !lambda |-
-                return x;
-          - script.execute: settings_sync_speaker
-  _settings_speaker_package:
-    script:
-      - id: settings_sync_speaker
-        then:
-          - if:
-              condition:
-                lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj && !lv_obj_has_state(id(ui_speaker_vol_slider), LV_STATE_PRESSED);
-              then:
-                - lvgl.label.update:
-                    id: ui_speaker_value_label
-                    text: !lambda |-
-                      char text[64];
-                      snprintf(text, sizeof(text), "Master volume: %.0f%%", static_cast<double>(id(master_volume).state));
-                      return std::string(text);
-                - lvgl.slider.update:
-                    id: ui_speaker_vol_slider
-                    value: !lambda |-
-                      return id(master_volume).state;
-  _settings_speaker_callback: id(master_volume).add_on_state_callback([](float) {
-    id(settings_sync_speaker).execute(); });
+  _settings_modes: ${ firmware_processing_modes | default([]) }
+  settings_microphone_gain_id: ${settings_microphone_gain_id}
+  settings_microphone_gain_label: ${settings_microphone_gain_label}
+  settings_input_gain_id: ${settings_input_gain_id}
+  settings_input_gain_label: ${settings_input_gain_label}
+  settings_reference_gain_id: ${settings_reference_gain_id}
+  settings_reference_gain_label: ${settings_reference_gain_label}
+  settings_voip_gain_id: ${settings_voip_gain_id}
+  _settings_has_mic_gain: ${ settings_microphone_gain_id != '' and settings_microphone_gain_id not in [settings_input_gain_id, settings_reference_gain_id, settings_voip_gain_id] }
+  _settings_number_widgets: ${ (_settings_numbers['mic']['widgets'] if _settings_has_mic_gain else []) + (_settings_numbers['input']['widgets'] if settings_input_gain_id else []) + (_settings_numbers['reference']['widgets'] if settings_reference_gain_id else []) + (_settings_numbers['voip']['widgets'] if settings_voip_gain_id else []) }
+  _settings_number_callbacks: |-
+    ${ _settings_numbers['mic']['callback'] if _settings_has_mic_gain else '' }
+    ${ _settings_numbers['input']['callback'] if settings_input_gain_id else '' }
+    ${ _settings_numbers['reference']['callback'] if settings_reference_gain_id else '' }
+    ${ _settings_numbers['voip']['callback'] if settings_voip_gain_id else '' }
+  _settings_number_refresh: ${ (_settings_numbers['mic']['refresh'] if _settings_has_mic_gain else []) + (_settings_numbers['input']['refresh'] if settings_input_gain_id else []) + (_settings_numbers['reference']['refresh'] if settings_reference_gain_id else []) + (_settings_numbers['voip']['refresh'] if settings_voip_gain_id else []) }
+  _settings_speaker_widgets: ${ _settings_numbers['master']['widgets'] }
+  _settings_speaker_package: ${ _settings_numbers['master']['package'] }
+  _settings_speaker_callback: ${ _settings_numbers['master']['callback'] }
   _settings_playback_widgets:
     - label:
         width: ${_settings_control_width}
@@ -87,6 +64,7 @@ substitutions:
               condition:
                 lambda: !lambda |-
                   if (lv_disp_get_scr_act(nullptr) != id(${_settings_page_id})->obj ||
+                      lv_obj_is_scrolling(id(settings_page_wrapper)) ||
                       lv_obj_has_state(id(ui_playback_vol_slider), LV_STATE_PRESSED)) return false;
                   char text[64];
                   snprintf(text, sizeof(text), "Playback volume: %ld%%",
@@ -107,54 +85,6 @@ substitutions:
                       return std::lround(id(speaker_media_player).volume * 100.0f);
   _settings_playback_callback: id(speaker_media_player).add_on_state_callback([](media_player::MediaPlayerState)
     { id(settings_sync_playback).execute(); });
-  _settings_mic_widgets:
-    - label:
-        width: ${_settings_control_width}
-        text: !lambda |-
-          char text[64];
-          snprintf(text, sizeof(text), "${settings_microphone_gain_label}: %.0f dB", static_cast<double>(id(${settings_microphone_gain_id}).state));
-          return std::string(text);
-        text_align: LEFT
-        text_color: 16777215
-        text_font: ${_settings_font}
-        long_mode: WRAP
-        id: ui_mic_value_label
-    - slider:
-        id: ui_mic_vol_slider
-        width: ${_settings_control_width}
-        height: ${settings_slider_height}
-        ext_click_area: ${_settings_slider_touch_pad}
-        margin_bottom: ${_settings_slider_touch_pad}
-        min_value: ${mic_gain_min}
-        max_value: ${mic_gain_max}
-        adv_hittest: true
-        on_release:
-          - number.set:
-              id: ${settings_microphone_gain_id}
-              value: !lambda |-
-                return x;
-          - script.execute: settings_sync_mic
-  _settings_mic_package:
-    script:
-      - id: settings_sync_mic
-        then:
-          - if:
-              condition:
-                lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj && !lv_obj_has_state(id(ui_mic_vol_slider), LV_STATE_PRESSED);
-              then:
-                - lvgl.label.update:
-                    id: ui_mic_value_label
-                    text: !lambda |-
-                      char text[64];
-                      snprintf(text, sizeof(text), "${settings_microphone_gain_label}: %.0f dB", static_cast<double>(id(${settings_microphone_gain_id}).state));
-                      return std::string(text);
-                - lvgl.slider.update:
-                    id: ui_mic_vol_slider
-                    value: !lambda |-
-                      return id(${settings_microphone_gain_id}).state;
-  _settings_mic_callback: id(${settings_microphone_gain_id}).add_on_state_callback([](float) { id(settings_sync_mic).execute();
-    });
   _settings_speaker_mute_widgets:
     - obj:
         width: ${_settings_control_width}
@@ -195,7 +125,9 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_speaker_mute_sw), LV_STATE_CHECKED) != id(speaker_mute).state;
               then:
                 - lvgl.widget.update:
                     id: ui_speaker_mute_sw
@@ -244,7 +176,9 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_mic_mute_sw), LV_STATE_CHECKED) != id(mute).state;
               then:
                 - lvgl.widget.update:
                     id: ui_mic_mute_sw
@@ -282,9 +216,9 @@ substitutions:
               height: ${_settings_switch_height}
               on_change:
                 - lambda: !lambda |-
-                    if (x == id(aec_switch).state) return;
-                    if (x) id(aec_switch).turn_on();
-                    else id(aec_switch).turn_off();
+                    if (x == id(${settings_aec_switch_id}).state) return;
+                    if (x) id(${settings_aec_switch_id}).turn_on();
+                    else id(${settings_aec_switch_id}).turn_off();
                 - script.execute: settings_sync_aec
   _settings_aec_package:
     script:
@@ -293,14 +227,16 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_aec_sw), LV_STATE_CHECKED) != id(${settings_aec_switch_id}).state;
               then:
                 - lvgl.widget.update:
                     id: ui_aec_sw
                     state:
                       checked: !lambda |-
-                        return id(aec_switch).state;
-  _settings_aec_callback: id(aec_switch).add_on_state_callback([](bool) { id(settings_sync_aec).execute();
+                        return id(${settings_aec_switch_id}).state;
+  _settings_aec_callback: id(${settings_aec_switch_id}).add_on_state_callback([](bool) { id(settings_sync_aec).execute();
     });
   _settings_ns_widgets:
     - obj:
@@ -331,9 +267,9 @@ substitutions:
               height: ${_settings_switch_height}
               on_change:
                 - lambda: !lambda |-
-                    if (x == id(ns_switch).state) return;
-                    if (x) id(ns_switch).turn_on();
-                    else id(ns_switch).turn_off();
+                    if (x == id(${settings_ns_switch_id}).state) return;
+                    if (x) id(${settings_ns_switch_id}).turn_on();
+                    else id(${settings_ns_switch_id}).turn_off();
                 - script.execute: settings_sync_ns
   _settings_ns_package:
     script:
@@ -342,14 +278,16 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_ns_sw), LV_STATE_CHECKED) != id(${settings_ns_switch_id}).state;
               then:
                 - lvgl.widget.update:
                     id: ui_ns_sw
                     state:
                       checked: !lambda |-
-                        return id(ns_switch).state;
-  _settings_ns_callback: id(ns_switch).add_on_state_callback([](bool) { id(settings_sync_ns).execute();
+                        return id(${settings_ns_switch_id}).state;
+  _settings_ns_callback: id(${settings_ns_switch_id}).add_on_state_callback([](bool) { id(settings_sync_ns).execute();
     });
   _settings_agc_widgets:
     - obj:
@@ -380,9 +318,9 @@ substitutions:
               height: ${_settings_switch_height}
               on_change:
                 - lambda: !lambda |-
-                    if (x == id(agc_switch).state) return;
-                    if (x) id(agc_switch).turn_on();
-                    else id(agc_switch).turn_off();
+                    if (x == id(${settings_agc_switch_id}).state) return;
+                    if (x) id(${settings_agc_switch_id}).turn_on();
+                    else id(${settings_agc_switch_id}).turn_off();
                 - script.execute: settings_sync_agc
   _settings_agc_package:
     script:
@@ -391,14 +329,16 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_agc_sw), LV_STATE_CHECKED) != id(${settings_agc_switch_id}).state;
               then:
                 - lvgl.widget.update:
                     id: ui_agc_sw
                     state:
                       checked: !lambda |-
-                        return id(agc_switch).state;
-  _settings_agc_callback: id(agc_switch).add_on_state_callback([](bool) { id(settings_sync_agc).execute();
+                        return id(${settings_agc_switch_id}).state;
+  _settings_agc_callback: id(${settings_agc_switch_id}).add_on_state_callback([](bool) { id(settings_sync_agc).execute();
     });
   _settings_vad_widgets:
     - obj:
@@ -429,9 +369,9 @@ substitutions:
               height: ${_settings_switch_height}
               on_change:
                 - lambda: !lambda |-
-                    if (x == id(vad_switch).state) return;
-                    if (x) id(vad_switch).turn_on();
-                    else id(vad_switch).turn_off();
+                    if (x == id(${settings_vad_switch_id}).state) return;
+                    if (x) id(${settings_vad_switch_id}).turn_on();
+                    else id(${settings_vad_switch_id}).turn_off();
                 - script.execute: settings_sync_vad
   _settings_vad_package:
     script:
@@ -440,14 +380,16 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_vad_sw), LV_STATE_CHECKED) != id(${settings_vad_switch_id}).state;
               then:
                 - lvgl.widget.update:
                     id: ui_vad_sw
                     state:
                       checked: !lambda |-
-                        return id(vad_switch).state;
-  _settings_vad_callback: id(vad_switch).add_on_state_callback([](bool) { id(settings_sync_vad).execute();
+                        return id(${settings_vad_switch_id}).state;
+  _settings_vad_callback: id(${settings_vad_switch_id}).add_on_state_callback([](bool) { id(settings_sync_vad).execute();
     });
   _settings_wake_word_widgets:
     - obj:
@@ -489,7 +431,9 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_wake_word_sw), LV_STATE_CHECKED) != id(wake_word_switch).state;
               then:
                 - lvgl.widget.update:
                     id: ui_wake_word_sw
@@ -512,7 +456,7 @@ substitutions:
         options: ${_settings_modes}
         on_change:
           - select.set_index:
-              id: aec_mode_select
+              id: ${settings_processing_mode_id}
               index: !lambda |-
                 return x;
           - script.execute: settings_sync_mode
@@ -522,14 +466,19 @@ substitutions:
         then:
           - if:
               condition:
-                lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                lambda: |-
+                  if (lv_disp_get_scr_act(nullptr) != id(${_settings_page_id})->obj ||
+                      lv_obj_is_scrolling(id(settings_page_wrapper))) return false;
+                  const auto selected = id(${settings_processing_mode_id}).active_index();
+                  return selected.has_value() && id(ui_aec_mode_dd).get_selected_index() != *selected;
               then:
+                # The Select and widget share the configured mode list. Use the
+                # native wrapper action so its option mapping stays coherent.
                 - lvgl.dropdown.update:
                     id: ui_aec_mode_dd
                     selected_text: !lambda |-
-                      return id(aec_mode_select).current_option();
-  _settings_mode_callback: id(aec_mode_select).add_on_state_callback([](size_t) {
+                      return id(${settings_processing_mode_id}).current_option();
+  _settings_mode_callback: id(${settings_processing_mode_id}).add_on_state_callback([](size_t) {
     id(settings_sync_mode).execute(); });
   _settings_sendspin_widgets:
     - obj:
@@ -600,56 +549,10 @@ substitutions:
                       return code.empty() ? std::string("No pairing code") : std::string("Pairing code: ") + code;
   _settings_sendspin_callback: id(sendspin_pairing_code).add_on_state_callback([](const
     std::string &) { id(settings_sync_sendspin).execute(); });
-  _settings_camera_quality_widgets:
-    - label:
-        id: ui_camera_jpeg_quality_label
-        width: ${_settings_control_width}
-        text: !lambda |-
-          char text[48];
-          snprintf(text, sizeof(text), "Camera JPEG quality: %.0f",
-                   static_cast<double>(id(p4_camera_jpeg_quality).state));
-          return std::string(text);
-        text_align: LEFT
-        text_color: 16777215
-        text_font: ${_settings_font}
-        long_mode: WRAP
-    - slider:
-        id: ui_camera_jpeg_quality_slider
-        width: ${_settings_control_width}
-        height: ${settings_slider_height}
-        ext_click_area: ${_settings_slider_touch_pad}
-        margin_bottom: ${_settings_slider_touch_pad}
-        min_value: 1
-        max_value: 63
-        adv_hittest: true
-        on_release:
-          - number.set:
-              id: p4_camera_jpeg_quality
-              value: !lambda return x;
-          - script.execute: settings_sync_camera_quality
-  _settings_camera_quality_package:
-    script:
-      - id: settings_sync_camera_quality
-        then:
-          - if:
-              condition:
-                lambda: |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
-                         !lv_obj_has_state(id(ui_camera_jpeg_quality_slider), LV_STATE_PRESSED);
-              then:
-                - lvgl.label.update:
-                    id: ui_camera_jpeg_quality_label
-                    text: !lambda |-
-                      char text[48];
-                      snprintf(text, sizeof(text), "Camera JPEG quality: %.0f",
-                               static_cast<double>(id(p4_camera_jpeg_quality).state));
-                      return std::string(text);
-                - lvgl.slider.update:
-                    id: ui_camera_jpeg_quality_slider
-                    value: !lambda return id(p4_camera_jpeg_quality).state;
-  _settings_camera_quality_callback: id(p4_camera_jpeg_quality).add_on_state_callback([](float) { id(settings_sync_camera_quality).execute(); });
-  _settings_refresh_camera_quality:
-    - script.execute: settings_sync_camera_quality
+  _settings_camera_quality_widgets: ${ _settings_numbers['camera']['widgets'] }
+  _settings_camera_quality_package: ${ _settings_numbers['camera']['package'] }
+  _settings_camera_quality_callback: ${ _settings_numbers['camera']['callback'] }
+  _settings_refresh_camera_quality: ${ _settings_numbers['camera']['refresh'] }
   _settings_audio_widgets:
     - obj:
         width: ${_settings_control_width}
@@ -693,23 +596,23 @@ substitutions:
         text_font: ${_settings_font}
         long_mode: WRAP
   _settings_left_widgets: ${ _settings_audio_widgets + _settings_speaker_widgets
-    + (_settings_playback_widgets if _fw_playback else []) + (_settings_mic_widgets if _settings_has_mic_gain else [])
+    + (_settings_playback_widgets if _fw_playback else []) + _settings_number_widgets
     + _settings_speaker_mute_widgets + _settings_mic_mute_widgets
     + (_settings_camera_quality_widgets if _settings_camera_jpeg_quality else []) }
-  _settings_right_widgets: ${ _settings_processing_widgets + _settings_aec_widgets + _settings_mode_widgets
-    + (_settings_ns_widgets + _settings_agc_widgets if _settings_afe and _settings_single_mic
-    else []) + (_settings_vad_widgets if _settings_afe else []) + (_settings_voice_heading
+  _settings_right_widgets: ${ _settings_processing_widgets + (_settings_aec_widgets if settings_aec_switch_id else []) + (_settings_mode_widgets if settings_processing_mode_id else [])
+    + (_settings_ns_widgets if settings_ns_switch_id else []) + (_settings_agc_widgets if settings_agc_switch_id else []) + (_settings_vad_widgets if settings_vad_switch_id else []) + (_settings_voice_heading
     + _settings_wake_word_widgets if _fw_wake_word else [])
     + (_settings_sendspin_widgets if _fw_sendspin else []) }
   _settings_audio_callbacks: !lambda |-
     ${ _settings_speaker_callback }
-    ${ _settings_mic_callback if _settings_has_mic_gain else '' }
+    ${ _settings_number_callbacks }
     ${ _settings_speaker_mute_callback }
     ${ _settings_mic_mute_callback }
-    ${ _settings_aec_callback }
-    ${ _settings_mode_callback }
-    ${ _settings_ns_callback + '\n' + _settings_agc_callback if _settings_afe and _settings_single_mic else '' }
-    ${ _settings_vad_callback if _settings_afe else '' }
+    ${ _settings_aec_callback if settings_aec_switch_id else '' }
+    ${ _settings_mode_callback if settings_processing_mode_id else '' }
+    ${ _settings_ns_callback if settings_ns_switch_id else '' }
+    ${ _settings_agc_callback if settings_agc_switch_id else '' }
+    ${ _settings_vad_callback if settings_vad_switch_id else '' }
     ${ _settings_wake_word_callback if _fw_wake_word else '' }
     ${ _settings_playback_callback if _fw_playback else '' }
     ${ _settings_sendspin_callback if _fw_sendspin else '' }
@@ -718,10 +621,11 @@ substitutions:
     - script.execute: settings_sync_speaker
     - script.execute: settings_sync_speaker_mute
     - script.execute: settings_sync_mic_mute
+
+  _settings_refresh_aec:
     - script.execute: settings_sync_aec
+  _settings_refresh_mode:
     - script.execute: settings_sync_mode
-  _settings_refresh_mic:
-    - script.execute: settings_sync_mic
   _settings_refresh_ns:
     - script.execute: settings_sync_ns
   _settings_refresh_agc:
@@ -734,23 +638,21 @@ substitutions:
     - script.execute: settings_sync_playback
   _settings_refresh_sendspin:
     - script.execute: settings_sync_sendspin
-  _settings_refresh_audio: ${ _settings_audio_sync + (_settings_refresh_mic if _settings_has_mic_gain else []) + (_settings_refresh_ns + _settings_refresh_agc
-    if _settings_afe and _settings_single_mic else []) + (_settings_refresh_vad if
-    _settings_afe else []) + (_settings_refresh_wake_word if _fw_wake_word else [])
-    + (_settings_refresh_playback if _fw_playback else []) + (_settings_refresh_sendspin
-    if _fw_sendspin else []) + (_settings_refresh_camera_quality if _settings_camera_jpeg_quality else []) }
+  _settings_refresh_audio: ${ _settings_audio_sync + _settings_number_refresh + (_settings_refresh_aec if settings_aec_switch_id else []) + (_settings_refresh_mode if settings_processing_mode_id else []) + (_settings_refresh_ns if settings_ns_switch_id else []) + (_settings_refresh_agc if settings_agc_switch_id else []) + (_settings_refresh_vad if settings_vad_switch_id else []) + (_settings_refresh_wake_word if _fw_wake_word else []) + (_settings_refresh_playback if _fw_playback else []) + (_settings_refresh_sendspin if _fw_sendspin else []) + (_settings_refresh_camera_quality if _settings_camera_jpeg_quality else []) }
 packages:
   camera_quality: ${ _settings_camera_quality_package if _settings_camera_jpeg_quality else {} }
   speaker: ${ _settings_speaker_package }
-  mic: ${ _settings_mic_package if _settings_has_mic_gain else {} }
+  mic_number: ${ _settings_numbers['mic']['package'] if _settings_has_mic_gain else {} }
+  input_gain_number: ${ _settings_numbers['input']['package'] if settings_input_gain_id else {} }
+  reference_gain_number: ${ _settings_numbers['reference']['package'] if settings_reference_gain_id else {} }
+  voip_gain_number: ${ _settings_numbers['voip']['package'] if settings_voip_gain_id else {} }
   speaker_mute: ${ _settings_speaker_mute_package }
   mic_mute: ${ _settings_mic_mute_package }
-  aec: ${ _settings_aec_package }
-  mode: ${ _settings_mode_package }
-  ns: ${ _settings_ns_package if _settings_afe and _settings_single_mic else {} }
-  agc: ${ _settings_agc_package if _settings_afe and _settings_single_mic else {}
-    }
-  vad: ${ _settings_vad_package if _settings_afe else {} }
+  aec: ${ _settings_aec_package if settings_aec_switch_id else {} }
+  mode: ${ _settings_mode_package if settings_processing_mode_id else {} }
+  ns: ${ _settings_ns_package if settings_ns_switch_id else {} }
+  agc: ${ _settings_agc_package if settings_agc_switch_id else {} }
+  vad: ${ _settings_vad_package if settings_vad_switch_id else {} }
   wake_word: ${ _settings_wake_word_package if _fw_wake_word else {} }
   playback: ${ _settings_playback_package if _fw_playback else {} }
   sendspin: ${ _settings_sendspin_package if _fw_sendspin else {} }

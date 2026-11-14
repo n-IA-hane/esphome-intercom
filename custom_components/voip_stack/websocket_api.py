@@ -55,6 +55,8 @@ from .phone_config import (
     CONF_PHONE_RING_GROUP,
     CONF_PHONE_QUEUES,
     CONF_PHONE_SEND_VIDEO,
+    phone_subentry_by_endpoint_id,
+    phone_subentry_data,
     update_phone_subentry,
 )
 from .debug_capture import debug_capture_pending_writes
@@ -464,26 +466,22 @@ async def async_set_ha_softphone_settings(
     send_video: object = None,
 ) -> dict[str, Any]:
     endpoint_id = _endpoint_store_id(endpoint_id)
-    store = _ha_softphone_store(hass, endpoint_id)
+    updates = {}
     if extension is not None:
-        store["extension"] = _clean_endpoint_field(extension)
+        updates[CONF_PHONE_EXTENSION] = _clean_endpoint_field(extension)
     if queues is not None:
-        store["queues"] = list(normalize_phone_queues(queues))
-    groups = _ha_softphone_groups(hass, endpoint_id)
+        updates[CONF_PHONE_QUEUES] = list(normalize_phone_queues(queues))
     if ring_group is not None:
-        groups["ring_group"] = _clean_group_name(ring_group)
+        updates[CONF_PHONE_RING_GROUP] = _clean_group_name(ring_group)
     if conference_group is not None:
-        groups["conference_group"] = _clean_group_name(conference_group)
+        updates[CONF_PHONE_CONFERENCE_GROUP] = _clean_group_name(conference_group)
     if conference_ring is not None:
-        groups["conference_ring"] = bool(conference_ring)
+        updates[CONF_PHONE_CONFERENCE_RING] = bool(conference_ring)
     if auto_answer is not None:
-        store["auto_answer"] = bool(auto_answer)
+        updates[CONF_PHONE_AUTO_ANSWER] = bool(auto_answer)
     if send_video is not None:
-        store["send_video"] = bool(send_video)
-    if not groups["conference_group"]:
-        groups["conference_ring"] = False
-    store["groups"] = groups
-    await _async_save_ha_softphone_store(hass, endpoint_id)
+        updates[CONF_PHONE_SEND_VIDEO] = bool(send_video)
+    await _async_save_ha_softphone_store(hass, endpoint_id, updates)
     state = _ha_softphone_state(hass, endpoint_id)
     _publish_ha_softphone_state(hass, state, endpoint_id=endpoint_id)
     return state
@@ -597,29 +595,21 @@ async def _async_load_ha_softphone_store(
         runtime["local_name"] = endpoint.name
 
 
-async def _async_save_ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> None:
+async def _async_save_ha_softphone_store(
+    hass: HomeAssistant, endpoint_id: str, updates: dict[str, Any],
+) -> None:
+    """Persist only the requested fields; the browser store is a projection."""
+    from homeassistant.exceptions import ServiceValidationError
+    from .store import config_entry
+
     endpoint_id = _endpoint_store_id(endpoint_id)
-    runtime = _ha_softphone_store(hass, endpoint_id)
-    groups = _ha_softphone_groups(hass, endpoint_id)
-    persisted = {
-        CONF_PHONE_DND: _ha_softphone_dnd(hass, endpoint_id),
-        CONF_PHONE_AUTO_ANSWER: _ha_softphone_auto_answer(hass, endpoint_id),
-        CONF_PHONE_SEND_VIDEO: _ha_softphone_send_video(hass, endpoint_id),
-        CONF_PHONE_EXTENSION: _ha_softphone_extension(hass, endpoint_id),
-        CONF_PHONE_RING_GROUP: groups["ring_group"],
-        CONF_PHONE_QUEUES: list(normalize_phone_queues(runtime.get("queues"))),
-        CONF_PHONE_CONFERENCE_GROUP: groups["conference_group"],
-        CONF_PHONE_CONFERENCE_RING: groups["conference_ring"],
-    }
-    entry_id = str(runtime.get("config_entry_id") or "")
-    entry = hass.config_entries.async_get_entry(entry_id) if entry_id else None
-    if entry is not None:
-        update_phone_subentry(
-            hass,
-            entry,
-            endpoint_id,
-            persisted,
-        )
+    entry = config_entry(hass)
+    subentry = phone_subentry_by_endpoint_id(entry, endpoint_id) if entry is not None else None
+    if subentry is None:
+        raise ServiceValidationError("This phone is no longer configured. Reload the phone list and choose a configured SIP account.")
+    update_phone_subentry(hass, entry, endpoint_id, updates)
+    await _async_load_ha_softphone_store(hass, entry, endpoint_id=endpoint_id,
+                                        endpoint_data=phone_subentry_data(subentry))
 
 
 def _ha_softphone_dnd(hass: HomeAssistant, endpoint_id: str) -> bool:
@@ -966,10 +956,10 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         CallState.IN_CALL.value,
         CallState.TERMINATING.value,
     }
-    last_status = (
-        store.get("sip_status_code", "") or runtime["last_sip_status_code"] or ""
-    )
-    last_event = store.get("last_sip_event", "") or runtime["last_sip_event"]
+    # Integration-wide registrar/trunk diagnostics never describe an unrelated
+    # account. An idle account with no call event has no SIP outcome to report.
+    last_status = store.get("sip_status_code", "") or ""
+    last_event = store.get("last_sip_event", "")
     caller = store.get("caller", "") or store.get("last_terminal_caller", "")
     callee = store.get("callee", "") or store.get("last_terminal_callee", "")
     connected_party = str(
@@ -1158,8 +1148,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "sip_status_code": last_status,
         "terminal_reason": store.get("terminal_reason", ""),
         "last_sip_event": last_event,
-        "last_sip_reason": store.get("last_sip_reason", "")
-        or runtime["last_sip_reason"],
+        "last_sip_reason": store.get("last_sip_reason", ""),
         "sip_udp_ready": runtime["sip_udp_ready"],
         "sip_tcp_ready": runtime["sip_tcp_ready"],
         "pending_transactions": runtime["pending_transactions"],
@@ -1786,6 +1775,12 @@ def websocket_subscribe_call_events(
     attach_activity()
 
 
+def _client_phone_state(hass, connection, endpoint_id, state=None):
+    """Project per-user controls without storing permissions in account state."""
+    return {**(_ha_softphone_state(hass, endpoint_id) if state is None else state),
+            "can_control": websocket_can_control_endpoint(hass, connection, _browser_endpoint(hass, endpoint_id))}
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_TYPE_SUBSCRIBE_HA_SOFTPHONE,
@@ -1825,7 +1820,7 @@ def websocket_subscribe_ha_softphone_state(
         event_endpoint = str(event.data.get("endpoint_id") or "").strip()
         if event_endpoint != requested_endpoint:
             return
-        connection.send_event(msg_id, event.data)
+        connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint, event.data))
 
     unsubscribe_state = hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state)
     if publishes_presence:
@@ -1850,7 +1845,7 @@ def websocket_subscribe_ha_softphone_state(
                     if occurrence.get("call_id") == ended["call_id"]:
                         state["sequence"] = occurrence.get("sequence", state["sequence"])
                         state["revision"] = occurrence.get("revision", state["revision"])
-            connection.send_event(msg_id, state)
+            connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint, state))
     try:
         unsubscribe_projection = phone_state_observer(hass).subscribe(forward_projection)
     except ServiceValidationError:
@@ -1871,7 +1866,7 @@ def websocket_subscribe_ha_softphone_state(
 
     connection.subscriptions[msg_id] = unsubscribe
     connection.send_result(msg_id)
-    connection.send_event(msg_id, _ha_softphone_state(hass, requested_endpoint))
+    connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint))
 
 
 @websocket_api.websocket_command(
@@ -1904,7 +1899,7 @@ async def websocket_ha_softphone_state(
     selected_endpoint = _browser_endpoint(hass, endpoint_id)
     if selected_endpoint is not None:
         require_websocket_endpoint_read(hass, connection, selected_endpoint)
-    state = _ha_softphone_state(hass, endpoint_id)
+    state = _client_phone_state(hass, connection, endpoint_id)
     media_client_id = str(msg.get("media_client_id") or "")
     if media_client_id:
         owner_status = media_websocket_owner_status(

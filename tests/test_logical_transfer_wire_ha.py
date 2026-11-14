@@ -15,9 +15,17 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_a"}], indirect=True)
 @pytest.mark.parametrize("reject", [False, True])
 @pytest.mark.parametrize("incoming", [False, True])
+@pytest.mark.parametrize("sensor_absent", [False, True])
 async def test_public_transfer_addresses_logical_phone_and_preserves_failure_conversation(
-    registered_phones, trunks, monkeypatch, tmp_path, reject, incoming,
+    registered_phones, trunks, monkeypatch, tmp_path, reject, incoming, sensor_absent,
 ):
+    if sensor_absent:
+        from custom_components.voip_stack import softphone_originate
+        from custom_components.voip_stack.phone_directory import PhoneDirectory
+
+        trunks.runtime.directory = PhoneDirectory(trunks.roster)
+        trunks.runtime.phonebook_sensor = None
+        monkeypatch.setattr(softphone_originate, "phonebook_state", lambda _hass: None, raising=False)
     references = []
     native_send = sip_client.send_sip_datagram
 

@@ -1,9 +1,9 @@
 # Phones, contacts and calls
 
 Home Assistant hosts the PBX independently of ESP hardware or another PBX.
-Logical browser phones, standard SIP accounts, physical endpoints and trunks
-share its routing and call applications. You can start with two room or app
-phones and add external equipment later.
+SIP accounts, their physical and HA clients, ESP endpoints and trunks share its
+routing and call applications. You can start with two room or app phones and
+add external equipment later.
 
 ![Illustration of Home Assistant as the local SIP and PBX hub](images/home-assistant-local-sip-pbx.png)
 
@@ -13,13 +13,14 @@ These are the names you will see in the editor, and when they matter.
 
 | Term | What it means | Example |
 | --- | --- | --- |
-| Phone | Something that places or receives calls and has its own state. | The HA browser phone named Reception, a SIP handset or an ESP. |
+| Phone | A callable account or ESP endpoint, selected by its visible name. | Reception, used by an HA card and a registered handset. |
 | Card | The dashboard controls for a phone. It is not another phone by itself. | Two cards can show Reception; the browser that answers owns its audio. |
 | Calling phone | The local phone that will place a call. Select it by name. | Reception. |
 | Destination | Who you want that phone to call. | Kitchen, extension 101, a group or an external number. |
 | Contact | A phonebook entry telling the PBX how to reach a destination. | A named door station or delivery driver's number. |
 | Extension | An optional local dial-plan number. Each destination needs a distinct one. | 101 for Kitchen. |
-| SIP account | Credentials a normal SIP phone uses to register with HA. | An account for a desk phone or Zoiper. |
+| SIP account | The callable identity, with its extension, policies, calls and client credentials. | Reception, shared by a desk phone and an HA card. |
+| Physical phone | A hardware client with its own model, lines and programmable keys. | A desk phone whose line 1 uses Reception. |
 | Trunk | A connection from HA to a provider or another PBX. | A work telephone line. It is not a room phone. |
 | Automation contact | A callable destination handled by HA automations; also a backend announcement caller. | Welcome or Wakeup-Caller. |
 | Mailbox | The messages stored for one phone by HA's voicemail feature. | Kitchen's unanswered-call messages. |
@@ -63,8 +64,10 @@ call applications. Cards and the Dashboard control those backend phones.
 Opening a view does not create a second phone identity. Browser media belongs
 to the browser or Companion session that answers or originates the call.
 Each room phone can have its own view and controls.
-The backend phone remains available to routing when its card is not in the
-foreground; opening a browser media session is a separate step.
+An enabled account is online when it has a valid SIP registration or a saved HA
+association. Closing a browser or hiding a view does not remove that saved
+association. An account with neither is offline. Browser media opens separately
+when a client originates or answers; DND, busy and queue state still apply.
 
 An ESP is optional. With VoIP firmware it is a physical SIP phone. A Full ESP
 profile can also run its own wake-word Voice Assistant and media player. That
@@ -99,6 +102,11 @@ See [network setup](DEPLOYMENT_GUIDE.md#network) when a phone rings but its audi
 cannot travel in one or both directions.
 
 ## Advanced identifiers
+
+Account and physical inventory references are owned by their native HA
+configuration records. New drafts retain the same reference when confirmed;
+upgrades preserve existing references and entities. Editing a name or extension
+does not recreate the account or hardware device.
 
 The guides use visible names first. For integrations and complex automations,
 `device_id` identifies the local HA device, `endpoint_id` identifies a logical

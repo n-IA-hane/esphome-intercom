@@ -477,6 +477,7 @@ async def test_reinvite_during_voicemail_keeps_recording_at_each_native_rate(mai
 
 @pytest.mark.parametrize("credentials", ["generated", "explicit"])
 async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrations, credentials):
+    from custom_components.voip_stack.phone_config import phone_endpoint_id
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
@@ -497,15 +498,16 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
         assert invalid["errors"] == {"username": "phone_username_invalid"}
         assert not any(item.title == "Study" for item in entry.subentries.values())
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"](values))
-    assert result["type"] == "create_entry"
+    assert result["type"] == "abort" and result["reason"] == "phone_configured"
     created = next(item for item in entry.subentries.values() if item.title == "Study")
     assert created.data["kind"] == "sip_account"
     assert created.data["voicemail"] == {"enabled": True}
     from custom_components.voip_stack.mailbox import mailbox_settings
-    assert mailbox_settings(lab.hass, created.data["endpoint_id"]) == {"enabled": True}
+    assert mailbox_settings(lab.hass, phone_endpoint_id(created)) == {"enabled": True}
 
 
 async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, custom_integrations):
+    from custom_components.voip_stack.phone_config import phone_endpoint_id
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
@@ -524,7 +526,7 @@ async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, cust
     updated = entry.subentries[child.subentry_id]
     assert updated.data["name"] == "New kitchen"
     assert updated.data["voicemail"] == {"enabled": True, "max_seconds": 2}
-    assert updated.data["endpoint_id"] == "kitchen"
+    assert phone_endpoint_id(updated) == "kitchen"
 
 
 
@@ -1009,7 +1011,7 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
         "enabled": True, "tts_entity_id": "tts.test", "language": "en",
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
-        subentry_type="phone", title="Source", unique_id="phone:source",
+        subentry_type="phone", title="Source", unique_id="phone:" + mailbox_id,
         data={"endpoint_id": mailbox_id, "name": "Source", "kind": "sip_account",
               "username": "source", "extension": "101", "voicemail": {"enabled": True, "pin_hash": _pin_hash(pin)}},
     ))

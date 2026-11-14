@@ -14,7 +14,7 @@ from .automation_routing import (
     automation_event_type,
 )
 from .const import DOMAIN
-from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
+from .phone_entity import PhoneEndpointEntity
 from .endpoint_entity_manager import (
     EndpointEntityManager,
     event_matches_endpoint,
@@ -68,6 +68,8 @@ class VoipStackCallEvent(EventEntity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title or "VoIP Stack",
+            manufacturer="VoIP Stack",
+            model="PBX",
         )
 
     @callback
@@ -100,43 +102,20 @@ class VoipStackCallEvent(EventEntity):
         self.async_write_ha_state()
 
 
-class PhoneEndpointCallEvent(EventEntity):
+class PhoneEndpointCallEvent(PhoneEndpointEntity, EventEntity):
     """Publish only call lifecycle events involving one logical phone."""
 
     _attr_event_types = AUTOMATION_EVENT_TYPES
-    _attr_has_entity_name = True
-    _attr_should_poll = False
     _attr_translation_key = "phone_endpoint_call"
     _unrecorded_attributes = VoipStackCallEvent._unrecorded_attributes
 
     def __init__(self, hass, endpoint, registry) -> None:
-        self.endpoint = endpoint
-        self.registry = registry
-        self._attr_unique_id = f"phone_endpoint_{endpoint.endpoint_id}_call_event"
-        self._attr_device_info = endpoint_device_info(endpoint)
-
-    @callback
-    def async_entity_id_changed(self, old_entity_id: str) -> None:
-        """Keep phone lookup and permissions attached to the renamed entity."""
-        super().async_entity_id_changed(old_entity_id)
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id, old_entity_id
-        )
-        self._linked_entity_id = self.entity_id
+        super().__init__(endpoint, registry, key="call_event")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id,
-            getattr(self, "_linked_entity_id", None),
-        )
-        self._linked_entity_id = self.entity_id
         self.async_on_remove(self.hass.bus.async_listen(CALL_EVENT, self._on_call_event))
         self.async_on_remove(self.hass.bus.async_listen(SIP_DTMF_EVENT, self._on_dtmf_event))
-
-    @callback
-    def apply_endpoint(self, endpoint) -> None:
-        self.endpoint = endpoint
 
     @callback
     def _on_call_event(self, event: Event) -> None:

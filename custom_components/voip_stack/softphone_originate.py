@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import partial
 import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .entity_identity import phonebook_state
+from .directory_runtime import routing_snapshot
 
 from .trunk_policy import external_call_denied, is_any_trunk_uri, trunk_available
 from .peer_media_profile import resolve_peer_media_profile
@@ -38,7 +37,7 @@ from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
-    ha_router_decision,
+    EndpointRouteResolver,
     peer_video_codec,
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
@@ -192,7 +191,6 @@ async def async_originate_browser_call(
     force_ha_bridge: bool = False,
 ) -> None:
     """Originate a standards SIP call from one Home Assistant browser phone."""
-    from .roster import parse_roster_json
     from .core.sip import SipUri, parse_sip_uri, sip_default_port
     from .sip_client import SIP_TIMER_B, SipCallClient
 
@@ -229,13 +227,13 @@ async def async_originate_browser_call(
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
         trunk_available(trunk)
     )
-    sensor = phonebook_state(hass)
-    roster_json = (
-        str(sensor.attributes.get("roster_json") or "") if sensor is not None else ""
-    )
-    contacts = parse_roster_json(roster_json) if roster_json else []
-    resolve_route = partial(ha_router_decision, hass, source_endpoint_id=endpoint_id,
-                            trunk_id=trunk_selection.identity)
+    try:
+        contacts = routing_snapshot(require_runtime_data(hass))
+    except ValueError as error:
+        raise _service_error("Phone directory is unavailable", "phone_unavailable", phone=target) from error
+    resolve_route = EndpointRouteResolver(hass, str(cfg.get("advertise_host") or ""),
+        int(cfg.get("sip_port") or 5060), source_endpoint_id=endpoint_id,
+        trunk_id=trunk_selection.identity).route
     route = resolve_route(target, contacts)
     from .inbound_routing.targets import resolve_phone_target
 

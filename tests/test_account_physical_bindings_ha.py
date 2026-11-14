@@ -33,12 +33,42 @@ async def test_discovery_editor_can_save_unassigned_without_creating_an_account(
     before = set(state.lab.entry.subentries)
     form = await start(state)
     assert form["description_placeholders"]["profile_pin"] == "a" * 40
-    form = await submit(state, form, identity())
-    saved = await submit(state, form, {"lines": [], "keys": []})
-    assert saved["type"] == "create_entry"
+    saved = await submit(state, form, identity())
+    assert saved["type"] == "abort" and saved["reason"] == "phone_configured"
     added = [item for key, item in state.lab.entry.subentries.items() if key not in before]
     assert len(added) == 1 and added[0].subentry_type == "physical_phone"
     assert added[0].data["lines"] == []
+
+
+async def test_inverse_picker_limits_each_device_and_preserves_legacy_rest_rows(physical_flow):
+    import json
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.physical_phone import (
+        account_physical_bindings_selector, account_physical_bindings_from_form,
+        async_account_physical_binding_options, async_prepare_account_bindings, normalize_physical_phone,
+    )
+
+    state = physical_flow
+    phones = []
+    for model, mac, name, owner in [("x3u-pro", "001122334455", "Fanvil", "sip:office"),
+                                     ("h2u-v2", "001122334466", "Small", "sip:front")]:
+        data = normalize_physical_phone({"name": name, "mac": mac, "profile_id": "fanvil/" + model,
+            "catalog_commit": "a" * 40, "lines": [{"slot": "1", "endpoint_id": owner}], "keys": []})
+        state.lab.hass.config_entries.async_add_subentry(state.lab.entry, ConfigSubentry(
+            subentry_type="physical_phone", title=name, data=data, unique_id="physical_phone:" + data["phone_id"]))
+        phones.append(data)
+    state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
+    options = await async_account_physical_binding_options(state.lab.hass, state.lab.entry, "sip:front")
+    offered = {tuple(json.loads(option["value"])) for option in options}
+    assert (phones[0]["phone_id"], "1") not in offered
+    assert (phones[0]["phone_id"], "6") in offered
+    assert (phones[1]["phone_id"], "1") in offered and (phones[1]["phone_id"], "2") not in offered
+    rows = [{"phone_id": phones[0]["phone_id"], "slot": "2", "transport": "udp"}]
+    selector = account_physical_bindings_selector(state.lab.entry, options=options)
+    assert account_physical_bindings_from_form(selector(rows)) == rows
+    with pytest.raises(ValueError, match="phone_line_unsupported"):
+        await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front",
+            [{"phone_id": phones[1]["phone_id"], "slot": "2", "transport": "udp"}])
 
 
 async def test_last_unbind_invalidates_old_credentials_and_serves_owned_disable_only(cached_physical_config):

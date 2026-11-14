@@ -42,6 +42,7 @@ async def queue_lab(trunks, monkeypatch):
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source", name="Source", username="source", kind=EndpointKind.SIP_ACCOUNT,
                                                 availability="available"))
     lab.roster.append(RosterEntry("source", address="127.0.0.2", metadata={"endpoint_id": "source"}))
+    lab.runtime.directory.replace(lab.roster)
     clients, sockets = [], []
 
     async def caller(name="Source", address="127.0.0.2"):
@@ -1054,8 +1055,56 @@ async def test_nonforwardable_source_with_bad_trunk_is_not_terminated(queue_lab)
         await client.terminate()
 
 
+async def bind_shared_queue_account(lab, endpoint_id="sip:bedroom0"):
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+
+    endpoint = lab.runtime.endpoints.require(endpoint_id)
+    lab.runtime.endpoints.update(endpoint.endpoint_id, device_id="shared-queue-account")
+    endpoint = lab.runtime.endpoints.require(endpoint.endpoint_id)
+    entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+    bindings = HaCardBindings(lab.hass, entry, lab.runtime, lambda _ids: None)
+    lab.runtime.ha_bindings = bindings
+    await bindings.async_start()
+    await bindings.async_set_popup_binding("test-user", "shared-queue-account-binding", endpoint.endpoint_id, True)
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=(endpoint.endpoint_id,))
+    lab.manager.agent_states[lab.identity] = {endpoint.endpoint_id: "available"}
+    lab.phones[0].final_status = 486
+    lab.phones[0].auto_answer = True
+    return endpoint, bindings
+
+
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_commit(queue_lab):
+async def test_external_call_does_not_claim_the_preferred_shared_account(queue_lab):
+    lab = queue_lab
+    endpoint, bindings = await bind_shared_queue_account(lab, "sip:bedroom1")
+    lab.runtime.preferred_phone_device_id = endpoint.device_id
+    for phone in lab.phones:
+        phone.auto_answer = False
+    source, _ = await lab.caller()
+    other, _ = await lab.caller("Other", "127.0.0.3")
+    try:
+        assert await source.invite(target="12345", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=2) == "ringing"
+        await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
+        session = lab.calls.get_session(source.dialog_ids.call_id)
+        assert endpoint.endpoint_id not in session.endpoint_claims
+        assert not lab.runtime.endpoints.require(endpoint.endpoint_id).active_call_id
+        assert await other.invite(target=endpoint.name, remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=2) == "ringing"
+        await asyncio.wait_for(lab.phones[1].invited.wait(), 2)
+        assert lab.runtime.endpoints.require(endpoint.endpoint_id).active_call_id == other.dialog_ids.call_id
+    finally:
+        await asyncio.gather(source.terminate(), other.terminate())
+        async with asyncio.timeout(3):
+            while lab.calls.sessions:
+                await asyncio.sleep(.01)
+        await bindings.async_close()
+        assert not lab.calls.endpoint_claims_snapshot()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("shared_transport", [False, True], ids=["separate-account", "same-account-sip-busy"])
+async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_commit(queue_lab, shared_transport):
     from custom_components.voip_stack import audio_ws_view
     from custom_components.voip_stack.websocket_owner import MediaWebSocketOwner, async_release_media_owner
     from .test_browser_paging_ha import Browser
@@ -1065,16 +1114,19 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
             self.force_close()
 
     lab = queue_lab
-    endpoint = PhoneEndpoint(endpoint_id="browser-agent", name="Browser agent", username="browser-agent",
-        device_id="browser-agent-device", kind=EndpointKind.BROWSER, availability="available")
-    lab.runtime.endpoints.register(endpoint)
-    lab.runtime.softphone_presence[endpoint.endpoint_id] = 1
-    lab.roster.append(RosterEntry(endpoint.name, metadata={"local_ha": True,
-        "endpoint_id": endpoint.endpoint_id, "endpoint_kind": "browser"}))
-    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
-        members=("sip:bedroom0", endpoint.endpoint_id))
-    lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
-    lab.phones[0].auto_answer = False
+    bindings = None
+    if shared_transport:
+        endpoint, bindings = await bind_shared_queue_account(lab)
+    else:
+        endpoint = PhoneEndpoint(endpoint_id="browser-agent", name="Browser agent", username="browser-agent",
+            device_id="browser-agent-device", kind=EndpointKind.BROWSER, availability="available")
+        lab.runtime.endpoints.register(endpoint)
+        lab.roster.append(RosterEntry(endpoint.name, metadata={"local_ha": True,
+            "endpoint_id": endpoint.endpoint_id, "endpoint_kind": "browser"}))
+        lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
+            members=("sip:bedroom0", endpoint.endpoint_id))
+        lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
+        lab.phones[0].auto_answer = False
     client, audio = await dial_queue(lab)
     session = lab.calls.get_session(client.dialog_ids.call_id)
     worker = None
@@ -1124,7 +1176,7 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         await wait_until(lambda: any(any(frame) for frame in browser.frames))
         voiced = next(frame for frame in browser.frames if any(frame))
         assert set(struct.unpack(f"<{len(voiced)//2}h", voiced)) == {2310}
-        assert any(request.method == "CANCEL" for request in lab.phones[0].requests)
+        assert any(request.method == ("ACK" if shared_transport else "CANCEL") for request in lab.phones[0].requests)
         await client.terminate()
         await asyncio.wait_for(session.terminated.wait(), 2)
         assert not lab.calls.sessions and not lab.manager.waiting and not lab.manager.reservations
@@ -1136,6 +1188,34 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         if worker is not None:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+        if bindings is not None:
+            await bindings.async_close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_shared_queue_account_counts_noanswer_after_its_sip_branch_is_busy(queue_lab):
+    lab = queue_lab
+    endpoint, bindings = await bind_shared_queue_account(lab)
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], auto_pause_after=1)
+    client = None
+    try:
+        client, _audio = await dial_queue(lab)
+        await wait_until(lambda: any(request.method == "ACK" for request in lab.phones[0].requests))
+        async with asyncio.timeout(4):
+            while lab.manager.agent_states[lab.identity][endpoint.endpoint_id] != "paused":
+                await asyncio.sleep(.01)
+        ended = [event for event in lab.queue_events if event["event_type"] == "offer_ended"]
+        assert len(ended) == 1 and ended[0]["outcome"] == "timeout"
+        stats = lab.manager.agent_stats[lab.identity][endpoint.endpoint_id]
+        assert stats["consecutive_misses"] == 1 and stats["pause_reason"] == "no_answer"
+    finally:
+        if client is not None:
+            identity = client.dialog_ids.call_id
+            await client.terminate()
+            if session := lab.calls.get_session(identity):
+                await asyncio.wait_for(session.terminated.wait(), 2)
+        await bindings.async_close()
+        assert not lab.manager.reservations and not lab.calls.endpoint_claims_snapshot()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

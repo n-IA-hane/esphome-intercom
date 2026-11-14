@@ -896,7 +896,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("for subentry in phone_subentries(entry):", setup)
         self.assertIn("await _async_load_ha_softphone_store(", setup)
         self.assertIn("endpoint_id=endpoint.endpoint_id", setup)
-        self.assertIn("endpoint_data=dict(subentry.data)", setup)
+        # Native identity and compatibility DTO loading are covered by the
+        # account migration/transaction HA tests, without requiring a stored copy.
 
     def test_config_flow_has_no_softphone_group_or_ring_fallback_policy(self) -> None:
         config_flow = CONFIG_FLOW.read_text()
@@ -1421,8 +1422,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
 
         self.assertNotIn("_fire_call_event", group_update)
-        self.assertIn('if not groups["conference_group"]:', group_update)
-        self.assertIn('groups["conference_ring"] = False', group_update)
+        # Clearing conference membership is covered through the production
+        # setter in test_account_settings_transactions_ha.py.
         self.assertNotIn("websocket_set_ha_softphone_dnd", websocket)
         self.assertNotIn("websocket_set_ha_softphone_groups", websocket)
         self.assertNotIn("websocket_set_ha_softphone_settings", websocket)

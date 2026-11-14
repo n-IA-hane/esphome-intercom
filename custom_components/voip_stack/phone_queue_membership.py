@@ -88,13 +88,13 @@ def observe_native_membership(record, field, value, *, allow_change=False):
 def iter_phone_memberships(hass, entry, kind):
     """Project the owning phone records, including temporarily offline ESPs."""
     from .managed_phones import managed_records
-    from .phone_config import CONF_PHONE_ENDPOINT_ID, phone_subentries
+    from .phone_config import phone_endpoint_id, phone_subentries
 
     field = MEMBERSHIP_FIELDS[kind]
 
     seen = set()
     for phone in phone_subentries(entry):
-        endpoint_id = str(phone.data.get(CONF_PHONE_ENDPOINT_ID) or "").strip()
+        endpoint_id = phone_endpoint_id(phone)
         if endpoint_id:
             seen.add(endpoint_id)
             yield endpoint_id, membership_names(field, phone.data.get(field))
@@ -123,7 +123,8 @@ def _apply_membership_updates(hass, entry, updates):
     """Validate every target before synchronously committing the batch."""
     from dataclasses import replace
     from .managed_phones import CONF_MANAGED_PHONES, managed_records
-    from .phone_config import endpoint_from_data, phone_subentry_by_endpoint_id, sync_registry_from_entry
+    from .phone_config import (endpoint_from_data, phone_subentry_by_endpoint_id,
+        phone_subentry_data, phone_subentry_storage_data, sync_registry_from_entry)
     from .phone_endpoint import EndpointKind
     from .runtime_data import runtime_data
 
@@ -137,7 +138,7 @@ def _apply_membership_updates(hass, entry, updates):
         normalized = {field: membership_value(field, value) for field, value in fields.items()}
         subentry = phone_subentry_by_endpoint_id(entry, endpoint_id)
         if subentry is not None:
-            data = {**subentry.data, **normalized}
+            data = {**phone_subentry_data(subentry), **normalized}
             if "queues" in normalized:
                 data["queues"] = list(normalized["queues"])
             endpoint_from_data(entry, data)
@@ -176,7 +177,8 @@ def _apply_membership_updates(hass, entry, updates):
         endpoint_updates[endpoint_id] = normalized
     # No await between these writes: listeners observe the complete desired batch.
     for subentry, data in subentries:
-        hass.config_entries.async_update_subentry(entry, subentry, data=data)
+        hass.config_entries.async_update_subentry(entry, subentry,
+            data=phone_subentry_storage_data(subentry, data))
     if managed_changed or legacy_changed:
         data = dict(entry.data)
         if managed_changed:

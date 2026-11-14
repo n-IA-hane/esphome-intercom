@@ -56,6 +56,27 @@ class AssetCatalog:
         return deepcopy(self.profiles[identity])
 
 
+async def test_account_binding_validation_overlays_existing_account_draft(physical_flow):
+    from custom_components.voip_stack.physical_phone import (
+        normalize_physical_phone, async_prepare_account_bindings, account_physical_bindings,
+    )
+    from custom_components.voip_stack.phone_config import phone_subentry_by_endpoint_id, phone_subentry_data
+
+    state = physical_flow
+    data = normalize_physical_phone({**identity(), **bindings(), "catalog_commit": PIN})
+    saved = ConfigSubentry(subentry_type="physical_phone", title=data["name"], data=data,
+        unique_id="physical_phone:" + data["phone_id"])
+    state.lab.hass.config_entries.async_add_subentry(state.lab.entry, saved)
+    state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
+    original = phone_subentry_by_endpoint_id(state.lab.entry, "sip:front")
+    proposal = {**phone_subentry_data(original), "name": "Renamed front"}
+    before = dict(saved.data)
+    prepared = await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front",
+        account_physical_bindings(state.lab.entry, "sip:front"), account_data=proposal)
+    assert prepared[0][1]["lines"] == before["lines"]
+    assert dict(saved.data) == before and original.data["name"] == "Front desk"
+
+
 @pytest.fixture
 def physical_flow(phone_lab, monkeypatch):
     from custom_components.voip_stack import physical_phone_flow
@@ -87,7 +108,39 @@ async def start(state, *, data=None):
 
 
 async def submit(state, result, data):
+    if result.get("step_id") in {"user", "phone_user"}:
+        data = dict(data)
+        advanced = dict(data.get("advanced") or {})
+        for key in ("area_id", "person", "follow_ha_language", "enabled"):
+            if key in data:
+                advanced[key] = data.pop(key)
+        if advanced:
+            data["advanced"] = advanced
     return await state.lab.hass.config_entries.subentries.async_configure(result["flow_id"], data)
+
+
+def physical_phone_data(record):
+    from custom_components.voip_stack.physical_phone import physical_phone_data as data
+    return data(record)
+
+
+def physical_record(state):
+    return next(item for item in state.lab.entry.subentries.values() if item.subentry_type == "physical_phone")
+
+
+async def reconfigure(state, step, record=None):
+    item = record or physical_record(state)
+    menu = await state.lab.hass.config_entries.subentries.async_init(
+        (state.lab.entry.entry_id, "physical_phone"),
+        context={"source": "reconfigure", "subentry_id": item.subentry_id})
+    assert menu["type"] == "menu" and step in menu["menu_options"]
+    return await submit(state, menu, {"next_step_id": step})
+
+
+async def binding_editor(state):
+    created = await submit(state, await start(state), identity())
+    assert created["type"] == "abort" and created["reason"] == "phone_configured"
+    return await reconfigure(state, "bindings")
 
 
 def identity(**values):
@@ -106,8 +159,9 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
     before = {endpoint.endpoint_id for endpoint in state.lab.runtime.endpoints.endpoints}
     form = await start(state)
     assert form["type"] == "form" and form["step_id"] == "user"
-    form = await submit(state, form, identity())
-    assert form["step_id"] == "bindings"
+    created = await submit(state, form, identity())
+    assert created["type"] == "abort" and created["reason"] == "phone_configured"
+    form = await reconfigure(state, "bindings")
     selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
     for name in ("lines", "keys"):
         config = selectors[name].serialize()["selector"]["object"]
@@ -117,8 +171,8 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
         {"slot": "2", "endpoint_id": "sip:office", "transport": "tcp"},
         {"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
     ]))
-    assert result["type"] == "create_entry"
-    data = result["data"]
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    data = physical_phone_data(physical_record(state))
     assert [line["slot"] for line in data["lines"]] == ["2", "1"]
     assert data["mac"] == "001122334455" and data["catalog_commit"] == PIN
     assert data["follow_ha_language"] is True and data["language"] == "en"
@@ -136,14 +190,14 @@ async def test_editor_selects_external_contact_created_through_the_contact_flow(
     created = await submit(state, created, {"name": "External client", "number": "003905512345"})
     assert created["type"] == "create_entry"
     reference = "contact:" + created["data"]["id"]
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
     options = selectors["keys"].serialize()["selector"]["object"]["fields"]["target"]["selector"]["select"]["options"]
     assert {"value": reference, "label": "External client"} in options
     complete = await submit(state, form, bindings(keys=[{"slot": "1", "line": "1",
         "function": "speed_dial", "target": reference, "label": ""}]))
-    assert complete["type"] == "create_entry"
-    assert complete["data"]["keys"][0]["target"] == reference
+    assert complete["type"] == "abort" and complete["reason"] == "reconfigure_successful"
+    assert physical_phone_data(physical_record(state))["keys"][0]["target"] == reference
 
 
 @pytest.mark.parametrize("kind,capability", [("keys", "clear_keys"), ("lines", "disable_lines")])
@@ -151,10 +205,10 @@ async def test_removal_is_saved_only_when_the_selected_profile_can_clear_it(phys
     state = physical_flow
     initial = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
                               {"slot": "2", "endpoint_id": "sip:office", "transport": "udp"}])
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     result = await submit(state, form, initial)
-    item = next(row for row in state.lab.entry.subentries.values()
-                if row.subentry_type == "physical_phone" and row.data["phone_id"] == result["data"]["phone_id"])
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    item = physical_record(state)
     replacement = deepcopy(initial)
     replacement[kind] = [] if kind == "keys" else initial["lines"][:1]
     for supported in (False, True):
@@ -162,7 +216,10 @@ async def test_removal_is_saved_only_when_the_selected_profile_can_clear_it(phys
         form = await state.lab.hass.config_entries.subentries.async_init(
             (state.lab.entry.entry_id, "physical_phone"),
             context={"source": "reconfigure", "subentry_id": item.subentry_id})
-        form = await submit(state, form, identity(update_profile=supported))
+        form = await submit(state, form, {"next_step_id": "user"})
+        properties = await submit(state, form, identity(update_profile=supported))
+        assert properties["type"] == "abort"
+        form = await reconfigure(state, "bindings", item)
         updated = await submit(state, form, replacement)
         if supported:
             assert updated["type"] == "abort" and updated["reason"] == "reconfigure_successful"
@@ -181,7 +238,7 @@ async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_fl
     from custom_components.voip_stack.sip_registrar import SipAccount
 
     state = physical_flow
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     tls_bindings = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "tls"}])
     with pytest.raises(InvalidData):
         await submit(state, form, tls_bindings)
@@ -190,7 +247,7 @@ async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_fl
     assert transport["selector"]["select"]["options"] == ["udp", "tcp"]
     with pytest.raises(ValueError, match="invalid_phone_transport"):
         PhysicalPhoneSubentryFlowHandler()._canonical_bindings(tls_bindings)
-    assert not any(item.subentry_type == "physical_phone" for item in state.lab.entry.subentries.values())
+    assert physical_phone_data(physical_record(state))["lines"] == []
 
     # Stored/imported data must pass the same guard before generating credentials.
     data = normalize_physical_phone({**identity(), **tls_bindings})
@@ -213,10 +270,13 @@ async def test_discovery_source_user_data_is_initialization_and_token_stays_priv
     assert form["type"] == "form" and form["step_id"] == "user"
     assert "private-discovery-token" not in repr(form)
     form = await submit(state, form, form["data_schema"]({}))
-    result = await submit(state, form, bindings())
-    assert result["data"]["phone_id"] == "discovered-id"
-    assert result["data"]["provisioning_token"] == "private-discovery-token"
-    assert result["data"]["host"] == "192.0.2.10"
+    result = form
+    assert result["type"] == "abort" and result["reason"] == "phone_configured"
+    saved = physical_phone_data(physical_record(state))
+    assert saved["phone_id"] == physical_record(state).subentry_id
+    assert saved["phone_id"] != "discovered-id"
+    assert saved["provisioning_token"] == "private-discovery-token"
+    assert saved["host"] == "192.0.2.10"
     assert not any(call[0] == "manifest" and call[2] for call in state.catalog.calls)
 
 
@@ -233,7 +293,7 @@ async def test_discovery_source_user_data_is_initialization_and_token_stays_priv
 ])
 async def test_binding_validation_uses_profile_and_existing_owners(physical_flow, bad):
     state = physical_flow
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     try:
         result = await submit(state, form, bindings(**bad))
     except InvalidData:
@@ -241,19 +301,20 @@ async def test_binding_validation_uses_profile_and_existing_owners(physical_flow
         pass
     else:
         assert result["type"] == "form" and result["step_id"] == "bindings" and result["errors"]
-    assert not any(item.subentry_type == "physical_phone" for item in state.lab.entry.subentries.values())
+    saved = physical_phone_data(physical_record(state))
+    assert saved["lines"] == [] and saved["keys"] == []
 
 
 async def test_queue_alias_is_saved_as_stable_queue_identity(physical_flow):
     state = physical_flow
     queue = SimpleNamespace(queue_id="stable-queue", name="Support", extension="700", members={"sip:front"})
     state.lab.runtime.queues = SimpleNamespace(resolve=lambda value: queue if value in {queue.queue_id, queue.name} else None)
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     result = await submit(state, form, bindings(keys=[{
         "slot": "2", "function": "queue_login", "line": "1", "target": "Support", "label": "",
     }]))
-    assert result["type"] == "create_entry"
-    assert result["data"]["keys"][0]["target"] == queue.queue_id
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert physical_phone_data(physical_record(state))["keys"][0]["target"] == queue.queue_id
 
 
 async def test_language_override_uses_supported_bcp_choice(physical_flow):
@@ -263,8 +324,9 @@ async def test_language_override_uses_supported_bcp_choice(physical_flow):
     with pytest.raises(InvalidData):
         await submit(state, form, {"language": "not-a-supported-language"})
     form = await submit(state, form, {"language": "it"})
-    result = await submit(state, form, bindings())
-    assert result["data"]["language"] == "it" and result["data"]["follow_ha_language"] is False
+    assert form["type"] == "abort" and form["reason"] == "phone_configured"
+    saved = physical_phone_data(physical_record(state))
+    assert saved["language"] == "it" and saved["follow_ha_language"] is False
 
 
 async def test_unsupported_ha_language_requests_an_explicit_override(physical_flow):
@@ -273,16 +335,16 @@ async def test_unsupported_ha_language_requests_an_explicit_override(physical_fl
     form = await submit(state, await start(state), identity())
     assert form["step_id"] == "language" and form["errors"]["base"] == "phone_language_unsupported"
     form = await submit(state, form, {"language": "it"})
-    result = await submit(state, form, bindings())
-    assert result["data"]["follow_ha_language"] is False
+    assert form["type"] == "abort" and form["reason"] == "phone_configured"
+    assert physical_phone_data(physical_record(state))["follow_ha_language"] is False
 
 
 async def test_profile_without_language_omits_language_only(physical_flow):
     state = physical_flow
     form = await submit(state, await start(state), identity(profile_id=state.catalog.empty_language))
-    assert form["step_id"] == "bindings"
-    result = await submit(state, form, bindings(keys=[]))
-    assert result["data"]["language"] == "" and result["data"]["follow_ha_language"] is True
+    assert form["type"] == "abort" and form["reason"] == "phone_configured"
+    saved = physical_phone_data(physical_record(state))
+    assert saved["language"] == "" and saved["follow_ha_language"] is True
     form = await submit(state, await start(state), identity(mac="00:11:22:33:44:66",
         profile_id=state.catalog.empty_language, follow_ha_language=False))
     assert form["step_id"] == "user" and form["errors"]["base"] == "phone_language_unsupported"
@@ -301,10 +363,11 @@ async def test_reconfigure_preserves_id_token_data_and_pin_unless_explicit(physi
     form = await state.lab.hass.config_entries.subentries.async_init(
         (state.lab.entry.entry_id, "physical_phone"),
         context={"source": "reconfigure", "subentry_id": item.subentry_id})
-    form = await submit(state, form, identity(name="Renamed", update_profile=refresh))
-    result = await submit(state, form, bindings())
+    form = await submit(state, form, {"next_step_id": "user"})
+    result = await submit(state, form, identity(name="Renamed", update_profile=refresh))
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
-    saved = state.lab.entry.subentries[item.subentry_id].data
+    saved = physical_phone_data(state.lab.entry.subentries[item.subentry_id])
+    assert "phone_id" not in state.lab.entry.subentries[item.subentry_id].data
     assert saved["phone_id"] == previous["phone_id"] and saved["provisioning_token"] == previous["provisioning_token"]
     assert saved["future_option"] == "retained" and saved["name"] == "Renamed"
     assert saved["catalog_commit"] == (NEW_PIN if refresh else PIN)
@@ -328,7 +391,7 @@ async def test_assisted_account_stays_draft_until_final_inventory_validation(phy
     from custom_components.voip_stack.physical_phone_flow import CREATE_ACCOUNT
     state = physical_flow
     accounts_before = {item.subentry_id for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"}
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     form = await submit(state, form, bindings(lines=[{"slot": "1", "endpoint_id": CREATE_ACCOUNT}], keys=[]))
     assert form["step_id"] == "account"
     rejected = await submit(state, form, {"name": "New account", "username": "new", "password": ""})
@@ -343,17 +406,19 @@ async def test_assisted_account_stays_draft_until_final_inventory_validation(phy
         await submit(state, form, {**values, "keys": [{"slot": "99", "function": "line", "line": "1"}]})
     assert len([item for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"]) == len(accounts_before)
     result = await submit(state, form, {**values, "keys": []})
-    assert result["type"] == "create_entry"
-    account = next(item.data for item in state.lab.entry.subentries.values()
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    from custom_components.voip_stack.phone_config import phone_subentry_data
+    account = next(phone_subentry_data(item) for item in state.lab.entry.subentries.values()
                    if item.subentry_type == "phone" and item.data["username"] == "new")
-    assert result["data"]["lines"][0]["endpoint_id"] == account["endpoint_id"]
+    saved = physical_phone_data(physical_record(state))
+    assert saved["lines"][0]["endpoint_id"] == account["endpoint_id"]
     assert account["password"] == "fixture-new-secret"
-    assert "password" not in result["data"]["lines"][0]
+    assert "password" not in saved["lines"][0]
 
 
 async def test_disabling_provisioning_mid_flow_aborts_without_persisting(physical_flow):
     state = physical_flow
-    form = await submit(state, await start(state), identity())
+    form = await binding_editor(state)
     state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
         "phone_provisioning": {"enabled": False}})
     result = await submit(state, form, bindings())
@@ -371,9 +436,8 @@ async def test_edit_preserves_valid_language_fallback_after_ha_locale_changes(ph
     form = await state.lab.hass.config_entries.subentries.async_init(
         (state.lab.entry.entry_id, "physical_phone"),
         context={"source": "reconfigure", "subentry_id": item.subentry_id})
-    form = await submit(state, form, identity(name="Renamed"))
-    assert form["step_id"] == "bindings"
-    result = await submit(state, form, bindings())
+    form = await submit(state, form, {"next_step_id": "user"})
+    result = await submit(state, form, identity(name="Renamed"))
     assert result["type"] == "abort"
     saved = state.lab.entry.subentries[item.subentry_id].data
     assert saved["language"] == "it" and saved["follow_ha_language"] is True
@@ -384,15 +448,16 @@ async def test_verified_catalog_statuses_remain_selectable(physical_flow, status
     state = physical_flow
     state.catalog.profiles[PROFILE][0]["status"] = status
     form = await submit(state, await start(state), identity())
-    assert form["step_id"] == "bindings"
-    result = await submit(state, form, bindings())
-    assert result["type"] == "create_entry" and result["data"]["profile_id"] == PROFILE
+    assert form["type"] == "abort" and form["reason"] == "phone_configured"
+    assert physical_phone_data(physical_record(state))["profile_id"] == PROFILE
 
 
 def cache_candidate(state):
     from custom_components.voip_stack.physical_phone_discovery import PhoneCandidate
-    candidate = PhoneCandidate("candidate-id", "001122334455", "192.0.2.10",
-                               "Fanvil", "X3U Pro", token="private-candidate-credential")
+    from custom_components.voip_stack.physical_phone import draft_physical_subentry, physical_phone_id
+    draft = draft_physical_subentry({"mac": "001122334455", "provisioning_token": "private-candidate-credential"})
+    candidate = PhoneCandidate(physical_phone_id(draft), "001122334455", "192.0.2.10",
+                               "Fanvil", "X3U Pro", token="private-candidate-credential", native_subentry=draft)
     state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog,
         discovery=SimpleNamespace(candidates={candidate.mac: candidate}))
     return candidate
@@ -404,18 +469,13 @@ async def test_main_native_discovery_reuses_editor_without_child_flow_or_second_
     assert "provisioning_token" not in candidate.public() and "token" not in candidate.public()
     result = await state.lab.hass.config_entries.flow.async_init("voip_stack",
         context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
-    assert result["type"] == "form" and result["step_id"] == "phone_discovered"
-    assert candidate.token not in repr(result)
-    result = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] == "form" and result["step_id"] == "phone_user"
     assert candidate.token not in repr(result)
     assert not state.lab.hass.config_entries.subentries.async_progress()
-    form = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], result["data_schema"]({}))
-    assert form["step_id"] == "phone_bindings"
-    created = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], bindings())
+    created = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], result["data_schema"]({}))
     assert created["type"] == "abort" and created["reason"] == "phone_configured"
     physical = next(item for item in state.lab.entry.subentries.values() if item.subentry_type == "physical_phone")
-    assert physical.data["phone_id"] == candidate.phone_id
+    assert physical_phone_data(physical)["phone_id"] == candidate.phone_id
     assert physical.data["provisioning_token"] == candidate.token
     assert len([entry for entry in state.lab.hass.config_entries.async_entries("voip_stack")
                 if entry.source != SOURCE_IGNORE]) == 1
@@ -506,35 +566,37 @@ async def test_ignored_discovery_metadata_is_not_the_parent_pbx(physical_flow, m
 
 async def test_main_adapter_language_and_account_keep_one_editor_draft(physical_flow):
     from custom_components.voip_stack.physical_phone_flow import CREATE_ACCOUNT
+    from custom_components.voip_stack.phone_config import phone_subentry_data
     state = physical_flow
     candidate = cache_candidate(state)
     form = await state.lab.hass.config_entries.flow.async_init("voip_stack",
         context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
-
-    async def main(data):
-        nonlocal form
-        form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], data)
-        return form
-
-    await main({})
-    await main(form["data_schema"]({"follow_ha_language": False}))
+    assert form["step_id"] == "phone_user"
+    form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
+        form["data_schema"]({"advanced": {"follow_ha_language": False}}))
     assert form["step_id"] == "phone_language"
-    await main({"language": "it"})
-    assert form["step_id"] == "phone_bindings"
-    account_ids = {item.subentry_id for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"}
-    await main({"lines": [{"slot": "1", "endpoint_id": CREATE_ACCOUNT}], "keys": []})
-    assert form["step_id"] == "phone_account"
-    await main({"name": "Discovery line", "username": "discovery-line", "password": "fixture-draft-secret",
-                "extension": "484", "enabled": True})
-    assert form["step_id"] == "phone_bindings"
-    assert {item.subentry_id for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"} == account_ids
-    await main(form["data_schema"]({}))
-    assert form["type"] == "abort" and form["reason"] == "phone_configured"
-    physical = next(item.data for item in state.lab.entry.subentries.values() if item.subentry_type == "physical_phone")
-    account = next(item.data for item in state.lab.entry.subentries.values()
-                   if item.subentry_type == "phone" and item.data["username"] == "discovery-line")
+    result = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], {"language": "it"})
+    assert result["type"] == "abort" and result["reason"] == "phone_configured"
+    physical = physical_phone_data(physical_record(state))
     assert physical["phone_id"] == candidate.phone_id and physical["provisioning_token"] == candidate.token
     assert physical["language"] == "it" and physical["follow_ha_language"] is False
+
+    # Adoption is finished. Advanced line/account editing keeps its own staged
+    # account until the same physical inventory passes final validation.
+    form = await reconfigure(state, "bindings")
+    account_ids = {item.subentry_id for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"}
+    form = await submit(state, form, {"lines": [{"slot": "1", "endpoint_id": CREATE_ACCOUNT}], "keys": []})
+    assert form["step_id"] == "account"
+    form = await submit(state, form, {"name": "Discovery line", "username": "discovery-line", "password": "fixture-draft-secret",
+                "extension": "484", "enabled": True})
+    assert form["step_id"] == "bindings"
+    assert {item.subentry_id for item in state.lab.entry.subentries.values() if item.subentry_type == "phone"} == account_ids
+    result = await submit(state, form, form["data_schema"]({}))
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    physical = physical_phone_data(physical_record(state))
+    account = next(phone_subentry_data(item) for item in state.lab.entry.subentries.values()
+                   if item.subentry_type == "phone" and item.data["username"] == "discovery-line")
+    assert physical["phone_id"] == candidate.phone_id and physical["provisioning_token"] == candidate.token
     assert physical["lines"][0]["endpoint_id"] == account["endpoint_id"]
     assert not state.lab.hass.config_entries.subentries.async_progress()
     state.reload.assert_not_awaited()

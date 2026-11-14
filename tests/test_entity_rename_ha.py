@@ -312,7 +312,12 @@ async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monke
     monkeypatch.setattr(sensor, "_schedule_and_wait_recompute", AsyncMock())
     scheduled = []
     monkeypatch.setattr(sensor, "_schedule_recompute", lambda: scheduled.append(True))
-    await sensor.async_added_to_hass()
+    entry = MockConfigEntry(domain="voip_stack", data={})
+    entry.add_to_hass(hass)
+    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="sensor",
+        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
+    platform.config_entry = entry
+    await platform.async_add_entities([sensor])
     try:
         hass.states.async_set(entity.entity_id, "before")
         registry.async_update_entity(entity.entity_id, new_entity_id=f"{domain}.renamed_groups")
@@ -325,4 +330,4 @@ async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monke
         await hass.async_block_till_done()
         assert scheduled == [True]
     finally:
-        await sensor.async_will_remove_from_hass()
+        await platform.async_reset()

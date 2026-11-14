@@ -69,6 +69,10 @@ async def test_wait_false_stop_cancels_one_producer_and_both_calls_idempotently(
     stream = tts_fixture(monkeypatch, lab, block=True)
     pending = await paging.async_announce(announce(lab, wait=False))
     await asyncio.wait_for(stream.started.wait(), 3)
+    job = owner.jobs[pending["announcement_id"]]
+    owned = {task.get_name() for task in job.session.tasks}
+    assert {"voip-page-output-sip:bedroom0", "voip-page-output-sip:bedroom1",
+            "paging-output-complete", "paging-next-chunk"} <= owned
     stop = ServiceCall(lab.hass, "voip_stack", "stop_announcement", {"announcement_id": pending["announcement_id"]}, context=Context())
     first = await asyncio.wait_for(paging.async_stop_announcement(stop), 4)
     second = await paging.async_stop_announcement(stop)
@@ -78,6 +82,34 @@ async def test_wait_false_stop_cancels_one_producer_and_both_calls_idempotently(
     assert stream.cancelled.is_set()
     assert all(phone.bye.is_set() for phone in lab.phones)
     assert not owner.jobs and not lab.calls.sessions
+    assert not job.session.tasks
+
+
+async def test_parent_session_termination_drains_paging_children_and_both_dialogs(lab, monkeypatch):
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+
+    owner = manager(lab, monkeypatch)
+    stream = tts_fixture(monkeypatch, lab, block=True)
+    pending = await paging.async_announce(announce(lab, wait=False))
+    await asyncio.wait_for(stream.started.wait(), 3)
+    job = owner.jobs[pending["announcement_id"]]
+    barrier = lab.calls.request_termination(job.session.call_id, TerminationIntent("test_parent_ended"))
+    try:
+        await asyncio.wait_for(asyncio.shield(barrier), 2)
+        assert stream.cancelled.is_set()
+        assert job.task.done() and not owner.jobs
+        assert all(phone.bye.is_set() for phone in lab.phones)
+        assert not lab.calls.sessions and not job.session.tasks
+        assert not lab.calls.endpoint_claims_snapshot() and not lab.runtime.rtp_port_pool["used"]
+    finally:
+        # Only needed to unwind an original candidate's demonstrated cycle.
+        for task in asyncio.all_tasks():
+            if task.get_name() == f"voip-page-cleanup-{job.identity}" and not task.done():
+                task.cancel()
+        if not job.task.done():
+            job.task.cancel()
+        await asyncio.wait_for(asyncio.gather(job.task, barrier, return_exceptions=True), 3)
+        owner.finished(job)
 
 
 async def test_busy_phone_is_skipped_without_interrupting_it(lab, monkeypatch):

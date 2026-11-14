@@ -106,6 +106,53 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+def test_cards_share_initial_stream_and_read_only_controls_do_not_open_media(popup_page):
+    page = popup_page
+    page.evaluate("""async()=>{
+      window.bootstrapReads=0;
+      const original=hass.callWS;
+      hass.callWS=request=>{
+        if(request.type==='voip_stack/ha_softphone_state'&&!request.media_client_id){bootstrapReads++;throw Error('Redundant initial GET');}
+        return original(request);
+      };
+      await import('/voip-stack-card.js');
+      window.cards=[0,1].map(()=>{
+        const card=document.createElement('voip-stack-card');
+        card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+        root.shadowRoot.append(card);return card;
+      });
+    }""")
+    page.wait_for_function("cards.every(card=>card._softphoneSnapshot?.state==='idle')")
+    assert page.evaluate("bootstrapReads") == 0
+    assert page.evaluate("streams.filter(s=>s.active&&s.request.type==='voip_stack/subscribe_ha_softphone_state').length") == 1
+    page.evaluate("push({state:'ringing',direction:'incoming',call_id:'readonly-A',can_control:false,auto_answer:true})")
+    page.wait_for_function("cards.every(card=>card._els.answerBtn.disabled&&card._els.declineBtn.disabled)")
+    page.evaluate("async()=>{await cards[0]._answer();await cards[0]._tryAutoAnswer();}")
+    assert page.evaluate("mics") == 0
+    assert page.evaluate("services") == []
+    page.evaluate("push({state:'in_call',can_control:false})")
+    page.wait_for_function("cards.every(card=>card._els.hangupBtn.disabled&&card._els.transferBtn.disabled)")
+
+
+def test_card_setting_request_contains_only_the_changed_fields(popup_page):
+    page = popup_page
+    page.evaluate("""async()=>{
+      await import('/voip-stack-card.js');
+      const card=window.settingCard=document.createElement('voip-stack-card');
+      card.setConfig({mode:'ha_softphone',device_id:phone.device_id});card.hass=hass;
+      root.shadowRoot.append(card);
+    }""")
+    page.wait_for_function("settingCard._softphoneSnapshot?.state==='idle'")
+    page.evaluate("""async()=>{
+      settingCard._softphoneExtension='stale-extension';
+      settingCard._softphoneGroups={ring_group:'stale-group',conference_group:'conference',conference_ring:false};
+      await settingCard._setHaSoftphoneSettings({conference_ring:true});
+    }""")
+    settings = page.evaluate("services.filter(s=>s.service==='set_ha_softphone_settings')")
+    assert len(settings) == 1
+    assert settings[0]["data"] == {"device_id": "desk-device", "conference_ring": True}
+
+
 def test_changed_popup_account_resolves_after_previous_request_finishes(popup_page):
     """Saving B while A is resolving must subscribe to B without another event."""
     page = popup_page
@@ -137,7 +184,7 @@ def test_changed_popup_account_resolves_after_previous_request_finishes(popup_pa
 
 
 def test_shared_phone_terminal_resyncs_passive_browser_without_reload(popup_page):
-    """Real cards/engines, two page contexts, backend ACK-only endpoint stream."""
+    """Real cards/engines, two page contexts, backend initial snapshot stream."""
     first = popup_page
     second = first.context.new_page()
 
@@ -152,10 +199,11 @@ def test_shared_phone_terminal_resyncs_passive_browser_without_reload(popup_page
     for page in (first, second):
         page.evaluate("""async()=>{
           const connection=hass.connection;
-          // This is the actual server contract: the subscription acknowledges
-          // registration, and a separate query supplies the initial snapshot.
+          // The server acknowledges and then delivers an initial snapshot,
+          // including when this observer missed the terminal event.
           connection.subscribeMessage=async(callback,request)=>{
             const item={callback,request,active:true};streams.push(item);
+            if(request.type==='voip_stack/subscribe_ha_softphone_state')queueMicrotask(()=>callback(current));
             if(request.type==='voip_stack/subscribe_phone_states')queueMicrotask(()=>callback({kind:'snapshot',revision:1,phones:[]}));
             return()=>{item.active=false;};
           };

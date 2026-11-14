@@ -38,6 +38,7 @@ async def browser_lab(lab, monkeypatch):
         ))
         lab.roster.append(RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
     lab.hass.states.async_set("sensor.voip_phonebook", "4", {"roster_json": dump_roster_json(lab.roster)})
+    lab.runtime.directory.replace(lab.roster)
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
     monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))

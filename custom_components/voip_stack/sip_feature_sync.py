@@ -29,13 +29,23 @@ def requested_dnd(body, username):
     if len(devices) > 1:
         raise ValueError("ambiguous feature device")
     if devices:
-        device = devices[0].findtext(f"{{{namespace}}}deviceIdentifier") or devices[0].text or ""
-        try:
-            user = sip.parse_sip_uri(device.strip()).user
-        except (ValueError, sip.SipError) as error:
-            raise ValueError("invalid feature device") from error
-        if user.casefold() != username.casefold():
-            raise PermissionError("foreign feature device")
+        identifiers = devices[0].findall(f"{{{namespace}}}deviceIdentifier")
+        if len(identifiers) > 1:
+            raise ValueError("ambiguous feature device")
+        device = ((identifiers[0].text if identifiers else devices[0].text) or "").strip()
+        if not device or len(device.encode("utf-8")) > 256 or not device.isprintable():
+            raise ValueError("invalid feature device")
+        # CSTA DeviceID may be an opaque terminal identifier. Authorization
+        # remains the authenticated SIP account and Request-URI, never this hint.
+        # Explicit account URIs retain their existing foreign-user protection.
+        if device.casefold().startswith(("sip:", "sips:")) or "@" in device:
+            uri = device if device.casefold().startswith(("sip:", "sips:")) else "sip:" + device
+            try:
+                user = sip.parse_sip_uri(uri).user
+            except (ValueError, sip.SipError) as error:
+                raise ValueError("invalid feature device") from error
+            if user.casefold() != username.casefold():
+                raise PermissionError("foreign feature device")
     return value in {"true", "1"}
 
 

@@ -93,6 +93,7 @@ module_app account.so
             accounts.chmod(0o600)
             peers.append(await asyncio.to_thread(BareSip, config))
         lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+        lab.runtime.directory.replace(lab.roster)
         yield peers
     finally:
         for peer in peers:

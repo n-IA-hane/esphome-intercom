@@ -18,6 +18,7 @@ from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_automation_originate_ha import lab as lab
+from tests.test_camera_intent_wire_ha import bootstrap_camera_phone_configuration
 CAPS = (b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Standard PCM peer\r\n"
         b"c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 96\r\n"
         b"a=rtpmap:96 L16/16000/1\r\na=ptime:20\r\na=sendrecv\r\n")
@@ -50,6 +51,7 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
         username="camera-wire-receiver", kind=EndpointKind.SIP_ACCOUNT)
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.register(receiver)
+    await bootstrap_camera_phone_configuration(lab)
     assert not any(item.kind is EndpointKind.ESPHOME for item in lab.runtime.endpoints.endpoints)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True

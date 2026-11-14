@@ -2,13 +2,18 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONT = ROOT / "custom_components/voip_stack/frontend"
+pytestmark = pytest.mark.js_runtime
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required")
 def test_fallback_reader_clock_geometry_backpressure_and_pending_start_cleanup():
     script = r'''
 import fs from 'node:fs';

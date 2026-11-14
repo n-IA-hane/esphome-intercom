@@ -7,6 +7,8 @@ import json
 import pytest
 
 from custom_components.voip_stack import call_transfer
+from custom_components.voip_stack.phone_directory import PhoneDirectory
+from custom_components.voip_stack.roster import parse_roster_json
 from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.sip_client import SipCallClient, SipTransferResult
 
@@ -34,9 +36,7 @@ def _runtime(*, blocked=True, remote="sip:desk@192.0.2.20", entries=None):
             sip_client_for=lambda call_id: client if call_id == "call" else None,
         ),
         endpoints=SimpleNamespace(resolve=lambda _value: None),
-        phonebook_sensor=SimpleNamespace(
-            extra_state_attributes={"roster_json": json.dumps(entries or [])}
-        ),
+        directory=PhoneDirectory(parse_roster_json(json.dumps(entries or []))),
     )
     return runtime, client
 

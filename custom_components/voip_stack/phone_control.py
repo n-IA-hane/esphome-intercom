@@ -435,19 +435,16 @@ class PhoneAdapterRegistry:
     async def _resolve_source(self, call: ServiceCall, operation=None) -> PhoneHandle:
         selector = str(call.data.get("device_id") or "").strip()
         if not selector:
-            selector = self._preferred_phone_device_id
-        if not selector:
-            from .runtime_data import preferred_browser_phone, runtime_data
+            from .runtime_data import preferred_browser_phone, runtime_data, select_preferred_phone
             if runtime_data(self._hass) is not None:
                 preferred = preferred_browser_phone(self._hass)
-                if preferred is not None:
-                    selector = preferred.device_id
             else:
-                # Standalone legacy browser registries have no SIP/account
-                # association owner. Do not guess among ordinary SIP accounts.
-                legacy = [item for item in self._endpoints.endpoints if item.kind is EndpointKind.BROWSER]
-                if len(legacy) == 1:
-                    selector = legacy[0].device_id
+                # A standalone legacy browser is itself a configured HA
+                # receiver. Ordinary SIP accounts require a binding declaration.
+                bound = {item.endpoint_id for item in self._endpoints.endpoints if item.kind is EndpointKind.BROWSER}
+                preferred = select_preferred_phone(self._endpoints, self._preferred_phone_device_id,
+                                                   ha_bound_endpoint_ids=bound)
+            selector = preferred.device_id if preferred is not None else ""
         if not selector:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,

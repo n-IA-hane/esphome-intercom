@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from .core import sip, sip_transfer
 from .phone_endpoint import PhoneEndpoint
 from .runtime_data import VoipStackRuntime
-from .roster import find_entry, parse_roster_json
+from .roster import find_entry
+from .directory_runtime import routing_snapshot
 from .sip_client import SipCallClient, SipTransferResult
 from .router import RouteAction, ha_uri_for, resolve_ha_router
 from .trunk_policy import call_external_call_denied
@@ -58,16 +59,16 @@ def _blind_target(
     runtime: VoipStackRuntime,
     remote_uri: str,
     destination: str,
+    *,
+    entries=None,
 ) -> sip_transfer.SipReferTarget:
     raw = str(destination or "").strip()
     if raw.lower().startswith(("sip:", "sips:")):
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(raw)))
     if "@" in raw:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))
-    phonebook = getattr(runtime, "phonebook_sensor", None)
-    attributes = phonebook.extra_state_attributes if phonebook is not None else {}
-    roster_json = str((attributes or {}).get("roster_json") or "")
-    entries = parse_roster_json(roster_json) if roster_json else []
+    if entries is None:
+        entries = routing_snapshot(runtime)
     entry = find_entry(entries, raw)
     if entry is not None and entry.metadata.get("virtual_endpoint") == "automation":
         if not entry.enabled:
@@ -153,7 +154,7 @@ def _server_local_uri(server) -> str:
     return str(sip.SipUri("HA", server.local_ip, port))
 
 
-def _external_transfer_denied(runtime, call_id, target, remote_uri, local_uri="") -> bool:
+def _external_transfer_denied(runtime, call_id, target, remote_uri, local_uri="", *, entries=None) -> bool:
     """Apply the existing call's access policy before delegating a REFER."""
     if not call_external_call_denied(runtime, call_id):
         return False
@@ -162,10 +163,8 @@ def _external_transfer_denied(runtime, call_id, target, remote_uri, local_uri=""
     if is_any_trunk_uri(runtime, target.uri):
         return True
     uri = sip.parse_sip_uri(target.uri)
-    phonebook = getattr(runtime, "phonebook_sensor", None)
-    attributes = phonebook.extra_state_attributes if phonebook is not None else {}
-    roster_json = str((attributes or {}).get("roster_json") or "")
-    entries = parse_roster_json(roster_json) if roster_json else []
+    if entries is None:
+        entries = routing_snapshot(runtime)
     local = sip.parse_sip_uri(local_uri) if local_uri else None
     local_target = bool(local and sip.sip_endpoints_equal(
         uri.host, uri.port, local.host, local.port
@@ -306,19 +305,20 @@ async def async_transfer_call(
     )
     if not remote_uri:
         return SipTransferResult(False, 0, "call_not_found")
+    entries = routing_snapshot(runtime) if getattr(runtime, "directory", None) is not None else None
     if request.replaces_call_id:
         consultation = _client_for_call(runtime, request.replaces_call_id)
         if consultation is None or consultation is client:
             return SipTransferResult(False, 0, "replacement_not_found")
         target = _attended_target(consultation)
     else:
-        target = _blind_target(runtime, remote_uri, request.destination)
+        target = _blind_target(runtime, remote_uri, request.destination, entries=entries)
     local_uri = (
         client.dialog.local_uri
         if client is not None and client.dialog is not None
         else _server_local_uri(server)
     )
-    if _external_transfer_denied(runtime, request.call_id, target, remote_uri, local_uri):
+    if _external_transfer_denied(runtime, request.call_id, target, remote_uri, local_uri, entries=entries):
         return SipTransferResult(False, 403, "external_calls_disabled")
     if server is not None:
         return await server.async_refer(request.call_id, target) or SipTransferResult(False, 0, "call_not_found")

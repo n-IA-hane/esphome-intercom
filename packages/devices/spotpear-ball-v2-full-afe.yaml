@@ -7,11 +7,12 @@ substitutions:
   afe_mode_restore_value: false
   # ES8311 set_input_gain controls ADC_SCALE before AFE, not its analog PGA.
   # Keep the codec profile's24dB default; no Number initial_value overrides NVS.
-  settings_microphone_gain_id: ${ "microphone_pga" if "voice" in firmware_features else "mic_gain" }
-  settings_microphone_gain_label: ${ "Mic gain (pre-AFE)" if "voice" in firmware_features else "Microphone gain" }
   mic_gain_min: ${ 0 if "voice" in firmware_features else -20 }
   mic_gain_max: ${ 36 if "voice" in firmware_features else 30 }
   _spotpear_input_gain_control:
+    substitutions:
+      settings_input_gain_id: microphone_pga
+      settings_input_gain_label: Microphone gain (pre-AFE)
     number:
       - platform: esp_audio_stack
         hardware_gain_diagnostics: ${ audio_hardware_gain_diagnostics | default(false) }
@@ -108,6 +109,18 @@ substitutions:
   s3_sip_jpeg_width: '240'
   s3_sip_jpeg_height: '240'
   s3_sip_jpeg_fps: '10'
+  # Early UI capability map mirrors the selected control packages below.
+  # This selects views only; Number defaults and DSP calibration stay with their owners.
+  settings_input_gain_id: ${ _spotpear_input_gain_control['number'][0]['input_pga']['id'] if 'voice' in firmware_features else '' }
+  settings_input_gain_label: Microphone gain (pre-AFE)
+  settings_reference_gain_id: ''
+  settings_microphone_gain_id: ${ 'mic_gain' if 'voice' not in firmware_features else '' }
+  settings_voip_gain_id: ${ 'voip_tx_gain' if 'voip' in firmware_features and (voip_tx_gain_enabled | default('voice' in firmware_features) | string | lower) == 'true' else '' }
+  settings_aec_switch_id: aec_switch
+  settings_processing_mode_id: aec_mode_select
+  settings_ns_switch_id: ns_switch
+  settings_agc_switch_id: agc_switch
+  settings_vad_switch_id: vad_switch
 esp32:
   framework:
     sdkconfig_options:

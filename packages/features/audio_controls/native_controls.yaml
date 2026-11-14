@@ -1,4 +1,7 @@
 # Controls for native capture and output; only selected consumers are addressed.
+substitutions:
+  settings_microphone_gain_id: mic_gain
+  settings_microphone_gain_label: Microphone boost
 defaults:
   _fw_native_volume_music:
   - mixer_speaker.apply_ducking:

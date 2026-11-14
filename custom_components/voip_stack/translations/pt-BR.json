@@ -193,24 +193,29 @@
           "name": "Name",
           "mac": "MAC address",
           "profile_id": "Phone model profile",
-          "area_id": "Area",
-          "person": "Person",
-          "follow_ha_language": "Follow Home Assistant language",
-          "enabled": "Enabled",
-          "update_profile": "Update the pinned profile"
+          "update_profile": "Update the pinned profile",
+          "account_id": "First SIP account (optional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
         },
         "sections": {
           "advanced": {
-            "name": "Indicação avançada de rede",
+            "name": "Administration and preferences",
             "data": {
-              "host": "Host ou indicação de IP (opcional)"
+              "host": "Host ou indicação de IP (opcional)",
+              "area_id": "Area",
+              "person": "Person",
+              "follow_ha_language": "Follow Home Assistant language",
+              "enabled": "Enabled",
+              "admin_username": "Phone administrator (optional)",
+              "admin_password": "Phone administrator password"
             },
             "data_description": {
-              "host": "Deixe vazio para descoberta ou DHCP. É uma indicação de rede, não uma prova de registro ou disponibilidade."
+              "host": "Deixe vazio para descoberta ou DHCP. É uma indicação de rede, não uma prova de registro ou disponibilidade.",
+              "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+              "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+              "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
             }
           }
         }
@@ -224,7 +229,7 @@
       },
       "phone_bindings": {
         "title": "Lines and programmable keys",
-        "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Você pode salvar sem linhas e associar as contas SIP depois.",
+        "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
         "data": {
           "lines": "SIP lines",
           "keys": "Programmable keys"
@@ -310,7 +315,10 @@
       "phone_retired_slot_unsupported": "O perfil selecionado não pode preservar todas as posições gerenciadas anteriormente. Mantenha o perfil atual até que essas posições possam ser gerenciadas.",
       "phone_not_found": "O telefone físico não existe mais.",
       "phone_line_occupied": "Esta linha física já está atribuída a outra conta.",
-      "phone_line_has_keys": "Reatribua ou remova as teclas que usam esta linha antes de remover a associação."
+      "phone_line_has_keys": "Reatribua ou remova as teclas que usam esta linha antes de remover a associação.",
+      "phone_ldap_mode_unsupported": "Este perfil de telefone não oferece suporte ao modo de conexão LDAP configurado.",
+      "invalid_phone_key_order": "Choose each existing key exactly once.",
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -328,9 +336,10 @@
   },
   "config_subentries": {
     "phone": {
-      "entry_type": "Conta SIP",
+      "entry_type": "Configuração da conta SIP",
       "initiate_flow": {
-        "user": "Adicionar conta SIP"
+        "user": "Adicionar conta SIP",
+        "reconfigure": "Editar conta SIP"
       },
       "title": "Conta SIP",
       "step": {
@@ -457,9 +466,10 @@
       }
     },
     "trunk": {
-      "entry_type": "Tronco SIP",
+      "entry_type": "Configuração do tronco SIP",
       "initiate_flow": {
-        "user": "Adicionar tronco SIP"
+        "user": "Adicionar tronco SIP",
+        "reconfigure": "Editar tronco SIP"
       },
       "title": "Tronco SIP",
       "step": {
@@ -550,9 +560,10 @@
       }
     },
     "group": {
-      "entry_type": "Ring group or queue",
+      "entry_type": "Configuração do grupo de toque ou fila",
       "initiate_flow": {
-        "user": "Add ring group or queue"
+        "user": "Add ring group or queue",
+        "reconfigure": "Editar grupo de toque ou fila"
       },
       "title": "Ring group or queue",
       "step": {
@@ -603,9 +614,10 @@
       }
     },
     "paging": {
-      "entry_type": "Paging group",
+      "entry_type": "Configuração do grupo de anúncios",
       "initiate_flow": {
-        "user": "Add paging group"
+        "user": "Add paging group",
+        "reconfigure": "Editar grupo de anúncios"
       },
       "title": "Paging group",
       "step": {
@@ -625,9 +637,10 @@
       }
     },
     "physical_phone": {
-      "entry_type": "Physical phone",
+      "entry_type": "Configuração do telefone físico",
       "initiate_flow": {
-        "user": "Add physical phone"
+        "user": "Add physical phone",
+        "reconfigure": "Configurar telefone físico"
       },
       "title": "Physical SIP phone",
       "step": {
@@ -638,24 +651,29 @@
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "area_id": "Area",
-            "person": "Person",
-            "follow_ha_language": "Follow Home Assistant language",
-            "enabled": "Enabled",
-            "update_profile": "Update the pinned profile"
+            "update_profile": "Update the pinned profile",
+            "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-            "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
           },
           "sections": {
             "advanced": {
-              "name": "Indicação avançada de rede",
+              "name": "Administration and preferences",
               "data": {
-                "host": "Host ou indicação de IP (opcional)"
+                "host": "Host ou indicação de IP (opcional)",
+                "area_id": "Area",
+                "person": "Person",
+                "follow_ha_language": "Follow Home Assistant language",
+                "enabled": "Enabled",
+                "admin_username": "Phone administrator (optional)",
+                "admin_password": "Phone administrator password"
               },
               "data_description": {
-                "host": "Deixe vazio para descoberta ou DHCP. É uma indicação de rede, não uma prova de registro ou disponibilidade."
+                "host": "Deixe vazio para descoberta ou DHCP. É uma indicação de rede, não uma prova de registro ou disponibilidade.",
+                "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+                "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+                "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
               }
             }
           }
@@ -669,7 +687,7 @@
         },
         "bindings": {
           "title": "Lines and programmable keys",
-          "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Você pode salvar sem linhas e associar as contas SIP depois.",
+          "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
           "data": {
             "lines": "SIP lines",
             "keys": "Programmable keys"
@@ -696,6 +714,18 @@
           "data_description": {
             "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
           }
+        },
+        "reconfigure": {
+          "title": "Configure physical phone",
+          "menu_options": {
+            "user": "Properties and profile",
+            "bindings": "Lines and key properties",
+            "key_order": "Reorder keys"
+          }
+        },
+        "key_order": {
+          "title": "Reorder keys",
+          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -732,7 +762,10 @@
         "phone_retired_slot_unsupported": "O perfil selecionado não pode preservar todas as posições gerenciadas anteriormente. Mantenha o perfil atual até que essas posições possam ser gerenciadas.",
         "phone_not_found": "O telefone físico não existe mais.",
         "phone_line_occupied": "Esta linha física já está atribuída a outra conta.",
-        "phone_line_has_keys": "Reatribua ou remova as teclas que usam esta linha antes de remover a associação."
+        "phone_line_has_keys": "Reatribua ou remova as teclas que usam esta linha antes de remover a associação.",
+        "phone_ldap_mode_unsupported": "Este perfil de telefone não oferece suporte ao modo de conexão LDAP configurado.",
+        "invalid_phone_key_order": "Choose each existing key exactly once.",
+        "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
@@ -742,7 +775,8 @@
         "phone_provisioning_disabled": "Physical phone provisioning is disabled.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
         "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
-        "reconfigure_successful": "Physical phone updated."
+        "reconfigure_successful": "Physical phone updated.",
+        "phone_configured": "Physical phone configured."
       }
     }
   },
@@ -912,9 +946,8 @@
     },
     "account_physical_bindings": {
       "fields": {
-        "phone_id": "Telefone físico",
-        "slot": "Posição da linha",
-        "transport": "Transporte"
+        "transport": "Transporte",
+        "binding": "Physical phone and line"
       }
     }
   },
@@ -935,6 +968,10 @@
     }
   },
   "issues": {
+    "phone_identity_conflict": {
+      "title": "A identidade do telefone precisa ser recuperada",
+      "description": "A identidade salva de {phone} difere da cópia anterior (nativa: {canonical}, anterior: {legacy}). Nenhuma identidade foi alterada. Restaure uma configuração consistente de um backup conhecido ou peça ao mantenedor da integração para recuperar essas referências. Não exclua e recrie o telefone para ignorar esta verificação, pois os dispositivos, associações e caixas de correio existentes usam sua identidade original."
+    },
     "esphome_actions_incomplete": {
       "title": "O controle do telefone ESPHome está incompleto",
       "description": "{phone} não expõe as ações de controle de chamada do ESPHome: {actions}. Atualize o pacote e o firmware do telefone VoIP."

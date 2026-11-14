@@ -117,9 +117,18 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         assert_no_browser_media_owner(runtime)
         assert caller.read().count("Call established") == 1
         await assert_no_active_calls(peers[1:])
+        relay = runtime.calls.resource_for(call_id, "relay")
+        async with asyncio.timeout(3):
+            while min(relay.left_tx_packets, relay.right_tx_packets) < 30:
+                await asyncio.sleep(.01)
     finally:
         await observer.close()
         await end_call(runtime, caller)
+    # Finalize the independent UA's PCM recorders after the real BYE barrier.
+    for peer in (caller, peers[0]):
+        await asyncio.to_thread(peer.close)
+    from .test_sip_phone_transfers_ha import assert_peer_audio_tones
+    assert_peer_audio_tones(tmp_path, (("transfer_a", 550), ("shared-contact-0", 450)))
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

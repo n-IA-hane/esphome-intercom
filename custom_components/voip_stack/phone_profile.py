@@ -11,6 +11,13 @@ from xml.etree import ElementTree
 from jinja2 import DictLoader, StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment, safe_range
 
+DIALOG_KEY_FUNCTIONS = frozenset({"blf", "queue_login", "queue_pause", "park"})
+
+
+def key_event_package(function):
+    """One key semantic decides whether the device owns a subscription."""
+    return "dialog" if function in DIALOG_KEY_FUNCTIONS else ""
+
 
 def safe_profile_path(value):
     path = PurePosixPath(str(value))
@@ -87,9 +94,9 @@ def resolve_phone_keys(runtime, phone, profile):
                  or (contact.display_name if contact is not None else "") or key["function"])
         if len(label.encode()) > int(cap.get("max_label_bytes", 31)):
             raise ValueError("phone_key_label_too_long")
+        event = key_event_package(key["function"])
         result.append({**key, "line": int(key["line"]), "label": label, "dial_target": target,
-                       "subscription_target": "" if key["function"] == "park_call" else target, "event_package": "dialog" if key["function"]
-                       in {"blf", "queue_login", "queue_pause", "park"} else "",
+                       "subscription_target": target if event else "", "event_package": event,
                        "pickup_target": ""})
     return result
 
@@ -128,6 +135,7 @@ def normalized_context(context: dict) -> dict:
             key.setdefault(field, default)
     ldap = c.setdefault("directory", {}).setdefault("ldap", {})
     for key, default in {
+        "mode": "plain",
         "host": "",
         "port": 389,
         "base_dn": "",
@@ -160,6 +168,13 @@ def validate_context(profile: dict, context: dict) -> dict:
     # Vendor clock data is owned by the verified profile, never by the caller.
     c["clock"] = deepcopy(time_zones[time_zone]) if time_zone else {}
     c["dnd_sync"] = caps.get("dnd_sync") is True
+    ldap = c["directory"]["ldap"]
+    modes = caps.get("ldap_modes", ["plain"])
+    if (not isinstance(modes, list) or any(not isinstance(mode, str) or mode not in {"plain", "ldaps"} for mode in modes)
+            or not isinstance(ldap["mode"], str) or ldap["mode"] not in {"plain", "ldaps"}
+            or (ldap["host"] and ldap["mode"] not in modes)
+            or (ldap.get("tls") and ldap["mode"] != "ldaps")):
+        raise ValueError("phone_ldap_mode_unsupported")
 
     def strings(value) -> None:
         if isinstance(value, str) and any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
@@ -207,7 +222,8 @@ def validate_context(profile: dict, context: dict) -> dict:
             raise ValueError("key dial target is required")
         if key["subscription_target"] and key["subscription_target"] != key["dial_target"]:
             raise ValueError("this subset requires one common dial and subscription target")
-        if key["event_package"] not in ({"", "dialog"} if key["function"] in {"line", "speed_dial"} else {"dialog"}):
+        dialog_key = bool(key_event_package(key["function"]))
+        if key["event_package"] != "dialog" and (dialog_key or key["event_package"] != ""):
             raise ValueError("only the dialog event package is mapped")
         if key["pickup_target"] and profile["vendor"] != "yealink":
             raise ValueError("separate pickup target is not mapped for this subset")

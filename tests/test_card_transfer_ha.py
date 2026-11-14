@@ -13,6 +13,7 @@ from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+from custom_components.voip_stack.phone_directory import PhoneDirectory
 from custom_components.voip_stack import softphone_originate
 
 pytestmark = pytest.mark.ha
@@ -47,6 +48,7 @@ async def test_browser_transfer_service_moves_peer_to_registered_phone(
             metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id},
         )
     )
+    runtime.runtime.directory = PhoneDirectory(runtime.roster)
     runtime.hass.states.async_set(
         "sensor.voip_phonebook",
         "ready",

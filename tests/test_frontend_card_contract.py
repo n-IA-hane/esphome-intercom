@@ -283,7 +283,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('"voip_stack", "set_dnd"', dnd)
         self.assertNotIn('"voip_stack/set_ha_softphone_settings"', self.source)
         self.assertNotIn('"voip_stack/set_ha_softphone_dnd"', self.source)
-        self.assertIn("extension: this._softphoneExtension", setter)
+        self.assertIn("...patch", setter)
+        self.assertNotIn("extension: this._softphoneExtension", setter)
         self.assertIn('id = "ha-softphone-extension"', self.source)
         self.assertIn('type = "text"', self.source)
         self.assertIn('setAttribute("list", "ha-softphone-ring-group-options")', self.source)
@@ -364,7 +365,7 @@ class FrontendCardContractTest(unittest.TestCase):
         hangup = _method_body(self.source, "async _hangup")
         start = _method_body(self.source, "async _startCall")
 
-        self.assertIn("els.hangupBtn.disabled = this._stopping", render)
+        self.assertIn("els.hangupBtn.disabled = !canControl || this._stopping", render)
         self.assertNotIn("els.hangupBtn.disabled = buttonDisabled", render)
         self.assertIn('case "connecting":', render)
         self.assertIn("showHangup = true", render.split("if (this._starting)", 1)[1])
@@ -629,9 +630,10 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertNotIn('reason: "superseded"', answer)
         hass_setter = _method_body(self.source, "set hass")
         connected = _method_body(self.source, "connectedCallback")
-        self.assertGreaterEqual(hass_setter.count("this.isConnected"), 2)
+        self.assertIn("this.isConnected", hass_setter)
         self.assertIn("this._subscribeBusEvents()", connected)
-        self.assertIn("this._loadSoftphoneState()", connected)
+        self.assertNotIn("this._loadSoftphoneState()", connected)
+        self.assertNotIn("this._loadSoftphoneState()", hass_setter)
         self.assertIn("this._render()", connected)
 
     def test_active_panel_does_not_label_answering_as_in_call(self) -> None:

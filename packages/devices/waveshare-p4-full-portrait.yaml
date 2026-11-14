@@ -92,6 +92,17 @@ substitutions:
       processing: !include '../features/audio_controls/afe_mode.yaml'
   afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
+  # Early UI capability map mirrors the selected control packages below.
+  # This selects views only; Number defaults and DSP calibration stay with their owners.
+  settings_input_gain_id: microphone_pga
+  settings_reference_gain_id: reference_pga
+  settings_microphone_gain_id: ${ 'mic_gain' if 'voice' not in firmware_features else '' }
+  settings_voip_gain_id: ${ 'voip_tx_gain' if 'voip' in firmware_features and (voip_tx_gain_enabled | default('voice' in firmware_features) | string | lower) == 'true' else '' }
+  settings_aec_switch_id: aec_switch
+  settings_processing_mode_id: aec_mode_select
+  settings_ns_switch_id: ''
+  settings_agc_switch_id: ''
+  settings_vad_switch_id: vad_switch
 packages:
   feature_validation: !include ../profiles/feature_validation.yaml
   hardware: !include '../board/waveshare-p4-full-portrait.yaml'

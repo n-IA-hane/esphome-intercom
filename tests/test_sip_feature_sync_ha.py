@@ -2,6 +2,7 @@
 
 import time
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape
 
 import pytest
 
@@ -17,9 +18,12 @@ pytestmark = pytest.mark.ha
 NS = "http://www.ecma-international.org/standards/ecma-323/csta/ed3"
 
 
-def request(*, target="alice", device="alice", enabled=None, cseq=1, tag="", expires=300):
+def request(*, target="alice", device="alice", device_ref=None, nested=False, enabled=None, cseq=1, tag="", expires=300):
     from custom_components.voip_stack.core import sip
-    body = (f'<SetDoNotDisturb xmlns="{NS}"><device>sip:{device}@localhost</device>'
+    reference = escape(device_ref if device_ref is not None else f"sip:{device}@localhost")
+    if nested:
+        reference = "<deviceIdentifier>" + reference + "</deviceIdentifier>"
+    body = (f'<SetDoNotDisturb xmlns="{NS}"><device>{reference}</device>'
             f'<doNotDisturbOn>{str(enabled).lower()}</doNotDisturbOn></SetDoNotDisturb>').encode() if enabled is not None else b""
     return sip.parse_message(sip.build_request("SUBSCRIBE", f"sip:{target}@localhost", [
         ("From", "<sip:alice@localhost>;tag=subscriber"),
@@ -92,6 +96,48 @@ async def test_foreign_line_device_or_source_cannot_set_dnd(features, target, de
     assert not app.subscriptions and not sent
 
 
+@pytest.mark.parametrize("device_ref,nested", [("0c383e68475c", False), ("Desk phone 1", True)])
+async def test_opaque_device_hint_uses_authenticated_account_without_inventory(features, device_ref, nested):
+    from custom_components.voip_stack.switch import async_set_endpoint_dnd
+    from custom_components.voip_stack.phone_config import phone_subentry_by_endpoint_id
+
+    lab, app, sender, sent = features
+    assert not any(row.subentry_type == "physical_phone" for row in lab.entry.subentries.values())
+    result = await app.handle(request(target="301", device_ref=device_ref, nested=nested, enabled=True),
+        ("127.0.0.2", 5060), "UDP", sender)
+    assert result.status == 200
+    result.follow_up_scheduler()
+    await lab.hass.async_block_till_done()
+    assert lab.runtime.endpoints.get("sip:alice").dnd is True
+    assert phone_subentry_by_endpoint_id(lab.entry, "sip:alice").data["dnd"] is True
+    # The body hint neither chooses another owner nor changes notification identity.
+    notification = ET.fromstring(sent[-1].follow_up.body)
+    assert notification.findtext(f"{{{NS}}}device") == "sip:301@localhost"
+    await async_set_endpoint_dnd(lab.hass, "sip:alice", False)
+    await lab.hass.async_block_till_done()
+    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert ET.fromstring(sent[-1].follow_up.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
+
+
+@pytest.mark.parametrize("target,source", [("bob", "127.0.0.2"), ("alice", "127.0.0.9")])
+async def test_opaque_hint_never_authorizes_a_foreign_target_or_source(features, target, source):
+    lab, app, sender, sent = features
+    result = await app.handle(request(target=target, device_ref="0c383e68475c", enabled=True),
+        (source, 5060), "UDP", sender)
+    assert result.status == 403
+    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert not app.subscriptions and not sent
+
+
+@pytest.mark.parametrize("device_ref", ["sips:bob@localhost", "bob@localhost"])
+async def test_explicit_foreign_SIP_device_reference_stays_forbidden(features, device_ref):
+    lab, app, sender, sent = features
+    result = await app.handle(request(device_ref=device_ref, enabled=True), ("127.0.0.2", 5060), "UDP", sender)
+    assert result.status == 403
+    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert not app.subscriptions and not sent
+
+
 async def test_stale_cseq_cannot_change_dnd_and_credential_revoke_retires_owner(features):
     from custom_components.voip_stack.sip_registrar import SipAccount
 
@@ -109,7 +155,12 @@ async def test_stale_cseq_cannot_change_dnd_and_credential_revoke_retires_owner(
 
 @pytest.mark.parametrize("body", [b"<broken", b"<!DOCTYPE a><SetDoNotDisturb/>",
     b"<SetDoNotDisturb><doNotDisturbOn>true</doNotDisturbOn></SetDoNotDisturb>",
-    f'<SetDoNotDisturb xmlns="{NS}"><doNotDisturbOn>toggle</doNotDisturbOn></SetDoNotDisturb>'.encode()])
+    f'<SetDoNotDisturb xmlns="{NS}"><doNotDisturbOn>toggle</doNotDisturbOn></SetDoNotDisturb>'.encode(),
+    *[f'<SetDoNotDisturb xmlns="{NS}"><device>{value}</device><doNotDisturbOn>true</doNotDisturbOn></SetDoNotDisturb>'.encode()
+      for value in ("", "Desk\nphone", "x" * 257, "é" * 129)],
+    f'<SetDoNotDisturb xmlns="{NS}"><device>one</device><device>two</device><doNotDisturbOn>true</doNotDisturbOn></SetDoNotDisturb>'.encode(),
+    f'<SetDoNotDisturb xmlns="{NS}"><device><deviceIdentifier>one</deviceIdentifier><deviceIdentifier>two</deviceIdentifier></device><doNotDisturbOn>true</doNotDisturbOn></SetDoNotDisturb>'.encode(),
+    f'<SetDoNotDisturb xmlns="{NS}"><doNotDisturbOn>true</doNotDisturbOn><doNotDisturbOn>false</doNotDisturbOn></SetDoNotDisturb>'.encode()])
 async def test_malformed_or_unsupported_feature_never_creates_owner_or_changes_state(features, body):
     from dataclasses import replace
     lab, app, sender, sent = features
@@ -133,7 +184,8 @@ async def test_unsubscribe_releases_feature_observer_and_owned_timer(features):
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("target_user", ["outbound-phone", "301"])
-async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_listener(wire_lab, target_user):
+@pytest.mark.parametrize("device_reference", ["sip:outbound-phone@127.0.0.1", "0c383e68475c", "Desk phone 1"])
+async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_listener(wire_lab, target_user, device_reference):
     from custom_components.voip_stack.core import sip
     from custom_components.voip_stack.phone_config import _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry
     from custom_components.voip_stack.store import config_entry
@@ -141,6 +193,7 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
 
     wire = wire_lab
     entry = config_entry(wire.lab.hass)
+    assert not any(row.subentry_type == "physical_phone" for row in entry.subentries.values())
     data = sip_account_phone_data({"username": "outbound-phone", "password": "fixture-only-password",
         "display_name": "Feature phone", "extension": "301"}, endpoint_id="sip:feature-phone")
     _add_phone_subentry(wire.lab.hass, entry, data=data, title="Feature phone")
@@ -156,7 +209,7 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
             ("Call-ID", call_id), ("CSeq", f"{sequence} SUBSCRIBE"),
             ("Event", "as-feature-event"), ("Expires", str(expires)),
             ("Content-Type", "application/x-as-feature-event+xml")]
-        body = (f'<SetDoNotDisturb xmlns="{NS}"><device>sip:{user}@127.0.0.1</device>'
+        body = (f'<SetDoNotDisturb xmlns="{NS}"><device>{device_reference}</device>'
                 f'<doNotDisturbOn>{str(value).lower()}</doNotDisturbOn></SetDoNotDisturb>').encode() if value is not None else b""
         phone.transport.sendto(sip.build_request("SUBSCRIBE", target, headers, body), wire.listener)
     async def transaction(expected):
@@ -185,5 +238,9 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
     notification, address = await phone.receive("NOTIFY")
     assert ET.fromstring(notification.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
     phone.respond(notification, address)
-    send(3, tag=sip.extract_tag(accepted.header("To")), expires=0)
+    assert wire.lab.runtime.endpoints.get("sip:feature-phone").dnd is False
+    send(3, tag=sip.extract_tag(accepted.header("To")), value=False)
+    await transaction("false")
+    assert wire.lab.runtime.endpoints.get("sip:feature-phone").dnd is False
+    send(4, tag=sip.extract_tag(accepted.header("To")), expires=0)
     await transaction("false")

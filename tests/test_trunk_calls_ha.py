@@ -74,6 +74,7 @@ async def trunks(lab, monkeypatch, request):
     lab.runtime.default_trunk_id = "home"
     lab.runtime.trunk_config = configs["home"]
     lab.roster.append(RosterEntry("External", number="12345"))
+    lab.runtime.directory.replace(lab.roster)
     await async_start_sip_trunk(lab.hass, local_ip="127.0.0.1")
     try:
         assert all(await asyncio.gather(*(client.wait_for_registration(timeout=2) for client in sip_trunks(lab.hass).values())))

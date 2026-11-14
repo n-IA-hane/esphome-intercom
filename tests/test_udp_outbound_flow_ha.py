@@ -111,7 +111,7 @@ async def wire_lab(trunks):
             phone.transport.close()
 
 
-async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True, cseq=1, contact_uri=""):
+async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True, cseq=1, contact_uri="", expires=120):
     phone = phone or wire.a
     uri = f"sip:127.0.0.1:{wire.listener[1]}"
     contact = f"<{contact_uri or sip.SipUri(username, *phone.address)}>"
@@ -122,7 +122,7 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
         headers = [("Via", f"SIP/2.0/UDP {phone.address[0]}:{phone.address[1]};branch=z9hG4bK-register-{username}-{cseq};rport"),
             ("From", f"<sip:{username}@127.0.0.1>;tag=registration"),
             ("To", f"<sip:{username}@127.0.0.1>"), ("Call-ID", f"register-{username}"),
-            ("CSeq", f"{cseq} REGISTER"), ("Contact", contact), ("Expires", "120")]
+            ("CSeq", f"{cseq} REGISTER"), ("Contact", contact), ("Expires", str(expires))]
         if outbound:
             headers.append(("Supported", "outbound"))
         if authorization:
@@ -135,6 +135,9 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
         username=username, password=PASSWORD, method="REGISTER", uri=uri)
     request(cseq + 1, authorization)
     accepted, _ = await phone.receive(status=200)
+    if expires == 0:
+        assert not wire.registrar.registered_contacts(username)
+        return None
     binding, = wire.registrar.registered_contacts(username)
     if discover:
         async with asyncio.timeout(2):
@@ -146,6 +149,127 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
     # Publish the registrar's actual selected Contact, not a synthetic flag.
     wire.lab.roster.append(next(entry for entry in wire.registrar.roster_entries() if entry.id == username))
     return binding
+
+
+async def test_public_register_ack_never_exposes_stale_routing_snapshot(wire_lab, monkeypatch):
+    """Hold the newest derived refresh while an earlier one is superseded."""
+    from custom_components.voip_stack import peer_snapshot, sip_capabilities
+    from custom_components.voip_stack.directory_runtime import routing_snapshot
+
+    wire = wire_lab
+    second_started, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def held_snapshots(_hass):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await second_started.wait()
+        elif calls == 2:
+            second_started.set()
+            await release.wait()
+        return []
+
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", held_snapshots)
+    monkeypatch.setattr(sip_capabilities, "schedule_capability_probe", lambda *_args: None)
+    registering = asyncio.create_task(register_phone(wire, outbound=False, discover=False))
+
+    def assert_current_binding():
+        rows = routing_snapshot(wire.lab.runtime)
+        row = next((row for row in rows if row.id == "outbound-phone"), None)
+        assert row is not None, "REGISTER200 was observable before its authoritative binding could be routed"
+        assert str(sip.SipUri("outbound-phone", *wire.a.address)) in str(row.metadata.get("sip_contacts") or row.sip_uri)
+
+    try:
+        await asyncio.wait_for(second_started.wait(), 2)
+        done, _ = await asyncio.wait((registering,), timeout=.1)
+        if registering in done:
+            await registering  # An observed public200 must already be routable.
+            assert_current_binding()
+        release.set()
+        await asyncio.wait_for(registering, 2)
+        assert_current_binding()
+    finally:
+        release.set()
+        await asyncio.gather(registering, return_exceptions=True)
+
+
+@pytest.mark.parametrize("ha_binding", [False, True])
+async def test_immediate_browser_call_and_unregister_use_current_binding_owner(wire_lab, monkeypatch, ha_binding):
+    from homeassistant.exceptions import ServiceValidationError
+    from custom_components.voip_stack import endpoint_runtime, softphone_originate
+    from custom_components.voip_stack.account_runtime import recompute_account_availability
+    from custom_components.voip_stack.directory_runtime import routing_snapshot
+    from custom_components.voip_stack.endpoint_routing import roster_from_peers
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+    from custom_components.voip_stack.local_softphone_runtime import async_setup_local_softphone_bridge, async_shutdown_local_softphone_bridge
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+
+    wire, lab = wire_lab, wire_lab.lab
+    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", roster_from_peers)
+    endpoint = PhoneEndpoint(endpoint_id="wire-account", username="outbound-phone", name="Wire account",
+        kind=EndpointKind.SIP_ACCOUNT, device_id="wire-account-device")
+    source = PhoneEndpoint(endpoint_id="wire-browser", username="wire-browser", name="Browser source",
+        kind=EndpointKind.BROWSER, device_id="wire-browser-device", availability="available")
+    lab.runtime.endpoints.register(endpoint)
+    lab.runtime.endpoints.register(source)
+    bindings = None
+    if ha_binding:
+        async_setup_local_softphone_bridge(lab.hass)
+        entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+        bindings = HaCardBindings(lab.hass, entry, lab.runtime,
+            lambda ids: recompute_account_availability(lab.hass, ids))
+        lab.runtime.ha_bindings = bindings
+        await bindings.async_start()
+        await bindings.async_set_popup_binding("test-user", "unregister-keeps-ha-binding", endpoint.endpoint_id, True)
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+
+    async def call():
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": endpoint.name, "media_client_id": "binding-owner-test",
+        }, blocking=True)
+
+    async def hangup():
+        identity = lab.runtime.endpoints.require(source.endpoint_id).active_call_id
+        if identity and (session := lab.calls.get_session(identity)) is not None:
+            await lab.hass.services.async_call("voip_stack", "hangup", {
+                "device_id": source.device_id, "call_id": identity,
+            }, blocking=True)
+            await asyncio.wait_for(session.terminated.wait(), 2)
+
+    try:
+        await register_phone(wire, outbound=False, discover=False)
+        await call()
+        _invite, _address = await wire.a.receive("INVITE")
+        await wire.b.receive("ACK")
+        await hangup()
+        await wire.b.receive("BYE")
+        # Keep the old public projection deliberately unchanged. The actual
+        # REGISTER owner still authenticates and commits the removal normally.
+        lab.runtime.directory.replace(routing_snapshot(lab.runtime))
+        monkeypatch.setattr(endpoint_runtime, "_refresh_and_push_phonebook", AsyncMock())
+        await register_phone(wire, outbound=False, discover=False, cseq=3, expires=0)
+        row = next(row for row in routing_snapshot(lab.runtime) if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
+        assert not row.metadata.get("sip_contacts") and not row.sip_uri
+        assert bool(row.metadata.get("local_ha")) is ha_binding
+        assert lab.runtime.endpoints.require(endpoint.endpoint_id).availability.value == ("available" if ha_binding else "offline")
+        if ha_binding:
+            await call()
+            identity = lab.runtime.endpoints.require(source.endpoint_id).active_call_id
+            assert lab.runtime.endpoints.require(endpoint.endpoint_id).active_call_id == identity
+            assert lab.runtime.softphones[endpoint.endpoint_id]["state"] == "ringing"
+        else:
+            with pytest.raises(ServiceValidationError):
+                await call()
+        assert sum(request.method == "INVITE" for request in wire.a.requests) == 1
+    finally:
+        await hangup()
+        if bindings is not None:
+            await bindings.async_close()
+            async_shutdown_local_softphone_bridge(lab.hass)
+        assert not lab.calls.sessions and not lab.calls.endpoint_claims_snapshot()
+        assert set(lab.runtime.rtp_port_pool.get("used", ())) == wire.idle_ports
 
 
 

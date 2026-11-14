@@ -123,6 +123,34 @@ async def test_migration_reference_is_declaration_not_an_observed_client(hass):
         await tracker.async_close()
 
 
+async def test_call_claims_and_binding_queries_do_not_rescan_saved_configuration(hass):
+    class ConfigurationRows(dict):
+        reads = 0
+
+        def values(self):
+            self.reads += 1
+            return super().values()
+
+    runtime = runtime_for_bindings()
+    subentries = ConfigurationRows()
+    entry = SimpleNamespace(entry_id="binding-test", subentries=subentries)
+    dashboard(hass, {"views": [{"cards": [{"type": "custom:voip-stack-card",
+        "mode": "ha_softphone", "device_id": "device-closed"}]}]})
+    tracker, _ = await owner(hass, runtime, entry)
+    try:
+        before = subentries.reads
+        for _ in range(20):
+            assert tracker.has_binding("closed")
+            runtime.endpoints.claim_call("closed", "call-token")
+            runtime.endpoints.release_call("closed", "call-token")
+        assert subentries.reads == before
+        runtime.endpoints.remove("closed")
+        assert not tracker.has_binding("closed")
+        assert subentries.reads > before
+    finally:
+        await tracker.async_close()
+
+
 async def test_account_subscription_sends_snapshot_after_ack_without_media(hass, phones):
     from copy import deepcopy
     from custom_components.voip_stack import websocket_api

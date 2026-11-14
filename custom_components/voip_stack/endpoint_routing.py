@@ -560,6 +560,36 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
     return assemble_directory_entries(hass, peers, registered_entries)
 
 
+def merge_registered_entries(entries, registered_entries, endpoint_registry):
+    """Overlay current registrar Contacts without making a second phone."""
+    entries = list(entries)
+    for registered in registered_entries:
+        endpoint = endpoint_registry.by_username(registered.id)
+        metadata = dict(registered.metadata or {})
+        if endpoint is not None:
+            registered = replace(registered, name=endpoint.name, extension=endpoint.extension)
+            declared = next((entry for entry in entries
+                             if entry.metadata.get("endpoint_id") == endpoint.endpoint_id), None)
+            if declared is not None:
+                metadata.setdefault("sip_video_codec", peer_video_codec(None, declared))
+            metadata.update(
+                {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "endpoint_kind": endpoint.kind.value,
+                    "device_id": endpoint.device_id,
+                    "capabilities": sorted(endpoint.capabilities),
+                    "registered": True,
+                }
+            )
+        if endpoint is not None:
+            # The Contact is the transport of the existing physical identity.
+            # It must not create a second phone alongside ESP discovery.
+            entries = [entry for entry in entries
+                       if entry.metadata.get("endpoint_id") != endpoint.endpoint_id]
+        entries.append(replace(registered, metadata=metadata))
+    return entries
+
+
 def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
     from .const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION
     from .groups import collect_groups
@@ -606,31 +636,7 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
     manual_entries = manual_roster_entries(hass)
     entries = merge_roster_overrides(entries, manual_entries)
     endpoint_registry = endpoint_directory(hass)
-    registered_endpoint_ids: set[str] = set()
-    for registered in registered_entries:
-        endpoint = endpoint_registry.by_username(registered.id)
-        metadata = dict(registered.metadata or {})
-        if endpoint is not None:
-            declared = next((entry for entry in entries
-                             if entry.metadata.get("endpoint_id") == endpoint.endpoint_id), None)
-            if declared is not None:
-                metadata.setdefault("sip_video_codec", peer_video_codec(None, declared))
-            registered_endpoint_ids.add(endpoint.endpoint_id)
-            metadata.update(
-                {
-                    "endpoint_id": endpoint.endpoint_id,
-                    "endpoint_kind": endpoint.kind.value,
-                    "device_id": endpoint.device_id,
-                    "capabilities": sorted(endpoint.capabilities),
-                    "registered": True,
-                }
-            )
-        if endpoint is not None:
-            # The Contact is the transport of the existing physical identity.
-            # It must not create a second phone alongside ESP discovery.
-            entries = [entry for entry in entries
-                       if entry.metadata.get("endpoint_id") != endpoint.endpoint_id]
-        entries.append(replace(registered, metadata=metadata))
+    entries = merge_registered_entries(entries, registered_entries, endpoint_registry)
     assist = assist_config(hass)
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist.get(CONF_ASSIST_EXTENSION):
         extension = assist[CONF_ASSIST_EXTENSION]

@@ -96,7 +96,14 @@ def route_namespace_conflicts(
             parse_mailbox_address(value) is not None for value in raw_routes | raw_groups
         ):
             return True
-        existing_routes.update(mapping_route_aliases(item))
+        routes = mapping_route_aliases(item)
+        if item.get("group_id") and item.get("kind") == "ring":
+            # A materialised ring group is the same route declared by its
+            # members. Its name may be reused as membership, not as a phone.
+            group_name = normalized_aliases((item.get("name"),))
+            existing_groups.update(group_name)
+            routes -= group_name
+        existing_routes.update(routes)
         existing_groups.update(mapping_group_aliases(item))
         existing_mailboxes.update(value.casefold() for value in mailbox_route_aliases(item))
         existing_exact.update(str(value or "").strip().casefold()
@@ -127,16 +134,18 @@ def entry_route_mappings(
     data: Mapping[str, Any],
     *,
     exclude_subentry_id: str = "",
+    exclude_endpoint_ids: Iterable[str] = (),
     include_assist: bool = True,
     include_features: bool = True,
 ) -> list[Mapping[str, Any]]:
     """Build the complete persisted routing namespace for flow validation."""
     from .contact_config import contact_dicts
-    from .phone_config import phone_subentries
+    from .phone_config import phone_endpoint_id, phone_subentries, phone_subentry_data
     from .phone_endpoint import EndpointKind
     from .const import CONF_ASSIST_EXTENSION, CONF_ASSIST_ENDPOINT_ENABLED
     from .parking_config import normalize_parking_config
 
+    excluded = set(exclude_endpoint_ids)
     mappings: list[Mapping[str, Any]] = (
         contact_dicts(entry) if entry is not None else list(data.get(CONF_PHONEBOOK_CONTACTS, []) or [])
     )
@@ -150,9 +159,10 @@ def entry_route_mappings(
     )
     if entry is not None:
         mappings.extend(
-            subentry.data
+            phone_subentry_data(subentry)
             for subentry in phone_subentries(entry)
             if subentry.subentry_id != exclude_subentry_id
+            and phone_endpoint_id(subentry) not in excluded
         )
         mappings.extend(
             subentry.data for subentry in entry.subentries.values()
@@ -163,10 +173,28 @@ def entry_route_mappings(
 
             mappings.extend(managed_route_mappings(entry))
     runtime = getattr(entry, "runtime_data", None) if entry is not None else None
-    endpoints = getattr(getattr(runtime, "endpoints", None), "endpoints", ())
+    registry = getattr(runtime, "endpoints", None)
+    endpoints = getattr(registry, "endpoints", ())
+    retiring = getattr(registry, "pending_removals", ())
+    configured_ids = {
+        phone_endpoint_id(subentry) for subentry in phone_subentries(entry)
+    } if entry is not None else set()
     mappings.extend(
-        {"id": endpoint.sip_uri_user, "name": endpoint.name, "extension": endpoint.extension}
-        for endpoint in endpoints if endpoint.kind is EndpointKind.ESPHOME
+        {"id": endpoint.sip_uri_user, "name": endpoint.name,
+         "extension": endpoint.extension, "username": endpoint.username}
+        for endpoint in endpoints
+        if endpoint.endpoint_id not in excluded
+        and (
+            endpoint.kind is EndpointKind.ESPHOME
+            or endpoint.endpoint_id in retiring
+            # HA queues the parent update listener after native deletion. Its
+            # PBX endpoint still owns these indexed aliases until reconcile,
+            # even before the listener marks an active call for deferred removal.
+            or (
+                endpoint.kind in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT}
+                and endpoint.endpoint_id not in configured_ids
+            )
+        )
     )
     assist_extension = str(data.get(CONF_ASSIST_EXTENSION) or "").strip()
     if include_assist and data.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist_extension:

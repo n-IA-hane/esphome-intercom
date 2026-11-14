@@ -268,11 +268,11 @@ async def async_setup_mailboxes(hass, entry):
 
 async def async_remove_entry_mailboxes(hass, entry):
     """Remove this entry's mailboxes after normal integration shutdown."""
-    from .phone_config import phone_subentries
+    from .phone_config import phone_endpoint_id, phone_subentries
     from .session_cleanup import async_wait_for_cleanup
 
     path = archive_path(hass)
-    identities = {str(item.data.get("endpoint_id") or "") for item in phone_subentries(entry)}
+    identities = {phone_endpoint_id(item) for item in phone_subentries(entry)}
     identities.update(entry.data.get(CONF_ESPHOME_MAILBOXES, {}))
     identities.discard("")
     if path is None or not identities:

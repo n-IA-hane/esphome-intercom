@@ -1,4 +1,7 @@
 # Codec gain before processing; hardware defaults remain in the board profile.
+substitutions:
+  settings_input_gain_id: microphone_pga
+  settings_reference_gain_id: reference_pga
 defaults:
   microphone_pga_name: '${ microphone_pga_name | default("Microphone Gain (pre-processing)") }'
   reference_pga_name: '${ reference_pga_name | default("AEC Reference Gain") }'

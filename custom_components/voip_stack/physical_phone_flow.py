@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import re
-from types import SimpleNamespace
 
 import voluptuous as vol
 from aiohttp import ClientError
@@ -12,20 +11,21 @@ from homeassistant.config_entries import ConfigSubentry, ConfigSubentryFlow, SOU
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.selector import (
     AreaSelector, BooleanSelector, EntitySelector, ObjectSelector,
-    SelectSelector, TextSelector,
+    SelectSelector, TextSelector, TextSelectorConfig, TextSelectorType,
 )
 
 from .phone_config import (
     _add_phone_subentry, endpoint_from_data, phone_subentries,
-    validate_sip_account_namespace,
+    phone_subentry_data, validate_sip_account_namespace,
 )
 from .phone_endpoint import EndpointKind
-from .phone_profile import resolve_phone_keys, resolve_phone_language
+from .phone_profile import resolve_phone_language
 from .phone_profile_catalog import PhoneProfileCatalog
 from .physical_phone import (
-    KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, normalize_physical_phone, physical_phone_records,
-    provisioning_enabled,
+    KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, physical_phone_records,
+    provisioning_enabled, draft_physical_subentry, physical_phone_data, physical_phone_id, reorder_physical_keys,
 )
+from .physical_phone_validation import physical_slot, physical_validation_runtime, validate_physical_inventory
 
 CREATE_ACCOUNT = "__create_account__"
 _IDENTITY_FIELDS = frozenset({
@@ -35,10 +35,7 @@ _IDENTITY_FIELDS = frozenset({
 
 
 def _slot(value):
-    text = str(value or "")
-    if not text.isascii() or not text.isdigit() or int(text) < 1:
-        raise ValueError("invalid_phone_bindings")
-    return str(int(text))
+    return physical_slot(value)
 
 
 class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
@@ -49,6 +46,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._seed = {}
         self._draft = {}
         self._accounts = {}
+        self._account_records = {}
+        self._inventory_draft = None
         self._account_flow = None
         self._catalog = None
         self._manifest = None
@@ -57,10 +56,10 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._language_override = False
 
     def _previous(self):
-        return dict(self._current.data) if self._current is not None else self._seed
+        return physical_phone_data(self._current) if self._current is not None else self._seed
 
     def _phone_accounts(self):
-        return {str(item.data["endpoint_id"]): dict(item.data)
+        return {str(phone_subentry_data(item)["endpoint_id"]): phone_subentry_data(item)
                 for item in phone_subentries(self._get_entry())
                 if item.data.get("kind") == EndpointKind.SIP_ACCOUNT.value}
 
@@ -76,8 +75,39 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
 
     async def async_step_reconfigure(self, user_input=None):
         self._current = self._get_reconfigure_subentry()
-        self._draft = deepcopy(dict(self._current.data))
-        return await self.async_step_user(user_input)
+        self._draft = deepcopy(physical_phone_data(self._current))
+        if not provisioning_enabled(self._get_entry()):
+            return self.async_abort(reason="phone_provisioning_disabled")
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "bindings", "key_order"])
+
+    def _new_inventory_draft(self):
+        if self._current is not None or self._inventory_draft is not None:
+            return
+        owner = getattr(getattr(self._get_entry(), "runtime_data", None), "physical_phones", None)
+        discovery = getattr(owner, "discovery", None)
+        candidate = getattr(discovery, "candidates", {}).get(str(self._draft.get("mac") or "").replace(":", "").replace("-", "").lower())
+        self._inventory_draft = getattr(candidate, "native_subentry", None)
+        if self._inventory_draft is None:
+            self._inventory_draft = draft_physical_subentry({key: value for key, value in self._seed.items() if key != "phone_id"})
+        self._seed = {**self._seed, **physical_phone_data(self._inventory_draft)}
+
+    def _store_inventory(self, data):
+        record = draft_physical_subentry(data, previous=self._current or self._inventory_draft, title=data["name"])
+        if self._current is not None:
+            self.hass.config_entries.async_update_subentry(self._get_entry(), self._current,
+                data=record.data, title=record.title, unique_id=record.unique_id)
+            return self.async_abort(reason="reconfigure_successful")
+        self.hass.config_entries.async_add_subentry(self._get_entry(), record)
+        return self.async_abort(reason="phone_configured")
+
+    def _finish_identity(self):
+        if self._current is None:
+            identity = str(self._draft.pop("account_id", "") or "")
+            if identity and identity not in self._phone_accounts():
+                raise ValueError("phone_sip_account_required")
+            self._draft["lines"] = [{"slot": "1", "endpoint_id": identity, "transport": "udp"}] if identity else []
+            self._draft["keys"] = []
+        return self._store_inventory(self._validate_phone())
 
     async def async_step_user(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
@@ -94,6 +124,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             self._discovery_model = (str(candidate.get("vendor") or "").lower(),
                                      re.sub(r"[^a-z0-9]", "", str(candidate.get("model") or "").lower()))
             user_input = None
+        self._new_inventory_draft()
         errors = {}
         try:
             manifest = await self._manifest_for_form()
@@ -106,11 +137,18 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             return self.async_abort(reason="phone_catalog_unavailable")
         if user_input is not None:
             self._draft.update({key: value for key, value in user_input.items() if key in _IDENTITY_FIELDS})
+            if self._current is None:
+                self._draft["account_id"] = user_input.get("account_id", "")
             if "advanced" in user_input:
                 advanced = user_input["advanced"]
                 if not isinstance(advanced, dict):
                     return self.async_show_form(step_id="user", errors={"base": "invalid_phone_host"})
                 self._draft["host"] = advanced.get("host", self._draft.get("host", ""))
+                self._draft.update({key: advanced[key] for key in ("area_id", "person", "follow_ha_language", "enabled") if key in advanced})
+                if "admin_username" in advanced:
+                    self._draft["admin_username"] = advanced["admin_username"]
+                if advanced.get("admin_password"):
+                    self._draft["admin_password"] = advanced["admin_password"]
             try:
                 name = str(self._draft.get("name") or "").strip()
                 mac = re.sub(r"[:-]", "", str(self._draft.get("mac") or "")).lower()
@@ -151,13 +189,13 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                                 pass
                             else:
                                 self._draft["language"] = canonical
-                                return await self.async_step_bindings()
+                                return self._finish_identity()
                         self._language_override = True
                         return await self.async_step_language()
                     self._draft["language"] = canonical
                 else:
                     self._draft["language"] = ""
-                return await self.async_step_bindings()
+                return self._finish_identity()
             except (ValueError, KeyError, TypeError, OSError, TimeoutError, ClientError) as error:
                 errors["base"] = self._error(error)
         values = self._draft
@@ -174,14 +212,19 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 SelectSelector({"options": choices}),
             vol.Optional("advanced"): section(vol.Schema({
                 vol.Optional("host", default=values.get("host", "")): TextSelector(),
+                vol.Optional("admin_username", default=values.get("admin_username", "")): TextSelector(),
+                vol.Optional("admin_password"): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                vol.Optional("area_id", **({"default": values["area_id"]} if values.get("area_id") else {})): AreaSelector(),
+                vol.Optional("person", **({"default": values["person"]} if values.get("person") else {})): EntitySelector({"domain": "person"}),
+                vol.Required("follow_ha_language", default=values.get("follow_ha_language", True)): BooleanSelector(),
+                vol.Required("enabled", default=values.get("enabled", True)): BooleanSelector(),
             }), {"collapsed": True}),
-            vol.Optional("area_id", **({"default": values["area_id"]} if values.get("area_id") else {})): AreaSelector(),
-            vol.Optional("person", **({"default": values["person"]} if values.get("person") else {})): EntitySelector({"domain": "person"}),
-            vol.Required("follow_ha_language", default=values.get("follow_ha_language", True)): BooleanSelector(),
-            vol.Required("enabled", default=values.get("enabled", True)): BooleanSelector(),
         }
         if self._current is not None:
             fields[vol.Optional("update_profile", default=False)] = BooleanSelector()
+        else:
+            fields[vol.Optional("account_id")] = SelectSelector({"options": [
+                {"value": identity, "label": data["name"]} for identity, data in self._phone_accounts().items()]})
         selected_profile = next((item for item in profiles if item["id"] == values.get("profile_id")), {})
         return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields),
             description_placeholders={"profile_pin": self._manifest_commit,
@@ -202,13 +245,13 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             except ValueError:
                 errors["base"] = "phone_language_unsupported"
             else:
-                return await self.async_step_bindings()
+                return self._finish_identity()
         return self.async_show_form(step_id="language", errors=errors, data_schema=vol.Schema({
             vol.Required("language", default=self._draft.get("language") or next(iter(languages))):
                 SelectSelector({"options": list(languages)})}))
 
     def _check_mac(self, mac):
-        own = self._current.data.get("phone_id") if self._current is not None else None
+        own = physical_phone_id(self._current) if self._current is not None else None
         if any(phone["mac"] == mac and phone["phone_id"] != own
                for phone in physical_phone_records(self._get_entry()).values()):
             raise ValueError("phone_mac_exists")
@@ -237,67 +280,12 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         return lines, keys
 
     def _validation_runtime(self):
-        from .endpoint_registry import EndpointRegistry
-        from .group_config import group_members, group_records
-        from .contact_config import contact_dicts
-        from .phone_directory import PhoneDirectory
-        from .roster import parse_roster_json
-
-        runtime = getattr(self._get_entry(), "runtime_data", None)
-        configured = EndpointRegistry()
-        for item in phone_subentries(self._get_entry()):
-            configured.register(endpoint_from_data(self._get_entry(), item.data))
-        for data in self._accounts.values():
-            configured.register(endpoint_from_data(self._get_entry(), data))
-        actual = getattr(runtime, "endpoints", None)
-        endpoints = SimpleNamespace(
-            resolve=lambda ref: configured.resolve(ref) or (actual.resolve(ref) if actual is not None else None))
-        queues = getattr(runtime, "queues", None)
-        if queues is None:
-            rows = {identity: SimpleNamespace(**record, queue_id=identity,
-                    members=frozenset(group_members(self.hass, self._get_entry(), record)))
-                    for identity, record in group_records(self._get_entry(), "queue").items()}
-            queues = SimpleNamespace(resolve=lambda ref: rows.get(str(ref)))
-        directory = PhoneDirectory(parse_roster_json(contact_dicts(self._get_entry())))
-        return SimpleNamespace(endpoints=endpoints, queues=queues, directory=directory)
+        return physical_validation_runtime(self.hass, self._get_entry(), self._accounts)
 
     def _validate_phone(self):
-        data = {**self._previous(), **normalize_physical_phone(self._draft, previous=self._previous())}
-        self._check_mac(data["mac"])
-        caps = self._profile["capabilities"]
-        accounts = {**self._phone_accounts(), **self._accounts}
-        for line in data["lines"]:
-            if int(line["slot"]) > int(caps["max_lines"]):
-                raise ValueError("phone_line_unsupported")
-            if line["endpoint_id"] not in accounts:
-                raise ValueError("phone_sip_account_required")
-        runtime = self._validation_runtime()
-        for key in data["keys"]:
-            function, target = key["function"], key.get("target", "")
-            if function in {"queue_login", "queue_pause"}:
-                queue = runtime.queues.resolve(target)
-                if queue is not None:
-                    key["target"] = queue.queue_id
-            elif function in {"speed_dial", "blf"}:
-                if str(target).casefold().startswith("contact:"):
-                    from .phone_directory import contact_key_reference
-                    contact = runtime.directory.key_contact(target)
-                    if function != "speed_dial" or contact is None:
-                        raise ValueError("invalid_phone_key_target")
-                    key["target"] = contact_key_reference(contact)
-                else:
-                    endpoint = runtime.endpoints.resolve(target)
-                    if endpoint is not None:
-                        key["target"] = endpoint.endpoint_id
-        resolve_phone_keys(runtime, data, self._profile)
-        from .physical_phone_provisioning import validate_slot_removal
-        owner = getattr(getattr(self._get_entry(), "runtime_data", None), "physical_phones", None)
-        validator = getattr(owner, "validate_inventory_change", None)
-        if validator is not None:
-            validator(data, self._profile)
-        else:
-            validate_slot_removal(self._previous(), data, self._profile)
-        return data
+        return validate_physical_inventory(self.hass, self._get_entry(), self._draft, self._profile,
+            previous=self._previous(), current_subentry_id=self._current.subentry_id if self._current else None,
+            account_drafts=self._accounts)
 
     def _binding_schema(self):
         caps = self._profile["capabilities"]
@@ -342,6 +330,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_bindings(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
             return self.async_abort(reason="phone_provisioning_disabled")
+        if self._profile is None:
+            await self._manifest_for_form()
+            self._profile, _templates = await self._catalog.async_profile(self._draft["profile_id"], commit=self._draft["catalog_commit"])
         errors = {}
         if user_input is not None:
             try:
@@ -363,14 +354,34 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 errors["base"] = self._error(error)
             else:
                 for account in drafts:
-                    _add_phone_subentry(self.hass, self._get_entry(), data=account, title=account["name"])
-                if self._current is not None:
-                    return self.async_update_and_abort(self._get_entry(), self._current, data=data, title=data["name"])
-                return self.async_create_entry(title=data["name"], data=data,
-                    unique_id="physical_phone:" + data["phone_id"])
+                    _add_phone_subentry(self.hass, self._get_entry(), data=account, title=account["name"],
+                        draft=self._account_records.get(account["endpoint_id"]))
+                return self._store_inventory(data)
         return self.async_show_form(step_id="bindings", errors=errors, data_schema=self._binding_schema(),
             description_placeholders={"max_lines": str(self._profile["capabilities"]["max_lines"]),
                                       "max_keys": str(len(self._profile["capabilities"].get("key_slots", [])))})
+
+    async def async_step_key_order(self, user_input=None):
+        if not provisioning_enabled(self._get_entry()):
+            return self.async_abort(reason="phone_provisioning_disabled")
+        if self._profile is None:
+            await self._manifest_for_form()
+            self._profile, _templates = await self._catalog.async_profile(self._draft["profile_id"], commit=self._draft["catalog_commit"])
+        keys = self._draft.get("keys", [])
+        positions = sorted((key["slot"] for key in keys), key=int)
+        errors = {}
+        if user_input is not None:
+            try:
+                proposal = {**self._draft, "keys": reorder_physical_keys(keys, [user_input.get(slot) for slot in positions])}
+                data = validate_physical_inventory(self.hass, self._get_entry(), proposal, self._profile,
+                    previous=self._previous(), current_subentry_id=self._current.subentry_id)
+            except ValueError as error:
+                errors["base"] = self._error(error)
+            else:
+                return self._store_inventory(data)
+        options = [{"value": key["slot"], "label": f"{key.get('label') or key['function']} ({key['slot']})"} for key in keys]
+        return self.async_show_form(step_id="key_order", errors=errors,
+            data_schema=vol.Schema({vol.Required(slot, default=slot): SelectSelector({"options": options}) for slot in positions}))
 
     async def async_step_account(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
@@ -392,6 +403,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     errors["base"] = "phone_alias_conflict"
             if not errors:
                 self._accounts[data["endpoint_id"]] = data
+                self._account_records[data["endpoint_id"]] = self._account_flow.account_draft
                 pending = next(line for line in self._draft["lines"] if line.get("endpoint_id") == CREATE_ACCOUNT)
                 pending["endpoint_id"] = data["endpoint_id"]
                 self._account_flow = None

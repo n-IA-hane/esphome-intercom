@@ -1,4 +1,6 @@
 # Physical audio/backend configuration; local GMF selection is explicit.
+substitutions:
+  settings_aec_switch_id: aec_switch
 esp_audio_stack:
   audio_task_stack_in_psram: false
   i2s_lrclk_pin: ${i2s_lrclk_pin}
@@ -93,6 +95,7 @@ switch:
 packages:
   speaker_mute: !include '../../voip/speaker_mute.yaml'
   controls: !include '../../esp_audio_stack/controls.yaml'
+  hardware_gain: !include '../../esp_audio_stack/hardware_gain_controls.yaml'
   playback: !include '../../media_player/playback_compat.yaml'
   gmf_source: !include '../gmf_source.yaml'
 external_components:

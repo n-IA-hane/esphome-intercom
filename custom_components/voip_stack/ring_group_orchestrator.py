@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .account_dialing import account_call_plan
 from .call_projection import (
     observe_phone_leg_projection,
     publish_bridge_projection,
@@ -120,17 +121,17 @@ async def run_ring_group_call(
     )
     ha_origin = origin_endpoint is not None
     call_ingress = "trunk" if invite.received_via_trunk else "extension"
-    route_kind = str(entry.metadata.get("route_kind") or GROUP_TYPE_RING)
+    account_plan = account_call_plan(entry)
+    route_kind = account_plan.route_kind if account_plan else str(entry.metadata.get("route_kind") or GROUP_TYPE_RING)
     members = _unique_group_members(entry.metadata.get("members"))
     try:
-        account_id = str(entry.metadata.get("account_fork") or "")
-        if account_id:
-            endpoint = endpoint_registry.get(account_id)
+        if account_plan:
+            endpoint = endpoint_registry.get(account_plan.endpoint_id)
             if endpoint is None:
                 raise ValueError("account disappeared before dialing")
             # The account's existing no-answer controller owns its policy.
             # An absent policy does not invent the ring-group's 30 s deadline.
-            ring_policy = RingPolicy(overall_timeout=float("inf"))
+            ring_policy = account_plan.ring_policy
         else:
             ring_policy = RingPolicy.from_metadata(entry.metadata)
     except (TypeError, ValueError) as err:

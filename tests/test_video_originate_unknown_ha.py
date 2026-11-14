@@ -24,6 +24,7 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
     lab.runtime.endpoints.register(source)
     capabilities = ["audio", "dtmf"] if policy == "known_audio_only" else []
     lab.roster[1] = replace(lab.roster[1], metadata={**lab.roster[1].metadata, "capabilities": capabilities})
+    lab.runtime.directory.replace(lab.roster)
     from custom_components.voip_stack.roster import dump_roster_json
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")

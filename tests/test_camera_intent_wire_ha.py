@@ -25,6 +25,25 @@ CAPS = BASE_CAPS + b"a=ptime:10\r\n"
 pytestmark = pytest.mark.ha
 
 
+async def bootstrap_camera_phone_configuration(lab):
+    """Mirror canonical account/store setup before exercising persistent actions."""
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentry_data
+    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.websocket_api import _async_load_ha_softphone_store
+
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry,
+        data={**entry.data, CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
+    for endpoint in lab.runtime.endpoints.endpoints:
+        subentry = _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
+            "endpoint_id": endpoint.endpoint_id, "kind": endpoint.kind.value, "name": endpoint.name,
+            "username": endpoint.username, "password": "fixture-only", "extension": endpoint.extension,
+            "send_video": endpoint.send_video, "video_enabled": True,
+        })
+        await _async_load_ha_softphone_store(lab.hass, entry, endpoint_id=endpoint.endpoint_id,
+                                            endpoint_data=phone_subentry_data(subentry))
+
+
 async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_generation(lab, monkeypatch, tmp_path):
     """Wire and ownership proof; no browser or synthetic RTP counter is used."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
@@ -49,6 +68,7 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
         username="camera-wire-receiver", kind=EndpointKind.SIP_ACCOUNT)
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.register(receiver)
+    await bootstrap_camera_phone_configuration(lab)
     assert not any(item.kind is EndpointKind.ESPHOME for item in lab.runtime.endpoints.endpoints)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True

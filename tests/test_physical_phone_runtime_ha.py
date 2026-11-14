@@ -73,6 +73,22 @@ async def test_default_off_does_not_create_catalog_or_services_or_discovery(phon
     construct.assert_not_called()
 
 
+async def test_disabled_provisioning_account_edit_keeps_bindings_without_catalog(phone_lab, monkeypatch):
+    from custom_components.voip_stack.physical_phone import async_prepare_account_bindings, account_physical_bindings
+    from custom_components.voip_stack import phone_profile_catalog
+
+    data = phone()
+    add(phone_lab, data)
+    construct = Mock(side_effect=AssertionError("Disabled account edit constructed a catalog"))
+    monkeypatch.setattr(phone_profile_catalog, "PhoneProfileCatalog", construct)
+    rows = account_physical_bindings(phone_lab.entry, "sip:first")
+    assert await async_prepare_account_bindings(phone_lab.hass, phone_lab.entry, "sip:first", rows,
+        account_data={"name": "Renamed account"}) == ()
+    with pytest.raises(ValueError, match="phone_provisioning_disabled"):
+        await async_prepare_account_bindings(phone_lab.hass, phone_lab.entry, "sip:first", [])
+    construct.assert_not_called()
+
+
 async def test_physical_device_has_own_identity_and_preserves_logical_endpoint_device(phone_lab):
     from custom_components.voip_stack.physical_phone import sync_physical_phone_devices, physical_phone_for_device
     data = phone()
@@ -377,6 +393,24 @@ async def dependency_config(cached_physical_config):
     await state.lab.hass.async_block_till_done()
     state.profile, state.templates = profile, templates
     return state
+
+
+async def test_implicit_tls_directory_is_not_rendered_as_plain_ldap(dependency_config):
+    state = dependency_config
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_services": {"enabled": True, "tls": True}})
+    with pytest.raises(ValueError, match="phone_ldap_mode_unsupported"):
+        await state.manager.async_context(state.data, state.profile)
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.public_state(state.data["phone_id"])["error"] == "phone_ldap_mode_unsupported"
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_services": {"enabled": True, "tls": False}})
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert not state.manager.public_state(state.data["phone_id"])["error"]
+    assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
 
 
 @pytest.fixture

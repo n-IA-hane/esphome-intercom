@@ -268,9 +268,6 @@ class VoipStackCard extends HTMLElement {
     this._observeLayout();
     if (this._hass) {
       this._subscribeBusEvents();
-      if (this._isHaSoftphoneMode() && !this._softphoneStateLoaded) {
-        this._loadSoftphoneState();
-      }
     }
     this._render();
   }
@@ -396,6 +393,7 @@ class VoipStackCard extends HTMLElement {
     if (!this._softphoneSnapshotMatches(state)) return;
     this._softphoneStateEpoch++;
     if (!this._applySoftphoneSnapshot(state, context)) return;
+    this._softphoneStateLoaded = true;
     this._ensureHaSoftphoneAudioPath(state);
     this._render();
   }
@@ -479,6 +477,7 @@ class VoipStackCard extends HTMLElement {
   // detect a missing permission as early as possible rather than wait for a
   // call to find we don't have media permissions to auto-answer.
   _checkAutoAnswerMedia(snapshot = {}) {
+    if (snapshot.can_control === false) return;
     if (isPagingAutoAnswer(snapshot)) return;
     if (!this._autoAnswer || !this._isSoftphoneController()) return;
     void voipStackEngine.checkAutoAnswerMedia("audio");
@@ -513,6 +512,7 @@ class VoipStackCard extends HTMLElement {
   }
 
   _maybeAutoAnswer(snapshot = {}) {
+    if (snapshot.can_control === false) return;
     if (
       !this._isSoftphoneController() ||
       snapshot.state !== "ringing" ||
@@ -873,7 +873,6 @@ class VoipStackCard extends HTMLElement {
     this._readBrowserPreferences();
     if (this._hass && this._isHaSoftphoneMode()) {
       if (this.isConnected) this._subscribeBusEvents();
-      if (this.isConnected) this._loadSoftphoneState();
     }
     else if (this._hass) this._findEntityIds();
     this._render();
@@ -922,12 +921,6 @@ class VoipStackCard extends HTMLElement {
     }
     if (hass) {
       this._loadSharedRoster();
-    }
-    if (
-      this.isConnected && hass && this._isHaSoftphoneMode() &&
-      !this._softphoneStateLoaded
-    ) {
-      this._loadSoftphoneState();
     }
 
     // Discover entity IDs once
@@ -1853,7 +1846,8 @@ class VoipStackCard extends HTMLElement {
     let showAnswer = false;
     let showHangup = false;
     let showCall = false;
-    const buttonDisabled = this._starting || this._stopping;
+    const canControl = !this._isHaSoftphoneMode() || this._softphoneSnapshot?.can_control !== false;
+    const buttonDisabled = !canControl || this._starting || this._stopping;
     const softphoneEnabled =
       !this._isHaSoftphoneMode() || this._softphoneSnapshot?.enabled !== false;
 
@@ -2071,18 +2065,18 @@ class VoipStackCard extends HTMLElement {
     // Cancelling an outbound INVITE has priority over the still-pending start
     // request. In particular, a trunk call may remain in CALLING until SIP
     // timer B expires, so `_starting` must never lock out Hangup.
-    els.hangupBtn.disabled = this._stopping;
+    els.hangupBtn.disabled = !canControl || this._stopping;
     els.callBtn.disabled = buttonDisabled || browserMediaBusy || !!this._transferBusy ||
       (softphoneMode && !keypadOpen && !this._getSoftphoneTargetDevice());
     els.callBtn.textContent = this._t(transferring ? "Transfer" : "Call");
     if (els.transferBtn) {
       els.transferBtn.hidden = espState !== "in_call" || !this._sessionCallId();
-      els.transferBtn.disabled = !!this._transferBusy || this._stopping;
+      els.transferBtn.disabled = !canControl || !!this._transferBusy || this._stopping;
       els.transferBtn.setAttribute("aria-pressed", String(transferring));
       els.transferBtn.title = this._t(transferring ? "Cancel transfer" : "Transfer call");
       els.transferBtn.setAttribute("aria-label", els.transferBtn.title);
       els.transferHangupBtn.hidden = !transferring;
-      els.transferHangupBtn.disabled = this._stopping;
+      els.transferHangupBtn.disabled = !canControl || this._stopping;
     }
 
     // Status
@@ -2603,6 +2597,7 @@ class VoipStackCard extends HTMLElement {
   }
 
   async _startCall(destination = "", options = {}) {
+    if (this._isHaSoftphoneMode() && this._softphoneSnapshot?.can_control === false) return;
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
     const mediaIntentToken = softphoneAction ? {} : null;
@@ -2853,6 +2848,7 @@ class VoipStackCard extends HTMLElement {
   }
 
   async _answer(options = {}) {
+    if (this._isHaSoftphoneMode() && this._softphoneSnapshot?.can_control === false) return;
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
     const callId = softphoneAction
@@ -3089,6 +3085,7 @@ class VoipStackCard extends HTMLElement {
   }
 
   async _tryAutoAnswer(options = {}) {
+    if (this._isHaSoftphoneMode() && this._softphoneSnapshot?.can_control === false) return;
     const requirePersistentPermission = options.requirePersistentPermission !== false;
     const softphoneAction = this._isHaSoftphoneMode();
     const pagingAutoAnswer = softphoneAction && isPagingAutoAnswer(this._softphoneSnapshot);
@@ -3937,10 +3934,7 @@ class VoipStackCard extends HTMLElement {
     try {
       await this._hass.callService("voip_stack", "set_ha_softphone_settings", {
         ...this._softphoneServiceScope(),
-        extension: this._softphoneExtension,
-        ring_group: this._softphoneGroups.ring_group,
-        conference_group: this._softphoneGroups.conference_group,
-        conference_ring: !!this._softphoneGroups.conference_ring,
+        ...patch,
       });
       await this._loadSoftphoneState();
     } catch (err) {

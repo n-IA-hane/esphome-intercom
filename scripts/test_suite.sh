@@ -177,6 +177,13 @@ ha_tests=(
   tests/test_browser_answer_noanswer_race_ha.py
   tests/test_browser_logical_availability_ha.py
   tests/test_account_consolidation_ha.py
+  tests/test_account_settings_transactions_ha.py
+  tests/test_account_identity_ha.py
+  tests/test_account_client_snapshot_ha.py
+  tests/test_authorization_registry_ha.py
+  tests/test_native_phone_primitives_ha.py
+  tests/test_physical_phone_user_journey_ha.py
+  tests/test_physical_phone_apply_ha.py
   tests/test_account_physical_bindings_ha.py
   tests/test_account_dialing_ha.py
   tests/test_canonical_account_calls_ha.py

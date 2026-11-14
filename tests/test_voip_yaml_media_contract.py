@@ -272,6 +272,10 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     options = by_id(config['lvgl']['pages'], 'ui_aec_mode_dd')['options']
     assert options == ['sr_low_cost', 'sr_high_perf']
     assert options == by_id(config['select'], 'aec_mode_select')['options']
+    mode_sync = values_text(by_id(config['script'], 'settings_sync_mode'))
+    assert 'id(aec_mode_select).current_option()' in mode_sync
+    assert 'lvgl.dropdown.update' in mode_sync and 'get_selected_index()' in mode_sync
+    assert 'lv_dropdown_set_options' not in mode_sync
 
 
 def _master_volume_boot_writes(boot, scripts=()):
@@ -476,7 +480,7 @@ def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
                              'DYNAMIC_TX_BUFFER_NUM': '64', 'TX_BA_WIN': '32', 'RX_BA_WIN': '32'}.items():
         assert sdk['CONFIG_WIFI_RMT_' + suffix] == expected
     assert sdk['CONFIG_LWIP_TCPIP_RECVMBOX_SIZE'] == '64'
-    assert 'master_volume' not in values_text(config['esphome']['on_boot'])
+    assert not _master_volume_boot_writes(config['esphome']['on_boot'], config.get('script', []))
     assert tuple(int(config['esp_afe'][key]) for key in ('task_priority', 'feed_task_priority', 'fetch_task_priority')) == (18, 18, 18)
 
 

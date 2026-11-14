@@ -9,10 +9,9 @@ import re
 import secrets
 import socket
 import time
-from uuid import uuid4
 
 from .core import sip
-from .physical_phone import physical_phone_records
+from .physical_phone import draft_physical_subentry, physical_phone_id, physical_phone_records
 
 PNP_ADDRESS = "224.0.1.75"
 PNP_PORT = 5060
@@ -28,6 +27,7 @@ class PhoneCandidate:
     token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     seen: float = field(default_factory=time.monotonic)
     flow_id: str = ""
+    native_subentry: object | None = field(default=None, repr=False)
 
     def public(self):
         return {"phone_id": self.phone_id, "mac": self.mac, "host": self.host,
@@ -142,7 +142,9 @@ class PhoneDiscovery:
         if candidate is None:
             if len(self.candidates) >= 64:
                 return SipRequestResult(503, "Service Unavailable")
-            candidate = self.candidates[mac] = PhoneCandidate(uuid4().hex, mac, addr[0], vendor, model)
+            record = draft_physical_subentry(title=(vendor + " " + model).strip())
+            candidate = self.candidates[mac] = PhoneCandidate(physical_phone_id(record), mac, addr[0], vendor, model,
+                token=record.data["provisioning_token"], native_subentry=record)
         candidate.seen, candidate.host = time.monotonic(), addr[0]
         if phone is None:
             task = self.owner.hass.async_create_task(self._start_flow(candidate), "voip-phone-discovery")

@@ -85,10 +85,18 @@ class EndpointEntityManager(Generic[_EntityT]):
             self.async_add_entities(entities, config_subentry_id=subentry_id)
 
     @callback
+    def _supports_endpoint(self, endpoint: PhoneEndpoint) -> bool:
+        if not is_managed_endpoint(endpoint) or (self.predicate is not None and not self.predicate(endpoint)):
+            return False
+        if endpoint.endpoint_id in self.registry.pending_removals:
+            return False
+        subentry_id = self._subentry_id(endpoint.endpoint_id)
+        subentries = getattr(self.entry, "subentries", None)
+        return not (subentry_id and subentries is not None and subentry_id not in subentries)
+
+    @callback
     def _create(self, endpoint: PhoneEndpoint) -> _EntityT | None:
-        if not is_managed_endpoint(endpoint):
-            return None
-        if self.predicate is not None and not self.predicate(endpoint):
+        if not self._supports_endpoint(endpoint):
             return None
         if endpoint.endpoint_id in self.entities:
             return None
@@ -116,10 +124,15 @@ class EndpointEntityManager(Generic[_EntityT]):
     def _on_registry_event(self, event: EndpointRegistryEvent) -> None:
         endpoint_id = event.endpoint.endpoint_id
         event_type = str(getattr(event.event_type, "value", event.event_type))
-        if event_type == "removed" or not is_managed_endpoint(event.endpoint):
+        if event_type == "removed" or not self._supports_endpoint(event.endpoint):
             entity = self.entities.pop(endpoint_id, None)
             if entity is not None and entity.hass is not None:
-                self.hass.async_create_task(self._async_remove_entity(entity))
+                record = er.async_get(self.hass).async_get(entity.entity_id)
+                if record is not None and (
+                    not record.config_subentry_id or record.config_subentry_id in self.entry.subentries
+                ):
+                    self.entry.async_create_task(self.hass, self._async_remove_entity(entity),
+                                                  f"voip-remove-entity-{endpoint_id}")
             return
         entity = self.entities.get(endpoint_id)
         if entity is None:
@@ -129,6 +142,9 @@ class EndpointEntityManager(Generic[_EntityT]):
                     [entity],
                     config_subentry_id=self._subentry_id(endpoint_id),
                 )
+            return
+        if (entity.hass is not None and getattr(entity, "entity_id", None)
+                and hasattr(entity, "registry_entry") and entity.registry_entry is None):
             return
         # Re-submit DeviceInfo only when device-facing configuration changes.
         # Runtime availability and call claims must not churn the HA Device

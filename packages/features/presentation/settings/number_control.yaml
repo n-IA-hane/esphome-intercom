@@ -1,0 +1,87 @@
+# A view of one existing Number. Slider positions are trait-sized ticks, not dB.
+# Include variables identify the owner and widgets; no audio state is stored here.
+widgets:
+  - label:
+      id: ${label_id}
+      width: ${_settings_control_width}
+      text: '${control_label}: waiting'
+      text_align: LEFT
+      text_color: 16777215
+      text_font: ${_settings_font}
+      long_mode: WRAP
+  - slider:
+      id: ${slider_id}
+      width: ${_settings_control_width}
+      height: ${settings_slider_height}
+      ext_click_area: ${_settings_slider_touch_pad}
+      margin_bottom: ${_settings_slider_touch_pad}
+      min_value: 0
+      max_value: 1
+      adv_hittest: true
+      state:
+        disabled: true
+      on_release:
+        - lambda: |-
+            auto &owner = *id(${number_id});
+            const float minimum = owner.traits.get_min_value();
+            const float maximum = owner.traits.get_max_value();
+            const float step = owner.traits.get_step();
+            if (!owner.has_state() || !std::isfinite(owner.state) ||
+                !std::isfinite(minimum) || !std::isfinite(maximum) ||
+                !std::isfinite(step) || step <= 0 || maximum < minimum) return;
+            const auto ticks = static_cast<int32_t>(std::floor((maximum - minimum) / step + 0.0001f));
+            const auto tick = std::max<int32_t>(0, std::min<int32_t>(ticks, std::lround(x)));
+            const float value = std::max(minimum, std::min(maximum, minimum + tick * step));
+            if (std::fabs(owner.state - value) < step * 0.0001f) return;
+            auto call = owner.make_call();
+            call.set_value(value);
+            call.perform();
+        - script.execute: ${sync_id}
+package:
+  script:
+    - id: ${sync_id}
+      then:
+        - lambda: |-
+            if (lv_disp_get_scr_act(nullptr) != id(${_settings_page_id})->obj ||
+                lv_obj_is_scrolling(id(settings_page_wrapper)) ||
+                lv_obj_has_state(id(${slider_id}), LV_STATE_PRESSED)) return;
+            auto &owner = *id(${number_id});
+            const float minimum = owner.traits.get_min_value();
+            const float maximum = owner.traits.get_max_value();
+            const float step = owner.traits.get_step();
+            const bool ready = owner.has_state() && std::isfinite(owner.state) &&
+                std::isfinite(minimum) && std::isfinite(maximum) &&
+                std::isfinite(step) && step > 0 && maximum >= minimum;
+            const bool disabled = lv_obj_has_state(id(${slider_id}), LV_STATE_DISABLED);
+            if (ready && disabled) lv_obj_remove_state(id(${slider_id}), LV_STATE_DISABLED);
+            else if (!ready && !disabled) lv_obj_add_state(id(${slider_id}), LV_STATE_DISABLED);
+            if (!ready) {
+              if (strcmp(lv_label_get_text(id(${label_id})), "${control_label}: waiting") != 0)
+                lv_label_set_text(id(${label_id}), "${control_label}: waiting");
+              return;
+            }
+            const auto ticks = static_cast<int32_t>(std::floor((maximum - minimum) / step + 0.0001f));
+            const auto tick = std::max<int32_t>(0, std::min<int32_t>(ticks,
+                std::lround((owner.state - minimum) / step)));
+            if (lv_slider_get_min_value(id(${slider_id})) != 0 ||
+                lv_slider_get_max_value(id(${slider_id})) != ticks)
+              lv_slider_set_range(id(${slider_id}), 0, ticks);
+            if (lv_slider_get_value(id(${slider_id})) != tick)
+              lv_slider_set_value(id(${slider_id}), tick, LV_ANIM_OFF);
+            const auto unit = owner.get_unit_of_measurement_ref();
+            int precision = 0;
+            float decimal_step = step;
+            while (precision < 6 && std::fabs(decimal_step - std::round(decimal_step)) > 0.0001f) {
+              ++precision;
+              decimal_step *= 10;
+            }
+            char text[96];
+            snprintf(text, sizeof(text), "${control_label}: %.*f%s%s", precision,
+                static_cast<double>(owner.state), unit.empty() ? "" : " ",
+                unit.empty() ? "" : unit.c_str());
+            if (strcmp(lv_label_get_text(id(${label_id})), text) != 0)
+              lv_label_set_text(id(${label_id}), text);
+callback: >-
+  id(${number_id}).add_on_state_callback([](float) { id(${sync_id}).execute(); });
+refresh:
+  - script.execute: ${sync_id}

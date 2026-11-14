@@ -7,7 +7,7 @@ from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
-from .physical_phone import physical_phone_for_device, physical_phone_records, physical_phone_subentries
+from .physical_phone import physical_phone_for_device, physical_phone_id, physical_phone_records, physical_phone_subentries
 from .runtime_data import require_runtime_data
 
 SERVICES = ("provision_phone", "get_phone_provisioning_state", "refresh_phone_profiles", "rotate_phone_provisioning_token")
@@ -35,6 +35,10 @@ def _phone(manager, data):
 async def async_provision_phone(call):
     manager = await _manager(call)
     phone = _phone(manager, call.data)
+    state = manager.states.setdefault(phone["phone_id"], {})
+    if state.get("apply_status") != "requesting":
+        state.pop("apply_attempted_revision", None)
+        state["apply_status"] = "pending"
     manager.schedule({phone["phone_id"]})
     return {"phone_id": phone["phone_id"], "status": "queued"}
 
@@ -59,7 +63,7 @@ async def async_rotate_provisioning_token(call):
     manager = await _manager(call)
     phone = _phone(manager, call.data)
     for subentry in physical_phone_subentries(manager.entry):
-        if subentry.data["phone_id"] == phone["phone_id"]:
+        if physical_phone_id(subentry) == phone["phone_id"]:
             manager.hass.config_entries.async_update_subentry(manager.entry, subentry,
                 data={**subentry.data, "provisioning_token": secrets.token_urlsafe(32)})
             manager.files.pop(phone["phone_id"], None)

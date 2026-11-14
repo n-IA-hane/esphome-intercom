@@ -514,7 +514,7 @@ async def route_invite(
             trunk_config=trunk_cfg,
             bridge_to_trunk=bridge_to_trunk,
             source_endpoint=source_endpoint,
-            target_endpoint=target_endpoint or preferred_browser_phone(hass),
+            target_endpoint=target_endpoint,
             resolved_callee=resolved_callee,
             trunk_invite=trunk_invite,
             registry=registry,

@@ -1,5 +1,7 @@
 # Call-only gain, after the processed microphone fan-out. Does not change AEC,
 # its reference, Assist or microWakeWord. VoIP owns processing and persistence.
+substitutions:
+  settings_voip_gain_id: voip_tx_gain
 number:
   - platform: voip_stack
     voip_stack_id: phone

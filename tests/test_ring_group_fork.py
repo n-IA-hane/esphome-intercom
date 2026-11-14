@@ -97,6 +97,27 @@ ring_group_fork, CLOSE_CALLS = _load_module()
 
 
 class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
+    async def test_child_timeout_or_cancellation_preserves_the_call_owned_decision(self) -> None:
+        for timeout in (.01, None):
+            with self.subTest(timeout=timeout):
+                future = asyncio.get_running_loop().create_future()
+                fork, _payloads, _decision = ring_group_fork.build_ring_group_fork(
+                    sip_port=5060, route_future=future, attempts=[],
+                    browser_legs=[SimpleNamespace(endpoint_id="kitchen")], preflight_failures=[],
+                    ring_timeout=timeout,
+                )
+                task = asyncio.create_task(fork[0].dial())
+                if timeout is None:
+                    await asyncio.sleep(0)
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                else:
+                    self.assertIs((await task).disposition, _Disposition.TIMEOUT)
+                self.assertFalse(future.done())
+                future.set_result({"action": "answer_ha", "endpoint_id": "kitchen"})
+                self.assertIs((await fork[0].dial()).disposition, _Disposition.ANSWERED)
+
     async def test_browser_answer_selects_the_requested_endpoint(self) -> None:
         future = asyncio.get_running_loop().create_future()
         browser_leg = SimpleNamespace(endpoint_id="kitchen")
@@ -186,7 +207,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(outcome.disposition, _Disposition.ANSWERED)
         self.assertEqual(client.invite_kwargs["remote_sip_port"], 5060)
-        self.assertEqual(client.final_timeout, 30.0)
+        self.assertIsNone(client.final_timeout)
         self.assertIs(payloads["sip:ws3"], leg)
         self.assertEqual(CLOSE_CALLS, [(leg, True)])
 

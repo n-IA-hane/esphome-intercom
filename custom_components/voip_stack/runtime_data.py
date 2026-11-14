@@ -176,24 +176,31 @@ def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
     return require_runtime_data(hass).endpoints
 
 
-def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
-    """Return the preferred account, historical default, or sole HA-bound one."""
-
-    runtime = require_runtime_data(hass)
-    endpoint = runtime.endpoints.by_device_id(runtime.preferred_phone_device_id)
+def select_preferred_phone(endpoints, configured_device_id="", *, ha_bound_endpoint_ids=()) -> PhoneEndpoint | None:
+    """Choose one configured HA phone, never an arbitrary unbound account."""
+    endpoint = endpoints.by_device_id(str(configured_device_id or "").strip())
     if endpoint is not None and endpoint.supports_ha_client:
         return endpoint
     from .phone_endpoint import DEFAULT_ENDPOINT_ID
-    initial = runtime.endpoints.get(DEFAULT_ENDPOINT_ID)
-    if initial is not None and initial.supports_ha_client:
+    initial = endpoints.get(DEFAULT_ENDPOINT_ID)
+    if initial is not None and initial.supports_ha_client and initial.device_id:
         return initial
-    from .account_runtime import account_has_ha_binding
     candidates = tuple(
         item
-        for item in runtime.endpoints.endpoints
-        if item.supports_ha_client and account_has_ha_binding(hass, item.endpoint_id)
+        for item in endpoints.endpoints
+        if item.supports_ha_client and item.device_id and item.endpoint_id in ha_bound_endpoint_ids
     )
     return candidates[0] if len(candidates) == 1 else None
+
+
+def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
+    """Read the entry's preference through the shared selection policy."""
+    runtime = require_runtime_data(hass)
+    bindings = runtime.ha_bindings
+    bound = {endpoint.endpoint_id for endpoint in runtime.endpoints.endpoints
+             if bindings is not None and bindings.has_binding(endpoint.endpoint_id)}
+    return select_preferred_phone(runtime.endpoints, runtime.preferred_phone_device_id,
+                                  ha_bound_endpoint_ids=bound)
 
 
 def browser_phone(hass: HomeAssistant, endpoint_id: str = "") -> PhoneEndpoint | None:

@@ -6,9 +6,11 @@ import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import secrets
+import socket
 import time
 from urllib.parse import urlsplit
 
@@ -66,6 +68,11 @@ def _freeze(value):
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(item) for item in value)
     return value
+
+
+def _render_inventory(phone):
+    """Administrative credentials never enter renderer input or dependencies."""
+    return {key: value for key, value in phone.items() if key not in {"admin_username", "admin_password"}}
 
 
 def _declared_slots(phone):
@@ -177,7 +184,7 @@ class PhysicalPhoneProvisioner:
     @callback
     def _wake_idle(self):
         self.schedule({identity for identity, state in self.states.items()
-                       if state.get("state") == "waiting_idle"})
+                       if state.get("state") == "waiting_idle" or state.get("apply_status") == "waiting_idle"})
 
     @callback
     def schedule(self, identities=None):
@@ -195,13 +202,119 @@ class PhysicalPhoneProvisioner:
                 continue
             try:
                 await self.async_prepare(phone)
+                await self._async_apply_if_needed(phone)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 # A template/transport error must not disclose rendered credentials.
                 state = self.states.setdefault(identity, {})
-                state.update(state="error", error=type(error).__name__)
+                code = str(error) if str(error) == "phone_ldap_mode_unsupported" else type(error).__name__
+                state.update(state="error", error=code)
                 self._changed(identity)
+
+    async def _apply_target(self, phone, capability):
+        """Resolve a route, never infer phone availability from an address."""
+        from yarl import URL
+
+        registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
+        contacts = [registration for line in phone["lines"]
+                    if (endpoint := self.runtime.endpoints.get(line["endpoint_id"])) is not None and registrar is not None
+                    for registration in registrar.registered_contacts(endpoint.username)]
+        paired = self.states.get(phone["phone_id"], {}).get("apply_target_instance", "")
+        matched = [contact for contact in contacts if paired and contact.instance_id == paired]
+        hosts = {contact.source_host for contact in matched}
+        if not hosts and phone.get("host"):
+            configured = str(phone["host"])
+            try:
+                hosts = {str(ipaddress.ip_address(configured))}
+            except ValueError:
+                addresses = await self.hass.loop.getaddrinfo(configured, int(capability.get("port", 80)), type=socket.SOCK_STREAM)
+                hosts = {address[4][0] for address in addresses}
+            observed = hosts & {contact.source_host for contact in contacts}
+            if observed:
+                hosts = observed
+        elif not hosts:
+            hosts = {contact.source_host for contact in contacts}
+        if len(hosts) != 1:
+            from .physical_phone_apply import PhoneApplyError
+            raise PhoneApplyError("phone_apply_target_unverified")
+        host = next(iter(hosts))
+        address = ipaddress.ip_address(host)
+        if not address.is_private or address.is_loopback or address.is_unspecified or address.is_multicast:
+            from .physical_phone_apply import PhoneApplyError
+            raise PhoneApplyError("phone_apply_target_unverified")
+        instances = {contact.instance_id for contact in contacts if contact.source_host == host and contact.instance_id}
+        instance = next(iter(instances)) if len(instances) == 1 else ""
+        return str(URL.build(scheme=capability.get("scheme", "http"), host=host,
+                             port=int(capability.get("port", 80)))), instance
+
+    async def _async_apply_if_needed(self, phone):
+        """Apply only the latest qualified revision through the existing worker."""
+        from aiohttp import ClientError, ClientTimeout, CookieJar
+        from homeassistant.helpers.aiohttp_client import async_create_clientsession
+        from .physical_phone_apply import PhoneApplyDeferred, PhoneApplyError, async_apply_fanvil
+
+        identity = phone["phone_id"]
+        state = self.states.setdefault(identity, {})
+        prepared = self.files.get(identity)
+        def status(value):
+            if state.get("apply_status") != value:
+                state["apply_status"] = value
+                self._changed(identity)
+        if not self.owned() or not phone.get("enabled", True) or prepared is None or state.get("error"):
+            return
+        capability = prepared.profile["capabilities"].get("apply", {})
+        if not isinstance(capability, dict) or capability.get("qualified") is not True or capability.get("method") != "fanvil_native_http":
+            status("not_qualified")
+            return
+        if not phone.get("admin_username") or not phone.get("admin_password"):
+            status("manual")
+            return
+        revision = state.get("desired_revision", "")
+        if not revision or state.get("apply_attempted_revision") == revision:
+            return
+        if self.busy(phone):
+            status("waiting_idle")
+            return
+
+        async def current():
+            if (not self.owned() or self.files.get(identity) is not prepared
+                    or physical_phone_records(self.entry).get(identity) != phone or self.busy(phone)):
+                return False
+            try:
+                dependencies, _context = await self._capture(phone, prepared.profile,
+                    profile_digest=prepared.dependencies.profile)
+            except (ValueError, HomeAssistantError):
+                return False
+            return dependencies == prepared.dependencies
+
+        try:
+            origin, instance = await self._apply_target(phone, capability)
+            if not await current():
+                return
+            state.update(apply_status="requesting", apply_error="", apply_attempted_revision=revision)
+            self.store.async_delay_save(lambda: self.states, 1)
+            session = async_create_clientsession(self.hass, auto_cleanup=False,
+                cookie_jar=CookieJar(unsafe=True), timeout=ClientTimeout(total=15), trust_env=False)
+            try:
+                async with asyncio.timeout(25), session:
+                    result = await async_apply_fanvil(session, origin, phone, prepared.profile,
+                        phone_provisioning_url(self.hass, self.entry, phone), still_current=current)
+            finally:
+                session.detach()
+            state.update(apply_status="requested", apply_request_time=time.time(), apply_error="",
+                         apply_target_instance=instance or state.get("apply_target_instance", ""), apply_method=result["method"])
+        except PhoneApplyDeferred as error:
+            state.pop("apply_attempted_revision", None)
+            state["apply_status"] = "waiting_idle" if str(error) == "phone_apply_waiting_idle" else "pending"
+            if str(error) == "phone_configuration_changed":
+                self.schedule({identity})
+        except (PhoneApplyError, ClientError, TimeoutError, OSError) as error:
+            state.update(apply_status="error", apply_error=str(error) if isinstance(error, PhoneApplyError)
+                         else "phone_apply_http_error")
+        finally:
+            self.store.async_delay_save(lambda: self.states, 1)
+            self._changed(identity)
 
     async def async_reconcile(self):
         records = physical_phone_records(self.entry)
@@ -210,6 +323,11 @@ class PhysicalPhoneProvisioner:
             self.states.pop(identity, None)
             self.files.pop(identity, None)
         changed = {identity for identity, phone in records.items() if self._records.get(identity) != phone}
+        changed.update(identity for identity in records if self.states.get(identity, {}).get("error"))
+        for identity, phone in records.items():
+            before = self._records.get(identity)
+            if before is not None and any(before.get(key) != phone.get(key) for key in ("admin_username", "admin_password")):
+                self.states.setdefault(identity, {}).pop("apply_attempted_revision", None)
         self._records = records
         for identity, phone in records.items():
             prepared = self.files.get(identity)
@@ -281,7 +399,7 @@ class PhysicalPhoneProvisioner:
                    "applied": {key: applied[key] for key in fields} if applied is not None else None, "epoch": epoch}
                   if "ldap" in profile["capabilities"].get("functions", ()) else {})
         digest = profile_digest or hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()
-        return RenderDependencies(_freeze(phone), authentication, digest, _freeze(context),
+        return RenderDependencies(_freeze(_render_inventory(phone)), authentication, digest, _freeze(context),
                                   _freeze(shared), _freeze(footprint)), context
 
     def _directory_service(self):
@@ -383,8 +501,11 @@ class PhysicalPhoneProvisioner:
         if ldap_requested and config is None:
             raise ValueError("phone_directory_service_unavailable")
         if ldap_requested and config["enabled"]:
+            mode = "ldaps" if config["tls"] else "plain"
+            if mode not in caps.get("ldap_modes", ["plain"]):
+                raise ValueError("phone_ldap_mode_unsupported")
             first = lines[0]
-            directory["ldap"] = {"host": host, "port": config["ldap_port"],
+            directory["ldap"] = {"mode": mode, "host": host, "port": config["ldap_port"],
                 "base_dn": config["base_dn"], "bind_dn": f"uid={escape_rdn(first['username'])},ou=accounts,{config['base_dn']}",
                 "password": first["password"], "display_name": "VoIP Stack",
                 "name_filter": "(|(cn=%)(givenName=%)(sn=%))",
@@ -413,7 +534,7 @@ class PhysicalPhoneProvisioner:
         if authentication is None:
             raise ValueError("phone_registrar_or_account_unavailable")
         prepared = self.files.get(identity)
-        if (prepared is not None and _freeze(phone) == prepared.dependencies.phone
+        if (prepared is not None and _freeze(_render_inventory(phone)) == prepared.dependencies.phone
                 and not state.get("error")):
             current, _context = await self._capture(phone, prepared.profile,
                 profile_digest=prepared.dependencies.profile)

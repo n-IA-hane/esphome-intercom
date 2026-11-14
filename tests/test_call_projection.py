@@ -12,6 +12,55 @@ from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 pytestmark = pytest.mark.ha
 
 
+async def test_publisher_delivers_one_described_forward_after_phone_projection(hass, monkeypatch):
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    registry = SipEndpointRuntime()
+    registry.activate()
+    endpoints = EndpointRegistry()
+    endpoints.register(PhoneEndpoint(endpoint_id="card", name="Card", kind="browser"))
+    registry.bind_endpoint_registry(endpoints)
+    runtime = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={}, endpoints=endpoints,
+                              phones=None, sip=registry)
+    monkeypatch.setattr(call_projection, "require_runtime_data", lambda _hass: runtime)
+    bridge_sink, phone_sink = Mock(), Mock()
+    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", bridge_sink)
+    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", phone_sink)
+    publisher = call_projection.CallStatePublisher(hass, registry)
+    registry.adopt_component("state_publisher", publisher, closer=publisher.close)
+    session = registry.upsert("described", state="connecting", owner="router", caller="Caller", callee="Target A",
+                              route_kind="direct", source_endpoint_id="card")
+    registry.claim_endpoint(session.call_id, "card", role="caller")
+    session.update_metadata(bridge_presentation={
+        "operation": session.event_context.sequence,
+        "context": (session.owner, session.state, session.callee, session.route_kind),
+        "details": {"peer_name": "Target A", "direction": "outgoing", "route_source": "automation",
+                    "event_type": "forwarding", "last_sip_event": "ROUTE_FORWARD"},
+    })
+    try:
+        await asyncio.sleep(0)
+        assert phone_sink.call_count == 1
+        assert bridge_sink.call_count == 1
+        assert bridge_sink.call_args.kwargs["event_type"] == "forwarding"
+        assert bridge_sink.call_args.kwargs["peer_name"] == "Target A"
+        assert bridge_sink.call_args.kwargs["route_source"] == "automation"
+        assert session.owner == "router" and session.state == "connecting"
+        # Topology changed within this accepted operation, not another forward.
+        registry.observe_leg(session.call_id, "transport", role="callee", state="calling")
+        await asyncio.sleep(0)
+        assert sum(call.kwargs.get("event_type") == "forwarding" for call in bridge_sink.call_args_list) == 1
+        boundary = bridge_sink.call_count
+        registry.transition(session.call_id, owner="router", state="remote_ringing", callee="Target B")
+        await asyncio.sleep(0)
+        assert all(call.kwargs.get("peer_name") != "Target A" for call in bridge_sink.call_args_list[boundary:])
+        assert phone_sink.call_args.kwargs["peer_name"] == "Target B"
+    finally:
+        await publisher.close()
+        await registry.request_termination(session.call_id, TerminationIntent("test_done"))
+
+
 def _runtime(monkeypatch):
     runtime = SipEndpointRuntime()
     runtime.activate()

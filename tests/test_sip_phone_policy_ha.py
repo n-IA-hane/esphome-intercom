@@ -755,6 +755,7 @@ async def test_immediate_sip_failure_obeys_only_matching_phone_policy(
             "registered": True,
         },
     )
+    runtime.runtime.directory.replace(runtime.roster)
     receive = phone.datagram_received
 
     def reject(raw, address):

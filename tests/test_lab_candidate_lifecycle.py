@@ -64,6 +64,10 @@ elif name in ("curl", "nc"):
     sys.exit(1 if state["active"] != "active" or (candidate and blocked) else 0)
 elif name == "sleep":
     pass
+elif name == "seq":
+    # Observe the real production budget, but compress only the fixture clock.
+    assert sys.argv[1:] == ["1", "120"], sys.argv
+    print("1\n2\n3")
 elif name in ("install", "cp", "mv"):
     state[name] += 1
     save()
@@ -131,7 +135,7 @@ def lab(tmp_path):
     tool = fake_bin / "fake-tool"
     tool.write_text(f"#!{sys.executable}\n" + FAKE_TOOL)
     tool.chmod(0o755)
-    for name in ("systemctl", "sudo", "curl", "nc", "sleep", "install", "cp", "mv",
+    for name in ("systemctl", "sudo", "curl", "nc", "sleep", "seq", "install", "cp", "mv",
                  "tmux", "ps", "pgrep", "pkill", "killall"):
         (fake_bin / name).symlink_to(tool.name)
     command = tmp_path / "command.py"
@@ -230,6 +234,14 @@ def test_setup_and_readiness_failures_restore_files_and_initial_state(lab, initi
     assert result.returncode != 0
     assert not Path(lab["env"]["FAKE_COMMAND_RAN"]).exists()
     assert_restored(lab, initially_active)
+    if failure in ("http", "sip"):
+        trace = events(lab)
+        budgets = [event for event in trace if event["tool"] == "seq"]
+        assert budgets and all(event["args"] == ["1", "120"] for event in budgets)
+        candidate = [event for event in trace if event["link"] == lab["env"]["FAKE_CANDIDATE"]]
+        assert sum(event["tool"] == "curl" for event in candidate) == 3
+        assert sum(event["tool"] == "nc" for event in candidate) == (3 if failure == "sip" else 0)
+        assert sum(event["tool"] == "sleep" for event in candidate) == 3
 
 
 @pytest.mark.parametrize("signal_number,expected", [(signal.SIGINT, 130), (signal.SIGTERM, 143)])

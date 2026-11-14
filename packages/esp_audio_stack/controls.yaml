@@ -32,11 +32,15 @@ button:
 # FULL microphone consumers use unity gain after their processor.
 defaults:
   _stack_phone_mic_control:
+    substitutions:
+      settings_microphone_gain_id: mic_gain
+      settings_microphone_gain_label: Software microphone gain
     number:
       - platform: esp_audio_stack
         mic_gain:
           id: mic_gain
           name: Mic Gain
+          unit_of_measurement: dB
           min_value: ${mic_gain_min}
           max_value: ${mic_gain_max}
           initial_value: ${ mic_gain_initial | default(0) }

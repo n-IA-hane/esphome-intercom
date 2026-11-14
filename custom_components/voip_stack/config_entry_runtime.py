@@ -18,6 +18,8 @@ from .phone_config import (
     CONF_PHONE_KIND,
     CONF_PHONE_SEND_VIDEO,
     phone_subentries,
+    phone_endpoint_id,
+    phone_subentry_data,
     sync_registry_from_entry,
 )
 from .phone_endpoint import EndpointKind
@@ -102,7 +104,7 @@ def entry_phone_signature(entry: ConfigEntry) -> tuple:
     """Return an equality-stable snapshot of native logical-phone subentries."""
 
     return tuple(
-        (subentry.subentry_id, subentry.title, dict(subentry.data))
+        (subentry.subentry_id, subentry.title, phone_subentry_data(subentry))
         for subentry in sorted(
             phone_subentries(entry), key=lambda item: item.subentry_id
         )
@@ -136,6 +138,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    if runtime.ha_bindings is not None:
+        runtime.ha_bindings.refresh_config()
     from .group_config import async_apply_group_updates, group_records, membership_signature
     from .paging_config import paging_group_configs
     async with runtime.group_update_lock:
@@ -156,20 +160,9 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
     )
     runtime_signature = entry_runtime_signature(entry)
-    phone_signature = entry_phone_signature(entry)
     from .contact_config import contact_dicts
 
-    contacts_signature = tuple(contact_dicts(entry))
     previous_runtime = runtime.entry_runtime_signature
-    previous_phones = runtime.entry_phone_signature
-    previous_contacts = runtime.entry_contacts_signature
-    runtime.entry_runtime_signature = runtime_signature
-    runtime.entry_phone_signature = phone_signature
-    runtime.entry_phone_records = {
-        str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
-        for subentry in phone_subentries(entry)
-    }
-    runtime.entry_contacts_signature = contacts_signature
 
     if previous_runtime is not None and previous_runtime != runtime_signature:
         await hass.config_entries.async_reload(entry.entry_id)
@@ -189,6 +182,12 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     from .phone_services import async_reconcile_phone_services
     await async_reconcile_phone_services(hass, entry)
 
+    # Other configuration writers may have completed while integrations were
+    # reconciling. Their canonical subentries, not the old projection, win.
+    phone_signature = entry_phone_signature(entry)
+    contacts_signature = tuple(contact_dicts(entry))
+    previous_phones = runtime.entry_phone_signature
+    previous_contacts = runtime.entry_contacts_signature
     phones_changed = previous_phones is not None and previous_phones != phone_signature
     contacts_changed = (
         previous_contacts is not None and previous_contacts != contacts_signature
@@ -208,7 +207,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         }
         sync_registry_from_entry(hass, entry)
         for subentry in phone_subentries(entry):
-            endpoint_id = str(subentry.data.get("endpoint_id") or "").strip()
+            endpoint_id = phone_endpoint_id(subentry)
             endpoint = runtime.endpoints.get(endpoint_id) if endpoint_id else None
             if endpoint is None or not endpoint.supports_ha_client:
                 continue
@@ -216,7 +215,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
                 hass,
                 entry,
                 endpoint_id=endpoint.endpoint_id,
-                endpoint_data=dict(subentry.data),
+                endpoint_data=phone_subentry_data(subentry),
             )
         current_browser_ids = {
             endpoint.endpoint_id
@@ -234,6 +233,15 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
             registrar.update_accounts(sip_accounts(hass))
         from .account_runtime import recompute_account_availability
         recompute_account_availability(hass)
+
+    # A failed sync must remain unapplied so a later reconciliation can retry.
+    runtime.entry_runtime_signature = runtime_signature
+    runtime.entry_phone_signature = phone_signature
+    runtime.entry_phone_records = {
+        str(data.get("endpoint_id") or "").strip(): dict(data)
+        for _identity, _title, data in phone_signature
+    }
+    runtime.entry_contacts_signature = contacts_signature
 
     if contacts_changed:
         hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (

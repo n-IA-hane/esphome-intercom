@@ -1,6 +1,28 @@
 """Compose account transports using the existing PBX fork and call owner."""
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
+
+from .dial_plan import RingPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class AccountCallPlan:
+    """One logical account; its policy owns the business answer deadline."""
+
+    endpoint_id: str
+    route_kind: str = "direct"
+
+    @property
+    def ring_policy(self) -> RingPolicy:
+        # SIP transaction timers remain in SipCallClient. A transport fork must
+        # not substitute the ring group's deadline for the account's policy.
+        return RingPolicy(overall_timeout=float("inf"), step_timeout=float("inf"))
+
+
+def account_call_plan(entry):
+    """Recover the operation-local account plan without creating a group."""
+    identity = str((entry.metadata if entry else {}).get("account_fork") or "")
+    return AccountCallPlan(identity) if identity else None
 
 def account_has_ha_binding(hass, endpoint_id):
     """Load the HA adapter only for a managed account's candidate path."""

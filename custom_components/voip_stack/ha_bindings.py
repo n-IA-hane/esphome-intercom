@@ -13,6 +13,8 @@ from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
+from .endpoint_registry import EndpointRegistryEventType
+
 _LOGGER = logging.getLogger(__name__)
 _CARD_TYPES = {"custom:voip-stack-card", "custom:voip-stack-dashboard-card"}
 _BINDING_ID = re.compile(r"[A-Za-z0-9._~-]{16,128}")
@@ -62,8 +64,22 @@ class HaCardBindings:
         self._reindex()
         self._unsubscribers.append(self.hass.bus.async_listen("lovelace_updated", self._schedule))
         self._unsubscribers.append(self.hass.bus.async_listen(EVENT_COMPONENT_LOADED, self._component_loaded))
-        self._unsubscribers.append(self.runtime.endpoints.subscribe(lambda _event: self._reindex()))
+        self._unsubscribers.append(self.runtime.endpoints.subscribe(self._endpoint_changed))
         await self._async_reload(force=False)
+
+    @callback
+    def _endpoint_changed(self, event):
+        previous, endpoint = event.previous, event.endpoint
+        if event.event_type is EndpointRegistryEventType.UPDATED and previous is not None and (
+            previous.endpoint_id, previous.kind, previous.device_id
+        ) == (endpoint.endpoint_id, endpoint.kind, endpoint.device_id):
+            return
+        self._reindex()
+
+    @callback
+    def refresh_config(self):
+        """Rebuild declared associations only when their configuration changes."""
+        self._reindex()
 
     @callback
     def _component_loaded(self, event):
@@ -135,7 +151,9 @@ class HaCardBindings:
         if endpoint is None and not selector.get("device_id") and not selector.get("endpoint_id"):
             # Do not call the sole-HA-bound fallback here: that fallback queries
             # this owner, creating a cycle for an implicit card declaration.
-            endpoint = registry.by_device_id(getattr(self.runtime, "preferred_phone_device_id", "")) or registry.get("default")
+            preferred = getattr(self.entry, "data", {}).get("preferred_phone_device_id") or getattr(
+                self.runtime, "preferred_phone_device_id", "")
+            endpoint = registry.by_device_id(preferred) or registry.get("default")
         return endpoint if endpoint is not None and str(endpoint.kind) in {"browser", "sip_account"} else None
 
     def _references(self):
@@ -155,9 +173,10 @@ class HaCardBindings:
         for value in self._popups.values():
             add(self._resolve(value), {"source": "popup", "reference": f"popup:{value['user_id']}:{value['binding_id']}",
                 "enabled": value.get("enabled") is True})
-        for subentry in self.entry.subentries.values():
+        from .phone_config import phone_endpoint_id, phone_subentries
+        for subentry in phone_subentries(self.entry):
             data = subentry.data
-            endpoint = self.runtime.endpoints.get(data.get("endpoint_id"))
+            endpoint = self.runtime.endpoints.get(phone_endpoint_id(subentry))
             for row in data.get("ha_bindings", ()):
                 if isinstance(row, dict) and row.get("source") == "migration" and isinstance(row.get("reference"), str):
                     add(endpoint, {"source": "migration", "reference": row["reference"], "enabled": row.get("enabled", True) is True})
@@ -182,7 +201,7 @@ class HaCardBindings:
         return any(row["enabled"] for row in self.references(endpoint_id))
 
     def references(self, endpoint_id):
-        return tuple(dict(row) for row in self._references().get(str(endpoint_id), ())) if self._owned() else ()
+        return tuple(dict(row) for row in self._index.get(str(endpoint_id), ())) if self._owned() else ()
 
     def popup_binding(self, user_id, binding_id):
         value = self._popups.get(f"{user_id}:{binding_id}")

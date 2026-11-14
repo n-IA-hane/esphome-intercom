@@ -11,7 +11,7 @@ from .test_shared_account_fork_ha import (
     logical_browser as logical_browser, registered_phones as registered_phones,
     trunks as trunks, lab as lab, assert_no_active_calls,
 )
-from .test_browser_logical_availability_ha import assert_no_browser_media_owner, end_call
+from .test_browser_logical_availability_ha import assert_no_browser_media_owner, end_call, resources
 
 pytestmark = pytest.mark.ha
 
@@ -91,3 +91,100 @@ async def test_shared_noanswer_retains_caller_for_real_fallback(
         output = tmp_path
         output.mkdir(parents=True, exist_ok=True)
         (output / f'shared-noanswer-{evidence["mode"]}-{time.time_ns()}.json').write_text(json.dumps(evidence, indent=2) + '\n')
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 1}], indirect=True)
+@pytest.mark.parametrize("forward_source", ["public", "no_answer"])
+async def test_public_forward_to_shared_account_uses_its_noanswer_policy(shared_account, registered_phones, tmp_path, forward_source):
+    from custom_components.voip_stack.phone_policy import PhonePolicy
+    from custom_components.voip_stack.websocket_api import CALL_EVENT
+    from .test_sip_phone_transfers_ha import assert_peer_audio_tones
+
+    runtime, caller, contacts = shared_account
+    original = runtime.runtime.endpoints.require("transfer_b")
+    runtime.runtime.endpoints.update(original.endpoint_id, device_id="original-phone")
+    if forward_source == "no_answer":
+        runtime.runtime.endpoints.update(original.endpoint_id, policy=PhonePolicy.from_data({
+            "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": "casa"},
+        }))
+    fallback = runtime.runtime.endpoints.require("transfer_c")
+    session = None
+    events = []
+    unsubscribe = runtime.hass.bus.async_listen(CALL_EVENT, lambda event: events.append(dict(event.data)))
+    try:
+        await asyncio.to_thread(caller.command, "/dial transfer_b")
+        async with asyncio.timeout(3):
+            while not any(session.state == "remote_ringing" and session.callee == original.name
+                          for session in runtime.calls.sessions.values()):
+                await asyncio.sleep(.01)
+        identity = runtime.runtime.endpoints.require(original.endpoint_id).active_call_id
+        session = runtime.calls.get_session(identity)
+        token = session.token
+        if forward_source == "public":
+            await runtime.hass.services.async_call("voip_stack", "forward", {
+                "device_id": "original-phone", "call_id": identity, "destination": "Casa",
+            }, blocking=True)
+        for contact in contacts:
+            await asyncio.to_thread(contact.wait_for, "Incoming call", 3)
+        async with asyncio.timeout(4):
+            while runtime.runtime.endpoints.require(fallback.endpoint_id).active_call_id != identity or session.state != "in_call":
+                await asyncio.sleep(.01)
+        assert session.owns(token)
+        assert caller.read().count("Call established") == 1
+        assert all("Call established" not in contact.read() for contact in contacts)
+        await assert_no_active_calls(contacts)
+        relay = runtime.calls.resource_for(identity, "relay")
+        async with asyncio.timeout(3):
+            while min(relay.left_tx_packets, relay.right_tx_packets) < 30:
+                await asyncio.sleep(.01)
+        forwarding = [event for event in events if event.get("event_type") == "forwarding"
+                      and event.get("scope") == "sip_bridge" and event.get("call_id") == identity]
+        assert sum(event.get("callee") == "Casa" for event in forwarding) == 1, forwarding
+        assert all(event.get("generation") == token.generation for event in forwarding), forwarding
+        # The later orchestrator handoff is already claimed, not this migrated
+        # forward-claim presentation family.
+        assert all(event.get("route_source") == "automation" for event in forwarding
+                   if event.get("callee") == "Casa"), forwarding
+    finally:
+        unsubscribe()
+        await asyncio.to_thread(caller.hangup)
+        if session is not None:
+            await asyncio.wait_for(session.terminated.wait(), 3)
+        snapshot = resources(runtime)
+        assert snapshot["call_scoped_quiescent"], {
+            key: value for key, value in snapshot["resource_counts"].items() if value
+        }
+    # The independent sndfile filters finalize their WAV headers on UA close.
+    for peer in (caller, registered_phones[2]):
+        await asyncio.to_thread(peer.close)
+    assert_peer_audio_tones(tmp_path, (("transfer_a", 650), ("transfer_c", 450)))
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 60}], indirect=True)
+@pytest.mark.timeout(45)
+async def test_shared_account_is_still_answerable_after_thirty_seconds(shared_account):
+    """Use elapsed wall time, not a patched timeout or synthetic fork result."""
+    runtime, caller, contacts = shared_account
+    started = asyncio.get_running_loop().time()
+    try:
+        target = f'sip:221@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}'
+        await asyncio.to_thread(caller.command, f"/dial {target}")
+        for contact in contacts:
+            await asyncio.to_thread(contact.wait_for, "Incoming call", 3)
+        session = next(session for session in runtime.calls.sessions.values() if "casa" in session.endpoint_claims)
+        token = session.token
+        await asyncio.sleep(max(0, started + 31 - asyncio.get_running_loop().time()))
+        route = runtime.calls.artifact_for(session.call_id, "pending_route")
+        assert session.owns(token) and route and not route["future"].done()
+        assert all("Call established" not in contact.read() for contact in contacts)
+        await runtime.hass.services.async_call("voip_stack", "answer", {
+            "device_id": "browser-casa", "call_id": session.call_id, "media_client_id": "after-thirty",
+        }, blocking=True)
+        await asyncio.to_thread(caller.wait_for, "Call established", 3)
+        assert session.owns(token) and caller.read().count("Call established") == 1
+        await assert_no_active_calls(contacts)
+    finally:
+        await end_call(runtime, caller)

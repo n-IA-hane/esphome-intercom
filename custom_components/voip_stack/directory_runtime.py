@@ -8,6 +8,44 @@ from .roster import RosterEntry
 from .runtime_data import require_runtime_data, runtime_data
 
 
+def routing_snapshot(runtime):
+    """Join configured identities with current binding owners without I/O."""
+    directory = getattr(runtime, "directory", None)
+    if directory is None or directory.closed:
+        raise ValueError("Phone directory is unavailable")
+    entries = list(directory.snapshot())
+    sip_runtime = getattr(runtime, "sip", None)
+    registrar = sip_runtime.component("registrar") if sip_runtime is not None else None
+    if registrar is None:
+        return entries
+    from .endpoint_routing import merge_registered_entries
+
+    registered = registrar.registered_roster_entries()
+    configured = []
+    for row in entries:
+        endpoint = runtime.endpoints.get(row.metadata.get("endpoint_id", ""))
+        username = endpoint.username if endpoint is not None else row.id
+        if username.casefold() in registrar.accounts and (
+                row.metadata.get("registered") or row.metadata.get("sip_contacts")):
+            # An old derived view cannot retain a departed Contact or lend its
+            # learned capabilities to another registration of the same account.
+            if endpoint is None:
+                continue
+            row = _endpoint_entry(endpoint)
+        configured.append(row)
+    entries = merge_registered_entries(configured, registered, runtime.endpoints)
+    result = []
+    for row in entries:
+        endpoint = runtime.endpoints.get(row.metadata.get("endpoint_id", ""))
+        if endpoint is not None and endpoint.supports_ha_client:
+            bindings = runtime.ha_bindings
+            bound = endpoint.kind.is_softphone or bool(bindings and bindings.has_binding(endpoint.endpoint_id))
+            row = replace(row, metadata={**row.metadata, "ha_client_supported": True, "ha_binding": bound,
+                                        "local_ha": bound and not bool(row.metadata.get("sip_contacts"))})
+        result.append(row)
+    return result
+
+
 def restore_esp_identities(hass, runtime):
     """Rebuild physical identities from their existing HA owners, even offline."""
     from homeassistant.helpers import device_registry as dr, entity_registry as er

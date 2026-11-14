@@ -458,20 +458,22 @@ class VoipStackEngine extends EventTarget {
     const request = { type: WS_SUBSCRIBE_HA_SOFTPHONE };
     if (record.selector.endpoint_id) request.endpoint_id = record.selector.endpoint_id;
     if (record.selector.device_id) request.device_id = record.selector.device_id;
+    let initialSnapshot = true;
     conn.subscribeMessage(
       (event) => {
         if (!current()) return;
-        record.stateEpoch = (record.stateEpoch || 0) + 1;
-        this._onSoftphoneState(event, record.selector);
+        const previous = initialSnapshot ? [...this._lastSoftphoneStates.values()].find(
+          state => softphoneStateMatches(state, record.selector),
+        ) : null;
+        const context = initialSnapshot
+          ? { authoritative: true, previousCallId: String(previous?.call_id || "") } : null;
+        initialSnapshot = false;
+        this._onSoftphoneState(event, record.selector, context);
       },
       request,
-    ).then(async (unsub) => {
-      if (current()) {
-        record.unsub = unsub;
-        await this._refreshSoftphoneScope(record, current);
-      } else {
-        unsub();
-      }
+    ).then((unsub) => {
+      if (current()) record.unsub = unsub;
+      else unsub();
     }).catch((err) => {
       if (!current()) return;
       if (this._isUnknownEndpointError(err)) {
@@ -505,28 +507,6 @@ class VoipStackEngine extends EventTarget {
     }
   }
 
-  async _refreshSoftphoneScope(record, current) {
-    if (!this._hass?.callWS) return;
-    // The endpoint subscription has no initial snapshot. Read only after its
-    // ACK, so a hangup missed while disconnected cannot leave a passive view
-    // stuck in-call. A subsequent event or generation supersedes this read.
-    const epoch = record.stateEpoch || 0;
-    const previous = [...this._lastSoftphoneStates.values()].find(
-      state => softphoneStateMatches(state, record.selector),
-    );
-    try {
-      const state = await this._hass.callWS({
-        type: "voip_stack/ha_softphone_state", ...record.selector,
-      });
-      if (!current() || (record.stateEpoch || 0) !== epoch ||
-          !softphoneStateMatches(state, record.selector)) return;
-      this._onSoftphoneState(state, record.selector, {
-        authoritative: true, previousCallId: String(previous?.call_id || ""),
-      });
-    } catch (error) {
-      if (current()) console.warn("voip-stack-engine: call-state resync failed", error);
-    }
-  }
 
   get active() {
     return this._state !== "IDLE";

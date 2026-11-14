@@ -477,10 +477,8 @@ assert.deepEqual(kitchenStates, ["K"]);
 assert.deepEqual(kitchenDeviceStates, ["K"]);
 assert.deepEqual(defaultStates, []);
 
-// Two browsers observe the same phone. The passive PC misses hangup while
-// disconnected; HA's endpoint subscription resumes without an initial event
-// (websocket_subscribe_ha_softphone_state only sends its subscription ACK).
-// A ready event must reconcile that observer from the authoritative query.
+// A reconnect receives a new authoritative snapshot from its subscription.
+// No independent GET may race that snapshot or multiply across card views.
 {{
   const observers = [new Engine(), new Engine()];
   const state = {{endpoint_id:"browser:casa",device_id:"device-casa",call_id:"user-call-A",
@@ -489,68 +487,51 @@ assert.deepEqual(defaultStates, []);
   const connections = observers.map((observer,index) => {{
     const listeners = new Map();
     const connection = {{
-      requests:0,activeSubscriptions:0,
-      addEventListener(name, callback) {{ listeners.set(name,callback); }},
-      removeEventListener(name) {{ listeners.delete(name); }},
-      subscribeMessage: async (callback, _request) => {{
-        connection.requests++; connection.activeSubscriptions++;
+      requests:0,activeSubscriptions:0,holdAck:false,
+      addEventListener(name,callback){{listeners.set(name,callback);}},
+      removeEventListener(name){{listeners.delete(name);}},
+      subscribeMessage: (callback,request) => {{
+        connection.requests++;connection.activeSubscriptions++;
         connection.softphoneCallback=callback;
-        return () => {{connection.activeSubscriptions--;}};
+        const snapshot=request.device_id==='other-device'
+          ? {{endpoint_id:"browser:other",device_id:"other-device",state:"idle",call_id:""}} : {{...state}};
+        const acknowledge=()=>{{queueMicrotask(()=>callback(snapshot));return()=>{{connection.activeSubscriptions--;}};}};
+        return connection.holdAck ? new Promise(resolve=>{{connection.finishAck=()=>resolve(acknowledge());}})
+          : Promise.resolve(acknowledge());
       }},
     }};
-    observer.configure({{connection,callWS:async request => {{
-      assert.equal(request.type,"voip_stack/ha_softphone_state");
-      assert.equal(request.device_id,"device-casa");
-      return {{...state}};
-    }}}});
-    const release=observer.subscribeSoftphoneState(value => seen[index].push(value),{{device_id:"device-casa"}});
+    observer.configure({{connection,callWS:async()=>{{throw Error('Unexpected bootstrap GET');}}}});
+    const release=observer.subscribeSoftphoneState(value=>seen[index].push(value),{{device_id:"device-casa"}});
     return {{connection,listeners,release}};
   }});
-  await new Promise(resolve => setImmediate(resolve));
-  for (const observer of observers) observer._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
+  await new Promise(resolve=>setImmediate(resolve));
   connections[1].listeners.get("disconnected")();
   Object.assign(state,{{state:"idle",sequence:11,revision:13,terminal_reason:"local_hangup"}});
-  observers[0]._onSoftphoneState({{...state}},{{device_id:"device-casa"}});
-  assert.equal(seen[0].at(-1).state,"idle");
+  connections[0].connection.softphoneCallback({{...state}});
   assert.equal(seen[1].at(-1).state,"in_call");
   connections[1].listeners.get("ready")();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(seen[1].at(-1).state,"idle","reconnected passive PC must not need F5 after another browser hangs up");
-  assert.equal(seen[1].at(-1).call_id,"user-call-A");
-
-  // Duplicate ready while the fresh query waits must share the subscription.
-  let resolveOld;
-  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].at(-1).state,"idle","missed hangup is recovered without F5");
+  connections[1].connection.holdAck=true;
   connections[1].listeners.get("ready")();
   await new Promise(resolve=>setImmediate(resolve));
   const requests=connections[1].connection.requests;
   connections[1].listeners.get("ready")();
+  assert.equal(connections[1].connection.requests,requests,'one pending subscription per account');
+  connections[1].connection.finishAck();
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(connections[1].connection.requests,requests);
   assert.equal(connections[1].connection.activeSubscriptions,1);
   connections[1].connection.softphoneCallback({{...state,state:"in_call",call_id:"new-call-B",sequence:1,revision:1}});
-  resolveOld({{...state,state:"idle"}});
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(seen[1].at(-1).call_id,"new-call-B","late read cannot replace a newer pushed call");
-
-  // Unmount cancels a pending read; neither it nor an old callback may reach
-  // a newly selected phone after the old endpoint subscription is released.
-  observers[1]._hass.callWS=()=>new Promise(resolve=>{{resolveOld=resolve;}});
-  connections[1].listeners.get("ready")();
-  await new Promise(resolve=>setImmediate(resolve));
   const oldCallback=connections[1].connection.softphoneCallback;
   connections[1].release();
   const seenCount=seen[1].length;
+  connections[1].connection.holdAck=false;
   const otherSeen=[];
-  observers[1]._hass.callWS=async()=>({{endpoint_id:"browser:other",device_id:"other-device",state:"idle",call_id:""}});
   const releaseOther=observers[1].subscribeSoftphoneState(value=>otherSeen.push(value),{{device_id:"other-device"}});
   await new Promise(resolve=>setImmediate(resolve));
-  resolveOld({{...state,state:"in_call"}});
   oldCallback({{...state,state:"in_call"}});
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(seen[1].length,seenCount);
-  assert.equal(otherSeen.length,1);
-  assert.equal(otherSeen[0].device_id,"other-device");
+  assert.equal(seen[1].length,seenCount,'retired callback cannot reach a new account');
+  assert.equal(otherSeen.length,1);assert.equal(otherSeen[0].device_id,"other-device");
   releaseOther();connections[0].release();
   assert.equal(connections[1].connection.activeSubscriptions,0);
 }}

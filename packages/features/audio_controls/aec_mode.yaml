@@ -32,6 +32,7 @@ defaults:
   - esp_audio_stack.start: {}
   - delay: 300ms
 substitutions:
+  settings_processing_mode_id: aec_mode_select
   aec_initial_mode: ${aec_initial_mode}
   aec_mode_restore_value: ${aec_mode_restore_value}
 esphome:

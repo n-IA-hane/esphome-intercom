@@ -193,24 +193,29 @@
           "name": "Name",
           "mac": "MAC address",
           "profile_id": "Phone model profile",
-          "area_id": "Area",
-          "person": "Person",
-          "follow_ha_language": "Follow Home Assistant language",
-          "enabled": "Enabled",
-          "update_profile": "Update the pinned profile"
+          "update_profile": "Update the pinned profile",
+          "account_id": "First SIP account (optional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
         },
         "sections": {
           "advanced": {
-            "name": "Pokročilá síťová nápověda",
+            "name": "Administration and preferences",
             "data": {
-              "host": "Hostitel nebo orientační IP (volitelné)"
+              "host": "Hostitel nebo orientační IP (volitelné)",
+              "area_id": "Area",
+              "person": "Person",
+              "follow_ha_language": "Follow Home Assistant language",
+              "enabled": "Enabled",
+              "admin_username": "Phone administrator (optional)",
+              "admin_password": "Phone administrator password"
             },
             "data_description": {
-              "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti."
+              "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti.",
+              "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+              "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+              "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
             }
           }
         }
@@ -224,7 +229,7 @@
       },
       "phone_bindings": {
         "title": "Lines and programmable keys",
-        "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Lze uložit bez linek a účty SIP přiřadit později.",
+        "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
         "data": {
           "lines": "SIP lines",
           "keys": "Programmable keys"
@@ -310,7 +315,10 @@
       "phone_retired_slot_unsupported": "Vybraný profil nemůže zachovat všechny dříve spravované pozice. Ponechte aktuální profil, dokud nebude možné tyto pozice spravovat.",
       "phone_not_found": "Fyzický telefon již neexistuje.",
       "phone_line_occupied": "Tato fyzická linka je již přiřazena jinému účtu.",
-      "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku."
+      "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku.",
+      "phone_ldap_mode_unsupported": "Tento profil telefonu nepodporuje nastavený režim připojení LDAP.",
+      "invalid_phone_key_order": "Choose each existing key exactly once.",
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -328,9 +336,10 @@
   },
   "config_subentries": {
     "phone": {
-      "entry_type": "Účet SIP",
+      "entry_type": "Konfigurace účtu SIP",
       "initiate_flow": {
-        "user": "Přidat účet SIP"
+        "user": "Přidat účet SIP",
+        "reconfigure": "Upravit účet SIP"
       },
       "title": "Účet SIP",
       "step": {
@@ -457,9 +466,10 @@
       }
     },
     "trunk": {
-      "entry_type": "SIP trunk",
+      "entry_type": "Konfigurace SIP trunku",
       "initiate_flow": {
-        "user": "Přidat SIP trunk"
+        "user": "Přidat SIP trunk",
+        "reconfigure": "Upravit SIP trunk"
       },
       "title": "SIP trunk",
       "step": {
@@ -550,9 +560,10 @@
       }
     },
     "group": {
-      "entry_type": "Ring group or queue",
+      "entry_type": "Konfigurace vyzváněcí skupiny nebo fronty",
       "initiate_flow": {
-        "user": "Add ring group or queue"
+        "user": "Add ring group or queue",
+        "reconfigure": "Upravit vyzváněcí skupinu nebo frontu"
       },
       "title": "Ring group or queue",
       "step": {
@@ -603,9 +614,10 @@
       }
     },
     "paging": {
-      "entry_type": "Paging group",
+      "entry_type": "Konfigurace skupiny hlášení",
       "initiate_flow": {
-        "user": "Add paging group"
+        "user": "Add paging group",
+        "reconfigure": "Upravit skupinu hlášení"
       },
       "title": "Paging group",
       "step": {
@@ -625,9 +637,10 @@
       }
     },
     "physical_phone": {
-      "entry_type": "Physical phone",
+      "entry_type": "Konfigurace fyzického telefonu",
       "initiate_flow": {
-        "user": "Add physical phone"
+        "user": "Add physical phone",
+        "reconfigure": "Nastavit fyzický telefon"
       },
       "title": "Physical SIP phone",
       "step": {
@@ -638,24 +651,29 @@
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "area_id": "Area",
-            "person": "Person",
-            "follow_ha_language": "Follow Home Assistant language",
-            "enabled": "Enabled",
-            "update_profile": "Update the pinned profile"
+            "update_profile": "Update the pinned profile",
+            "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-            "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved."
+            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
           },
           "sections": {
             "advanced": {
-              "name": "Pokročilá síťová nápověda",
+              "name": "Administration and preferences",
               "data": {
-                "host": "Hostitel nebo orientační IP (volitelné)"
+                "host": "Hostitel nebo orientační IP (volitelné)",
+                "area_id": "Area",
+                "person": "Person",
+                "follow_ha_language": "Follow Home Assistant language",
+                "enabled": "Enabled",
+                "admin_username": "Phone administrator (optional)",
+                "admin_password": "Phone administrator password"
               },
               "data_description": {
-                "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti."
+                "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti.",
+                "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+                "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+                "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
               }
             }
           }
@@ -669,7 +687,7 @@
         },
         "bindings": {
           "title": "Lines and programmable keys",
-          "description": "Add, edit, remove or drag rows to reorder them. Positions are unique and start at 1. This profile generates at most {max_lines} lines and {max_keys} keys; these projection limits are not a claim about every hardware capability. Lze uložit bez linek a účty SIP přiřadit později.",
+          "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
           "data": {
             "lines": "SIP lines",
             "keys": "Programmable keys"
@@ -696,6 +714,18 @@
           "data_description": {
             "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
           }
+        },
+        "reconfigure": {
+          "title": "Configure physical phone",
+          "menu_options": {
+            "user": "Properties and profile",
+            "bindings": "Lines and key properties",
+            "key_order": "Reorder keys"
+          }
+        },
+        "key_order": {
+          "title": "Reorder keys",
+          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -732,7 +762,10 @@
         "phone_retired_slot_unsupported": "Vybraný profil nemůže zachovat všechny dříve spravované pozice. Ponechte aktuální profil, dokud nebude možné tyto pozice spravovat.",
         "phone_not_found": "Fyzický telefon již neexistuje.",
         "phone_line_occupied": "Tato fyzická linka je již přiřazena jinému účtu.",
-        "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku."
+        "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku.",
+        "phone_ldap_mode_unsupported": "Tento profil telefonu nepodporuje nastavený režim připojení LDAP.",
+        "invalid_phone_key_order": "Choose each existing key exactly once.",
+        "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
       },
       "abort": {
         "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
@@ -742,7 +775,8 @@
         "phone_provisioning_disabled": "Physical phone provisioning is disabled.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
         "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
-        "reconfigure_successful": "Physical phone updated."
+        "reconfigure_successful": "Physical phone updated.",
+        "phone_configured": "Physical phone configured."
       }
     }
   },
@@ -912,9 +946,8 @@
     },
     "account_physical_bindings": {
       "fields": {
-        "phone_id": "Fyzický telefon",
-        "slot": "Pozice linky",
-        "transport": "Přenos"
+        "transport": "Přenos",
+        "binding": "Physical phone and line"
       }
     }
   },
@@ -935,6 +968,10 @@
     }
   },
   "issues": {
+    "phone_identity_conflict": {
+      "title": "Identitu telefonu je nutné obnovit",
+      "description": "Uložená identita telefonu {phone} se liší od původní kopie (nativní: {canonical}, původní: {legacy}). Žádná identita nebyla změněna. Obnovte konzistentní konfiguraci ze známé zálohy nebo požádejte správce integrace o obnovení těchto odkazů. Telefon nemažte a nevytvářejte znovu, protože stávající zařízení, přiřazení a hlasové schránky používají jeho původní identitu."
+    },
     "esphome_actions_incomplete": {
       "title": "Ovládání ESPHome telefonu není kompletní",
       "description": "U zařízení {phone} chybí akce pro ovládání hovorů ESPHome: {actions}. Aktualizujte jeho softwarový balíček VoIP telefonu a firmware."

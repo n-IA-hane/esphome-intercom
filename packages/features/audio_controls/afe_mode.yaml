@@ -45,6 +45,7 @@ defaults:
           tag: main
           format: AFE mode switch did not complete cleanly; audio restart skipped
 substitutions:
+  settings_processing_mode_id: aec_mode_select
   afe_initial_mode: ${afe_initial_mode}
   afe_mode_restore_value: ${afe_mode_restore_value}
 esphome:

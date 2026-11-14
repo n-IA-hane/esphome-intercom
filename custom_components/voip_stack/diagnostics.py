@@ -26,6 +26,8 @@ from .runtime_data import (
 # they are not authentication secrets. Keep public diagnostics useful through
 # allowlisted runtime summaries and redact all configured identity fields.
 TO_REDACT = {
+    "admin_username",
+    "admin_password",
     "address",
     "assist_pipeline",
     "auth_username",
@@ -49,6 +51,7 @@ TO_REDACT = {
     "offline_forward_target",
     "outbound_proxy",
     "password",
+    "provisioning_token",
     "pin",
     "pin_hash",
     "peer",

@@ -198,6 +198,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
             "sdp_features": ["directional_audio_v1"] + (["independent_audio_ptime_v1"] if independent else []),
         })
         destination = "bedroom0"
+    lab.runtime.directory.replace(lab.roster)
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))

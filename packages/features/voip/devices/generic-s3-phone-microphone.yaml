@@ -1,4 +1,6 @@
 # Complete telephone binding and local controls, without a voice/media coordinator.
+substitutions:
+  audio_mic_channel: right
 voip_stack:
   use_ha_as_first_contact: true
   task_stacks_in_psram: true
@@ -15,7 +17,7 @@ voip_stack:
     microphone: mic_main
     bits_per_sample: 16
     channels:
-    - 1
+    - ${ {"left":0,"right":1}.get(audio_mic_channel,-1) }
     gain_factor: 1
   dc_offset_removal: false
   delete_contact_missing_from:

@@ -160,6 +160,17 @@ substitutions:
   aec_mode_restore_value: false
   afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
+  # Early UI capability map mirrors the selected control packages below.
+  # This selects views only; Number defaults and DSP calibration stay with their owners.
+  settings_input_gain_id: microphone_pga
+  settings_reference_gain_id: reference_pga
+  settings_microphone_gain_id: ${ 'mic_gain' if 'voice' not in firmware_features else '' }
+  settings_voip_gain_id: ${ 'voip_tx_gain' if 'voip' in firmware_features and (voip_tx_gain_enabled | default('voice' in firmware_features) | string | lower) == 'true' else '' }
+  settings_aec_switch_id: aec_switch
+  settings_processing_mode_id: aec_mode_select
+  settings_ns_switch_id: ${ 'ns_switch' if _v2_afe and _v2_average else '' }
+  settings_agc_switch_id: ${ 'agc_switch' if _v2_afe and _v2_average else '' }
+  settings_vad_switch_id: ${ 'vad_switch' if _v2_afe else '' }
 runtime_controller:
   id: runtime
   storage_in_psram: true

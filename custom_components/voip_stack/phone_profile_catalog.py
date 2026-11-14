@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import tempfile
 import zipfile
 
 from .phone_profile import safe_profile_path
@@ -91,11 +92,15 @@ def decode_profile_bundle(raw, metadata):
 
 def _private_write(path: Path, data: bytes):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("wb") as stream:
-        stream.write(data)
-    temporary.chmod(0o600)
-    temporary.replace(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 class PhoneProfileCatalog:
@@ -147,14 +152,17 @@ class PhoneProfileCatalog:
             if not re.fullmatch(r"[0-9a-f]{40}", selected):
                 raise ValueError("invalid_phone_catalog_revision")
             cached_path = self.root / (selected + ".json")
+            fetched = False
             try:
                 raw = await self.hass.async_add_executor_job(cached_path.read_bytes)
             except OSError:
                 raw = await self._fetch(
                     f"https://raw.githubusercontent.com/{CATALOG_REPOSITORY}/{selected}/manifest.json",
                     MAX_MANIFEST_BYTES)
+                fetched = True
             manifest = validate_catalog(json.loads(raw))
-            await self.hass.async_add_executor_job(_private_write, cached_path, raw)
+            if fetched:
+                await self.hass.async_add_executor_job(_private_write, cached_path, raw)
             if not commit or not self.commit:
                 self.commit, self.manifest = selected, manifest
             if not commit:
@@ -170,14 +178,17 @@ class PhoneProfileCatalog:
         selected = commit or self.commit
         bundle = metadata["bundle"]
         path = self.root / "bundles" / (bundle["sha256"] + ".zip")
+        fetched = False
         try:
             raw = await self.hass.async_add_executor_job(path.read_bytes)
         except OSError:
             raw = await self._fetch(
                 f"https://raw.githubusercontent.com/{CATALOG_REPOSITORY}/{selected}/{safe_profile_path(bundle['path'])}",
                 MAX_BUNDLE_BYTES)
+            fetched = True
         decoded = await self.hass.async_add_executor_job(decode_profile_bundle, raw, metadata)
-        await self.hass.async_add_executor_job(_private_write, path, raw)
+        if fetched:
+            await self.hass.async_add_executor_job(_private_write, path, raw)
         return decoded
 
     async def async_clear(self):

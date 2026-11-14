@@ -238,8 +238,9 @@ advertise host so ESPs and softphones see a reachable SIP Contact/SDP address.
 Use `ha_bridge` for routed or logical calls that should pass through HA.
 
 Enable the local registrar if standard SIP endpoints should register to HA. Create
-accounts with `voip_stack.create_account`; registered clients appear
-in the central phonebook as softphone contacts.
+an account in the native SIP account editor or with `voip_stack.create_account`.
+Register the physical client with that account's credentials. The same account
+can also be selected by an HA card; a separate account per client is optional.
 
 Enable **Include voice assistant** only when a native HA Assist pipeline should
 be callable. Choose HA's preferred pipeline or a specific one and assign an
@@ -249,9 +250,11 @@ no second SIP listener or separate Assist satellite is deployed.
 
 ### Add and bind a browser phone
 
-Use **Add phone** to create each room phone, then select that phone Device in
-the card editor. The card's persisted settings update the same backend phone
-configuration exposed by its HA entities.
+Create or select a SIP account, then choose its account Device in the card
+editor. An HA card uses HA authentication and WebSocket media; it does not SIP
+REGISTER. Its saved association keeps the account available to backend routing
+when the browser closes. The account's native HA entities expose the same
+preferences and policies.
 
 <table>
   <tr>
@@ -263,6 +266,28 @@ configuration exposed by its HA entities.
     <td><img src="images/phone-cards/softphone-options.png" alt="Home Assistant softphone options"/></td>
   </tr>
 </table>
+
+### Add a managed desk phone
+
+Enable the optional phone-provisioning feature only when needed. It downloads
+the profile index and the selected model bundle separately from the integration.
+With it off, ordinary SIP account edits perform no catalog download.
+
+Adopt the phone through its discovery card or **Add physical phone**. The short
+form accepts a name, MAC, model and optional first account; other preferences and
+administrative credentials are under **Advanced**. Configure additional lines
+and keys afterward. The account editor's **Associated physical phones** picker
+and the physical phone's line editor share the same associations.
+
+Use **Reorder keys** to change the physical order of existing keys. Each editor
+row's explicit position controls its placement; rearranging rows alone does not
+move the hardware keys. Existing profiles stay pinned until explicitly updated.
+Automatic application additionally requires a qualified method, configured
+private administrative credentials and idle guards. A prepared or downloaded
+file does not prove device adoption. See [managed SIP phones](PHONE_PROVISIONING.md)
+for current qualification, LDAP modes and delivery details.
+
+### ESP mirror cards
 
 An ESP mirror card binds to the existing physical ESPHome Device and controls
 that endpoint's normal ESPHome entities.

@@ -156,7 +156,9 @@ substitutions:
           - if:
               condition:
                 lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_video_send_sw), LV_STATE_CHECKED) != id(voip_video_send).state;
               then:
                 - lvgl.widget.update:
                     id: ui_video_send_sw
@@ -204,7 +206,9 @@ script:
       - if:
           condition:
             lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_auto_answer_sw), LV_STATE_CHECKED) != id(auto_answer_switch).state;
           then:
             - lvgl.widget.update:
                 id: ui_auto_answer_sw
@@ -216,7 +220,9 @@ script:
       - if:
           condition:
             lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_dnd_sw), LV_STATE_CHECKED) != id(dnd_switch).state;
           then:
             - lvgl.widget.update:
                 id: ui_dnd_sw
@@ -228,7 +234,9 @@ script:
       - if:
           condition:
             lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj;
+              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                         lv_obj_has_state(id(ui_conference_ring_sw), LV_STATE_CHECKED) != id(phone).get_conference_ring();
           then:
             - lvgl.widget.update:
                 id: ui_conference_ring_sw

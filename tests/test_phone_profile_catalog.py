@@ -173,7 +173,7 @@ def test_real_fanvil_xml_escapes_user_values_and_preserves_directory_filters(rea
     assert b"(&(objectClass" not in body
 
 
-@pytest.mark.parametrize("function,target", [("line", ""), ("speed_dial", "*123")])
+@pytest.mark.parametrize("function,target", [("line", ""), ("speed_dial", "*123"), ("park_call", "700")])
 def test_real_core_resolved_non_dialog_keys_match_asset_reference(real_assets, function, target):
     _, profile, templates = decoded(real_assets, "fanvil/x3u-pro")
     _, _, reference, _ = real_assets
@@ -183,7 +183,43 @@ def test_real_core_resolved_non_dialog_keys_match_asset_reference(real_assets, f
     context = context_for(real_assets, profile)
     context["keys"] = phone_profile.resolve_phone_keys(runtime, phone, profile)
     assert context["keys"][0]["event_package"] == ""
+    assert context["keys"][0]["subscription_target"] == ""
     assert phone_profile.render_phone_bundle(profile, templates, context)[0] == reference.render(profile, templates, context)
+
+
+@pytest.mark.parametrize("mode", ["ldaps", "starttls"])
+def test_real_ldap_profile_rejects_unmapped_transport_mode(real_assets, mode):
+    _, profile, templates = decoded(real_assets, "fanvil/x3u-pro")
+    _, _, reference, _ = real_assets
+    context = context_for(real_assets, profile)
+    context["directory"]["ldap"].update(host="192.0.2.10", mode=mode)
+    for render in (reference.render, lambda *args: phone_profile.render_phone_bundle(*args)[0]):
+        with pytest.raises(ValueError, match="phone_ldap_mode_unsupported"):
+            render(profile, templates, context)
+
+
+def test_ldap_tls_hint_cannot_silently_fall_back_to_plain(real_assets):
+    _, profile, templates = decoded(real_assets, "fanvil/x3u-pro")
+    _, _, reference, _ = real_assets
+    context = context_for(real_assets, profile)
+    context["directory"]["ldap"].update(host="192.0.2.10", tls=True)
+    for render in (reference.render, lambda *args: phone_profile.render_phone_bundle(*args)[0]):
+        with pytest.raises(ValueError, match="phone_ldap_mode_unsupported"):
+            render(profile, templates, context)
+
+
+@pytest.mark.parametrize("function,target", [("blf", "peer"), ("queue_login", "queue"),
+    ("queue_pause", "queue"), ("park", "701")])
+def test_dialog_key_functions_keep_their_subscription(real_assets, function, target):
+    _, profile, _ = decoded(real_assets, "fanvil/x3u-pro")
+    queue = SimpleNamespace(extension="1010", name="Queue", queue_id="stable-queue", members={"sip:fixture"})
+    peer = SimpleNamespace(extension="430", sip_uri_user="peer", name="P4")
+    runtime = SimpleNamespace(queues=SimpleNamespace(resolve=lambda _value: queue),
+        endpoints=SimpleNamespace(resolve=lambda value: peer if value == "peer" else None))
+    phone = {"lines": [{"slot": "1", "endpoint_id": "sip:fixture"}], "keys": [
+        {"slot": "1", "function": function, "line": "1", "target": target, "label": "Key"}]}
+    (key,) = phone_profile.resolve_phone_keys(runtime, phone, profile)
+    assert key["event_package"] == "dialog" and key["subscription_target"] == key["dial_target"]
 
 
 def minimal_bundle(files):

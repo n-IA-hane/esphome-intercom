@@ -64,6 +64,15 @@ maintained backend profile when changing the audio-processing architecture,
 or use the processor selector where the board provides one, as below.
 They do not disable Home Assistant's PBX services or change its feature policy.
 
+## Select a generic I2S microphone channel
+
+Generic single-bus, dual-bus and native-I2S microphone profiles expose
+`audio_mic_channel: left` or `right`. Match the microphone's L/R wiring:
+INMP441 tied to GND selects left; tied to 3V3 selects right. Defaults preserve
+the original wiring of each profile. Native profiles keep stereo capture and
+select the requested channel consistently for Voice Assistant, wake word and
+VoIP; the setting does not change speaker channels or codec/AFE slot mappings.
+
 ## Choose processing and SIP on Waveshare Box V2
 
 The [unified V2 YAML](../yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
