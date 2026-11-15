@@ -205,6 +205,20 @@ speaker routing remains under operating-system control.
 Use a distinct browser or Companion session for each independent media endpoint.
 The [user guide](docs/USER_GUIDE.md) covers the visual phone picker and card setup.
 
+### Use the VoIP dashboard
+
+**Development preview:** the responsive VoIP Dashboard brings the calling phone,
+extension activity and shared contacts into one view. The
+[2026.12.0-dev preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.12.0-dev)
+also supports video on maintained S3 and P4 display profiles. See the
+[preview card guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/USER_GUIDE.md)
+for its current account and dashboard controls.
+
+<img src="docs/images/voip-dashboard-companion-portrait.png" width="360" alt="VoIP Dashboard in the Companion app in portrait, with illustrative incoming, active, held and offline states"/>
+
+_Companion app portrait view with demonstration data and illustrative call states.
+The landscape preview remains at the top of this page._
+
 ## Home Assistant as a SIP video phone
 
 Video is available to compatible browser phones in current browsers and the
