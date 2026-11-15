@@ -30,7 +30,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         calls=0, posts=[], gets=[], revoked=False, late_busy=False, auth_ok=True, redirect=False, server=SERVER,
         preauthenticated=False, unknown_landing=False, information_status=200, final_login=False,
         password="fixture-secret", on_trigger=None, basic_calls=False, basic_password="fixture-secret",
-        basic_call_requests=[], provision_auth=[], final_status=200, on_challenge=None)
+        basic_call_requests=[], provision_auth=[], final_status=200, on_challenge=None,
+        language_cookie="", gui_logged_in=False)
     login_html = ('<form id="login" method="post"><input id="username"><input id="password" type="password">'
         '<input id="encoded" name="encoded"><input name="CurLanguage" value="it">'
         '<input id="logonButton" type="button" value="Login"></form>')
@@ -39,25 +40,24 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         if request.method == "GET":
             state.gets.append(request.path)
             if state.preauthenticated:
-                return web.Response(text='<frameset><frame name="main" src="/information.htm"></frameset>')
+                response = web.Response(text='<frameset><frame name="main" src="/information.htm"></frameset>')
+                if state.language_cookie:
+                    response.set_cookie("CUR_LANG", state.language_cookie)
+                return response
             if state.unknown_landing:
                 return web.Response(text='<html>Unknown landing</html>')
             return web.Response(text=login_html)
         form = dict(await request.post())
         state.posts.append((request.path, form))
-        if state.preauthenticated:
-            # The real device invalidated the IP/session authorization when
-            # the helper submitted an unnecessary login without form fields.
-            state.preauthenticated = False
-            state.auth_ok = False
-            return web.Response(text=login_html)
         expected = "fixture-admin:" + md5(("fixture-admin:" + state.password + ":fixture-nonce").encode(), usedforsecurity=False).hexdigest()
-        assert form == {"encoded": expected, "CurLanguage": "it", "ReturnPage": "/"}
+        language = state.language_cookie if state.preauthenticated or state.unknown_landing else "it"
+        assert form == {"encoded": expected, "CurLanguage": language, "ReturnPage": "/"}
         assert request.cookies.get("auth") == "fixture-nonce"
         if state.redirect:
             raise web.HTTPFound("http://outside.invalid/")
         response = web.Response(text="Authenticated frames")
         if state.auth_ok:
+            state.gui_logged_in = True
             response.set_cookie("session", "fixture-session")
         return response
 
@@ -94,6 +94,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         state.provision_auth.append(bool(request.headers.get("Authorization")))
         if request.method == "POST":
             state.posts.append((request.path, dict(await request.post())))
+            if not state.gui_logged_in:
+                return web.Response(text=login_html)
             if state.on_trigger is not None:
                 await state.on_trigger()
             if state.final_login:
@@ -138,24 +140,28 @@ async def test_native_nonce_cookie_digest_and_single_provision_command(fanvil_ht
     assert "fixture-secret" not in str(result) and SERVER not in str(result)
 
 
-async def test_preauthenticated_frameset_uses_identity_and_guards_without_another_login(fanvil_http):
+async def test_public_frameset_still_requires_native_nonce_login_before_command(fanvil_http):
     state = fanvil_http
     state.preauthenticated = True
     result = await state.run()
     assert result["request_status"] == "accepted"
-    assert state.gets == ["/", "/information.htm", "/callInfo.xml", "/provision.htm", "/callInfo.xml"]
-    assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
+    assert state.gets == ["/", "/key==nonce", "/information.htm", "/callInfo.xml", "/provision.htm", "/callInfo.xml"]
+    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
+    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
 
 
 async def test_frameset_and_information_do_not_replace_call_info_Basic_authentication(fanvil_http):
     state = fanvil_http
     state.preauthenticated = state.basic_calls = True
+    state.language_cookie = "it"
     result = await state.run()
     assert result["request_status"] == "accepted"
     assert state.basic_call_requests == [False, True, True]
     assert state.provision_auth == [True, True]
-    assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
-    assert "/key==nonce" not in state.gets
+    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
+    assert state.posts[0][1]["CurLanguage"] == "it"
+    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
+    assert state.gets.count("/key==nonce") == 1
 
 
 async def test_bad_Basic_credentials_are_tried_once_and_never_dispatch_a_command(fanvil_http):
@@ -165,7 +171,7 @@ async def test_bad_Basic_credentials_are_tried_once_and_never_dispatch_a_command
     with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
         await state.run()
     assert state.basic_call_requests == [False, True]
-    assert not state.posts and not state.provision_auth
+    assert [path for path, _ in state.posts] == ["/"] and not state.provision_auth
 
 
 async def test_Basic_challenge_retry_rechecks_current_before_sending_credentials(fanvil_http):
@@ -176,7 +182,7 @@ async def test_Basic_challenge_retry_rechecks_current_before_sending_credentials
     state.on_challenge = revoke
     with pytest.raises(ValueError, match="phone_configuration_changed"):
         await state.run()
-    assert state.basic_call_requests == [False] and not state.posts
+    assert state.basic_call_requests == [False] and [path for path, _ in state.posts] == ["/"]
 
 
 @pytest.mark.parametrize("previous_challenge", [False, True])
@@ -187,7 +193,8 @@ async def test_final_POST_401_Basic_is_never_replayed(fanvil_http, previous_chal
     state.final_status = 401
     with pytest.raises(ValueError, match="phone_apply_http_error"):
         await state.run()
-    assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
+    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
+    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
 
 
 @pytest.mark.parametrize("field,value,code", [
@@ -201,15 +208,17 @@ async def test_preauthenticated_landing_never_bypasses_independent_guards(fanvil
     setattr(state, field, value)
     with pytest.raises(ValueError, match=code):
         await state.run()
-    assert state.posts == [] and "/key==nonce" not in state.gets
+    assert [path for path, _ in state.posts] == ["/"] and state.gets.count("/key==nonce") == 1
 
 
-async def test_unknown_landing_is_not_proof_of_access(fanvil_http):
+async def test_unknown_landing_does_not_bypass_failed_native_login(fanvil_http):
     state = fanvil_http
     state.unknown_landing = True
+    state.auth_ok = False
     with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
         await state.run()
-    assert state.posts == [] and state.gets == ["/", "/information.htm"]
+    assert [path for path, _ in state.posts] == ["/"]
+    assert state.gets == ["/", "/key==nonce", "/information.htm"]
 
 
 async def test_final_native_response_login_form_is_not_an_accepted_application(fanvil_http):

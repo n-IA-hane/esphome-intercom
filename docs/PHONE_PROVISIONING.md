@@ -258,7 +258,9 @@ The Fanvil native method uses its authenticated Auto Provision form and an
 explicit HTTP connection policy for the observed RapidLogic framing and reuse
 behavior. The native call-count checks run after authentication and again
 immediately before the command. This compatibility handling is local to that method and
-does not relax HA's HTTP parser or TLS settings. Some Fanvil pages open while
+does not relax HA's HTTP parser or TLS settings. Every application session
+performs the native nonce login; an accessible frameset is not proof of permission
+to change configuration. Some Fanvil pages open while
 the call-state API separately requires HTTP Basic authentication. A challenge
 on a read may use the existing administrator credentials once, scoped to that
 phone origin. Redirects never receive those credentials, and the final apply

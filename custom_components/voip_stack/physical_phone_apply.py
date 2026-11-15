@@ -152,18 +152,21 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
 
     login = _NativeForm()
     login.feed(await request("GET", "/"))
-    # The native UI skips login when the landing is already an authorized
-    # frameset. Identity and all command guards below are still mandatory.
-    if "logonButton" in login.ids:
-        language = login.values.get("CurLanguage") or login.values.get("langSelect", "")
+    # A public frameset/information page does not authorize native GUI writes.
+    # Each operation establishes its own nonce session, independently of Basic
+    # authentication required by protected status APIs.
+    language_cookie = session.cookie_jar.filter_cookies(base).get("CUR_LANG")
+    language = (login.values.get("CurLanguage") or login.values.get("langSelect")
+                or (language_cookie.value if language_cookie is not None else ""))
+    if language:
         session.cookie_jar.update_cookies({"CUR_LANG": language}, response_url=base)
-        nonce = await request("GET", "/key==nonce?now=" + str(int(time.time() * 1000)))
-        if not nonce or len(nonce) > 256 or any(ord(char) < 33 or ord(char) == 127 for char in nonce):
-            raise PhoneApplyError("phone_apply_authentication_failed")
-        session.cookie_jar.update_cookies({"auth": nonce, "CUR_LANGCLICK": "false"}, response_url=base)
-        encoded = username + ":" + md5((username + ":" + password + ":" + nonce).encode(), usedforsecurity=False).hexdigest()
-        await request("POST", "/", data={"encoded": encoded,
-            "CurLanguage": language, "ReturnPage": "/"})
+    nonce = await request("GET", "/key==nonce?now=" + str(int(time.time() * 1000)))
+    if not nonce or len(nonce) > 256 or any(ord(char) < 33 or ord(char) == 127 for char in nonce):
+        raise PhoneApplyError("phone_apply_authentication_failed")
+    session.cookie_jar.update_cookies({"auth": nonce, "CUR_LANGCLICK": "false"}, response_url=base)
+    encoded = username + ":" + md5((username + ":" + password + ":" + nonce).encode(), usedforsecurity=False).hexdigest()
+    await request("POST", "/", data={"encoded": encoded,
+        "CurLanguage": language, "ReturnPage": "/"})
     information = await request("GET", "/information.htm")
     information_form = _NativeForm()
     information_form.feed(information)
