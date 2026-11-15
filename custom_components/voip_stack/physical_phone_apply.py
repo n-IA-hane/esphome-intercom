@@ -8,6 +8,7 @@ import re
 import time
 from xml.etree import ElementTree
 
+from aiohttp import BasicAuth
 from yarl import URL
 
 MAX_PAGE_BYTES = 256 * 1024
@@ -91,29 +92,47 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
     password = phone.get("admin_password", "")
     if not username or not password:
         raise PhoneApplyError("phone_apply_credentials_required")
+    basic_auth = None
 
     async def current():
         if not await still_current():
             raise PhoneApplyDeferred("phone_configuration_changed")
 
     async def request(method, path, *, data=None, final_command=False):
+        nonlocal basic_auth
         await current()
         url = base.join(URL(path))
+        if url.origin() != base.origin():
+            raise PhoneApplyError("phone_apply_target_unverified")
         if final_command and on_dispatch is not None:
             on_dispatch()
-        async with session.request(method, url, data=data, headers={"Connection": "keep-alive"}, allow_redirects=False) as response:
+        retry_basic = False
+        async with session.request(method, url, data=data, auth=basic_auth,
+                                   headers={"Connection": "keep-alive"}, allow_redirects=False) as response:
             if response.status in {301, 302, 303} and method == "POST" and path == "/":
                 redirect = url.join(URL(response.headers.get("Location", "")))
                 if redirect.origin() != base.origin() or redirect.path not in {"/", "/index.htm", "/information.htm"}:
                     raise PhoneApplyError("phone_apply_authentication_failed")
                 return await request("GET", str(redirect.relative()))
-            if response.status != 200:
+            if (response.status == 401 and method == "GET" and not final_command and basic_auth is None
+                    and any(re.match(r"(?i)^Basic(?:\s|$)", challenge.strip())
+                            for challenge in response.headers.getall("WWW-Authenticate", []))):
+                # Some native pages require HTTP authentication even when the
+                # GUI frameset is already authorized. Retry only the safe GET.
+                basic_auth = BasicAuth(username, password)
+                retry_basic = True
+            elif response.status == 401 and method == "GET" and basic_auth is not None:
+                raise PhoneApplyError("phone_apply_authentication_failed")
+            elif response.status != 200:
                 raise PhoneApplyError("phone_apply_http_error")
             content = bytearray()
-            async for chunk in response.content.iter_chunked(8192):
-                content.extend(chunk)
-                if len(content) > MAX_PAGE_BYTES:
-                    raise PhoneApplyError("phone_apply_response_invalid")
+            if not retry_basic:
+                async for chunk in response.content.iter_chunked(8192):
+                    content.extend(chunk)
+                    if len(content) > MAX_PAGE_BYTES:
+                        raise PhoneApplyError("phone_apply_response_invalid")
+        if retry_basic:
+            return await request(method, path, data=data)
         # The command might already have taken effect. A call or configuration
         # change during its ACK cannot turn it back into a safe deferred request.
         if not final_command:

@@ -2,6 +2,7 @@
 
 from hashlib import md5
 import asyncio
+from base64 import b64encode
 from copy import deepcopy
 from datetime import timedelta
 import threading
@@ -28,7 +29,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
     state = SimpleNamespace(mac="00:11:22:33:44:55", model="X3U Pro", firmware="2.12.20",
         calls=0, posts=[], gets=[], revoked=False, late_busy=False, auth_ok=True, redirect=False, server=SERVER,
         preauthenticated=False, unknown_landing=False, information_status=200, final_login=False,
-        password="fixture-secret", on_trigger=None)
+        password="fixture-secret", on_trigger=None, basic_calls=False, basic_password="fixture-secret",
+        basic_call_requests=[], provision_auth=[], final_status=200, on_challenge=None)
     login_html = ('<form id="login" method="post"><input id="username"><input id="password" type="password">'
         '<input id="encoded" name="encoded"><input name="CurLanguage" value="it">'
         '<input id="logonButton" type="button" value="Login"></form>')
@@ -76,17 +78,28 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
 
     async def calls(request):
         state.gets.append(request.path)
+        if state.basic_calls:
+            authorization = request.headers.get("Authorization", "")
+            state.basic_call_requests.append(bool(authorization))
+            expected = "Basic " + b64encode(("fixture-admin:" + state.basic_password).encode()).decode()
+            if authorization != expected:
+                if state.on_challenge is not None:
+                    state.on_challenge()
+                return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
         if not state.preauthenticated and request.cookies.get("session") != "fixture-session":
             return web.Response(status=401, text="Authentication required")
         return web.Response(text=f"<callInfo><calls>{state.calls}</calls></callInfo>")
 
     async def provision(request):
+        state.provision_auth.append(bool(request.headers.get("Authorization")))
         if request.method == "POST":
             state.posts.append((request.path, dict(await request.post())))
             if state.on_trigger is not None:
                 await state.on_trigger()
             if state.final_login:
                 return web.Response(text=login_html)
+            if state.final_status != 200:
+                return web.Response(status=state.final_status, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
             return web.Response(text="Requested")
         state.gets.append(request.path)
         return web.Response(text=f'<input name="FTP_AutoServer_R" value="{state.server}">'
@@ -131,6 +144,49 @@ async def test_preauthenticated_frameset_uses_identity_and_guards_without_anothe
     result = await state.run()
     assert result["request_status"] == "accepted"
     assert state.gets == ["/", "/information.htm", "/callInfo.xml", "/provision.htm", "/callInfo.xml"]
+    assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
+
+
+async def test_frameset_and_information_do_not_replace_call_info_Basic_authentication(fanvil_http):
+    state = fanvil_http
+    state.preauthenticated = state.basic_calls = True
+    result = await state.run()
+    assert result["request_status"] == "accepted"
+    assert state.basic_call_requests == [False, True, True]
+    assert state.provision_auth == [True, True]
+    assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
+    assert "/key==nonce" not in state.gets
+
+
+async def test_bad_Basic_credentials_are_tried_once_and_never_dispatch_a_command(fanvil_http):
+    state = fanvil_http
+    state.preauthenticated = state.basic_calls = True
+    state.basic_password = "different-fixture-password"
+    with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
+        await state.run()
+    assert state.basic_call_requests == [False, True]
+    assert not state.posts and not state.provision_auth
+
+
+async def test_Basic_challenge_retry_rechecks_current_before_sending_credentials(fanvil_http):
+    state = fanvil_http
+    state.preauthenticated = state.basic_calls = True
+    def revoke():
+        state.revoked = True
+    state.on_challenge = revoke
+    with pytest.raises(ValueError, match="phone_configuration_changed"):
+        await state.run()
+    assert state.basic_call_requests == [False] and not state.posts
+
+
+@pytest.mark.parametrize("previous_challenge", [False, True])
+async def test_final_POST_401_Basic_is_never_replayed(fanvil_http, previous_challenge):
+    state = fanvil_http
+    state.preauthenticated = True
+    state.basic_calls = previous_challenge
+    state.final_status = 401
+    with pytest.raises(ValueError, match="phone_apply_http_error"):
+        await state.run()
     assert state.posts == [("/provision.htm", {"autoProvisionNow": "autopNow"})]
 
 

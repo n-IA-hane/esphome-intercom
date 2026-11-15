@@ -16,6 +16,9 @@
 - Track a provisioning command once it may have reached the phone. A call or
   configuration change after dispatch cannot silently replay that revision;
   an uncertain response is reported for an explicit administrator retry.
+- Authenticate protected Fanvil status requests when the phone challenges with
+  HTTP Basic, even if its main pages already open. Authentication retries are
+  bounded to reads on the configured origin and never replay the apply command.
 - Isolate conflicting ESPHome phone names and report the affected device through
   HA Repairs, allowing other phones and directory updates to continue.
 - Surface supported diagnostic codes, including incompatible LDAP transport,
