@@ -227,7 +227,7 @@ def test_native_lvgl_keypad_rows_have_room_for_the_actual_font(tmp_path):
     relative = 'yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml'
     original = yaml_util.load_yaml(ROOT / relative)
     source = device_config(tmp_path, original['substitutions']['firmware_features'], relative)
-    checked = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(source)],
+    checked = subprocess.run([sys.executable, '-m', 'esphome', 'config', str(source)],
                              capture_output=True, text=True, timeout=120)
     assert checked.returncode == 0, checked.stdout + checked.stderr
     expanded = tmp_path / 'expanded.yaml'

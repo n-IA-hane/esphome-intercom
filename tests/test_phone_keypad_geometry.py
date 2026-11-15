@@ -11,8 +11,8 @@ from esphome.core import CORE, Lambda
 import pytest
 
 from tests.test_package_composition import device_config
-from tests.native_profile import by_id
-from tools.render_lvgl import make_host_config
+from tests.native_profile import nodes
+from tools.render_lvgl import find_id, make_host_config
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(480)]
@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.architecture, pytest.mark.timeout(480)]
 def test_round_keypad_uses_the_freed_call_space_without_clipping_or_losing_hits(tmp_path, size, relative):
     original = yaml_util.load_yaml(ROOT / "yamls" / relative)
     device = device_config(tmp_path, original["substitutions"]["firmware_features"], "yamls/" + relative)
-    checked = subprocess.run([sys.executable, "-m", "esphome", "config", "--no-defaults", str(device)],
+    checked = subprocess.run([sys.executable, "-m", "esphome", "config", str(device)],
         capture_output=True, text=True, timeout=180)
     (tmp_path / "validation.log").write_text(checked.stdout + checked.stderr)
     assert checked.returncode == 0, checked.stdout + checked.stderr
@@ -37,8 +37,9 @@ def test_round_keypad_uses_the_freed_call_space_without_clipping_or_losing_hits(
              if "PHONE_KEYPAD_GEOMETRY_BUILD" in os.environ else tmp_path / "host").resolve()
     config, _hash = make_host_config(source, "settings_continuous_page", size, size, build, pointer=True)
     if not any(script["id"] == "update_call_idle_labels" for script in config["script"]):
-        config["script"].append(copy.deepcopy(by_id(source["script"], "update_call_idle_labels")))
-    idle = next(action["lambda"] for action in source["voip_stack"]["on_idle"]
+        config["script"].append(copy.deepcopy(find_id(source, "script", "update_call_idle_labels")))
+    assert all("then" in script for script in config["script"])
+    idle = next(action["lambda"] for action in nodes(source["voip_stack"]["on_idle"])
                 if "show_idle" in str(action.get("lambda", "")))
     check = r'''
         lv_refr_now(nullptr);
