@@ -62,7 +62,7 @@ def restore_esp_identities(hass, runtime):
     records = managed_records(entry) if entry is not None else {}
     entities = er.async_get(hass)
     devices = dr.async_get(hass)
-    collisions = set()
+    eligible_devices = set()
     owned_devices = (device for origin in hass.config_entries.async_entries("esphome")
                      for device in dr.async_entries_for_config_entry(devices, origin.entry_id))
     for device in owned_devices:
@@ -72,13 +72,16 @@ def restore_esp_identities(hass, runtime):
         provisioner = runtime.phone_provisioning
         if provisioner is not None and provisioner.is_removed(origin.entry_id, device.id):
             continue
-        if runtime.endpoints.by_device_id(device.id) is not None:
-            continue
         phone = records.get(device.id)
         native_entities = [entity for entity in er.async_entries_for_device(entities, device.id)
                            if entity.platform == "esphome"]
         roles = {entity_role(entity): entity for entity in native_entities}
         if "voip_state" not in roles:
+            continue
+        eligible_devices.add(device.id)
+        if runtime.endpoints.by_device_id(device.id) is not None:
+            # No attempt was made to apply its desired name/aliases here.
+            # Only the provisioner's successful sync can clear that conflict.
             continue
         fields = {}
         for role, field in (("voip_extension", "extension"), ("voip_ring_groups", "ring_group"),
@@ -98,14 +101,15 @@ def restore_esp_identities(hass, runtime):
         try:
             runtime.endpoints.register(candidate)
         except EndpointCollisionError as error:
-            collisions.add(device.id)
             async_sync_esphome_endpoint_collision_issue(hass, device.id, name=candidate.name, error=error)
+        else:
+            async_sync_esphome_endpoint_collision_issue(hass, device.id)
     # The issue registry owns diagnostics. Reconcile its derived rows after
-    # every restore, including resolved, removed and no-longer-phone devices.
+    # every restore, clearing only removed or no-longer-phone devices here.
     for domain, issue_id in tuple(ir.async_get(hass).issues):
         if domain == DOMAIN and issue_id.startswith(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX):
             device_id = issue_id.removeprefix(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX)
-            if device_id not in collisions:
+            if device_id not in eligible_devices:
                 async_sync_esphome_endpoint_collision_issue(hass, device_id)
 
 

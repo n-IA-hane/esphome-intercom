@@ -445,7 +445,8 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 local_call, session = prepared.resolve_current()
                 if local_call is not None:
                     lease = prepared.acquire_local_lease(media_owner)
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     await _run_local_audio_session(
                         hass,
                         ws,
@@ -454,7 +455,8 @@ class VoipAudioWebSocketView(HomeAssistantView):
                     )
                 else:
                     assert session is not None
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     if session.rtp_socket is not None:
                         client = prepared.registry.sip_client_for(session.call_id)
                         if client is not None and getattr(client, "audio_rtp_socket", None) is session.rtp_socket:

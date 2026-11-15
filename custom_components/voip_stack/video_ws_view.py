@@ -506,7 +506,8 @@ class VoipVideoWebSocketView(HomeAssistantView):
                 local_call, session = prepared.resolve_current()
                 if local_call is not None:
                     lease = prepared.acquire_local_lease(media_owner)
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     await _run_local_video_session(
                         hass,
                         ws,
@@ -517,7 +518,8 @@ class VoipVideoWebSocketView(HomeAssistantView):
                     assert session is not None
                     call = prepared.registry.get_session(session.call_id)
                     generation = call.generation if call is not None else None
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     if (call is None or not call.live
                             or call_projection(hass) is not prepared.registry
                             or prepared.registry.get_session(session.call_id) is not call

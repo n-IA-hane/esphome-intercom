@@ -17,12 +17,14 @@ from .config import transport_config
 from .const import CONF_REGISTRAR_ENABLED
 from .device_resolver import entity_role, slugify_route_id
 from .endpoint_lifecycle import create_runtime_task
+from .endpoint_registry import EndpointCollisionError
 from .managed_phones import (CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID,
     ManagedPhone, active_managed_accounts, managed_phone_mode, managed_records, normalize_mac)
 from .phone_endpoint import EndpointKind, PhoneEndpoint
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
     normalize_membership_tracking, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
+from .repairs import async_sync_esphome_endpoint_collision_issue
 from .sip_registrar import generate_password
 
 _LOGGER = logging.getLogger(__name__)
@@ -142,8 +144,6 @@ class EspHomeProvisioner:
     @callback
     def _device_changed(self, event):
         if event.data.get("action") == "remove":
-            from .repairs import async_sync_esphome_endpoint_collision_issue
-
             async_sync_esphome_endpoint_collision_issue(self.hass, event.data["device_id"])
             self._removed_devices.add(event.data["device_id"])
             self._refresh_accounts()
@@ -299,6 +299,7 @@ class EspHomeProvisioner:
                         changed |= previous != phone or old is None
                         records[device.id] = phone
                         self._save(records)
+                        async_sync_esphome_endpoint_collision_issue(self.hass, device.id)
                         self._refresh_accounts()
                         await self._deliver(phone, native)
                         if not self._owned() or revision != self._revision:
@@ -306,6 +307,9 @@ class EspHomeProvisioner:
                         await self._deliver_memberships(phone.device_id, phone.record(), native)
                         if not self._owned() or revision != self._revision:
                             return
+                    except EndpointCollisionError as error:
+                        async_sync_esphome_endpoint_collision_issue(self.hass, device.id,
+                            name=device.name_by_user or device.name or origin.title, error=error)
                     except Exception as error:
                         # Third-party RPC errors may contain secret parameters.
                         _LOGGER.warning("Phone provisioning incomplete for %s (%s)", device.id, type(error).__name__)

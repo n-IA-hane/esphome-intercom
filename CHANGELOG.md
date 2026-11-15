@@ -2,6 +2,25 @@
 
 ## 2026.12.0-dev
 
+### Consistent transfer targets and administrative updates
+
+- Transfer an enabled offline SIP account through the PBX, allowing its normal
+  always/unavailable forwarding policy to run. Disabled and ambiguous targets
+  remain rejected. Resolve built-in parking destinations through the configured
+  parking parser before constructing REFER, including custom access codes.
+- Settle an already-dispatched phone update when only its administrator
+  credentials change. The existing worker tracks its active application task;
+  an orphaned requesting state can be recovered by an explicit administrator
+  retry without automatically repeating a command with an uncertain result.
+- Enforce current account read/control permission on audio and video attachment,
+  including reconnects. Access changes retire only the affected media owners,
+  using the existing lease cleanup and keeping other participants connected.
+- Report rejected ESPHome renames with the existing device Repair. Preserve the
+  issue across unrelated directory refreshes and clear it after a successful
+  correction or device removal.
+- Reuse the display-control descriptors for refresh actions as well as widgets
+  and callbacks. Expanded configuration and generated runtime code are unchanged.
+
 ### Call and provisioning lifecycle
 
 - Route transfers to queues, ring groups and paging through the PBX listener,

@@ -36,7 +36,8 @@ async def async_provision_phone(call):
     manager = await _manager(call)
     phone = _phone(manager, call.data)
     state = manager.states.setdefault(phone["phone_id"], {})
-    if state.get("apply_status") != "requesting":
+    active = manager._active_apply
+    if not (active is not None and active[0] == phone["phone_id"] and not active[1].done()):
         state.pop("apply_attempted_revision", None)
         state["apply_status"] = "pending"
         state["apply_error"] = ""

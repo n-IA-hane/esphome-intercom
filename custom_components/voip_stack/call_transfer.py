@@ -6,12 +6,12 @@ import asyncio
 from dataclasses import dataclass, replace
 
 from .core import sip, sip_transfer
-from .phone_endpoint import PhoneEndpoint
+from .phone_endpoint import PhoneEndpoint, EndpointAvailability
 from .runtime_data import VoipStackRuntime
 from .roster import find_entry
 from .directory_runtime import routing_snapshot
 from .sip_client import SipCallClient, SipTransferResult
-from .router import RouteAction, ha_uri_for, resolve_ha_router
+from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
 from .trunk_policy import call_external_call_denied
 from .endpoint_session import LegPhase
 
@@ -61,6 +61,7 @@ def _blind_target(
     destination: str,
     *,
     entries=None,
+    hass=None,
 ) -> sip_transfer.SipReferTarget:
     raw = str(destination or "").strip()
     if raw.lower().startswith(("sip:", "sips:")):
@@ -69,11 +70,23 @@ def _blind_target(
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))
     if entries is None:
         entries = routing_snapshot(runtime)
+    if hass is not None:
+        from .parking import resolve_parking_route
+
+        parking = resolve_parking_route(hass, raw)
+        if parking is not None:
+            return _local_transfer_target(runtime, parking.target, entries)
     entry = find_entry(entries, raw)
     if entry is not None:
         route = resolve_ha_router(raw, entries, trunk_ready=True)
         if route.action is RouteAction.REJECT:
-            raise sip.SipError("transfer destination is unavailable or disabled")
+            endpoint = runtime.endpoints.resolve(raw) if route.reason is RouteReason.TARGET_UNREACHABLE else None
+            if not (entry.enabled and endpoint is not None
+                    and entry.metadata.get("endpoint_id") == endpoint.endpoint_id
+                    and endpoint.availability is not EndpointAvailability.UNAVAILABLE):
+                raise sip.SipError("transfer destination is unavailable or disabled")
+            # A configured offline phone is still a local dial-plan identity.
+            # Its policy belongs to the PBX handling the referred INVITE.
         if route.action is RouteAction.GROUP or route.action.is_local_application:
             return _local_transfer_target(runtime, entry.extension or entry.id, entries)
     endpoint = runtime.endpoints.resolve(raw)
@@ -311,7 +324,7 @@ async def async_transfer_call(
             return SipTransferResult(False, 0, "replacement_not_found")
         target = _attended_target(consultation)
     else:
-        target = _blind_target(runtime, remote_uri, request.destination, entries=entries)
+        target = _blind_target(runtime, remote_uri, request.destination, entries=entries, hass=hass)
     local_uri = (
         client.dialog.local_uri
         if client is not None and client.dialog is not None

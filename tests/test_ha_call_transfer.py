@@ -22,6 +22,98 @@ from .test_automation_originate_ha import lab as lab, dial, assert_call_resource
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("destination,policy_kind", [
+    ("Offline target", None), ("Offline target", "contact"), ("Offline target", "voicemail"),
+    ("700", None), ("park.701", None), ("810", None), ("park.811", None),
+], ids=["offline", "offline-forward", "offline-mailbox", "parking-access", "parking-slot",
+        "parking-custom-access", "parking-custom-slot"])
+async def test_public_transfer_service_defers_logical_offline_and_builtin_targets_to_pbx(
+    lab, monkeypatch, destination, policy_kind,
+):
+    from homeassistant.core import Context
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind, DEFAULT_ENDPOINT_ID
+    from custom_components.voip_stack.phone_policy import PhonePolicy, PhoneDestination
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import config_entry
+
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=DEFAULT_ENDPOINT_ID, name="Operator",
+        device_id="operator-device", kind=EndpointKind.BROWSER, availability="available"))
+    policy = PhonePolicy(unavailable=PhoneDestination(policy_kind,
+        "sip:offline" if policy_kind == "voicemail" else "bedroom1")) if policy_kind else PhonePolicy()
+    offline = PhoneEndpoint(endpoint_id="sip:offline", name="Offline target", username="offline_user",
+        device_id="offline-device", extension="450", kind=EndpointKind.SIP_ACCOUNT, policy=policy)
+    lab.runtime.endpoints.register(offline)
+    lab.runtime.directory.upsert(RosterEntry("offline_user", name=offline.name, extension="450",
+        metadata={"endpoint_id": offline.endpoint_id, "endpoint_kind": "sip_account", "call_policy": policy.as_data()}))
+    if destination in {"810", "park.811"}:
+        entry = config_entry(lab.hass)
+        lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+            "parking": {"access": "810", "slots": ["811"]}})
+    references = []
+    peer = lab.phones[0]
+    original = peer.datagram_received
+
+    def receive(raw, address):
+        request = sip.parse_message(raw)
+        if request.method == "REFER":
+            references.append(sip.parse_sip_uri(request.header("Refer-To")))
+            peer.respond(request, address, 486)
+        else:
+            original(raw, address)
+
+    monkeypatch.setattr(peer, "datagram_received", receive)
+    called = await dial(lab, Context())
+    call_id = called["call_id"]
+    try:
+        result = await lab.hass.services.async_call("voip_stack", "transfer",
+            {"call_id": call_id, "destination": destination}, blocking=True, return_response=True)
+        assert not result["success"] and result["status"] == 486
+        assert len(references) == 1
+        assert (references[0].host, references[0].port) == ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+        assert references[0].user == ("450" if destination == offline.name else destination)
+        assert lab.calls.get_session(call_id).live
+        assert lab.runtime.endpoints.get(offline.endpoint_id) == offline, "REFER must not execute or rewrite PhonePolicy"
+        assert lab.calls.component("parking") is None, "Target classification must not create a parking application"
+    finally:
+        await lab.calls.request_termination(call_id, TerminationIntent("test_done"))
+    assert_call_resources_released(lab)
+
+
+@pytest.mark.parametrize("invalid", ["disabled", "unavailable", "mislinked", "missing"])
+def test_offline_transfer_exception_never_overrides_invalid_or_disabled_identity(invalid):
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.roster import RosterEntry
+
+    endpoints = EndpointRegistry()
+    endpoint = PhoneEndpoint(endpoint_id="offline", name="Offline", username="offline_user",
+        extension="450", kind=EndpointKind.SIP_ACCOUNT,
+        availability="unavailable" if invalid == "unavailable" else "offline")
+    if invalid != "missing":
+        endpoints.register(endpoint)
+    entry = RosterEntry(endpoint.username, name=endpoint.name, extension="450", enabled=invalid != "disabled",
+        metadata={"endpoint_kind": "sip_account", "endpoint_id": "wrong-link" if invalid == "mislinked" else endpoint.endpoint_id})
+    runtime = SimpleNamespace(endpoints=endpoints, directory=PhoneDirectory([entry]))
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", endpoint.name)
+
+
+def test_offline_transfer_exception_preserves_ambiguous_and_explicit_uri_contracts():
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.roster import RosterEntry
+
+    runtime = SimpleNamespace(endpoints=EndpointRegistry(), directory=PhoneDirectory([
+        RosterEntry("first", extension="450"), RosterEntry("second", extension="450")]))
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", "450")
+    explicit = "sips:park.701@explicit.example:5061;transport=tls"
+    assert call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", explicit).uri == explicit
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", "sip:bad@")
+
+
 @pytest.mark.parametrize("kind,identity,extension", [
     ("queue", "queue:help-desk", ""),
     ("queue", "queue:help-desk", "701"),

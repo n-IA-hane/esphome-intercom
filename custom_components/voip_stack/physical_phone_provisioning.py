@@ -132,6 +132,7 @@ class PhysicalPhoneProvisioner:
         self._records = {}
         self.discovery_error = ""
         self._idle_retry_cancel = None
+        self._active_apply = None
 
     def owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -298,6 +299,14 @@ class PhysicalPhoneProvisioner:
                 self._changed(identity)
         if not self.owned() or not phone.get("enabled", True) or prepared is None or state.get("error"):
             return
+        active = self._active_apply
+        if (state.get("apply_status") == "requesting"
+                and not (active is not None and active[0] == identity and not active[1].done())):
+            attempted = bool(state.get("apply_attempted_revision"))
+            state.update(apply_status="uncertain" if attempted else "pending",
+                         apply_error="phone_apply_result_uncertain" if attempted else "")
+            self.store.async_delay_save(lambda: self.states, 1)
+            self._changed(identity)
         capability = prepared.profile["capabilities"].get("apply", {})
         if not isinstance(capability, dict) or capability.get("qualified") is not True or capability.get("method") != "fanvil_native_http":
             status("not_qualified")
@@ -315,9 +324,13 @@ class PhysicalPhoneProvisioner:
         dispatched = False
 
         def same_candidate(*, closing=False):
-            return ((closing or self.owned()) and self.states.get(identity) is state
+            owner = physical_phone_records(self.entry).get(identity)
+            # Credential edits revoke authority to send, not ownership of an
+            # already dispatched command for the same physical/render owner.
+            same_phone = (owner is not None and _render_inventory(owner) == _render_inventory(phone)) if dispatched else owner == phone
+            return ((closing or self.owned()) and self._active_apply is attempt and self.states.get(identity) is state
                     and self.files.get(identity) is prepared and state.get("desired_revision") == revision
-                    and physical_phone_records(self.entry).get(identity) == phone)
+                    and same_phone)
 
         @callback
         def dispatch():
@@ -341,6 +354,8 @@ class PhysicalPhoneProvisioner:
                 return False
             return dependencies == prepared.dependencies
 
+        attempt = (identity, asyncio.current_task())
+        self._active_apply = attempt
         try:
             origin, instance = await self._apply_target(phone, capability)
             if not await current():
@@ -386,6 +401,8 @@ class PhysicalPhoneProvisioner:
                              else "phone_apply_http_error" if isinstance(error, (ClientError, TimeoutError, OSError))
                              else safe_phone_error(error))
         finally:
+            if self._active_apply is attempt:
+                self._active_apply = None
             self.store.async_delay_save(lambda: self.states, 1)
             self._changed(identity)
 

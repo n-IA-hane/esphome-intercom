@@ -5,9 +5,11 @@ substitutions:
   _settings_auto_answer_widgets: ${ _settings_switches['auto_answer']['widgets'] }
   _settings_auto_answer_package: ${ _settings_switches['auto_answer']['package'] }
   _settings_auto_answer_callback: ${ _settings_switches['auto_answer']['callback'] }
+  _settings_auto_answer_refresh: ${ _settings_switches['auto_answer']['refresh'] }
   _settings_dnd_widgets: ${ _settings_switches['dnd']['widgets'] }
   _settings_dnd_package: ${ _settings_switches['dnd']['package'] }
   _settings_dnd_callback: ${ _settings_switches['dnd']['callback'] }
+  _settings_dnd_refresh: ${ _settings_switches['dnd']['refresh'] }
   _settings_voip_heading:
     - obj:
         width: ${settings_row_width}
@@ -55,13 +57,11 @@ substitutions:
                     if (x == id(phone).get_conference_ring()) return;
                     id(phone).set_conference_ring(x);
                 - script.execute: settings_sync_conference_ring
-  _settings_voip_sync:
-    - script.execute: settings_sync_auto_answer
-    - script.execute: settings_sync_dnd
+  _settings_conference_ring_sync:
     - script.execute: settings_sync_conference_ring
+  _settings_voip_sync: ${ _settings_auto_answer_refresh + _settings_dnd_refresh + _settings_conference_ring_sync }
   _settings_video_widgets: ${ _settings_switches['video']['widgets'] }
-  _settings_video_sync:
-    - script.execute: settings_sync_video_send
+  _settings_video_sync: ${ _settings_switches['video']['refresh'] }
   _settings_video_package: ${ _settings_switches['video']['package'] }
   _settings_video_callback: ${ _settings_switches['video']['callback'] }
   _settings_voip_callback: !lambda |-

@@ -258,6 +258,7 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
             user,
             *,
             endpoint_id,
+            endpoint=None,
         ) -> None:
             calls.append(
                 (
@@ -270,6 +271,10 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
             )
 
         authorization.async_require_media_controller = authorize
+        authorization.POLICY_CONTROL = "control"
+        authorization.POLICY_READ = "read"
+        authorization.require_user_endpoint_permission = lambda *_: "user-1"
+        hass.runtime = types.SimpleNamespace(endpoints=types.SimpleNamespace(get=lambda _: object()))
         call_registry = types.ModuleType(f"{PKG_NAME}.call_registry")
         call_registry.CallRegistry = CallRegistry
         const = types.ModuleType(f"{PKG_NAME}.const")
@@ -333,16 +338,36 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
             call_id="call-1",
             local_bridge=None,
         )
-        request = types.SimpleNamespace(transport=object())
+        request = types.SimpleNamespace(transport=object(), get=lambda _: object())
+        call = types.SimpleNamespace(generation=1, live=True)
+        registry = types.SimpleNamespace(get_session=lambda _: call)
+        hass.runtime.sip = registry
+        hass.runtime.endpoints = {"phone": object()}
+        runtime_data.runtime_data = lambda value: value.runtime
+        authorization = types.ModuleType(f"{PKG_NAME}.authorization")
+        authorization.POLICY_CONTROL = "control"
+        authorization.POLICY_READ = "read"
+        authorization.require_http_control = lambda _: "user-1"
+        authorization.require_user_endpoint_permission = lambda *_: "user-1"
+        state = types.ModuleType(f"{PKG_NAME}.phone_state")
+        state.phone_state_observer = lambda _: types.SimpleNamespace(subscribe=lambda *a, **kw: lambda: None)
+        ha_auth = types.ModuleType("homeassistant.auth")
+        ha_auth.EVENT_USER_REMOVED = "user_removed"
+        ha_core = types.ModuleType("homeassistant.core")
+        ha_core.callback = lambda fn: fn
+        ha_exceptions = types.ModuleType("homeassistant.exceptions")
+        ha_exceptions.Unauthorized = PermissionError
         const = types.ModuleType(f"{PKG_NAME}.const")
         const.DOMAIN = "voip_stack"
         published: list[str] = []
 
-        with patch.dict(sys.modules, {const.__name__: const}):
+        with patch.dict(sys.modules, {const.__name__: const, authorization.__name__: authorization,
+                state.__name__: state, "homeassistant.auth": ha_auth, "homeassistant.core": ha_core,
+                "homeassistant.exceptions": ha_exceptions}):
             async with media_ws_session.async_claimed_media_websocket(
                 request,
                 context,
-                _Registry(),
+                registry,
                 channel="audio",
                 max_msg_size=4096,
                 timeout=0.1,

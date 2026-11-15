@@ -289,7 +289,12 @@ accepted, not that the phone applied the revision. `apply_status: uncertain` mea
 that the command may already have reached the phone but its acceptance could not
 be confirmed. The attempted revision is retained and is not sent automatically
 again; check the phone and use the existing application action to retry explicitly.
-An acknowledged or uncertain older request never marks a newer revision applied.
+An acknowledged or uncertain older request never marks a newer revision applied. Changing only the
+administrator username or password does not alter the rendered revision or
+prevent an already-sent request from settling. An explicit retry consults the
+worker's actual active attempt; a stored requesting label alone cannot keep an
+inactive operation locked. Requests with an uncertain result still require
+an explicit retry.
 
 A pending command waits for all managed lines to become idle. HA call events
 wake the existing worker immediately. If the phone reports a call on another

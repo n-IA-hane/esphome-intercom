@@ -31,7 +31,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         preauthenticated=False, unknown_landing=False, information_status=200, final_login=False,
         password="fixture-secret", on_trigger=None, basic_calls=False, basic_password="fixture-secret",
         basic_call_requests=[], provision_auth=[], final_status=200, on_challenge=None,
-        language_cookie="", gui_logged_in=False, commands=[], command_auth=[], on_calls=None)
+        language_cookie="", gui_logged_in=False, commands=[], command_auth=[], on_calls=None,
+        username="fixture-admin", disconnect_command=False)
     login_html = ('<form id="login" method="post"><input id="username"><input id="password" type="password">'
         '<input id="encoded" name="encoded"><input name="CurLanguage" value="it">'
         '<input id="logonButton" type="button" value="Login"></form>')
@@ -49,7 +50,7 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
             return web.Response(text=login_html)
         form = dict(await request.post())
         state.posts.append((request.path, form))
-        expected = "fixture-admin:" + md5(("fixture-admin:" + state.password + ":fixture-nonce").encode(), usedforsecurity=False).hexdigest()
+        expected = state.username + ":" + md5((state.username + ":" + state.password + ":fixture-nonce").encode(), usedforsecurity=False).hexdigest()
         language = state.language_cookie if state.preauthenticated or state.unknown_landing else "it"
         assert form == {"encoded": expected, "CurLanguage": language, "ReturnPage": "/"}
         assert request.cookies.get("auth") == "fixture-nonce"
@@ -85,7 +86,7 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         if state.basic_calls:
             authorization = request.headers.get("Authorization", "")
             state.basic_call_requests.append(bool(authorization))
-            expected = "Basic " + b64encode(("fixture-admin:" + state.basic_password).encode()).decode()
+            expected = "Basic " + b64encode((state.username + ":" + state.basic_password).encode()).decode()
             if authorization != expected:
                 if state.on_challenge is not None:
                     state.on_challenge()
@@ -106,12 +107,15 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         assert request.method == "GET" and dict(request.query) == {"key": "AutoP"}
         state.commands.append(dict(request.query))
         authorization = request.headers.get("Authorization", "")
-        expected = "Basic " + b64encode(("fixture-admin:" + state.basic_password).encode()).decode()
+        expected = "Basic " + b64encode((state.username + ":" + state.basic_password).encode()).decode()
         state.command_auth.append(authorization == expected)
         if authorization != expected:
             return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
         if state.on_trigger is not None:
             await state.on_trigger()
+        if state.disconnect_command:
+            request.transport.abort()
+            return web.Response(text="Unacknowledged command")
         if state.final_login:
             return web.Response(text=login_html)
         if state.final_status != 200:
@@ -623,6 +627,82 @@ async def test_HTTP_AutoP_received_before_busy_ACK_is_never_replayed(apply_owner
     finally:
         reply.set()
         state.lab.runtime.endpoints.release_call("sip:first", "owned-ACK-race")
+
+
+@pytest.mark.parametrize("outcome", ["acknowledged", "disconnect", "cancel"])
+async def test_admin_credentials_changed_during_AutoP_ACK_do_not_orphan_requesting(
+        apply_owner, fanvil_http, monkeypatch, hass_admin_user, outcome):
+    from homeassistant.core import Context, ServiceCall
+    from custom_components.voip_stack.physical_phone_services import async_provision_phone
+
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    received, reply = asyncio.Event(), asyncio.Event()
+    async def held_reply():
+        received.set()
+        await reply.wait()
+    peer.on_trigger = held_reply
+    peer.disconnect_command = outcome == "disconnect"
+    try:
+        state.manager.schedule()
+        await asyncio.wait_for(received.wait(), 3)
+        revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+        prepared = state.manager.files[state.data["phone_id"]]
+        state.data = {**state.data, "admin_username": "replacement-admin", "admin_password": "replacement-private"}
+        peer.username, peer.password, peer.basic_password = "replacement-admin", "replacement-private", "replacement-private"
+        state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+        await state.manager.async_reconcile()
+        assert state.manager.files[state.data["phone_id"]] is prepared
+        assert state.manager.public_state(state.data["phone_id"])["desired_revision"] == revision
+        # An administrator pressing Retry during the actual active request may
+        # enqueue work, but cannot clear the dispatched revision or replay it.
+        call = ServiceCall(state.lab.hass, "voip_stack", "provision_phone", {"phone_id": state.data["phone_id"]},
+            context=Context(user_id=hass_admin_user.id))
+        await async_provision_phone(call)
+        assert state.manager.public_state(state.data["phone_id"])["apply_attempted_revision"] == revision
+        if outcome == "cancel":
+            state.manager._task.cancel()
+            await asyncio.gather(state.manager._task, return_exceptions=True)
+        else:
+            reply.set()
+            await asyncio.wait_for(state.manager._task, 3)
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["apply_status"] == ("requested" if outcome == "acknowledged" else "uncertain")
+        assert public["apply_attempted_revision"] == revision and len(peer.commands) == 1
+        assert getattr(state.manager, "_active_apply", None) is None
+        state.manager.schedule()
+        await state.lab.hass.async_block_till_done()
+        assert len(peer.commands) == 1
+    finally:
+        reply.set()
+
+
+@pytest.mark.parametrize("normalise_first", [False, True])
+async def test_orphan_requesting_uses_task_liveness_and_explicit_admin_retry(
+        apply_owner, fanvil_http, monkeypatch, hass_admin_user, normalise_first):
+    from homeassistant.core import Context, ServiceCall
+    from custom_components.voip_stack.physical_phone_services import async_provision_phone
+
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    state.manager.schedule()
+    await state.lab.hass.async_block_till_done()
+    assert len(peer.commands) == 1 and state.manager._task.done()
+    # Legacy/orphan diagnostics are not an active task. The preceding actual
+    # command has finished, but a stored status can still read requesting.
+    state.manager.states[state.data["phone_id"]]["apply_status"] = "requesting"
+    if normalise_first:
+        state.manager.schedule()
+        await state.lab.hass.async_block_till_done()
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["apply_status"] == "uncertain" and public["apply_error"] == "phone_apply_result_uncertain"
+        assert len(peer.commands) == 1
+    call = ServiceCall(state.lab.hass, "voip_stack", "provision_phone", {"phone_id": state.data["phone_id"]},
+        context=Context(user_id=hass_admin_user.id))
+    await async_provision_phone(call)
+    await state.lab.hass.async_block_till_done()
+    assert len(peer.commands) == 2
+    assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "requested"
 
 
 async def test_uncertain_HTTP_result_requires_explicit_admin_retry(apply_owner, fanvil_http, monkeypatch, hass_admin_user):

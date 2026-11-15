@@ -330,21 +330,14 @@ substitutions:
     ${ _settings_playback_callback if _fw_playback else '' }
     ${ _settings_sendspin_callback if _fw_sendspin else '' }
     ${ _settings_camera_quality_callback if _settings_camera_jpeg_quality else '' }
-  _settings_audio_sync:
-    - script.execute: settings_sync_speaker
-    - script.execute: settings_sync_speaker_mute
-    - script.execute: settings_sync_mic_mute
+  _settings_audio_sync: ${ _settings_numbers['master']['refresh'] + _settings_switches['speaker_mute']['refresh'] + _settings_switches['mic_mute']['refresh'] }
 
-  _settings_refresh_aec:
-    - script.execute: settings_sync_aec
+  _settings_refresh_aec: ${ _settings_switches['aec']['refresh'] }
   _settings_refresh_mode:
     - script.execute: settings_sync_mode
-  _settings_refresh_ns:
-    - script.execute: settings_sync_ns
-  _settings_refresh_agc:
-    - script.execute: settings_sync_agc
-  _settings_refresh_vad:
-    - script.execute: settings_sync_vad
+  _settings_refresh_ns: ${ _settings_switches['ns']['refresh'] }
+  _settings_refresh_agc: ${ _settings_switches['agc']['refresh'] }
+  _settings_refresh_vad: ${ _settings_switches['vad']['refresh'] }
   _settings_refresh_wake_word:
     - script.execute: settings_sync_wake_word
   _settings_refresh_playback:

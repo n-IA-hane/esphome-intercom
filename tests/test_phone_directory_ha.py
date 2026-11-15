@@ -17,6 +17,47 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("resolution", ["rename", "remove", "ineligible"])
+async def test_live_esp_rename_collision_repair_survives_unrelated_refresh_until_resolved(managed, resolution):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+
+    lab = managed
+    await lab.controller.async_sync()
+    before = phone_record(lab)
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="existing-desk", name="Occupied name",
+        username="existing_desk", device_id="existing-desk-device", kind=EndpointKind.SIP_ACCOUNT))
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    devices = dr.async_get(lab.hass)
+    devices.async_update_device(lab.device.id, name_by_user="Occupied name")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    issue_id = f"esphome_endpoint_collision_{lab.device.id}"
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is not None
+    assert phone_record(lab) == before
+    assert lab.runtime.endpoints.get(before.endpoint_id).name == before.display_name
+    await async_refresh_directory(lab.hass, peers=[], registered=[])
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is not None
+    if resolution == "rename":
+        devices.async_update_device(lab.device.id, name_by_user="New distinct name")
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        after = phone_record(lab)
+        assert after.endpoint_id == before.endpoint_id and after.device_id == before.device_id
+        assert after.mac == before.mac and after.username == before.username and after.password == before.password
+        assert after.display_name == "New distinct name"
+    elif resolution == "remove":
+        devices.async_remove_device(lab.device.id)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+    else:
+        registry = er.async_get(lab.hass)
+        entity = next(item for item in er.async_entries_for_device(registry, lab.device.id)
+                      if item.unique_id.endswith("-voip_state"))
+        registry.async_remove(entity.entity_id)
+        await async_refresh_directory(lab.hass, peers=[], registered=[])
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+
+
 @pytest.mark.parametrize("resolution", ["rename", "remove"])
 async def test_duplicate_esp_name_does_not_block_other_directory_identities(managed, resolution):
     from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
