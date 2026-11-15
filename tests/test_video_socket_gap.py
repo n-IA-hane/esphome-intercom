@@ -500,7 +500,9 @@ async def test_handshake_rechecks_call_claim_and_current_media(monkeypatch, chan
 
     @asynccontextmanager
     async def claim(*args, **kwargs):
-        yield ClaimedMediaWebSocket(ws, owner, lease)
+        # This fixture isolates the video handshake/state guards. Account
+        # authorization runs separately through the real HTTP media tests.
+        yield ClaimedMediaWebSocket(ws, owner, lease, validate=lambda: None)
 
     async def run(*args, **kwargs):
         attached.append(args[2])
