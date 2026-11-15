@@ -182,6 +182,8 @@ class SoftwareCallPeer:
                 key = (socket, value["id"])
                 if value["type"] == "subscribe":
                     self.subscriptions[key] = value["request"]
+                    if value["request"]["type"] == "voip_stack/subscribe_ha_softphone_state":
+                        await socket.send_json({"id": value["id"], "event": self.snapshot()})
                 elif value["type"] == "unsubscribe":
                     self.subscriptions.pop(key, None)
         finally:
