@@ -999,6 +999,10 @@
     "phone_service_unavailable": {
       "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Prüfen Sie Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses und speichern Sie diese, um es erneut zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
       "title": "LDAP-Verzeichnis nicht verfügbar"
+    },
+    "esphome_endpoint_collision": {
+      "title": "Identitätskonflikt beim ESPHome-Telefon",
+      "description": "Das ESPHome-Telefon {phone} kann nicht wiederhergestellt werden, weil sein Feld {field} ({value}) bereits von einem anderen Telefon verwendet wird. Andere Telefone bleiben erreichbar. Öffne die Geräteseite, um den Namen oder die für die Anrufweiterleitung verwendete Identität zu prüfen. Kennungen und Zugangsdaten wurden nicht geändert."
     }
   },
   "exceptions": {

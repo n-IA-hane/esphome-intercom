@@ -999,6 +999,10 @@
     "phone_service_unavailable": {
       "description": "O serviço de escuta {service} na porta {port} não pôde ser iniciado. Verifique o endereço, a porta e os caminhos dos certificados nas configurações do diretório LDAP e salve para tentar novamente. O SIP continua funcionando e os telefones mantêm o diretório anterior.",
       "title": "Diretório LDAP indisponível"
+    },
+    "esphome_endpoint_collision": {
+      "title": "Conflito de identidade do telefone ESPHome",
+      "description": "O telefone ESPHome {phone} não pôde ser restaurado porque o campo {field} ({value}) já é usado por outro telefone. Os outros telefones continuam disponíveis. Abra a página do dispositivo para verificar seu nome ou a identidade usada para encaminhar chamadas. Os identificadores e as credenciais não foram alterados."
     }
   },
   "exceptions": {

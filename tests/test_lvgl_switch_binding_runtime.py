@@ -24,7 +24,7 @@ def binding_lambdas():
     checked = str(action["then"][0]["lvgl.widget.update"]["state"]["checked"])
     callback = str(binding["callback"])
     fragments = [change, condition, checked, callback]
-    for name, value in {"switch_id": "owner", "widget_id": "widget", "sync_id": "sync",
+    for name, value in {"switch_id": "owner", "widget_id": "widget", "sync_id": "test_sync_script",
                         "_settings_page_id": "page"}.items():
         fragments = [part.replace("${" + name + "}", value) for part in fragments]
     assert not any("${" in part for part in fragments)
@@ -32,7 +32,7 @@ def binding_lambdas():
     try:
         for name, type_ in [("owner", switch.Switch), ("widget", lv_obj_base_t),
                             ("settings_page_wrapper", lv_obj_base_t), ("page", lv_page_t),
-                            ("sync", cg.esphome_ns.namespace("script").class_("Script").template())]:
+                            ("test_sync_script", cg.esphome_ns.namespace("script").class_("Script").template())]:
             cg.Pvariable(ID(name, is_declaration=True, type=type_), cg.RawExpression("nullptr"))
 
         async def generate():
@@ -53,6 +53,7 @@ def test_switch_binding_preserves_owner_callbacks_deferred_refresh_and_idempoten
     prelude = r'''
 #include <cassert>
 #include <functional>
+#include <unistd.h>  // Keep the POSIX sync() declaration visible on every host.
 #ifdef REAL_SWITCH_API
 #include "esphome/components/switch/switch.h"
 using Switch=esphome::switch_::Switch;
@@ -71,8 +72,8 @@ Obj *const widget=&widget_value, *const settings_page_wrapper=&wrapper_value;
 Obj *active=&page_value;
 struct Page { Obj *obj; } page_value_wrapper{&page_value};
 Page *const page=&page_value_wrapper;
-struct Script { std::function<void()> action; void execute(){action();} } sync_value;
-Script *const sync=&sync_value;
+struct Script { std::function<void()> action; void execute(){action();} } test_sync_script_value;
+Script *const test_sync_script=&test_sync_script_value;
 constexpr int LV_STATE_CHECKED=1;
 Obj *lv_disp_get_scr_act(void*) { return active; }
 bool lv_obj_is_scrolling(Obj *o) { return o->scrolling; }
@@ -88,24 +89,24 @@ int main() {
     code = (prelude + "auto change=" + change + ";\nauto condition=" + condition
             + ";\nauto checked=" + checked + ";\nauto callback=" + callback + ";\n" + r'''
  int visual_writes=0;
- sync->action=[&](){if(condition()){widget->checked=checked();++visual_writes;}};
+ test_sync_script->action=[&](){if(condition()){widget->checked=checked();++visual_writes;}};
  callback();
 #ifndef REAL_SWITCH_API
  owner->publish_state(true); assert(widget->checked && visual_writes==1 && owner->writes==0);
  owner->publish_state(true); assert(visual_writes==1 && owner->writes==0);
- change(true); sync->execute(); assert(owner->writes==0 && visual_writes==1);
- change(false); sync->execute(); assert(!widget->checked && owner->writes==1 && visual_writes==2);
+ change(true); test_sync_script->execute(); assert(owner->writes==0 && visual_writes==1);
+ change(false); test_sync_script->execute(); assert(!widget->checked && owner->writes==1 && visual_writes==2);
  // During scrolling callbacks are deferred, not lost or written back to the owner.
  settings_page_wrapper->scrolling=true; owner->publish_state(true);
  assert(!widget->checked && visual_writes==2 && owner->writes==1);
- settings_page_wrapper->scrolling=false; sync->execute();
+ settings_page_wrapper->scrolling=false; test_sync_script->execute();
  assert(widget->checked && visual_writes==3 && owner->writes==1);
  active=&other_page; owner->publish_state(false);
  assert(widget->checked && visual_writes==3 && owner->writes==1);
- active=page->obj; sync->execute();
+ active=page->obj; test_sync_script->execute();
  assert(!widget->checked && visual_writes==4 && owner->writes==1);
  // Programmatic refresh never calls change/turn_on/turn_off.
- owner->publish_state(false); sync->execute(); assert(visual_writes==4 && owner->writes==1);
+ owner->publish_state(false); test_sync_script->execute(); assert(visual_writes==4 && owner->writes==1);
 #else
  (void)visual_writes; (void)change;
 #endif
