@@ -82,7 +82,7 @@ same device.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/esp32-s3-video-call-cropped.jpg" width="300" alt="Remote SIP video shown on a real ESP32-S3 display"/><br/><b>SIP video on an S3 display</b></td>
+    <td align="center"><img src="docs/images/esp32-s3-video-call-cropped.jpg" width="300" alt="Remote SIP video shown on a real ESP32-S3 display"/><br/><b>SIP video on S3 and P4 displays</b></td>
     <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="200" alt="Audio controls on an ESP screen"/><br/><b>On-device controls</b></td>
     <td align="center"><img src="docs/images/lvgl-hangup-reason.jpg" width="200" alt="Call result shown on the ESP display"/><br/><b>Call feedback</b></td>
   </tr>
