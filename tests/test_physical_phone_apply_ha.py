@@ -31,7 +31,7 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
         preauthenticated=False, unknown_landing=False, information_status=200, final_login=False,
         password="fixture-secret", on_trigger=None, basic_calls=False, basic_password="fixture-secret",
         basic_call_requests=[], provision_auth=[], final_status=200, on_challenge=None,
-        language_cookie="", gui_logged_in=False)
+        language_cookie="", gui_logged_in=False, commands=[], command_auth=[], on_calls=None)
     login_html = ('<form id="login" method="post"><input id="username"><input id="password" type="password">'
         '<input id="encoded" name="encoded"><input name="CurLanguage" value="it">'
         '<input id="logonButton" type="button" value="Login"></form>')
@@ -64,6 +64,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
     async def nonce(request):
         state.gets.append(request.path)
         assert request.query.get("now", "").isdigit()
+        if state.preauthenticated:
+            return web.Response(text="")
         return web.Response(text="fixture-nonce")
 
     async def information(request):
@@ -78,6 +80,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
 
     async def calls(request):
         state.gets.append(request.path)
+        if state.on_calls is not None:
+            state.on_calls()
         if state.basic_calls:
             authorization = request.headers.get("Authorization", "")
             state.basic_call_requests.append(bool(authorization))
@@ -92,29 +96,35 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
 
     async def provision(request):
         state.provision_auth.append(bool(request.headers.get("Authorization")))
-        if request.method == "POST":
-            state.posts.append((request.path, dict(await request.post())))
-            if not state.gui_logged_in:
-                return web.Response(text=login_html)
-            if state.on_trigger is not None:
-                await state.on_trigger()
-            if state.final_login:
-                return web.Response(text=login_html)
-            if state.final_status != 200:
-                return web.Response(status=state.final_status, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
-            return web.Response(text="Requested")
         state.gets.append(request.path)
         return web.Response(text=f'<input name="FTP_AutoServer_R" value="{state.server}">'
             '<input name="FTP_AutoFileName_R" value="001122334455.cfg">'
             '<select name="FTP_AutoDownloadMode"><option value="0">Disabled</option>'
             '<option value="1" selected>Update after reboot</option></select>')
 
+    async def command(request):
+        assert request.method == "GET" and dict(request.query) == {"key": "AutoP"}
+        state.commands.append(dict(request.query))
+        authorization = request.headers.get("Authorization", "")
+        expected = "Basic " + b64encode(("fixture-admin:" + state.basic_password).encode()).decode()
+        state.command_auth.append(authorization == expected)
+        if authorization != expected:
+            return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
+        if state.on_trigger is not None:
+            await state.on_trigger()
+        if state.final_login:
+            return web.Response(text=login_html)
+        if state.final_status != 200:
+            return web.Response(status=state.final_status, headers={"WWW-Authenticate": 'Basic realm="Fanvil"'})
+        return web.Response(text="Requested")
+
     app = web.Application()
     app.router.add_route("*", "/", root)
     app.router.add_get("/key==nonce", nonce)
     app.router.add_get("/information.htm", information)
     app.router.add_get("/callInfo.xml", calls)
-    app.router.add_route("*", "/provision.htm", provision)
+    app.router.add_get("/provision.htm", provision)
+    app.router.add_get("/cgi-bin/ConfigManApp.com", command)
     server = await aiohttp_server(app)
     state.origin = str(server.make_url("/"))
     state.phone = {"mac": "001122334455", "admin_username": "fixture-admin", "admin_password": "fixture-secret"}
@@ -130,38 +140,39 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
     return state
 
 
-async def test_native_nonce_cookie_digest_and_single_provision_command(fanvil_http):
+async def test_native_nonce_cookie_digest_and_single_AutoP_command(fanvil_http):
     state = fanvil_http
     result = await state.run()
     assert result == {"method": "fanvil_native_http", "request_status": "accepted", "firmware": "2.12.20"}
-    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
-    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
+    assert [path for path, _ in state.posts] == ["/"]
+    assert state.commands == [{"key": "AutoP"}] and state.command_auth == [True]
     assert state.gets.count("/callInfo.xml") == 2
     assert "fixture-secret" not in str(result) and SERVER not in str(result)
 
 
-async def test_public_frameset_still_requires_native_nonce_login_before_command(fanvil_http):
+async def test_two_fresh_frameset_operations_use_AutoP_without_GUI_nonce(fanvil_http):
     state = fanvil_http
-    state.preauthenticated = True
-    result = await state.run()
-    assert result["request_status"] == "accepted"
-    assert state.gets == ["/", "/key==nonce", "/information.htm", "/callInfo.xml", "/provision.htm", "/callInfo.xml"]
-    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
-    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
+    state.preauthenticated = state.basic_calls = True
+    for _ in range(2):
+        result = await state.run()
+        assert result["request_status"] == "accepted"
+    assert state.gets == ["/", "/information.htm", "/callInfo.xml", "/provision.htm", "/callInfo.xml"] * 2
+    assert not state.posts and "/key==nonce" not in state.gets
+    assert state.commands == [{"key": "AutoP"}] * 2
+    assert state.command_auth == [True, True]
+    assert state.basic_call_requests == [True] * 4
 
 
-async def test_frameset_and_information_do_not_replace_call_info_Basic_authentication(fanvil_http):
+async def test_public_reads_do_not_remove_separate_Basic_API_authentication(fanvil_http):
     state = fanvil_http
     state.preauthenticated = state.basic_calls = True
     state.language_cookie = "it"
     result = await state.run()
     assert result["request_status"] == "accepted"
-    assert state.basic_call_requests == [False, True, True]
-    assert state.provision_auth == [True, True]
-    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
-    assert state.posts[0][1]["CurLanguage"] == "it"
-    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
-    assert state.gets.count("/key==nonce") == 1
+    assert state.basic_call_requests == [True, True]
+    assert state.provision_auth == [True]
+    assert not state.posts and state.commands == [{"key": "AutoP"}]
+    assert "/key==nonce" not in state.gets
 
 
 async def test_bad_Basic_credentials_are_tried_once_and_never_dispatch_a_command(fanvil_http):
@@ -170,31 +181,29 @@ async def test_bad_Basic_credentials_are_tried_once_and_never_dispatch_a_command
     state.basic_password = "different-fixture-password"
     with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
         await state.run()
-    assert state.basic_call_requests == [False, True]
-    assert [path for path, _ in state.posts] == ["/"] and not state.provision_auth
+    assert state.basic_call_requests == [True]
+    assert not state.posts and not state.provision_auth and not state.commands
 
 
-async def test_Basic_challenge_retry_rechecks_current_before_sending_credentials(fanvil_http):
+async def test_API_guard_rechecks_current_before_sending_command(fanvil_http):
     state = fanvil_http
     state.preauthenticated = state.basic_calls = True
     def revoke():
         state.revoked = True
-    state.on_challenge = revoke
+    state.on_calls = revoke
     with pytest.raises(ValueError, match="phone_configuration_changed"):
         await state.run()
-    assert state.basic_call_requests == [False] and [path for path, _ in state.posts] == ["/"]
+    assert state.basic_call_requests == [True] and not state.posts and not state.commands
 
 
-@pytest.mark.parametrize("previous_challenge", [False, True])
-async def test_final_POST_401_Basic_is_never_replayed(fanvil_http, previous_challenge):
+@pytest.mark.parametrize("status", [401, 503])
+async def test_final_AutoP_error_is_never_replayed(fanvil_http, status):
     state = fanvil_http
     state.preauthenticated = True
-    state.basic_calls = previous_challenge
-    state.final_status = 401
+    state.final_status = status
     with pytest.raises(ValueError, match="phone_apply_http_error"):
         await state.run()
-    assert [path for path, _ in state.posts] == ["/", "/provision.htm"]
-    assert state.posts[-1][1] == {"autoProvisionNow": "autopNow"}
+    assert not state.posts and state.commands == [{"key": "AutoP"}]
 
 
 @pytest.mark.parametrize("field,value,code", [
@@ -208,25 +217,26 @@ async def test_preauthenticated_landing_never_bypasses_independent_guards(fanvil
     setattr(state, field, value)
     with pytest.raises(ValueError, match=code):
         await state.run()
-    assert [path for path, _ in state.posts] == ["/"] and state.gets.count("/key==nonce") == 1
+    assert not state.posts and not state.commands and "/key==nonce" not in state.gets
+    if field in {"mac", "information_status"}:
+        assert not state.basic_call_requests and not state.provision_auth and not state.command_auth
 
 
-async def test_unknown_landing_does_not_bypass_failed_native_login(fanvil_http):
+async def test_unknown_landing_is_not_proof_of_access(fanvil_http):
     state = fanvil_http
     state.unknown_landing = True
-    state.auth_ok = False
     with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
         await state.run()
-    assert [path for path, _ in state.posts] == ["/"]
-    assert state.gets == ["/", "/key==nonce", "/information.htm"]
+    assert not state.posts and not state.commands and state.gets == ["/", "/information.htm"]
 
 
-async def test_final_native_response_login_form_is_not_an_accepted_application(fanvil_http):
+async def test_final_command_login_form_is_not_an_accepted_application(fanvil_http):
     state = fanvil_http
     state.final_login = True
     with pytest.raises(ValueError, match="phone_apply_authentication_failed"):
         await state.run()
-    assert [path for path, _body in state.posts] == ["/", "/provision.htm"]
+    assert [path for path, _ in state.posts] == ["/"]
+    assert state.commands == [{"key": "AutoP"}]
 
 
 @pytest.mark.parametrize("field,value,code", [
@@ -237,12 +247,12 @@ async def test_final_native_response_login_form_is_not_an_accepted_application(f
     ("server", "https://other.invalid/", "phone_apply_provisioning_not_configured"),
     ("redirect", True, "phone_apply_authentication_failed"),
 ])
-async def test_unverified_identity_auth_or_provisioning_never_posts_apply(fanvil_http, field, value, code):
+async def test_unverified_identity_auth_or_provisioning_never_dispatches_apply(fanvil_http, field, value, code):
     state = fanvil_http
     setattr(state, field, value)
     with pytest.raises(ValueError, match=code):
         await state.run()
-    assert not any(path == "/provision.htm" for path, _ in state.posts)
+    assert not state.commands
 
 
 @pytest.mark.parametrize("late", [False, True])
@@ -252,8 +262,7 @@ async def test_busy_native_phone_is_deferred_before_application(fanvil_http, lat
     state.calls = 0 if late else 1
     with pytest.raises(ValueError, match="phone_apply_waiting_idle"):
         await state.run()
-    assert not any(path == "/provision.htm" for path, _ in state.posts)
-    assert [path for path, _ in state.posts] == ["/"]
+    assert not state.commands and [path for path, _ in state.posts] == ["/"]
 
 
 @pytest.fixture
@@ -262,7 +271,7 @@ async def rapidlogic_http(socket_enabled):
     from urllib.parse import parse_qs, urlsplit
 
     state = SimpleNamespace(requests=[], errors=[], handlers=set(), writers=set(),
-                            connections=0, auth_posts=0, triggers=0)
+                            connections=0, auth_posts=0, triggers=0, drop_command=False)
 
     async def handle(reader, writer):
         task = asyncio.current_task()
@@ -305,9 +314,12 @@ async def rapidlogic_http(socket_enabled):
                         '<input name="FTP_AutoFileName_R" value="001122334455.cfg">'
                         '<select name="FTP_AutoDownloadMode"><option value="1" selected>Enabled</option></select>').encode()
                 else:
-                    assert path == "/provision.htm" and method == "POST"
-                    assert parse_qs(payload.decode()) == {"autoProvisionNow": ["autopNow"]}
+                    assert path == "/cgi-bin/ConfigManApp.com" and method == "GET"
+                    assert parse_qs(urlsplit(target).query) == {"key": ["AutoP"]}
+                    assert headers.get("authorization") == "basic " + b64encode(b"fixture-admin:fixture-secret").decode().lower()
                     state.triggers += 1
+                    if state.drop_command:
+                        break  # Side effect occurred; no response reaches client.
                     body = b"Requested"
                 # With no explicit policy, the real server advertises chunking
                 # but writes unframed HTML. Both explicit policies frame it.
@@ -372,7 +384,23 @@ async def test_rapidlogic_explicit_keepalive_completes_one_connection_auth_and_t
     assert [(method, path) for method, path, _policy, _conn in state.requests] == [
         ("GET", "/"), ("GET", "/key==nonce"), ("POST", "/"),
         ("GET", "/information.htm"), ("GET", "/callInfo.xml"), ("GET", "/provision.htm"),
-        ("GET", "/callInfo.xml"), ("POST", "/provision.htm")]
+        ("GET", "/callInfo.xml"), ("GET", "/cgi-bin/ConfigManApp.com")]
+
+
+async def test_AutoP_disconnect_after_receipt_cannot_trigger_aiohttp_automatic_GET_replay(rapidlogic_http):
+    from custom_components.voip_stack.physical_phone_apply import async_apply_fanvil
+
+    state = rapidlogic_http
+    state.drop_command = True
+    phone = {"mac": "001122334455", "admin_username": "fixture-admin", "admin_password": "fixture-secret"}
+    profile = {"capabilities": {"apply": {"method": "fanvil_native_http", "model": "X3U Pro", "firmwares": ["2.12.20"]}},
+        "outputs": [{"path": "{mac}.cfg"}]}
+    async def current():
+        return True
+    async with ClientSession(cookie_jar=CookieJar(unsafe=True)) as session:
+        with pytest.raises(ValueError, match="phone_apply_result_uncertain"):
+            await async_apply_fanvil(session, state.origin, phone, profile, SERVER, still_current=current)
+    assert state.triggers == 1 and state.connections == 1
 
 
 async def test_rapidlogic_close_branch_ends_the_stream_before_a_next_auth_request(rapidlogic_http):
@@ -561,18 +589,19 @@ def use_real_native_HTTP(state, peer, monkeypatch):
     from custom_components.voip_stack.physical_phone_provisioning import phone_provisioning_url
 
     peer.password = state.data["admin_password"]
+    peer.basic_password = state.data["admin_password"]
     peer.server = phone_provisioning_url(state.lab.hass, state.lab.entry, state.data)
     monkeypatch.setattr(physical_phone_apply, "async_apply_fanvil", state.real_apply)
     monkeypatch.setattr(state.manager, "_apply_target", AsyncMock(return_value=(peer.origin, "")))
 
 
-async def test_HTTP_POST_received_before_busy_ACK_is_never_replayed(apply_owner, fanvil_http, monkeypatch):
+async def test_HTTP_AutoP_received_before_busy_ACK_is_never_replayed(apply_owner, fanvil_http, monkeypatch):
     state, peer = apply_owner, fanvil_http
     use_real_native_HTTP(state, peer, monkeypatch)
     received, reply = asyncio.Event(), asyncio.Event()
 
     async def received_trigger():
-        if sum(path == "/provision.htm" for path, _ in peer.posts) == 1:
+        if len(peer.commands) == 1:
             state.lab.runtime.endpoints.claim_call("sip:first", "owned-ACK-race")
             received.set()
             await reply.wait()
@@ -587,7 +616,7 @@ async def test_HTTP_POST_received_before_busy_ACK_is_never_replayed(apply_owner,
         state.lab.runtime.endpoints.release_call("sip:first", "owned-ACK-race")
         state.manager.schedule({state.data["phone_id"]})
         await state.lab.hass.async_block_till_done()
-        assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+        assert len(peer.commands) == 1
         public = state.manager.public_state(state.data["phone_id"])
         assert public["apply_attempted_revision"] == revision
         assert public["apply_status"] == "requested"
@@ -621,17 +650,18 @@ async def test_uncertain_HTTP_result_requires_explicit_admin_retry(apply_owner, 
     async_fire_time_changed_exact(state.lab.hass, dt_util.utcnow() + timedelta(seconds=120))
     state.data = {**state.data, "admin_password": "changed-private-fixture"}
     peer.password = state.data["admin_password"]
+    peer.basic_password = state.data["admin_password"]
     state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
     await state.manager.async_reconcile()
     await state.lab.hass.async_block_till_done()
-    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+    assert len(peer.commands) == 1
     call = ServiceCall(state.lab.hass, "voip_stack", "get_phone_provisioning_state",
         {"phone_id": state.data["phone_id"]}, context=Context(user_id=hass_admin_user.id))
     report = await async_provisioning_state(call)
     assert report["apply_status"] == "uncertain" and report["apply_attempted_revision"] == revision
     await async_provision_phone(call)
     await state.lab.hass.async_block_till_done()
-    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 2
+    assert len(peer.commands) == 2
     assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "requested"
 
 
@@ -657,11 +687,11 @@ async def test_external_phone_busy_is_rechecked_every_60s_until_idle_without_cal
         await state.lab.hass.async_block_till_done()
         assert peer.gets.count("/callInfo.xml") > previous_checks
         assert state.manager._idle_retry_cancel is not None
-        assert not any(path == "/provision.htm" for path, _ in peer.posts)
+        assert not peer.commands
     peer.calls = 0
     async_fire_time_changed_exact(state.lab.hass, now + timedelta(seconds=244))
     await state.lab.hass.async_block_till_done()
-    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+    assert len(peer.commands) == 1
     assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "requested"
     assert state.manager._idle_retry_cancel is None
 
@@ -732,7 +762,7 @@ async def test_old_HTTP_ack_does_not_mark_new_revision_or_revive_deleted_phone(a
             assert b"A newer revision" in data
         else:
             assert not public and data is None and state.data["phone_id"] not in state.manager.files
-        assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+        assert len(peer.commands) == 1
     finally:
         reply.set()
         await asyncio.gather(task, return_exceptions=True)

@@ -16,10 +16,10 @@
 - Track a provisioning command once it may have reached the phone. A call or
   configuration change after dispatch cannot silently replay that revision;
   an uncertain response is reported for an explicit administrator retry.
-- Establish the native Fanvil login for every application session, even when
-  its public frameset already opens. Answer separate HTTP Basic challenges on
-  protected status reads, scoped to the configured origin. Authentication
-  retries never replay the apply command.
+- Request Fanvil updates through its documented, authenticated `AutoP` command.
+  Keep native identity and idle checks, and avoid relying on a GUI login session
+  for configuration writes. Suppress automatic HTTP retries for this command,
+  including the client's normal retry of a GET after a connection failure.
 - Isolate conflicting ESPHome phone names and report the affected device through
   HA Repairs, allowing other phones and directory updates to continue.
 - Surface supported diagnostic codes, including incompatible LDAP transport,

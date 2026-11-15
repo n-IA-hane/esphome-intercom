@@ -8,7 +8,7 @@ import re
 import time
 from xml.etree import ElementTree
 
-from aiohttp import BasicAuth
+from aiohttp import BasicAuth, ClientOSError, ServerDisconnectedError
 from yarl import URL
 
 MAX_PAGE_BYTES = 256 * 1024
@@ -70,7 +70,7 @@ class _NativeForm(HTMLParser):
 
 async def async_apply_fanvil(session, origin, phone, profile, expected_server, *, still_current,
                              on_dispatch=None):
-    """Request one download, after native login, identity and idle validation.
+    """Request one native AutoP download after identity and idle validation.
 
     The caller owns the HTTP session and the revision. A successful response
     confirms the request only; file delivery and device adoption remain distinct.
@@ -98,41 +98,38 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
         if not await still_current():
             raise PhoneApplyDeferred("phone_configuration_changed")
 
+    async def no_command_replay(request, handler):
+        # AutoP is a vendor side effect despite its GET verb. aiohttp normally
+        # retries a GET on these errors; its outcome is uncertain here instead.
+        try:
+            return await handler(request)
+        except (ClientOSError, ServerDisconnectedError) as error:
+            raise PhoneApplyError("phone_apply_result_uncertain") from error
+
     async def request(method, path, *, data=None, final_command=False):
-        nonlocal basic_auth
         await current()
         url = base.join(URL(path))
         if url.origin() != base.origin():
             raise PhoneApplyError("phone_apply_target_unverified")
         if final_command and on_dispatch is not None:
             on_dispatch()
-        retry_basic = False
         async with session.request(method, url, data=data, auth=basic_auth,
-                                   headers={"Connection": "keep-alive"}, allow_redirects=False) as response:
+                                   headers={"Connection": "keep-alive"}, allow_redirects=False,
+                                   middlewares=(no_command_replay,) if final_command else None) as response:
             if response.status in {301, 302, 303} and method == "POST" and path == "/":
                 redirect = url.join(URL(response.headers.get("Location", "")))
                 if redirect.origin() != base.origin() or redirect.path not in {"/", "/index.htm", "/information.htm"}:
                     raise PhoneApplyError("phone_apply_authentication_failed")
                 return await request("GET", str(redirect.relative()))
-            if (response.status == 401 and method == "GET" and not final_command and basic_auth is None
-                    and any(re.match(r"(?i)^Basic(?:\s|$)", challenge.strip())
-                            for challenge in response.headers.getall("WWW-Authenticate", []))):
-                # Some native pages require HTTP authentication even when the
-                # GUI frameset is already authorized. Retry only the safe GET.
-                basic_auth = BasicAuth(username, password)
-                retry_basic = True
-            elif response.status == 401 and method == "GET" and basic_auth is not None:
+            if response.status == 401 and not final_command and basic_auth is not None:
                 raise PhoneApplyError("phone_apply_authentication_failed")
             elif response.status != 200:
                 raise PhoneApplyError("phone_apply_http_error")
             content = bytearray()
-            if not retry_basic:
-                async for chunk in response.content.iter_chunked(8192):
-                    content.extend(chunk)
-                    if len(content) > MAX_PAGE_BYTES:
-                        raise PhoneApplyError("phone_apply_response_invalid")
-        if retry_basic:
-            return await request(method, path, data=data)
+            async for chunk in response.content.iter_chunked(8192):
+                content.extend(chunk)
+                if len(content) > MAX_PAGE_BYTES:
+                    raise PhoneApplyError("phone_apply_response_invalid")
         # The command might already have taken effect. A call or configuration
         # change during its ACK cannot turn it back into a safe deferred request.
         if not final_command:
@@ -152,21 +149,20 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
 
     login = _NativeForm()
     login.feed(await request("GET", "/"))
-    # A public frameset/information page does not authorize native GUI writes.
-    # Each operation establishes its own nonce session, independently of Basic
-    # authentication required by protected status APIs.
-    language_cookie = session.cookie_jar.filter_cookies(base).get("CUR_LANG")
-    language = (login.values.get("CurLanguage") or login.values.get("langSelect")
-                or (language_cookie.value if language_cookie is not None else ""))
-    if language:
-        session.cookie_jar.update_cookies({"CUR_LANG": language}, response_url=base)
-    nonce = await request("GET", "/key==nonce?now=" + str(int(time.time() * 1000)))
-    if not nonce or len(nonce) > 256 or any(ord(char) < 33 or ord(char) == 127 for char in nonce):
-        raise PhoneApplyError("phone_apply_authentication_failed")
-    session.cookie_jar.update_cookies({"auth": nonce, "CUR_LANGCLICK": "false"}, response_url=base)
-    encoded = username + ":" + md5((username + ":" + password + ":" + nonce).encode(), usedforsecurity=False).hexdigest()
-    await request("POST", "/", data={"encoded": encoded,
-        "CurLanguage": language, "ReturnPage": "/"})
+    # GUI login authorizes only the native read pages when they require it.
+    # The ActiveURI command uses separate HTTP authentication after MAC checks.
+    if "logonButton" in login.ids:
+        language_cookie = session.cookie_jar.filter_cookies(base).get("CUR_LANG")
+        language = (login.values.get("CurLanguage") or login.values.get("langSelect")
+                    or (language_cookie.value if language_cookie is not None else ""))
+        session.cookie_jar.update_cookies({"CUR_LANG": language, "CUR_LANGCLICK": "false"}, response_url=base)
+        nonce = await request("GET", "/key==nonce?now=" + str(int(time.time() * 1000)))
+        if not nonce or len(nonce) > 256 or any(ord(char) < 33 or ord(char) == 127 for char in nonce):
+            raise PhoneApplyError("phone_apply_authentication_failed")
+        session.cookie_jar.update_cookies({"auth": nonce}, response_url=base)
+        encoded = username + ":" + md5((username + ":" + password + ":" + nonce).encode(), usedforsecurity=False).hexdigest()
+        await request("POST", "/", data={"encoded": encoded,
+            "CurLanguage": language, "ReturnPage": "/"})
     information = await request("GET", "/information.htm")
     information_form = _NativeForm()
     information_form.feed(information)
@@ -179,6 +175,7 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
     firmware = next((version for version in versions if re.search(r"(?<![\d.])" + re.escape(version) + r"(?![\d.])", information)), "")
     if phone["mac"] not in macs or not model or model not in normalized or not firmware:
         raise PhoneApplyError("phone_apply_identity_mismatch")
+    basic_auth = BasicAuth(username, password)
     await idle()
     form = _NativeForm()
     form.feed(await request("GET", "/provision.htm"))
@@ -189,8 +186,7 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
         raise PhoneApplyError("phone_apply_provisioning_not_configured")
     await idle()
     result = _NativeForm()
-    result.feed(await request("POST", "/provision.htm", data={"autoProvisionNow": "autopNow"},
-                              final_command=True))
+    result.feed(await request("GET", "/cgi-bin/ConfigManApp.com?key=AutoP", final_command=True))
     if "logonButton" in result.ids:
         raise PhoneApplyError("phone_apply_authentication_failed")
     return {"method": "fanvil_native_http", "request_status": "accepted", "firmware": firmware}

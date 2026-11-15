@@ -254,19 +254,23 @@ not proof of registration or device identity. The adapter checks the expected
 MAC, model and firmware before sending its native command and can follow a
 previously paired SIP registration instance when its address changes.
 
-The Fanvil native method uses its authenticated Auto Provision form and an
-explicit HTTP connection policy for the observed RapidLogic framing and reuse
-behavior. The native call-count checks run after authentication and again
-immediately before the command. This compatibility handling is local to that method and
-does not relax HA's HTTP parser or TLS settings. Every application session
-performs the native nonce login; an accessible frameset is not proof of permission
-to change configuration. Some Fanvil pages open while
-the call-state API separately requires HTTP Basic authentication. A challenge
-on a read may use the existing administrator credentials once, scoped to that
-phone origin. Redirects never receive those credentials, and the final apply
-POST is never replayed to satisfy a challenge. It sends no explicit reboot,
-reset, call, keypress or PoE command. Physical observation is still required to
-qualify application and uptime continuity for a model and firmware.
+The Fanvil native method uses its documented Active URI command
+`GET /cgi-bin/ConfigManApp.com?key=AutoP`, authenticated with the configured
+administrator credentials after the MAC, model and firmware have been checked.
+The native read pages may require GUI login; that session does not authorize the
+command, which uses separate HTTP authentication on the same phone origin.
+Call-count and provisioning-server checks remain in place, with an idle check
+immediately before dispatch. Native read compatibility stays local to this
+adapter and does not relax HA's HTTP parser or TLS settings.
+
+Although the vendor command uses GET, it changes device state. The adapter
+therefore suppresses both application retries and aiohttp's normal connection
+retry for GET. A command whose response is lost remains uncertain and requires
+an explicit administrative decision. No alternate GUI POST is attempted.
+Fanvil documents AutoP separately from its reboot and factory-reset commands.
+See [Active URI specification, sections 3.3 and 3.4](https://www.fanvil.com/Uploads/Temp/download/20200717/5f1124d378924.pdf).
+Actual download, setting readback and uptime continuity are still required to
+qualify a model and firmware; command acceptance alone does not establish them.
 
 ## State and evidence
 
