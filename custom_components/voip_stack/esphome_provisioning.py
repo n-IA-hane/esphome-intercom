@@ -142,6 +142,9 @@ class EspHomeProvisioner:
     @callback
     def _device_changed(self, event):
         if event.data.get("action") == "remove":
+            from .repairs import async_sync_esphome_endpoint_collision_issue
+
+            async_sync_esphome_endpoint_collision_issue(self.hass, event.data["device_id"])
             self._removed_devices.add(event.data["device_id"])
             self._refresh_accounts()
         self.schedule()

@@ -1,5 +1,13 @@
 # This final section is included only for VoIP. Video follows the real call pipeline.
+defaults:
+  _settings_switches: !include switch_controls.yaml
 substitutions:
+  _settings_auto_answer_widgets: ${ _settings_switches['auto_answer']['widgets'] }
+  _settings_auto_answer_package: ${ _settings_switches['auto_answer']['package'] }
+  _settings_auto_answer_callback: ${ _settings_switches['auto_answer']['callback'] }
+  _settings_dnd_widgets: ${ _settings_switches['dnd']['widgets'] }
+  _settings_dnd_package: ${ _settings_switches['dnd']['package'] }
+  _settings_dnd_callback: ${ _settings_switches['dnd']['callback'] }
   _settings_voip_heading:
     - obj:
         width: ${settings_row_width}
@@ -14,71 +22,8 @@ substitutions:
         text_color: 8956671
         text_font: ${_settings_font}
         long_mode: WRAP
-  _settings_voip_controls:
-    - obj:
-        width: ${_settings_control_width}
-        height: SIZE_CONTENT
-        min_height: ${_settings_row_height}
-        clickable: false
-        bg_opa: TRANSP
-        border_width: 0
-        pad_all: 0
-        scrollable: false
-        layout:
-          type: FLEX
-          flex_flow: ROW
-          flex_align_main: SPACE_BETWEEN
-          flex_align_cross: CENTER
-        widgets:
-          - label:
-              width: ${_settings_label_width}
-              text: Auto answer
-              text_align: LEFT
-              text_color: 16777215
-              text_font: ${_settings_font}
-              long_mode: WRAP
-          - switch:
-              id: ui_auto_answer_sw
-              width: ${_settings_switch_width}
-              height: ${_settings_switch_height}
-              on_change:
-                - lambda: !lambda |-
-                    if (x == id(auto_answer_switch).state) return;
-                    if (x) id(auto_answer_switch).turn_on();
-                    else id(auto_answer_switch).turn_off();
-                - script.execute: settings_sync_auto_answer
-    - obj:
-        width: ${_settings_control_width}
-        height: SIZE_CONTENT
-        min_height: ${_settings_row_height}
-        clickable: false
-        bg_opa: TRANSP
-        border_width: 0
-        pad_all: 0
-        scrollable: false
-        layout:
-          type: FLEX
-          flex_flow: ROW
-          flex_align_main: SPACE_BETWEEN
-          flex_align_cross: CENTER
-        widgets:
-          - label:
-              width: ${_settings_label_width}
-              text: Do not disturb
-              text_align: LEFT
-              text_color: 16777215
-              text_font: ${_settings_font}
-              long_mode: WRAP
-          - switch:
-              id: ui_dnd_sw
-              width: ${_settings_switch_width}
-              height: ${_settings_switch_height}
-              on_change:
-                - lambda: !lambda |-
-                    if (x == id(dnd_switch).state) return;
-                    if (x) id(dnd_switch).turn_on();
-                    else id(dnd_switch).turn_off();
-                - script.execute: settings_sync_dnd
+  _settings_voip_controls: ${ _settings_auto_answer_widgets + _settings_dnd_widgets + _settings_conference_ring_widgets }
+  _settings_conference_ring_widgets:
     - obj:
         width: ${_settings_control_width}
         height: SIZE_CONTENT
@@ -114,62 +59,14 @@ substitutions:
     - script.execute: settings_sync_auto_answer
     - script.execute: settings_sync_dnd
     - script.execute: settings_sync_conference_ring
-  _settings_video_widgets:
-    - obj:
-        width: ${_settings_control_width}
-        height: SIZE_CONTENT
-        min_height: ${_settings_row_height}
-        clickable: false
-        bg_opa: TRANSP
-        border_width: 0
-        pad_all: 0
-        scrollable: false
-        layout:
-          type: FLEX
-          flex_flow: ROW
-          flex_align_main: SPACE_BETWEEN
-          flex_align_cross: CENTER
-        widgets:
-          - label:
-              width: ${_settings_label_width}
-              text: Send video
-              text_align: LEFT
-              text_color: 16777215
-              text_font: ${_settings_font}
-              long_mode: WRAP
-          - switch:
-              id: ui_video_send_sw
-              width: ${_settings_switch_width}
-              height: ${_settings_switch_height}
-              on_change:
-                - lambda: !lambda |-
-                    if (x == id(voip_video_send).state) return;
-                    if (x) id(voip_video_send).turn_on();
-                    else id(voip_video_send).turn_off();
-                - script.execute: settings_sync_video_send
+  _settings_video_widgets: ${ _settings_switches['video']['widgets'] }
   _settings_video_sync:
     - script.execute: settings_sync_video_send
-  _settings_video_package:
-    script:
-      - id: settings_sync_video_send
-        then:
-          - if:
-              condition:
-                lambda: !lambda |-
-                  return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
-                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
-                         lv_obj_has_state(id(ui_video_send_sw), LV_STATE_CHECKED) != id(voip_video_send).state;
-              then:
-                - lvgl.widget.update:
-                    id: ui_video_send_sw
-                    state:
-                      checked: !lambda |-
-                        return id(voip_video_send).state;
-  _settings_video_callback: id(voip_video_send).add_on_state_callback([](bool) { id(settings_sync_video_send).execute();
-    });
+  _settings_video_package: ${ _settings_switches['video']['package'] }
+  _settings_video_callback: ${ _settings_switches['video']['callback'] }
   _settings_voip_callback: !lambda |-
-    id(auto_answer_switch).add_on_state_callback([](bool) { id(settings_sync_auto_answer).execute(); });
-    id(dnd_switch).add_on_state_callback([](bool) { id(settings_sync_dnd).execute(); });
+    ${ _settings_auto_answer_callback }
+    ${ _settings_dnd_callback }
     if (auto *setting = id(phone).get_conference_ring_switch())
       setting->add_on_state_callback([](bool) { id(settings_sync_conference_ring).execute(); });
     ${ _settings_video_callback if _settings_video else '' }
@@ -200,48 +97,21 @@ substitutions:
         long_mode: WRAP
   _settings_refresh_voip: ${ _settings_voip_sync + (_settings_video_sync if _settings_video
     else []) }
-script:
-  - id: settings_sync_auto_answer
-    then:
-      - if:
-          condition:
-            lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
-                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
-                         lv_obj_has_state(id(ui_auto_answer_sw), LV_STATE_CHECKED) != id(auto_answer_switch).state;
-          then:
-            - lvgl.widget.update:
-                id: ui_auto_answer_sw
-                state:
-                  checked: !lambda |-
-                    return id(auto_answer_switch).state;
-  - id: settings_sync_dnd
-    then:
-      - if:
-          condition:
-            lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
-                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
-                         lv_obj_has_state(id(ui_dnd_sw), LV_STATE_CHECKED) != id(dnd_switch).state;
-          then:
-            - lvgl.widget.update:
-                id: ui_dnd_sw
-                state:
-                  checked: !lambda |-
-                    return id(dnd_switch).state;
-  - id: settings_sync_conference_ring
-    then:
-      - if:
-          condition:
-            lambda: !lambda |-
-              return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
-                         !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
-                         lv_obj_has_state(id(ui_conference_ring_sw), LV_STATE_CHECKED) != id(phone).get_conference_ring();
-          then:
-            - lvgl.widget.update:
-                id: ui_conference_ring_sw
-                state:
-                  checked: !lambda |-
-                    return id(phone).get_conference_ring();
+  _settings_conference_ring_scripts:
+    - id: settings_sync_conference_ring
+      then:
+        - if:
+            condition:
+              lambda: !lambda |-
+                return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                           !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                           lv_obj_has_state(id(ui_conference_ring_sw), LV_STATE_CHECKED) != id(phone).get_conference_ring();
+            then:
+              - lvgl.widget.update:
+                  id: ui_conference_ring_sw
+                  state:
+                    checked: !lambda |-
+                      return id(phone).get_conference_ring();
+script: ${ _settings_auto_answer_package['script'] + _settings_dnd_package['script'] + _settings_conference_ring_scripts }
 packages:
   video: ${ _settings_video_package if _settings_video else {} }

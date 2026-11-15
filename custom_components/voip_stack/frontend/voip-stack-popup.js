@@ -288,12 +288,12 @@ export class VoipStackPopup extends HTMLElement {
     this.syncPreference();
     if (!this.receivingPopups) return;
     if (state.endpoint_id !== this.phone?.endpoint_id || state.device_id !== this.phone?.device_id) return;
-    if (this.state && !softphoneSnapshotSupersedes(this.state, state)) return;
+    if (state.kind !== "closed" && this.state && !softphoneSnapshotSupersedes(this.state, state)) return;
     this.state = state;
     const incoming = activeCall(state) && state.available !== false &&
       ["ringing", "incoming"].includes(state.state) && state.direction === "incoming";
     engine.setRingtoneRequest("voip-stack-global-popup", incoming, true);
-    void engine.syncOwnedSoftphoneState(this.phone, state).catch(error => { this.error = error?.message || String(error); });
+    if (state.kind !== "closed") void engine.syncOwnedSoftphoneState(this.phone, state).catch(error => { this.error = error?.message || String(error); });
     if (!activeCall(state)) { this.dialog?.closeDialog(false); this.minimized = false; }
     else if (incoming && this._announcedCall !== state.call_id) { this._announcedCall = state.call_id; this.open(); }
     else if (state.state === "in_call" && !this.dialog?._dialog.open) this.minimized = true;

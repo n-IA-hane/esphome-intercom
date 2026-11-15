@@ -42,11 +42,11 @@ def _outcome(result: str) -> DialOutcome:
 
 def account_offer_outcome(results: list[str], *, pending: bool) -> str:
     """Reduce a completed account offer, rather than one physical Contact."""
-    from .dial_fork import DialForkController, terminal_reason
+    from .dial_fork import reduce_dial_failures, terminal_reason
 
     if pending or "timeout" in results:
         return "timeout"
-    outcome = DialForkController._reduce_failures([_outcome(result) for result in results])
+    outcome = reduce_dial_failures([_outcome(result) for result in results])
     return terminal_reason(outcome.disposition, "transport_unreachable")
 
 

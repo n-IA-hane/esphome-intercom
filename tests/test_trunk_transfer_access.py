@@ -15,6 +15,34 @@ from custom_components.voip_stack.sip_client import SipCallClient, SipTransferRe
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("kind", ["queue", "paging"])
+@pytest.mark.parametrize("explicit_uri", [False, True])
+async def test_restricted_source_cannot_delegate_local_application_without_its_origin(kind, explicit_uri):
+    from custom_components.voip_stack.core.sip import SipUri
+
+    identity = f"{kind}:local"
+    runtime, client = _runtime(entries=[{"id": identity, "name": "Application",
+        "metadata": {"virtual_endpoint": kind}}])
+    runtime.transport_config.update(advertise_host="192.0.2.1", sip_port=5060)
+    destination = str(SipUri(identity, "192.0.2.1", 5060)) if explicit_uri else "Application"
+    result = await call_transfer.async_transfer_call(runtime, call_transfer.CallTransferRequest("call", destination))
+    assert not result.accepted and result.status == 403 and result.state == "external_calls_disabled"
+    client.refer.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["queue", "paging", "ring"])
+async def test_disabled_local_transfer_target_is_rejected_before_refer(kind):
+    from custom_components.voip_stack.core import sip
+
+    metadata = {"group_type": "ring"} if kind == "ring" else {"virtual_endpoint": kind}
+    runtime, client = _runtime(blocked=False, entries=[{"id": "disabled", "name": "Disabled",
+        "enabled": False, "metadata": metadata}])
+    runtime.transport_config.update(advertise_host="192.0.2.1", sip_port=5060)
+    with pytest.raises(sip.SipError, match="unavailable or disabled"):
+        await call_transfer.async_transfer_call(runtime, call_transfer.CallTransferRequest("call", "Disabled"))
+    client.refer.assert_not_awaited()
+
+
 def _runtime(*, blocked=True, remote="sip:desk@192.0.2.20", entries=None):
     client = Mock(spec=SipCallClient)
     client.dialog = SimpleNamespace(

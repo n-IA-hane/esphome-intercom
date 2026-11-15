@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from enum import StrEnum
 import importlib.util
 from pathlib import Path
 import sys
@@ -18,56 +16,18 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
 PACKAGE = "voip_stack_ring_group_fork_test"
 
 
-class _Disposition(StrEnum):
-    ANSWERED = "answered"
-    BUSY = "busy"
-    DND = "dnd"
-    DECLINED = "declined"
-    UNAVAILABLE = "unavailable"
-    TIMEOUT = "timeout"
-    MEDIA_INCOMPATIBLE = "media_incompatible"
-    AUTH_FAILED = "auth_failed"
-    CANCELLED = "cancelled"
-    SOURCE_CANCELLED = "source_cancelled"
-    REROUTE = "reroute"
-    PROTOCOL_ERROR = "protocol_error"
-
-
-class _CloseMode(StrEnum):
-    CANCEL_OR_BYE = "cancel_or_bye"
-    BYE = "bye"
-    CLOSE = "close"
-
-
-@dataclass(frozen=True, slots=True)
-class _Outcome:
-    disposition: _Disposition
-    status: int = 0
-    reason: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class _Candidate:
-    candidate_id: str
-    dial: object
-    close: object
-    tier: int = 0
-    order: int = 0
-    endpoint_id: str = ""
-    control: bool = False
-
-
 def _load_module():
     package = types.ModuleType(PACKAGE)
     package.__path__ = [str(MODULE.parent)]
     sys.modules[PACKAGE] = package
 
-    dial_fork = types.ModuleType(f"{PACKAGE}.dial_fork")
-    dial_fork.DialCandidate = _Candidate
-    dial_fork.DialDisposition = _Disposition
-    dial_fork.DialOutcome = _Outcome
-    dial_fork.LegCloseMode = _CloseMode
+    # Use the actual pure fork types and reducer; only transport adapters below
+    # remain controlled boundaries for this software test.
+    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.dial_fork", MODULE.with_name("dial_fork.py"))
+    assert spec is not None and spec.loader is not None
+    dial_fork = importlib.util.module_from_spec(spec)
     sys.modules[dial_fork.__name__] = dial_fork
+    spec.loader.exec_module(dial_fork)
 
     close_calls: list[tuple[object, bool]] = []
 
@@ -94,9 +54,24 @@ def _load_module():
 
 
 ring_group_fork, CLOSE_CALLS = _load_module()
+_Disposition = ring_group_fork.DialDisposition
+_Outcome = ring_group_fork.DialOutcome
+_CloseMode = ring_group_fork.LegCloseMode
+_Candidate = sys.modules[f"{PACKAGE}.dial_fork"].DialCandidate
 
 
 class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
+    def test_account_offer_keeps_pending_and_timeout_semantics(self):
+        for results, pending, expected in [
+            ([], True, "timeout"), (["busy"], True, "timeout"),
+            (["busy", "timeout"], False, "timeout"), (["dnd", "timeout"], False, "timeout"),
+            (["busy", "dnd"], False, "busy"), (["declined"], False, "declined"),
+            (["media_incompatible"], False, "media_incompatible"),
+            ([], False, "transport_unreachable"),
+        ]:
+            with self.subTest(results=results, pending=pending):
+                self.assertEqual(ring_group_fork.account_offer_outcome(results, pending=pending), expected)
+
     async def test_child_timeout_or_cancellation_preserves_the_call_owned_decision(self) -> None:
         for timeout in (.01, None):
             with self.subTest(timeout=timeout):

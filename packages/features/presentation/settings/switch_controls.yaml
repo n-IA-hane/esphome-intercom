@@ -1,0 +1,65 @@
+# Only compatible Switch owners use this compile-time binding.
+# Component-specific controls keep their explicit APIs.
+speaker_mute: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: speaker_mute
+    control_label: Speaker mute
+    widget_id: ui_speaker_mute_sw
+    sync_id: settings_sync_speaker_mute
+mic_mute: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: mute
+    control_label: Microphone mute
+    widget_id: ui_mic_mute_sw
+    sync_id: settings_sync_mic_mute
+aec: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: ${ settings_aec_switch_id or 'speaker_mute' }
+    control_label: Echo cancellation
+    widget_id: ui_aec_sw
+    sync_id: settings_sync_aec
+ns: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: ${ settings_ns_switch_id or 'speaker_mute' }
+    control_label: Noise suppression
+    widget_id: ui_ns_sw
+    sync_id: settings_sync_ns
+agc: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: ${ settings_agc_switch_id or 'speaker_mute' }
+    control_label: Automatic gain
+    widget_id: ui_agc_sw
+    sync_id: settings_sync_agc
+vad: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: ${ settings_vad_switch_id or 'speaker_mute' }
+    control_label: Voice activity detection
+    widget_id: ui_vad_sw
+    sync_id: settings_sync_vad
+auto_answer: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: auto_answer_switch
+    control_label: Auto answer
+    widget_id: ui_auto_answer_sw
+    sync_id: settings_sync_auto_answer
+dnd: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: dnd_switch
+    control_label: Do not disturb
+    widget_id: ui_dnd_sw
+    sync_id: settings_sync_dnd
+video: !include
+  file: switch_control.yaml
+  vars:
+    switch_id: voip_video_send
+    control_label: Send video
+    widget_id: ui_video_send_sw
+    sync_id: settings_sync_video_send

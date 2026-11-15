@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .core import sip, sip_transfer
 from .phone_endpoint import PhoneEndpoint
@@ -70,11 +70,12 @@ def _blind_target(
     if entries is None:
         entries = routing_snapshot(runtime)
     entry = find_entry(entries, raw)
-    if entry is not None and entry.metadata.get("virtual_endpoint") == "automation":
-        if not entry.enabled:
-            raise sip.SipError("transfer destination is disabled")
-        target = entry.extension or entry.id
-        return _local_transfer_target(runtime, target, entries)
+    if entry is not None:
+        route = resolve_ha_router(raw, entries, trunk_ready=True)
+        if route.action is RouteAction.REJECT:
+            raise sip.SipError("transfer destination is unavailable or disabled")
+        if route.action is RouteAction.GROUP or route.action.is_local_application:
+            return _local_transfer_target(runtime, entry.extension or entry.id, entries)
     endpoint = runtime.endpoints.resolve(raw)
     if endpoint is not None:
         # A logical phone belongs to this PBX's dial plan. Its current
@@ -82,9 +83,6 @@ def _blind_target(
         # ownership or the media negotiation performed by the PBX.
         return _local_transfer_target(runtime, _endpoint_user(endpoint, raw), entries)
     if entry is not None and entry.address:
-        route = resolve_ha_router(raw, entries)
-        if route.action is RouteAction.REJECT:
-            raise sip.SipError("transfer destination is unavailable")
         if route.sip_uri:
             return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(route.sip_uri)))
     if entry is not None and entry.sip_uri:
@@ -102,7 +100,7 @@ def _blind_target(
 
 def _local_transfer_target(runtime, target, entries):
     """Address a local extension through the PBX that owns its dial plan."""
-    uri = ha_uri_for(target, entries)
+    uri = ha_uri_for("HA", entries)
     if not uri:
         config = runtime.transport_config
         server = runtime.sip.component("udp_listener") if runtime.sip is not None else None
@@ -110,8 +108,10 @@ def _local_transfer_target(runtime, target, entries):
         if not host or host in {"0.0.0.0", "::"}:
             raise sip.SipError("Home Assistant SIP address is unavailable for transfer")
         port = int(config.get("sip_port") or getattr(server, "local_sip_port", 5060))
-        uri = ha_uri_for(target, entries, str(sip.SipUri("HA", host, port)))
-    return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(uri)))
+        uri = ha_uri_for("HA", entries, str(sip.SipUri("HA", host, port)))
+    # Resolve the PBX authority once, then let the SIP URI encoder preserve the
+    # exact dial-plan identity (including queue:/paging: IDs and named groups).
+    return sip_transfer.SipReferTarget(str(replace(sip.parse_sip_uri(uri), user=target)))
 
 
 def _inbound_server(runtime: VoipStackRuntime, call_id: str):
@@ -175,9 +175,8 @@ def _external_transfer_denied(runtime, call_id, target, remote_uri, local_uri=""
         # REFER delegates a new call to the peer, losing this session's
         # restricted origin. Groups and automation can create later trunk legs;
         # only HA-owned forwarding can retain the origin across those routes.
-        return route.action in {
-            RouteAction.TRUNK, RouteAction.GROUP, RouteAction.AUTOMATION,
-        } or is_any_trunk_uri(runtime, route.sip_uri)
+        return (route.action in {RouteAction.TRUNK, RouteAction.GROUP}
+                or route.action.is_local_application or is_any_trunk_uri(runtime, route.sip_uri))
     if not is_any_trunk_uri(runtime, remote_uri):
         return False
     # A provider executes REFER itself. Only a known direct local destination

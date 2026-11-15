@@ -3,6 +3,8 @@
 from hashlib import md5
 import asyncio
 from copy import deepcopy
+from datetime import timedelta
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -25,7 +27,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
 
     state = SimpleNamespace(mac="00:11:22:33:44:55", model="X3U Pro", firmware="2.12.20",
         calls=0, posts=[], gets=[], revoked=False, late_busy=False, auth_ok=True, redirect=False, server=SERVER,
-        preauthenticated=False, unknown_landing=False, information_status=200, final_login=False)
+        preauthenticated=False, unknown_landing=False, information_status=200, final_login=False,
+        password="fixture-secret", on_trigger=None)
     login_html = ('<form id="login" method="post"><input id="username"><input id="password" type="password">'
         '<input id="encoded" name="encoded"><input name="CurLanguage" value="it">'
         '<input id="logonButton" type="button" value="Login"></form>')
@@ -46,7 +49,7 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
             state.preauthenticated = False
             state.auth_ok = False
             return web.Response(text=login_html)
-        expected = "fixture-admin:" + md5(b"fixture-admin:fixture-secret:fixture-nonce", usedforsecurity=False).hexdigest()
+        expected = "fixture-admin:" + md5(("fixture-admin:" + state.password + ":fixture-nonce").encode(), usedforsecurity=False).hexdigest()
         assert form == {"encoded": expected, "CurLanguage": "it", "ReturnPage": "/"}
         assert request.cookies.get("auth") == "fixture-nonce"
         if state.redirect:
@@ -80,6 +83,8 @@ async def fanvil_http(aiohttp_server, hass, socket_enabled):
     async def provision(request):
         if request.method == "POST":
             state.posts.append((request.path, dict(await request.post())))
+            if state.on_trigger is not None:
+                await state.on_trigger()
             if state.final_login:
                 return web.Response(text=login_html)
             return web.Response(text="Requested")
@@ -346,6 +351,7 @@ async def apply_owner(cached_physical_config, monkeypatch, request):
     state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
     state.manager.catalog.async_profile.return_value = profile, templates
     await state.manager.async_prepare(state.data)
+    state.real_apply = physical_phone_apply.async_apply_fanvil
     state.apply = AsyncMock(return_value={"method": "fanvil_native_http"})
     monkeypatch.setattr(physical_phone_apply, "async_apply_fanvil", state.apply)
     state.profile = profile
@@ -396,11 +402,12 @@ async def test_a_new_revision_retires_the_inflight_candidate_before_native_post(
     entered, release = asyncio.Event(), asyncio.Event()
     posted = []
 
-    async def apply(_session, _origin, phone, _profile, _server, *, still_current):
+    async def apply(_session, _origin, phone, _profile, _server, *, still_current, on_dispatch):
         entered.set()
         await release.wait()
         if not await still_current():
             raise PhoneApplyDeferred("phone_configuration_changed")
+        on_dispatch()
         posted.append(phone["name"])
         return {"method": "fanvil_native_http"}
 
@@ -465,3 +472,264 @@ async def test_native_diagnostics_redact_administrative_credentials(hass):
     assert result["subentries"]["record"]["data"] == {
         "admin_username": "**REDACTED**", "admin_password": "**REDACTED**",
         "provisioning_token": "**REDACTED**", "enabled": True}
+
+
+async def test_idle_wakeup_uses_real_HA_bus_on_the_event_loop(apply_owner, monkeypatch):
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from custom_components.voip_stack.websocket_api import CALL_EVENT
+
+    state = apply_owner
+    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("fixture no multicast")))
+    await state.manager.async_start()
+    await state.lab.hass.async_block_till_done()
+    threads = []
+    monkeypatch.setattr(state.manager, "schedule", lambda _ids=None: threads.append(threading.get_ident()))
+    state.manager.states[state.data["phone_id"]]["apply_status"] = "waiting_idle"
+    state.lab.hass.bus.async_fire(CALL_EVENT, {"state": "idle"})
+    await state.lab.hass.async_block_till_done()
+    assert threads == [threading.get_ident()]
+
+
+def use_real_native_HTTP(state, peer, monkeypatch):
+    """Replace only target resolution; execute the actual adapter and HTTP I/O."""
+    from custom_components.voip_stack import physical_phone_apply
+    from custom_components.voip_stack.physical_phone_provisioning import phone_provisioning_url
+
+    peer.password = state.data["admin_password"]
+    peer.server = phone_provisioning_url(state.lab.hass, state.lab.entry, state.data)
+    monkeypatch.setattr(physical_phone_apply, "async_apply_fanvil", state.real_apply)
+    monkeypatch.setattr(state.manager, "_apply_target", AsyncMock(return_value=(peer.origin, "")))
+
+
+async def test_HTTP_POST_received_before_busy_ACK_is_never_replayed(apply_owner, fanvil_http, monkeypatch):
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    received, reply = asyncio.Event(), asyncio.Event()
+
+    async def received_trigger():
+        if sum(path == "/provision.htm" for path, _ in peer.posts) == 1:
+            state.lab.runtime.endpoints.claim_call("sip:first", "owned-ACK-race")
+            received.set()
+            await reply.wait()
+
+    peer.on_trigger = received_trigger
+    try:
+        state.manager.schedule({state.data["phone_id"]})
+        await asyncio.wait_for(received.wait(), 3)
+        revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+        reply.set()
+        await asyncio.wait_for(state.manager._task, 3)
+        state.lab.runtime.endpoints.release_call("sip:first", "owned-ACK-race")
+        state.manager.schedule({state.data["phone_id"]})
+        await state.lab.hass.async_block_till_done()
+        assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["apply_attempted_revision"] == revision
+        assert public["apply_status"] == "requested"
+    finally:
+        reply.set()
+        state.lab.runtime.endpoints.release_call("sip:first", "owned-ACK-race")
+
+
+async def test_uncertain_HTTP_result_requires_explicit_admin_retry(apply_owner, fanvil_http, monkeypatch, hass_admin_user):
+    from homeassistant.core import Context, ServiceCall
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+    from custom_components.voip_stack.physical_phone_services import async_provision_phone, async_provisioning_state
+
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    peer.final_login = True
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+    public = state.manager.public_state(state.data["phone_id"])
+    assert public["apply_status"] == "uncertain"
+    assert public["apply_error"] == "phone_apply_result_uncertain"
+    assert public["apply_attempted_revision"] == revision
+    assert state.manager._idle_retry_cancel is None
+    # Neither unrelated events, elapsed time nor credential edits authorize a
+    # replay of a command that the real HTTP server has already received.
+    peer.final_login = False
+    for _ in range(2):
+        state.manager.schedule()
+    async_fire_time_changed_exact(state.lab.hass, dt_util.utcnow() + timedelta(seconds=120))
+    state.data = {**state.data, "admin_password": "changed-private-fixture"}
+    peer.password = state.data["admin_password"]
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+    call = ServiceCall(state.lab.hass, "voip_stack", "get_phone_provisioning_state",
+        {"phone_id": state.data["phone_id"]}, context=Context(user_id=hass_admin_user.id))
+    report = await async_provisioning_state(call)
+    assert report["apply_status"] == "uncertain" and report["apply_attempted_revision"] == revision
+    await async_provision_phone(call)
+    await state.lab.hass.async_block_till_done()
+    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 2
+    assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "requested"
+
+
+async def test_external_phone_busy_is_rechecked_every_60s_until_idle_without_call_event(apply_owner, fanvil_http, monkeypatch):
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    peer.calls = 1  # A native external line has no HA account call event.
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "waiting_idle"
+    first_timer = state.manager._idle_retry_cancel
+    assert first_timer is not None
+    now = dt_util.utcnow()
+    async_fire_time_changed_exact(state.lab.hass, now + timedelta(seconds=59))
+    await state.lab.hass.async_block_till_done()
+    assert state.manager._idle_retry_cancel is first_timer
+    for seconds in (61, 122, 183):
+        previous_checks = peer.gets.count("/callInfo.xml")
+        async_fire_time_changed_exact(state.lab.hass, now + timedelta(seconds=seconds))
+        await state.lab.hass.async_block_till_done()
+        assert peer.gets.count("/callInfo.xml") > previous_checks
+        assert state.manager._idle_retry_cancel is not None
+        assert not any(path == "/provision.htm" for path, _ in peer.posts)
+    peer.calls = 0
+    async_fire_time_changed_exact(state.lab.hass, now + timedelta(seconds=244))
+    await state.lab.hass.async_block_till_done()
+    assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+    assert state.manager.public_state(state.data["phone_id"])["apply_status"] == "requested"
+    assert state.manager._idle_retry_cancel is None
+
+
+async def test_new_save_behind_old_requested_revision_retains_the_idle_timer(apply_owner):
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+
+    state = apply_owner
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    old_revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+    state.lab.runtime.endpoints.claim_call("sip:first", "long-call")
+    try:
+        state.data = {**state.data, "name": "New settings during long call"}
+        state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+        await state.manager.async_reconcile()
+        await state.lab.hass.async_block_till_done()
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["state"] == "waiting_idle" and public["apply_status"] == "requested"
+        assert public["desired_revision"] == public["apply_attempted_revision"] == old_revision
+        assert state.manager._idle_retry_cancel is not None
+        async_fire_time_changed_exact(state.lab.hass, dt_util.utcnow() + timedelta(seconds=61))
+        await state.lab.hass.async_block_till_done()
+        assert state.apply.await_count == 1  # No replay of the old revision.
+        state.lab.runtime.endpoints.release_call("sip:first", "long-call")
+        async_fire_time_changed_exact(state.lab.hass, dt_util.utcnow() + timedelta(seconds=122))
+        await state.lab.hass.async_block_till_done()
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["desired_revision"] != old_revision
+        assert public["apply_attempted_revision"] == public["desired_revision"]
+        assert state.apply.await_count == 2 and state.manager._idle_retry_cancel is None
+    finally:
+        state.lab.runtime.endpoints.release_call("sip:first", "long-call")
+
+
+@pytest.mark.parametrize("change", ["new_revision", "delete"])
+async def test_old_HTTP_ack_does_not_mark_new_revision_or_revive_deleted_phone(apply_owner, fanvil_http, monkeypatch, change):
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    received, reply = asyncio.Event(), asyncio.Event()
+
+    async def held_reply():
+        received.set()
+        await reply.wait()
+
+    peer.on_trigger = held_reply
+    task = state.lab.hass.async_create_task(state.manager._async_apply_if_needed(state.data))
+    try:
+        await asyncio.wait_for(received.wait(), 3)
+        old_revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+        if change == "new_revision":
+            state.data = {**state.data, "name": "A newer revision"}
+            state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+            await state.manager.async_prepare(state.data)
+            new_revision = state.manager.public_state(state.data["phone_id"])["desired_revision"]
+            assert new_revision != old_revision
+        else:
+            state.lab.hass.config_entries.async_remove_subentry(state.lab.entry, state.subentry.subentry_id)
+            await state.manager.async_reconcile()
+        reply.set()
+        await asyncio.wait_for(task, 3)
+        public = state.manager.public_state(state.data["phone_id"])
+        data = await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+        if change == "new_revision":
+            assert public["desired_revision"] == new_revision and public["apply_attempted_revision"] == old_revision
+            assert public["apply_status"] != "requested"
+            assert b"A newer revision" in data
+        else:
+            assert not public and data is None and state.data["phone_id"] not in state.manager.files
+        assert sum(path == "/provision.htm" for path, _ in peer.posts) == 1
+    finally:
+        reply.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_unload_after_HTTP_dispatch_preserves_uncertainty_and_rejects_late_GET(apply_owner, fanvil_http, monkeypatch):
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    received, reply = asyncio.Event(), asyncio.Event()
+
+    async def held_reply():
+        received.set()
+        await reply.wait()
+
+    peer.on_trigger = held_reply
+    try:
+        state.manager.schedule()
+        await asyncio.wait_for(received.wait(), 3)
+        await state.manager.async_close()
+        public = state.manager.public_state(state.data["phone_id"])
+        assert public["apply_status"] == "uncertain" and public["apply_error"] == "phone_apply_result_uncertain"
+        assert public["apply_attempted_revision"] == public["desired_revision"]
+        assert state.manager._idle_retry_cancel is None and not state.manager.files
+        assert await state.manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    finally:
+        reply.set()
+
+
+@pytest.mark.parametrize("change", ["delete", "unload"])
+async def test_pending_idle_timer_is_cancelled_when_owner_is_removed(apply_owner, fanvil_http, monkeypatch, change):
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+
+    state, peer = apply_owner, fanvil_http
+    use_real_native_HTTP(state, peer, monkeypatch)
+    peer.calls = 1
+    await state.manager.async_reconcile()
+    await state.lab.hass.async_block_till_done()
+    assert state.manager._idle_retry_cancel is not None
+    requests = len(peer.gets)
+    if change == "delete":
+        state.lab.hass.config_entries.async_remove_subentry(state.lab.entry, state.subentry.subentry_id)
+        await state.manager.async_reconcile()
+    else:
+        await state.manager.async_close()
+    assert state.manager._idle_retry_cancel is None
+    async_fire_time_changed_exact(state.lab.hass, dt_util.utcnow() + timedelta(seconds=120))
+    await state.lab.hass.async_block_till_done()
+    assert len(peer.gets) == requests
+
+
+async def test_worker_and_service_redact_unexpected_exception_messages(apply_owner, hass_admin_user):
+    from homeassistant.core import Context, ServiceCall
+    from custom_components.voip_stack.physical_phone_services import async_provisioning_state
+
+    state = apply_owner
+    state.apply.side_effect = RuntimeError("secret-password at https://private.invalid/token")
+    state.manager.schedule()
+    await state.lab.hass.async_block_till_done()
+    call = ServiceCall(state.lab.hass, "voip_stack", "get_phone_provisioning_state",
+        {"phone_id": state.data["phone_id"]}, context=Context(user_id=hass_admin_user.id))
+    public = await async_provisioning_state(call)
+    assert public["apply_status"] == "error" and public["apply_error"] == "RuntimeError"
+    assert not any(word in str(public) for word in ("secret-password", "private.invalid", "https://"))
+    assert state.manager._idle_retry_cancel is None

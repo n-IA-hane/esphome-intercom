@@ -394,7 +394,7 @@ class VoipStackCard extends HTMLElement {
     this._softphoneStateEpoch++;
     if (!this._applySoftphoneSnapshot(state, context)) return;
     this._softphoneStateLoaded = true;
-    this._ensureHaSoftphoneAudioPath(state);
+    if (state.kind !== "closed") this._ensureHaSoftphoneAudioPath(state);
     this._render();
   }
 
@@ -623,7 +623,7 @@ class VoipStackCard extends HTMLElement {
     const reconciledIdle = context?.authoritative === true && !this._starting &&
       ["idle", "unavailable"].includes(snapshot.state) &&
       String(context.previousCallId || "") === String(current?.call_id || "");
-    if (!reconciledIdle && !softphoneSnapshotSupersedes(current, snapshot)) return false;
+    if (payload.kind !== "closed" && !reconciledIdle && !softphoneSnapshotSupersedes(current, snapshot)) return false;
     this._softphoneSnapshot = snapshot;
     const mailboxChanged = ["new", "old", "total"].some(
       key => current?.voicemail?.[key] !== snapshot.voicemail?.[key],
@@ -648,7 +648,7 @@ class VoipStackCard extends HTMLElement {
     this._activeSessionDeviceId =
       snapshot.session_device_id || snapshot.device_id || this._activeSessionDeviceId || "";
     const activePhoneState = ["calling", "remote_ringing", "ringing", "answering", "in_call", "connecting", "terminating"].includes(snapshot.state);
-    if (activePhoneState) {
+    if (activePhoneState || payload.kind === "closed") {
       this._lastSoftphoneTerminalKey = "";
       this._clearEndReason(false);
     } else {

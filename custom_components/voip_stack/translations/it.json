@@ -999,6 +999,10 @@
     "phone_service_unavailable": {
       "title": "Rubrica LDAP non disponibile",
       "description": "Il listener {service} sulla porta {port} non si avvia. Controlla indirizzo, porta e percorsi del certificato nelle impostazioni della rubrica LDAP, quindi salva per riprovare. SIP continua a funzionare e i telefoni conservano la rubrica precedente."
+    },
+    "esphome_endpoint_collision": {
+      "title": "Conflitto con un telefono ESPHome",
+      "description": "Il telefono ESPHome {phone} non può essere aggiunto perché il campo {field} ({value}) è già usato da un altro telefono. Gli altri telefoni continuano a funzionare. Apri la pagina del dispositivo per controllarne il nome e i dati usati per chiamarlo. Identificativi e credenziali non sono stati modificati."
     }
   },
   "exceptions": {

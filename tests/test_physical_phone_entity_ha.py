@@ -149,6 +149,22 @@ async def test_physical_apply_attributes_reject_unknown_or_private_values(physic
     assert "private" not in json.dumps(attributes)
 
 
+@pytest.mark.parametrize(("error", "status"), [
+    ("phone_ldap_mode_unsupported", "error"),
+    ("phone_apply_result_uncertain", "uncertain"),
+])
+async def test_domain_error_codes_and_uncertain_outcome_are_visible(physical_entities, error, status):
+    from custom_components.voip_stack.physical_phone_entity import PhysicalPhoneProvisioningSensor
+
+    lab = physical_entities
+    lab.manager.states[lab.inventory["phone_id"]] = {"state": "error", "error": error,
+        "apply_status": status, "apply_error": error if status == "uncertain" else ""}
+    sensor = PhysicalPhoneProvisioningSensor(lab.hass, lab.entry, lab.inventory["phone_id"])
+    attributes = sensor.extra_state_attributes
+    assert attributes.get("error") == error
+    assert attributes.get("apply_status") == status
+
+
 async def test_physical_entities_can_enable_late_and_remove_on_feature_disable(physical_entities):
     from custom_components.voip_stack import physical_phone_entity
     lab = physical_entities

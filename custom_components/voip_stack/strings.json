@@ -999,6 +999,10 @@
     "phone_service_unavailable": {
       "title": "LDAP directory unavailable",
       "description": "The {service} listener on port {port} could not start. Check the address, port and certificate paths in LDAP directory settings, then save to retry. SIP continues to run and phones retain their previous directory."
+    },
+    "esphome_endpoint_collision": {
+      "title": "ESPHome phone identity conflict",
+      "description": "The ESPHome phone {phone} could not be restored because its {field} ({value}) is already owned by another phone. Other phones remain available. Open the device page to review its name or routing identity. No identifiers or credentials were changed."
     }
   },
   "exceptions": {

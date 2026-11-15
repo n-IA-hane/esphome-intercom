@@ -1780,11 +1780,12 @@ for (const useRvfc of [true, false]) {{
     pause() {{ this.paused = true; }}
     remove() {{ this.removed = true; }}
   }}
-  const track = {{
+  const track = Object.assign(new EventTarget(), {{
+    readyState: "live",
     stopped: false,
     getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
-    stop() {{ this.stopped = true; }},
-  }};
+    stop() {{ this.stopped = true; this.readyState = "ended"; }},
+  }});
   const frames = [];
   class FakeCanvas {{
     constructor() {{

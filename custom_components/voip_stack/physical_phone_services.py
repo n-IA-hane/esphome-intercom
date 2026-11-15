@@ -39,6 +39,7 @@ async def async_provision_phone(call):
     if state.get("apply_status") != "requesting":
         state.pop("apply_attempted_revision", None)
         state["apply_status"] = "pending"
+        state["apply_error"] = ""
     manager.schedule({phone["phone_id"]})
     return {"phone_id": phone["phone_id"], "status": "queued"}
 

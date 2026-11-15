@@ -11,7 +11,21 @@ from .runtime_data import runtime_data
 
 MEDIA_CAPTURE_ISSUE_ID = "media_capture_enabled"
 ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
+ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX = "esphome_endpoint_collision_"
 _PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
+
+
+def async_sync_esphome_endpoint_collision_issue(hass, device_id, *, name="", error=None) -> None:
+    """Expose one rejected native identity without rewriting either owner."""
+    issue_id = f"{ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX}{device_id}"
+    if error is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
+        is_persistent=False, severity=ir.IssueSeverity.WARNING,
+        translation_key="esphome_endpoint_collision",
+        translation_placeholders={"phone": str(name), "field": error.field, "value": error.value},
+        learn_more_url=f"/config/devices/device/{device_id}")
 
 
 def async_sync_phone_identity_issue(hass, entry, error=None) -> None:

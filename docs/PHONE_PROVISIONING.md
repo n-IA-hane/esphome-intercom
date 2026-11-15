@@ -275,8 +275,21 @@ finishes after its dependencies change cannot replace the current files.
 prove every setting was applied.
 
 Application metadata is separate: `apply_status: requested` means the native request was
-accepted, not that the phone applied the revision. A file request made by a
-diagnostic client is also a download, so it is not independent physical evidence.
+accepted, not that the phone applied the revision. `apply_status: uncertain` means
+that the command may already have reached the phone but its acceptance could not
+be confirmed. The attempted revision is retained and is not sent automatically
+again; check the phone and use the existing application action to retry explicitly.
+An acknowledged or uncertain older request never marks a newer revision applied.
+
+A pending command waits for all managed lines to become idle. HA call events
+wake the existing worker immediately. If the phone reports a call on another
+line, one shared 60-second timer rechecks only unsent pending updates until the
+phone becomes idle. Requests are coalesced to the latest revision. The timer is
+cancelled when no such requests remain, on phone removal and on integration
+unload. It does not poll language, time zone or idle phone configurations, and
+it does not repeat commands with uncertain outcomes.
+
+A file request made by a diagnostic client is also a download, so it is not independent physical evidence.
 Actual key/LCD readback and an appropriate uptime observation establish adoption
 and whether a particular application occurred without rebooting.
 

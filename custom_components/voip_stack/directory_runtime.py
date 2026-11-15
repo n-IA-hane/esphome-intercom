@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from .const import DOMAIN
 from .phone_directory import PhoneDirectory, public_metadata
 from .phone_endpoint import EndpointKind, EndpointAvailability, PhoneEndpoint
 from .roster import RosterEntry
@@ -53,11 +54,15 @@ def restore_esp_identities(hass, runtime):
     from .managed_phones import managed_records
     from .phone_config import esphome_phone_policy
     from .store import config_entry
+    from .endpoint_registry import EndpointCollisionError
+    from .repairs import ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX, async_sync_esphome_endpoint_collision_issue
+    from homeassistant.helpers import issue_registry as ir
 
     entry = config_entry(hass)
     records = managed_records(entry) if entry is not None else {}
     entities = er.async_get(hass)
     devices = dr.async_get(hass)
+    collisions = set()
     owned_devices = (device for origin in hass.config_entries.async_entries("esphome")
                      for device in dr.async_entries_for_config_entry(devices, origin.entry_id))
     for device in owned_devices:
@@ -83,13 +88,25 @@ def restore_esp_identities(hass, runtime):
             value = state.state if state is not None and state.state not in {"unknown", "unavailable"} else fallback
             fields[field] = str(value).casefold() in {"on", "true", "1"} if field == "conference_ring" else str(value)
         endpoint_id = phone.endpoint_id if phone is not None else f"esphome:{device.id}"
-        runtime.endpoints.register(PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
+        candidate = PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
             name=(device.name_by_user or (phone.display_name if phone is not None else "")
                   or device.name or origin.title or (phone.username if phone is not None else "ESPHome")),
             username=phone.username if phone is not None else str(origin.data.get("device_name") or ""),
             kind=EndpointKind.ESPHOME, entity_ids=frozenset(entity.entity_id for entity in native_entities),
             availability=EndpointAvailability.OFFLINE, capabilities=frozenset({"audio", "dtmf"}),
-            policy=esphome_phone_policy(entry, endpoint_id), **fields))
+            policy=esphome_phone_policy(entry, endpoint_id), **fields)
+        try:
+            runtime.endpoints.register(candidate)
+        except EndpointCollisionError as error:
+            collisions.add(device.id)
+            async_sync_esphome_endpoint_collision_issue(hass, device.id, name=candidate.name, error=error)
+    # The issue registry owns diagnostics. Reconcile its derived rows after
+    # every restore, including resolved, removed and no-longer-phone devices.
+    for domain, issue_id in tuple(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX):
+            device_id = issue_id.removeprefix(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX)
+            if device_id not in collisions:
+                async_sync_esphome_endpoint_collision_issue(hass, device_id)
 
 
 def _endpoint_entry(endpoint):

@@ -630,6 +630,10 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_reducer_preserves_group_semantics(self) -> None:
         cases = (
+            ([], dial_fork.DialDisposition.UNAVAILABLE, 480),
+            ([dial_fork.DialDisposition.BUSY, dial_fork.DialDisposition.DND], dial_fork.DialDisposition.BUSY, 486),
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.BUSY], dial_fork.DialDisposition.BUSY, 486),
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.DECLINED], dial_fork.DialDisposition.UNAVAILABLE, 480),
             (
                 [dial_fork.DialDisposition.DECLINED] * 2,
                 dial_fork.DialDisposition.DECLINED,
@@ -653,7 +657,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         )
         for dispositions, expected, status in cases:
             with self.subTest(dispositions=dispositions):
-                outcome = dial_fork.DialForkController._reduce_failures(
+                outcome = dial_fork.reduce_dial_failures(
                     [dial_fork.DialOutcome(item) for item in dispositions]
                 )
                 self.assertEqual(outcome.disposition, expected)

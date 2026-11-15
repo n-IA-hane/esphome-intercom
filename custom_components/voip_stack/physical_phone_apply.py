@@ -11,6 +11,28 @@ from xml.etree import ElementTree
 from yarl import URL
 
 MAX_PAGE_BYTES = 256 * 1024
+SAFE_PHONE_ERROR_CODES = frozenset({
+    "phone_provisioning_error", "phone_ldap_mode_unsupported", "phone_configuration_changed",
+    "phone_apply_target_unverified", "phone_apply_unsupported", "phone_apply_credentials_required",
+    "phone_apply_authentication_failed", "phone_apply_http_error", "phone_apply_response_invalid",
+    "phone_apply_identity_mismatch", "phone_apply_provisioning_not_configured",
+    "phone_apply_waiting_idle", "phone_apply_result_uncertain",
+})
+
+
+def is_safe_phone_error(value):
+    """Keep domain codes and legacy exception class labels, never messages."""
+    return isinstance(value, str) and (value == "" or value in SAFE_PHONE_ERROR_CODES
+        or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}(?:Error|Exception)", value) is not None)
+
+
+def safe_phone_error(error):
+    """Project an exception without HTTP bodies, URLs or credential arguments."""
+    code = str(error)
+    if code in SAFE_PHONE_ERROR_CODES:
+        return code
+    code = type(error).__name__
+    return code if is_safe_phone_error(code) else "phone_provisioning_error"
 
 
 class PhoneApplyError(ValueError):
@@ -45,7 +67,8 @@ class _NativeForm(HTMLParser):
             self._select = ""
 
 
-async def async_apply_fanvil(session, origin, phone, profile, expected_server, *, still_current):
+async def async_apply_fanvil(session, origin, phone, profile, expected_server, *, still_current,
+                             on_dispatch=None):
     """Request one download, after native login, identity and idle validation.
 
     The caller owns the HTTP session and the revision. A successful response
@@ -73,9 +96,11 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
         if not await still_current():
             raise PhoneApplyDeferred("phone_configuration_changed")
 
-    async def request(method, path, *, data=None):
+    async def request(method, path, *, data=None, final_command=False):
         await current()
         url = base.join(URL(path))
+        if final_command and on_dispatch is not None:
+            on_dispatch()
         async with session.request(method, url, data=data, headers={"Connection": "keep-alive"}, allow_redirects=False) as response:
             if response.status in {301, 302, 303} and method == "POST" and path == "/":
                 redirect = url.join(URL(response.headers.get("Location", "")))
@@ -89,7 +114,10 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
                 content.extend(chunk)
                 if len(content) > MAX_PAGE_BYTES:
                     raise PhoneApplyError("phone_apply_response_invalid")
-        await current()
+        # The command might already have taken effect. A call or configuration
+        # change during its ACK cannot turn it back into a safe deferred request.
+        if not final_command:
+            await current()
         return bytes(content).decode("utf-8", errors="replace")
 
     async def idle():
@@ -139,7 +167,8 @@ async def async_apply_fanvil(session, origin, phone, profile, expected_server, *
         raise PhoneApplyError("phone_apply_provisioning_not_configured")
     await idle()
     result = _NativeForm()
-    result.feed(await request("POST", "/provision.htm", data={"autoProvisionNow": "autopNow"}))
+    result.feed(await request("POST", "/provision.htm", data={"autoProvisionNow": "autopNow"},
+                              final_command=True))
     if "logonButton" in result.ids:
         raise PhoneApplyError("phone_apply_authentication_failed")
     return {"method": "fanvil_native_http", "request_status": "accepted", "firmware": firmware}

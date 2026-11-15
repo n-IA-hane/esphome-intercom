@@ -1292,7 +1292,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 arbitration_start,
             ),
         )
-        self.assertIn("_reduce_failures(failures)", fork_source)
+        self.assertIn("reduce_dial_failures(failures)", fork_source)
 
     def test_ring_group_winner_clears_pending_route_before_active_hangup(self) -> None:
         ring_group = self.ring_group

@@ -1809,27 +1809,89 @@ def websocket_subscribe_ha_softphone_state(
     selected_endpoint = _browser_endpoint(hass, requested_endpoint)
     if selected_endpoint is not None:
         require_websocket_endpoint_read(hass, connection, selected_endpoint)
-    publishes_presence = websocket_can_control_endpoint(
-        hass,
-        connection,
-        selected_endpoint,
-    )
+    from .phone_monitor import PhoneSubscriptionAccess
+    from .phone_state import phone_state_observer
+    from homeassistant.exceptions import ServiceValidationError
+
+    access = PhoneSubscriptionAccess(hass, connection)
+    unsubscribers = []
+    released = False
+    publishes_presence = False
+
+    @callback
+    def unsubscribe() -> None:
+        nonlocal released, publishes_presence
+        if released:
+            return
+        released = True
+        for detach in unsubscribers:
+            detach()
+        unsubscribers.clear()
+        if publishes_presence:
+            publishes_presence = False
+            _update_browser_presence(hass, requested_endpoint, -1)
+
+    @callback
+    def close(reason):
+        if released:
+            return
+        try:
+            connection.send_event(msg_id, {
+                "kind": "closed", "reason": reason,
+                "endpoint_id": requested_endpoint,
+                "device_id": getattr(selected_endpoint, "device_id", ""),
+            })
+        finally:
+            unsubscribe()
+
+    def readable():
+        if released:
+            return False
+        # Preserve both gates used when opening this account stream. The
+        # passive multi-phone monitor intentionally needs only per-phone read.
+        try:
+            require_websocket_read(hass, connection)
+        except Unauthorized:
+            close("permissions_revoked")
+            return False
+        endpoint = _browser_endpoint(hass, requested_endpoint)
+        if selected_endpoint is None and endpoint is None and access.active:
+            return True  # Older singleton uses the integration boundary.
+        if access.readable(endpoint):
+            return True
+        close("permissions_revoked")
+        return False
+
+    @callback
+    def emit(state=None):
+        nonlocal publishes_presence
+        if not readable():
+            return
+        payload = _client_phone_state(hass, connection, requested_endpoint, state)
+        presence = bool(payload["can_control"])
+        if presence != publishes_presence:
+            publishes_presence = presence
+            _update_browser_presence(hass, requested_endpoint, 1 if presence else -1, publish=False)
+        connection.send_event(msg_id, payload)
 
     @callback
     def forward_state(event: Event) -> None:
-        event_endpoint = str(event.data.get("endpoint_id") or "").strip()
-        if event_endpoint != requested_endpoint:
-            return
-        connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint, event.data))
+        if str(event.data.get("endpoint_id") or "").strip() == requested_endpoint:
+            emit(event.data)
 
-    unsubscribe_state = hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state)
-    if publishes_presence:
-        _update_browser_presence(hass, requested_endpoint, 1, publish=False)
-    from .phone_state import phone_state_observer
-    from homeassistant.exceptions import ServiceValidationError
+    @callback
+    def forward_access(update):
+        if released:
+            return
+        terminal = access.terminal_reason(update)
+        if terminal:
+            close(terminal)
+        elif readable() and update.access_event is not None:
+            emit()
+
     @callback
     def forward_projection(change, _context=None):
-        if change.get("endpoint_id") == requested_endpoint:
+        if change.get("endpoint_id") == requested_endpoint and readable():
             state = _ha_softphone_state(hass, requested_endpoint)
             previous_calls = (change.get("previous") or {}).get("calls", ())
             occurrence = change.get("call") or {}
@@ -1845,28 +1907,21 @@ def websocket_subscribe_ha_softphone_state(
                     if occurrence.get("call_id") == ended["call_id"]:
                         state["sequence"] = occurrence.get("sequence", state["sequence"])
                         state["revision"] = occurrence.get("revision", state["revision"])
-            connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint, state))
+            emit(state)
+    unsubscribers.append(hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state))
     try:
-        unsubscribe_projection = phone_state_observer(hass).subscribe(forward_projection)
+        observer = phone_state_observer(hass)
+        unsubscribers.append(observer.subscribe(forward_projection))
+        unsubscribers.append(observer.subscribe(forward_access, kind="projection"))
     except ServiceValidationError:
-        def unsubscribe_projection():
-            return None
-    released = False
-
-    @callback
-    def unsubscribe() -> None:
-        nonlocal released
-        unsubscribe_state()
-        unsubscribe_projection()
-        if released:
-            return
-        released = True
-        if publishes_presence:
-            _update_browser_presence(hass, requested_endpoint, -1)
-
+        pass
     connection.subscriptions[msg_id] = unsubscribe
-    connection.send_result(msg_id)
-    connection.send_event(msg_id, _client_phone_state(hass, connection, requested_endpoint))
+    try:
+        connection.send_result(msg_id)
+        emit()
+    except Exception:
+        unsubscribe()
+        raise
 
 
 @websocket_api.websocket_command(

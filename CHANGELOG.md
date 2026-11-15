@@ -2,6 +2,30 @@
 
 ## 2026.12.0-dev
 
+### Call and provisioning lifecycle
+
+- Route transfers to queues, ring groups and paging through the PBX listener,
+  using the same destination resolution as ordinary calls. Preserve restrictions
+  on delegated transfers and share the reduction of failed call attempts.
+- Revoke existing account-state subscriptions when their user loses read access.
+  Cards and popups retract the private call data, while unrelated subscriptions
+  and calls keep running. Control-only changes preserve authorized observation.
+- Resume deferred phone updates from the HA event loop. A single cancellable
+  60-second check exists only while an unsent update waits for an idle phone,
+  including calls on a line that this PBX does not manage.
+- Track a provisioning command once it may have reached the phone. A call or
+  configuration change after dispatch cannot silently replay that revision;
+  an uncertain response is reported for an explicit administrator retry.
+- Isolate conflicting ESPHome phone names and report the affected device through
+  HA Repairs, allowing other phones and directory updates to continue.
+- Surface supported diagnostic codes, including incompatible LDAP transport,
+  on the provisioning sensor without exposing arbitrary exception details.
+- End the camera fallback reader when its selected video track ends, releasing
+  pending reads and browser resources through the existing sender cleanup.
+- Require the native MasterVolume integration tests against a pinned Audio Stack
+  checkout in CI. Share compatible on-device Switch controls at configuration
+  generation time while retaining their existing owners and behavior.
+
 ### Browser camera frame sources
 
 - Supply camera frames through a muted video element when the current browser
@@ -60,7 +84,8 @@
   for qualified profiles with administrator credentials and an idle phone.
   Preparation, file delivery and an accepted application request remain
   separate observations. Unqualified models retain their manual application
-  path; no browser runtime or periodic resynchronization task is added to HA.
+  path. Idle systems do not poll phone configuration; the pending-only busy
+  check is described above.
 - Qualify automatic configuration application for Fanvil X3U Pro firmware
   2.12.20, including physical BLF key reordering without a manual provisioning
   command or reboot. Existing phones need the updated pinned catalog profile.

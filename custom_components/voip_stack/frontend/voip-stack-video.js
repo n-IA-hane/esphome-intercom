@@ -84,7 +84,7 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
 // Use the same reader contract when this context has no track processor.
 // Each pending read arms at most one callback; a slow encoder cannot build
 // a queue of captured frames or keep an otherwise idle timer running.
-function createVideoElementFrameReader(stream, framerate) {
+function createVideoElementFrameReader(stream, framerate, track) {
   let target = {};
   const video = document.createElement("video");
   video.muted = true;
@@ -109,6 +109,7 @@ function createVideoElementFrameReader(stream, framerate) {
     resolve?.(result);
   };
   const emit = (mediaTime) => {
+    if (track.readyState === "ended") { cleanup(); return; }
     if (cancelled || !waiter || !(video.readyState >= 2)) return;
     try {
       const seconds = Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
@@ -147,6 +148,7 @@ function createVideoElementFrameReader(stream, framerate) {
     arm();
   };
   const arm = () => {
+    if (track.readyState === "ended") { cleanup(); return; }
     if (cancelled || !waiter || callbackId !== null || timer !== null) return;
     if (useRvfc) callbackId = video.requestVideoFrameCallback(onVideoFrame);
     else timer = setTimeout(onTimer, intervalMs);
@@ -154,6 +156,7 @@ function createVideoElementFrameReader(stream, framerate) {
   const cleanup = () => {
     if (cancelled) return;
     cancelled = true;
+    track.removeEventListener("ended", cleanup);
     rejectStartup?.(new Error("Camera frame reader cancelled"));
     if (timer !== null) clearTimeout(timer);
     timer = null;
@@ -166,10 +169,13 @@ function createVideoElementFrameReader(stream, framerate) {
     try { video.remove(); } catch (_) {}
     finish({ done: true });
   };
+  track.addEventListener("ended", cleanup);
   return {
     async start() {
       let timeout;
       try {
+        if (track.readyState === "ended") cleanup();
+        if (cancelled) throw new Error("Camera frame reader cancelled");
         await Promise.race([
           video.play(),
           new Promise((_resolve, reject) => {
@@ -187,6 +193,7 @@ function createVideoElementFrameReader(stream, framerate) {
     },
     setTarget(next) { target = next || {}; },
     read() {
+      if (track.readyState === "ended") cleanup();
       if (cancelled) return Promise.resolve({ done: true });
       if (waiter) return Promise.reject(new Error("Camera frame read already pending"));
       return new Promise((resolve) => { waiter = resolve; arm(); });
@@ -1265,6 +1272,7 @@ export class VoipStackVideo extends EventTarget {
         reader = createVideoElementFrameReader(
           stream,
           Number(settings.frameRate) || 15,
+          track,
         );
         this._senderSetupReader = reader;
         await reader.start();

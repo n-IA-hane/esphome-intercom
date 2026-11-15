@@ -877,3 +877,34 @@ def test_sip_call_is_shared_observation_without_browser_capture(popup_page):
     page.wait_for_function("observerCard._softphoneSnapshot?.call_id==='native-call'")
     assert page.evaluate("mics===0 && !__voipStackEngine.active")
     assert page.get_by_role("button", name="Hang up call", exact=True).is_visible()
+
+
+def test_revoked_account_stream_clears_open_popup_and_card_without_hangup(popup_page):
+    page = popup_page
+    enable(page)
+    page.evaluate("""async () => {
+      await import('/voip-stack-card.js');
+      window.observedCard = document.createElement('voip-stack-card');
+      observedCard.setConfig({mode:'ha_softphone', device_id:phone.device_id});
+      observedCard.hass = hass;
+      root.shadowRoot.append(observedCard);
+    }""")
+    incoming(page, "private-call")
+    page.wait_for_function("observedCard._softphoneSnapshot?.call_id === 'private-call'")
+    page.evaluate("""() => {
+      for (const stream of streams) {
+        if (stream.active && stream.request.type === 'voip_stack/subscribe_ha_softphone_state') {
+          stream.callback({kind:'closed', reason:'permissions_revoked',
+            endpoint_id:phone.endpoint_id, device_id:phone.device_id});
+        }
+      }
+    }""")
+    page.wait_for_function("!__voipStackPopup.dialog._dialog.open")
+    assert page.evaluate("__voipStackPopup.dialog._phone") is None
+    assert page.evaluate("__voipStackPopup.state.state") == "unavailable"
+    assert page.evaluate("__voipStackPopup.state.caller || ''") == ""
+    assert page.evaluate("observedCard._softphoneSnapshot?.caller || ''") == ""
+    assert page.evaluate("observedCard._softphoneSnapshot?.call_id || ''") == ""
+    assert page.evaluate("services") == []
+    assert page.evaluate("mics") == 0
+    assert page.evaluate("streams.filter(s=>s.active && s.request.type==='voip_stack/subscribe_ha_softphone_state').length") == 0

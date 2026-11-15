@@ -74,6 +74,28 @@ class DialOutcome:
         return self.disposition is DialDisposition.ANSWERED
 
 
+def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
+    """Reduce terminal branch outcomes without owning calls or transport state."""
+    if not outcomes:
+        return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+    dispositions = [outcome.disposition for outcome in outcomes]
+    if all(item is DialDisposition.DECLINED for item in dispositions):
+        return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
+    if any(item is DialDisposition.BUSY for item in dispositions):
+        return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
+    if any(item is DialDisposition.DND for item in dispositions):
+        return DialOutcome(DialDisposition.DND, 486, "DND")
+    if all(item is DialDisposition.MEDIA_INCOMPATIBLE for item in dispositions):
+        return DialOutcome(
+            DialDisposition.MEDIA_INCOMPATIBLE,
+            488,
+            "Not Acceptable Here",
+        )
+    if all(item is DialDisposition.TIMEOUT for item in dispositions):
+        return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
+    return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+
+
 DialOperation = Callable[[], Awaitable[DialOutcome]]
 CloseOperation = Callable[[LegCloseMode], Awaitable[None]]
 WinnerCommit = Callable[["DialCandidate", DialOutcome], bool]
@@ -328,26 +350,6 @@ class DialForkController:
                 termination.cancel()
             await asyncio.gather(termination, return_exceptions=True)
 
-    @staticmethod
-    def _reduce_failures(outcomes: list[DialOutcome]) -> DialOutcome:
-        if not outcomes:
-            return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
-        dispositions = [outcome.disposition for outcome in outcomes]
-        if all(item is DialDisposition.DECLINED for item in dispositions):
-            return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
-        if any(item is DialDisposition.BUSY for item in dispositions):
-            return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
-        if any(item is DialDisposition.DND for item in dispositions):
-            return DialOutcome(DialDisposition.DND, 486, "DND")
-        if all(item is DialDisposition.MEDIA_INCOMPATIBLE for item in dispositions):
-            return DialOutcome(
-                DialDisposition.MEDIA_INCOMPATIBLE,
-                488,
-                "Not Acceptable Here",
-            )
-        if all(item is DialDisposition.TIMEOUT for item in dispositions):
-            return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
-        return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
 
     async def _dial_parallel_tier(
         self,
@@ -487,7 +489,7 @@ class DialForkController:
 
         self.session.ensure_live(self.token)
         if not self.candidates:
-            return ForkResult(self._reduce_failures([]))
+            return ForkResult(reduce_dial_failures([]))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.overall_timeout
         attempted: list[str] = []
@@ -532,7 +534,7 @@ class DialForkController:
             if winner is None or winner_outcome is None:
                 await self._close_candidates(all_candidates, LegCloseMode.CLOSE)
                 return ForkResult(
-                    self._reduce_failures(failures),
+                    reduce_dial_failures(failures),
                     attempted=tuple(attempted),
                 )
 
@@ -774,7 +776,7 @@ class DialForkController:
                     break
             result = branch_result or await branch_task
             if not branches:
-                result = ForkResult(self._reduce_failures(
+                result = ForkResult(reduce_dial_failures(
                     control_failures or [DialOutcome(DialDisposition.TIMEOUT, 408)]
                 ), attempted=attempted)
             control = _ready_priority_control()

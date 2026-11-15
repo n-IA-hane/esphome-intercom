@@ -17,6 +17,77 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("resolution", ["rename", "remove"])
+async def test_duplicate_esp_name_does_not_block_other_directory_identities(managed, resolution):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
+
+    lab = managed
+    lab.native.runtime_data.available = False
+    lab.native.runtime_data.client.is_connected = False
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    devices, entities = dr.async_get(lab.hass), er.async_get(lab.hass)
+    additions = []
+    for index, name in ((2, "Ingresso"), (3, "Studio")):
+        origin = MockConfigEntry(domain="esphome", title=f"Node {index}",
+                                 data={"device_name": f"node_{index}"})
+        origin.add_to_hass(lab.hass)
+        device = devices.async_get_or_create(config_entry_id=origin.entry_id,
+            identifiers={("esphome", f"84c7bb00000{index}")}, name=name)
+        entity = entities.async_get_or_create("sensor", "esphome", f"84c7bb00000{index}-voip_state",
+            config_entry=origin, device_id=device.id, suggested_object_id=f"node_{index}_voip_state")
+        lab.hass.states.async_set(entity.entity_id, "unavailable")
+        additions.append(device)
+    before = dict(lab.entry.data)
+    await async_refresh_directory(lab.hass, peers=[], registered=[])
+    duplicate, third = additions
+    first_id, third_id = f"esphome:{lab.device.id}", f"esphome:{third.id}"
+    assert lab.runtime.directory.get(first_id) is not None
+    assert lab.runtime.directory.get(third_id) is not None
+    assert lab.runtime.endpoints.by_device_id(duplicate.id) is None
+    issue_id = f"esphome_endpoint_collision_{duplicate.id}"
+    issue = ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id)
+    assert issue is not None
+    assert issue.learn_more_url == f"/config/devices/device/{duplicate.id}"
+    if resolution == "rename":
+        devices.async_update_device(duplicate.id, name_by_user="Ingresso upstairs")
+    else:
+        devices.async_remove_device(duplicate.id)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+    await async_refresh_directory(lab.hass, peers=[], registered=[])
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+    assert lab.runtime.directory.get(first_id).name == "Ingresso"
+    assert lab.runtime.directory.get(third_id).name == "Studio"
+    if resolution == "rename":
+        restored = lab.runtime.endpoints.by_device_id(duplicate.id)
+        assert restored.endpoint_id == f"esphome:{duplicate.id}"
+        assert restored.name == "Ingresso upstairs"
+    assert lab.entry.data == before, "Repair must not rewrite identities or credentials"
+
+
+async def test_esp_restore_collision_never_reassigns_a_stable_endpoint_owner(phone_lab):
+    from homeassistant.helpers import device_registry as dr, issue_registry as ir
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+
+    lab = phone_lab
+    other = dr.async_get(lab.hass).async_get_or_create(config_entry_id=lab.native.entry_id,
+        identifiers={("esphome", "84c7bb009999")}, name="Existing owner")
+    identity = f"esphome:{lab.device.id}"
+    owner = PhoneEndpoint(endpoint_id=identity, device_id=other.id, name="Existing owner",
+                          username="existing_owner", kind=EndpointKind.ESPHOME)
+    lab.runtime.endpoints.register(owner)
+    await async_refresh_directory(lab.hass, peers=[], registered=[])
+    assert lab.runtime.endpoints.get(identity) == owner
+    assert lab.runtime.endpoints.by_device_id(lab.device.id) is None
+    issue = ir.async_get(lab.hass).async_get_issue("voip_stack", f"esphome_endpoint_collision_{lab.device.id}")
+    assert issue is not None and issue.translation_placeholders["field"] == "endpoint_id"
+    assert lab.runtime.directory.get(identity).id == "existing_owner"
+
+
 async def test_cold_reload_publishes_managed_identity_without_api_or_binding(managed):
     from custom_components.voip_stack.phone_config import async_setup_endpoint_registry
     from custom_components.voip_stack.sensor import VoipPhonebookSensor

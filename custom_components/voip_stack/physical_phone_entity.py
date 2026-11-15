@@ -13,6 +13,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 from .physical_phone import PHONE_PROVISIONING_CHANGED, physical_phone_id, physical_phone_model, physical_phone_records, physical_phone_subentries, provisioning_enabled
+from .physical_phone_apply import is_safe_phone_error
 
 
 async def async_setup_physical_phone_entities(hass, entry, async_add_entities, factory):
@@ -102,22 +103,18 @@ class PhysicalPhoneProvisioningSensor(PhysicalPhoneEntity, SensorEntity):
         phone = physical_phone_records(self.entry)[self.phone_id]
         state = self.entry.runtime_data.physical_phones.public_state(self.phone_id)
         result = {"phone_id": self.phone_id, "profile_id": phone["profile_id"]}
-        for key in ("desired_revision", "downloaded_revision"):
+        for key in ("desired_revision", "downloaded_revision", "apply_attempted_revision"):
             if isinstance(value := state.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", value):
                 result[key] = value
         if isinstance(value := state.get("last_download"), (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
             result["last_download"] = value
-        if isinstance(value := state.get("error"), str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}(?:Error|Exception)", value):
+        if (value := state.get("error")) and is_safe_phone_error(value):
             result["error"] = value
         if isinstance(value := state.get("apply_status"), str) and value in {
-            "pending", "waiting_idle", "not_qualified", "manual", "requesting", "requested", "error",
+            "pending", "waiting_idle", "not_qualified", "manual", "requesting", "requested", "uncertain", "error",
         }:
             result["apply_status"] = value
-        if isinstance(value := state.get("apply_error"), str) and value in {
-            "", "phone_apply_target_unverified", "phone_apply_unsupported", "phone_apply_credentials_required",
-            "phone_apply_authentication_failed", "phone_apply_http_error", "phone_apply_response_invalid",
-            "phone_apply_identity_mismatch", "phone_apply_provisioning_not_configured",
-        }:
+        if (value := state.get("apply_error")) is not None and is_safe_phone_error(value):
             result["apply_error"] = value
         if isinstance(value := state.get("language_code"), str) and re.fullmatch(r"[a-zA-Z0-9_-]{0,24}", value):
             result["language_code"] = value

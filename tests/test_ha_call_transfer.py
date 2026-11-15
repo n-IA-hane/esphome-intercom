@@ -16,9 +16,58 @@ from custom_components.voip_stack.sip_client import (
     SipDialog,
     SipTransferResult,
 )
+from .test_automation_originate_ha import lab as lab, dial, assert_call_resources_released
 
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("kind,identity,extension", [
+    ("queue", "queue:help-desk", ""),
+    ("queue", "queue:help-desk", "701"),
+    ("paging", "paging:all-rooms", ""),
+    ("paging", "paging:all-rooms", "702"),
+    ("ring", "Family Ring", ""),
+    ("ring", "Family Ring", "703"),
+], ids=["queue-id", "queue-extension", "paging-id", "paging-extension", "ring-id", "ring-extension"])
+async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_peer(
+    lab, monkeypatch, kind, identity, extension,
+):
+    from homeassistant.core import Context
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.roster import RosterEntry
+
+    metadata = {"group_type": "ring"} if kind == "ring" else {"virtual_endpoint": kind}
+    row = RosterEntry(identity, name="Local destination", extension=extension, ha_bridge=True, metadata=metadata)
+    lab.runtime.directory.upsert(row)
+    references = []
+    peer = lab.phones[0]
+    receive = peer.datagram_received
+
+    def reject_refer(raw, address):
+        message = sip.parse_message(raw)
+        if message.method == "REFER":
+            references.append(sip.parse_sip_uri(message.header("Refer-To")))
+            peer.respond(message, address, 486)
+        else:
+            receive(raw, address)
+
+    monkeypatch.setattr(peer, "datagram_received", reject_refer)
+    called = await dial(lab, Context())
+    call_id = called["call_id"]
+    try:
+        result = await call_transfer.async_transfer_call(
+            lab.runtime, call_transfer.CallTransferRequest(call_id, row.name), hass=lab.hass)
+        assert not result.accepted and result.status == 486
+        assert len(references) == 1
+        assert references[0].host == "127.0.0.1"
+        assert references[0].port == lab.runtime.transport_config["sip_port"]
+        assert references[0].user == (extension or identity)
+        assert lab.calls.get_session(call_id).live, "Rejected REFER must retain the original conversation"
+    finally:
+        await lab.calls.request_termination(call_id, TerminationIntent("test_done"))
+    assert_call_resources_released(lab)
 
 
 def test_blind_transfer_routes_from_directory_when_sensor_projection_is_absent():

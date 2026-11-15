@@ -461,7 +461,24 @@ class VoipStackEngine extends EventTarget {
     let initialSnapshot = true;
     conn.subscribeMessage(
       (event) => {
-        if (!current()) return;
+        if (!current() || record.invalid) return;
+        if (event?.kind === "closed") {
+          // This is a loss of this client's view, not termination of the call.
+          record.invalid = true;
+          try { record.unsub?.(); } catch (_) {}
+          record.unsub = null;
+          const previous = [...this._lastSoftphoneStates.values()].find(
+            state => softphoneStateMatches(state, record.selector),
+          );
+          this._onSoftphoneState({
+            kind: "closed", endpoint_id: event.endpoint_id || previous?.endpoint_id || record.selector.endpoint_id || "",
+            device_id: event.device_id || previous?.device_id || record.selector.device_id || "",
+            state: "unavailable", sip_state: "unavailable", availability: "unavailable",
+            can_control: false, can_attach_media: false, available: false,
+            subscription_error: event.reason || "permissions_revoked",
+          }, record.selector, { authoritative: true, previousCallId: String(previous?.call_id || "") });
+          return;
+        }
         const previous = initialSnapshot ? [...this._lastSoftphoneStates.values()].find(
           state => softphoneStateMatches(state, record.selector),
         ) : null;
@@ -472,7 +489,7 @@ class VoipStackEngine extends EventTarget {
       },
       request,
     ).then((unsub) => {
-      if (current()) record.unsub = unsub;
+      if (current() && !record.invalid) record.unsub = unsub;
       else unsub();
     }).catch((err) => {
       if (!current()) return;
@@ -1537,7 +1554,7 @@ class VoipStackEngine extends EventTarget {
 
   _onSoftphoneState(state, subscriptionSelector = null, context = null) {
     if (!this.rememberSoftphoneState(state)) return;
-    this._syncUnmountedSoftphoneState(state);
+    if (state.kind !== "closed") this._syncUnmountedSoftphoneState(state);
     for (const cb of this._softphoneSubscribers) {
       const selector = this._softphoneSubscriberSelectors.get(cb) || {};
       // Dispatch only through the subscription owned by this callback so one
@@ -1608,8 +1625,20 @@ class VoipStackEngine extends EventTarget {
       throw new Error("Choose a phone in the dashboard editor.");
     }
     if (this._dashboardIsBrowser(owner)) {
+      const connection = this._busConnection;
+      const scopes = [...this._softphoneScopeSubscriptions.values()]
+        .filter(record => (record.selector.endpoint_id || record.selector.device_id) &&
+          softphoneStateMatches(owner, record.selector))
+        .map(record => [record, record.generation || 0]);
       const state = await this._hass.callWS({ type: "voip_stack/ha_softphone_state",
         device_id: owner.device_id, media_client_id: this.mediaClientId });
+      // A query sent before revocation cannot repopulate a retracted view.
+      if (connection !== this._busConnection ||
+          this._lastSoftphoneStates.get(`endpoint:${owner.endpoint_id}`)?.kind === "closed" ||
+          scopes.some(([record, generation]) => record.invalid ||
+            (record.generation || 0) !== generation || this._softphoneScopeSubscriptions.get(record.key) !== record)) {
+        throw new Error("The phone state request was superseded.");
+      }
       this.rememberSoftphoneState(state);
       return state;
     }

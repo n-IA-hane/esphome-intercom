@@ -635,6 +635,41 @@ assert.equal(missingRetrySchedules, 0);
 assert.equal(missingStates.at(-1).state, "unavailable");
 assert.equal(missingStates.at(-1).terminal_reason, "unknown_endpoint");
 
+// Revoking a view retracts cached caller data and never hangs up another owner.
+const revoked = new Engine();
+const revokedStates = [];
+const keepStates = [];
+const callbacks = new Map();
+let detached = 0;
+const revocationConnection = {{ subscribeMessage: async (cb, request) => {{
+  callbacks.set(request.endpoint_id, cb);
+  return () => {{ detached++; }};
+}} }};
+revoked._busConnection = revocationConnection;
+revoked.subscribeSoftphoneState(state => revokedStates.push(state), {{ endpoint_id: "private" }});
+revoked.subscribeSoftphoneState(state => keepStates.push(state), {{ endpoint_id: "other" }});
+await new Promise(resolve => setTimeout(resolve, 0));
+callbacks.get("private")({{ endpoint_id: "private", device_id: "private-device", state: "ringing",
+  call_id: "secret-call", caller: "secret-number", generation: 99 }});
+callbacks.get("other")({{ endpoint_id: "other", state: "in_call", call_id: "unrelated-call" }});
+let completePrivateRead;
+revoked._hass = {{ callWS: () => new Promise(resolve => {{ completePrivateRead = resolve; }}) }};
+const pendingPrivateRead = revoked._dashboardSnapshot({{kind:"sip_account",endpoint_id:"private",device_id:"private-device"}});
+const privateReadOutcome = pendingPrivateRead.then(() => "accepted", () => "superseded");
+revoked._syncUnmountedSoftphoneState = () => assert.fail("revocation is not a call outcome");
+callbacks.get("private")({{ kind: "closed", reason: "permissions_revoked", endpoint_id: "private" }});
+completePrivateRead({{endpoint_id:"private",device_id:"private-device",state:"ringing",call_id:"secret-call",caller:"secret-number"}});
+assert.equal(await privateReadOutcome, "superseded");
+assert.equal(detached, 1);
+assert.equal(revokedStates.at(-1).state, "unavailable");
+assert.equal(revokedStates.at(-1).can_control, false);
+assert.equal(revokedStates.at(-1).call_id, undefined);
+assert.equal(revokedStates.at(-1).caller, undefined);
+assert.equal(revoked._lastSoftphoneStates.get("endpoint:private").caller, undefined);
+assert.equal(keepStates.at(-1).call_id, "unrelated-call");
+callbacks.get("private")({{ endpoint_id: "private", state: "ringing", call_id: "late" }});
+assert.equal(revokedStates.at(-1).call_id, undefined);
+
 // Camera preflight ignores the Permissions API state: it opens the camera once,
 // then releases that one temporary stream.
 let mediaRequests = 0;
