@@ -4,7 +4,7 @@
 
 ![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
 
-_VoIP Dashboard [development preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev.1),
+_VoIP Dashboard [development preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.12.0-dev),
 shown with illustrative incoming, active and held call states._
 
 Answer your SIP video doorbell from a Home Assistant dashboard or Companion
