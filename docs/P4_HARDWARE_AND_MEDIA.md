@@ -56,6 +56,22 @@ Compare those with the selected SDK's compatibility requirement. Use a supported
 update or ROM recovery only when that identified mismatch requires it; an audio
 problem alone is not evidence that the coprocessor needs reflashing.
 
+## Camera source in the preview
+
+Dev profiles and coordinated CI use the
+[project camera fork on `dev`](https://github.com/n-IA-hane/esphome-esp-video-camera/tree/dev).
+It includes the shared hardware-JPEG frame admission submitted in
+[upstream PR #9](https://github.com/Psix-anp/esphome-esp-video-camera/pull/9).
+The existing 14 November P4 JPEG firmware was built with that same C++ code;
+changing the public profile reference does not itself update installed firmware.
+Main/stable profiles continue to use the upstream component on `main`.
+
+For `device: jpeg` with hardware JPEG encoding, the camera makes one admission
+decision before RAW callbacks, PPA and encoding. Dedicated `device: csi` RAW
+capture and already-compressed JPEG/MJPEG paths retain their existing policy.
+This describes the code path, not a measured FPS or CPU gain. The October check
+below records its original source revision and remains historical evidence.
+
 ## ESPHome 2026.10 physical check
 
 The 2026-10-21 check used the FULL landscape JPEG profile on physical P4

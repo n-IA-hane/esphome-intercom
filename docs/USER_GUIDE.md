@@ -27,8 +27,9 @@ names; HA stores the identifiers for you.
 
 **Release scope:** stable **2026.11.0** includes compact phone cards, routing,
 groups, voicemail, recording, parking, pickup and SIP BLF/MWI. The Dashboard,
-global popups, persistent LDAP directory and managed ESP registration described
-here require **2026.11.1-dev** and matching preview firmware where applicable.
+global popups, shared SIP accounts, persistent LDAP directory, queues, paging,
+physical-phone provisioning and managed ESP registration described here require
+**2026.12.0-dev** and matching preview firmware where applicable.
 Choose the intended release in HACS, restart HA and refresh its frontend after
 an update. The [changelog](../CHANGELOG.md) retains release history.
 
@@ -115,7 +116,7 @@ saved configuration without reloading the PBX. Existing saved `ha_softphone`,
 
 ### Receive calls over other Home Assistant views
 
-The **2026.11.1-dev** preview includes optional global call popups for an
+The **2026.12.0-dev** preview includes optional global call popups for an
 existing account. This associates the HA client with that account, rather than
 creating another card type or another phone to provision.
 
@@ -134,9 +135,11 @@ creating another card type or another phone to provision.
   </tr>
 </table>
 
-The choice persists in this browser or Companion app. Repeat it on each
-receiving device. There is no HA user-to-phone mapping. Finish the current
-call before choosing a different popup phone.
+The association is saved in Home Assistant for this user and browser or
+Companion instance. The local preference controls whether that instance shows
+popups. Repeat the choice on each receiving device; it does not assign the
+account globally to every browser used by that HA user. Finish the current call
+before selecting a different account for the popup.
 
 To turn popups off, clear **Receive call popups on this device** and save.
 The selected phone is remembered together with the disabled preference.
@@ -202,7 +205,14 @@ use the Frosted Glass Dark theme with demo contacts and illustrative call states
 
 ![Phone options with audio, video and routing settings](images/phone-cards/softphone-options.png)
 
-Options includes auto-answer, DND, mailbox, ringtone and media-device settings.
+Options includes auto-answer, DND, mailbox, ringtone and media-device settings,
+plus extension, group and queue membership. Under **Queues**, choose the queues
+this account belongs to; each queue's **Available**, **Paused** or **Logged out**
+control changes the operator state separately from membership. See
+[groups and queues](GROUPS_AND_QUEUES.md) for queue policies and fallbacks.
+The operator-state selectors also work when an ESP mirror is the only phone
+card on that page. In ESP mirror mode these controls operate the selected
+ESP's existing queue membership, and audio remains on that physical device.
 **Send Camera** controls your outgoing camera; it does not prevent receiving
 video. For example, a dashboard phone with Send Camera off can call a Companion
 phone and receive its camera when that phone answers with Send Camera on.

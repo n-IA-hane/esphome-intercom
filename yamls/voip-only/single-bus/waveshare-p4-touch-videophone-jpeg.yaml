@@ -43,7 +43,7 @@ substitutions:
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
-  camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"
+  camera_components_source: "github://n-IA-hane/esphome-esp-video-camera@dev"
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
   intercom_idf_ref: "dev"

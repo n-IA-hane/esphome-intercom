@@ -154,12 +154,15 @@ The compact-card screenshots use the Frosted Glass Dark theme with demo
 contacts and illustrative call states. The [card guide](docs/USER_GUIDE.md#choose-a-card-view)
 covers configuration and controls.
 
-### A Home Assistant softphone
+<a id="a-home-assistant-softphone"></a>
 
-A compact card gives one room or app session a dialer, contacts, answer/decline,
-DTMF, call settings and the available in-call controls. Select microphone,
-speaker and camera from its options; compatible browsers can change devices
-during a call. Give each independent room its own logical phone.
+### Use a SIP account from Home Assistant
+
+A compact card connects to an existing SIP account and gives a room or app
+session a dialer, contacts, answer/decline, DTMF and call settings. The same
+account can also ring a registered SIP phone. Select microphone, speaker and
+camera from the card's options; compatible browsers can change devices during
+a call. Create separate accounts when rooms need independent extensions.
 
 <table>
   <tr>
@@ -185,6 +188,10 @@ another phone or require another microphone.
 <img src="docs/images/phone-cards/phonebook.png" width="500" alt="Shared phonebook with demo room phones, a door station and an outside contact"/>
 
 ### Use the VoIP dashboard
+
+<img src="docs/images/voip-dashboard-companion-portrait.png" width="360" alt="VoIP Dashboard in the Companion app in portrait, with illustrative incoming, active, held and offline states"/>
+
+_Companion app portrait view with demonstration data and illustrative call states._
 
 The Dashboard brings the calling phone, extension activity and shared contacts
 into one view. See who is ringing, busy, available or offline; inspect calls
@@ -415,10 +422,10 @@ Requires **Home Assistant 2026.7.0 or newer**. Choose one channel:
 | Channel | Version | Starting point |
 | --- | --- | --- |
 | [Stable](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0) | **2026.11.0** | Stable PBX and phone cards, with matching firmware from `main`. |
-| [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.1-dev) | **2026.11.1-dev** | The Dashboard, popups and current ESP/directory features presented here. |
+| [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.12.0-dev) | **2026.12.0-dev** | Shared SIP accounts, Dashboard, popups, queues, paging, phone provisioning and current ESP/directory features. |
 
 The preview is updated under the same version. If HACS already shows
-**2026.11.1-dev**, use **Redownload** to receive its current archive, then
+**2026.12.0-dev**, use **Redownload** to receive its current archive, then
 restart HA and reload the frontend. A changed archive under the same version
 does not produce a new-version update notification.
 
@@ -427,10 +434,10 @@ does not produce a new-version update notification.
 1. Find **VoIP Stack** in HACS, choose **Download** and your version, then restart
    HA. For an existing installation, use **Redownload** to select the version.
 2. Add **VoIP Stack** under **Settings > Devices & services > Add integration**.
-3. Keep the HA phone created during setup, then use **Add phone** to create a
-   second browser phone. Give each a recognizable name and optional extension.
-4. Add a **VoIP Stack** card for each phone and select its Phone in the visual
-   editor. The preview also offers the **VoIP Dashboard** card.
+3. Keep the SIP account created during setup, then use **Add SIP account** to
+   create a second account. Give each a recognizable name and optional extension.
+4. Add a **VoIP Stack** card and select the account's Device in its **SIP account**
+   field. The **VoIP Dashboard** card uses the **Calling phone** selector.
 5. Open the phones on separate devices or browser sessions, allow microphone
    access and call the other phone from the shared phonebook. Answer, speak in
    both directions, hang up and call again.

@@ -106,6 +106,80 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+@pytest.mark.parametrize("cleanup", ["unmount", "phonebook"])
+def test_standalone_esp_mirror_observes_queue_states_without_another_card(popup_page, cleanup):
+    page = popup_page
+    page.evaluate("""async()=>{
+      await import('/voip-stack-card.js');
+      window.esp={device_id:'esp-device',endpoint_id:'esphome:esp-device',name:'Kitchen',kind:'esphome',
+        entities:{voip_state:'sensor.esp_voip_state',voip_queues:'text.esp_queues',
+          start_call_service:'esphome.esp_start_call'}};
+      hass.states={
+        'sensor.esp_voip_state':{state:'idle',attributes:{}},
+        'text.esp_queues':{state:'First queue, Second queue, Third queue',attributes:{}},
+        'sensor.voip_phonebook':{state:'ready',attributes:{roster_json:'[]'}}};
+      hass.services={voip_stack:{set_phone_settings:{},set_queue_agent_state:{}}};
+      const originalSend=hass.connection.sendMessagePromise;
+      hass.connection.sendMessagePromise=async request=>{
+        if(request.type==='voip_stack/resolve_device')return {device:esp};
+        if(request.type==='voip_stack/list_devices')return {devices:[esp],entity_ids:{phonebook:'sensor.voip_phonebook'}};
+        return originalSend(request);
+      };
+      window.queuePhones=[{...esp,state:'idle',queues:['First queue','Second queue','Third queue'],queue_states:[
+        {queue_id:'first',name:'First queue',state:'available'},
+        {queue_id:'second',name:'Second queue',state:'paused'},
+        {queue_id:'third',name:'Third queue',state:'logged_out'}]}];
+      let revision=1;
+      const originalSubscribe=hass.connection.subscribeMessage;
+      hass.connection.subscribeMessage=async(callback,request)=>{
+        if(request.type==='voip_stack/subscribe_phone_states'){
+          const record={callback,request,active:true};streams.push(record);
+          queueMicrotask(()=>callback({kind:'snapshot',revision,phones:queuePhones}));
+          return()=>{record.active=false;};
+        }
+        return originalSubscribe(callback,request);
+      };
+      window.pushQueueState=state=>{
+        queuePhones[0].queue_states[0]={...queuePhones[0].queue_states[0],state};
+        for(const stream of streams)if(stream.active&&stream.request.type==='voip_stack/subscribe_phone_states')
+          stream.callback({kind:'delta',revision:++revision,phones:queuePhones,removed:[]});
+      };
+      window.mirror=document.createElement('voip-stack-card');
+      mirror.style.cssText='display:block;width:380px';
+      mirror.setConfig({mode:'esp_mirror',device_id:esp.device_id,name:esp.name});
+      mirror.hass=hass;root.shadowRoot.append(mirror);
+    }""")
+    page.wait_for_function("mirror._queuesTextEntityId==='text.esp_queues'")
+    card = page.locator("voip-stack-card")
+    card.get_by_role("button", name="Options", exact=True).click()
+    page.wait_for_function("mirror._els.queuesInput.value==='First queue, Second queue, Third queue'")
+    witness = page.evaluate("""() => ({
+      active:streams.filter(s=>s.active&&s.request.type==='voip_stack/subscribe_phone_states').length,
+      states:[...mirror._els.queueStates.querySelectorAll('select')].map(e=>e.value),
+      visible:!mirror._els.queueStates.hidden,
+      cards:root.shadowRoot.querySelectorAll('voip-stack-card').length,
+      popup:__voipStackPopup.receivingPopups,
+      softphoneStreams:streams.filter(s=>s.request.type==='voip_stack/subscribe_ha_softphone_state').length
+    })""")
+    assert witness == {"active": 1, "states": ["available", "paused", "logged_out"],
+        "visible": True, "cards": 1, "popup": False, "softphoneStreams": 0}
+    card.get_by_label("First queue", exact=True).select_option("logged_out")
+    page.wait_for_function("services.some(s=>s.service==='set_queue_agent_state')")
+    assert page.evaluate("services") == [{"domain": "voip_stack", "service": "set_queue_agent_state",
+        "data": {"queue": "first", "phone": "esp-device", "state": "logged_out"}}]
+    page.evaluate("pushQueueState('paused')")
+    page.wait_for_function("mirror._els.queueStates.querySelector('select').value==='paused'")
+    assert page.evaluate("streams.filter(s=>s.request.type==='voip_stack/subscribe_phone_states').length") == 1
+    assert page.evaluate("mics===0&&contexts===0")
+    if cleanup == "unmount":
+        page.evaluate("mirror.remove()")
+    else:
+        page.evaluate("mirror.setConfig({mode:'phonebook'})")
+    page.wait_for_function("streams.filter(s=>s.active&&s.request.type==='voip_stack/subscribe_phone_states').length===0")
+    assert page.evaluate("__voipStackEngine.phoneStateFor('',esp.device_id)") is None
+    assert page.evaluate("services.length===1&&mics===0&&contexts===0")
+
+
 def test_cards_share_initial_stream_and_read_only_controls_do_not_open_media(popup_page):
     page = popup_page
     page.evaluate("""async()=>{

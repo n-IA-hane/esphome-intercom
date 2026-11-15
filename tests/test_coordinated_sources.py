@@ -17,7 +17,7 @@ def test_default_and_exact_manifest():
     assert refs['esphome-voip-stack'] == 'dev'
     assert refs['esphome-video-renderer'] == 'dev'
     assert refs['esphome-screenshot'] == 'dev'
-    assert refs['esphome-esp-video-camera'] == 'main'
+    assert refs['esphome-esp-video-camera'] == 'dev'
     components = {name: {'repository': repo, 'sha': str(i)*40}
                   for i, (name, repo) in enumerate(module.REPOSITORIES.items(), 1)}
     exact = module.requested_refs({'version': 1, 'components': components}, 'main')
@@ -68,3 +68,39 @@ def test_ci_component_refs_cover_incremental_preview_tags():
     result = subprocess.run(['node', '-e', script, json.dumps({'expressions': expressions, 'cases': cases})],
                             check=True, capture_output=True, text=True, timeout=10)
     assert json.loads(result.stdout) == [[expected for _, expected in cases]] * len(expressions)
+
+
+@pytest.mark.parametrize("channel,owner", [("dev", "n-IA-hane"), ("main", "Psix-anp")])
+def test_checkout_camera_uses_the_selected_repository_and_ref(tmp_path, monkeypatch, channel, owner):
+    commands = []
+    def fake_git(path, *args):
+        commands.append((path.name, args))
+        return "a" * 40 if args == ("rev-parse", "HEAD") else ""
+    monkeypatch.setattr(module, "git", fake_git)
+    result = module.checkout(tmp_path, module.requested_refs(None, channel))
+    camera = "esphome-esp-video-camera"
+    assert (camera, ("remote", "add", "origin", f"https://github.com/{owner}/{camera}.git")) in commands
+    assert (camera, ("fetch", "--depth", "1", "origin", channel)) in commands
+    assert result[camera]["repository"] == f"{owner}/{camera}"
+
+
+@pytest.mark.parametrize("owner", ["n-IA-hane", "Psix-anp"])
+def test_recorded_camera_repository_is_replayed_without_channel_substitution(tmp_path, monkeypatch, owner):
+    components = {name: {'repository': repo, 'sha': 'a' * 40} for name, repo in module.REPOSITORIES.items()}
+    camera = 'esphome-esp-video-camera'
+    components[camera]['repository'] = f'{owner}/{camera}'
+    manifest = {'version': 1, 'components': components}
+    repositories = module.requested_repositories(manifest, 'dev')
+    assert repositories[camera] == f'{owner}/{camera}'
+    commands = []
+    def fake_git(path, *args):
+        commands.append((path.name, args))
+        return 'a' * 40 if args == ('rev-parse', 'HEAD') else ''
+    monkeypatch.setattr(module, 'git', fake_git)
+    actual = module.checkout(tmp_path, module.requested_refs(manifest, 'dev'), repositories)
+    assert actual == components
+    assert (camera, ('remote', 'add', 'origin', f'https://github.com/{owner}/{camera}.git')) in commands
+    assert (camera, ('fetch', '--depth', '1', 'origin', 'a' * 40)) in commands
+    components[camera]['repository'] = 'unapproved/example'
+    with pytest.raises(ValueError, match='Invalid repository'):
+        module.requested_refs(manifest, 'dev')

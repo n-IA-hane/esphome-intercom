@@ -17,31 +17,41 @@ REPOSITORIES = {
     'esphome-screenshot': 'n-IA-hane/esphome-screenshot',
     'esphome-esp-video-camera': 'Psix-anp/esphome-esp-video-camera',
 }
+CAMERA = 'esphome-esp-video-camera'
+CAMERA_DEV_REPOSITORY = 'n-IA-hane/esphome-esp-video-camera'
 
 
 def git(path: Path, *args: str) -> str:
     return subprocess.check_output(['git', '-C', str(path), *args], text=True).strip()
 
 
-def requested_refs(manifest: dict | None, default_ref: str) -> dict[str, str]:
+def requested_repositories(manifest: dict | None, default_ref: str) -> dict[str, str]:
+    """Choose channel defaults, or preserve an explicitly recorded commit set."""
     if manifest is None:
-        return {name: 'main' if name == 'esphome-esp-video-camera' else default_ref
-                for name in REPOSITORIES}
+        return {**REPOSITORIES, CAMERA: CAMERA_DEV_REPOSITORY if default_ref == 'dev' else REPOSITORIES[CAMERA]}
     if manifest.get('version') != 1 or set(manifest.get('components', {})) != set(REPOSITORIES):
         raise ValueError('Manifest must contain the complete coordinated component set')
-    refs = {}
+    repositories = {}
     for name, repository in REPOSITORIES.items():
         item = manifest['components'][name]
         sha = item.get('sha', '')
-        if item.get('repository') != repository or not re.fullmatch(r'[0-9a-f]{40}', sha):
+        allowed = {repository, CAMERA_DEV_REPOSITORY} if name == CAMERA else {repository}
+        if item.get('repository') not in allowed or not re.fullmatch(r'[0-9a-f]{40}', sha):
             raise ValueError(f'Invalid repository or immutable SHA for {name}')
-        refs[name] = sha
-    return refs
+        repositories[name] = item['repository']
+    return repositories
 
 
-def checkout(root: Path, refs: dict[str, str]) -> dict:
+def requested_refs(manifest: dict | None, default_ref: str) -> dict[str, str]:
+    repositories = requested_repositories(manifest, default_ref)
+    return ({name: default_ref for name in repositories} if manifest is None else
+            {name: manifest['components'][name]['sha'] for name in repositories})
+
+
+def checkout(root: Path, refs: dict[str, str], repositories: dict[str, str] | None = None) -> dict:
     components = {}
-    for name, repository in REPOSITORIES.items():
+    repositories = repositories or requested_repositories(None, refs.get(CAMERA, 'main'))
+    for name, repository in repositories.items():
         path = root / name
         if path.exists():
             raise ValueError(f'Refusing to replace existing checkout: {path}')
@@ -71,7 +81,7 @@ def main() -> None:
     backend = git(args.backend, 'rev-parse', 'HEAD')
     if manifest is not None and manifest.get('backend_sha') != backend:
         raise ValueError('Select the manifest backend commit before replaying its components')
-    components = checkout(args.root, refs)
+    components = checkout(args.root, refs, requested_repositories(manifest, args.ref))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({'version': 1, 'backend_sha': backend,
                                       'components': components}, indent=2) + '\n')

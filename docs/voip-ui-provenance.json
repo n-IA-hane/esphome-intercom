@@ -1,5 +1,5 @@
 {
-  "captured_on": "2026-11-04",
+  "captured_on": "2026-11-15",
   "source": "VoIP UI gallery provenance. Each gallery below states whether it is a live capture, a restored original or an offline demonstration.",
   "p4_native_capture": {
     "file": "p4-touch-overview.jpg",
@@ -15,18 +15,13 @@
   "restored_phone_card_gallery": {
     "source_commit": "22e91179f7a54c95e461c66ee11ce3ccb7365d18",
     "theme": "Frosted Glass Dark",
-    "source": "Original themed phone-card screenshots, restored byte for byte from the published gallery commit.",
+    "source": "Remaining original themed phone-card screenshots, restored byte for byte from the published gallery commit. The refreshed option assets are recorded separately below.",
     "presentation": "Demo contacts and illustrative call states. These screenshots document the UI, not a new real-call qualification.",
     "files": [
       {
         "path": "docs/images/phone-cards/esp-mirror-keypad.png",
         "bytes": 258164,
         "sha256": "133382093ad8c8eb4498d512a439351374d82faf9bef139735e577534e7356d3"
-      },
-      {
-        "path": "docs/images/phone-cards/esp-mirror-options.png",
-        "bytes": 188338,
-        "sha256": "1e6f3a44d5def07d8dea5e65e72539a2e2e6c6d38396f9ea412629675eb42b27"
       },
       {
         "path": "docs/images/phone-cards/esp-mirror.png",
@@ -54,11 +49,6 @@
         "sha256": "c304a3f85eae25272148010758fec443fdcd438fcea98cedeec85be1d561a3e8"
       },
       {
-        "path": "docs/images/phone-cards/softphone-options.png",
-        "bytes": 283130,
-        "sha256": "b2f93ee922d4429d9b352c33b4a737f5cc31728c99fe3f12044c3e77d12b5d33"
-      },
-      {
         "path": "docs/images/phone-cards/softphone-parked.png",
         "bytes": 172502,
         "sha256": "8b9b4aa4990cf6bba3b6782901f663f1311b72b48ce800f9fd4fbab10ff31e4b"
@@ -79,11 +69,6 @@
         "sha256": "6802188e0939db0116652067d669be90e13a505e9696f2d5330352163f1e9b3b"
       },
       {
-        "path": "docs/images/phone-cards/softphone-routing.png",
-        "bytes": 410835,
-        "sha256": "728c89eccd4a90bce2c326e264901886684408535b3b7e0d46dc7e407ba45051"
-      },
-      {
         "path": "docs/images/phone-cards/softphone-transfer.png",
         "bytes": 172905,
         "sha256": "f16a6361fe369e5a3121155cada9f70bd379ff812a462e15cf63d3ef1ac99bc1"
@@ -92,6 +77,23 @@
         "path": "docs/images/phone-cards/softphone-voicemail.png",
         "bytes": 265151,
         "sha256": "b85aa0751ac29b06abdbb5bd06648c0016eb9975d15f546d5e4743d428f920c2"
+      }
+    ],
+    "historical_superseded_files": [
+      {
+        "path": "docs/images/phone-cards/esp-mirror-options.png",
+        "bytes": 188338,
+        "sha256": "1e6f3a44d5def07d8dea5e65e72539a2e2e6c6d38396f9ea412629675eb42b27"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-options.png",
+        "bytes": 283130,
+        "sha256": "b2f93ee922d4429d9b352c33b4a737f5cc31728c99fe3f12044c3e77d12b5d33"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-routing.png",
+        "bytes": 410835,
+        "sha256": "728c89eccd4a90bce2c326e264901886684408535b3b7e0d46dc7e407ba45051"
       }
     ]
   },
@@ -364,6 +366,11 @@
       "HACS native version/download dialog on installed repository, cancelled without Download; source helper in installed172.f5ba6b7dcddd98b0.js only dispatches show-dialog.",
       "Create-account two filenames intentionally show identical full form content, no account creation.",
       "Automation first greeting TTS separately corrected to Hello. This is a test., its manifest updated."
+    ],
+    "historical": true,
+    "superseded_files": [
+      "pbx-add-trunk-menu-dark.png",
+      "card-configuration.png"
     ]
   },
   "previous_live_popup_capture": {
@@ -564,5 +571,85 @@
         "pseudo": "none"
       }
     }
+  },
+  "companion_portrait_dashboard": {
+    "captured_on": "2026-11-15",
+    "source": "Official Home Assistant Companion 2026.11.1-full on Android 14; real Dashboard frontend, demonstration data injected in this page only.",
+    "presentation": "Illustrative incoming, active, held and offline call states; no real calls or household contacts.",
+    "file": "docs/images/voip-dashboard-companion-portrait.png",
+    "dimensions": [
+      1080,
+      2400
+    ],
+    "sha256": "e2ba142b76c74dcd8081bf0932411b21a77ebf78ae7918a4cd64cc66eb9a1ef7"
+  },
+  "current_native_editors": {
+    "captured_on": "2026-11-15",
+    "source": "Home Assistant 2026.11.1 native integration menu and Lovelace editor, current Dev integration/frontend.",
+    "theme": "Frosted Glass Dark, temporary browser context only",
+    "presentation": "Isolated lab accounts, no calls, account creation or configuration saves. Physical phone provisioning remained opt-in disabled.",
+    "files": [
+      {
+        "path": "docs/images/pbx-add-trunk-menu-dark.png",
+        "sha256": "28d93d8d7079ab0fa903e3fbb2dad266efad28467c344745b90c98746dc66f37"
+      },
+      {
+        "path": "docs/images/card-configuration.png",
+        "sha256": "55fd1d54a60e584a045e435728dd58de7af690d11b38ad6c265b69f2731b9335"
+      }
+    ]
+  },
+  "current_phone_options": {
+    "captured_on": "2026-11-15",
+    "source": "Production compact-card/engine/view with controlled read-only HA presentation data, not a real call qualification.",
+    "theme": "Frosted Glass Dark",
+    "presentation": {
+      "softphone-options.png": "Illustrative SIP account options with mailbox, browser-media controls and queue membership/operator states. Available controls depend on permissions and capabilities.",
+      "softphone-routing.png": "Illustrative routing: busy/unavailable calls forward to Office; after25seconds noanswer, use Reception mailbox. Demo provider is selected as outgoing trunk.",
+      "esp-mirror-options.png": "ESP remote controls for Front door, with that same ESP endpoint's queue membership and operator states. Available controls follow its native entity roles and capabilities; no additional phone, SIP account or browser-media session is created."
+    },
+    "source_component_JS_SHA256": {
+      "custom_components/voip_stack/frontend/voip-stack-media-model.js": "246df1427b7a88d917902907ae9f0e50c995b0cb72e89f85f6fe8de977dfd7ba",
+      "custom_components/voip_stack/frontend/voip-phonebook-card.js": "cc2dd38ef9cc234f3a08121c10e0b63c5f3f7db6f3580d8309a9fc23b518cec7",
+      "custom_components/voip_stack/frontend/voip-stack-card-editor.js": "81b559592ee54031559bbee83bda650725a55c4aadb6ef4c2953b2f80e467406",
+      "custom_components/voip_stack/frontend/voip-stack-i18n.js": "fd021968f591b50557115d27db57b5e60869f9ec4452cb93dce3f8fe82e11c58",
+      "custom_components/voip_stack/frontend/ringtone.js": "e3378a051d91f40089a8386ccc333d74026e77e2a6c428f3021a5a03aa15e468",
+      "custom_components/voip_stack/frontend/voip-stack-video-model.js": "a5f944a4960c1f737724b78bf6f88f1e80c2c0201ceab3717f59983f5a611aca",
+      "custom_components/voip_stack/frontend/voip-stack-dashboard-view.js": "b28ed0780c6312f294e88b87f73440087fe7115852875b05c01779b4b8fc7953",
+      "custom_components/voip_stack/frontend/voip-stack-video-worker.js": "fd3de4f0f8013acdcc0e2df629f1ce2e17e1157a7aaf78daf0bb621f9899c7c5",
+      "custom_components/voip_stack/frontend/voip-stack-card.js": "1f4998abf4db2f6c6a94e8d08dd502fb8bf8e17aa766448246440ffd0b683daa",
+      "custom_components/voip_stack/frontend/voip-stack-media-devices.js": "b868955255e592426a8222ff9db5d4228b3e01be7fea8d5f52608ea889fd1e63",
+      "custom_components/voip_stack/frontend/voip-stack-processor.js": "b2c0e5d9808c2143b7805da878475c3ccf204b9427f1bf77bd3d50138d9b3e37",
+      "custom_components/voip_stack/frontend/voip-stack-dashboard-card.js": "da814ae7d601c34f09b2db7873abb6e871441c19cea93fc14141406da69778d0",
+      "custom_components/voip_stack/frontend/voip-stack-dashboard-card-editor.js": "a81dba1b51e868e963ed7b0881ecef5730c3df522d0f907370f680223beaceca",
+      "custom_components/voip_stack/frontend/voip-stack-popup.js": "a63a7c26c147051ab310a72935559b18cea49a9fca9052ced94269935874bfd2",
+      "custom_components/voip_stack/frontend/voip-stack-session-model.js": "24cbe4d84f8db25d6a579d43e350aaff36a71da6d31dfbc519342f62c1e469d3",
+      "custom_components/voip_stack/frontend/voip-stack-engine.js": "48bd340c305f26f45f933805708dab99bd07e454098a34ff96521a42f18eb903",
+      "custom_components/voip_stack/frontend/voip-stack-card-model.js": "928303d99117cf3a7deb6b34d89d26f913213c17a4e9f963da3fd0d5255f2671",
+      "custom_components/voip_stack/frontend/voip-stack-video.js": "667136ca4cc8a905ec28a2f3eef8b6ec4e85c6b3806fbb83f2f1a1eeb5e5f6c2",
+      "custom_components/voip_stack/frontend/voip-stack-playback-processor.js": "0c0052a12ef5e1d5dfdc313f729b9448e239eda04f36a6391f5505b3f9bd7a7d",
+      "custom_components/voip_stack/frontend/voip-stack-card-view.js": "34d6586f8829ae0c4517ef0c184a2fab0d65e3dca527863079de247404c74fe6",
+      "custom_components/voip_stack/frontend/voip-stack-dashboard-model.js": "acd9a0e5df3d00fc9c2fba84c780d849a5a653144ba00c0696a21e16a25cfdab",
+      "custom_components/voip_stack/frontend/voip-stack-entity-ids.js": "9611fdb7405a77919e3d06156677f61b6114957439521e564f9509a2ed08d20d"
+    },
+    "no_service_writes_or_media_capture": true,
+    "ESP_mirror_is_remote_control_for_existing_ESP": true,
+    "files": [
+      {
+        "path": "docs/images/phone-cards/softphone-options.png",
+        "bytes": 137860,
+        "sha256": "64cae18be067849a8624744ad363318f899123f968bbc1f84b88d0b0a816faed"
+      },
+      {
+        "path": "docs/images/phone-cards/softphone-routing.png",
+        "bytes": 179973,
+        "sha256": "5f57df8e35c9dbb3c25d81dd6f8d363fe3b40b3093a972dfbe15d5807d7df20c"
+      },
+      {
+        "path": "docs/images/phone-cards/esp-mirror-options.png",
+        "bytes": 77476,
+        "sha256": "f1b93e5a29a561d4b1a705079563928ed93f1fa561e809a597f4d6eab2307637"
+      }
+    ]
   }
 }

@@ -320,12 +320,12 @@ class VoipStackCard extends HTMLElement {
   }
 
   async _subscribeBusEvents() {
+    if (!this._isPhonebookMode() && !this._unsubDestinationStates) {
+      this._unsubDestinationStates = voipStackEngine.subscribePhoneStates(() => {
+        if (this.isConnected) this._render();
+      });
+    }
     if (this._isHaSoftphoneMode()) {
-      if (!this._unsubDestinationStates) {
-        this._unsubDestinationStates = voipStackEngine.subscribePhoneStates(() => {
-          if (this.isConnected) this._render();
-        });
-      }
       if (!this._unsubSoftphoneState) {
         this._unsubSoftphoneState = voipStackEngine.subscribeSoftphoneState(
           (state, context) => this._onSoftphoneState(state, context),
@@ -833,11 +833,13 @@ class VoipStackCard extends HTMLElement {
     this.config = normalised.config;
     const newSelector = this.config?.entity_id || this.config?.device_id || "";
     const newMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
+    if (newMode === "phonebook") {
+      this._unsubDestinationStates?.();
+      this._unsubDestinationStates = null;
+    }
     if (oldMode === "ha_softphone" && newMode !== "ha_softphone") {
       this._lifecycleGeneration++;
       this._callOperationId++;
-      this._unsubDestinationStates?.();
-      this._unsubDestinationStates = null;
       if (this._unsubSoftphoneState) {
         this._unsubSoftphoneState();
         this._unsubSoftphoneState = null;

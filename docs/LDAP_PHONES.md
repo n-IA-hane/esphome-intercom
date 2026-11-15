@@ -42,8 +42,9 @@ does not enable or change SIP transport encryption.
 Use an enabled SIP account already configured in this VoIP Stack integration.
 The LDAP listener checks the account's current password through the existing
 account owner. It does not maintain another password database. Home Assistant
-users, browser phone identities and remote trunk credentials are not LDAP
-accounts.
+users and remote trunk credentials are not LDAP accounts. A card has no
+separate LDAP identity, but its enabled SIP account can authenticate with that
+account's SIP username and password.
 
 For a SIP account named `desk01`, the client settings are:
 

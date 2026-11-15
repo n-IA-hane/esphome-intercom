@@ -227,18 +227,17 @@ normal in-dialog method.
 
 ## HA logical phones
 
-The integration creates one normal Home Assistant browser phone on first
-setup, named from the Home Assistant location. Add or remove phones under
-**Settings > Devices & services > VoIP Stack > Add phone**. Each phone is
-stored as a native Home Assistant config subentry and selected publicly by its
-Device ID. Names, extensions and SIP usernames remain dial-plan destinations,
-not local-phone selectors.
+The integration creates one SIP account on first setup, named from the Home
+Assistant location. Add or remove accounts under **Settings > Devices & services
+> VoIP Stack > Add SIP account**. Each account is a native HA config subentry;
+cards select its Device. Names, extensions and SIP usernames are dial-plan
+destinations rather than alternative card identifiers.
 
-| Phone kind | HA representation | Transport behavior |
+| Object | HA representation | Client behavior |
 | --- | --- | --- |
-| Home Assistant browser phone | Integration-owned `DeviceEntryType.SERVICE` Device with call-state sensor, connectivity binary sensor, DND switch and call event entity. | One or more cards attach through authenticated WebSockets. Browser-to-browser calls use HA's in-memory local bridge. |
-| SIP account | Integration-owned `DeviceEntryType.SERVICE` Device with the same logical state surface. | A normal SIP UA registers to HA. The Device persists while its Contact is offline. |
-| ESPHome phone | The existing ESPHome physical Device and its standard VoIP entity surface. | VoIP Stack discovers and routes it but does not merge, adopt or duplicate the ESPHome Device. |
+| SIP account | Integration-owned `DeviceEntryType.SERVICE` Device with call state, connectivity, DND and call events. | Registered SIP clients and authenticated HA cards share the account. Cards use WebSockets; they do not need a SIP REGISTER. |
+| Managed physical phone | Separate inventory Device with model, line bindings, provisioning state and administrative controls. | Each managed line binds an existing SIP account. Registration and call state belong to that account. |
+| ESPHome phone | The existing ESPHome physical Device and its native VoIP entities. | VoIP Stack discovers and routes it without creating a duplicate physical Device. |
 
 There is no custom `phone` entity platform. Home Assistant's Device Registry is
 the phone/container and standard sensor, binary sensor, switch and event

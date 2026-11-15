@@ -199,13 +199,14 @@ The available pages follow the selected board and firmware features.
 
 For an update, open the existing VoIP Stack repository in HACS, choose
 **Redownload** and select the intended stable **2026.11.0** or preview
-**2026.11.1-dev** release. Restart HA and reload the frontend. The preview
-includes the Dashboard, optional global call popups and updated ESP services.
+**2026.12.0-dev** release. Restart HA and reload the frontend. The preview
+includes shared SIP accounts, the Dashboard, optional call popups, queues,
+paging, desk-phone provisioning and updated ESP services.
 Use matching [firmware sources](#development-preview-firmware) when rebuilding
 an ESP; redownloading the HA integration does not flash it.
 
 The preview keeps the same version as its archive is updated. Use
-**Redownload** even when **2026.11.1-dev** is already installed; HACS does not
+**Redownload** even when **2026.12.0-dev** is already installed; HACS does not
 announce a new version when only that version's archive changes.
 
 <table>

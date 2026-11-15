@@ -19,8 +19,9 @@ beyond the project overview in the [top-level README](../README.md).
 ## Release channels
 
 The stable release is **2026.11.0**. These `dev` guides also cover the
-**2026.11.1-dev** preview, including the VoIP Dashboard, global call popups,
-the persistent LDAP directory and managed ESP SIP accounts. Version notes at
+**2026.12.0-dev** preview, including the VoIP Dashboard, global call popups,
+shared SIP accounts, queues, paging, desk-phone provisioning and managed ESP
+registration. Version notes at
 the relevant setup steps identify preview features. Existing PBX functions
 such as voicemail, transfers, parking, SIP BLF and MWI are already in stable.
 
@@ -104,9 +105,10 @@ Each ESPHome component ships its own README with the full option list, YAML snip
 
 - [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack), the ESP SIP
   phone component.
-- [`esp_video_camera`](https://github.com/Psix-anp/esphome-esp-video-camera), the
-  ESP32-P4 Espressif V4L2 camera surface used by the native camera entity and
-  SIP video sources.
+- [`esp_video_camera` Dev fork](https://github.com/n-IA-hane/esphome-esp-video-camera/tree/dev),
+  the ESP32-P4 Espressif V4L2 camera surface used by the preview's native camera
+  entity and SIP video sources. Stable profiles retain the
+  [upstream component](https://github.com/Psix-anp/esphome-esp-video-camera).
 - [`esp_jpeg_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/esp_jpeg_video_source),
   [`esp_h264_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/esp_h264_video_source)
   and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/p4_video_renderer),

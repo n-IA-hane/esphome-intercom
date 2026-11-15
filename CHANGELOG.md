@@ -2,6 +2,19 @@
 
 ## 2026.12.0-dev
 
+### Preview camera sources and documentation
+
+- Build Dev P4 camera profiles and coordinated CI from the project camera fork,
+  including shared admission before hardware JPEG processing. Main/stable keep
+  the upstream camera source. The C++ already used by the qualified private P4
+  firmware is now selected by public Dev profiles as well.
+- Keep queue operator controls available in a standalone ESP mirror card, using
+  the existing shared phone-state subscription. Changing to a passive phonebook
+  or removing the card releases its observer without adding another runtime.
+- Add a portrait VoIP Dashboard capture from the official Companion app with
+  illustrative call states. Refresh account/queue documentation and current
+  option screenshots, while retaining labelled historical captures.
+
 ### Consistent transfer targets and administrative updates
 
 - Transfer an enabled offline SIP account through the PBX, allowing its normal

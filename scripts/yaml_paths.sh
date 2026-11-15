@@ -24,8 +24,17 @@ CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"
 P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
 OWNED_CAMERA_URL = "github://n-IA-hane/esphome-esp-video-camera"
+CAMERA_URLS = (CAMERA_URL, OWNED_CAMERA_URL)
 URLS[OWNED_CAMERA_URL] = CAMERA_ROOT
 OWNED_URLS = tuple(url for url in URLS if url != CAMERA_URL)
+
+
+def remote_source(url, ref):
+    """Dev previews use our camera fork; main and stable retain upstream."""
+    if url in CAMERA_URLS:
+        preview = ref == "dev" or ref.endswith("-dev") or "-dev." in ref
+        return (OWNED_CAMERA_URL, "dev") if preview else (CAMERA_URL, "main")
+    return url, ref
 
 
 def managed_files(base):
@@ -121,14 +130,14 @@ def rewrite_package(line, path, ref):
         repo = repo_for_path(target)
         if repo:
             url, repo_root = repo
-            remote_ref = "main" if url == CAMERA_URL else ref
+            url, remote_ref = remote_source(url, ref)
             return f"{prefix}{url}/{target.relative_to(repo_root).as_posix()}@{remote_ref}{suffix}"
         return line
     for url in URLS:
         marker = f"{url}/"
         if value.startswith(marker) and "@" in value:
             inner = value[len(marker):].rsplit("@", 1)[0]
-            remote_ref = "main" if url == CAMERA_URL else ref
+            url, remote_ref = remote_source(url, ref)
             return f"{prefix}{url}/{inner}@{remote_ref}{suffix}"
     return line
 
@@ -142,7 +151,7 @@ def rewrite_yaml(path, ref):
         if key == "camera_components_source" and not p4:
             continue
         component_dir = "components" if key == "camera_components_source" else "esphome/components"
-        remote_ref = "main" if key == "camera_components_source" else ref
+        url, remote_ref = remote_source(url, ref)
         overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else f"{url}@{remote_ref}"
     if device_entrypoint:
         overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" and (ROOT.parent / "esp-gmf/elements/gmf_ai_audio").is_dir() else ""
@@ -186,7 +195,8 @@ def camera_source_root(path):
 def rewrite_camera(path, ref):
     lines = path.read_text().splitlines()
     source_root = camera_source_root(path)
-    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@main"
+    url, remote_ref = remote_source(CAMERA_URL, ref)
+    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{url}@{remote_ref}"
     for index in range(1, len(lines)):
         if re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", lines[index]):
             if "${camera_components_source}" in lines[index - 1]:
@@ -206,12 +216,21 @@ def rewrite_sources(path, ref):
         if line.lstrip().startswith("#"):
             continue
         if ref != "local":
+            camera_url, camera_ref = remote_source(CAMERA_URL, ref)
+            for original in CAMERA_URLS:
+                line = re.sub(re.escape(original) + r'((?:/[\w./-]+)?)@[\w./-]+',
+                              lambda match: camera_url + match[1] + "@" + camera_ref, line)
+                line = re.sub(re.escape("https://github.com/" + original.removeprefix("github://"))
+                              + r"(?=(?:\.git)?(?:[\s\"']|$))",
+                              lambda match: "https://github.com/" + camera_url.removeprefix("github://"), line)
             for url, root in URLS.items():
                 component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
                 local_source = str(root / component_dir) if path.is_relative_to(ROOT / "packages") else relative(path.parent, root / component_dir)
-                remote_ref = "main" if url == CAMERA_URL else ref
-                line = re.sub(re.escape(local_source) + r"(?=['\" )}]|$)", lambda match: url + "@" + remote_ref, line)
+                remote_url, remote_ref = remote_source(url, ref)
+                line = re.sub(re.escape(local_source) + r"(?=['\" )}]|$)", lambda match: remote_url + "@" + remote_ref, line)
             for url in OWNED_URLS:
+                if url in CAMERA_URLS:
+                    continue
                 line = re.sub(re.escape(url) + r'((?:/[\w./-]+)?)@[\w./-]+',
                               lambda match: url + match[1] + "@" + ref, line)
             line = re.sub(r'(https://(?:raw\.githubusercontent\.com/n-IA-hane/esphome-intercom/|github\.com/n-IA-hane/esphome-intercom/raw/))[\w.-]+/',
@@ -219,15 +238,17 @@ def rewrite_sources(path, ref):
             if re.match(r"\s*intercom_idf_ref:", line):
                 line = re.sub(r'default\(([\"\'])[^\"\']+\1\)', lambda match: 'default(' + match[1] + ref + match[1] + ')', line)
             indent = len(line) - len(line.lstrip())
-            if owned_git_indent is not None and line.strip() and indent < owned_git_indent:
+            if owned_git_indent is not None and line.strip() and indent < owned_git_indent[0]:
                 owned_git_indent = None
-            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/n-IA-hane/", line):
-                if any(url.removeprefix("github://") in line for url in OWNED_URLS):
-                    owned_git_indent = indent
+            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/", line):
+                if camera_url.removeprefix("github://") in line:
+                    owned_git_indent = (indent, camera_ref)
+                elif any(url.removeprefix("github://") in line for url in OWNED_URLS):
+                    owned_git_indent = (indent, ref)
             elif owned_git_indent is not None and re.match(r"\s*ref:\s*", line):
                 # Dynamic refs are set by their substitution/default above.
                 if "${" not in line:
-                    line = re.sub(r'(ref:\s*)[^#]+', lambda match: match[1] + ref, line)
+                    line = re.sub(r'(ref:\s*)[^#]+', lambda match: match[1] + owned_git_indent[1], line)
                 owned_git_indent = None
         else:
             # A package default is evaluated after expansion from the entrypoint.
@@ -246,18 +267,31 @@ def source_errors(path, ref, remote):
     text = "\n".join(lines)
     if ref:
         for url in OWNED_URLS:
+            if url in CAMERA_URLS:
+                continue
             for actual in sorted(set(re.findall(re.escape(url) + r'(?:/[\w./-]+)?@([\w./-]+)', text)) - {ref}):
                 yield f"source channel {actual}, expected {ref}"
+        camera_url, camera_ref = remote_source(CAMERA_URL, ref)
+        for url in CAMERA_URLS:
+            for actual in sorted(set(re.findall(re.escape(url) + r'(?:/[\w./-]+)?@([\w./-]+)', text))):
+                if (url, actual) != (camera_url, camera_ref):
+                    yield f"camera source {url}@{actual}, expected {camera_url}@{camera_ref}"
         pending = None
         for line in lines:
             indent = len(line) - len(line.lstrip())
-            if pending is not None and line.strip() and indent < pending:
+            if pending is not None and line.strip() and indent < pending[0]:
                 pending = None
-            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/n-IA-hane/", line) and any(url.removeprefix("github://") in line for url in OWNED_URLS):
-                pending = indent
+            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/", line):
+                camera = next((url for url in CAMERA_URLS if url.removeprefix("github://") in line), None)
+                if camera is not None:
+                    if camera != camera_url:
+                        yield f"camera repository {camera}, expected {camera_url}"
+                    pending = (indent, camera_ref, "camera")
+                elif any(url.removeprefix("github://") in line for url in OWNED_URLS):
+                    pending = (indent, ref, "git")
             elif pending is not None and (match := re.match(r"\s*ref:\s*['\"]?([^'\"\s#]+)", line)):
-                if not match[1].startswith("${") and match[1] != ref:
-                    yield f"git source channel {match[1]}, expected {ref}"
+                if not match[1].startswith("${") and match[1] != pending[1]:
+                    yield f"{pending[2]} source channel {match[1]}, expected {pending[1]}"
                 pending = None
         for actual in re.findall(r"intercom_idf_ref:\s*['\"]?(?:\$\{\s*intercom_idf_ref\s*\|\s*default\(['\"])?([\w.-]+)", text):
             if actual != ref:
@@ -280,8 +314,7 @@ def mode(path):
     local |= bool(re.search(r'^\s*intercom_idf_root:\s*"[^"\s][^"]*"', text, re.MULTILINE))
     local |= bool(re.search(r'^\s*gmf_ai_audio_source:\s*"[^"\s][^"]*"', text, re.MULTILINE))
     for url, root in URLS.items():
-        if url != CAMERA_URL:
-            remote |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(url) + r'@', text))
+        remote |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(url) + r'@', text))
         component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
         source = relative(path.parent, root / component_dir)
         local |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(source) + r'(?:[\'"\s]|$)', text))
