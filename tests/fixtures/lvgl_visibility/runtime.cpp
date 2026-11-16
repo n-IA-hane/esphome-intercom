@@ -6,8 +6,18 @@
 #include <string>
 
 using esphome::lvgl_visibility::VisibilityPolicy;
-static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 5,
-              "This integration oracle is for real LVGL 9.5");
+static_assert(LVGL_VERSION_MAJOR == 9 && (LVGL_VERSION_MINOR == 5 || LVGL_VERSION_MINOR == 6),
+              "This integration oracle is for the reviewed managed LVGL releases");
+
+static void set_hidden(lv_obj_t *object, bool hidden) {
+#if LVGL_VERSION_MINOR >= 6
+  // The deprecated generic flag wrappers delegate to this same native setter.
+  lv_obj_set_hidden(object, hidden);
+#else
+  if (hidden) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+#endif
+}
 
 struct Scene {
   lv_display_t *display{};
@@ -198,13 +208,13 @@ static void screen_matrix() {
 
 static void ancestor_hidden() {
   Scene s;
-  lv_obj_add_flag(s.panel, LV_OBJ_FLAG_HIDDEN);
+  set_hidden(s.panel, true);
   s.pump(64);
   s.require(!lv_obj_is_visible(s.panel), "LVGL did not hide the ancestor");
   s.require(!s.script_running, "ancestor HIDDEN did not stop its script owner");
   s.require(Scene::inactive(s.avatar), "hidden ancestor avatar kept running");
   s.require(lv_anim_get(s.marquee, nullptr) == nullptr, "hidden ancestor marquee kept running");
-  lv_obj_remove_flag(s.panel, LV_OBJ_FLAG_HIDDEN);
+  set_hidden(s.panel, false);
   s.pump(64);
   s.require(s.script_running && s.starts == 2, "visible ancestor did not restore its script");
 }
@@ -212,7 +222,7 @@ static void ancestor_hidden() {
 static void script_only_hidden() {
   Scene s(false);
   s.require(s.script_running, "script-only scene did not start");
-  lv_obj_add_flag(s.panel, LV_OBJ_FLAG_HIDDEN);
+  set_hidden(s.panel, true);
   s.pump(64);
   s.require(!lv_obj_is_visible(s.panel), "script-only ancestor did not become hidden");
   s.require(!s.script_running && s.stops == 1,
@@ -255,10 +265,10 @@ static void top_layer() {
   s.show(4);
   s.require(s.policy.is_visible(s.top_label), "top-layer visibility changed with the active page");
   s.require(lv_anim_get(s.top_label, nullptr) != nullptr, "top-layer marquee stopped on another page");
-  lv_obj_add_flag(s.top_label, LV_OBJ_FLAG_HIDDEN);
+  set_hidden(s.top_label, true);
   s.pump(64);
   s.require(lv_anim_get(s.top_label, nullptr) == nullptr, "hidden top-layer marquee kept running");
-  lv_obj_remove_flag(s.top_label, LV_OBJ_FLAG_HIDDEN);
+  set_hidden(s.top_label, false);
   s.pump(64);
   s.require(lv_label_get_long_mode(s.top_label) == LV_LABEL_LONG_MODE_SCROLL_CIRCULAR,
             "top-layer marquee mode was not restored");
@@ -320,5 +330,5 @@ int main(int argc, char **argv) {
   else if (name == "owner_paused") generic_pause(true);
   else if (name == "unrelated_events") unrelated_events();
   else return 3;
-  std::cout << "PASS real_lvgl_9_5 " << name << '\n';
+  std::cout << "PASS real_lvgl_" << lv_version_major() << '_' << lv_version_minor() << ' ' << name << '\n';
 }

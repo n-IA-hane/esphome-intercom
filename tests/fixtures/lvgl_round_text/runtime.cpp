@@ -12,7 +12,7 @@
 #include <vector>
 
 using esphome::lvgl_round_text::RoundText;
-static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 5);
+static_assert(LVGL_VERSION_MAJOR == 9 && (LVGL_VERSION_MINOR == 5 || LVGL_VERSION_MINOR == 6));
 
 struct AllocationProbe {
   size_t calls{0}, fail_at{SIZE_MAX};
@@ -288,6 +288,6 @@ int main(int argc, char **argv) {
   else if (scenario == "setup_failure") setup_failure();
   else if (scenario == "oversized_empty_clear") oversized_empty_clear();
   else assert(false);
-  std::cout << "PASS real_lvgl_9_5 " << scenario << '\n';
+  std::cout << "PASS real_lvgl_" << lv_version_major() << '_' << lv_version_minor() << ' ' << scenario << '\n';
   return 0;
 }

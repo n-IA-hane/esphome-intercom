@@ -877,7 +877,15 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(len(access_units), 3, diagnostic)
             if restart_source:
                 self.assertGreaterEqual(len(access_units), 20, diagnostic)
-            self.assertTrue(any(item.key_frame for item in access_units))
+            self.assertTrue(
+                any(item.key_frame for item in access_units),
+                f"{video_format.encoding} -> {selected_output.encoding}: "
+                f"input_packets={input_packets}, output_packets={packets}, "
+                f"dropped_access_units={depacketizer.dropped_access_units}, "
+                f"sequence_gaps={getattr(depacketizer, 'sequence_gaps', None)}, "
+                f"access_units={[(item.timestamp, len(item.data), item.key_frame) for item in access_units]}\n"
+                f"{diagnostic}",
+            )
             timestamps = [item.timestamp for item in access_units]
             self.assertEqual(timestamps, sorted(timestamps))
         finally:

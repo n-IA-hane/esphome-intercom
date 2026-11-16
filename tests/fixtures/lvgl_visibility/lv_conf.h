@@ -2,6 +2,8 @@
 #define LV_CONF_H
 
 #define LV_COLOR_DEPTH 16
+/* LVGL 9.6 uses the explicit format; 9.5 retains its matching depth setting. */
+#define LV_COLOR_FORMAT_DEFAULT LV_COLOR_FORMAT_RGB565
 #define LV_USE_OS LV_OS_NONE
 #define LV_USE_LOG 0
 #define LV_USE_DRAW_SW 1

@@ -1,4 +1,4 @@
-"""Real LVGL 9.5 text layout, borrowed-pointer lifetime and bounded caches."""
+"""Real reviewed LVGL text layout, borrowed-pointer lifetime and bounded caches."""
 
 import os
 from pathlib import Path
@@ -7,9 +7,10 @@ import subprocess
 
 import pytest
 
+from tests.lvgl_host_source import lvgl_source_tag
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/lvgl_round_text"
-LVGL_COMPONENT_SHA = "184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae"
 CASES = ("differential", "pointer_cache", "allocation_failure", "work", "wrapper", "setup_failure",
          "oversized_empty_clear")
 pytestmark = [pytest.mark.diagnostic_reference, pytest.mark.integration, pytest.mark.timeout(180)]
@@ -24,9 +25,9 @@ def _run(command, *, timeout=120):
 @pytest.fixture(scope="module", params=[False, True], ids=["plain", "arabic"])
 def round_text_binary(request, tmp_path_factory):
     value = os.environ.get("LVGL_HOST_SOURCE", "")
-    assert value, "Provide LVGL_HOST_SOURCE from the identified managed LVGL 9.5 component"
+    assert value, "Provide LVGL_HOST_SOURCE from the identified managed LVGL component"
     source = Path(value).resolve()
-    assert (source / ".component_hash").read_text().strip() == LVGL_COMPONENT_SHA
+    lvgl_source_tag(source)
     cmake = shutil.which("cmake")
     assert cmake, "The real LVGL round text contract requires CMake"
     work = tmp_path_factory.mktemp("lvgl-round-text")
@@ -40,6 +41,6 @@ def round_text_binary(request, tmp_path_factory):
 @pytest.mark.parametrize("case", CASES)
 def test_real_lvgl_round_text_contract(round_text_binary, case):
     output = _run([str(round_text_binary), case], timeout=10)
-    assert f"PASS real_lvgl_9_5 {case}" in output
+    assert f"PASS {lvgl_source_tag(Path(os.environ['LVGL_HOST_SOURCE']))} {case}" in output
     if case == "work":
         assert "METRICS allocations=0 " in output
