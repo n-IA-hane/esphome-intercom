@@ -44,7 +44,7 @@ struct RingBufferAudioSource {
   std::vector<int16_t> pcm;
   bool exposed = false;
   size_t available() const { return exposed ? pcm.size() * 2 : 0; }
-  size_t fill(int, bool) { exposed = true; return pcm.size() * 2; }
+  size_t fill(int) { exposed = true; return pcm.size() * 2; }
   uint8_t *mutable_data() { return reinterpret_cast<uint8_t *>(pcm.data()); }
 };
 }

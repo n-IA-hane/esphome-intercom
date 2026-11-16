@@ -20,6 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_JS = "voip-stack-card.js"
 GLOBAL_JS = "voip-stack-popup.js"
+SECTION_JS = "voip-stack-section-strategy.js"
 FRONTEND_DIR = Path(__file__).parent
 
 
@@ -44,14 +45,18 @@ class JSModuleRegistration:
         modules = self.hass.data.get(DATA_EXTRA_MODULE_URL)
         asset_stamp = await self.hass.async_add_executor_job(_frontend_asset_stamp)
         popup_url = f"{URL_BASE}/{GLOBAL_JS}"
+        section_url = f"{URL_BASE}/{SECTION_JS}"
         if modules is not None:
             menu_url = f"{URL_BASE}/voip-stack-menu.js"
             for registered in tuple(modules.urls):
-                if registered.split("?")[0] in {menu_url, popup_url}:
+                if registered.split("?")[0] in {menu_url, popup_url, section_url}:
                     remove_extra_js_url(self.hass, registered)
         # Load before any dashboard card is mounted, including on other panels.
         add_extra_js_url(
             self.hass, f"{popup_url}?v={INTEGRATION_VERSION}-{asset_stamp}"
+        )
+        add_extra_js_url(
+            self.hass, f"{section_url}?v={INTEGRATION_VERSION}-{asset_stamp}"
         )
         if async_panel_exists(self.hass, "voip-stack-popup"):
             async_remove_panel(self.hass, "voip-stack-popup")

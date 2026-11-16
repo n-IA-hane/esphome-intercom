@@ -257,7 +257,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
 async def restore_managed_caller(lab, caller, discovery):
     """Recreate a persisted managed owner, then learn its real REGISTER/OPTIONS."""
     from homeassistant.helpers import device_registry as dr, entity_registry as er
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import peer_snapshot
     from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
     from custom_components.voip_stack.runtime_data import sip_registrar

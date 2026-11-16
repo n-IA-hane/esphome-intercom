@@ -4,8 +4,10 @@ This guide covers installation, firmware selection and network settings.
 `transport: udp` or `transport: tcp` selects SIP signaling transport; RTP audio
 and video use UDP in both cases.
 
-Use Home Assistant 2026.7.0 or newer. Firmware builds require
-ESPHome 2026.10.0 or newer. HA and ESP firmware do not need matching version
+The current development tree requires Home Assistant 2026.11.1 or newer and
+uses the official ESPHome development revision recorded in
+[stabilization](STABILIZATION.md). Stable 2026.11.0 retains its Home Assistant
+2026.7 and ESPHome 2026.10 requirements. HA and ESP firmware do not need matching version
 numbers: a HACS update and a device firmware update are separate operations.
 Rebuild an ESP when adopting firmware-side changes. Keep the selected release's
 YAML, packages and component revisions coordinated; a documentation or HACS
@@ -216,6 +218,10 @@ announce a new version when only that version's archive changes.
     <td><img src="images/voip-stack-config-flow.png" alt="Configure SIP and RTP"/></td>
   </tr>
 </table>
+
+_SIP/RTP settings are separate from the native account and physical-phone
+editors described in [accounts and clients](ACCOUNTS_AND_CLIENTS.md) and
+[managed phones](PHONE_PROVISIONING.md)._
 
 HACS registers the bundled Lovelace card automatically. A normal LAN can keep
 SIP `5060` and RTP base `40000`.

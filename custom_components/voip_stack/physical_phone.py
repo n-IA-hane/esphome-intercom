@@ -66,7 +66,7 @@ def physical_phone_identity_updates(entry):
         legacy = str(record.data.get("phone_id") or "")
         if not identity or identity in seen or (legacy and identity != legacy):
             from .phone_config import PhoneIdentityConflict
-            raise PhoneIdentityConflict(record.title, identity, legacy)
+            raise PhoneIdentityConflict(record.title, identity, legacy, subentry_id=record.subentry_id)
         seen.add(identity)
         data = {key: value for key, value in record.data.items() if key != "phone_id"}
         unique = record.unique_id or "physical_phone:" + identity

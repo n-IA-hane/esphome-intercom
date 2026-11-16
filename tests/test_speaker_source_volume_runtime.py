@@ -3,6 +3,8 @@ import subprocess
 
 from pathlib import Path
 
+from tests.esphome_native import NATIVE_COMPONENTS
+
 COMPONENTS = Path(__file__).resolve().parents[1] / "esphome/components"
 
 
@@ -35,6 +37,7 @@ protected:
     cpp = tmp_path / 'volume.cpp'
     cpp.write_text(r'''
 #include "esphome/components/speaker/speaker.h"
+#include "esphome/components/speaker/announcement_volume.h"
 #include <cassert>
 #include <vector>
 namespace esphome::speaker_source {
@@ -46,11 +49,13 @@ struct Pipeline {speaker::Speaker* speaker;std::vector<Binding*> sources;bool is
 struct SpeakerSourceMediaPlayer {
  speaker::Speaker sink;std::vector<Pipeline> pipelines_{{&sink,{}}};
  float volume=0.5f,volume_min_=0.3f,volume_max_=1;bool is_muted_=false;
+ speaker::AnnouncementVolume announcement_volume_;
  Trigger mute_trigger_,unmute_trigger_,volume_trigger_;
  void save_volume_restore_state_(){}template<class F>void defer(F f){f();}
  void set_volume_(float,bool=true);void set_mute_state_(bool,bool=true);
+ void apply_speaker_volume_(float);
 };
-''' + method(source, 'void SpeakerSourceMediaPlayer::set_mute_state_(') + '\n' + method(source, 'void SpeakerSourceMediaPlayer::set_volume_(') + r'''
+''' + method(source, 'void SpeakerSourceMediaPlayer::set_mute_state_(') + '\n' + method(source, 'void SpeakerSourceMediaPlayer::set_volume_(') + '\n' + method(source, 'void SpeakerSourceMediaPlayer::apply_speaker_volume_(') + r'''
 }
 int main(){
  using namespace esphome::speaker_source;
@@ -64,5 +69,8 @@ int main(){
 }
 ''')
     executable = tmp_path / 'volume'
-    subprocess.run(['g++', '-std=c++20', '-I', str(tmp_path), '-I', str(component), str(cpp), '-o', str(executable)], check=True, capture_output=True, text=True)
+    compiled = subprocess.run(['g++', '-std=c++20', '-I', str(tmp_path), '-I', str(component),
+                               '-I', str(NATIVE_COMPONENTS.parent.parent), str(cpp), '-o', str(executable)],
+                              capture_output=True, text=True)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     subprocess.run([str(executable)], check=True, capture_output=True, text=True)

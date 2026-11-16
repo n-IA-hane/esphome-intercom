@@ -1,0 +1,79 @@
+{
+  "repository": "espressif/esp-idf",
+  "base_tag": "v5.5.6",
+  "base_commit": "880a203ae603d08a94d06aa01e0d6761958e5e9e",
+  "official_fix_commit": "9da8ff53f751f6682f69897d886f3a9946deed31",
+  "patch_file": "9da8ff53.patch",
+  "patch_sha256": "9e504cbcf1878dee91aa16fcafa6cf763799d5300df32de89479eb265daf25f6",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "path": "components/esp_driver_ppa/src/ppa_blend.c",
+      "sha256": "a775488d838987e2470e2b6ec4a41dafc667b5cfa3e0bbd97cefebf77ad943e6",
+      "git_blob": "b276b505327172567718b76c2c71b4cde2a1f5e7",
+      "patched_sha256": "246b1f79e233563a6b184e56688fdbc82e174266bd5e557229b1399a2be3f766"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_core.c",
+      "sha256": "2b2b465880818405b611c3a76898bcba321df0f87fc65625677077b017d21ae6",
+      "git_blob": "b9683b9099829dbd2de8a66d18c8cd371d91c897",
+      "patched_sha256": "fd18027ed87206134fd006273c83e465e8078a057a5808cdebd1aa8019e894d1"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_fill.c",
+      "sha256": "04e944325dd871144b29a8882595b041edb35a633c3bad75fabb0da8f284ac6a",
+      "git_blob": "651f489834ff2826f27951e7cf36a16e01b8141d",
+      "patched_sha256": "2af806c299786fbeec8303a29046fd727480c6058541ffcdae0b828cc980e7b4"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_priv.h",
+      "sha256": "9073671970c8725a6d160404332942938f08531599a341dab205a489c03060d3",
+      "git_blob": "37e2220a5d7af52b24e4d208efb7c982e4d7391f",
+      "patched_sha256": "692acf1dd1211d3f23720cb39f85d435ffecf2904bb4e56995fe959e0821e918"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_srm.c",
+      "sha256": "e562ff0080f6ccf7402891bd4f4b176a9bf05a296f3a452d1442055df86b6a4f",
+      "git_blob": "0a6edc7ba55222b9e0d9bf8e265b1932ce2ce61a",
+      "patched_sha256": "d7b861d35a3d89490c41be4cf5dc400d9058e6244055f23ebd408e9b731461f9"
+    }
+  ],
+  "additional_bases": {
+    "6.0.3": {
+      "base_tag": "v6.0.3",
+      "base_commit": "76f5dedd9950a3012fee8fb7d5586df21fc67802",
+      "files": [
+        {
+          "path": "components/esp_driver_ppa/src/ppa_blend.c",
+          "sha256": "20a9e88f793377f7d7cddbdfde7733270484f6a2c27c5bb11242a45efad5c5cf",
+          "git_blob": "04312cc7eb5329fe355800ffd96a1d01330e5345",
+          "patched_sha256": "19a9c799680be13f040f96a75aecc45d833717e96cd581ed1ad8c27ea17f648e"
+        },
+        {
+          "path": "components/esp_driver_ppa/src/ppa_core.c",
+          "sha256": "d3ad65fe93d8017fecc62aa81982470f9c5dc8a76c54877370e8dabd2f36edaf",
+          "git_blob": "922c4b2268f2c0731ccc36f8a090b0ed5628f476",
+          "patched_sha256": "7dcf254ea0e39704386456ee83af717b650c1435bd38bdf1ddb41cf1592bcfe7"
+        },
+        {
+          "path": "components/esp_driver_ppa/src/ppa_fill.c",
+          "sha256": "ed1b4e8d4a149ac0251e4bb5b9a623694472b8afbed4e054c151fbf502727ca0",
+          "git_blob": "bc037554ee948889913e9ffc0b71c51d2ecdadc3",
+          "patched_sha256": "2a3f9c4c5421ee40db8f5c523e9ed56b2982573e43ebf9275599115dfb7d7fe3"
+        },
+        {
+          "path": "components/esp_driver_ppa/src/ppa_priv.h",
+          "sha256": "6ab1626b8e61800a3f03f451762735077237f7d7305d43cf505ed135863d94b5",
+          "git_blob": "a5fd5e96b5835ebfe1bdd3376daf0e2838ba0fc3",
+          "patched_sha256": "f41ed0bcce4b514e50da68c2222521664e5721af1203df90b03d9f61946695bc"
+        },
+        {
+          "path": "components/esp_driver_ppa/src/ppa_srm.c",
+          "sha256": "1494d1cacf4e686a580443f13176682b1e816c3de094779c2bf85a14f14fe4b5",
+          "git_blob": "c388a0cec031aae714fb893f3cf5a36a98c0971f",
+          "patched_sha256": "cf5542ab4bd8093a93489083acda71e68ba829fb5941b4cf3796a911de8f1597"
+        }
+      ]
+    }
+  }
+}

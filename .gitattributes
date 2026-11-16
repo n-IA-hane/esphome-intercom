@@ -1,0 +1,4 @@
+# Preserve the exact whitespace of imported upstream patches and license text.
+esphome/components/p4_ppa_backport/9da8ff53.patch -whitespace
+tests/fixtures/p4_default_sdk/dd47ea36.patch -whitespace
+tests/fixtures/espressif_p4_official/esp-video-components/esp_video/LICENSE -whitespace

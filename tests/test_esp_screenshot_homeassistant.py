@@ -41,6 +41,7 @@ from pathlib import Path
 import sys
 from unittest.mock import patch
 
+import homeassistant  # Initialize the official HTTP client alias before httpx.
 import httpx
 
 from homeassistant.config_entries import ConfigEntries
@@ -51,6 +52,7 @@ from homeassistant.components.template.image import IMAGE_YAML_SCHEMA, StateImag
 async def main():
     hass = HomeAssistant(sys.argv[1])
     hass.config_entries = ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
     dr.async_setup(hass)
     await dr.async_load(hass, load_empty=True)
     fetched, updates = [], []
@@ -63,7 +65,7 @@ async def main():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         config = IMAGE_YAML_SCHEMA(json.loads(Path(sys.argv[2]).read_text()))
-        with patch("homeassistant.components.image.get_async_client", return_value=client):
+        with patch("homeassistant.components.image.entity.get_async_client", return_value=client):
             image = StateImageEntity(hass, config, config.get("unique_id"))
         image.entity_id = "image.screen_screenshot"
 

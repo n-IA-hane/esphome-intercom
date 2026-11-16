@@ -407,7 +407,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('customElements.define("voip-stack-phonebook-view"', source)
         self.assertNotIn('customElements.define("voip-phonebook-card"', source)
         self.assertNotIn('type: "voip-phonebook-card"', source)
-        self.assertIn('phonebookOpt.value = "phonebook"', self.editor_source)
+        self.assertIn('{ value: "phonebook",', self.editor_source)
         self.assertIn('this._isPhonebookMode()', self.source)
         self.assertIn('document.createElement("voip-stack-phonebook-view")', self.source)
 
@@ -661,6 +661,15 @@ class FrontendCardContractTest(unittest.TestCase):
 
     def test_frontend_has_no_esp_call_control_ws_commands(self) -> None:
         engine = (ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-engine.js").read_text()
+        # AudioWorklet MessagePorts own their local processor lifetime. Their
+        # commands are distinct from WebSocket/ESP call-control messages.
+        message_port_calls = re.compile(r"\b[\w.]+\.port\.postMessage\(\s*\{[^{}]*\}\s*\)")
+        websocket_source = message_port_calls.sub("", engine)
+        local_stop = 'node.port.postMessage({ type: "stop" })'
+        forbidden_stop = 'this._ws.send(JSON.stringify({ type: "stop" }))'
+        self.assertNotIn('type: "stop"', message_port_calls.sub("", local_stop))
+        self.assertIn('type: "stop"', message_port_calls.sub("", forbidden_stop))
+        self.assertIn('type: "stop"', message_port_calls.sub("", local_stop + ";" + forbidden_stop))
         for token in (
             "ENGINE_TRANSITIONS",
             "startP2P",
@@ -674,7 +683,7 @@ class FrontendCardContractTest(unittest.TestCase):
             'type: "hangup"',
             "answer_esp_call",
         ):
-            self.assertNotIn(token, engine)
+            self.assertNotIn(token, websocket_source if token.startswith("type:") else engine)
 
     def test_ha_softphone_browser_audio_survives_hidden_tabs(self) -> None:
         engine = (ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-engine.js").read_text()
@@ -813,8 +822,10 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertNotIn("newConfig.endpoint_id = selected.endpoint_id", editor)
         self.assertIn("Preferred SIP account", editor)
         self.assertIn("normaliseCardConfig(config)", editor)
-        self.assertIn("const configuredMissingPhone = softphoneMode", editor)
-        self.assertIn("Missing phone:", editor)
+        self.assertIn("const configuredMissingPhone = configuredDeviceId", editor)
+        self.assertIn('this._t("Missing phone")', editor)
+        self.assertIn('document.createElement("ha-form")', editor)
+        self.assertIn('visible: controlVisible', editor)
         self.assertIn("disconnectedCallback()", editor)
         self.assertIn("clearTimeout(this._devicesRetryTimer)", editor)
         self.assertIn(

@@ -117,23 +117,26 @@ schema. Use the pinned component source for all fields and resource limits.
 
 ### ESP video components
 
-The maintained ESP32-P4 profiles wire four components. They are excluded when
-`voip_stack.video` is absent.
+The maintained ESP32-P4 video packages select the camera, codec-specific source
+and receiver components below. These roles are independent. A standalone
+renderer does not require VoIP; the Native transport adapter is created only
+when `voip_stack.video.sink` selects that renderer.
 
 | Component | Purpose and options |
 | --- | --- |
 | `esp_video_camera` | Espressif `esp_video` V4L2 camera source and native ESPHome camera entity. Required `i2c_id`; options include `device`, `resolution`, `jpeg_quality`, `max_framerate`, `rotation`, XCLK controls and optional UVC support. `device: jpeg` exposes hardware JPEG frames, while `device: csi` exposes raw CSI frames for H.264. |
 | `esp_jpeg_video_source` | Borrowed JPEG access-unit adapter with `camera_id`, `width`, `height` and `framerate`. It requires a JPEG-producing camera and performs no decode/re-encode or per-frame allocation. |
 | `esp_h264_video_source` | ESP32-P4 hardware H.264 encoder with `camera_id`, `width`, `height`, `framerate`, `bitrate` and `gop`. Width and height must be multiples of 16 and the camera must use `device: csi`. PPA performs crop, rotation and scaling before the Espressif encoder. |
-| `p4_video_renderer` | Encoded RX sink with `codec`, preferred `width`, `height`, `framerate`, decode bounds, optional `display_id`, `display_rotation`, `on_first_frame` and `on_video_ended`. H.264 requires `display_id` and presents through the direct P4 display path. |
+| `p4_video_renderer` | Independent encoded-frame renderer from the renderer repository, with `codec`, preferred `width`, `height`, `framerate`, decode bounds, `display_id`, `on_first_frame` and `on_video_ended`. Both codecs present through the LVGL image owner. `display_rotation` is deprecated; LVGL owns orientation. |
 
 The source and renderer codec must match `voip_stack.video.codec`. The shipped
 P4 packages are the reference wiring; custom YAMLs should copy one complete
 JPEG or H.264 package instead of mixing parts from both profiles.
 
-S3 LCD profiles use a separate `esp_video_renderer` JPEG sink wired by
+S3 LCD profiles use the independent `esp_video_renderer` JPEG renderer wired by
 [`s3_video_jpeg.yaml`](../packages/voip/s3_video_jpeg.yaml). Its defaults are
-320x240 at 2 FPS; the profile supplies an LVGL video container and the call page
+320x240 at 2 FPS in the shared package; board profiles can override that
+preference. The profile supplies an LVGL video container and the call page
 switches on a remote frame. This is distinct from an S3 with only camera TX and
 from the display-less Waveshare S3 Audio Board. It does not imply S3 H.264 RX
 or physical-panel qualification for every board that includes the package.
@@ -225,7 +228,9 @@ normal in-dialog method.
 - `voip_stack.destination_is` (`destination`)
 - `voip_stack.is_ha_destination`
 
-## HA logical phones
+<a id="ha-logical-phones"></a>
+
+## SIP accounts and HA clients
 
 The integration creates one SIP account on first setup, named from the Home
 Assistant location. Add or remove accounts under **Settings > Devices & services
@@ -246,21 +251,22 @@ automations, entity ownership and config-subentry removal semantics without a
 private HA Core patch.
 
 Common phone options are name, extension, enabled, DND, ring/conference group,
-conference ringing and video capability. A configured browser phone remains a
-routable logical handset even with no card connected: it enters `ringing`,
+conference ringing and video capability. An account with a saved HA association
+remains routable even with no card connected: it enters `ringing`,
 automations can act on that state, and a card connected during the ring window
 can answer. Browser presence controls media availability, never dial-plan
-membership. Unregistered SIP accounts may instead reject or forward because
-they have no reachable Contact. Each phone owns at most one call; concurrent
+membership. An account with neither a valid SIP Contact nor a saved HA
+association is offline and follows its unavailable-call policy. Each account
+owns at most one call; concurrent
 calls receive `486 Busy Here`.
 
-Browser-phone Devices expose extension and group membership as native text
+SIP-account Devices expose extension and group membership as native text
 entities plus DND and conference-ringing switches. These entities, the card
 and the settings action share the same config-subentry-backed values.
 
-One HA phone may be displayed by several cards. The first browser that answers
+One SIP account may be displayed by several cards. The first browser that answers
 atomically owns its audio/video media; later answers cannot steal it. Create a
-separate phone when a tablet must behave as a separately callable handset. A
+separate account when a tablet needs an independent extension and call state. A
 dashboard reload may reclaim its still-active call only after every old media
 socket has closed; a second live tab cannot preempt the owner. Audio-only
 destinations remain audio-only even if the caller requests video. For

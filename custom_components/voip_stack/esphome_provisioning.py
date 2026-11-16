@@ -8,10 +8,11 @@ import logging
 
 from homeassistant.components import network
 from homeassistant.config_entries import ConfigEntryChange, SIGNAL_CONFIG_ENTRY_CHANGED
-from homeassistant.const import EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED, EVENT_STATE_CHANGED
+from homeassistant.const import EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .config import transport_config
 from .const import CONF_REGISTRAR_ENABLED
@@ -50,6 +51,8 @@ class EspHomeProvisioner:
         self.hass, self.entry, self.runtime = hass, entry, entry.runtime_data
         self._lock = asyncio.Lock()
         self._unsubscribers = []
+        self._state_unsubscribe = None
+        self._state_entities = frozenset()
         self._delivered = {}
         self._task = None
         self._closed = False
@@ -83,12 +86,28 @@ class EspHomeProvisioner:
         self._unsubscribers = [
             self.hass.bus.async_listen(EVENT_SERVICE_REGISTERED, self._service_changed),
             self.hass.bus.async_listen(EVENT_SERVICE_REMOVED, self._service_changed),
-            self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._state_changed),
             self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
             self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._entity_changed),
             async_dispatcher_connect(self.hass, SIGNAL_CONFIG_ENTRY_CHANGED, self._entry_changed),
         ]
+        self._refresh_state_entities()
         self.schedule()
+
+    @callback
+    def _refresh_state_entities(self):
+        """Rebind HA's entity index only when registry membership changes."""
+        if not self._owned():
+            return
+        entities = frozenset(entity.entity_id for entity in er.async_get(self.hass).entities.values()
+                             if entity.platform == "esphome" and entity_role(entity) in {*_ROLES, "voip_state"})
+        if entities == self._state_entities:
+            return
+        if self._state_unsubscribe is not None:
+            self._state_unsubscribe()
+            self._state_unsubscribe = None
+        self._state_entities = entities
+        if entities:
+            self._state_unsubscribe = async_track_state_change_event(self.hass, entities, self._state_changed)
 
     @callback
     def schedule(self):
@@ -111,6 +130,8 @@ class EspHomeProvisioner:
 
     @callback
     def _state_changed(self, event):
+        if not self._owned():
+            return
         entity = er.async_get(self.hass).async_get(str(event.data.get("entity_id") or ""))
         if entity is not None and entity.platform == "esphome" and entity_role(entity) in {
                 *_ROLES, "voip_state"}:
@@ -137,8 +158,11 @@ class EspHomeProvisioner:
 
     @callback
     def _entity_changed(self, event):
-        entity = er.async_get(self.hass).async_get(str(event.data.get("entity_id") or ""))
-        if entity is not None and entity.platform == "esphome" and entity_role(entity) in _ROLES:
+        identity = str(event.data.get("entity_id") or "")
+        entity = er.async_get(self.hass).async_get(identity)
+        if (identity in self._state_entities or event.data.get("old_entity_id") in self._state_entities
+                or (entity is not None and entity.platform == "esphome" and entity_role(entity) in {*_ROLES, "voip_state"})):
+            self._refresh_state_entities()
             self.schedule()
 
     @callback
@@ -517,6 +541,10 @@ class EspHomeProvisioner:
     async def async_close(self):
         self._closed = True
         self._revision += 1
+        if self._state_unsubscribe is not None:
+            self._state_unsubscribe()
+            self._state_unsubscribe = None
+        self._state_entities = frozenset()
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()

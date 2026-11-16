@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from inspect import signature
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
@@ -34,7 +36,11 @@ def async_sync_phone_identity_issue(hass, entry, error=None) -> None:
     if error is None:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
-    ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
+    ownership = {"config_entry_id": entry.entry_id}
+    subentry_id = str(getattr(error, "subentry_id", "") or "")
+    if subentry_id in entry.subentries and "config_subentry_id" in signature(ir.async_create_issue).parameters:
+        ownership["config_subentry_id"] = subentry_id
+    ir.async_create_issue(hass, DOMAIN, issue_id, **ownership, is_fixable=False,
         is_persistent=False, severity=ir.IssueSeverity.ERROR,
         translation_key="phone_identity_conflict", translation_placeholders={
             "phone": str(getattr(error, "phone", entry.title)),

@@ -873,6 +873,12 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
+    if runtime is not None:
+        stores = tuple(store for owner in (runtime.ha_bindings, runtime.physical_phones, runtime.queues)
+                       if owner is not None
+                       if (store := getattr(owner, "store", None) or getattr(owner, "_store", None)) is not None)
+        if stores:
+            runtime.entry_stores = stores
     if runtime is not None and runtime.ha_bindings is not None:
         bindings, runtime.ha_bindings = runtime.ha_bindings, None
         await bindings.async_close()
@@ -928,6 +934,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     from .mailbox import async_remove_entry_mailboxes
 
     await async_remove_entry_mailboxes(hass, entry)
+    from homeassistant.helpers.storage import Store
+
+    runtime = getattr(entry, "runtime_data", None)
+    stores = {store.key: store for store in getattr(runtime, "entry_stores", ())}
+    for name in ("ha_bindings", "physical_phones", "queues"):
+        key = f"voip_stack.{name}.{entry.entry_id}"
+        store = stores.get(key)
+        if store is None:
+            # A disabled/never-loaded entry has no live owner or delayed writer.
+            store = Store(hass, 1, key)
+        await store.async_remove()
+    if runtime is not None:
+        runtime.entry_stores = ()
     bucket = hass.data.get(DOMAIN)
     if not isinstance(bucket, dict):
         return

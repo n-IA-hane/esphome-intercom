@@ -24,14 +24,14 @@
           "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
           "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs without recording call audio.",
           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
-          "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
+          "experimental_sip_video": "Allow optional video for compatible endpoints and routes. Browser H.264, VP8 and JPEG require a secure context and a compatible browser. ESP support follows the configured device and codec profile: supported S3 display profiles receive JPEG; P4 profiles can use JPEG or H.264. Audio-only and camera-only profiles retain their respective limits.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
           "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
         }
       },
       "video": {
         "title": "SIP video",
-        "description": "Video is optional. The Home Assistant softphone and standard SIP endpoints support it, and qualified ESP32-P4 profiles can negotiate JPEG or H.264. Other ESP endpoints remain audio-only.",
+        "description": "Video is optional and depends on the endpoint, route and configured codec. Supported S3 display profiles receive JPEG; P4 profiles can use JPEG or H.264. Browser and standard SIP video still require compatible peers, and a camera-only profile does not add video reception.",
         "data": {
           "video_transcoding_enabled": "Enable video transcoding",
           "video_camera_send_enabled": "Allow browser camera transmission"
@@ -646,16 +646,16 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Source: {profile_source}. Pinned revision: {profile_pin}. Status: {profile_status}. Downloaded does not mean applied.",
+          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "update_profile": "Update the pinned profile",
+            "update_profile": "Update model profile",
             "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
           },
           "sections": {
             "advanced": {

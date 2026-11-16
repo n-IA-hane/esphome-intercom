@@ -32,11 +32,12 @@ async def test_discovery_editor_can_save_unassigned_without_creating_an_account(
     state = physical_flow
     before = set(state.lab.entry.subentries)
     form = await start(state)
-    assert form["description_placeholders"]["profile_pin"] == "a" * 40
     saved = await submit(state, form, identity())
     assert saved["type"] == "abort" and saved["reason"] == "phone_configured"
     added = [item for key, item in state.lab.entry.subentries.items() if key not in before]
     assert len(added) == 1 and added[0].subentry_type == "physical_phone"
+    # Pin integrity belongs to the saved record, not optional UI text.
+    assert added[0].data["catalog_commit"] == "a" * 40
     assert added[0].data["lines"] == []
 
 

@@ -1,4 +1,4 @@
-"""Compile native providers and the four recorded lifecycle adaptations."""
+"""Compile native providers and explicitly recorded local adaptations."""
 from pathlib import Path
 import base64
 import hashlib
@@ -186,9 +186,96 @@ def test_recorded_lifecycle_provider_reaches_generated_cpp(native_full_build, co
 def test_all_local_upstream_providers_are_documented():
     assert not (COMPONENTS / "spi").exists()
     manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
-    assert set(manifest["components"]) == {"mipi_dsi", *LIFECYCLE}
+    assert set(manifest["components"]) == set(LIFECYCLE) | {"mipi_dsi"}
     for component, entry in manifest["components"].items():
         document = (COMPONENTS / component / "UPSTREAM.md").read_text()
         assert entry.get("upstream_revision", manifest["revision"]) in document
     assert set(manifest["native_components"]) == set(OFFICIAL)
     assert metadata.version("esphome") == manifest["native_provider_baseline"]["version"]
+
+
+def test_sdk_manifest_records_qualification_without_overriding_framework():
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    baseline = manifest["build_baseline"]
+    assert baseline["esp_idf_selection"] == "esphome_recommended"
+    assert "esp_idf_p4_revision" not in baseline
+    reference = baseline["esp_idf_qualification_reference"]
+    assert reference["repository"] == "espressif/esp-idf"
+    assert reference["tag"] == "v5.5.6"
+    assert reference["revision"] == "880a203ae603d08a94d06aa01e0d6761958e5e9e"
+    assert reference["framework_override"] is False
+
+
+def test_official_build_backports_are_separate_from_runtime_provider_overrides():
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    fixes = {"p4_sdmmc_reset": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+             "p4_ppa_backport": "9da8ff53f751f6682f69897d886f3a9946deed31"}
+    assert set(manifest["build_backports"]) == set(fixes)
+    assert set(fixes).isdisjoint(manifest["components"])
+    for name, fix in fixes.items():
+        entry = manifest["build_backports"][name]
+        assert entry["official_fix_revision"] == fix
+        assert entry["apply_when"] == {"variant": "ESP32P4", "framework": "esp-idf", "versions": ["5.5.6", "6.0.3"]}
+        assert entry["scope"] == "build_directory_only"
+        assert entry["installed_sdk_modified"] is False
+        assert entry["removal_condition"]
+        for filename, digest in entry["source_sha256"].items():
+            assert hashlib.sha256((COMPONENTS / name / filename).read_bytes()).hexdigest() == digest
+    for component, number in (("micro_wake_word", 22781), ("voice_assistant", 22782)):
+        entry = manifest["components"][component]
+        assert entry["public_proposal"] is True
+        assert entry["proposal_url"] == f"https://github.com/esphome/esphome/pull/{number}"
+
+
+@pytest.fixture(scope="module")
+def official_p4_build(tmp_path_factory):
+    directory = tmp_path_factory.mktemp("official-p4-provider-contract")
+    profile = "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml"
+    document = yaml_util.load_yaml(ROOT / profile)
+    config = device_config(directory, document["substitutions"]["firmware_features"], profile)
+    expanded = subprocess.run([sys.executable, "-m", "esphome", "config", str(config)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    path = directory / "expanded.yaml"
+    path.write_text(expanded.stdout)
+    generated = subprocess.run([sys.executable, "-m", "esphome", "compile", "--only-generate", str(config)],
+                               capture_output=True, text=True, timeout=180)
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    return yaml_util.load_yaml(path), next(directory.rglob("src/main.cpp")).parent
+
+
+def test_p4_resolves_declared_mipi_and_esphome_recommended_sdk(official_p4_build):
+    from esphome.components.esp32 import ESP_IDF_FRAMEWORK_VERSION_LOOKUP
+
+    document, source = official_p4_build
+    providers = {name for item in document.get("external_components", [])
+                 for name in item.get("components", [])}
+    assert {"mipi_dsi", "p4_sdmmc_reset", "p4_ppa_backport"} <= providers
+    framework = document["esp32"]["framework"]
+    assert framework["version"] == str(ESP_IDF_FRAMEWORK_VERSION_LOOKUP["recommended"])
+    assert not framework.get("source")
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    assert set(manifest["build_backports"]) <= providers
+    # Recommended selection stays authoritative; a recorded source qualification
+    # must not grow into an implicit framework override in the expanded YAML.
+    assert manifest["build_baseline"]["esp_idf_selection"] == "esphome_recommended"
+    assert not any("-DLV_USE_PPA" in flag for flag in document["esphome"].get("build_flags", []))
+    assert not {"esp_driver_ppa", "esp_video_csi_compat"} & {
+        item["name"] for item in framework.get("components", [])}
+    for name in ["mipi_dsi.h", "mipi_dsi.cpp"]:
+        assert (source / "esphome/components/mipi_dsi" / name).read_bytes() == (
+            COMPONENTS / "mipi_dsi" / name).read_bytes()
+
+
+def test_loaded_upstream_exceptions_have_an_explicit_exit(native_full_build):
+    document, _ = native_full_build
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    providers = {name for item in document.get("external_components", [])
+                 for name in item.get("components", [])}
+    shadowed = {name for name in providers if (NATIVE_COMPONENTS / name).is_dir()}
+    assert shadowed <= set(manifest["components"])
+    for name in shadowed:
+        entry = manifest["components"][name]
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["upstream_revision"])
+        assert entry["removal_condition"]
+        assert entry.get("proposal_status") or entry.get("upstream_pr")

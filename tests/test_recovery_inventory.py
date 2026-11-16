@@ -21,7 +21,9 @@ def test_recovery_catalogue_has_explicit_contracts(inventory):
 def test_candidate_lock_covers_every_component_used_by_the_baseline(inventory):
     sources = json.loads((Path(__file__).parents[1] / "qualification/sources.json").read_text())
     expected = {name for name, source in inventory["sources"].items() if source["baseline_included"]}
-    assert set(sources["repositories"]) == expected
+    # The historical recovery baseline remains covered as the current product
+    # adds independently qualified renderer and screenshot repositories.
+    assert expected <= set(sources["repositories"])
 
 
 def test_missing_product_file_is_not_silently_dropped(inventory):

@@ -1,5 +1,5 @@
 {
-  "captured_on": "2026-11-15",
+  "captured_on": "2026-11-16",
   "source": "VoIP UI gallery provenance. Each gallery below states whether it is a live capture, a restored original or an offline demonstration.",
   "p4_native_capture": {
     "file": "p4-touch-overview.jpg",
@@ -595,7 +595,7 @@
       },
       {
         "path": "docs/images/card-configuration.png",
-        "sha256": "55fd1d54a60e584a045e435728dd58de7af690d11b38ad6c265b69f2731b9335"
+        "sha256": "5f005654d06c786da6a1ad5d025b0b14749d9add8a0835958b3ab95e6d3cc4f2"
       }
     ]
   },
@@ -651,5 +651,60 @@
         "sha256": "f1b93e5a29a561d4b1a705079563928ed93f1fa561e809a597f4d6eab2307637"
       }
     ]
+  },
+  "stabilization_native_forms": {
+    "captured_on": "2026-11-16",
+    "source": "Home Assistant2026.11.1 native config/subentry forms and native Lovelace card editor, actual stabilization integration source.",
+    "presentation": "Isolated lab with demo accounts and a disabled phone using synthetic MAC020000000042; forms not submitted; no calls, household access, provisioning or media.",
+    "theme": "Frosted Glass Dark, temporary browser context only",
+    "readable_line_summary": "Nested native edit changes the visible account label immediately. Saving uses the original canonical account reference; no new identifier is stored.",
+    "cleanup": "Lab stopped, original service configuration restored and169 original configuration/authentication files byte-identical.",
+    "files": [
+      {
+        "path": "docs/images/card-configuration.png",
+        "sha256": "5f005654d06c786da6a1ad5d025b0b14749d9add8a0835958b3ab95e6d3cc4f2",
+        "dimensions": [
+          1024,
+          818
+        ]
+      },
+      {
+        "path": "docs/images/voip-stack-config-flow.png",
+        "sha256": "21362485cef37f3dfaf26659a120bf7a989dc043ff693eebd28c4cc3c71c567f",
+        "dimensions": [
+          580,
+          1232
+        ]
+      },
+      {
+        "path": "docs/images/physical-phone-reorder.png",
+        "sha256": "e3ae4dd129391aa8c21703b663a26f9c62a35a87731b7247a40ae0549393bb4e",
+        "dimensions": [
+          580,
+          844
+        ]
+      },
+      {
+        "path": "docs/images/physical-phone-properties.png",
+        "sha256": "0392c4857b6a3df0da31bd1502817317147247cb47d38b6d1f7b47d6201a7c8a",
+        "dimensions": [
+          580,
+          676
+        ]
+      },
+      {
+        "path": "docs/images/physical-phone-lines-keys.png",
+        "sha256": "62697cdd32a75190677ab78269e5d1e1aae913ac4a10662c8956b8070cdd0b74",
+        "dimensions": [
+          580,
+          662
+        ]
+      }
+    ],
+    "source_SHA256": {
+      "custom_components/voip_stack/physical_phone_flow.py": "cfa89b65db640f56457e882304f202c164be8f797ea71c2d0c3c7370fb389ddc",
+      "custom_components/voip_stack/frontend/voip-stack-card-editor.js": "633371a4d1fa656b5199bb957c7a77655f64a0d45a72f4c86b57ea1d51b18aaf",
+      "custom_components/voip_stack/frontend/voip-stack-form.js": "837f35c55ac47a27802396d0d3cce9166617c36170183546f456e553757d2918"
+    }
   }
 }

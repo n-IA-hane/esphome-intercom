@@ -3,20 +3,27 @@
 `esp_screenshot` is maintained in the standalone
 [ESP Screenshot repository](https://github.com/n-IA-hane/esphome-screenshot/tree/dev).
 Its [canonical guide](https://github.com/n-IA-hane/esphome-screenshot/blob/dev/README.md)
-covers standalone LVGL and P4 MIPI DSI configurations, HTTP capture,
+covers standalone LVGL capture and coherent P4 display readback, HTTP access,
 Home Assistant image helpers and resource settings.
 
-Intercom keeps the optional [diagnostic controls](../packages/diagnostics/screenshot.yaml)
-and its [maintained MIPI DSI provider](../esphome/components/mipi_dsi/UPSTREAM.md).
-For P4 snapshots, load `esp_screenshot` from its repository and `mipi_dsi`
-from Intercom as separate external component sources. Use the selected
+Intercom keeps the optional [diagnostic controls](../packages/diagnostics/screenshot.yaml).
+Load `esp_screenshot` from its repository and use the display provider declared
+by the coordinated configuration.
+Use the selected
 [coordinated source channel](DEPLOYMENT_GUIDE.md#development-preview-firmware).
 
-Choose exactly one existing backend: `lvgl_id` captures LVGL layers, while
-`mipi_dsi_id` copies the synchronized P4 driver framebuffer, including direct
-video. The latter is not a readback of the physical panel. For the maintained
-P4 FULL landscape UI, screenshot `rotation: 90` makes the native portrait buffer
-upright without changing display, touch or video settings.
+Configure `lvgl_id` with the existing LVGL owner. For the compatible P4 MIPI
+display, capability metadata automatically selects public
+`copy_frame_buffer_rgb565` readback of the driver's composed UI and direct
+video. Capture copies the last completed composition under the display owner;
+it does not force a redraw that could repaint over video. A busy owner preserves
+the previous JPEG and ID. No framebuffer pointer or private getter is exposed.
+
+Other displays, including the normal S3 path, keep complete LVGL-layer capture.
+The deprecated `mipi_dsi_id` selector remains accepted and preserves the logical
+output orientation. Explicit screenshot rotation is additional and applied
+once; it does not repeat the display owner's rotation. Component, renderer and
+native action IDs are unchanged.
 
 After including the diagnostic package, use **Take screenshot** or the ordinary
 node-prefixed `esphome.<node>_take_screenshot` action. A successful capture

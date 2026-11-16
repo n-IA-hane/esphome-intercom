@@ -7,7 +7,7 @@ from homeassistant.core import Context
 from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from homeassistant.setup import async_setup_component
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
 

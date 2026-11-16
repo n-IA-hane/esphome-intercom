@@ -1,4 +1,11 @@
 const PT_BR = {
+  "SIP account": "Conta SIP",
+  "SIP accounts": "Contas SIP",
+  "Missing phone": "Telefone ausente",
+  "Choose existing SIP accounts.": "Selecione contas SIP existentes.",
+  "Choose existing SIP accounts to display in this section.": "Selecione as contas SIP existentes para exibir nesta seção.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Uma conta SIP selecionada está indisponível. Edite esta seção para atualizar a seleção.",
+  "Unable to load SIP accounts.": "Não foi possível carregar as contas SIP.",
   "Transfer": "Transferir",
   "Transfer call": "Transferir chamada",
   "Cancel transfer": "Cancelar transferência",
@@ -149,6 +156,13 @@ const PT_BR = {
 };
 
 const DE = {
+  "SIP account": "SIP-Konto",
+  "SIP accounts": "SIP-Konten",
+  "Missing phone": "Fehlendes Telefon",
+  "Choose existing SIP accounts.": "Wählen Sie vorhandene SIP-Konten.",
+  "Choose existing SIP accounts to display in this section.": "Wählen Sie vorhandene SIP-Konten für diesen Abschnitt.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Ein ausgewähltes SIP-Konto ist nicht verfügbar. Bearbeiten Sie diesen Abschnitt, um die Auswahl zu aktualisieren.",
+  "Unable to load SIP accounts.": "SIP-Konten konnten nicht geladen werden.",
   "Transfer": "Übergeben",
   "Transfer call": "Anruf übergeben",
   "Cancel transfer": "Übergabe abbrechen",
@@ -299,6 +313,12 @@ const DE = {
 };
 
 const IT = {
+  "SIP accounts": "Account SIP",
+  "Missing phone": "Telefono non disponibile",
+  "Choose existing SIP accounts.": "Seleziona account SIP esistenti.",
+  "Choose existing SIP accounts to display in this section.": "Seleziona gli account SIP da mostrare in questa sezione.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Un account SIP selezionato non è disponibile. Modifica la sezione per aggiornare la selezione.",
+  "Unable to load SIP accounts.": "Impossibile caricare gli account SIP.",
   "SIP account": "Account SIP",
   "Preferred SIP account": "Account SIP preferito",
   "Use any authorized SIP account. Leave unselected to use the preferred account.": "Usa un account SIP autorizzato. Senza selezione viene usato quello preferito.",

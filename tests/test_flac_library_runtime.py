@@ -100,7 +100,7 @@ struct Input {
   size_t available() const { return limit-position; }
   void consume(size_t n) { assert(n<=available()); position+=n; }
   bool has_buffered_data() const { return position<bytes.size(); }
-  size_t fill(int, bool) { if(position==limit)limit=std::min(bytes.size(),limit+chunk); return available(); }
+  size_t fill(int) { if(position==limit)limit=std::min(bytes.size(),limit+chunk); return available(); }
 };
 struct Output {
   std::vector<uint8_t> delivered;
@@ -177,7 +177,8 @@ int main(int argc,char **argv) {
                '-DUSE_AUDIO_FLAC_SUPPORT', '-I', str(tmp_path), '-I', str(dependency / 'include'),
                '-I', str(NATIVE_COMPONENTS / 'audio'), str(cpp),
                str(NATIVE_COMPONENTS / 'audio/audio.cpp'), *map(str, sources), '-o', str(binary)]
-    subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
+    compiled = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     subprocess.run([str(binary), str(tmp_path / 'plain.flac'), str(tmp_path / 'zero-metadata.flac'),
                     str(tmp_path / 'reference.pcm'), str(tmp_path / 'invalid.flac')],
                    check=True, capture_output=True, text=True, timeout=10)

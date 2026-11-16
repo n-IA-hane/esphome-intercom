@@ -1,4 +1,4 @@
-"""Build-local backport of the ESP32-P4 ESP-IDF 5.5.6 SDMMC reset order."""
+"""Build-local backport of the official ESP32-P4 SDMMC reset order."""
 
 import logging
 from pathlib import Path
@@ -13,7 +13,7 @@ DEPENDENCIES = ["esp32"]
 CONFIG_SCHEMA = cv.Schema({})
 
 _LOGGER = logging.getLogger(__name__)
-_SDK_VERSION = cv.Version(5, 5, 6)
+_SDK_VERSIONS = (cv.Version(5, 5, 6), cv.Version(6, 0, 3))
 _HOOK = "p4_sdmmc_reset.cmake"
 
 
@@ -22,10 +22,10 @@ async def to_code(config):
         _LOGGER.warning("P4 SDMMC reset backport not applied: requires ESP32-P4 with ESP-IDF")
         return
     version = esp32.idf_version()
-    if version != _SDK_VERSION:
+    if version not in _SDK_VERSIONS:
         _LOGGER.warning(
-            "P4 SDMMC reset backport not applied to SDK %s: only exact ESP-IDF %s is supported",
-            version, _SDK_VERSION,
+            "P4 SDMMC reset backport not applied to SDK %s: only exact ESP-IDF 5.5.6 and 6.0.3 are supported",
+            version,
         )
         return
     esp32.add_extra_build_file(_HOOK, Path(__file__).parent / _HOOK)

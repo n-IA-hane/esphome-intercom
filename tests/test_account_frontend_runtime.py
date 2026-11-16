@@ -19,14 +19,27 @@ import assert from "assert/strict";
 import { pathToFileURL } from "url";
 const model = await import(pathToFileURL(MODEL));
 const dashboard = await import(pathToFileURL(DASHBOARD));
-let source = fs.readFileSync(EDITOR, "utf8").replace(/import.meta.url/g, JSON.stringify("file:///editor.js"))
+const editorURL = pathToFileURL(EDITOR);
+let source = fs.readFileSync(EDITOR, "utf8").replace(/import.meta.url/g, JSON.stringify(editorURL.href))
   .replace(/await import\(`\.\/voip-stack-i18n\.js[^`]+`\)/, "globalThis.i18n")
   .replace(/await import\(`\.\/voip-stack-card-model\.js[^`]+`\)/, "globalThis.model");
 const types = new Map();
 const context = vm.createContext({ URL, HTMLElement:class {}, model, i18n:{voipStackTranslate:(_h,t)=>t},
   customElements:{get:key=>types.get(key),define:(key,value)=>types.set(key,value)} });
-const loaded = new vm.SourceTextModule(source,{context});
+const dynamicImports = [];
+const loaded = new vm.SourceTextModule(source,{
+  context, identifier:editorURL.href,
+  async importModuleDynamically(specifier, referrer) {
+    const target = new URL(specifier, referrer.identifier);
+    assert.equal(target.pathname, new URL("./voip-stack-form.js", editorURL).pathname);
+    const actual = await import(target.href);
+    assert.equal(typeof actual.ensureNativeForm,"function");
+    dynamicImports.push(target.pathname);
+    return actual;
+  },
+});
 await loaded.link(()=>{throw new Error("Unexpected static import");});await loaded.evaluate();
+assert.deepEqual(dynamicImports,[new URL("./voip-stack-form.js", editorURL).pathname]);
 const editor = types.get("voip-stack-card-editor").prototype;
 const account = {kind:"sip_account",device_id:"device-sip",endpoint_id:"sip:desk",name:"Desk",availability:"offline"};
 assert.equal(editor._isSoftphoneDevice(account), true, "An unbound authorized SIP account must be selectable");

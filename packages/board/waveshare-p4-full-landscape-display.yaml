@@ -30,7 +30,3 @@ output:
   pin: ${display_backlight_pin}
   inverted: false
   frequency: 1000Hz
-
-external_components:
-- source: ${ext_components_source}
-  components: [mipi_dsi]

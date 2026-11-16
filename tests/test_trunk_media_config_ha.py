@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 import voluptuous as vol
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack.config import normalized_trunk_config
 from custom_components.voip_stack.config_flow import TrunkFormMixin, VoipStackConfigFlow

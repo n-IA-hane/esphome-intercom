@@ -748,7 +748,7 @@ def test_local_audio_provider_requests_https_certificate_bundle(tmp_path):
 
 
 @pytest.mark.parametrize('features', [['voip'], ['voip', 'display', 'video']])
-def test_p4_local_idf_dependency_has_one_owner(tmp_path, features):
+def test_p4_official_idf_dependency_has_one_owner(tmp_path, features):
     config = device_config(tmp_path, features,
                            'yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
     document = yaml_util.load_yaml(config)
@@ -761,11 +761,13 @@ def test_p4_local_idf_dependency_has_one_owner(tmp_path, features):
     expanded = tmp_path / 'expanded.yaml'
     expanded.write_text(result.stdout)
     document = yaml_util.load_yaml(expanded)
-    ppa = [item for item in document['esp32']['framework']['components'] if item['name'] == 'esp_driver_ppa']
-    assert ppa == [{'name': 'esp_driver_ppa', 'path': str(ROOT / 'idf_components/esp_driver_ppa')}]
-    csi = [item for item in document['esp32']['framework']['components'] if item['name'] == 'esp_video_csi_compat']
-    assert csi == ([{'name': 'esp_video_csi_compat', 'path': str(ROOT / 'idf_components/esp_video_csi_compat')}]
-                   if 'video' in features else [])
+    framework = document['esp32']['framework']
+    # The public profile delegates SDK selection to the installed ESPHome.
+    # --no-defaults must not invent an explicit version or source override.
+    assert 'version' not in framework
+    assert 'source' not in framework
+    assert not {'esp_driver_ppa', 'esp_video_csi_compat'} & {
+        item['name'] for item in framework.get('components', [])}
 
 
 def test_local_gmf_override_only_binds_the_selected_afe(tmp_path):

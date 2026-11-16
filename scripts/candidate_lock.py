@@ -60,6 +60,19 @@ def _package_version(name: str) -> str:
         return "unavailable"
 
 
+def _esphome_source() -> dict[str, str]:
+    """Read the installer receipt; a development version alone is ambiguous."""
+    try:
+        raw = importlib.metadata.distribution("esphome").read_text("direct_url.json")
+    except importlib.metadata.PackageNotFoundError:
+        raw = None
+    receipt = json.loads(raw) if raw else {}
+    return {
+        "url": receipt.get("url", ""),
+        "revision": receipt.get("vcs_info", {}).get("commit_id", ""),
+    }
+
+
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -92,6 +105,13 @@ def build_lock(
     ha_python: str = "",
 ) -> dict[str, object]:
     repositories: dict[str, object] = {}
+    esphome_source = _esphome_source()
+    required_source = config.get("official_sources", {}).get("esphome", {})
+    if required_source and esphome_source["revision"] != required_source["revision"]:
+        raise RuntimeError(
+            "Install the complete official ESPHome revision from "
+            "requirements-firmware-test.txt before qualifying this candidate"
+        )
     for name, source in config["repositories"].items():
         path = (ROOT / source["path"]).resolve()
         resolved = _repository(path)
@@ -115,6 +135,7 @@ def build_lock(
             "python": platform.python_version(),
             "node": _run("node", "--version"),
             "esphome": _package_version("esphome"),
+            "esphome_source": esphome_source,
             "home_assistant": home_assistant,
             "python_environment_sha256": _environment_digest(sys.executable),
             "ha_environment_sha256": _environment_digest(ha_python)

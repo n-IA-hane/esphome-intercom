@@ -59,7 +59,7 @@ substitutions:
 packages:
   device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@dev
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg
 
 api:

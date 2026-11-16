@@ -343,7 +343,7 @@ async def test_untrusted_mac_announcement_cannot_redisclose_existing_download_cr
 
 
 async def test_ignored_discovery_metadata_is_never_the_pbx_configuration_owner(hass):
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack.store import config_entry
     ignored = MockConfigEntry(domain="voip_stack", source="ignore", unique_id="physical_phone:001122334455", data={})
     ignored.add_to_hass(hass)
@@ -736,10 +736,13 @@ async def test_failed_footprint_write_cannot_claim_or_publish_new_slot(managed_s
     state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
     before = state.manager.files[changed["phone_id"]]
     state.manager.store.async_save.side_effect = OSError("fixture disk failure")
-    with pytest.raises(OSError, match="fixture disk failure"):
-        await state.manager.async_prepare(changed)
-    assert state.manager.files[changed["phone_id"]] is before
-    assert state.manager.states[changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+    try:
+        with pytest.raises(OSError, match="fixture disk failure"):
+            await state.manager.async_prepare(changed)
+        assert state.manager.files[changed["phone_id"]] is before
+        assert state.manager.states[changed["phone_id"]]["managed_slots"]["keys"] == ["1"]
+    finally:
+        state.manager.store.async_save.side_effect = None
 
 
 async def test_real_store_write_error_cannot_publish_unpersisted_ownership(managed_slot_config, monkeypatch):
@@ -761,7 +764,7 @@ async def test_real_store_write_error_cannot_publish_unpersisted_ownership(manag
     def failed_write(*_args):
         raise WriteError("fixture actual Store write failure")
 
-    monkeypatch.setattr(manager.store, "_write_prepared_data", failed_write)
+    monkeypatch.setattr(manager.store._io, "_write", failed_write)
     try:
         try:
             await manager.async_prepare(changed)
@@ -782,7 +785,7 @@ async def test_cancel_during_real_executor_write_settles_before_rollback(managed
         {"slot": "2", "line": "1", "function": "speed_dial", "target": "00456", "label": "New"}]}
     state.lab.hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=changed)
     entered, release, writes = asyncio.Event(), Event(), []
-    original = state.manager.store._write_prepared_data
+    original = state.manager.store._io._write
 
     def held_write(mode, payload):
         writes.append(True)
@@ -792,7 +795,7 @@ async def test_cancel_during_real_executor_write_settles_before_rollback(managed
                 raise RuntimeError("fixture executor write was not released")
         original(mode, payload)
 
-    monkeypatch.setattr(state.manager.store, "_write_prepared_data", held_write)
+    monkeypatch.setattr(state.manager.store._io, "_write", held_write)
     before = state.manager.files[changed["phone_id"]]
     task = state.lab.hass.async_create_task(state.manager.async_prepare(changed))
     try:
@@ -1039,3 +1042,49 @@ async def test_changed_binding_cannot_serve_previous_enabled_account_credentials
     assert state.lab.registrar.accounts["second"].enabled
     assert await state.manager.async_file(state.data["phone_id"],
         state.data["provisioning_token"], state.filename) is None
+
+
+@pytest.mark.parametrize("permanent", [False, True], ids=["reload-preserves", "remove-forgets"])
+async def test_entry_store_lifetime_reuses_owners_and_cancels_delayed_writes(
+        cached_physical_config, monkeypatch, permanent):
+    from datetime import timedelta
+    from pathlib import Path
+    from homeassistant.helpers.storage import Store
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant.common import async_fire_time_changed_exact
+    from custom_components import voip_stack
+    from custom_components.voip_stack.call_queues import QueueManager
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+
+    state = cached_physical_config
+    lab = state.lab
+    bindings = HaCardBindings(lab.hass, lab.entry, lab.runtime, lambda _changed: None)
+    lab.runtime.ha_bindings = bindings
+    await bindings.async_start()
+    queue_store = Store(lab.hass, 1, f"voip_stack.queues.{lab.entry.entry_id}")
+    queues = lab.runtime.queues = QueueManager(lab.hass, lab.entry, store=queue_store)
+    originals = (bindings._store, state.manager.store, queue_store)
+    # Real Store timers must not resurrect the deleted files after removal.
+    for store in originals:
+        store.async_delay_save(lambda: {"pending_fixture": True}, 60)
+    before = dict(lab.entry.data)
+    monkeypatch.setattr(lab.hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True))
+    monkeypatch.setattr(voip_stack, "_async_apply_assist_intents", AsyncMock())
+    monkeypatch.setattr("custom_components.voip_stack.websocket_api._async_shutdown_all", AsyncMock())
+    monkeypatch.setattr(voip_stack, "_async_stop_sip_endpoint", AsyncMock())
+    assert await voip_stack.async_unload_entry(lab.hass, lab.entry)
+    assert lab.runtime.entry_stores == originals
+    assert bindings._closed and state.manager._closed and queues.closed
+    assert all(Path(store.path).is_file() for store in originals)
+    assert dict(lab.entry.data) == before
+    if permanent:
+        await voip_stack.async_remove_entry(lab.hass, lab.entry)
+        assert lab.runtime.entry_stores == ()
+        assert all(not Path(store.path).exists() for store in originals)
+    async_fire_time_changed_exact(lab.hass, dt_util.utcnow() + timedelta(seconds=65))
+    await lab.hass.async_block_till_done()
+    if permanent:
+        assert all(not Path(store.path).exists() for store in originals)
+    else:
+        for store in originals:
+            assert await Store(lab.hass, 1, store.key).async_load() is not None

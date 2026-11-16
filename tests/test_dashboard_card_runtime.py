@@ -316,11 +316,12 @@ def test_dashboard_mobile_keeps_name_and_voicemail_without_empty_badge_rows(dash
 def test_dashboard_editor_selects_owner_only_and_retains_missing_config(dashboard_page):
     page = dashboard_page
     page.evaluate("""()=>{const editor=customElements.get('voip-stack-dashboard-card').getConfigElement();window.editor=editor;editor.setConfig({device_id:'studio-device'});editor.hass=hass;document.body.append(editor)}""")
-    page.wait_for_function("editor.shadowRoot.querySelector('select').options.length>1")
-    assert page.locator("voip-stack-dashboard-card-editor select").count() == 1
-    assert page.locator("voip-stack-dashboard-card-editor select option[value='office-device']").count() == 0
+    page.wait_for_function("editor.shadowRoot.querySelector('ha-form')?.schema?.[0]?.selector?.select?.options.length>1")
+    assert page.locator("voip-stack-dashboard-card-editor ha-form").count() == 1
+    assert page.evaluate("editor._form.schema[0].selector.select.options.some(option=>option.value==='office-device')") is False
     page.evaluate("editor.setConfig({device_id:'missing-device'})")
-    assert page.locator("voip-stack-dashboard-card-editor select").input_value() == "missing-device"
+    assert page.evaluate("editor._form.data.device_id") == "missing-device"
+    assert page.evaluate("editor._form.schema[0].selector.select.options.some(option=>option.value==='missing-device'&&option.label==='Missing phone')")
 
 
 @pytest.mark.browser_real

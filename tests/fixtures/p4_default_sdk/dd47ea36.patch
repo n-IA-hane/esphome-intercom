@@ -1,0 +1,50 @@
+From dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5 Mon Sep 17 00:00:00 2001
+From: Yogesh Mantri <yogesh.mantri@espressif.com>
+Date: Wed, 28 Oct 2026 02:51:56 +0800
+Subject: [PATCH] fix(esp_system): reset SDMMC before other peripherals on
+ ESP32-P4 restart
+
+esp_restart() on ESP32-P4 resets MSPI AXI and other peripherals first,
+and SDMMC last. The SDMMC DMA is not stopped before these resets. If
+SDMMC DMA is active at that time, the next boot cannot do an SDMMC DMA
+transfer: the IDMAC stays in DESC_RD and CMD53 times out (0x107). A CPU
+reset does not clear this state. Only a system reset clears it.
+
+Reset SDMMC before the other peripheral resets.
+
+Tested on ESP32-P4 + ESP32-C5 (SDIO 4-bit 40 MHz, ESP-Hosted), with
+esp_restart() during SDIO traffic:
+- Before: 4 faults in 67 restarts.
+- After: 0 faults in 300 restarts.
+---
+ .../esp_system/port/soc/esp32p4/system_internal.c      | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/components/esp_system/port/soc/esp32p4/system_internal.c b/components/esp_system/port/soc/esp32p4/system_internal.c
+index 0e198d286595..1b141dbca822 100644
+--- a/components/esp_system/port/soc/esp32p4/system_internal.c
++++ b/components/esp_system/port/soc/esp32p4/system_internal.c
+@@ -73,6 +73,12 @@ void esp_system_reset_modules_on_exit(void)
+         }
+     }
+ 
++    // The DMA inside SDMMC Host needs to be reset to avoid memory corruption after restart.
++    // Reset it before the peripheral resets that follow: if its DMA is still active when those
++    // reset, the SDMMC DMA cannot access memory after the CPU reset, until a system reset.
++    SET_PERI_REG_MASK(LP_CLKRST_HP_SDMMC_EMAC_RST_CTRL_REG, LP_CLKRST_RST_EN_SDMMC);
++    CLEAR_PERI_REG_MASK(LP_CLKRST_HP_SDMMC_EMAC_RST_CTRL_REG, LP_CLKRST_RST_EN_SDMMC);
++
+     // Set Peripheral clk rst
+     SET_PERI_REG_MASK(HP_SYS_CLKRST_HP_RST_EN0_REG, HP_SYS_CLKRST_REG_RST_EN_MSPI_AXI);
+     SET_PERI_REG_MASK(HP_SYS_CLKRST_HP_RST_EN0_REG, HP_SYS_CLKRST_REG_RST_EN_DUAL_MSPI_AXI);
+@@ -103,10 +109,6 @@ void esp_system_reset_modules_on_exit(void)
+     CLEAR_PERI_REG_MASK(HP_SYS_CLKRST_HP_RST_EN2_REG, HP_SYS_CLKRST_REG_RST_EN_ADC);
+     CLEAR_PERI_REG_MASK(HP_SYS_CLKRST_HP_RST_EN2_REG, HP_SYS_CLKRST_REG_RST_EN_H264);
+ 
+-    // The DMA inside SDMMC Host needs to be reset to avoid memory corruption after restart.
+-    SET_PERI_REG_MASK(LP_CLKRST_HP_SDMMC_EMAC_RST_CTRL_REG, LP_CLKRST_RST_EN_SDMMC);
+-    CLEAR_PERI_REG_MASK(LP_CLKRST_HP_SDMMC_EMAC_RST_CTRL_REG, LP_CLKRST_RST_EN_SDMMC);
+-
+     // Reset crypto peripherals. This ensures a clean state for the crypto peripherals after a CPU restart
+     // and hence avoiding any possibility with crypto failure in ROM security workflows.
+     SET_PERI_REG_MASK(HP_SYS_CLKRST_HP_RST_EN2_REG, HP_SYS_CLKRST_REG_RST_EN_CRYPTO);

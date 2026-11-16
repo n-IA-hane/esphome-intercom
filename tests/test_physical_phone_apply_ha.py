@@ -708,7 +708,7 @@ async def test_orphan_requesting_uses_task_liveness_and_explicit_admin_retry(
 async def test_uncertain_HTTP_result_requires_explicit_admin_retry(apply_owner, fanvil_http, monkeypatch, hass_admin_user):
     from homeassistant.core import Context, ServiceCall
     from homeassistant.util import dt as dt_util
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+    from pytest_homeassistant.common import async_fire_time_changed_exact
     from custom_components.voip_stack.physical_phone_services import async_provision_phone, async_provisioning_state
 
     state, peer = apply_owner, fanvil_http
@@ -747,7 +747,7 @@ async def test_uncertain_HTTP_result_requires_explicit_admin_retry(apply_owner, 
 
 async def test_external_phone_busy_is_rechecked_every_60s_until_idle_without_call_event(apply_owner, fanvil_http, monkeypatch):
     from homeassistant.util import dt as dt_util
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+    from pytest_homeassistant.common import async_fire_time_changed_exact
 
     state, peer = apply_owner, fanvil_http
     use_real_native_HTTP(state, peer, monkeypatch)
@@ -778,7 +778,7 @@ async def test_external_phone_busy_is_rechecked_every_60s_until_idle_without_cal
 
 async def test_new_save_behind_old_requested_revision_retains_the_idle_timer(apply_owner):
     from homeassistant.util import dt as dt_util
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+    from pytest_homeassistant.common import async_fire_time_changed_exact
 
     state = apply_owner
     await state.manager.async_reconcile()
@@ -874,7 +874,7 @@ async def test_unload_after_HTTP_dispatch_preserves_uncertainty_and_rejects_late
 @pytest.mark.parametrize("change", ["delete", "unload"])
 async def test_pending_idle_timer_is_cancelled_when_owner_is_removed(apply_owner, fanvil_http, monkeypatch, change):
     from homeassistant.util import dt as dt_util
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
+    from pytest_homeassistant.common import async_fire_time_changed_exact
 
     state, peer = apply_owner, fanvil_http
     use_real_native_HTTP(state, peer, monkeypatch)

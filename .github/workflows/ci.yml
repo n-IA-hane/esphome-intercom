@@ -74,6 +74,7 @@ jobs:
           VOIP_PHONE_PROFILE_CATALOG_PATH: ${{ github.workspace }}/.test-deps/phone-profiles
           AUDIO_STACK_REPO: ${{ github.workspace }}/../esphome-audio-stack
           AUDIO_LIBS_REPO: ${{ github.workspace }}/.test-deps/esp-audio-libs
+          MIPI_COMPONENTS_SOURCE: ${{ github.workspace }}/esphome/components
         run: PYTHON=python scripts/test_suite.sh software-full --keep-going
       - name: Require executed software tests
         run: python scripts/check_test_results.py test-results/software.xml
@@ -83,6 +84,74 @@ jobs:
         with:
           name: software-results
           path: test-results/software.xml
+          if-no-files-found: error
+
+  mipi-driver-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk_boundary: [5, 6]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Configure bounded official APT mirrors
+        uses: ./.github/actions/configure-apt
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Install canonical host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ ninja-build
+          python -m pip install -r requirements-firmware-test.txt
+      - name: Check out the immutable official host runner and canonical main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: esphome/esphome
+          ref: 373224c141dceadbb67ace263040cbfc802c5968
+          path: .test-deps/esphome
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /esphome/
+            /script/
+            /tests/components/main.cpp
+            /tests/testing_helpers.py
+            /tests/__init__.py
+            /pyproject.toml
+            /platformio.ini
+      - name: Execute the complete local MIPI owner with canonical gtest
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.test-deps/esphome
+          ESPHOME_BUILD_PATH: ${{ runner.temp }}/mipi-host-sdk${{ matrix.sdk_boundary }}
+          ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT: "1"
+          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1
+          TMPDIR: ${{ runner.temp }}
+          MIPI_TEST_IDF_MAJOR: ${{ matrix.sdk_boundary }}
+          GTEST_OUTPUT: xml:${{ github.workspace }}/test-results/mipi-sdk${{ matrix.sdk_boundary }}.xml
+        run: |
+          mkdir -p test-results
+          ulimit -c 0
+          set -o pipefail
+          python tests/fixtures/mipi_dsi/run_canonical.py --check-source > test-results/mipi-sdk${{ matrix.sdk_boundary }}-source.json
+          python tests/fixtures/mipi_dsi/run_canonical.py 2>&1 | tee test-results/mipi-sdk${{ matrix.sdk_boundary }}.log
+          python scripts/check_test_results.py test-results/mipi-sdk${{ matrix.sdk_boundary }}.xml
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          path = Path(os.environ['GTEST_OUTPUT'].removeprefix('xml:'))
+          cases = ET.parse(path).getroot().findall('.//testcase')
+          assert len(cases) == 29, len(cases)
+          assert not any(case.find('skipped') is not None for case in cases)
+          PY
+      - name: Preserve driver boundary results and exact source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mipi-driver-sdk${{ matrix.sdk_boundary }}-host
+          path: test-results/mipi-sdk${{ matrix.sdk_boundary }}*
           if-no-files-found: error
 
   home-assistant:
@@ -109,6 +178,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
+          # CPython >=3.14.4 fixes autospec with lazy forward annotations.
+          check-latest: true
           cache: pip
       - name: Install dependencies for independent SIP and video peers
         run: |
@@ -123,7 +194,9 @@ jobs:
           echo "$RUNNER_TEMP/sip-peer/bin" >> "$GITHUB_PATH"
           echo "VOIP_TEST_BARESIP_MODULE_PATH=$RUNNER_TEMP/sip-peer/lib/baresip/modules" >> "$GITHUB_ENV"
       - name: Install Home Assistant test dependencies
-        run: python -m pip install -r requirements-test.txt -r requirements-ha-test.txt
+        run: |
+          python -m pip install uv==0.13.7
+          uv pip install --system -r requirements-ha-test.txt
       - name: Run Home Assistant suite
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/home-assistant.xml -ra
@@ -198,7 +271,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: esphome/esphome
-          ref: 704551a6c93c29a311802f7ee97d67a9e9bce718
+          ref: 373224c141dceadbb67ace263040cbfc802c5968
           path: .test-deps/esphome
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -288,7 +361,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install official ESPHome and composition helper dependency
-        run: python -m pip install esphome==2026.10.0 pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
+        run: python -m pip install -r requirements-firmware-test.txt pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Compile and link ${{ matrix.label }}
         env:
           FIRMWARE_BUILD_DIR: ${{ runner.temp }}/${{ matrix.build_dir }}
@@ -365,8 +438,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
-      - name: Install the reported official ESPHome version
-        run: python -m pip install esphome==2026.10.2
+      - name: Install the qualified official ESPHome revision
+        run: python -m pip install -r requirements-firmware-test.txt
       - name: Copy the public WS3 Audio profile without source overrides
         run: |
           python - <<'PY'
@@ -391,7 +464,8 @@ jobs:
           commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
           assert commit == os.environ['GITHUB_SHA']
           version = importlib.metadata.version('esphome')
-          assert version == '2026.10.2'
+          receipt = json.loads(importlib.metadata.distribution('esphome').read_text('direct_url.json'))
+          assert receipt['vcs_info']['commit_id'] == '373224c141dceadbb67ace263040cbfc802c5968'
           (output / 'input.json').write_text(json.dumps({
               'checkout_commit': commit,
               'profile': profile.as_posix(),

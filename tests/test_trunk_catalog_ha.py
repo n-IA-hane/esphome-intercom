@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from homeassistant.config_entries import ConfigSubentry
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack.config import normalized_trunk_config, trunk_config
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry

@@ -68,9 +68,10 @@ _LOGGER = logging.getLogger(__name__)
 class PhoneIdentityConflict(ValueError):
     """Keep inconsistent persisted identities unchanged for explicit repair."""
 
-    def __init__(self, phone: str, canonical: str, legacy: str):
+    def __init__(self, phone: str, canonical: str, legacy: str, *, subentry_id: str = ""):
         super().__init__("phone_identity_conflict")
         self.phone, self.canonical, self.legacy = phone, canonical, legacy
+        self.subentry_id = subentry_id
 
 
 def phone_subentries(entry: ConfigEntry) -> list[ConfigSubentry]:
@@ -89,10 +90,10 @@ def phone_endpoint_id(subentry: ConfigSubentry) -> str:
     if unique_id:
         identity = unique_id.removeprefix("phone:").strip()
         if not identity or (legacy and legacy != identity):
-            raise PhoneIdentityConflict(subentry.title, identity, legacy)
+            raise PhoneIdentityConflict(subentry.title, identity, legacy, subentry_id=getattr(subentry, "subentry_id", ""))
         return identity
     if not legacy:
-        raise PhoneIdentityConflict(subentry.title, unique_id, legacy)
+        raise PhoneIdentityConflict(subentry.title, unique_id, legacy, subentry_id=getattr(subentry, "subentry_id", ""))
     return legacy
 
 
@@ -107,7 +108,7 @@ def phone_subentry_storage_data(subentry: ConfigSubentry, data: Mapping[str, Any
     result = dict(data)
     supplied = str(result.get(CONF_PHONE_ENDPOINT_ID) or "").strip()
     if supplied and supplied != identity:
-        raise PhoneIdentityConflict(subentry.title, identity, supplied)
+        raise PhoneIdentityConflict(subentry.title, identity, supplied, subentry_id=getattr(subentry, "subentry_id", ""))
     if getattr(subentry, "unique_id", None):
         result.pop(CONF_PHONE_ENDPOINT_ID, None)
     return result

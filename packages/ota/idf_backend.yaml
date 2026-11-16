@@ -3,4 +3,4 @@ substitutions:
   ext_components_source: github://n-IA-hane/esphome-intercom@dev
 
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0

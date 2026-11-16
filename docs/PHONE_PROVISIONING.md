@@ -35,7 +35,7 @@ The adoption form asks for its name, MAC, model profile and an optional first SI
 account. Discovery fills the known identity fields. Leave the account empty to
 adopt an unassigned phone, then configure its lines and keys later.
 
-The collapsed **Advanced** section contains area, person, language preferences,
+The collapsed **Administration and preferences** section contains area, person, language preferences,
 the management host hint and optional administrative credentials. A person is
 descriptive; it does not grant SIP or queue permissions or affect presence.
 If the profile cannot represent the HA language, select a supported override.
@@ -75,6 +75,17 @@ editor. That account stays a draft until the complete binding passes validation;
 confirmation retains the native HA reference allocated for the draft. Cancelling
 does not leave an additional account behind. Managed line transports match the
 PBX UDP/TCP listeners. Removing a physical phone preserves its shared accounts.
+
+<table>
+  <tr>
+    <td><img src="images/physical-phone-properties.png" width="340" alt="Native physical-phone properties with a named model profile"/></td>
+    <td><img src="images/physical-phone-lines-keys.png" width="340" alt="Native line and key editor showing the associated SIP account by name and extension"/></td>
+  </tr>
+</table>
+
+_Actual Home Assistant forms with demonstration data. The line summary shows
+the selected account's name and extension. Changing its label does not create
+another account or change the stored association._
 
 **Follow Home Assistant language** uses the instance language. Otherwise select
 one of the model profile's supported languages. Profiles without a verified
@@ -138,6 +149,8 @@ existing key belongs at each occupied position. Every key must be selected once;
 duplicate or incomplete selections are rejected before saving. The saved list
 is in physical position order. This operation preserves unmanaged positions,
 line associations and the phone's identity and private credential.
+
+<img src="images/physical-phone-reorder.png" width="340" alt="Native key reordering form with an explicit physical position for each key"/>
 
 Removing a managed key means clearing it on the phone, not just omitting it
 from the next file. Successfully prepared configurations claim only their

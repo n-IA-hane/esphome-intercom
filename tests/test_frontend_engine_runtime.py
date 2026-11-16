@@ -246,13 +246,27 @@ context.navigator.mediaDevices = {{
   }},
 }};
 let outputStarted;
+let inputProcessed;
+let outputTime = 0;
+let readinessChecks = 0;
 let contextCloses = 0;
+class PreparedReadinessNode {{
+  constructor(_context, name) {{
+    assert.equal(name, "voip-stack-audio-ready");
+    this.port = {{onmessage: null, postMessage(value) {{if(value.type === "check") readinessChecks++;}}}};
+    inputProcessed = () => this.port.onmessage?.({{data: {{type: "ready"}}}});
+  }}
+  connect(node) {{return node;}}
+  disconnect() {{}}
+}}
 class PreparedContext {{
   constructor() {{
     this.audioWorklet = {{ addModule: async () => {{}} }};
     preparationOrder.push("output");
     this.state = "running"; this.sampleRate = 48000; this.destination = {{}};
+    this.currentTime = 0;
   }}
+  getOutputTimestamp() {{return {{contextTime:outputTime,performanceTime:outputTime}};}}
   async resume() {{}}
   createMediaStreamSource() {{ return {{ connect(node) {{ return node; }}, disconnect() {{}} }}; }}
   createGain() {{ return {{ gain: {{value: 1}}, connect(node) {{return node;}}, disconnect() {{}} }}; }}
@@ -264,15 +278,21 @@ class PreparedContext {{
   async close() {{contextCloses++; this.state="closed";}}
 }}
 context.window.AudioContext = PreparedContext;
+context.AudioWorkletNode = PreparedReadinessNode;
 const intentToken = {{}};
 audioPreflight._ownedSoftphoneCalls.clear();
 assert.equal(audioPreflight.tryAcquireMediaIntent("kitchen", intentToken),true);
 let prepared = false;
 const preparing = audioPreflight.prepareAudioCall().then(()=>{{prepared=true;}});
 for(let i=0;i<30;i++) await Promise.resolve();
-assert.equal(prepared, false, "Do not dial before the audio output has rendered");
-assert.equal(typeof outputStarted, "function");
-outputStarted();await preparing;
+assert.equal(prepared, false, "A running context must not admit SIP before the actual input graph processes");
+assert.equal(typeof outputStarted, "undefined", "BufferSource ended is not actual worklet readiness");
+assert.equal(typeof inputProcessed, "function");
+inputProcessed();
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(prepared,false,"First worklet process can belong to prerender before device output starts");
+assert.equal(readinessChecks,1,"Recheck on a subsequent render callback without a timer");
+outputTime=1;inputProcessed();await preparing;
 assert.equal(audioTrackStops, 0, "Retain the initialized microphone for the call");
 assert.equal(audioPreflight._preparedAudio.ready, true);
 assert.deepEqual(preparationOrder,["input","output"]);
@@ -306,6 +326,24 @@ await assert.rejects(latePreparation,/cancelled/i);
 assert.equal(lateStops,1,"A late microphone grant must be released after cancellation");
 assert.equal(audioPreflight._preparedAudio,null);
 context.navigator.mediaDevices.getUserMedia=originalInput;
+const playbackOnlyPrepare = audioPreflight.prepareAudioCall({{needsMicrophone:false}});
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(audioPreflight._preparedAudio.mediaStream,null,"Playback-only preparation must not acquire a microphone");
+inputProcessed();await playbackOnlyPrepare;
+await audioPreflight._discardPreparedAudio();
+const outputTimestamp = PreparedContext.prototype.getOutputTimestamp;
+delete PreparedContext.prototype.getOutputTimestamp;
+let fallbackPrepared=false;
+const fallbackPrepare=audioPreflight.prepareAudioCall({{needsMicrophone:false}}).then(()=>{{fallbackPrepared=true;}});
+for(let i=0;i<30;i++) await Promise.resolve();
+audioPreflight._preparedAudio.audioContext.currentTime=1;
+inputProcessed();
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(fallbackPrepared,false,"Without output timestamps, require advancement after the first round-trip");
+audioPreflight._preparedAudio.audioContext.currentTime=2;
+inputProcessed();await fallbackPrepare;
+await audioPreflight._discardPreparedAudio();
+PreparedContext.prototype.getOutputTimestamp=outputTimestamp;
 
 
 // sessionStorage is only a reload/handoff hint. A backend snapshot is
@@ -1177,9 +1215,11 @@ class RuntimeAudioContext {{
     this.state = "running";
     this.destination = {{}};
     this.loadedModules = [];
+    this.sourcesCreated = 0;
     this.audioWorklet = {{ addModule: async (url) => {{this.loadedModules.push(url);}} }};
   }}
   async resume() {{ this.state = "running"; }}
+  getOutputTimestamp() {{return {{contextTime:1,performanceTime:1}};}}
   createBuffer() {{ return {{}}; }}
   createBufferSource() {{
     const node = {{connect() {{}}, disconnect() {{}}, stop() {{}},
@@ -1187,6 +1227,7 @@ class RuntimeAudioContext {{
     return node;
   }}
   createMediaStreamSource() {{
+    this.sourcesCreated++;
     return {{ connect(target) {{ return target; }}, disconnect() {{}} }};
   }}
   createGain() {{
@@ -1199,6 +1240,9 @@ class RuntimeWorkletNode {{
     this.name = name;
     this.options = options;
     this.port = {{ onmessage: null, postMessage() {{}} }};
+    if (name === "voip-stack-audio-ready") {{
+      Promise.resolve().then(() => this.port.onmessage?.({{data: {{type:"ready"}}}}));
+    }}
   }}
   connect(target) {{ return target; }}
   disconnect() {{}}
@@ -1261,6 +1305,7 @@ releaseModules();
 await prepareSession;
 const preparedContext = preparedSession._preparedAudio.audioContext;
 const preparedStream = preparedSession._preparedAudio.mediaStream;
+const preparedSource = preparedSession._preparedAudio.source;
 const preparedRequests = microphoneRequests;
 assert.equal(preparedContext.loadedModules.length, 2, "Processors must load before dialing");
 preparedContext.audioWorklet.addModule = async () => {{throw new Error("Late worklet download after dialing");}};
@@ -1272,6 +1317,8 @@ await preparedSession._setupAudio({{audio_mode: "full_duplex"}}, {{
 assert.equal(microphoneRequests, preparedRequests, "Reuse input instead of opening it twice");
 assert.equal(preparedSession._mediaStream, preparedStream);
 assert.equal(preparedSession._audioContext, preparedContext);
+assert.equal(preparedSession._source, preparedSource,"Keep the ready microphone graph owner after SIP answer");
+assert.equal(preparedContext.sourcesCreated,1,"Do not restart the source after the websocket opens");
 assert.equal(preparedSession._preparedAudio, null);
 await preparedSession.close();
 microphoneRequests=0;stoppedTracks=0;

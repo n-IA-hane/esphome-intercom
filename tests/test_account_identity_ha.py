@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 from homeassistant.config_entries import ConfigSubentry
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,

@@ -743,6 +743,10 @@ class PhysicalPhoneProvisioner:
         self.hass.bus.async_fire(PHONE_PROVISIONING_CHANGED, {"phone_id": identity})
 
     async def async_close(self, *, clear_assets=False):
+        if self._closed:
+            if clear_assets:
+                await self.catalog.async_clear()
+            return
         self._closed = True
         self._sync_idle_retry()
         for unsubscribe in self._unsubscribers:
@@ -753,6 +757,8 @@ class PhysicalPhoneProvisioner:
         if self._task is not None and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        if (store := getattr(self, "store", None)) is not None:
+            await store.async_save(self.states)
         self.files.clear()
         from .physical_phone_services import unregister_physical_phone_services
         unregister_physical_phone_services(self.hass)

@@ -26,6 +26,14 @@ def _configured_cards(value, path=""):
         for index, item in enumerate(value):
             yield from _configured_cards(item, f"{path}/{index}")
     elif isinstance(value, dict):
+        strategy = value.get("strategy")
+        if isinstance(strategy, dict) and strategy.get("type") == "custom:voip-stack":
+            ids = strategy.get("account_ids", ())
+            if isinstance(ids, list):
+                for index, identity in enumerate(ids):
+                    if isinstance(identity, str) and identity:
+                        yield {"reference": f"{path}/strategy/account_ids/{index}",
+                               "device_id": "", "endpoint_id": identity}
         if value.get("type") in _CARD_TYPES:
             if (value["type"] == "custom:voip-stack-dashboard-card"
                     or value.get("mode", value.get("card_mode", "esp_mirror")) == "ha_softphone"):
@@ -231,6 +239,8 @@ class HaCardBindings:
             return deepcopy(value)
 
     async def async_close(self):
+        if self._closed:
+            return
         self._closed = True
         for unsubscribe in self._unsubscribers:
             unsubscribe()
@@ -238,3 +248,5 @@ class HaCardBindings:
         if self._task is not None and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        async with self._lock:
+            await self._save(self._dashboards, self._popups)

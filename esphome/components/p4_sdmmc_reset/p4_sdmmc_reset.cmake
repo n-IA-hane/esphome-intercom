@@ -1,5 +1,5 @@
-# ESP-IDF v5.5 SDMMC reset ordering fix, Espressif's 2026-10-27 proposal:
-# https://github.com/espressif/esp-hosted-mcu/issues/240#issuecomment-6451429332
+# Official SDMMC reset ordering fix dd47ea36 (release6 counterpart 2c454e88).
+# https://github.com/espressif/esp-idf/commit/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5
 # Change only the per-build copy. Never modify IDF_PATH or replace its component.
 include_guard(GLOBAL)
 
@@ -12,8 +12,8 @@ function(_esphome_p4_sdmmc_reset)
     idf_build_get_property(_idf_path IDF_PATH)
     include("${_idf_path}/tools/cmake/version.cmake")
     set(_version "${IDF_VERSION_MAJOR}.${IDF_VERSION_MINOR}.${IDF_VERSION_PATCH}")
-    if(NOT _version STREQUAL "5.5.6")
-        message(STATUS "P4 SDMMC reset backport not applied to SDK ${_version}: only exact SDK 5.5.6 is supported")
+    if(NOT _version STREQUAL "5.5.6" AND NOT _version STREQUAL "6.0.3")
+        message(STATUS "P4 SDMMC reset backport not applied to SDK ${_version}: only exact SDK 5.5.6 and 6.0.3 are supported")
         return()
     endif()
 
@@ -21,12 +21,22 @@ function(_esphome_p4_sdmmc_reset)
     set(_copy "${CMAKE_BINARY_DIR}/p4_sdmmc_reset/system_internal.c")
     set(_before_sha "7bd2af3da2a9c1592c8d9ff6f65ad7fe320690b2e480076685df068f231e40cc")
     set(_after_sha "38aca3174d6ac05afa37c87e9c9d33533c3772fb136b17c44d6ee20bcdad4946")
+    set(_official_fixed_sha "6db8eb2394097f2db6891d81bfb88acfe77681588b4af09aa04d2842db1ae410")
+    if(_version STREQUAL "6.0.3")
+        set(_before_sha "46d19f89c4e9036e04a245382b241e6675c659f741199c4678b4466e6659f6ae")
+        set(_after_sha "2293982e148b2f425dba91006f86f0003dc4b6d3214cc852e3317f7a2ac68f21")
+        set(_official_fixed_sha "65c475c54f22b25d573dd7674ef231261479828f8a1b1fa5d2156b0b531280d1")
+    endif()
     if(NOT EXISTS "${_original}")
-        message(FATAL_ERROR "P4 SDMMC reset backport: SDK 5.5.6 source is missing; no replacement written")
+        message(FATAL_ERROR "P4 SDMMC reset backport: SDK ${_version} source is missing; no replacement written")
     endif()
     file(SHA256 "${_original}" _sha)
+    if(_sha STREQUAL _after_sha OR _sha STREQUAL _official_fixed_sha)
+        message(STATUS "P4 SDMMC reset backport skipped: official reset order already present")
+        return()
+    endif()
     if(NOT _sha STREQUAL _before_sha)
-        message(FATAL_ERROR "P4 SDMMC reset backport: unrecognized SDK 5.5.6 source SHA256 ${_sha}; no replacement written")
+        message(FATAL_ERROR "P4 SDMMC reset backport: unrecognized SDK ${_version} source SHA256 ${_sha}; no replacement written")
     endif()
 
     idf_component_get_property(_library esp_system COMPONENT_LIB)
@@ -93,7 +103,7 @@ function(_esphome_p4_sdmmc_reset)
     list(REMOVE_AT _sources ${_index})
     list(INSERT _sources ${_index} "${_copy}")
     set_property(TARGET "${_library}" PROPERTY SOURCES "${_sources}")
-    message(STATUS "P4 SDMMC reset backport applied to build-local system_internal.c, SDK 5.5.6, SHA256 ${_after_sha}")
+    message(STATUS "P4 SDMMC reset backport applied to build-local system_internal.c, SDK ${_version}, SHA256 ${_after_sha}")
 endfunction()
 
 # ESP-IDF's project() creates component targets after the CMake project hook.

@@ -30,6 +30,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .config_validation import entry_route_mappings as _entry_route_mappings
+from homeassistant.data_entry_flow import Optional as visible_optional, Required as visible_required
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts, mailbox_route_aliases, mailbox_namespace_conflicts
 from .phone_config import (
@@ -906,8 +907,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             vol.Required("base_dn", default=current["base_dn"]): str,
             vol.Required("allow_anonymous", default=current["allow_anonymous"]): BooleanSelector(),
             vol.Required("tls", default=current["tls"]): BooleanSelector(),
-            vol.Optional("certificate", default=current["certificate"]): str,
-            vol.Optional("private_key", default=current["private_key"]): str,
+            visible_optional("certificate", default=current["certificate"], visible={"field": "tls", "value": True}): str,
+            visible_optional("private_key", default=current["private_key"], visible={"field": "tls", "value": True}): str,
         }))
 
     async def async_step_parking(self, user_input=None):
@@ -1002,9 +1003,10 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 CONF_PHONE_CONFERENCE_GROUP,
                 default=str(current.get(CONF_PHONE_CONFERENCE_GROUP) or ""),
             ): TextSelector(),
-            vol.Required(
+            visible_required(
                 CONF_PHONE_CONFERENCE_RING,
                 default=bool(current.get(CONF_PHONE_CONFERENCE_RING, False)),
+                visible={"field": CONF_PHONE_CONFERENCE_GROUP, "operator": "not_eq", "value": ""},
             ): BooleanSelector(),
             vol.Required(
                 CONF_PHONE_VIDEO_ENABLED,
@@ -1029,9 +1031,10 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                             mode="dropdown",
                         )
                     ),
-                    vol.Optional(
+                    visible_optional(
                         CONF_PHONE_OFFLINE_FORWARD_TARGET,
                         default=offline_target,
+                        visible={"field": CONF_PHONE_OFFLINE_POLICY, "value": OfflinePolicy.FORWARD.value},
                     ): TextSelector(),
                 }
             )
@@ -1055,7 +1058,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             )
         fields.update({
             vol.Required(CONF_PHONE_AUTO_ANSWER, default=bool(current.get(CONF_PHONE_AUTO_ANSWER, False))): BooleanSelector(),
-            vol.Required(CONF_PHONE_SEND_VIDEO, default=bool(current.get(CONF_PHONE_SEND_VIDEO, False))): BooleanSelector(),
+            visible_required(CONF_PHONE_SEND_VIDEO, default=bool(current.get(CONF_PHONE_SEND_VIDEO, False)),
+                visible={"field": CONF_PHONE_VIDEO_ENABLED, "value": True}): BooleanSelector(),
         })
         if sip_account:
             from .physical_phone import (
@@ -1117,6 +1121,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         errors: dict[str, str] = {}
         current = self._current_data()
         values = {**current, **user_input}
+        unavailable = persisted_phone_policy(current).unavailable
+        previous_offline_target = unavailable.target if unavailable is not None else ""
+        offline_target = str(user_input.get(CONF_PHONE_OFFLINE_FORWARD_TARGET, previous_offline_target) or "").strip()
         voicemail = dict(current.get("voicemail", {}))
         if "voicemail_enabled" in user_input:
             voicemail["enabled"] = bool(user_input["voicemail_enabled"])
@@ -1141,9 +1148,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             kind is EndpointKind.SIP_ACCOUNT
             and str(user_input.get(CONF_PHONE_OFFLINE_POLICY))
             == OfflinePolicy.FORWARD.value
-            and not str(
-                user_input.get(CONF_PHONE_OFFLINE_FORWARD_TARGET) or ""
-            ).strip()
+            and not offline_target
         ):
             errors[CONF_PHONE_OFFLINE_FORWARD_TARGET] = "phone_forward_target_required"
         if not self._validate_aliases(
@@ -1193,7 +1198,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 if user_input[CONF_PHONE_OFFLINE_POLICY] == OfflinePolicy.FORWARD.value:
                     policy_data["unavailable"] = {
                         "kind": "contact",
-                        "target": str(user_input.get(CONF_PHONE_OFFLINE_FORWARD_TARGET) or "").strip(),
+                        "target": offline_target,
                     }
                 else:
                     policy_data.pop("unavailable", None)

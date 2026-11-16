@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 from homeassistant.exceptions import ServiceValidationError
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
 

@@ -342,8 +342,16 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
                 deadline = asyncio.get_running_loop().time() + budget
                 await asyncio.to_thread(peers[1].hangup)
                 await wait_until(lambda: bool(received(offer.header("Call-ID"), status=486)))
-                assert any(outgoing and message.method == "ACK" and message.header("Call-ID") == offer.header("Call-ID")
-                           for outgoing, message in observed)
+                # Ingress capture precedes transaction processing. Wait for the
+                # actual non-2xx ACK, within the same fallback deadline.
+                ack_cseq = offer.header("CSeq").split()[0] + " ACK"
+                ack_branch = sip.parse_via(offer.header("Via")).branch
+                async with asyncio.timeout_at(deadline):
+                    await wait_until(lambda: any(outgoing and message.method == "ACK"
+                        and message.header("Call-ID") == offer.header("Call-ID")
+                        and message.header("CSeq") == ack_cseq
+                        and sip.parse_via(message.header("Via")).branch == ack_branch
+                        for outgoing, message in observed))
                 snapshot("agent_486_ack", first)
                 await asyncio.wait_for(asyncio.shield(forward), budget)
                 snapshot("offer_forward_released", first)

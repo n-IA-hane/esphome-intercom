@@ -1,6 +1,7 @@
 """A recorded component set must replay exactly or fail before checkout."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -42,8 +43,12 @@ def test_existing_checkout_is_preserved(tmp_path):
     assert work.read_text() == 'preserve'
 
 
-def test_ci_component_refs_cover_incremental_preview_tags():
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text())
+@pytest.mark.parametrize("owner", ["intercom", "renderer"])
+def test_ci_component_refs_cover_incremental_preview_tags(owner):
+    root = Path(__file__).resolve().parents[1]
+    if owner == "renderer":
+        root = Path(os.environ.get("VIDEO_RENDERER_SOURCE", root.parent / "esphome-video-renderer"))
+    workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
     expressions = [step['env']['COMPONENT_REF'][3:-2].strip()
                    for job in workflow['jobs'].values() for step in job.get('steps', [])
                    if 'COMPONENT_REF' in step.get('env', {})]

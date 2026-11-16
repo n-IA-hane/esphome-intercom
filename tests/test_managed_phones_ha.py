@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from aioesphomeapi import DeviceInfo, UserService, UserServiceArg, UserServiceArgType
 from homeassistant.components.esphome.entry_data import RuntimeEntryData
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 import pytest
 
 pytestmark = pytest.mark.ha
@@ -146,6 +146,85 @@ async def managed(phone_lab):
 def phone_record(lab):
     from custom_components.voip_stack.managed_phones import managed_records
     return managed_records(lab.entry)[lab.device.id]
+
+
+async def test_provisioning_state_listener_is_indexed_and_tracks_registry_changes(managed, monkeypatch):
+    from homeassistant.core import callback
+
+    lab = managed
+    seen = []
+    original = lab.controller._state_changed
+
+    @callback
+    def observed(event):
+        seen.append(event.data["entity_id"])
+        original(event)
+
+    monkeypatch.setattr(lab.controller, "_state_changed", observed)
+    monkeypatch.setattr(lab.controller, "schedule", MagicMock())
+    lab.controller.start()
+    await lab.hass.async_block_till_done()
+    seen.clear()
+    lab.hass.states.async_set("sensor.unrelated", "on")
+    await lab.hass.async_block_till_done()
+    assert seen == []
+    registry = er.async_get(lab.hass)
+    entity = registry.async_get_or_create("text", "esphome", "84c7bb000001-voip_queues",
+        config_entry=lab.native, device_id=lab.device.id)
+    await lab.hass.async_block_till_done()
+    lab.hass.states.async_set(entity.entity_id, "Reception")
+    await lab.hass.async_block_till_done()
+    assert seen == [entity.entity_id]
+    registry.async_update_entity(entity.entity_id, new_entity_id="text.renamed_queues")
+    await lab.hass.async_block_till_done()
+    lab.hass.states.async_set(entity.entity_id, "Old identity")
+    lab.hass.states.async_set("text.renamed_queues", "Kitchen")
+    await lab.hass.async_block_till_done()
+    assert seen == [entity.entity_id, "text.renamed_queues"]
+    registry.async_remove("text.renamed_queues")
+    await lab.hass.async_block_till_done()
+    lab.hass.states.async_set("text.renamed_queues", "Removed")
+    await lab.hass.async_block_till_done()
+    assert len(seen) == 2
+    await lab.controller.async_close()
+    lab.hass.states.async_set("sensor.phone_node_voip_state", "calling")
+    await lab.hass.async_block_till_done()
+    assert len(seen) == 2
+
+
+async def test_state_bridge_indexes_only_ESP_state_entities_and_rebinds(phone_lab, monkeypatch):
+    from custom_components.voip_stack import esphome_state_bridge as bridge
+
+    lab = phone_lab
+    emit = AsyncMock()
+    monkeypatch.setattr(bridge, "async_emit_state_event", emit)
+    bridge.register_state_event_bridge(lab.hass)
+    registry = er.async_get(lab.hass)
+    try:
+        lab.hass.states.async_set("sensor.unrelated", "calling")
+        await lab.hass.async_block_till_done()
+        emit.assert_not_awaited()
+        entity = registry.async_get_or_create("sensor", "esphome", "second-voip_state",
+            config_entry=lab.native, device_id=lab.device.id)
+        await lab.hass.async_block_till_done()
+        lab.hass.states.async_set(entity.entity_id, "calling")
+        await lab.hass.async_block_till_done()
+        assert emit.await_args.args[1] == entity.entity_id
+        registry.async_update_entity(entity.entity_id, new_entity_id="sensor.renamed_phone_state")
+        await lab.hass.async_block_till_done()
+        emit.reset_mock()
+        lab.hass.states.async_set(entity.entity_id, "in_call")
+        lab.hass.states.async_set("sensor.renamed_phone_state", "ringing")
+        await lab.hass.async_block_till_done()
+        assert emit.await_count == 1 and emit.await_args.args[1] == "sensor.renamed_phone_state"
+        lab.runtime.esp_state_event_bridge_unsub()
+        emit.reset_mock()
+        lab.hass.states.async_set("sensor.renamed_phone_state", "in_call")
+        await lab.hass.async_block_till_done()
+        emit.assert_not_awaited()
+    finally:
+        if lab.runtime.esp_state_event_bridge_unsub is not None:
+            lab.runtime.esp_state_event_bridge_unsub()
 
 
 async def bind_account(lab, phone):

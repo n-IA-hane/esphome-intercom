@@ -1,4 +1,4 @@
-"""Borrow PCM and call each core's owner API without allocation or legacy shims."""
+"""The native MWW microphone callback borrows capture bytes without a legacy shim."""
 
 from pathlib import Path
 import subprocess
@@ -8,86 +8,108 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "esphome/components/micro_wake_word"
 
 
-def test_core_api_adapters_preserve_bytes_without_allocating(tmp_path):
-    source = tmp_path / "compat.cpp"
-    source.write_text(r"""
-#include "core_compat.h"
+def test_native_capture_callback_preserves_borrowing_and_consumer_reset_owner(tmp_path):
+    source = (COMPONENT / "micro_wake_word.cpp").read_text()
+    start = source.index("this->microphone_source_->add_data_callback(")
+    end = source.index("\n  });", start) + len("\n  });")
+    callback_registration = source[start:end]
+    cpp = tmp_path / "capture-callback.cpp"
+    cpp.write_text(r'''
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
-#include <cstring>
+#include <functional>
+#include <memory>
 #include <new>
 #include <span>
-#include <type_traits>
+#include <vector>
 
 static size_t allocations = 0;
 void *operator new(size_t size) {
   ++allocations;
-  if (void *p = std::malloc(size)) return p;
+  if (void *ptr = std::malloc(size)) return ptr;
   throw std::bad_alloc();
 }
-void operator delete(void *p) noexcept { std::free(p); }
-void operator delete(void *p, size_t) noexcept { std::free(p); }
+// Keep the replacement deallocator at its ABI boundary, as in libstdc++; do not inline free into callers.
+[[gnu::noinline]] void operator delete(void *ptr) noexcept { std::free(ptr); }
+void operator delete(void *ptr, size_t) noexcept { ::operator delete(ptr); }
+static unsigned event_bits = 0;
+void xEventGroupSetBits(unsigned, unsigned bits) { event_bits |= bits; }
 
-// These signatures match the two supported core interfaces. The actual core
-// headers and link are checked by their separate firmware builds.
+namespace esphome {
+namespace microphone {
 struct AudioCapture { std::span<const uint8_t> data; };
-struct LegacySource {
-  unsigned calls{0}; uint32_t timeout{0}; bool shift{true};
-  size_t fill(uint32_t ticks, bool pre_shift) {
-    ++calls; timeout = ticks; shift = pre_shift; return 128;
+struct Microphone {
+  std::function<void(const AudioCapture &)> callback;
+  template<typename F> void add_data_callback(F callback) { this->callback = callback; }
+};
+}
+namespace ring_buffer {
+struct RingBuffer {
+  const uint8_t *observed = nullptr;
+  size_t observed_size = 0;
+  unsigned writes = 0, resets = 0;
+  bool accepts = true;
+  size_t write_without_replacement(const uint8_t *data, size_t size, unsigned timeout, bool partial) {
+    assert(timeout == 0 && !partial);
+    observed = data; observed_size = size; ++writes;
+    return accepts ? size : 0;
+  }
+  void reset() { ++resets; }
+};
+}
+namespace micro_wake_word {
+enum class State { STOPPED, RUNNING };
+struct EventGroupBits {
+  static constexpr unsigned WARNING_FULL_RING_BUFFER = 1, COMMAND_RESET_RING_BUFFER = 2;
+};
+struct MicroWakeWord {
+  microphone::Microphone *microphone_source_;
+  State state_ = State::STOPPED;
+  std::weak_ptr<ring_buffer::RingBuffer> ring_buffer_{};
+  unsigned event_group_ = 0;
+  void bind() {
+''' + callback_registration + r'''
   }
 };
-struct CurrentSource {
-  unsigned calls{0}, deprecated_calls{0}; uint32_t timeout{0};
-  size_t fill(uint32_t ticks) { ++calls; timeout = ticks; return 128; }
-  size_t fill(uint32_t, bool) { ++deprecated_calls; return 0; }
-};
-struct LegacyStatus {
-  const char *name{nullptr}; uint32_t duration{0};
-  void status_momentary_error(const char *value, uint32_t length) { name=value; duration=length; }
-};
-struct CurrentStatus {
-  unsigned calls{0}, deprecated_calls{0}; uint32_t duration{0};
-  void status_momentary_error(uint32_t length) { ++calls; duration=length; }
-  void status_momentary_error(const char *, uint32_t) { ++deprecated_calls; }
-};
-
-int main() {
-  using namespace esphome::micro_wake_word;
-  const std::vector<uint8_t> original{0, 1, 127, 128, 254, 255};
-  const AudioCapture capture{original};
-  const uint8_t *received = nullptr; size_t bytes = 0;
-  auto callback = [&](const auto &input) {
-    const auto &data = compat::audio_bytes(input);
-    received = data.data(); bytes = data.size();
-    assert(std::memcmp(received, original.data(), original.size()) == 0);
-  };
-  static_assert(std::is_invocable_v<decltype(callback), const std::vector<uint8_t> &>);
-  static_assert(std::is_invocable_v<decltype(callback), const AudioCapture &>);
-  const size_t before = allocations;
-  callback(original);
-  assert(received == original.data() && bytes == original.size());
-  callback(capture);
-  assert(received == original.data() && bytes == original.size());
-  LegacySource legacy; CurrentSource current;
-  assert(compat::fill(legacy, uint32_t{50}, 0) == 128);
-  assert(legacy.calls == 1 && legacy.timeout == 50 && !legacy.shift);
-  assert(compat::fill(current, uint32_t{50}, 0) == 128);
-  assert(current.calls == 1 && current.timeout == 50 && current.deprecated_calls == 0);
-  LegacyStatus old_status; CurrentStatus new_status;
-  compat::momentary_error(old_status, "frontend_alloc", 1000, 0);
-  compat::momentary_error(new_status, "frontend_alloc", 1000, 0);
-  assert(std::strcmp(old_status.name, "frontend_alloc") == 0 && old_status.duration == 1000);
-  assert(new_status.calls == 1 && new_status.duration == 1000 && new_status.deprecated_calls == 0);
-  assert(allocations == before);
 }
-""")
-    executable = tmp_path / "core-compat"
+}
+int main() {
+  using namespace esphome;
+  auto ring = std::make_shared<ring_buffer::RingBuffer>();
+  microphone::Microphone mic;
+  micro_wake_word::MicroWakeWord model{&mic};
+  model.ring_buffer_ = ring;
+  model.bind();
+  const std::vector<uint8_t> bytes{0, 1, 127, 128, 254, 255};
+  const microphone::AudioCapture capture{bytes};
+  const size_t before = allocations;
+  mic.callback(capture);
+  assert(ring->writes == 0 && event_bits == 0);
+  model.state_ = micro_wake_word::State::RUNNING;
+  mic.callback(capture);
+  assert(ring->writes == 1 && ring->observed == bytes.data() && ring->observed_size == bytes.size());
+  assert(event_bits == 0);
+  ring->accepts = false;
+  mic.callback(capture);
+  assert(ring->writes == 2 && ring->resets == 0);
+  assert(event_bits == (micro_wake_word::EventGroupBits::WARNING_FULL_RING_BUFFER |
+                        micro_wake_word::EventGroupBits::COMMAND_RESET_RING_BUFFER));
+  ring.reset();
+  event_bits = 0;
+  mic.callback(capture);
+  assert(event_bits == 0 && allocations == before);
+  void *probe = ::operator new(1);
+  assert(allocations == before + 1);
+  ::operator delete(probe);
+}
+''')
+    binary = tmp_path / "capture-callback"
     compiled = subprocess.run(
-        ["g++", "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror",
-         "-I" + str(COMPONENT), str(source), "-o", str(executable)],
+        ["g++", "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
+         str(cpp), "-o", str(binary)],
         capture_output=True, text=True, timeout=30,
     )
-    assert compiled.returncode == 0, compiled.stderr
-    run = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
-    assert run.returncode == 0, run.stderr
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr

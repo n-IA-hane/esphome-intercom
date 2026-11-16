@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack import async_migrate_entry
 from custom_components.voip_stack.parking_config import parking_settings, normalize_parking_config

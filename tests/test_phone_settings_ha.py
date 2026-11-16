@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.exceptions import ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components import voip_stack
 from custom_components.voip_stack import phone_config, services

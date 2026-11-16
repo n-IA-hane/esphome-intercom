@@ -333,4 +333,29 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
   }
 }
 
+// Preparation belongs to the existing call owner. This temporary node carries
+// no PCM/session state and keeps its silent graph alive through the handoff.
+class VoipAudioReadyProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this._needsMicrophone = options?.processorOptions?.needsMicrophone === true;
+    this._check = true;
+    this._stopped = false;
+    this.port.onmessage = (event) => {
+      if (event.data?.type === "check") this._check = true;
+      if (event.data?.type === "stop") this._stopped = true;
+    };
+  }
+
+  process(inputs) {
+    if (this._stopped) return false;
+    if (this._check && (!this._needsMicrophone || inputs?.[0]?.[0]?.length)) {
+      this._check = false;
+      this.port.postMessage({ type: "ready" });
+    }
+    return true;
+  }
+}
+
+registerProcessor("voip-stack-audio-ready", VoipAudioReadyProcessor);
 registerProcessor("voip-stack-playback-processor", VoipPlaybackProcessor);

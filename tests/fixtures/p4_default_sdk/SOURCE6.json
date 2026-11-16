@@ -1,0 +1,46 @@
+{
+  "base_tag": "v6.0.3",
+  "base_commit": "76f5dedd9950a3012fee8fb7d5586df21fc67802",
+  "official_ppa_release6_fix": "9e43423b2b9fab1c363b4ba9361527513de17255",
+  "official_sdmmc_release6_fix": "2c454e88e7439d872659f5ffa4e409988c9e37b3",
+  "files": [
+    {
+      "path": "components/esp_driver_ppa/src/ppa_blend.c",
+      "sha256": "20a9e88f793377f7d7cddbdfde7733270484f6a2c27c5bb11242a45efad5c5cf",
+      "git_blob": "04312cc7eb5329fe355800ffd96a1d01330e5345",
+      "patched_sha256": "19a9c799680be13f040f96a75aecc45d833717e96cd581ed1ad8c27ea17f648e"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_core.c",
+      "sha256": "d3ad65fe93d8017fecc62aa81982470f9c5dc8a76c54877370e8dabd2f36edaf",
+      "git_blob": "922c4b2268f2c0731ccc36f8a090b0ed5628f476",
+      "patched_sha256": "7dcf254ea0e39704386456ee83af717b650c1435bd38bdf1ddb41cf1592bcfe7"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_fill.c",
+      "sha256": "ed1b4e8d4a149ac0251e4bb5b9a623694472b8afbed4e054c151fbf502727ca0",
+      "git_blob": "bc037554ee948889913e9ffc0b71c51d2ecdadc3",
+      "patched_sha256": "2a3f9c4c5421ee40db8f5c523e9ed56b2982573e43ebf9275599115dfb7d7fe3"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_priv.h",
+      "sha256": "6ab1626b8e61800a3f03f451762735077237f7d7305d43cf505ed135863d94b5",
+      "git_blob": "a5fd5e96b5835ebfe1bdd3376daf0e2838ba0fc3",
+      "patched_sha256": "f41ed0bcce4b514e50da68c2222521664e5721af1203df90b03d9f61946695bc"
+    },
+    {
+      "path": "components/esp_driver_ppa/src/ppa_srm.c",
+      "sha256": "1494d1cacf4e686a580443f13176682b1e816c3de094779c2bf85a14f14fe4b5",
+      "git_blob": "c388a0cec031aae714fb893f3cf5a36a98c0971f",
+      "patched_sha256": "cf5542ab4bd8093a93489083acda71e68ba829fb5941b4cf3796a911de8f1597"
+    },
+    {
+      "path": "components/esp_system/port/soc/esp32p4/system_internal.c",
+      "sha256": "46d19f89c4e9036e04a245382b241e6675c659f741199c4678b4466e6659f6ae",
+      "git_blob": "9b3c089b1e472036ae058fadb6be085e25b832cd",
+      "patched_sha256": "65c475c54f22b25d573dd7674ef231261479828f8a1b1fa5d2156b0b531280d1"
+    }
+  ],
+  "sdmmc_move_only_sha256": "2293982e148b2f425dba91006f86f0003dc4b6d3214cc852e3317f7a2ac68f21",
+  "sdmmc_difference_from_official_patch": "Only the two added explanatory comment lines, preserving the already qualified move-only5.5.6 transformation"
+}

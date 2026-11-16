@@ -53,6 +53,8 @@ def _candidate(head: str) -> dict[str, object]:
             "esphome-audio-stack": {"commit": "audio", "dirty": False},
             "esphome-runtime-controller": {"commit": "runtime", "dirty": False},
             "esphome-esp-video-camera": {"commit": "camera", "dirty": False},
+            "esphome-video-renderer": {"commit": "renderer", "dirty": False},
+            "esphome-screenshot": {"commit": "screenshot", "dirty": False},
         },
         "toolchain": {},
     }
@@ -1291,3 +1293,13 @@ def test_ha_package_installer_preserves_one_canonical_source(tmp_path: Path) -> 
     )
     assert len(digest) == 64
     assert install(tmp_path, check=True) == (target, digest)
+
+
+def test_development_esphome_version_cannot_substitute_for_its_source_revision(monkeypatch):
+    monkeypatch.setattr("scripts.candidate_lock._esphome_source",
+                        lambda: {"url": "", "revision": ""})
+    config = {"repositories": {}, "official_sources": {
+        "esphome": {"revision": "a" * 40}}}
+    import pytest
+    with pytest.raises(RuntimeError, match="complete official ESPHome revision"):
+        build_lock(config, allow_dirty=False)

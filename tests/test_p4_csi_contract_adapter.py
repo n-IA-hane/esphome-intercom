@@ -1,73 +1,79 @@
-"""Compile the build adaptation against the old and new CSI format contracts."""
+"""Exercise the exact official CSI version boundary without source rewriting."""
 
+import hashlib
 from pathlib import Path
 import subprocess
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER = ROOT / "idf_components/esp_video_csi_compat/CMakeLists.txt"
-# The unchanged esp_video 2.4.1 pre-v3 format-selection boundary. The complete
-# real library is additionally compiled and exercised by the P4 firmware gate.
-BOUNDARY = """#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
-        /* Old IDF version: use sensor format as CSI input */
-        input = 8;
-#else
-        input = 16;
-#endif
-"""
+SOURCE = (
+    ROOT / "tests/fixtures/espressif_p4_official/esp-video-components"
+    / "esp_video/src/device/esp_video_csi_format.c"
+)
+SOURCE_SHA = "9f7cb1453031448b7f11094a6c5093d92fa3866754b42b543a0bca5e9cc946eb"
 
 
-@pytest.mark.parametrize("revision", [0, 100, 300])
-@pytest.mark.parametrize("version", [(5, 5, 5), (5, 5, 6), (6, 0, 0)])
-def test_csi_adapter_preserves_vendor_and_one_source(tmp_path, revision, version):
-    source_dir = tmp_path / "video/src/device"
-    source_dir.mkdir(parents=True)
+@pytest.mark.parametrize("version", [(5, 5, 5), (5, 5, 6), (5, 5, 7), (6, 0, 0)])
+@pytest.mark.parametrize("converts", [False, True])
+def test_official_csi_input_matches_isp_output_from_556(tmp_path, version, converts):
+    assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == SOURCE_SHA
+    source = SOURCE.read_text()
+    # Retain both real branches of the RAW->ISP->CSI path. Stub only color
+    # conversions and diagnostics; the version test and assignments are vendor C.
+    start = source.index("#if ESP_VIDEO_CSI_DEVICE_CONV_FORMAT", source.index(
+        "/* ISP can process the data (sensor outputs RAW format) */"
+    ))
+    block = source[start:source.index(
+        "#endif /* ESP_VIDEO_CSI_DEVICE_CONV_FORMAT */", start
+    ) + len("#endif /* ESP_VIDEO_CSI_DEVICE_CONV_FORMAT */")]
+    expected = 116 if converts or version >= (5, 5, 6) else 108
     encoded = version[0] * 65536 + version[1] * 256 + version[2]
-    original = f"""#include <assert.h>
+    harness = f"""
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
 #define ESP_IDF_VERSION_VAL(a,b,c) ((a)*65536+(b)*256+(c))
 #define ESP_IDF_VERSION {encoded}
+#define ESP_VIDEO_CSI_DEVICE_CONV_FORMAT {int(converts)}
+#define ESP_OK 0
+#define ESP_ERR_NOT_SUPPORTED -1
+#define ESP_LOGD(...) ((void)0)
+#define ISP_COLOR_RGB888 224
+#define V4L2_PIX_FMT_RGB24 24
+struct Formats {{ unsigned isp_output_fmt, csi_input_fmt, csi_output_fmt; }};
+static unsigned v4l2_to_isp_color(unsigned value) {{ return value + 200; }}
+static unsigned v4l2_to_csi_color(unsigned value) {{ return value + 100; }}
+#if ESP_VIDEO_CSI_DEVICE_CONV_FORMAT
+static bool is_csi_supported_input(unsigned value) {{ return value == 16 || value == 24; }}
+#endif
+static int check(struct Formats *in_out_format, bool isp_can_output) {{
+ const uint32_t sensor_v4l2_fmt = 8, requested_fmt = 16;
+ (void)sensor_v4l2_fmt;
+{block}
+}}
 int main(void) {{
- int input = 0;
-{BOUNDARY}
- assert(input == {8 if version < (5, 5, 6) else 16});
+ struct Formats result = {{0}};
+ assert(check(&result, true) == ESP_OK);
+ assert(result.isp_output_fmt == 216);
+ assert(result.csi_input_fmt == {expected});
+ assert(result.csi_output_fmt == 116);
+#if ESP_VIDEO_CSI_DEVICE_CONV_FORMAT
+ assert(check(&result, false) == ESP_OK);
+ assert(result.isp_output_fmt == ISP_COLOR_RGB888);
+ assert(result.csi_input_fmt == 124);
+ assert(result.csi_output_fmt == 116);
+#else
+ assert(check(&result, false) == ESP_ERR_NOT_SUPPORTED);
+#endif
  return 0;
 }}
 """
-    source = source_dir / "esp_video_csi_format.c"
-    source.write_text(original)
-    # Production rev3 takes a different, already correct upstream branch.
-    enabled = revision < 300 and (5, 5, 6) <= version < (6, 0, 0)
-    (tmp_path / "CMakeLists.txt").write_text(f"""
-cmake_minimum_required(VERSION 3.20)
-project(csi_contract LANGUAGES C)
-set(CONFIG_IDF_TARGET_ESP32P4 ON)
-set(CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE ON)
-set(CONFIG_ESP32P4_REV_MIN_FULL {revision})
-set(IDF_VERSION_MAJOR {version[0]})
-set(IDF_VERSION_MINOR {version[1]})
-set(IDF_VERSION_PATCH {version[2]})
-add_executable(probe video/src/device/esp_video_csi_format.c)
-function(idf_component_register)
-endfunction()
-function(idf_component_get_property result component property)
- if(property STREQUAL "COMPONENT_DIR")
-  set(${{result}} "${{CMAKE_CURRENT_SOURCE_DIR}}/video" PARENT_SCOPE)
- else()
-  set(${{result}} probe PARENT_SCOPE)
- endif()
-endfunction()
-include("{ADAPTER}")
-get_target_property(final_sources probe SOURCES)
-list(LENGTH final_sources count)
-if(NOT count EQUAL 1)
- message(FATAL_ERROR "The adapter added a second CSI format implementation")
-endif()
-""")
-    build = tmp_path / "build"
-    subprocess.run(["cmake", "-S", str(tmp_path), "-B", str(build)], check=True, capture_output=True)
-    subprocess.run(["cmake", "--build", str(build)], check=True, capture_output=True)
-    if revision < 300:
-        subprocess.run([str(build / "probe")], check=True)
-    assert source.read_text() == original
-    assert (build / "esp_video_csi_format.c").exists() is enabled
+    fixture = tmp_path / "csi.c"
+    fixture.write_text(harness)
+    executable = tmp_path / "csi"
+    subprocess.run(
+        ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(fixture), "-o", str(executable)],
+        check=True, capture_output=True,
+    )
+    subprocess.run([str(executable)], check=True, capture_output=True)

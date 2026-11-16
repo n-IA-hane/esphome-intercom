@@ -2055,3 +2055,77 @@ if (resolver._pending) await resolver._pending;
 assert.equal(resolver.phonebook, "sensor.new_server");
 '''
     subprocess.run(["node", "--input-type=module", "-e", script], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_native_editors_and_section_strategy_preserve_canonical_selections():
+    """Control only the native ha-form boundary, execute the actual editors."""
+    script = r'''
+import assert from 'node:assert/strict';
+class Element extends EventTarget {
+  constructor(){super();this.children=[];this.style={};this.hidden=false;}
+  append(...items){this.children.push(...items);}
+  appendChild(item){this.append(item);return item;}
+  replaceChildren(...items){this.children=[...items];}
+  attachShadow(){this.shadowRoot=new Element();return this.shadowRoot;}
+  get childElementCount(){return this.children.length;}
+}
+globalThis.HTMLElement=Element;
+globalThis.window=globalThis;
+if(!globalThis.CustomEvent)globalThis.CustomEvent=class extends Event{constructor(type,init={}){super(type,init);this.detail=init.detail;}};
+const definitions=new Map();
+globalThis.customElements={get:name=>definitions.get(name),define:(name,value)=>definitions.set(name,value)};
+globalThis.document={createElement:name=>{const Type=definitions.get(name);const item=Type?new Type():new Element();item.localName=name;return item;}};
+let nativeLoads=0;
+globalThis.loadCardHelpers=async()=>({createCardElement:()=>({constructor:{async getConfigElement(){nativeLoads++;customElements.define('ha-form',class extends Element{});}}})});
+const base=__FRONTEND__;
+const {ensureNativeForm}=await import(base+'/voip-stack-form.js');
+await Promise.all([ensureNativeForm(),ensureNativeForm()]);
+assert.equal(nativeLoads,1);
+const requests=[];
+let devices=[{endpoint_id:'account-A',device_id:'device-A',kind:'sip_account',name:'Reception',extension:'201'},
+ {endpoint_id:'esp-A',device_id:'esp-device',kind:'esphome',name:'Kitchen',audio_mode:'full_duplex'}];
+const connection={sendMessagePromise:async request=>{requests.push(request);assert.equal(request.type,'voip_stack/list_devices');return{devices};}};
+const hass={connection,language:'en',config:{components:['voip_stack']},callWS:request=>connection.sendMessagePromise(request)};
+await import(base+'/voip-stack-card-editor.js');
+const Editor=customElements.get('voip-stack-card-editor');const editor=new Editor();
+editor.setConfig({type:'custom:voip-stack-card',mode:'ha_softphone',device_id:'device-A',name:'Original',show_extended_info:true,custom_user_option:{keep:true}});
+editor.hass=hass;await new Promise(resolve=>setImmediate(resolve));
+const form=editor._els.form;
+assert.equal(form.localName,'ha-form');
+assert.equal(form.data.device_id,'device-A');
+const choices=form.schema.find(field=>field.name==='device_id').selector.select.options;
+assert(choices.some(option=>option.value==='device-A'&&option.label.includes('Reception')));
+assert(!choices.some(option=>option.value==='esp-device'));
+assert.equal(form.schema.find(field=>field.name==='show_recording_controls').visible.value,'ha_softphone');
+const changes=[];editor.addEventListener('config-changed',event=>changes.push(event.detail.config));
+form.dispatchEvent(new CustomEvent('value-changed',{detail:{value:{name:'Renamed'}}}));
+assert.equal(changes.at(-1).device_id,'device-A');assert.equal(changes.at(-1).show_extended_info,true);
+assert.deepEqual(changes.at(-1).custom_user_option,{keep:true});assert.equal(changes.at(-1).name,'Renamed');
+editor.setConfig({...changes.at(-1),device_id:'missing-device'});
+assert.equal(editor._els.form.data.device_id,'missing-device');
+assert(editor._els.form.schema.find(field=>field.name==='device_id').selector.select.options.some(option=>option.value==='missing-device'&&option.label==='Missing phone'));
+await import(base+'/voip-stack-dashboard-card-editor.js');
+const DashEditor=customElements.get('voip-stack-dashboard-card-editor');const dash=new DashEditor();
+dash.setConfig({type:'custom:voip-stack-dashboard-card',device_id:'device-A',title:'Calls'});dash.hass=hass;await new Promise(resolve=>setImmediate(resolve));
+assert.equal(dash._form.localName,'ha-form');
+const dashboardChanges=[];dash.addEventListener('config-changed',event=>dashboardChanges.push(event.detail.config));
+dash._form.dispatchEvent(new CustomEvent('value-changed',{detail:{value:{title:'Operator'}}}));
+assert.equal(dashboardChanges.at(-1).device_id,'device-A');assert.equal(dashboardChanges.at(-1).title,'Operator');
+await import(base+'/voip-stack-section-strategy.js');
+const strategy=customElements.get('ll-strategy-section-voip-stack');
+assert.equal(window.customStrategies.filter(item=>item.type==='voip-stack'&&item.strategyType==='section').length,1);
+assert.deepEqual(strategy.getStubConfig(),{type:'custom:voip-stack',account_ids:[]});
+const config={type:'custom:voip-stack',account_ids:['account-A']};
+let section=await strategy.generate(config,hass);
+assert.deepEqual(section.cards,[{type:'custom:voip-stack-card',mode:'ha_softphone',device_id:'device-A'}]);
+devices=[{...devices[0],device_id:'new-device-A',name:'Reception renamed'}];
+section=await strategy.generate(config,hass);
+assert.equal(section.cards[0].device_id,'new-device-A');assert.deepEqual(config.account_ids,['account-A']);
+devices=[];section=await strategy.generate(config,hass);
+assert.equal(section.cards.length,1);assert.equal(section.cards[0].type,'markdown');
+assert(requests.every(request=>request.type==='voip_stack/list_devices'));
+editor.disconnectedCallback();
+'''.replace("__FRONTEND__", json.dumps(CARD.parent.as_uri()))
+    result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

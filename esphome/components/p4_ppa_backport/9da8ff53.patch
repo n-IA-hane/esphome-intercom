@@ -1,0 +1,279 @@
+From 9da8ff53f751f6682f69897d886f3a9946deed31 Mon Sep 17 00:00:00 2001
+From: Matt Sephton <matt.sephton@gmail.com>
+Date: Fri, 4 Sep 2026 19:40:14 +0100
+Subject: [PATCH] fix(ppa): decide engine idleness under the engine spinlock
+
+Merges https://github.com/espressif/esp-idf/pull/19047
+
+The engine's "idle" state was a binary semaphore that the completion ISR
+gave only AFTER leaving the engine spinlock, while ppa_do_operation
+inserted its transaction under that spinlock and then tried the semaphore
+with a zero timeout. On the ISR's own core the two cannot interleave. When
+the submitting task runs on the OTHER core it can insert between the
+ISR's "queue empty" decision and its give, find the semaphore still taken,
+assume the ISR will chain-start the transaction, and be left at the head of
+an idle engine's queue. It only starts when a later submission's completion
+picks it up; a lone last submission never completes and a caller waiting on
+its done callback blocks forever.
+
+Seen on ESP32-P4 with the PPA/2D-DMA interrupt on core 0 and SRM
+transactions submitted from a core-1 task: ~130 stranded transactions per
+20000 when single transactions are submitted at their own duration, none
+when the submitter is on core 0; none after this change.
+
+Replace the semaphore with a `busy` flag that both sides read and write
+only under the engine spinlock: the submitter inserts and, if the engine
+is idle, marks it busy and starts the transaction itself; the ISR clears
+the flag in the same critical section in which it finds the queue empty.
+Blocking mode also clears a stale give on the recycled per-transaction
+semaphore (the ISR gives it unconditionally, non-blocking callers never
+take it), which made a blocking operation return before its transaction
+had finished.
+---
+ components/esp_driver_ppa/src/ppa_blend.c |  1 -
+ components/esp_driver_ppa/src/ppa_core.c  | 93 ++++++++++-------------
+ components/esp_driver_ppa/src/ppa_fill.c  |  1 -
+ components/esp_driver_ppa/src/ppa_priv.h  |  2 +-
+ components/esp_driver_ppa/src/ppa_srm.c   |  1 -
+ 5 files changed, 42 insertions(+), 56 deletions(-)
+
+diff --git a/components/esp_driver_ppa/src/ppa_blend.c b/components/esp_driver_ppa/src/ppa_blend.c
+index b276b5053271..7d03a222ecc8 100644
+--- a/components/esp_driver_ppa/src/ppa_blend.c
++++ b/components/esp_driver_ppa/src/ppa_blend.c
+@@ -339,7 +339,6 @@ esp_err_t ppa_do_blend(ppa_client_handle_t ppa_client, const ppa_blend_oper_conf
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {
+diff --git a/components/esp_driver_ppa/src/ppa_core.c b/components/esp_driver_ppa/src/ppa_core.c
+index b9683b909982..1708826e230f 100644
+--- a/components/esp_driver_ppa/src/ppa_core.c
++++ b/components/esp_driver_ppa/src/ppa_core.c
+@@ -98,17 +98,14 @@ static esp_err_t ppa_engine_acquire(const ppa_engine_config_t *config, ppa_engin
+     if (config->engine == PPA_ENGINE_TYPE_SRM) {
+         if (!s_platform.srm) {
+             ppa_srm_engine_t *srm_engine = heap_caps_calloc(1, sizeof(ppa_srm_engine_t), PPA_MEM_ALLOC_CAPS);
+-            SemaphoreHandle_t srm_sem = xSemaphoreCreateBinaryWithCaps(PPA_MEM_ALLOC_CAPS);
+             dma2d_descriptor_t *srm_tx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *srm_rx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+-            if (srm_engine && srm_sem && srm_tx_dma_desc && srm_rx_dma_desc) {
++            if (srm_engine && srm_tx_dma_desc && srm_rx_dma_desc) {
+                 srm_engine->dma_tx_desc = srm_tx_dma_desc;
+                 srm_engine->dma_rx_desc = srm_rx_dma_desc;
+                 srm_engine->base.platform = &s_platform;
+                 srm_engine->base.type = PPA_ENGINE_TYPE_SRM;
+                 srm_engine->base.spinlock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+-                srm_engine->base.sem = srm_sem;
+-                xSemaphoreGive(srm_engine->base.sem);
+                 STAILQ_INIT(&srm_engine->base.trans_stailq);
+                 s_platform.srm = srm_engine;
+                 s_platform.srm_engine_ref_count++;
+@@ -120,9 +117,6 @@ static esp_err_t ppa_engine_acquire(const ppa_engine_config_t *config, ppa_engin
+                 ret = ESP_ERR_NO_MEM;
+                 ESP_LOGE(TAG, "no mem to register PPA SRM engine");
+                 free(srm_engine);
+-                if (srm_sem) {
+-                    vSemaphoreDeleteWithCaps(srm_sem);
+-                }
+                 free(srm_tx_dma_desc);
+                 free(srm_rx_dma_desc);
+             }
+@@ -143,19 +137,16 @@ static esp_err_t ppa_engine_acquire(const ppa_engine_config_t *config, ppa_engin
+     } else if (config->engine == PPA_ENGINE_TYPE_BLEND) {
+         if (!s_platform.blending) {
+             ppa_blend_engine_t *blending_engine = heap_caps_calloc(1, sizeof(ppa_blend_engine_t), PPA_MEM_ALLOC_CAPS);
+-            SemaphoreHandle_t blending_sem = xSemaphoreCreateBinaryWithCaps(PPA_MEM_ALLOC_CAPS);
+             dma2d_descriptor_t *blending_tx_bg_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *blending_tx_fg_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *blending_rx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+-            if (blending_engine && blending_sem && blending_tx_bg_dma_desc && blending_tx_fg_dma_desc && blending_rx_dma_desc) {
++            if (blending_engine && blending_tx_bg_dma_desc && blending_tx_fg_dma_desc && blending_rx_dma_desc) {
+                 blending_engine->dma_tx_bg_desc = blending_tx_bg_dma_desc;
+                 blending_engine->dma_tx_fg_desc = blending_tx_fg_dma_desc;
+                 blending_engine->dma_rx_desc = blending_rx_dma_desc;
+                 blending_engine->base.platform = &s_platform;
+                 blending_engine->base.type = PPA_ENGINE_TYPE_BLEND;
+                 blending_engine->base.spinlock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+-                blending_engine->base.sem = blending_sem;
+-                xSemaphoreGive(blending_engine->base.sem);
+                 STAILQ_INIT(&blending_engine->base.trans_stailq);
+                 s_platform.blending = blending_engine;
+                 s_platform.blend_engine_ref_count++;
+@@ -164,9 +155,6 @@ static esp_err_t ppa_engine_acquire(const ppa_engine_config_t *config, ppa_engin
+                 ret = ESP_ERR_NO_MEM;
+                 ESP_LOGE(TAG, "no mem to register PPA Blending engine");
+                 free(blending_engine);
+-                if (blending_sem) {
+-                    vSemaphoreDeleteWithCaps(blending_sem);
+-                }
+                 free(blending_tx_bg_dma_desc);
+                 free(blending_tx_fg_dma_desc);
+                 free(blending_rx_dma_desc);
+@@ -264,7 +252,6 @@ static esp_err_t ppa_engine_release(ppa_engine_t *ppa_engine)
+             s_platform.srm = NULL;
+             free(srm_engine->dma_tx_desc);
+             free(srm_engine->dma_rx_desc);
+-            vSemaphoreDeleteWithCaps(srm_engine->base.sem);
+ #if CONFIG_PM_ENABLE
+             if (srm_engine->base.pm_lock) {
+                 ret = esp_pm_lock_delete(srm_engine->base.pm_lock);
+@@ -283,7 +270,6 @@ static esp_err_t ppa_engine_release(ppa_engine_t *ppa_engine)
+             free(blending_engine->dma_tx_bg_desc);
+             free(blending_engine->dma_tx_fg_desc);
+             free(blending_engine->dma_rx_desc);
+-            vSemaphoreDeleteWithCaps(blending_engine->base.sem);
+ #if CONFIG_PM_ENABLE
+             if (blending_engine->base.pm_lock) {
+                 ret = esp_pm_lock_delete(blending_engine->base.pm_lock);
+@@ -480,51 +466,51 @@ esp_err_t ppa_do_operation(ppa_client_handle_t ppa_client, ppa_engine_t *ppa_eng
+ {
+     esp_err_t ret = ESP_OK;
+     esp_err_t pm_lock_ret __attribute__((unused));
++    bool start_now = false;
++
++    if (mode == PPA_TRANS_MODE_BLOCKING) {
++        // Ensure no transaction semaphore before transaction starts
++        // A recycled transaction element may still hold the give from a previous
++        // non-blocking use (the ISR gives it unconditionally and nobody took it)
++        xSemaphoreTake(trans_elm->sem, 0);
++    }
+ 
++    // Send transaction into PPA engine queue. Whether it starts now or is chained
++    // by the ISR is decided under the engine spinlock, together with the insert:
++    // the ISR makes the matching "queue empty -> engine idle" decision under the
++    // same lock, so a submission from another core cannot slip in between the
++    // ISR's decision and the engine becoming idle (see ppa_transaction_done_cb)
+     portENTER_CRITICAL(&ppa_client->spinlock);
+-    // Send transaction into PPA engine queue
+     portENTER_CRITICAL(&ppa_engine_base->spinlock);
+     STAILQ_INSERT_TAIL(&ppa_engine_base->trans_stailq, trans_elm, entry);
++    if (!ppa_engine_base->busy) {
++        ppa_engine_base->busy = true;
++        start_now = true;
++    }
+     portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+     ppa_client->trans_cnt++;
+     portEXIT_CRITICAL(&ppa_client->spinlock);
+ 
+-    TickType_t ticks_to_wait = (mode == PPA_TRANS_MODE_NON_BLOCKING) ? 0 : portMAX_DELAY;
+-    if (xSemaphoreTake(ppa_engine_base->sem, ticks_to_wait) == pdTRUE) {
+-        // Check if the transaction has already been started from the ISR
+-        // If so, then the transaction should have been removed from queue at this moment (transaction completed)
+-        bool found = false;
+-        ppa_trans_t *temp = NULL;
+-        portENTER_CRITICAL(&ppa_engine_base->spinlock);
+-        STAILQ_FOREACH(temp, &ppa_engine_base->trans_stailq, entry) {
+-            if (temp == trans_elm) {
+-                found = true;
+-                break;
+-            }
+-        }
+-        portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+-        if (found) {
++    if (start_now) {
++        // The engine was idle, so the queue held nothing but this transaction
+ #if CONFIG_PM_ENABLE
+-            pm_lock_ret = esp_pm_lock_acquire(ppa_engine_base->pm_lock);
+-            assert((pm_lock_ret == ESP_OK) && "acquire pm_lock failed");
++        pm_lock_ret = esp_pm_lock_acquire(ppa_engine_base->pm_lock);
++        assert((pm_lock_ret == ESP_OK) && "acquire pm_lock failed");
+ #endif
+-            ret = ppa_dma2d_enqueue(trans_elm);
+-            if (ret != ESP_OK) {
+-                portENTER_CRITICAL(&ppa_engine_base->spinlock);
+-                STAILQ_REMOVE(&ppa_engine_base->trans_stailq, trans_elm, ppa_trans_s, entry);
+-                portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+-                xSemaphoreGive(ppa_engine_base->sem);
++        ret = ppa_dma2d_enqueue(trans_elm);
++        if (ret != ESP_OK) {
++            portENTER_CRITICAL(&ppa_engine_base->spinlock);
++            STAILQ_REMOVE(&ppa_engine_base->trans_stailq, trans_elm, ppa_trans_s, entry);
++            ppa_engine_base->busy = false;
++            portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+ #if CONFIG_PM_ENABLE
+-                pm_lock_ret = esp_pm_lock_release(ppa_engine_base->pm_lock);
+-                assert((pm_lock_ret == ESP_OK) && "release pm_lock failed");
++            pm_lock_ret = esp_pm_lock_release(ppa_engine_base->pm_lock);
++            assert((pm_lock_ret == ESP_OK) && "release pm_lock failed");
+ #endif
+-                portENTER_CRITICAL(&ppa_client->spinlock);
+-                ppa_client->trans_cnt--;
+-                portEXIT_CRITICAL(&ppa_client->spinlock);
+-                goto err;
+-            }
+-        } else {
+-            xSemaphoreGive(ppa_engine_base->sem);
++            portENTER_CRITICAL(&ppa_client->spinlock);
++            ppa_client->trans_cnt--;
++            portEXIT_CRITICAL(&ppa_client->spinlock);
++            goto err;
+         }
+     }
+ 
+@@ -553,6 +539,11 @@ bool ppa_transaction_done_cb(dma2d_channel_handle_t dma2d_chan, dma2d_event_data
+     // Remove this transaction from transaction queue
+     STAILQ_REMOVE(&engine_base->trans_stailq, trans_elm, ppa_trans_s, entry);
+     next_start_trans = STAILQ_FIRST(&engine_base->trans_stailq);
++    if (!next_start_trans) {
++        // Nothing queued: the engine goes idle HERE, under the same lock a
++        // submitting task takes to insert and check (ppa_do_operation)
++        engine_base->busy = false;
++    }
+     portEXIT_CRITICAL_ISR(&engine_base->spinlock);
+ 
+     portENTER_CRITICAL_ISR(&client->spinlock);
+@@ -566,12 +557,10 @@ bool ppa_transaction_done_cb(dma2d_channel_handle_t dma2d_chan, dma2d_event_data
+     client->trans_cnt--;
+     portEXIT_CRITICAL_ISR(&client->spinlock);
+ 
+-    // If there is next trans in PPA engine queue, send it to DMA queue; otherwise, release the engine semaphore
++    // If there is next trans in PPA engine queue, send it to DMA queue; otherwise the engine is idle (flag cleared above)
+     if (next_start_trans) {
+         ppa_dma2d_enqueue(next_start_trans);
+     } else {
+-        xSemaphoreGiveFromISR(engine_base->sem, &HPTaskAwoken);
+-        need_yield |= (HPTaskAwoken == pdTRUE);
+ #if CONFIG_PM_ENABLE
+         esp_err_t pm_lock_ret = esp_pm_lock_release(engine_base->pm_lock);
+         assert(pm_lock_ret == ESP_OK);
+diff --git a/components/esp_driver_ppa/src/ppa_fill.c b/components/esp_driver_ppa/src/ppa_fill.c
+index 651f489834ff..665141db6314 100644
+--- a/components/esp_driver_ppa/src/ppa_fill.c
++++ b/components/esp_driver_ppa/src/ppa_fill.c
+@@ -158,7 +158,6 @@ esp_err_t ppa_do_fill(ppa_client_handle_t ppa_client, const ppa_fill_oper_config
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {
+diff --git a/components/esp_driver_ppa/src/ppa_priv.h b/components/esp_driver_ppa/src/ppa_priv.h
+index 37e2220a5d7a..fcac11c8165a 100644
+--- a/components/esp_driver_ppa/src/ppa_priv.h
++++ b/components/esp_driver_ppa/src/ppa_priv.h
+@@ -54,7 +54,7 @@ struct ppa_engine_t {
+     ppa_platform_t *platform;                     // PPA driver platform
+     ppa_engine_type_t type;                       // Type of the PPA engine
+     portMUX_TYPE spinlock;                        // Engine level spinlock
+-    SemaphoreHandle_t sem;                        // Semaphore for whether the engine is processing a transaction
++    bool busy;                                    // Whether the engine has a transaction running or queued; only read/written under `spinlock`
+     STAILQ_HEAD(trans, ppa_trans_s) trans_stailq; // link head of pending transactions for the PPA engine
+ #if CONFIG_PM_ENABLE
+     esp_pm_lock_handle_t pm_lock;                 // Power management lock
+diff --git a/components/esp_driver_ppa/src/ppa_srm.c b/components/esp_driver_ppa/src/ppa_srm.c
+index cd031fd12fb9..358d369d976b 100644
+--- a/components/esp_driver_ppa/src/ppa_srm.c
++++ b/components/esp_driver_ppa/src/ppa_srm.c
+@@ -365,7 +365,6 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t ppa_client, const ppa_s
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {

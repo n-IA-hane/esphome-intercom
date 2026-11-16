@@ -5,28 +5,27 @@
 
 // only applicable on ESP32-P4
 #ifdef USE_ESP32_VARIANT_ESP32P4
-#include "esphome/core/component.h"
-#include "esphome/core/helpers.h"
 #include "esphome/core/application.h"
-#include "esphome/core/log.h"
+#include "esphome/core/component.h"
 #include "esphome/core/gpio.h"
+#include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/display/display_color_utils.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_lcd_panel_io.h"
 
-#include "esp_lcd_mipi_dsi.h"
-#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
 #include "driver/ppa.h"
-#endif
+#include "esp_lcd_mipi_dsi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include <utility>
-#include "freertos/semphr.h"
 
 namespace esphome::mipi_dsi {
 
-static constexpr const char *TAG = "display.mipi_dsi";
+ESPHOME_LOG_TAG(TAG, "display.mipi_dsi");
 const uint8_t SW_RESET_CMD = 0x01;
 const uint8_t SLEEP_OUT = 0x11;
 const uint8_t SDIR_CMD = 0xC7;
@@ -75,64 +74,38 @@ class MipiDsi final : public display::Display {
   void update() override;
 
   void setup() override;
-  // Display-backed media consumers reserve their resources at DATA.
-  float get_setup_priority() const override {
-    return setup_priority::DATA + 1.0f;
-  }
 
   void draw_pixel_at(int x, int y, Color color) override;
   void fill(Color color) override;
   int get_width() override;
   int get_height() override;
 
-  using display::Display::draw_pixels_at;
-  void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
-                      display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad) override;
-  uint8_t *get_frame_buffer() const { return this->frame_buffer_; }
-  size_t get_frame_buffer_size() const { return this->frame_buffer_size_; }
-#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
-  using WriteAdmission = bool (*)(void *context);
-  bool supports_native_rgb565() const;
-  bool supports_rgb565_transform() const;
-  /// Native coordinates bypass logical Display rotation for codec output
-  /// that is already oriented. Input is borrowed through panel completion.
-  bool draw_native_rgb565(int x, int y, int width, int height,
-                          const uint8_t *data, size_t bytes);
-  /// Write a native framebuffer rectangle through the display's existing
-  /// submission owner. Input remains borrowed until PPA and the one panel
-  /// completion finish; no framebuffer pointer or write lease escapes.
-  bool draw_rgb565_transformed(const ppa_srm_oper_config_t &operation,
-                               size_t input_bytes, int native_x, int native_y,
-                               int output_width, int output_height,
-                               WriteAdmission still_current = nullptr,
-                               void *context = nullptr);
-#endif
-#ifdef USE_ESP_SCREENSHOT
-  /// Copy completed RGB565 pixels in logical display orientation, followed by
-  /// an optional clockwise output rotation. Returns busy
-  /// without waiting when a panel DMA submission owns the framebuffer.
-  bool copy_frame_buffer_rgb565(uint8_t *target, size_t capacity,
-                               display::DisplayRotation rotation = display::DISPLAY_ROTATION_0_DEGREES);
-#endif
   void dump_config() override;
 
+  using WriteAdmission = bool (*)(void *context);
+  bool supports_rgb565_transform() const;
+  // Output is RGB565; source pixel mode remains the public PPA input format.
+  // Rectangles are logical. Only this driver composes its display rotation.
+  bool draw_rgb565_transformed(const ppa_srm_oper_config_t &operation, size_t input_bytes, int logical_x, int logical_y,
+                               int logical_width, int logical_height, WriteAdmission still_current = nullptr,
+                               void *context = nullptr);
+  // Default output is the logical display orientation; rotation is additional
+  // clockwise.
+  bool copy_frame_buffer_rgb565(uint8_t *target, size_t capacity,
+                                display::DisplayRotation rotation = display::DISPLAY_ROTATION_0_DEGREES);
+
  protected:
-  void draw_pixels_compat_(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorBitness bitness,
-                            bool big_endian, int x_offset, int y_offset, int x_pad);
+  void draw_pixels_internal(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorBitness bitness,
+                            bool big_endian, int x_offset, int y_offset, int x_pad) override;
 
   void write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                          int x_pad);
   bool check_buffer_();
-#ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
-  bool draw_rotated_rgb565_(int x, int y, int width, int height,
-                            const uint8_t *data, int x_offset, int y_offset,
-                            int x_pad);
-  void mirror_native_rgb565_(int x, int y, int width, int height,
-                             const uint8_t *data, size_t stride);
-#endif
-  bool submit_bitmap_(int x_start, int y_start, int x_end, int y_end, const uint8_t *ptr);
-  bool submit_bitmap_locked_(int x_start, int y_start, int x_end, int y_end,
-                             const uint8_t *ptr);
+  bool draw_rotated_rgb565_(int x, int y, int w, int h, const uint8_t *data, int x_offset, int y_offset, int x_pad);
+  bool submit_bitmap_(int x1, int y1, int x2, int y2, const uint8_t *data);
+  bool submit_bitmap_locked_(int x1, int y1, int x2, int y2, const uint8_t *data);
+  void mirror_native_rgb565_(int x, int y, int w, int h, const uint8_t *data, size_t stride);
+
   /// Send the region touched since the last flush to the panel.
   void flush_dirty_();
   // Maps drawn coordinates to the buffer the way draw_pixel_at() stores them
@@ -196,6 +169,7 @@ class MipiDsi final : public display::Display {
 #ifdef USE_MIPI_DSI_RGB565_OWNED_TRANSFORM
   ppa_client_handle_t transform_client_{nullptr};
 #endif
+
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};

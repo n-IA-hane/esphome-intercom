@@ -24,14 +24,14 @@
           "assist_endpoint_enabled": "Aggiunge un interno SIP collegato direttamente a una pipeline Assist di Home Assistant, senza integrazioni VoIP o listener SIP separati.",
           "debug_mode": "Abilita diagnostica e log SIP/RTP/media dettagliati senza registrare l'audio delle chiamate.",
           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
-          "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
+          "experimental_sip_video": "Abilita il video opzionale per dispositivi e percorsi compatibili. H.264, VP8 e JPEG nel browser richiedono un contesto sicuro e un browser compatibile. Sugli ESP il supporto dipende dal dispositivo e dal profilo codec configurato: i profili S3 con display supportati ricevono JPEG; i profili P4 possono usare JPEG o H.264. I profili solo audio e solo camera mantengono i rispettivi limiti.",
           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
           "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF."
         }
       },
       "video": {
         "title": "Video SIP",
-        "description": "Il video è opzionale e riguarda soltanto il softphone Home Assistant e gli endpoint SIP standard. Gli ESP restano solo audio.",
+        "description": "Il video è opzionale e dipende dal dispositivo, dal percorso e dal codec configurato. I profili S3 con display supportati ricevono JPEG; i profili P4 possono usare JPEG o H.264. Il video browser e SIP richiede comunque controparti compatibili; un profilo con sola camera non aggiunge la ricezione video.",
         "data": {
           "video_transcoding_enabled": "Abilita transcodifica video",
           "video_camera_send_enabled": "Consenti la trasmissione della videocamera dal browser"
@@ -646,16 +646,16 @@
       "step": {
         "user": {
           "title": "Telefono fisico",
-          "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata. Fonte: {profile_source}. Revisione fissata: {profile_pin}. Stato: {profile_status}. Scaricato non significa applicato.",
+          "description": "Scegli un modello di telefono compatibile e assegna gli Account SIP alle sue linee. Una configurazione scaricata non conferma che il telefono l'abbia applicata.",
           "data": {
             "name": "Nome",
             "mac": "Indirizzo MAC",
             "profile_id": "Profilo del modello",
-            "update_profile": "Aggiorna il profilo fissato",
+            "update_profile": "Aggiorna il profilo del modello",
             "account_id": "Primo account SIP (facoltativo)"
           },
           "data_description": {
-            "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo."
+            "update_profile": "I telefoni esistenti mantengono il profilo attuale finché non lo aggiorni o scegli un altro modello."
           },
           "sections": {
             "advanced": {

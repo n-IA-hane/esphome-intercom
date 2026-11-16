@@ -1,7 +1,7 @@
 # Assist media lifecycle host tests
 
 The twelve C++ cases compile the maintained `speaker_source` and `audio_http`
-providers with the official ESPHome 2026.10.0 host-test runner. AudioReader,
+providers with the official ESPHome development host-test runner at `373224c1`. AudioReader,
 DecoderSource0.4.0, the FLAC decoder and pthread create/join are real. HTTP
 transport, the speaker sink and the player's FreeRTOS queue interface are host
 fixtures. There is no ESP SDK or HTTP server in this test.
@@ -13,7 +13,7 @@ it is not an optional diagnostic lane.
 
 Dependencies are pinned in CI:
 
-- ESPHome 2026.10.0: `704551a6c93c29a311802f7ee97d67a9e9bce718`.
+- ESPHome: `373224c141dceadbb67ace263040cbfc802c5968`.
 - micro-decoder 0.4.0: `4d06df93a1ee69788dfc7d8676cbd66371b3eae9`.
 - micro-flac 0.3.0: `f9c27d4d0166021db977d7fc37d205b21d81e9f2`.
 
@@ -28,9 +28,10 @@ python scripts/test_assist_media_host.py --esphome-source .test-deps/esphome \
 python -m pytest -q tests/test_voice_assistant_idle_runtime.py
 ```
 
-The six Python-collected VA cases execute the exact production transition
-methods and IDLE branch in a small host class. They are not a complete VA
-integration test. All eighteen cases are software regressions, not physical
+The nine Python-collected VA cases execute the exact production transition
+methods, native deferred end helper and IDLE branch in a small host class. They
+also preserve the native end callback's two-second fallback and client guard.
+They are not a complete VA integration test. All twenty-one cases are software regressions, not physical
 TTS, microphone, display, RAM-headroom or acoustic qualification.
 
 The 60 KiB audio fixture is synthetic. `reference.pcm` is 16000 little-endian

@@ -108,6 +108,13 @@ async def start(state, *, data=None):
 
 
 async def submit(state, result, data):
+    if result.get("step_id") in {"bindings", "phone_bindings"}:
+        # Existing scenarios describe canonical records; exercise the actual UI wire values.
+        data = deepcopy(data)
+        fixture_choices = {"sip:front": "Front desk (481)", "sip:office": "Office (482)",
+                           "__create_account__": "Create SIP account"}
+        for line in data.get("lines", []):
+            line["endpoint_id"] = fixture_choices.get(line.get("endpoint_id"), line.get("endpoint_id"))
     if result.get("step_id") in {"user", "phone_user"}:
         data = dict(data)
         advanced = dict(data.get("advanced") or {})
@@ -550,7 +557,7 @@ async def test_main_user_still_enforces_one_pbx(physical_flow):
 
 async def test_ignored_discovery_metadata_is_not_the_parent_pbx(physical_flow, monkeypatch):
     from custom_components.voip_stack.config_flow import VoipStackConfigFlow
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     state = physical_flow
     ignored = MockConfigEntry(domain="voip_stack", source=SOURCE_IGNORE,
                               unique_id="physical_phone:ignored", data={})
@@ -600,3 +607,63 @@ async def test_main_adapter_language_and_account_keep_one_editor_draft(physical_
     assert physical["lines"][0]["endpoint_id"] == account["endpoint_id"]
     assert not state.lab.hass.config_entries.subentries.async_progress()
     state.reload.assert_not_awaited()
+
+
+async def test_line_account_form_roundtrip_uses_readable_choices_and_saves_only_canonical_ids(physical_flow):
+    state = physical_flow
+    initial = await start(state)
+    profile_selector = next(value for key, value in initial['data_schema'].schema.items() if key.schema == 'profile_id')
+    assert {'value': PROFILE, 'label': 'Fanvil X3U Pro'} in profile_selector.config['options']
+    await submit(state, initial, identity())
+    form = await reconfigure(state, 'bindings')
+    line_selector = next(value for key, value in form['data_schema'].schema.items() if key.schema == 'lines')
+    choices = line_selector.config['fields']['endpoint_id']['selector'].config['options']
+    values = [choice['value'] for choice in choices]
+    assert 'Front desk (481)' in values and 'Office (482)' in values
+    assert len(values) == len(set(values))
+    assert not {'sip:front', 'sip:office'} & set(values)
+    # This is exactly the updated value returned by HA's nested object edit dialog.
+    await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Office (482)', 'transport': 'udp'}], 'keys': []})
+    record = physical_record(state)
+    assert record.data['lines'] == [{'slot': '1', 'endpoint_id': 'sip:office', 'transport': 'udp'}]
+    assert record.data['catalog_commit'] == PIN
+    form = await reconfigure(state, 'bindings')
+    values = form['data_schema']({})
+    assert values['lines'][0]['endpoint_id'] == 'Office (482)'
+    values['lines'][0]['endpoint_id'] = 'Front desk (481)'
+    await submit(state, form, values)
+    assert physical_record(state).data['lines'][0]['endpoint_id'] == 'sip:front'
+    state.reload.assert_not_awaited()
+
+
+async def test_unmapped_line_account_form_value_is_rejected_without_saving(physical_flow):
+    state = physical_flow
+    form = await binding_editor(state)
+    before = deepcopy(dict(physical_record(state).data))
+    try:
+        result = await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Unlisted (999)', 'transport': 'udp'}], 'keys': []})
+    except InvalidData:
+        pass
+    else:
+        assert result['type'] == 'form' and result['errors']['base'] == 'invalid_phone_bindings'
+    assert physical_record(state).data == before
+    state.reload.assert_not_awaited()
+
+
+async def test_line_account_without_extension_uses_its_unique_username_in_the_form(physical_flow):
+    from custom_components.voip_stack.phone_config import (
+        _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry,
+    )
+    state = physical_flow
+    account = sip_account_phone_data({'username': 'guest-alpha', 'password': 'fixture-guest-secret',
+        'display_name': 'Guest desk'}, endpoint_id='sip:guest')
+    _add_phone_subentry(state.lab.hass, state.lab.entry, data=account, title='Guest desk')
+    sync_registry_from_entry(state.lab.hass, state.lab.entry)
+    form = await binding_editor(state)
+    line_selector = next(value for key, value in form['data_schema'].schema.items() if key.schema == 'lines')
+    choices = line_selector.config['fields']['endpoint_id']['selector'].config['options']
+    assert {'value': 'Guest desk (guest-alpha)', 'label': 'Guest desk (guest-alpha)'} in choices
+    result = await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Guest desk (guest-alpha)'}], 'keys': []})
+    assert result['type'] == 'abort' and result['reason'] == 'reconfigure_successful'
+    assert physical_record(state).data['lines'][0]['endpoint_id'] == 'sip:guest'
+    assert 'fixture-guest-secret' not in repr(form)

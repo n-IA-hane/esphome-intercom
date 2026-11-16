@@ -1,0 +1,103 @@
+intents:
+  VoipAnswer:
+    data:
+    - response: default
+      sentences:
+      - rispondi
+      - rispondi alla chiamata
+      slots:
+        voip_response: template
+  VoipCall:
+    data:
+    - response: default
+      sentences:
+      - chiama {target}
+      - chiama{target}
+      slots:
+        voip_response: template
+  VoipDecline:
+    data:
+    - response: default
+      sentences:
+      - rifiuta
+      - rifiuta la chiamata
+      slots:
+        voip_response: template
+  VoipHangup:
+    data:
+    - response: default
+      sentences:
+      - riaggancia
+      - termina la chiamata
+      slots:
+        voip_response: template
+language: it
+lists:
+  target:
+    wildcard: true
+responses:
+  intents:
+    VoipAnswer:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Non so quale dispositivo\
+        \ VoIP ha ricevuto il comando.\",\n  \"missing_target\": \"Quale contatto\
+        \ VoIP devo chiamare?\",\n  \"not_found\": \"Non trovo un contatto VoIP chiamato\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Il contatto VoIP \" ~ slots.target\
+        \ ~ \" è ambiguo.\",\n  \"ambiguous_area\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" è ambigua.\",\n  \"area_empty\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" non contiene dispositivi VoIP.\",\n  \"ambiguous_area_device\": \"\
+        L'area Home Assistant \" ~ slots.target ~ \" contiene più dispositivi VoIP.\"\
+        ,\n  \"call_failed\": \"Non sono riuscito a chiamare \" ~ slots.target ~ \"\
+        .\",\n  \"hangup_failed\": \"Non sono riuscito a riagganciare.\",\n  \"answer_failed\"\
+        : \"Non sono riuscito a rispondere alla chiamata.\",\n  \"decline_failed\"\
+        : \"Non sono riuscito a rifiutare la chiamata.\",\n  \"VoipCall\": \"Chiamo\
+        \ \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"Va bene.\",\n  \"VoipAnswer\"\
+        : \"Rispondo.\",\n  \"VoipDecline\": \"Rifiuto la chiamata.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipCall:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Non so quale dispositivo\
+        \ VoIP ha ricevuto il comando.\",\n  \"missing_target\": \"Quale contatto\
+        \ VoIP devo chiamare?\",\n  \"not_found\": \"Non trovo un contatto VoIP chiamato\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Il contatto VoIP \" ~ slots.target\
+        \ ~ \" è ambiguo.\",\n  \"ambiguous_area\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" è ambigua.\",\n  \"area_empty\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" non contiene dispositivi VoIP.\",\n  \"ambiguous_area_device\": \"\
+        L'area Home Assistant \" ~ slots.target ~ \" contiene più dispositivi VoIP.\"\
+        ,\n  \"call_failed\": \"Non sono riuscito a chiamare \" ~ slots.target ~ \"\
+        .\",\n  \"hangup_failed\": \"Non sono riuscito a riagganciare.\",\n  \"answer_failed\"\
+        : \"Non sono riuscito a rispondere alla chiamata.\",\n  \"decline_failed\"\
+        : \"Non sono riuscito a rifiutare la chiamata.\",\n  \"VoipCall\": \"Chiamo\
+        \ \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"Va bene.\",\n  \"VoipAnswer\"\
+        : \"Rispondo.\",\n  \"VoipDecline\": \"Rifiuto la chiamata.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipDecline:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Non so quale dispositivo\
+        \ VoIP ha ricevuto il comando.\",\n  \"missing_target\": \"Quale contatto\
+        \ VoIP devo chiamare?\",\n  \"not_found\": \"Non trovo un contatto VoIP chiamato\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Il contatto VoIP \" ~ slots.target\
+        \ ~ \" è ambiguo.\",\n  \"ambiguous_area\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" è ambigua.\",\n  \"area_empty\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" non contiene dispositivi VoIP.\",\n  \"ambiguous_area_device\": \"\
+        L'area Home Assistant \" ~ slots.target ~ \" contiene più dispositivi VoIP.\"\
+        ,\n  \"call_failed\": \"Non sono riuscito a chiamare \" ~ slots.target ~ \"\
+        .\",\n  \"hangup_failed\": \"Non sono riuscito a riagganciare.\",\n  \"answer_failed\"\
+        : \"Non sono riuscito a rispondere alla chiamata.\",\n  \"decline_failed\"\
+        : \"Non sono riuscito a rifiutare la chiamata.\",\n  \"VoipCall\": \"Chiamo\
+        \ \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"Va bene.\",\n  \"VoipAnswer\"\
+        : \"Rispondo.\",\n  \"VoipDecline\": \"Rifiuto la chiamata.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipHangup:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Non so quale dispositivo\
+        \ VoIP ha ricevuto il comando.\",\n  \"missing_target\": \"Quale contatto\
+        \ VoIP devo chiamare?\",\n  \"not_found\": \"Non trovo un contatto VoIP chiamato\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Il contatto VoIP \" ~ slots.target\
+        \ ~ \" è ambiguo.\",\n  \"ambiguous_area\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" è ambigua.\",\n  \"area_empty\": \"L'area Home Assistant \" ~ slots.target\
+        \ ~ \" non contiene dispositivi VoIP.\",\n  \"ambiguous_area_device\": \"\
+        L'area Home Assistant \" ~ slots.target ~ \" contiene più dispositivi VoIP.\"\
+        ,\n  \"call_failed\": \"Non sono riuscito a chiamare \" ~ slots.target ~ \"\
+        .\",\n  \"hangup_failed\": \"Non sono riuscito a riagganciare.\",\n  \"answer_failed\"\
+        : \"Non sono riuscito a rispondere alla chiamata.\",\n  \"decline_failed\"\
+        : \"Non sono riuscito a rifiutare la chiamata.\",\n  \"VoipCall\": \"Chiamo\
+        \ \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"Va bene.\",\n  \"VoipAnswer\"\
+        : \"Rispondo.\",\n  \"VoipDecline\": \"Rifiuto la chiamata.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"

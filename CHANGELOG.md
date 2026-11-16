@@ -2,10 +2,83 @@
 
 ## 2026.12.0-dev
 
+### Official component alignment and independent rendering
+
+- Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,
+  using the shared platform owners. Retain the exact official Core 373 preview
+  for qualification without raising unrelated standalone-component minimums.
+- Align the remaining wake-word, Voice Assistant and playback providers with
+  one complete official ESPHome revision. Keep only the documented lifecycle
+  corrections until their upstream replacements are qualified.
+- Publish the focused HTTP completion proposal as
+  [PR22787](https://github.com/esphome/esphome/pull/22787) and contribute the
+  broader player error/replacement policy to
+  [existing PR22118](https://github.com/esphome/esphome/pull/22118#issuecomment-6914576261).
+  MWW [PR22781](https://github.com/esphome/esphome/pull/22781) and Voice Assistant
+  [PR22782](https://github.com/esphome/esphome/pull/22782) remain separate proposals;
+  publication does not mean integration or a qualified official replacement.
+- Record the selected H.264 candidate fork at `176cda6`, on official `08a0b658`,
+  with one default-off Kconfig DB-buffer preference and allocation diagnostic.
+  On the qualified P4 it recovers about 240 KB of internal memory and restores
+  audio-task creation and networking. Duplex H.264 data was verified; the
+  optional vendor Unity case is compiled but not presented as hardware-executed.
+  Propose the narrow allocation option in [Espressif PR28](https://github.com/espressif/esp-h264-component/pull/28).
+- Select the official Espressif GMF provider while retaining ESP-SR 2.6.0.
+  Record renderer and screenshot repositories in the shared qualification
+  catalog and identify development ESPHome installations by their Git commit.
+- Follow ESPHome's recommended P4 SDK without a source pin. Apply the official
+  PPA and SDMMC fixes to checksummed build-local sources for the exact supported
+  5.5.6 and 6.0.3 tags, preserving the installed SDK and original build targets.
+  Keep the official CSI correction in the camera dependency.
+- Declare P4 PSRAM execution through the official framework option so the
+  display and camera drivers share the correct interrupt memory policy.
+- Capture P4's composed UI/video through the display owner's public readback,
+  selected automatically from `lvgl_id` without a forced redraw. Preserve S3
+  LVGL capture, legacy selectors, native actions and one additional output rotation.
+- Move P4 rendering into the independent renderer repository and create the
+  VoIP adapter from the ordinary sink reference. The renderer no longer owns
+  telephone formats, negotiation or transport lifecycle.
+- Retain a minimal upstream-aligned MIPI display adaptation as the single
+  owner of RGB/YUV transforms, framebuffer writes and UI/video serialization.
+  P4 uses its public pixel transaction; S3 retains LVGL image presentation.
+  Propose the generic display API in [PR22789](https://github.com/esphome/esphome/pull/22789)
+  with its [developer documentation](https://github.com/esphome/developers.esphome.io/pull/348).
+- Record default-SDK receive-video windows of 9.696 and 9.941 FPS. Preserve the
+  repeat's strict browser failure with 24 startup audio-playout drops. A matching
+  true-SDK 6.0.3 call measured 9.824 FPS, with strict browser audio passing and
+  no RTP loss. Restore the recommended-SDK candidate after that forward check;
+  physical white flashes and acoustic quality remain unverified.
+
+### Home Assistant configuration and lifecycle
+
+- Wait for the actual browser audio device clock before starting a call or
+  answering, and retain the prepared microphone graph through media setup.
+  The original Casa-to-WS3 path now has zero startup playout drops, with the
+  transmitted tone and received PCM verified independently. No buffer, jitter
+  target, DSP setting or ESP firmware change is required for this correction.
+- Follow only the relevant ESPHome entity changes through HA's indexed state
+  listeners. Preserve device and entity identity during registry changes.
+- Remove entry-owned persistent Stores only when the integration is deleted;
+  ordinary reloads preserve their data and pending saves cannot recreate
+  deleted storage.
+- Use shared native HA form controls in the card editors. Persist VoIP section
+  strategy account selections so configured cards remain callable with every
+  browser closed.
+- Keep native physical-phone forms readable: named model choices and account
+  name/extension summaries replace raw configuration references. Existing
+  canonical associations are unchanged. Refresh actual native form screenshots.
+- Retain an explicit December stable-release checkpoint for the newer Repair
+  ownership and Assist processing APIs. Qualify development Core separately;
+  do not require a household Core development installation.
+
+
 ### Preview camera sources and documentation
 
 - Build Dev P4 camera profiles and coordinated CI from the project camera fork,
-  including shared admission before hardware JPEG processing. Main/stable keep
+  including shared admission before hardware JPEG processing. Camera
+  [upstream PR9](https://github.com/Psix-anp/esphome-esp-video-camera/pull/9) is
+  ready for review with 99 local software checks; those checks do not establish
+  a physical frame-rate gain. Main/stable keep
   the upstream camera source. The C++ already used by the qualified private P4
   firmware is now selected by public Dev profiles as well.
 - Keep queue operator controls available in a standalone ESP mirror card, using
@@ -193,7 +266,7 @@ BLF and MWI, retain their normal owners and interfaces.
   against the resolved device profile, separately from calls translated by HA.
 - Integrate the maintained S3 JPEG receive profile, preserve source aspect and
   receiver geometry, and align P4 camera frame rate with the selected profile.
-  P4 display rotation uses the upstream PPA geometry correction. Add optional
+  P4 display rotation is composed by the declared display owner. Add optional
   LVGL coordinate-tap diagnostics through the existing device action path.
 - Keep coordinated preview component references and the browser, HA and media
   regression witnesses in CI. Document the explicit

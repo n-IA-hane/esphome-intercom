@@ -331,3 +331,28 @@ def test_camera_checker_rejects_wrong_owner_or_ref(tmp_path, channel, source):
     assert list(tool.source_errors(config, channel, True))
     tool.rewrite_camera(config, channel)
     assert list(tool.source_errors(config, channel, True)) == []
+
+
+def test_exact_manifest_preserves_per_repository_revisions(tmp_path: Path) -> None:
+    import json
+    tool = _load_yaml_paths()
+    catalog = json.loads((ROOT / "qualification/sources.json").read_text())
+    components = {
+        name: {"repository": source["repository"], "sha": str(index) * 40}
+        for index, (name, source) in enumerate(
+            ((name, source) for name, source in catalog["repositories"].items()
+             if name != "esphome-intercom"), 1)
+    }
+    components["esphome-esp-video-camera"]["repository"] = "n-IA-hane/esphome-esp-video-camera"
+    manifest = tmp_path / "sources.json"
+    manifest.write_text(json.dumps({"version": 1, "backend_sha": "a" * 40,
+                                    "components": components}))
+    tool.load_manifest(manifest)
+    config = tmp_path / "dependencies.yaml"
+    config.write_text("\n".join(
+        f"{name}: github://{item['repository']}@dev" for name, item in components.items()
+    ) + "\n")
+    tool.rewrite_sources(config, "main")
+    assert not list(tool.source_errors(config, "main", True))
+    for name, item in components.items():
+        assert f"github://{item['repository']}@{item['sha']}" in config.read_text()

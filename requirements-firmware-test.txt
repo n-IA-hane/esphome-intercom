@@ -1,2 +1,1 @@
-esphome==2026.10.0
-voluptuous==0.16.0
+esphome @ git+https://github.com/esphome/esphome.git@373224c141dceadbb67ace263040cbfc802c5968

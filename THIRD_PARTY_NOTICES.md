@@ -13,7 +13,6 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 
 | Local path | Upstream | Notes |
 |---|---|---|
-| `esphome/components/mipi_dsi/` | ESPHome community component lineage | Local P4 display support and panel models. |
 | `esphome/components/voice_assistant/` | ESPHome 2026.10.0, `704551a6` | Noncontinuous idle completion and callback ordering. |
 | `esphome/components/speaker_source/` | ESPHome 2026.10.0, `704551a6` | Terminal source error cleanup through the existing player owner. |
 | `esphome/components/audio_http/` | ESPHome 2026.10.0, `704551a6` | Release completed HTTP workers before publishing idle. |

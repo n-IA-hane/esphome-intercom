@@ -77,6 +77,8 @@ def test_manifest_records_toolchain_config_and_binary_hash(tmp_path: Path) -> No
             "target": "esp32s3",
             "esphome_version": "2026.8.0",
             "esp_idf_version": "v5.5.5",
+            "esp_idf_commit": "",
+            "dependency_lock_sha256": "",
             "config_hash": 123,
             "memory": {
                 "dram_data_bytes": 0,
@@ -242,3 +244,31 @@ def test_manifest_index_uses_repository_notices_and_external_firmware(
     )
     assert {name: (bundle / name).read_bytes() for name in notices} == notices
     assert json.loads(output.read_text(encoding="utf-8"))["candidate_id"] == "external"
+
+
+def test_private_build_records_actual_sdk_commit_and_resolved_dependencies(tmp_path: Path) -> None:
+    import hashlib
+    import subprocess
+    sdk = tmp_path / "official-sdk"
+    sdk.mkdir()
+    subprocess.run(["git", "init", "-q", str(sdk)], check=True)
+    (sdk / "version.txt").write_text("v5.5.6\n")
+    subprocess.run(["git", "-C", str(sdk), "add", "version.txt"], check=True)
+    subprocess.run(["git", "-C", str(sdk), "-c", "user.name=Fixture",
+                    "-c", "user.email=fixture@example.invalid", "commit", "-qm", "SDK identity"], check=True)
+    commit = subprocess.check_output(["git", "-C", str(sdk), "rev-parse", "HEAD"], text=True).strip()
+    build = tmp_path / "private-profile" / "build"
+    output = build / "build"
+    output.mkdir(parents=True)
+    (output / "project_description.json").write_text(json.dumps({
+        "project_name": "private-phone", "git_revision": "v5.5.6",
+        "idf_path": str(sdk), "target": "esp32p4",
+    }))
+    (output / "firmware.factory.bin").write_bytes(b"private firmware")
+    lock = build / "dependencies.lock"
+    lock.write_bytes(b"resolved dependencies\n")
+    records = load_script().build_records(tmp_path, (output,))
+    assert len(records) == 1
+    assert records[0]["esp_idf_version"] == "v5.5.6"
+    assert records[0]["esp_idf_commit"] == commit
+    assert records[0]["dependency_lock_sha256"] == hashlib.sha256(lock.read_bytes()).hexdigest()

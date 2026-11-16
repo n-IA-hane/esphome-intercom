@@ -39,6 +39,46 @@ def _worklet_script(script):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_preparation_ack_requires_real_processing_and_requested_input() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+const processors = new Map();
+class Base {{
+  constructor() {{this.messages=[];this.port={{postMessage: value=>this.messages.push(value)}};}}
+}}
+const context=vm.createContext({{
+  AudioWorkletProcessor:Base, sampleRate:48000,
+  registerProcessor(name,value){{processors.set(name,value);}},
+  ArrayBuffer,DataView,Float32Array,Math,Number,Object,Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))},"utf8"),context);
+const Ready=processors.get("voip-stack-audio-ready");
+assert.equal(typeof Ready,"function");
+const microphone=new Ready({{processorOptions:{{needsMicrophone:true}}}});
+assert.equal(microphone.messages.length,0,"Construction/running context cannot acknowledge processing");
+assert.equal(microphone.process([]),true);
+assert.equal(microphone.process([[]]),true);
+assert.equal(microphone.messages.length,0,"An absent input must not admit the call");
+assert.equal(microphone.process([[new Float32Array(128)]]),true);
+assert.equal(microphone.messages.length,1,"Digital silence is valid input, no speech/energy gate");
+assert.equal(microphone.messages[0].type,"ready");
+microphone.process([[new Float32Array(128)]]);
+assert.equal(microphone.messages.length,1,"One reply per check, no repeated port traffic while prepared");
+microphone.port.onmessage({{data:{{type:"check"}}}});
+microphone.process([[new Float32Array(128)]]);
+assert.equal(microphone.messages.length,2);
+microphone.port.onmessage({{data:{{type:"stop"}}}});
+assert.equal(microphone.process([[new Float32Array(128)]]),false,"Retire on handoff or cancellation");
+const outputOnly=new Ready({{processorOptions:{{needsMicrophone:false}}}});
+assert.equal(outputOnly.process([]),true);
+assert.equal(outputOnly.messages.length,1,"A receive-only call needs rendering but no microphone");
+'''
+    subprocess.run(["node", "--input-type=module", "-e", _worklet_script(script)], check=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_playback_distinguishes_packet_loss_from_remote_silence() -> None:
     script = rf'''
 import fs from "fs";

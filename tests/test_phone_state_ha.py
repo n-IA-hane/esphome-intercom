@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.trigger import TriggerConfig
 from homeassistant.helpers.condition import ConditionConfig
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint

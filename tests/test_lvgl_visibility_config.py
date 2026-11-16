@@ -89,7 +89,10 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
     assert "target = call_video_page->obj" in code
     assert "s3_video->attach_video_container(call_video_surface)" in code
     assert "call_video_hangup = lv_button_create(call_video_page->obj)" in code
-    control = re.search(r"lv_obj_add_flag\(call_video_hangup, LV_OBJ_FLAG_CLICKABLE\);(.*?)"
+    # The official LVGL9 generator uses the explicit flag setter; LVGL8 used
+    # add_flag. Both must make this exact control clickable before its action.
+    control = re.search(r"(?:lv_obj_set_clickable\(call_video_hangup, true\)|"
+                        r"lv_obj_add_flag\(call_video_hangup, LV_OBJ_FLAG_CLICKABLE\));(.*?)"
                         r"LvglComponent::add_event_cb\(call_video_hangup,", code, re.S)
     assert control is not None
     assert "voip_stack::StopAction<bool, lv_event_t *>" in control[1]

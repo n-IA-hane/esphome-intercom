@@ -24,14 +24,14 @@
           "assist_endpoint_enabled": "Přidat SIP klapku propojenou přímo s konverzačním asistentem Home Assistant Assist. Není vyžadována žádná samostatná VoIP integrace ani SIP posluchač.",
           "debug_mode": "Povolí podrobnou diagnostiku a logování SIP/RTP/médií bez zaznamenávání samotného zvuku hovorů.",
           "media_capture": "Explicitně zaznamenává zvuk soukromých hovorů: až 15 sekund pro každý směr HA-softphonu a 8 sekund pro každou větev přenosu. Data se ukládají jako WAV/JSON do ~/.cache/voip_stack_debug (režim 0700) a promazávají se na limit 24 souborů / 64 MiB. Ponechte zakázané, pokud zrovna neshromažďujete diagnostický vzorek.",
-          "experimental_sip_video": "Umožnit softphonu Home Assistant vyjednávat SIP video s kompatibilními standardními telefony, softphony a dveřními stanicemi. Formáty H.264, VP8 a JPEG využívají vestavěnou cestu médií prohlížeče. Standardní koncové body ESP zůstávají pouze zvukové; kompatibilní profily ESP32-P4 mohou vyjednávat JPEG nebo H.264. Vyžaduje HTTPS a kompatibilní prohlížeč.",
+          "experimental_sip_video": "Povolí volitelné video pro kompatibilní zařízení a trasy. H.264, VP8 a JPEG v prohlížeči vyžadují zabezpečený kontext a kompatibilní prohlížeč. U ESP závisí podpora na nastaveném zařízení a profilu kodeku: podporované profily S3 s displejem přijímají JPEG; profily P4 mohou používat JPEG nebo H.264. Profily pouze pro zvuk a pouze pro kameru si zachovávají svá omezení.",
           "sip_registrar_enabled": "Přijímat REGISTER z lokálních SIP koncových bodů, jako jsou VoIP telefony, Zoiper, Linphone nebo baresip, pomocí účtů spravovaných službami VoIP Stack.",
           "trunk_enabled": "Zobrazit nastavení trunku poskytovatele/ústředny. Pokud je tato možnost zakázána, nespustí se registrace trunku, externí trasa ani kolektor DTMF."
         }
       },
       "video": {
         "title": "SIP video",
-        "description": "Video je volitelné. Softphone Home Assistant a standardní koncové body SIP jej podporují a kompatibilní profily ESP32-P4 mohou vyjednávat JPEG nebo H.264. Ostatní koncové body ESP zůstávají pouze zvukové.",
+        "description": "Video je volitelné a závisí na zařízení, trase a nastaveném kodeku. Podporované profily S3 s displejem přijímají JPEG; profily P4 mohou používat JPEG nebo H.264. Video v prohlížeči i přes SIP vyžaduje kompatibilní protistranu a profil pouze s kamerou nepřidává příjem videa.",
         "data": {
           "video_transcoding_enabled": "Povolit transkódování videa",
           "video_camera_send_enabled": "Povolit přenos z kamery prohlížeče"
@@ -646,16 +646,16 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Zdroj: {profile_source}. Pevná revize: {profile_pin}. Stav: {profile_status}. Stažení nepotvrzuje použití.",
+          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "update_profile": "Update the pinned profile",
+            "update_profile": "Update model profile",
             "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
           },
           "sections": {
             "advanced": {

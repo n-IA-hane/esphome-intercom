@@ -74,6 +74,8 @@ class VoipStackRuntime:
     archive_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     preferred_phone_device_id: str = ""
     ha_bindings: Any | None = None
+    # Keep the original Store instances through unload for permanent removal.
+    entry_stores: tuple[Any, ...] = ()
     debug_mode: bool = False
     media_capture: bool = False
     sip: SipEndpointRuntime | None = None

@@ -24,8 +24,9 @@ transfer, ring several rooms, take a message or let Assist deal with the visitor
 
 Home Assistant runs the telephone system. You can use browser phones in rooms,
 SIP desk phones, desktop softphones, ATAs and compatible door stations together.
-Create independent phone identities for tablets and Companion sessions, then
-call by contact name or extension. ESP hardware and an external PBX are optional.
+Create SIP accounts for rooms or people, then use an account from a tablet,
+a Companion session or a registered handset. Several clients can share the
+same account and extension. ESP hardware and an external PBX are optional.
 
 This is also where the ordinary PBX jobs live: forwarding, unanswered-call
 rules, voicemail, transfers, parking, pickup, ring groups and audio conferences.
@@ -140,15 +141,15 @@ which keeps using its own audio hardware.
 
 There are **two Lovelace card types**. The compact card has three modes, while
 the Dashboard combines the selected phone with the shared extension overview.
-The optional popup presents an existing HA phone over other HA views.
+The optional popup presents an existing SIP account over other HA views.
 
 | View | What it is for |
 | --- | --- |
-| Compact card, `ha_softphone` | Talk from a browser, tablet or Companion app using an existing HA phone. |
+| Compact card, `ha_softphone` | Talk from a browser, tablet or Companion app using an existing SIP account. |
 | Compact card, `esp_mirror` | Call, answer, hang up and select contacts on a physical ESP phone. |
 | Compact card, `phonebook` | Browse shared contacts without adding another phone. |
-| VoIP Dashboard | See extension activity, contacts and call controls for the selected HA or ESP phone. |
-| Global call popup | Receive and control calls on an existing HA phone while using another HA view. |
+| VoIP Dashboard | See extension activity, contacts and call controls for the selected SIP account or ESP phone. |
+| Global call popup | Receive and control calls on an existing SIP account while using another HA view. |
 
 The compact-card screenshots use the Frosted Glass Dark theme with demo
 contacts and illustrative call states. The [card guide](docs/USER_GUIDE.md#choose-a-card-view)
@@ -205,7 +206,7 @@ examples for both card types.
 
 ### Receive calls over another HA view
 
-Enable call popups for an existing HA phone in the receiving browser or Companion
+Enable call popups for an existing SIP account in the receiving browser or Companion
 session. An incoming call can appear while you are looking at another HA view,
 without a phone card on that view. The same phone can also have compact cards
 or a Dashboard.
@@ -229,9 +230,10 @@ video in the popup too.
 </table>
 
 Browser and Companion media require a running HA frontend, a secure context and
-media permissions. Mobile systems can suspend background clients. Enabled
-logical HA phones retain their identity and no-answer rules without an open
-card; actual browser audio and auto-answer need an active receiving client.
+media permissions. Mobile systems can suspend background clients. An enabled
+SIP account with a saved HA association remains callable and follows its
+no-answer rules without an open card. Actual browser audio and auto-answer need
+an active receiving client.
 Companion uses its WebView, not a native operating-system telephone channel.
 See [popup setup](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
 and [actionable notifications](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification).
@@ -417,7 +419,11 @@ for codecs and endpoint limits.
 
 ## Installation
 
-Requires **Home Assistant 2026.7.0 or newer**. Choose one channel:
+This development tree requires **Home Assistant 2026.11.1 or newer**, as declared
+in its HACS metadata. Its coordinated ESP recipes require **ESPHome 2026.12.0**;
+use the exact official preview documented in [stabilization](docs/STABILIZATION.md)
+while that stable ESPHome release is unavailable. Stable **2026.11.0** retains
+its Home Assistant 2026.7 and ESPHome 2026.10 requirements. Choose one channel:
 
 | Channel | Version | Starting point |
 | --- | --- | --- |
@@ -448,7 +454,7 @@ The cards register automatically. Keep the default network settings unless
 another service conflicts; see the [deployment guide](docs/DEPLOYMENT_GUIDE.md)
 for containers, advertised addresses and manual installation. To receive calls
 over other HA views, enable [call popups](docs/USER_GUIDE.md#receive-calls-over-other-home-assistant-views)
-for an existing HA phone in each receiving browser or Companion app.
+for an existing SIP account in each receiving browser or Companion app.
 
 An ESP joins through the normal ESPHome integration with its matching firmware.
 HACS updates HA and the frontend; rebuilding and uploading ESP firmware is a
@@ -460,7 +466,9 @@ updating a copied configuration.
 Choose the exact profile, rather than a board with a similar chip name.
 Statuses below retain the existing profile evidence; they do not certify every
 silicon revision or workload. The [catalog](packages/DEVICE_CATALOG.md) also
-lists VoIP-only and experimental choices.
+lists VoIP-only and experimental choices. Current development migration gates
+are tracked in [stabilization](docs/STABILIZATION.md); retained screenshots and
+older field tests do not qualify each new firmware build.
 
 | Device/profile | Support |
 | --- | --- |

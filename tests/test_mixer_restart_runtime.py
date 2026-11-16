@@ -48,7 +48,7 @@ struct MixerSpeaker {
  uint32_t all_stopped_since_ms_=0;Source source;std::vector<Source*> source_speakers_{&source};
  static void audio_mixer_task(void*){};
  bool status_has_error(){return error;}void status_clear_error(){error=false;}
- void status_set_error(const char*){error=true;}void status_momentary_error(const char*,int){}
+ void status_set_error(const char*){error=true;}void status_momentary_error(uint32_t){}
  void disable_loop(){disabled=true;}void loop();
 };
 ''' + method + start_method + r'''
@@ -74,6 +74,7 @@ int main(){
     cpp = tmp_path / "mixer_restart.cpp"
     binary = tmp_path / "mixer_restart"
     cpp.write_text(source)
-    subprocess.run(["g++", "-std=c++17", str(cpp), "-o", str(binary)], check=True, capture_output=True, text=True)
+    compiled = subprocess.run(["g++", "-std=c++17", str(cpp), "-o", str(binary)], capture_output=True, text=True)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     result = subprocess.run(["bash", "-c", 'ulimit -c 0; exec "$1"', "bash", str(binary)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

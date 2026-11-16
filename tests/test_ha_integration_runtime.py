@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
 
@@ -1176,3 +1176,30 @@ async def test_flow_namespace_includes_discovered_esphome_extensions(hass):
     mappings = _entry_route_mappings(entry, {}, include_assist=False)
     assert route_namespace_conflicts(candidate_routes=("1000",), existing=mappings)
     assert not route_namespace_conflicts(candidate_routes=("1001",), existing=mappings)
+
+
+async def test_identity_repair_uses_native_subentry_ownership_when_available(hass):
+    from inspect import signature
+    from homeassistant.config_entries import ConfigSubentry
+    from homeassistant.helpers import issue_registry as ir
+    from custom_components.voip_stack.phone_config import PhoneIdentityConflict
+    from custom_components.voip_stack.repairs import async_sync_phone_identity_issue
+
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    child = ConfigSubentry(subentry_type="phone", title="Desk", unique_id="phone:canonical", data={})
+    hass.config_entries.async_add_subentry(entry, child)
+    error = PhoneIdentityConflict("Desk", "canonical", "conflict", subentry_id=child.subentry_id)
+    async_sync_phone_identity_issue(hass, entry, error)
+    issues = ir.async_get(hass)
+    key = (DOMAIN, "phone_identity_conflict_" + entry.entry_id)
+    assert issues.issues[key].config_entry_id == entry.entry_id
+    native_subentry = "config_subentry_id" in signature(ir.async_create_issue).parameters
+    assert getattr(issues.issues[key], "config_subentry_id", None) == (child.subentry_id if native_subentry else None)
+    hass.config_entries.async_remove_subentry(entry, child.subentry_id)
+    await hass.async_block_till_done()
+    if native_subentry:
+        assert key not in issues.issues
+    else:
+        assert key in issues.issues  # Stable11.1 keeps the existing entry owner.
+    async_sync_phone_identity_issue(hass, entry)

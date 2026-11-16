@@ -1,0 +1,102 @@
+intents:
+  VoipAnswer:
+    data:
+    - response: default
+      sentences:
+      - answer
+      - answer the call
+      slots:
+        voip_response: template
+  VoipCall:
+    data:
+    - response: default
+      sentences:
+      - call {target}
+      slots:
+        voip_response: template
+  VoipDecline:
+    data:
+    - response: default
+      sentences:
+      - decline
+      - decline the call
+      slots:
+        voip_response: template
+  VoipHangup:
+    data:
+    - response: default
+      sentences:
+      - hang up
+      - end the call
+      slots:
+        voip_response: template
+language: en
+lists:
+  target:
+    wildcard: true
+responses:
+  intents:
+    VoipAnswer:
+      default: "{% set messages = {\n  \"unknown_origin\": \"I do not know which VoIP\
+        \ device heard that.\",\n  \"missing_target\": \"Which VoIP contact should\
+        \ I call?\",\n  \"not_found\": \"I cannot find a VoIP contact named \" ~ slots.target\
+        \ ~ \".\",\n  \"ambiguous\": \"The VoIP contact \" ~ slots.target ~ \" is\
+        \ ambiguous.\",\n  \"ambiguous_area\": \"The Home Assistant area \" ~ slots.target\
+        \ ~ \" is ambiguous.\",\n  \"area_empty\": \"The Home Assistant area \" ~\
+        \ slots.target ~ \" has no VoIP device.\",\n  \"ambiguous_area_device\": \"\
+        The Home Assistant area \" ~ slots.target ~ \" has more than one VoIP device.\"\
+        ,\n  \"call_failed\": \"I could not call \" ~ slots.target ~ \".\",\n  \"\
+        hangup_failed\": \"I could not hang up the VoIP call.\",\n  \"answer_failed\"\
+        : \"I could not answer the VoIP call.\",\n  \"decline_failed\": \"I could\
+        \ not decline the VoIP call.\",\n  \"VoipCall\": \"Calling \" ~ slots.target\
+        \ ~ \".\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Answering.\",\n\
+        \  \"VoipDecline\": \"Declining.\"\n} %} {{ messages.get(slots.error or slots.action,\
+        \ messages.call_failed) }}"
+    VoipCall:
+      default: "{% set messages = {\n  \"unknown_origin\": \"I do not know which VoIP\
+        \ device heard that.\",\n  \"missing_target\": \"Which VoIP contact should\
+        \ I call?\",\n  \"not_found\": \"I cannot find a VoIP contact named \" ~ slots.target\
+        \ ~ \".\",\n  \"ambiguous\": \"The VoIP contact \" ~ slots.target ~ \" is\
+        \ ambiguous.\",\n  \"ambiguous_area\": \"The Home Assistant area \" ~ slots.target\
+        \ ~ \" is ambiguous.\",\n  \"area_empty\": \"The Home Assistant area \" ~\
+        \ slots.target ~ \" has no VoIP device.\",\n  \"ambiguous_area_device\": \"\
+        The Home Assistant area \" ~ slots.target ~ \" has more than one VoIP device.\"\
+        ,\n  \"call_failed\": \"I could not call \" ~ slots.target ~ \".\",\n  \"\
+        hangup_failed\": \"I could not hang up the VoIP call.\",\n  \"answer_failed\"\
+        : \"I could not answer the VoIP call.\",\n  \"decline_failed\": \"I could\
+        \ not decline the VoIP call.\",\n  \"VoipCall\": \"Calling \" ~ slots.target\
+        \ ~ \".\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Answering.\",\n\
+        \  \"VoipDecline\": \"Declining.\"\n} %} {{ messages.get(slots.error or slots.action,\
+        \ messages.call_failed) }}"
+    VoipDecline:
+      default: "{% set messages = {\n  \"unknown_origin\": \"I do not know which VoIP\
+        \ device heard that.\",\n  \"missing_target\": \"Which VoIP contact should\
+        \ I call?\",\n  \"not_found\": \"I cannot find a VoIP contact named \" ~ slots.target\
+        \ ~ \".\",\n  \"ambiguous\": \"The VoIP contact \" ~ slots.target ~ \" is\
+        \ ambiguous.\",\n  \"ambiguous_area\": \"The Home Assistant area \" ~ slots.target\
+        \ ~ \" is ambiguous.\",\n  \"area_empty\": \"The Home Assistant area \" ~\
+        \ slots.target ~ \" has no VoIP device.\",\n  \"ambiguous_area_device\": \"\
+        The Home Assistant area \" ~ slots.target ~ \" has more than one VoIP device.\"\
+        ,\n  \"call_failed\": \"I could not call \" ~ slots.target ~ \".\",\n  \"\
+        hangup_failed\": \"I could not hang up the VoIP call.\",\n  \"answer_failed\"\
+        : \"I could not answer the VoIP call.\",\n  \"decline_failed\": \"I could\
+        \ not decline the VoIP call.\",\n  \"VoipCall\": \"Calling \" ~ slots.target\
+        \ ~ \".\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Answering.\",\n\
+        \  \"VoipDecline\": \"Declining.\"\n} %} {{ messages.get(slots.error or slots.action,\
+        \ messages.call_failed) }}"
+    VoipHangup:
+      default: "{% set messages = {\n  \"unknown_origin\": \"I do not know which VoIP\
+        \ device heard that.\",\n  \"missing_target\": \"Which VoIP contact should\
+        \ I call?\",\n  \"not_found\": \"I cannot find a VoIP contact named \" ~ slots.target\
+        \ ~ \".\",\n  \"ambiguous\": \"The VoIP contact \" ~ slots.target ~ \" is\
+        \ ambiguous.\",\n  \"ambiguous_area\": \"The Home Assistant area \" ~ slots.target\
+        \ ~ \" is ambiguous.\",\n  \"area_empty\": \"The Home Assistant area \" ~\
+        \ slots.target ~ \" has no VoIP device.\",\n  \"ambiguous_area_device\": \"\
+        The Home Assistant area \" ~ slots.target ~ \" has more than one VoIP device.\"\
+        ,\n  \"call_failed\": \"I could not call \" ~ slots.target ~ \".\",\n  \"\
+        hangup_failed\": \"I could not hang up the VoIP call.\",\n  \"answer_failed\"\
+        : \"I could not answer the VoIP call.\",\n  \"decline_failed\": \"I could\
+        \ not decline the VoIP call.\",\n  \"VoipCall\": \"Calling \" ~ slots.target\
+        \ ~ \".\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Answering.\",\n\
+        \  \"VoipDecline\": \"Declining.\"\n} %} {{ messages.get(slots.error or slots.action,\
+        \ messages.call_failed) }}"

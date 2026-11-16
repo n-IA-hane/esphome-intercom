@@ -9,6 +9,7 @@ substitutions:
 external_components:
   - source: ${esp_video_renderer_components_source}
     components:
+      - video_renderer
       - esp_video_renderer
 esp_video_renderer:
   id: s3_video
@@ -17,15 +18,13 @@ esp_video_renderer:
   width: ${s3_sip_jpeg_width}
   height: ${s3_sip_jpeg_height}
   framerate: ${s3_sip_jpeg_fps}
-  voip:
-    id: s3_video_sink
 lvgl:
   on_boot:
     - lambda: id(s3_video).attach_video_container(id(${s3_video_container_id}));
 voip_stack:
   video:
     codec: jpeg
-    sink: s3_video_sink
+    sink: s3_video
     width: ${s3_sip_jpeg_width}
     height: ${s3_sip_jpeg_height}
     framerate: ${s3_sip_jpeg_fps}

@@ -291,7 +291,7 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
 ):
     """Actual setup/unload and command authorization on one non-admin socket."""
     from unittest.mock import AsyncMock
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components import voip_stack
     from custom_components.voip_stack import phone_services
     from custom_components.voip_stack.endpoint_lifecycle import call_registry
@@ -430,6 +430,7 @@ async def test_real_HA_connection_close_owns_the_subscription_dictionary(hass, m
     connection.subscriptions[22] = lambda: remaining.append("other subscription")
     connection.logger = logging.getLogger(__name__)
     connection._connect_closed_error = lambda *_: None
+    connection._async_unsubscribe_all = ActiveConnection._async_unsubscribe_all.__get__(connection)
     ActiveConnection.async_handle_close(connection)
     assert not connection.subscriptions
     assert remaining == ["other subscription"]

@@ -1,6 +1,5 @@
 # P4 JPEG video. Camera/rendering retain their original owners and frame gates.
 packages:
-  csi_contract: !include 'p4_video_csi.yaml'
   call_media_route: !include '../lvgl/p4_call_media_route.yaml'
   video_entities: !include 'video_entities.yaml'
   wake_word: ${ _p4_video_wake_word_hooks if _p4_video_has_wake_word else {} }
@@ -12,7 +11,8 @@ external_components:
 - source: ${voip_stack_components_source}
   components:
   - esp_jpeg_video_source
-  - p4_video_renderer
+- source: ${esp_video_renderer_components_source}
+  components: [video_renderer, p4_video_renderer]
 esp_jpeg_video_source:
   id: p4_jpeg_video
   camera_id: p4_camera
@@ -28,7 +28,6 @@ p4_video_renderer:
   max_decode_width: 800
   max_decode_height: 800
   display_id: main_display
-  display_rotation: 270
   on_first_frame:
   - script.execute: show_call_video_page
   on_video_ended:
@@ -58,6 +57,8 @@ lvgl:
         width: 1280
         height: 720
         bg_color: 0
+        # The page already provides the black backdrop. Avoid a themed card fill.
+        bg_opa: TRANSP
         border_width: 0
         pad_all: 0
         scrollable: false
@@ -132,5 +133,6 @@ script:
           \ != id(call_video_page)->obj)\n  lv_disp_load_scr(id(call_video_page)->obj);\nid(runtime_rendered_page)\
           \ = \"call_video\";"
 defaults:
+  esp_video_renderer_components_source: '${ esp_video_renderer_components_source | default("github://n-IA-hane/esphome-video-renderer@dev") }'
   _p4_video_has_wake_word: ${ ('voice' in firmware_features and 'wake_word' in firmware_features) if firmware_features is defined else true }
   _p4_video_wake_word_hooks: !include video_mww_policy.yaml

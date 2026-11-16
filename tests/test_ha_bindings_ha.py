@@ -104,6 +104,32 @@ async def test_popup_binding_is_server_persistent_scoped_and_explicit(hass):
         await tracker.async_close()
 
 
+async def test_saved_section_strategy_declares_explicit_accounts_without_frontend(hass):
+    from dataclasses import replace
+    runtime = runtime_for_bindings()
+    export = dashboard(hass, {"views": [{"sections": [{"strategy": {
+        "type": "custom:voip-stack", "account_ids": ["closed"]}}]}]})
+    tracker, _ = await owner(hass, runtime)
+    try:
+        assert tracker.has_binding("closed") and not tracker.has_binding("reception")
+        references = tracker.references("closed")
+        assert len(references) == 1 and "/strategy/account_ids/0" in references[0]["reference"]
+        runtime.endpoints.upsert(replace(runtime.endpoints.get("closed"), name="Renamed account"))
+        assert tracker.references("closed") == references
+        export.async_load.return_value = {"views": [{"sections": [{"strategy": {
+            "type": "custom:voip-stack", "account_ids": ["reception"]}}]}]}
+        hass.bus.async_fire("lovelace_updated", {"url_path": None})
+        await hass.async_block_till_done()
+        assert tracker.has_binding("reception") and not tracker.has_binding("closed")
+        export.async_load.return_value = {"views": [{"sections": [{"strategy": {
+            "type": "custom:other", "account_ids": ["closed"]}}]}]}
+        hass.bus.async_fire("lovelace_updated", {"url_path": None})
+        await hass.async_block_till_done()
+        assert not tracker.has_binding("closed") and not tracker.has_binding("reception")
+    finally:
+        await tracker.async_close()
+
+
 async def test_migration_reference_is_declaration_not_an_observed_client(hass):
     runtime = runtime_for_bindings()
     subentry = SimpleNamespace(subentry_type="phone", data={"endpoint_id": "closed", "ha_bindings": [

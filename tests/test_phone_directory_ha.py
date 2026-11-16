@@ -61,7 +61,7 @@ async def test_live_esp_rename_collision_repair_survives_unrelated_refresh_until
 @pytest.mark.parametrize("resolution", ["rename", "remove"])
 async def test_duplicate_esp_name_does_not_block_other_directory_identities(managed, resolution):
     from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack.directory_runtime import async_refresh_directory
 
     lab = managed

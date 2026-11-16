@@ -1191,7 +1191,7 @@ class VoipStackEngine extends EventTarget {
     await this._discardPreparedAudio();
     const resources = {
       endpointId: this._mediaIntent?.endpointId || "",
-      audioContext: null, mediaStream: null, source: null, captureSink: null,
+      audioContext: null, mediaStream: null, source: null, captureSink: null, readinessNode: null,
       ready: false, cancel: null,
     };
     this._preparedAudio = resources;
@@ -1228,21 +1228,44 @@ class VoipStackEngine extends EventTarget {
       // Load processors before INVITE/answer so immediate RTP does not wait on downloads.
       await this._loadAudioWorklets(context, { capture: needsMicrophone, playback: true });
       assertCurrent();
-      // Confirm actual rendering before SIP starts, including device startup.
-      const probe = context.createBufferSource();
-      probe.buffer = context.createBuffer(1, 1, context.sampleRate);
+      // A running context and a short BufferSource's ended event can precede
+      // processing of the live microphone graph. Admit SIP only after that
+      // graph has reached the audio rendering thread, without choosing a
+      // fabricated PCM format before negotiation.
+      const probe = resources.readinessNode = new AudioWorkletNode(
+        context, "voip-stack-audio-ready", {
+          numberOfInputs: needsMicrophone ? 1 : 0,
+          outputChannelCount: [1],
+          processorOptions: { needsMicrophone },
+        },
+      );
+      resources.source?.connect(probe);
       probe.connect(context.destination);
       try {
         await new Promise((resolve, reject) => {
+          let previousClock = null;
           resources.cancel = () => reject(new Error("Audio preparation cancelled"));
-          probe.onended = resolve;
-          probe.start();
+          probe.port.onmessage = (event) => {
+            if (event.data?.type !== "ready") return;
+            // The initial render can prefill a small hardware buffer before
+            // the device clock actually starts. Wait for its output timestamp,
+            // or a fresh render round-trip when that public API is absent.
+            const timestamp = context.getOutputTimestamp?.();
+            const outputStarted = timestamp
+              ? timestamp.performanceTime > 0 && timestamp.contextTime > 0
+              : previousClock !== null && context.currentTime > previousClock;
+            if (outputStarted) resolve();
+            else {
+              previousClock = context.currentTime;
+              probe.port.postMessage({ type: "check" });
+            }
+          };
+          probe.onprocessorerror = () => reject(new Error("Browser audio preparation failed"));
         });
       } finally {
         resources.cancel = null;
-        probe.onended = null;
-        try { probe.stop(); } catch (_) {}
-        probe.disconnect();
+        probe.port.onmessage = null;
+        probe.onprocessorerror = null;
       }
       assertCurrent();
       resources.ready = true;
@@ -2140,16 +2163,15 @@ class VoipStackEngine extends EventTarget {
     const expectedCallId = this._callId;
     const prepared = this._preparedAudio?.ready ? this._preparedAudio : null;
     if (prepared) this._preparedAudio = null;
-    prepared?.source?.disconnect();
-    prepared?.captureSink?.disconnect();
     const resources = {
       audioContext: prepared?.audioContext || null,
       mediaStream: prepared?.mediaStream || null,
       captureNode: null,
-      captureSink: null,
-      source: null,
+      captureSink: prepared?.captureSink || null,
+      source: prepared?.source || null,
       playbackNode: null,
       playbackAnalyser: null,
+      readinessNode: prepared?.readinessNode || null,
     };
     const assertCurrent = () => {
       if (
@@ -2183,6 +2205,10 @@ class VoipStackEngine extends EventTarget {
       }
 
       if (!capture && resources.mediaStream) {
+        resources.source?.disconnect();
+        resources.captureSink?.disconnect();
+        resources.source = null;
+        resources.captureSink = null;
         for (const track of resources.mediaStream.getTracks()) track.stop();
         resources.mediaStream = null;
       }
@@ -2203,7 +2229,7 @@ class VoipStackEngine extends EventTarget {
           { processing: true },
         );
         assertCurrent();
-        resources.source = resources.audioContext.createMediaStreamSource(resources.mediaStream);
+        resources.source ||= resources.audioContext.createMediaStreamSource(resources.mediaStream);
         resources.captureNode = new AudioWorkletNode(resources.audioContext, "voip-stack-processor", {
           processorOptions: {
             format: formats.tx,
@@ -2217,11 +2243,16 @@ class VoipStackEngine extends EventTarget {
           ) this._sendAudio(event.data.buffer);
         };
         resources.source.connect(resources.captureNode);
-        resources.captureSink = resources.audioContext.createGain();
+        resources.captureSink ||= resources.audioContext.createGain();
         resources.captureSink.gain.value = 0;
-        resources.captureNode
-          .connect(resources.captureSink)
-          .connect(resources.audioContext.destination);
+        resources.captureNode.connect(resources.captureSink);
+        if (prepared?.captureSink) {
+          // Keep the prepared input owner alive while the negotiated capture
+          // node is attached. Remove only its old muted bypass afterwards.
+          resources.source.disconnect(resources.captureSink);
+        } else {
+          resources.captureSink.connect(resources.audioContext.destination);
+        }
       }
 
       if (playback) {
@@ -2251,6 +2282,13 @@ class VoipStackEngine extends EventTarget {
         }
       }
       assertCurrent();
+      // Keep preparation's graph alive until both negotiated paths are wired.
+      if (resources.readinessNode) {
+        resources.readinessNode.port.postMessage({ type: "stop" });
+        try { resources.source?.disconnect(resources.readinessNode); } catch (_) {}
+        resources.readinessNode.disconnect();
+        resources.readinessNode = null;
+      }
       const previous = this._takeAudioResources();
       this._audioMode = audioMode;
       this._microphoneAntiAlias = microphoneAntiAlias;
@@ -2810,6 +2848,12 @@ class VoipStackEngine extends EventTarget {
   }
 
   async _disposeAudioResources(resources = {}) {
+    if (resources.readinessNode) {
+      resources.readinessNode.port.onmessage = null;
+      resources.readinessNode.onprocessorerror = null;
+      try { resources.readinessNode.port.postMessage({ type: "stop" }); } catch (_) {}
+      try { resources.readinessNode.disconnect(); } catch (_) {}
+    }
     try { resources.captureNode?.disconnect(); } catch (_) {}
     try { resources.captureSink?.disconnect(); } catch (_) {}
     try { resources.source?.disconnect(); } catch (_) {}

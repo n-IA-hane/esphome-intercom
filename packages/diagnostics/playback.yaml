@@ -1,6 +1,6 @@
 # Optional playback observation for full Audio Stack profiles. No audio actions.
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
 defaults:
   playback_diagnostics_source: '${ playback_diagnostics_source | default(ext_components_source | default("github://n-IA-hane/esphome-intercom@dev")) }'
   playback_diagnostics_player_id: '${ playback_diagnostics_player_id | default("speaker_media_player") }'

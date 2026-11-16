@@ -111,8 +111,9 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   [upstream component](https://github.com/Psix-anp/esphome-esp-video-camera).
 - [`esp_jpeg_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/esp_jpeg_video_source),
   [`esp_h264_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/esp_h264_video_source)
-  and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-voip-stack/tree/main/esphome/components/p4_video_renderer),
-  the compile-gated P4 SIP video TX and RX paths.
+  and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer/tree/dev/esphome/components/p4_video_renderer),
+  the compile-gated P4 video sources and independent renderer. VoIP owns the
+  transport adapter; rendering is reusable by other frame producers.
 - [`esp_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer/tree/dev),
   the standalone JPEG receive/display component used by supported S3 preview
   profiles. A camera source and a receive display are separate capabilities.
@@ -146,3 +147,6 @@ Each ESPHome component ships its own README with the full option list, YAML snip
 For an offline or browsable copy, [build the documentation site](DOCUMENTATION_SITE.md).
 
 - [Managed physical SIP phones and optional provisioning](PHONE_PROVISIONING.md)
+
+The active upstream migration and December Core checkpoint are tracked in
+[Stabilization](STABILIZATION.md).

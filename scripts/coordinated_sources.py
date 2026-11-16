@@ -9,13 +9,13 @@ from pathlib import Path
 import re
 import subprocess
 
+SOURCE_CATALOG = json.loads(
+    (Path(__file__).resolve().parents[1] / 'qualification/sources.json').read_text()
+)
 REPOSITORIES = {
-    'esphome-voip-stack': 'n-IA-hane/esphome-voip-stack',
-    'esphome-audio-stack': 'n-IA-hane/esphome-audio-stack',
-    'esphome-runtime-controller': 'n-IA-hane/esphome-runtime-controller',
-    'esphome-video-renderer': 'n-IA-hane/esphome-video-renderer',
-    'esphome-screenshot': 'n-IA-hane/esphome-screenshot',
-    'esphome-esp-video-camera': 'Psix-anp/esphome-esp-video-camera',
+    name: source['repository']
+    for name, source in SOURCE_CATALOG['repositories'].items()
+    if name != 'esphome-intercom'
 }
 CAMERA = 'esphome-esp-video-camera'
 CAMERA_DEV_REPOSITORY = 'n-IA-hane/esphome-esp-video-camera'

@@ -2,19 +2,44 @@
   "schema_version": 1,
   "repositories": {
     "esphome-intercom": {
-      "path": "."
+      "path": ".",
+      "repository": "n-IA-hane/esphome-intercom"
     },
     "esphome-voip-stack": {
-      "path": "../esphome-voip-stack"
+      "path": "../esphome-voip-stack",
+      "repository": "n-IA-hane/esphome-voip-stack"
     },
     "esphome-audio-stack": {
-      "path": "../esphome-audio-stack"
+      "path": "../esphome-audio-stack",
+      "repository": "n-IA-hane/esphome-audio-stack"
     },
     "esphome-runtime-controller": {
-      "path": "../esphome-runtime-controller"
+      "path": "../esphome-runtime-controller",
+      "repository": "n-IA-hane/esphome-runtime-controller"
     },
     "esphome-esp-video-camera": {
-      "path": "../esphome-esp-video-camera"
+      "path": "../esphome-esp-video-camera",
+      "repository": "Psix-anp/esphome-esp-video-camera"
+    },
+    "esphome-video-renderer": {
+      "path": "../esphome-video-renderer",
+      "repository": "n-IA-hane/esphome-video-renderer"
+    },
+    "esphome-screenshot": {
+      "path": "../esphome-screenshot",
+      "repository": "n-IA-hane/esphome-screenshot"
     }
+  },
+  "official_sources": {
+    "esphome": {
+      "repository": "esphome/esphome",
+      "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+      "version": "2026.12.0.dev0"
+    },
+    "home_assistant_development": {
+      "repository": "home-assistant/core",
+      "revision": "fddf359f543346a9b7cc0068e8e4dc19944dea13"
+    },
+    "home_assistant_minimum": "2026.11.1"
   }
 }

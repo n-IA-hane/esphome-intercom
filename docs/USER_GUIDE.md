@@ -281,7 +281,8 @@ rewrite user-authored YAML or retain the old ID as an alias.
 
 This works with the existing remove-and-add lifecycle and Home Assistant's
 in-place entity renaming introduced in Core 2026.11. The minimum supported
-Home Assistant version remains 2026.7.0.
+Home Assistant version for this development tree is 2026.11.1, as declared
+in HACS metadata; stable 2026.11.0 retains its earlier requirement.
 
 ## Choose the calling phone in the editor
 

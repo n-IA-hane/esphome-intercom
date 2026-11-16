@@ -465,7 +465,7 @@ async def test_confirmed_call_handoff_changes_owner_without_second_answer(applic
 
 
 async def test_forward_to_another_automation_reuses_media_and_releases_old_controller(application, monkeypatch):
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import call_forwarder
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.endpoint_routing import EndpointRouteResolver

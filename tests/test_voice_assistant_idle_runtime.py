@@ -13,6 +13,9 @@ CASES = (
     "idle_callback_new_run_not_overwritten",
     "initial_idle_does_not_create_completion",
     "nonterminal_states_do_not_emit_idle",
+    "official_end_is_deferred_after_idle",
+    "official_run_end_wait_is_preserved",
+    "official_end_checks_client_when_dispatched",
 )
 
 
@@ -31,16 +34,21 @@ def transition_program():
     cpp = (component / "voice_assistant.cpp").read_text()
     header = (component / "voice_assistant.h").read_text()
     methods = [block(cpp, "void VoiceAssistant::set_state_(State state) {"),
-               block(cpp, "void VoiceAssistant::set_state_(State state, State desired_state) {")]
+               block(cpp, "void VoiceAssistant::set_state_(State state, State desired_state) {"),
+               block(cpp, "void VoiceAssistant::end_session_() {"),
+               block(cpp, "void VoiceAssistant::request_start(bool continuous, bool silence_detection) {")]
     idle = block(cpp, "case State::IDLE: {", False)
     enum = block(header, "enum class State") + ";"
     source='''#include <cstdint>
     #include <functional>
     #include <iostream>
     #include <string>
+    #include <vector>
     #define ESP_LOGD(...) discard_log(__VA_ARGS__)
+    #define ESP_LOGE(...) discard_log(__VA_ARGS__)
     #define LOG_STR_ARG(x) (x)
     constexpr const char *TAG="voice_assistant";
+    constexpr uint32_t RUN_END_TIMEOUT_ID=5, RUN_END_TIMEOUT_MS=2000;
     template<typename... Args> void discard_log(Args&&...) {}
     '''+enum+'''
     const char *voice_assistant_state_to_string(State) { return "state"; }
@@ -48,11 +56,23 @@ def transition_program():
     class VoiceAssistant {
      public:
       State state_=State::IDLE, desired_state_=State::IDLE;
-      bool continuous_=false;
+      bool continuous_=false, silence_detection_=false;
+      bool end_pending_=false, run_active_=false;
+      void *api_client_=this;
       unsigned releases=0;
-      Trigger idle_trigger_;
+      Trigger idle_trigger_, end_trigger_;
+      std::vector<std::function<void()>> deferred;
+      std::function<void()> timeout;
+      uint32_t timeout_id=0, timeout_ms=0;
       void set_state_(State state);
       void set_state_(State state, State desired_state);
+      void end_session_();
+      void request_start(bool continuous, bool silence_detection);
+      template<class F>void defer(F callback) { deferred.push_back(callback); }
+      template<class F>void set_timeout(uint32_t id,uint32_t ms,F callback) {
+        timeout_id=id; timeout_ms=ms; timeout=callback;
+      }
+      void flush_deferred() { auto callbacks=std::move(deferred); for(auto &callback:callbacks)callback(); }
       void deallocate_buffers_() { ++releases; }
       void idle_loop() { switch (state_) { case State::IDLE: '''+idle+''' default: break; } }
     };
@@ -79,7 +99,7 @@ def transition_program():
      }
      {
       VoiceAssistant va; va.state_=va.desired_state_=State::RESPONSE_FINISHED;
-      va.idle_trigger_.callback=[&]() { va.set_state_(State::START_MICROPHONE,State::START_PIPELINE); };
+      va.idle_trigger_.callback=[&]() { va.request_start(false,true); };
       va.set_state_(State::IDLE,State::IDLE);
       check("idle_callback_new_run_not_overwritten",va.idle_trigger_.count==1 && va.state_==State::START_MICROPHONE && va.desired_state_==State::START_PIPELINE);
      }
@@ -90,6 +110,30 @@ def transition_program():
      {
       VoiceAssistant va;va.set_state_(State::START_MICROPHONE,State::START_PIPELINE);va.set_state_(State::STREAMING_RESPONSE,State::STREAMING_RESPONSE);
       check("nonterminal_states_do_not_emit_idle",va.idle_trigger_.count==0);
+     }
+     {
+      VoiceAssistant va; va.state_=va.desired_state_=State::RESPONSE_FINISHED; va.end_pending_=true;
+      va.set_state_(State::IDLE,State::IDLE);
+      bool deferred=va.idle_trigger_.count==1 && va.end_trigger_.count==0 && !va.end_pending_;
+      va.flush_deferred();
+      va.set_state_(State::IDLE,State::IDLE); va.flush_deferred();
+      check("official_end_is_deferred_after_idle",deferred && va.end_trigger_.count==1 && va.idle_trigger_.count==1);
+     }
+     {
+      VoiceAssistant va; va.state_=va.desired_state_=State::RESPONSE_FINISHED;
+      va.end_pending_=true; va.run_active_=true;
+      va.set_state_(State::IDLE,State::IDLE); va.flush_deferred();
+      bool waiting=va.idle_trigger_.count==1 && va.end_trigger_.count==0 && va.end_pending_ &&
+                   va.timeout_id==5 && va.timeout_ms==2000 && bool(va.timeout);
+      if(va.timeout)va.timeout();
+      va.flush_deferred();
+      check("official_run_end_wait_is_preserved",waiting && va.end_trigger_.count==1 && !va.end_pending_);
+     }
+     {
+      VoiceAssistant va; va.state_=va.desired_state_=State::RESPONSE_FINISHED; va.end_pending_=true;
+      va.idle_trigger_.callback=[&]() { va.api_client_=nullptr; };
+      va.set_state_(State::IDLE,State::IDLE); va.flush_deferred();
+      check("official_end_checks_client_when_dispatched",va.idle_trigger_.count==1 && va.end_trigger_.count==0);
      }
      return failed?1:0;
     }

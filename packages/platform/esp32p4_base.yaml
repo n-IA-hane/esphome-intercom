@@ -18,23 +18,14 @@ packages:
 
 external_components:
   - source: ${ext_components_source}
-    components: [p4_sdmmc_reset]
+    components: [p4_sdmmc_reset, p4_ppa_backport]
 
-# Build-local backport for the SDK 5.5.6 warm-restart SDMMC DMA reset order.
-# Other SDK versions are reported explicitly and left unchanged.
-p4_sdmmc_reset:
+p4_sdmmc_reset: {}
+p4_ppa_backport: {}
 
-defaults:
-  intercom_idf_root: '${ intercom_idf_root | default("") }'
-  intercom_idf_ref: '${ intercom_idf_ref | default("dev") }'
-  _p4_ppa_remote:
-    name: esp_driver_ppa
-    source: https://github.com/n-IA-hane/esphome-intercom.git
-    ref: ${intercom_idf_ref}
-    path: idf_components/esp_driver_ppa
-  _p4_ppa_local:
-    name: esp_driver_ppa
-    path: ${intercom_idf_root}/esp_driver_ppa
+# Coordinated Intercom providers use the complete official Core 12 baseline.
+esphome:
+  min_version: 2026.12.0
 
 esp32:
   # This board selects ESPHome's engineering-sample P4 target, including rev1.3.
@@ -56,16 +47,17 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
-    # Qualified DIG-734 FIFO boundary repair, shared by JPEG and H.264.
-    components: ${ [_p4_ppa_local if intercom_idf_root else _p4_ppa_remote] }
-    # Omitting version uses the SDK selected by the installed ESPHome release.
-    # An explicit newer SDK is a separate candidate: qualify cold boot, restart,
-    # normal OTA and simultaneous audio/video before making it the default.
+    # Follow ESPHome's recommended SDK. Qualification records its resolved
+    # revision; display correctness must not depend on holding an older SDK.
     advanced:
       compiler_optimization: PERF
       enable_idf_experimental_features: true
-    sdkconfig_options:
       # Keep P4 instruction/rodata fetches in PSRAM as in the last stable
       # display/audio baseline. Disabling this globally fixed one AFE FFT crash
       # signature but reintroduced display flicker and choppy VoIP TX audio.
-      CONFIG_SPIRAM_XIP_FROM_PSRAM: "y"
+      # The official framework option also informs display drivers which
+      # cache-safe ISR policy applies, without a conflicting raw SDK override.
+      execute_from_psram: true
+
+defaults:
+  ext_components_source: '${ ext_components_source | default("github://n-IA-hane/esphome-intercom@dev") }'

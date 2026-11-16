@@ -24,14 +24,14 @@
           "assist_endpoint_enabled": "Adiciona uma extensão SIP atendida diretamente por uma pipeline do Home Assistant Assist. Não é necessária outra integração VoIP nem outro listener SIP.",
           "debug_mode": "Ativa diagnósticos e logs detalhados de SIP/RTP/mídia sem gravar o áudio das chamadas.",
           "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
-          "experimental_sip_video": "Permite que o softphone do Home Assistant negocie vídeo SIP com telefones, softphones e interfones compatíveis. H.264, VP8 e JPEG usam o caminho de mídia do navegador. Endpoints ESP padrão permanecem somente com áudio; perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Requer HTTPS e um navegador compatível.",
+          "experimental_sip_video": "Permite vídeo opcional para dispositivos e rotas compatíveis. H.264, VP8 e JPEG no navegador exigem um contexto seguro e um navegador compatível. No ESP, o suporte depende do dispositivo e do perfil de codec configurados: perfis S3 com tela compatíveis recebem JPEG; perfis P4 podem usar JPEG ou H.264. Perfis somente de áudio ou somente de câmera mantêm seus respectivos limites.",
           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
           "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
         }
       },
       "video": {
         "title": "Vídeo SIP",
-        "description": "O vídeo é opcional. O softphone do Home Assistant e endpoints SIP padrão oferecem suporte, e perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Outros endpoints ESP permanecem somente com áudio.",
+        "description": "O vídeo é opcional e depende do dispositivo, da rota e do codec configurado. Perfis S3 com tela compatíveis recebem JPEG; perfis P4 podem usar JPEG ou H.264. Vídeo no navegador e por SIP ainda exige terminais compatíveis; um perfil somente de câmera não adiciona recepção de vídeo.",
         "data": {
           "video_transcoding_enabled": "Ativar transcodificação de vídeo",
           "video_camera_send_enabled": "Permitir transmissão da câmera do navegador"
@@ -646,16 +646,16 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Origem: {profile_source}. Revisão fixada: {profile_pin}. Estado: {profile_status}. Baixado não significa aplicado.",
+          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
-            "update_profile": "Update the pinned profile",
+            "update_profile": "Update model profile",
             "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
           },
           "sections": {
             "advanced": {

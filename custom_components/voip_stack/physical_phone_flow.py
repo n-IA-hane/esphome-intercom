@@ -21,9 +21,11 @@ from .phone_config import (
 from .phone_endpoint import EndpointKind
 from .phone_profile import resolve_phone_language
 from .phone_profile_catalog import PhoneProfileCatalog
+from homeassistant.data_entry_flow import Optional as visible_optional
 from .physical_phone import (
     KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, physical_phone_records,
-    provisioning_enabled, draft_physical_subentry, physical_phone_data, physical_phone_id, reorder_physical_keys,
+    provisioning_enabled, draft_physical_subentry, physical_phone_data, physical_phone_id, physical_phone_model,
+    reorder_physical_keys,
 )
 from .physical_phone_validation import physical_slot, physical_validation_runtime, validate_physical_inventory
 
@@ -54,6 +56,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._manifest_commit = ""
         self._profile = None
         self._language_override = False
+        self._line_account_refs = {}
 
     def _previous(self):
         return physical_phone_data(self._current) if self._current is not None else self._seed
@@ -132,7 +135,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             return self.async_abort(reason="phone_catalog_unavailable")
         profiles = [item for item in manifest["profiles"] if item.get("status") in {
             "software_validated", "protocol_verified", "hardware_qualified"}]
-        choices = [{"value": item["id"], "label": f"{item['vendor']} {item['model']}"} for item in profiles]
+        choices = [{"value": item["id"],
+                    "label": f"{item['vendor'][:1].upper()}{item['vendor'][1:]} {physical_phone_model(item['id'])}"}
+                   for item in profiles]
         if not choices:
             return self.async_abort(reason="phone_catalog_unavailable")
         if user_input is not None:
@@ -213,7 +218,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             vol.Optional("advanced"): section(vol.Schema({
                 vol.Optional("host", default=values.get("host", "")): TextSelector(),
                 vol.Optional("admin_username", default=values.get("admin_username", "")): TextSelector(),
-                vol.Optional("admin_password"): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                visible_optional("admin_password", visible={"field": "admin_username", "operator": "not_eq", "value": ""}):
+                    TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 vol.Optional("area_id", **({"default": values["area_id"]} if values.get("area_id") else {})): AreaSelector(),
                 vol.Optional("person", **({"default": values["person"]} if values.get("person") else {})): EntitySelector({"domain": "person"}),
                 vol.Required("follow_ha_language", default=values.get("follow_ha_language", True)): BooleanSelector(),
@@ -225,11 +231,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         else:
             fields[vol.Optional("account_id")] = SelectSelector({"options": [
                 {"value": identity, "label": data["name"]} for identity, data in self._phone_accounts().items()]})
-        selected_profile = next((item for item in profiles if item["id"] == values.get("profile_id")), {})
-        return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields),
-            description_placeholders={"profile_pin": self._manifest_commit,
-                "profile_status": str(selected_profile.get("status", "")),
-                "profile_source": str(manifest.get("upstream", {}).get("repository", "fusionpbx/fusionpbx"))})
+        return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields))
 
     async def async_step_language(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
@@ -268,10 +270,13 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             raise ValueError("invalid_phone_bindings")
         lines, keys = [], []
         for raw in raw_lines:
-            line = {"slot": _slot(raw.get("slot")), "endpoint_id": str(raw.get("endpoint_id") or ""),
-                    "transport": str(raw.get("transport") or "udp").lower()}
+            line = {"slot": _slot(raw.get("slot")), "transport": str(raw.get("transport") or "udp").lower()}
             if line["transport"] not in PHYSICAL_LINE_TRANSPORTS:
                 raise ValueError("invalid_phone_transport")
+            reference = self._line_account_refs.get(str(raw.get("endpoint_id") or ""))
+            if reference is None:
+                raise ValueError("invalid_phone_bindings")
+            line["endpoint_id"] = reference
             lines.append(line)
         for raw in raw_keys:
             key = {name: raw[name] for name in ("function", "target", "label") if name in raw}
@@ -290,8 +295,19 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
     def _binding_schema(self):
         caps = self._profile["capabilities"]
         accounts = {**self._phone_accounts(), **self._accounts}
-        account_choices = [{"value": identity, "label": item["name"]} for identity, item in accounts.items()]
-        account_choices.append({"value": CREATE_ACCOUNT, "label": "Create SIP account"})
+        # HA's object summary formats select values without resolving their option labels.
+        # Only this form uses readable references; persisted lines retain canonical endpoint IDs.
+        self._line_account_refs = {}
+        for identity, item in accounts.items():
+            label = f"{item['name']} ({item.get('extension') or item['username']})"
+            if label in self._line_account_refs:
+                raise ValueError("invalid_phone_bindings")
+            self._line_account_refs[label] = identity
+        self._line_account_refs["Create SIP account"] = CREATE_ACCOUNT
+        account_choices = [{"value": label, "label": label} for label in self._line_account_refs]
+        displayed_refs = {identity: label for label, identity in self._line_account_refs.items()}
+        displayed_lines = [{**line, "endpoint_id": displayed_refs.get(line.get("endpoint_id"), "")}
+                           for line in self._draft.get("lines", [])]
         line_slots = [str(slot) for slot in range(1, int(caps["max_lines"]) + 1)]
         functions = sorted(KEY_FUNCTIONS & {function for slot in caps.get("key_slots", [])
                                           for function in slot.get("functions", caps.get("functions", []))})
@@ -307,7 +323,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         targets.extend({"value": contact_key_reference(contact), "label": contact.display_name}
                        for contact in self._validation_runtime().directory.programmable_contacts())
         return vol.Schema({
-            vol.Required("lines", default=self._draft.get("lines", [])): ObjectSelector({
+            vol.Required("lines", default=displayed_lines): ObjectSelector({
                 "multiple": True, "label_field": "slot", "description_field": "endpoint_id",
                 "translation_key": "physical_phone_lines", "fields": {
                     "slot": {"required": True, "selector": SelectSelector({"options": line_slots})},
@@ -357,7 +373,12 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     _add_phone_subentry(self.hass, self._get_entry(), data=account, title=account["name"],
                         draft=self._account_records.get(account["endpoint_id"]))
                 return self._store_inventory(data)
-        return self.async_show_form(step_id="bindings", errors=errors, data_schema=self._binding_schema(),
+        try:
+            schema = self._binding_schema()
+        except ValueError as error:
+            errors["base"] = self._error(error)
+            schema = vol.Schema({})
+        return self.async_show_form(step_id="bindings", errors=errors, data_schema=schema,
             description_placeholders={"max_lines": str(self._profile["capabilities"]["max_lines"]),
                                       "max_keys": str(len(self._profile["capabilities"].get("key_slots", [])))})
 

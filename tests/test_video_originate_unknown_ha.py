@@ -276,7 +276,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
 async def test_registered_managed_target_negotiates_video_after_audio_only_discovery(lab, monkeypatch, policy, direction):
     """REGISTER, partial OPTIONS and the real resolver must reach second-leg SDP."""
     from homeassistant.helpers import device_registry as dr, entity_registry as er
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import endpoint_runtime
     from custom_components.voip_stack.core import rtp, sip, video_rtp
     from custom_components.voip_stack.core.audio_format import AudioFormat

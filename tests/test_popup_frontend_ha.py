@@ -4,12 +4,54 @@ import importlib
 from pathlib import Path
 import sys
 import types
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 pytestmark = pytest.mark.ha
 ROOT = Path(__file__).resolve().parents[1]
+
+
+async def test_native_resource_refresh_preserves_ids_and_serves_versioned_worklet(
+    hass, hass_client_no_auth
+):
+    """The real HA resource store and HTTP owner expose the current assets."""
+    from homeassistant.components.lovelace.dashboard import LovelaceStorage
+    from homeassistant.components.lovelace.resources import ResourceStorageCollection
+    from homeassistant.setup import async_setup_component
+    from custom_components.voip_stack import frontend as assets
+
+    assert await async_setup_component(hass, "http", {})
+    resources = ResourceStorageCollection(hass, LovelaceStorage(hass, None))
+    foreign = await resources.async_create_item(
+        {"res_type": "module", "url": "/unrelated-card.js?v=retained"}
+    )
+    owned = await resources.async_create_item(
+        {"res_type": "module", "url": f"{assets.URL_BASE}/{assets.CARD_JS}?v=old"}
+    )
+    foreign_before = dict(foreign)
+    hass.data["lovelace"] = types.SimpleNamespace(
+        resource_mode="storage", resources=resources
+    )
+    registration = assets.JSModuleRegistration(hass)
+    await registration._async_register_path()
+    await registration._async_register_resource()
+
+    items = {item["id"]: item for item in resources.async_items()}
+    assert len(items) == 2
+    assert items[foreign["id"]] == foreign_before
+    current = items[owned["id"]]
+    version = parse_qs(urlsplit(current["url"]).query)["v"][0]
+    current_stamp = max(int(path.stat().st_mtime) for path in assets.FRONTEND_DIR.glob("*.js"))
+    assert version == f"{assets.INTEGRATION_VERSION}-{current_stamp}"
+
+    client = await hass_client_no_auth()
+    filename = "voip-stack-playback-processor.js"
+    response = await client.get(f"{assets.URL_BASE}/{filename}?v={version}")
+    assert response.status == 200
+    assert await response.read() == (assets.FRONTEND_DIR / filename).read_bytes()
+    assert "max-age=" in response.headers["Cache-Control"]
 
 
 @pytest.mark.parametrize("existing_manager", [False, True])
@@ -140,6 +182,8 @@ async def test_popup_global_registration_without_lovelace(monkeypatch):
     popup_urls = [url for url in urls.urls if url.split("?")[0].endswith("/voip-stack-popup.js")]
     assert len(popup_urls) == 1
     assert "v=old" not in popup_urls[0]
+    section_urls = [url for url in urls.urls if url.split("?")[0].endswith("/voip-stack-section-strategy.js")]
+    assert len(section_urls) == 1
     assert "/unrelated.js" in urls.urls
     panel = hass.data[frontend.DATA_PANELS]["voip-stack-popup"]
     assert panel.sidebar_title is None

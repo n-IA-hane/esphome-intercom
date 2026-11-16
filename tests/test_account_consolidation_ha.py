@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from .test_managed_phones_ha import custom_integration_path as custom_integration_path, phone_lab as phone_lab
 
@@ -302,3 +302,28 @@ async def test_entry_update_removing_last_migration_ref_goes_offline_without_man
     finally:
         await owner.async_close()
         lab.runtime.ha_bindings = None
+
+
+async def test_conditional_account_fields_preserve_omitted_preferences_and_target(phone_lab):
+    from homeassistant.config_entries import SOURCE_RECONFIGURE
+    from .support.ha_frontend import prepare_frontend_dependency
+    lab = phone_lab
+    lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
+    data = {"endpoint_id": "account-visible", "kind": "sip_account", "name": "Desk", "extension": "221",
+        "username": "desk", "password": "fixture-account-password", "enabled": True,
+        "conference_group": "", "conference_ring": True, "video_enabled": False, "send_video": True,
+        "call_policy": {"unavailable": {"kind": "contact", "target": "backup"}}}
+    sub = add_phone(lab.hass, lab.entry, data)
+    before_id = sub.unique_id
+    form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id})
+    markers = {marker.schema: marker for marker in form["data_schema"].schema}
+    assert markers["send_video"].visible == {"field": "video_enabled", "value": True}
+    assert markers["offline_forward_target"].visible == {"field": "offline_policy", "value": "forward"}
+    result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
+        "name": "Desk renamed", "username": "desk", "password": data["password"],
+        "offline_policy": "forward", "video_enabled": False})
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert sub.unique_id == before_id and sub.data["conference_ring"] and sub.data["send_video"]
+    assert sub.data["call_policy"]["unavailable"]["target"] == "backup"

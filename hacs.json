@@ -1,7 +1,7 @@
 {
   "name": "VoIP Stack",
   "render_readme": true,
-  "homeassistant": "2026.7.0",
+  "homeassistant": "2026.11.1",
   "zip_release": true,
   "filename": "voip_stack.zip"
 }

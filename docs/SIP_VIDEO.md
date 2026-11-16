@@ -189,28 +189,31 @@ The two video directions are independent and can run at the same time:
 
 Presentation follows the video media clock. Capture, decode and display use
 bounded queues, persistent workers and reusable buffers so that a slow frame
-cannot create an ever-growing delay. Video work is kept out of the ESPHome main
-loop, and JPEG and H.264 dependencies remain gated by the selected firmware
-profile.
+cannot create an ever-growing delay. Decode work remains on its worker. Surface publication and the LVGL image
+are coordinated by the main loop; JPEG conversion uses its bounded PPA step
+before publication. JPEG and H.264 dependencies remain gated by the selected
+firmware profile.
 
-The renderer also owns the transition between the normal LVGL interface and
-the call image. It enters the video view only for an accepted receive stream,
-can return to audio-only during the same dialog, and restores the idle page and
-navigation controls after hangup. Qualification therefore checks signaling,
-RTP/codec processing and physical-panel presentation separately.
+The renderer emits first-frame and stream-ended events. The package automations
+own call pages and navigation, including video removal and hangup. Rendering
+itself has no SIP or call state. Qualification checks signaling, RTP/codec
+processing and physical-panel presentation separately.
 
 Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
-gates the unused source, decoder, buffers and managed libraries at compile
-time.
+gates the unused source, decoder, buffers and managed libraries at compile time.
 
-H.264 receive uses the P4 direct display path. `display_id` is therefore
-required on `p4_video_renderer` when `codec: h264`; ESPHome rejects the YAML at
-validation time if it is missing. JPEG can present through the LVGL image path
-or an optional direct display. In either case, receiving RTP packets or
-decoding frames is not considered display success: the presentation counter or
-a synchronized [screenshot](ESP_SCREENSHOT.md) must demonstrate presentation
-through that path. A driver framebuffer capture is not independent proof that
-the physical panel received every transfer.
+Both P4 codecs now publish an image through LVGL. `display_id` supplies the
+bounded surface geometry; LVGL owns the orientation and display transfer. A
+worker never writes directly to the panel. Receiving packets or decoding frames
+is not display success: presented-frame evidence and a complete
+[screenshot](ESP_SCREENSHOT.md) must cover the visible composition. Physical
+panel delivery remains a separate qualification.
+
+The renderer is loaded from `esphome-video-renderer`, including the neutral
+`video_renderer` module. `voip_stack.video.sink` references the renderer ID and
+creates its transport adapter automatically. On S3, remove the old `voip:` block
+inside `esp_video_renderer` and replace a reference to its old adapter ID with
+the existing renderer ID. The shipped packages apply this migration.
 
 ## Home Assistant video capabilities
 

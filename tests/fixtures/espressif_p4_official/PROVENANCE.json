@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "path": "esp-idf/components/esp_driver_ppa/src/ppa_srm.c",
+      "repository": "espressif/esp-idf",
+      "commit": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+      "source_path": "components/esp_driver_ppa/src/ppa_srm.c",
+      "url": "https://github.com/espressif/esp-idf/blob/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5/components/esp_driver_ppa/src/ppa_srm.c",
+      "git_blob": "358d369d976b7cba98eafbededef0f7394afe046",
+      "sha256": "6421c730681f5114fa4f614d6d14e87f066b57459bb51bb250b8546798fe13e8",
+      "license": "Apache-2.0",
+      "modified": false
+    },
+    {
+      "path": "esp-idf/components/esp_system/port/soc/esp32p4/system_internal.c",
+      "repository": "espressif/esp-idf",
+      "commit": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+      "source_path": "components/esp_system/port/soc/esp32p4/system_internal.c",
+      "url": "https://github.com/espressif/esp-idf/blob/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5/components/esp_system/port/soc/esp32p4/system_internal.c",
+      "git_blob": "1b141dbca82210651df6c45d7eeef69bb24d2b3a",
+      "sha256": "6db8eb2394097f2db6891d81bfb88acfe77681588b4af09aa04d2842db1ae410",
+      "license": "Apache-2.0",
+      "modified": false
+    },
+    {
+      "path": "esp-idf/LICENSE",
+      "repository": "espressif/esp-idf",
+      "commit": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+      "source_path": "LICENSE",
+      "url": "https://github.com/espressif/esp-idf/blob/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5/LICENSE",
+      "git_blob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "license": "Apache-2.0",
+      "modified": false
+    },
+    {
+      "path": "esp-video-components/esp_video/src/device/esp_video_csi_format.c",
+      "repository": "espressif/esp-video-components",
+      "commit": "79ae6117e58e0cf831c8e96820af72e877b5fb82",
+      "source_path": "esp_video/src/device/esp_video_csi_format.c",
+      "url": "https://github.com/espressif/esp-video-components/blob/79ae6117e58e0cf831c8e96820af72e877b5fb82/esp_video/src/device/esp_video_csi_format.c",
+      "git_blob": "90c6c6bea0921e2fe6d1aa29bb68fb306e33c933",
+      "sha256": "9f7cb1453031448b7f11094a6c5093d92fa3866754b42b543a0bca5e9cc946eb",
+      "license": "ESPRESSIF MIT",
+      "modified": false
+    },
+    {
+      "path": "esp-video-components/esp_video/LICENSE",
+      "repository": "espressif/esp-video-components",
+      "commit": "79ae6117e58e0cf831c8e96820af72e877b5fb82",
+      "source_path": "esp_video/LICENSE",
+      "url": "https://github.com/espressif/esp-video-components/blob/79ae6117e58e0cf831c8e96820af72e877b5fb82/esp_video/LICENSE",
+      "git_blob": "51bb2f058d4c1036146fcde81d8038ee5f944aa8",
+      "sha256": "48833e4f8afc4f34b1181cf5ccafa6fb5f56dad2491225d2f3561acd4362d8bb",
+      "license": "ESPRESSIF MIT",
+      "modified": false
+    }
+  ]
+}

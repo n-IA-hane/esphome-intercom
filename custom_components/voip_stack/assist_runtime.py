@@ -61,7 +61,7 @@ class AssistConversation:
         self.detached = False
 
     async def _audio_stream(self) -> AsyncGenerator[bytes]:
-        """Wait for speech, then delimit one utterance with the same detector."""
+        """Wait for initial speech with pre-roll; only HA ends the utterance."""
         from homeassistant.components.assist_pipeline.vad import VoiceCommandSegmenter
         from pymicro_vad import MicroVad
 
@@ -69,7 +69,6 @@ class AssistConversation:
             speech_seconds=_SPEECH_GATE_START_SECONDS,
             before_command_speech_threshold=_SPEECH_GATE_START_PROBABILITY,
         )
-        command_seconds_left = gate.timeout_seconds
         gate.timeout_seconds = float("inf")
         gate.reset()
         vad = MicroVad()
@@ -94,17 +93,13 @@ class AssistConversation:
         while not self.media.closed.is_set():
             frame = await self.media.rx_queue.get()
             yield frame
-            for offset in range(0, len(frame), vad_chunk_bytes):
-                chunk = frame[offset : offset + vad_chunk_bytes]
-                if len(chunk) != vad_chunk_bytes:
-                    continue
-                command_seconds_left -= 0.01
-                if (
-                    not gate.process(0.01, vad.Process10ms(chunk))
-                    or command_seconds_left <= 0
-                ):
-                    self.media._accepting_input = False
-                    return
+
+    @staticmethod
+    async def _prefetched_stream(first_frame: bytes, stream) -> AsyncGenerator[bytes]:
+        """Return the gate's first pre-roll frame without consuming it twice."""
+        yield first_frame
+        async for frame in stream:
+            yield frame
 
     def _pipeline_event(self, event: Any) -> None:
         event_type = getattr(
@@ -194,34 +189,44 @@ class AssistConversation:
             if self.call_connected_intent:
                 await self._run_call_connected_turn(conversation_id)
             while not self.media.closed.is_set():
-                self.media.counters["pipeline_runs"] += 1
                 self.media._tts_task = None
                 self._pipeline_failed = False
                 self.media._drain_rx()
                 self.media._accepting_input = True
-                await async_pipeline_from_audio_stream(
-                    self.hass,
-                    context=self.context,
-                    event_callback=self._pipeline_event,
-                    stt_metadata=stt.SpeechMetadata(
-                        language="",
-                        format=stt.AudioFormats.WAV,
-                        codec=stt.AudioCodecs.PCM,
-                        bit_rate=stt.AudioBitRates.BITRATE_16,
-                        sample_rate=stt.AudioSampleRates.SAMPLERATE_16000,
-                        channel=stt.AudioChannels.CHANNEL_MONO,
-                    ),
-                    stt_stream=self._audio_stream(),
-                    pipeline_id=None
-                    if self.pipeline_id in {"", "preferred"}
-                    else self.pipeline_id,
-                    conversation_id=conversation_id,
-                    tts_audio_output=self.media._tts_audio_output(),
-                    audio_settings=AudioSettings(
-                        noise_suppression_level=_CALL_NOISE_SUPPRESSION_LEVEL,
-                        is_vad_enabled=False,
-                    ),
-                )
+                stream = self._audio_stream()
+                try:
+                    # Do not start Core's no-speech clock while a telephone
+                    # caller has not spoken yet. Preserve the gate's pre-roll.
+                    first_frame = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                self.media.counters["pipeline_runs"] += 1
+                try:
+                    await async_pipeline_from_audio_stream(
+                        self.hass,
+                        context=self.context,
+                        event_callback=self._pipeline_event,
+                        stt_metadata=stt.SpeechMetadata(
+                            language="",
+                            format=stt.AudioFormats.WAV,
+                            codec=stt.AudioCodecs.PCM,
+                            bit_rate=stt.AudioBitRates.BITRATE_16,
+                            sample_rate=stt.AudioSampleRates.SAMPLERATE_16000,
+                            channel=stt.AudioChannels.CHANNEL_MONO,
+                        ),
+                        stt_stream=self._prefetched_stream(first_frame, stream),
+                        pipeline_id=None
+                        if self.pipeline_id in {"", "preferred"}
+                        else self.pipeline_id,
+                        conversation_id=conversation_id,
+                        tts_audio_output=self.media._tts_audio_output(),
+                        audio_settings=AudioSettings(
+                            noise_suppression_level=_CALL_NOISE_SUPPRESSION_LEVEL,
+                            is_vad_enabled=True,
+                        ),
+                    )
+                finally:
+                    await stream.aclose()
                 self.media._accepting_input = False
                 if self._pipeline_failed:
                     raise RuntimeError("Assist pipeline reported an error")

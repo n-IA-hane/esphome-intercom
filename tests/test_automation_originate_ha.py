@@ -11,7 +11,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers import config_validation as cv
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack.core import rtp, sip
 
