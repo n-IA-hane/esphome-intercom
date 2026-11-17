@@ -1,6 +1,6 @@
 # Your PBX should be nervous.
 
-2026.12.0-dev development preview.
+2026.12.0-dev development preview. Changes since stable **2026.11.0**.
 
 After updating VoIP Stack at the company where I work, I started looking at our
 FreeSWITCH installation a little differently. More and more of what I needed
@@ -21,15 +21,44 @@ keeps proving its worth. Office hours, on-call rotations, presence, door control
 and custom call flows can use the same tools you already use to run everything
 else.
 
-Phone provisioning is another thing I want to tackle. Managed ESP devices
-already have it. Now imagine entering the MAC address of your desk phone,
-choosing its model and letting VoIP Stack configure its account, keys and
-directory.
-
-That part is still ahead of us. The ideas, unfortunately, show no sign of
-stopping.
+Desk-phone provisioning is now part of the preview too: adopt a supported
+model, assign an existing SIP account and manage its lines, keys and directory
+from Home Assistant. The ideas, unfortunately, show no sign of stopping.
 
 The intercom wants the whole damn office.
+
+## One SIP account, several clients
+
+Existing HA/browser phones become shared SIP accounts in place, preserving
+their names, extensions, cards and existing credentials. The component creates
+missing SIP credentials during migration. A registered handset and an HA card
+can use the same account without creating another extension or queue agent.
+The first client to answer owns the media; opening another card observes that
+call without taking over its microphone or speaker.
+
+A saved card association keeps the account callable with every browser closed.
+An HA automation can notify you, then opening the card recovers the current
+ringing call while its configured timeout still allows an answer.
+
+An account and a physical phone have separate HA devices. The account owns its
+extension, DND, routing, mailbox and queue state. The physical phone owns its
+model, managed line positions and programmable keys. See
+[accounts and clients](ACCOUNTS_AND_CLIENTS.md) for migration and reception with
+closed browsers.
+
+## Optional desk-phone provisioning
+
+Enable **Phone provisioning** only when needed. Adopt a discovered or manually
+entered phone using its MAC and supported model profile, optionally assigning
+its first SIP account. Native HA editors manage its properties, line
+associations and physical key order. The account and line editors update the
+same association; removing a handset does not delete its shared accounts.
+
+Each phone pins its catalog profile. Profiles declare the line positions, key
+functions and configuration-application methods they support. Preparing a file,
+delivering it and the phone applying it are separate observations. Models
+without a qualified application method retain their manual path. See
+[managed phones](PHONE_PROVISIONING.md) for setup and model-specific limits.
 
 ## Group devices and queues
 
@@ -43,10 +72,11 @@ Manual groups can remain empty. Renaming a group preserves its stable identity.
 Offline ESP changes are persisted and synchronized without registering the SIP
 account again; reconnect snapshots cannot undo a pending HA edit.
 
-Queues use FIFO callers and ring-all available operators, with bounded waiting,
-answer windows, retries, post-call wrap-up, optional waiting audio and a fallback
-destination. Login, logout and pause persist separately from membership. SIP
-keys use the existing authenticated dialog-info BLF owner.
+Queues keep callers in FIFO order and select operators with ring-all,
+round-robin, ordered or longest-idle strategies. Waiting time, answer windows,
+retries, post-call wrap-up, optional waiting audio and fallback are configurable.
+Login, logout and pause persist separately from membership. SIP keys use the
+existing authenticated dialog-info BLF owner.
 
 See [group and queue setup](GROUPS_AND_QUEUES.md).
 

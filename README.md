@@ -440,13 +440,19 @@ does not produce a new-version update notification.
 1. Find **VoIP Stack** in HACS, choose **Download** and your version, then restart
    HA. For an existing installation, use **Redownload** to select the version.
 2. Add **VoIP Stack** under **Settings > Devices & services > Add integration**.
-3. Keep the SIP account created during setup, then use **Add SIP account** to
-   create a second account. Give each a recognizable name and optional extension.
-4. Add a **VoIP Stack** card and select the account's Device in its **SIP account**
-   field. The **VoIP Dashboard** card uses the **Calling phone** selector.
-5. Open the phones on separate devices or browser sessions, allow microphone
-   access and call the other phone from the shared phonebook. Answer, speak in
-   both directions, hang up and call again.
+
+Keep the phone or account created during setup, then use your release's controls
+to create a second calling identity and add its card:
+
+| Release | Create the second phone or account | Configure each **VoIP Stack** card |
+| --- | --- | --- |
+| Stable **2026.11.0** | **Add phone**, keep **Phone type** at `browser`, then complete **Home Assistant softphone**. | Choose **Home Assistant softphone** mode, then select the phone by name in **Home Assistant phone**. |
+| Preview **2026.12.0-dev** | **Add SIP account** | Choose **SIP account** mode, then select the account's Device in **SIP account**. The preview's **VoIP Dashboard** uses **Calling phone** instead. |
+
+Give each phone or account a recognizable name and optional extension. Open its
+card on a separate device or browser session, allow microphone access and call
+the other phone from the shared phonebook. Answer, speak in both directions,
+hang up and call again.
 
 ![Select the VoIP Stack version in HACS](docs/images/hacs-download-voip-stack.png)
 

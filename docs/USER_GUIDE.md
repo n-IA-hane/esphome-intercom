@@ -44,17 +44,21 @@ an update. The [changelog](../CHANGELOG.md) retains release history.
 6. Set **Advertise host** only when automatic detection does not produce an
    address reachable by every phone.
 
-The first setup creates one SIP account. Its default name comes from the Home
-Assistant location name, for example `Casa`. Save a card associated with this
-account or register a SIP client to make it available for incoming calls.
-Another card or handset on that account does not create another extension.
+In **2026.12.0-dev**, the first setup creates one SIP account. Its default name
+comes from the Home Assistant location name, for example `Casa`. Save a card
+associated with this account or register a SIP client to make it available for
+incoming calls. Another card or handset on that account does not create another
+extension. Stable **2026.11.0** creates a Home Assistant softphone instead; use
+the stable card labels below when selecting it.
 
 ## Add the dashboard phone
 
 1. Add the **VoIP Stack card** to a dashboard.
-2. Select **Home Assistant phone** mode.
-3. Choose the phone created during setup from the visual device picker,
-   for example `Casa`. Select it by name; you do not need to look up its ID.
+2. Select **SIP account** mode in the preview, or **Home Assistant softphone**
+   on stable **2026.11.0**.
+3. Choose the account created during setup in **SIP account**, or the stable
+   phone in **Home Assistant phone**, for example `Casa`. Select it by name in
+   the visual device picker; you do not need to look up its ID.
 4. Save the card.
 5. Grant microphone permission when the browser asks. Grant camera permission
    only when this phone must transmit video.

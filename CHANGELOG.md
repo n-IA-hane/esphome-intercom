@@ -74,6 +74,12 @@
 
 ### Preview camera sources and documentation
 
+- Distinguish stable and preview setup instructions using their actual account
+  and card labels. Document physical-phone provisioning as an available preview
+  feature, and align BOX V2 profile headers with the existing ESPHome 2026.12
+  minimum.
+- Include the real Chromium decoder-recovery regression in the browser CI
+  catalog, so the browser job executes it alongside the other media checks.
 - Build Dev P4 camera profiles and coordinated CI from the project camera fork,
   including shared admission before hardware JPEG processing. Camera
   [upstream PR9](https://github.com/Psix-anp/esphome-esp-video-camera/pull/9) is

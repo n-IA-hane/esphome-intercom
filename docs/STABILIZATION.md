@@ -104,6 +104,28 @@ The exact ELF, map and generated source were archived, then the build was
 cleaned with ESPHome. This proves build-time independence, without a firmware
 upload or another physical qualification claim.
 
+## Real upgrade and call checks
+
+On 17 November, an existing laboratory installation running stable Core
+2026.11.1 upgraded its persisted integration configuration from 6.4 to 7.1.
+The component converted three browser phones into SIP accounts in place,
+preserving subentries, devices, entities and nine saved card configurations.
+Existing SIP credentials were unchanged; the component generated the three
+missing browser-account passwords once. A second actual HA process start
+preserved the migrated configuration and credentials.
+
+The same integration source completed a call from a registered bareSIP client
+answered in the existing Lovelace card, followed by a separate bidirectional
+L16 call. The latter retained browser PCM in both directions and two audio
+streams independently decoded from the packet capture. Call resources returned
+to quiescence before reuse. The peers were local SIP clients, with browser
+audio output disabled; this checks digital media rather than acoustic quality.
+The original laboratory storage and service state were restored afterwards.
+
+The Chromium suite also passed 138 cases, including decoder recovery after an
+H.264 error. Its explicit browser catalog now includes that regression file;
+the catalog guard passes as well. These checks complement the live HA calls.
+
 ## Home Assistant stable release checkpoint
 
 **Open checkpoint: 2026-12-02.** Verify the official stable release includes
