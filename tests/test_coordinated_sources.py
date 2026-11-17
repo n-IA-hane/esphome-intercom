@@ -1,7 +1,9 @@
 """A recorded component set must replay exactly or fail before checkout."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 
 import pytest
 import yaml
@@ -14,11 +16,9 @@ spec.loader.exec_module(module)
 def test_default_and_exact_manifest():
     refs = module.requested_refs(None, 'dev')
     assert refs['esphome-voip-stack'] == 'dev'
-    assert refs['esphome-screenshot'] == 'dev'
     assert refs['esphome-video-renderer'] == 'dev'
+    assert refs['esphome-screenshot'] == 'dev'
     assert refs['esphome-esp-video-camera'] == 'dev'
-    assert module.repositories_for(None, 'dev')[module.CAMERA] == 'n-IA-hane/esphome-esp-video-camera'
-    assert module.repositories_for(None, 'main')[module.CAMERA] == module.LEGACY_CAMERA_REPOSITORY
     components = {name: {'repository': repo, 'sha': str(i)*40}
                   for i, (name, repo) in enumerate(module.REPOSITORIES.items(), 1)}
     exact = module.requested_refs({'version': 1, 'components': components}, 'main')
@@ -43,101 +43,69 @@ def test_existing_checkout_is_preserved(tmp_path):
     assert work.read_text() == 'preserve'
 
 
-def _manifest():
-    return {'version': 1, 'backend_sha': 'a' * 40,
-            'components': {name: {'repository': repository, 'sha': str(index) * 40}
-                           for index, (name, repository) in enumerate(module.REPOSITORIES.items(), 1)}}
+@pytest.mark.parametrize("owner", ["intercom", "renderer"])
+def test_ci_component_refs_cover_incremental_preview_tags(owner):
+    root = Path(__file__).resolve().parents[1]
+    if owner == "renderer":
+        root = Path(os.environ.get("VIDEO_RENDERER_SOURCE", root.parent / "esphome-video-renderer"))
+    workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
+    expressions = [step['env']['COMPONENT_REF'][3:-2].strip()
+                   for job in workflow['jobs'].values() for step in job.get('steps', [])
+                   if 'COMPONENT_REF' in step.get('env', {})]
+    assert expressions
+    cases = [
+        ({'base_ref': '', 'ref_name': 'main', 'ref_type': 'branch'}, 'main'),
+        ({'base_ref': '', 'ref_name': 'dev', 'ref_type': 'branch'}, 'dev'),
+        ({'base_ref': 'main', 'ref_name': '153/merge', 'ref_type': 'branch'}, 'main'),
+        ({'base_ref': 'dev', 'ref_name': '153/merge', 'ref_type': 'branch'}, 'dev'),
+        ({'base_ref': '', 'ref_name': 'v2026.11.0', 'ref_type': 'tag'}, 'main'),
+        ({'base_ref': '', 'ref_name': 'v2026.11.1-dev', 'ref_type': 'tag'}, 'dev'),
+        ({'base_ref': '', 'ref_name': 'v2026.11.1-dev.1', 'ref_type': 'tag'}, 'dev'),
+    ]
+    # Evaluate the actual workflow conditions. These use only Boolean/string
+    # operators shared by Actions and JavaScript, and the documented functions.
+    script = """const vm=require('node:vm'), data=JSON.parse(process.argv[1]);
+      const lower=value=>String(value).toLowerCase();
+      const endsWith=(value,suffix)=>lower(value).endsWith(lower(suffix));
+      const contains=(value,part)=>lower(value).includes(lower(part));
+      console.log(JSON.stringify(data.expressions.map(expression=>data.cases.map(([github])=>
+        vm.runInNewContext(expression,{github,endsWith,contains})))));"""
+    result = subprocess.run(['node', '-e', script, json.dumps({'expressions': expressions, 'cases': cases})],
+                            check=True, capture_output=True, text=True, timeout=10)
+    assert json.loads(result.stdout) == [[expected for _, expected in cases]] * len(expressions)
 
 
-def test_historical_camera_manifest_keeps_its_repository():
-    manifest = _manifest()
-    manifest['components'][module.CAMERA]['repository'] = module.LEGACY_CAMERA_REPOSITORY
-    assert module.repositories_for(manifest, 'dev')[module.CAMERA] == module.LEGACY_CAMERA_REPOSITORY
-    assert module.requested_refs(manifest, 'dev')[module.CAMERA] == '6' * 40
-    manifest['components'][module.CAMERA]['repository'] = 'unrelated/esphome-esp-video-camera'
-    with pytest.raises(ValueError, match='Invalid repository'):
-        module.repositories_for(manifest, 'dev')
-
-
-def test_resolved_manifest_does_not_query_moving_branches(monkeypatch):
-    manifest = _manifest()
-    monkeypatch.setattr(module.subprocess, 'check_output',
-                        lambda *args, **kwargs: pytest.fail('Immutable replay queried a branch'))
-    result = module.resolve(module.requested_refs(manifest, 'dev'),
-                            module.repositories_for(manifest, 'dev'))
-    assert result == manifest['components']
-
-
-def test_resolver_records_each_qualified_dev_repository(monkeypatch):
-    calls = []
-
-    def ls_remote(command, **kwargs):
-        calls.append(command)
-        return f'{len(calls):040x}\trefs/heads/dev\n'
-
-    monkeypatch.setattr(module.subprocess, 'check_output', ls_remote)
-    resolved = module.resolve(module.requested_refs(None, 'dev'), module.repositories_for(None, 'dev'))
-    assert len(calls) == len(module.REPOSITORIES)
-    assert calls[-1][-2:] == ['https://github.com/n-IA-hane/esphome-esp-video-camera.git', 'refs/heads/dev']
-    assert resolved[module.CAMERA]['sha'] == '0000000000000000000000000000000000000006'
-
-
-def test_checkout_uses_the_recorded_camera_repository(tmp_path, monkeypatch):
-    manifest = _manifest()
-    manifest['components'][module.CAMERA]['repository'] = module.LEGACY_CAMERA_REPOSITORY
+@pytest.mark.parametrize("channel,owner", [("dev", "n-IA-hane"), ("main", "Psix-anp")])
+def test_checkout_camera_uses_the_selected_repository_and_ref(tmp_path, monkeypatch, channel, owner):
     commands = []
-
-    def git(path, *args):
+    def fake_git(path, *args):
         commands.append((path.name, args))
-        if args[:2] == ('rev-parse', 'HEAD'):
-            return manifest['components'][path.name]['sha']
-        return ''
-
-    monkeypatch.setattr(module, 'git', git)
-    result = module.checkout(tmp_path, module.requested_refs(manifest, 'dev'),
-                             module.repositories_for(manifest, 'dev'))
-    assert result == manifest['components']
-    assert (module.CAMERA, ('remote', 'add', 'origin',
-                           'https://github.com/Psix-anp/esphome-esp-video-camera.git')) in commands
+        return "a" * 40 if args == ("rev-parse", "HEAD") else ""
+    monkeypatch.setattr(module, "git", fake_git)
+    result = module.checkout(tmp_path, module.requested_refs(None, channel))
+    camera = "esphome-esp-video-camera"
+    assert (camera, ("remote", "add", "origin", f"https://github.com/{owner}/{camera}.git")) in commands
+    assert (camera, ("fetch", "--depth", "1", "origin", channel)) in commands
+    assert result[camera]["repository"] == f"{owner}/{camera}"
 
 
-def test_replay_requires_its_backend_before_checkout(tmp_path, monkeypatch):
-    manifest = _manifest()
-    path = tmp_path / 'manifest.json'
-    path.write_text(json.dumps(manifest))
-    output = tmp_path / 'output.json'
-    monkeypatch.setattr(module, 'git', lambda *args: 'b' * 40)
-    monkeypatch.setattr('sys.argv', ['coordinated_sources.py', '--manifest', str(path),
-                                   '--root', str(tmp_path / 'sources'), '--output', str(output)])
-    with pytest.raises(ValueError, match='Select the manifest backend'):
-        module.main()
-    assert not output.exists()
-    assert not (tmp_path / 'sources').exists()
-
-
-def test_coordinator_selects_the_historical_backend_without_refetch(tmp_path, monkeypatch):
-    manifest = _manifest()
-    manifest['components'][module.CAMERA]['repository'] = module.LEGACY_CAMERA_REPOSITORY
-    path = tmp_path / 'manifest.json'
-    path.write_text(json.dumps(manifest))
-    output = tmp_path / 'output.json'
-    monkeypatch.setattr(module, 'git', lambda *args: 'b' * 40)
-    monkeypatch.setattr('sys.argv', ['coordinated_sources.py', '--resolve-only', '--manifest', str(path),
-                                   '--output', str(output)])
-    module.main()
-    assert json.loads(output.read_text()) == manifest
-
-
-def test_ci_lanes_share_one_manifest_and_its_backend():
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text())
-    jobs = workflow['jobs']
-    assert jobs['coordinated-sources']['outputs']['manifest_sha256']
-    for name, job in jobs.items():
-        if name == 'coordinated-sources':
-            continue
-        assert job['needs'] == 'coordinated-sources'
-        checkout = next(step for step in job['steps'] if str(step.get('uses', '')).startswith('actions/checkout@'))
-        assert checkout['with']['ref'] == '${{ needs.coordinated-sources.outputs.backend_sha }}'
-        for step in job['steps']:
-            if 'scripts/coordinated_sources.py' in step.get('run', ''):
-                assert step['env']['COMPONENT_MANIFEST'] == '${{ needs.coordinated-sources.outputs.manifest }}'
+@pytest.mark.parametrize("owner", ["n-IA-hane", "Psix-anp"])
+def test_recorded_camera_repository_is_replayed_without_channel_substitution(tmp_path, monkeypatch, owner):
+    components = {name: {'repository': repo, 'sha': 'a' * 40} for name, repo in module.REPOSITORIES.items()}
+    camera = 'esphome-esp-video-camera'
+    components[camera]['repository'] = f'{owner}/{camera}'
+    manifest = {'version': 1, 'components': components}
+    repositories = module.requested_repositories(manifest, 'dev')
+    assert repositories[camera] == f'{owner}/{camera}'
+    commands = []
+    def fake_git(path, *args):
+        commands.append((path.name, args))
+        return 'a' * 40 if args == ('rev-parse', 'HEAD') else ''
+    monkeypatch.setattr(module, 'git', fake_git)
+    actual = module.checkout(tmp_path, module.requested_refs(manifest, 'dev'), repositories)
+    assert actual == components
+    assert (camera, ('remote', 'add', 'origin', f'https://github.com/{owner}/{camera}.git')) in commands
+    assert (camera, ('fetch', '--depth', '1', 'origin', 'a' * 40)) in commands
+    components[camera]['repository'] = 'unapproved/example'
+    with pytest.raises(ValueError, match='Invalid repository'):
+        module.requested_refs(manifest, 'dev')

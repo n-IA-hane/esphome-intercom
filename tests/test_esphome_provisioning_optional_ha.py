@@ -30,11 +30,12 @@ from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
 from custom_components.voip_stack.runtime_data import VoipStackRuntime
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 async def main():
     hass = HomeAssistant(sys.argv[2])
     hass.config_entries = ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
     device_registry.async_setup(hass)
     await device_registry.async_load(hass, load_empty=True)
     await entity_registry.async_load(hass, load_empty=True)
@@ -44,6 +45,7 @@ async def main():
     entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={},
         trunk_config={}, endpoints=endpoints, phones=PhoneAdapterRegistry(hass, endpoints))
     bridge = EspHomeProvisioner(hass, entry)
+    entry.runtime_data.phone_provisioning = bridge
     bridge.start()
     await bridge.async_sync()
     await bridge.async_close()

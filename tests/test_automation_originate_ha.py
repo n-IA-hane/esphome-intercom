@@ -11,31 +11,37 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers import config_validation as cv
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack.core import rtp, sip
 
 pytestmark = pytest.mark.ha
 
 
-class FixtureRoster(list):
-    """Commit synthetic contact edits at their source, as the HA owner does."""
+def assert_call_resources_released(lab):
+    """Account snapshots may remain; live call and media ownership may not."""
+    from custom_components.voip_stack.runtime_diagnostics import runtime_resource_snapshot
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state
+    from custom_components.voip_stack.phone_state import phone_states
 
-    def __init__(self, entries, runtime):
-        super().__init__(entries)
-        self.runtime = runtime
-
-    def _publish(self):
-        if self.runtime.directory is not None:
-            self.runtime.directory.replace(self)
-
-    def append(self, entry):
-        super().append(entry)
-        self._publish()
-
-    def __setitem__(self, index, value):
-        super().__setitem__(index, value)
-        self._publish()
+    resources = runtime_resource_snapshot(lab.calls, rtp_port_pool=lab.runtime.rtp_port_pool,
+        call_artifacts=lab.calls, browser_media=lab.runtime.media, runtime_tasks=lab.runtime.tasks)
+    assert resources["call_scoped_quiescent"], resources
+    assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+    for endpoint_id, cached in lab.runtime.softphones.items():
+        endpoint = lab.runtime.endpoints.require(endpoint_id)
+        assert endpoint.supports_ha_client
+        state = _ha_softphone_state(lab.hass, endpoint_id)
+        assert state["state"] in {"idle", "unavailable"}, (
+            f"{endpoint_id}: cache={cached.get('state')} public={state.get('state')} "
+            f"call_id={state.get('call_id')} can_attach_media={state.get('can_attach_media')} "
+            f"call_scoped_quiescent={resources['call_scoped_quiescent']}"
+        )
+        call_id = cached.get("call_id") or cached.get("last_terminal_call_id")
+        if call_id:
+            assert lab.calls.is_terminated(lab.calls.resolve_session_id(call_id))
+        assert phone_states(lab.hass)[endpoint_id]["calls"] == []
+        assert state["can_attach_media"] is False
 
 
 class Phone(asyncio.DatagramProtocol):
@@ -136,6 +142,7 @@ async def lab(hass, monkeypatch, socket_enabled):
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
     from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
@@ -183,10 +190,9 @@ async def lab(hass, monkeypatch, socket_enabled):
     runtime = VoipStackRuntime(
         transport_config={"sip_port": 5099, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1"},
         assist_config={}, trunk_config={}, endpoints=endpoints,
-        phones=PhoneAdapterRegistry(hass, endpoints), sip=calls,
+        phones=PhoneAdapterRegistry(hass, endpoints), sip=calls, directory=PhoneDirectory(roster),
     )
     entry.runtime_data = runtime
-    roster = FixtureRoster(roster, runtime)
     monkeypatch.setattr(module, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(module, "async_build_peer_snapshot", AsyncMock(return_value=[]))
     monkeypatch.setattr(module, "roster_from_peers", lambda *_args: roster)
@@ -311,7 +317,7 @@ async def test_ordinary_script_calls_then_speaks_and_hangs_up(lab, monkeypatch, 
             assert not lab.phones[0].invites
         assert not any(session.live for session in lab.calls.sessions.values())
         assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
-        assert not lab.runtime.softphones
+        assert_call_resources_released(lab)
     finally:
         await script.async_stop()
         await asyncio.gather(task, return_exceptions=True)
@@ -797,7 +803,7 @@ async def test_two_scripts_speak_and_hang_up_their_own_call_without_ids(lab, mon
                 voiced.append(payload)
         assert b''.join(voiced) == b'\x01\x80' * 960
     assert not lab.calls.sessions
-    assert not lab.runtime.softphones
+    assert_call_resources_released(lab)
 
 
 async def test_implicit_action_never_falls_back_to_another_execution(lab, monkeypatch):
@@ -861,13 +867,13 @@ async def test_outgoing_announcement_owns_rtp_port_before_invite_and_reuses_it(l
 
 
 async def test_outgoing_rtp_bind_failure_releases_call_and_allows_retry(lab, monkeypatch):
-    from custom_components.voip_stack import automation_originate
+    from custom_components.voip_stack import media_ports
 
     def unavailable(_port):
         raise OSError("RTP socket unavailable")
 
     with monkeypatch.context() as patch:
-        patch.setattr(automation_originate, "bind_sip_rtp_socket", unavailable)
+        patch.setattr(media_ports, "bind_sip_audio_socket", unavailable)
         with pytest.raises(ServiceValidationError):
             await dial(lab, Context())
     assert not lab.phones[0].invites

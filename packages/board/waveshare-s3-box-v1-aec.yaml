@@ -1,6 +1,6 @@
 # Experimental first-generation 1.85C board. The original factory partition table is preserved.
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: false

@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .core.audio_format import parse_audio_format_list
 from .const import DOMAIN
+from .phone_queue_membership import normalize_phone_queues
 from .runtime_data import runtime_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ _ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("voip_extension", ("voip_extension",)),
     ("voip_transport", ("voip_transport",)),
     ("voip_ring_groups", ("voip_ring_groups",)),
+    ("voip_queues", ("voip_queues",)),
     ("voip_conference_groups", ("voip_conference_groups",)),
     ("voip_conference_ring", ("voip_ring_on_conference",)),
     ("video_send", ("video_send", "send_video")),
@@ -44,6 +46,7 @@ _ENTITY_ROLE_DOMAINS: dict[str, frozenset[str]] = {
     "voip_extension": frozenset({"text"}),
     "voip_transport": frozenset({"sensor", "text_sensor"}),
     "voip_ring_groups": frozenset({"text"}),
+    "voip_queues": frozenset({"text"}),
     "voip_conference_groups": frozenset({"text"}),
     "voip_conference_ring": frozenset({"switch"}),
     "video_send": frozenset({"switch"}),
@@ -176,21 +179,25 @@ def _sip_audio_formats(extras: list[str], direction: str) -> list[str]:
 def _sdp_features(extras: list[str]) -> list[str]:
     """Return explicitly advertised, versioned SDP extensions."""
 
+    features: set[str] = set()
     for token in extras:
         key, separator, value = token.partition("=")
         normalized_key = key.strip().casefold()
+        if separator and normalized_key == "ip" and value.strip() == "1":
+            features.add("independent_audio_ptime_v1")
         if not separator or normalized_key not in {"sdp_features", "sf"}:
             continue
         if normalized_key == "sf" and value.strip().casefold() == "d1":
-            return ["directional_audio_v1"]
-        return [
+            features.add("directional_audio_v1")
+            continue
+        features.update(
             feature
             for feature in (
                 item.strip().casefold() for item in value.split(";")
             )
-            if feature in {"directional_audio_v1"}
-        ]
-    return []
+            if feature in {"directional_audio_v1", "independent_audio_ptime_v1"}
+        )
+    return sorted(features)
 
 
 def parse_voip_endpoint(value: str | None) -> dict | None:
@@ -319,12 +326,54 @@ class VoipDeviceResolver:
                     return entry
         return None
 
+    def _configured_sip_endpoint(self, device_id: str) -> dict:
+        """Read an explicit direct route from the existing contact owner.
+
+        DeviceInfo identifies a node but does not describe its SIP listener.
+        Never infer SIP port/transport or media formats from the API address.
+        """
+        if not any(entry.domain == DOMAIN and getattr(entry, "source", None) != "ignore"
+                   for entry in self.hass.config_entries.async_entries(DOMAIN)):
+            return {}
+        from .core import sip
+        from .store import manual_roster_entries
+
+        for contact in manual_roster_entries(self.hass):
+            metadata = contact.metadata or {}
+            if not contact.enabled or not (
+                metadata.get("device_id") == device_id or
+                metadata.get("endpoint_id") == f"esphome:{device_id}"
+            ):
+                continue
+            if contact.sip_uri:
+                try:
+                    uri = sip.parse_sip_uri(contact.sip_uri)
+                except ValueError:
+                    continue
+                if uri.scheme != "sip":
+                    continue
+                host, port = uri.host, uri.port or 5060
+                transport = str(dict(uri.params).get("transport") or "").lower()
+            else:
+                host, port = contact.address, contact.port
+                transport = str(metadata.get("sip_transport") or "").lower()
+            if not host or _valid_port(port) is None or transport not in {"udp", "tcp"}:
+                continue
+            result = {"host": host, "sip_port": port, "sip_transport": transport}
+            if contact.sip_uri and uri.user:
+                result["sip_uri_user"] = uri.user
+            return result
+        return {}
+
     async def list_devices(self) -> list[dict]:
-        """Return current VoIP devices by parsing live endpoint states."""
+        """Discover ESPHome phones by state entity, then resolve route metadata."""
         entity_registry = er.async_get(self.hass)
         device_registry = dr.async_get(self.hass)
+        entry = next((item for item in self.hass.config_entries.async_entries(DOMAIN)
+                      if item.domain == DOMAIN and getattr(item, "source", None) != "ignore"), None)
+        provisioner = getattr(getattr(entry, "runtime_data", None), "phone_provisioning", None)
 
-        # First pass: device IDs owning an voip_endpoint entity, plus
+        # First pass: ESPHome device IDs owning a voip_state entity, plus
         # an entities-by-device bucket for the second pass.
         voip_device_ids: set[str] = set()
         entities_by_device: dict[str, list] = {}
@@ -336,10 +385,10 @@ class VoipDeviceResolver:
             # object ids intentionally contain ``voip_endpoint``; treating
             # those as ESP devices produces a misleading "missing endpoint"
             # warning and can hide the canonical logical endpoint path.
-            if str(getattr(entity, "platform", "") or "") == DOMAIN:
+            if str(getattr(entity, "platform", "") or "") != "esphome":
                 continue
             entities_by_device.setdefault(entity.device_id, []).append(entity)
-            if entity_role(entity) == "voip_endpoint":
+            if entity_role(entity) == "voip_state":
                 voip_device_ids.add(entity.device_id)
 
         out: list[dict] = []
@@ -347,25 +396,32 @@ class VoipDeviceResolver:
             device = device_registry.async_get(device_id)
             if not device:
                 continue
+            origin = self.hass.config_entries.async_get_entry(str(device.config_entry_id or ""))
+            if origin is None or origin.domain != "esphome":
+                continue
+            if provisioner is not None and provisioner.is_removed(origin.entry_id, device_id):
+                voip_device_ids.discard(device_id)
+                continue
 
             esphome_id = self._device_esphome_id(device)
             entities = self._collect_entities(entities_by_device.get(device_id, []))
             endpoint_entity_id = entities.get("voip_endpoint")
             endpoint_state = self.hass.states.get(endpoint_entity_id) if endpoint_entity_id else None
-            endpoint = parse_voip_endpoint(endpoint_state.state if endpoint_state else None)
-            if endpoint is None:
-                _LOGGER.debug(
-                    "Skipping VoIP device %s: missing/invalid voip_endpoint",
-                    device.name or esphome_id or device_id,
-                )
-                continue
-            route_id = self.route_id_for_host(endpoint["host"])
-            sip_uri_user = self.sip_uri_user_for_host(endpoint["host"], device)
-            if not route_id:
-                route_id = self._route_id_from_device(device)
+            # Read compatibility for old firmware only. Presence/validity of
+            # this long state is never a prerequisite for device discovery.
+            endpoint = parse_voip_endpoint(endpoint_state.state if endpoint_state else None) or {}
+            endpoint.update(self._configured_sip_endpoint(device_id))
+            native = getattr(origin, "runtime_data", None)
+            info = getattr(native, "device_info", None)
+            node_name = str(getattr(info, "name", "") or origin.data.get("device_name") or "")
+            route_id = slugify_route_id(node_name) or self._route_id_from_device(device)
+            sip_uri_user = endpoint.get("sip_uri_user") or node_name
             if route_id:
                 entities["start_call_service"] = f"esphome.{route_id}_start_call"
             ring_group = self._state_value(entities.get("voip_ring_groups"))
+            queue_entity = self.hass.states.get(entities.get("voip_queues", ""))
+            queue_state = (str(queue_entity.state).strip() if queue_entity is not None
+                           and queue_entity.state not in {"unknown", "unavailable"} else None)
             conference_group = self._state_value(entities.get("voip_conference_groups"))
             extension = self._state_value(entities.get("voip_extension")) or endpoint.get("extension") or ""
             camera_entity_id = entities.get("camera", "")
@@ -377,10 +433,11 @@ class VoipDeviceResolver:
 
             out.append({
                 "device_id": device_id,
-                "name": endpoint["name"],
+                "name": (getattr(device, "name_by_user", None) or endpoint.get("name") or
+                         device.name or getattr(info, "friendly_name", "") or node_name or device_id),
                 "sip_uri_user": sip_uri_user,
                 "route_id": route_id,
-                "host": endpoint["host"],
+                "host": endpoint.get("host") or str(origin.data.get("host") or ""),
                 "sip_port": endpoint.get("sip_port"),
                 "rtp_port": endpoint.get("rtp_port"),
                 "sip_transport": endpoint.get("sip_transport") or "",
@@ -388,86 +445,86 @@ class VoipDeviceResolver:
                 "conference_group": conference_group,
                 "conference_ring": _parse_bool(self._state_value(entities.get("voip_conference_ring"))),
                 "ring_group": ring_group,
-                "audio_mode": endpoint["audio_mode"],
-                "tx_formats": _format_tokens(endpoint["tx_formats"]),
-                "rx_formats": _format_tokens(endpoint["rx_formats"]),
+                **({"queues": list(normalize_phone_queues(queue_state))} if queue_state is not None else {}),
+                "audio_mode": endpoint.get("audio_mode"),
+                "tx_formats": _format_tokens(endpoint.get("tx_formats") or []),
+                "rx_formats": _format_tokens(endpoint.get("rx_formats") or []),
                 "sip_audio_tx_formats": list(endpoint.get("sip_audio_tx_formats") or []),
                 "sip_audio_rx_formats": list(endpoint.get("sip_audio_rx_formats") or []),
                 "sdp_features": list(endpoint.get("sdp_features") or []),
-                "sip_video_codec": endpoint.get("sip_video_codec") or "",
+                "sip_video_codec": endpoint.get("sip_video_codec"),
                 "camera_entity_id": camera_entity_id,
                 "capabilities": sorted(capabilities),
                 "esphome_id": esphome_id,
                 "entities": entities,
+                "api_available": bool(getattr(native, "available", False)
+                    and getattr(getattr(native, "client", None), "is_connected", False)),
             })
 
-        # New phones are identified by their ESPHome owner and SIP account.
-        # Keep the old descriptor parser only for firmware migration.
+        if entry is not None:
+            legacy = entry.data.get("esphome_phone_memberships", {})
+            for item in out:
+                saved = next((record for record in legacy.values()
+                              if record.get("device_id") == item["device_id"]), None)
+                if saved is not None:
+                    item.update(queues=list(normalize_phone_queues(saved.get("queues"))),
+                                ring_group=str(saved.get("ring_group") or ""))
+        if entry is None or not entry.data.get("managed_esphome_phones"):
+            return out
         from .managed_phones import managed_phone_mode, managed_records
         from .core import sip
-
-        entry = next(iter(self.hass.config_entries.async_entries(DOMAIN)), None)
-        records = managed_records(entry) if entry is not None else {}
-        current = {device["device_id"]: device for device in out}
-        if records:
-            from .runtime_data import sip_registrar
-            registrar = sip_registrar(self.hass)
-            for phone in records.values():
-                device = device_registry.async_get(phone.device_id)
-                origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
-                if device is None or origin is None or origin.domain != "esphome":
-                    continue
-                if managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
-                    # Keep the descriptor's physical SIP address and capabilities.
-                    # Identity and user-facing name survive firmware rollback.
-                    if phone.device_id in current:
-                        current[phone.device_id].update(endpoint_id=phone.endpoint_id,
-                            name=device.name_by_user or phone.display_name,
-                            extension=current[phone.device_id].get("extension") or phone.extension)
-                    continue
-                bindings = registrar.registered_contacts(phone.username) if registrar is not None else ()
-                binding = bindings[0] if bindings else None
-                uri = sip.parse_sip_uri(binding.contact_uri) if binding is not None else None
-                entities = self._collect_entities(entities_by_device.get(phone.device_id, []))
-                native = getattr(origin, "runtime_data", None)
-                api_available = bool(getattr(getattr(native, "client", None), "is_connected", False))
-                previous = current.get(phone.device_id, {})
-                runtime = runtime_data(self.hass)
-                caps = (binding.capabilities or {}) if binding is not None else {}
-                logical = runtime.endpoints.get(phone.endpoint_id) if runtime is not None else None
-                current[phone.device_id] = {
-                    **previous,
-                    "device_id": phone.device_id,
-                    "endpoint_id": phone.endpoint_id,
-                    "name": phone.display_name,
-                    "sip_uri_user": phone.username,
-                    "route_id": phone.route_id,
-                    "host": uri.host if uri is not None else phone.api_host,
-                    "sip_port": (uri.port or 5060) if uri is not None else 5060,
-                    "rtp_port": previous.get("rtp_port", 40000),
-                    "sip_transport": binding.transport.lower() if binding is not None else phone.sip_transport,
-                    "extension": self._state_value(entities.get("voip_extension")) or phone.extension,
-                    "ring_group": self._state_value(entities.get("voip_ring_groups"),
-                        str(previous.get("ring_group") or getattr(logical, "ring_group", "") or "")),
-                    "conference_group": self._state_value(entities.get("voip_conference_groups"),
-                        str(previous.get("conference_group") or getattr(logical, "conference_group", "") or "")),
-                    "conference_ring": _parse_bool(self._state_value(entities.get("voip_conference_ring"),
-                        "on" if previous.get("conference_ring", getattr(logical, "conference_ring", False)) else "off")),
-                    "audio_mode": caps.get("audio_mode", previous.get("audio_mode", "full_duplex")),
-                    "tx_formats": previous.get("tx_formats", []),
-                    "rx_formats": previous.get("rx_formats", []),
-                    "sip_audio_tx_formats": caps.get("sip_audio_tx_formats", previous.get("sip_audio_tx_formats", [])),
-                    "sip_audio_rx_formats": caps.get("sip_audio_rx_formats", previous.get("sip_audio_rx_formats", [])),
-                    "sdp_features": caps.get("sdp_features", previous.get("sdp_features", [])),
-                    "sip_video_codec": caps.get("sip_video_codec", previous.get("sip_video_codec", "")),
-                    "camera_entity_id": entities.get("camera", ""),
-                    "capabilities": sorted(logical.capabilities) if logical else previous.get("capabilities", ["audio", "dtmf"]),
-                    "esphome_id": phone.username,
-                    "entities": entities,
-                    "managed": True,
-                    "registered": bool(bindings),
-                    "api_available": api_available,
-                }
+        from .runtime_data import sip_registrar
+        registrar = sip_registrar(self.hass)
+        current = {item["device_id"]: item for item in out}
+        for phone in managed_records(entry).values():
+            device = device_registry.async_get(phone.device_id)
+            origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
+            if (device is None or origin is None or origin.domain != "esphome"
+                    or phone.device_id not in voip_device_ids):
+                continue
+            previous = current.get(phone.device_id, {})
+            if not phone.active or managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
+                if previous:
+                    previous.update(endpoint_id=phone.endpoint_id, endpoint_username=phone.username,
+                        name=device.name_by_user or phone.display_name)
+                continue
+            bindings = registrar.registered_contacts(phone.username) if registrar is not None else ()
+            binding = bindings[0] if bindings else None
+            uri = sip.parse_sip_uri(binding.contact_uri) if binding is not None else None
+            entities = self._collect_entities(entities_by_device.get(phone.device_id, []))
+            caps = binding.capabilities or {} if binding is not None else {}
+            native = getattr(origin, "runtime_data", None)
+            video_codec = caps.get("sip_video_codec", previous.get("sip_video_codec"))
+            capabilities = set(previous.get("capabilities") or ["audio", "dtmf"])
+            if video_codec:
+                capabilities.add("video")
+            else:
+                capabilities.discard("video")
+            current[phone.device_id] = {
+                **previous, "device_id": phone.device_id, "endpoint_id": phone.endpoint_id,
+                "endpoint_username": phone.username, "name": phone.display_name,
+                "sip_uri_user": phone.username, "route_id": phone.route_id,
+                "host": uri.host if uri is not None else phone.api_host,
+                "sip_port": (uri.port or 5060) if uri is not None else None,
+                "rtp_port": previous.get("rtp_port"),
+                "sip_transport": binding.transport.lower() if binding is not None else "",
+                "extension": phone.extension, "ring_group": phone.ring_group,
+                "queues": list(phone.queues),
+                "conference_group": phone.conference_group, "conference_ring": phone.conference_ring,
+                "audio_mode": caps.get("audio_mode", previous.get("audio_mode")),
+                "tx_formats": previous.get("tx_formats", []), "rx_formats": previous.get("rx_formats", []),
+                "sip_audio_tx_formats": caps.get("sip_audio_tx_formats", previous.get("sip_audio_tx_formats", [])),
+                "sip_audio_rx_formats": caps.get("sip_audio_rx_formats", previous.get("sip_audio_rx_formats", [])),
+                "sdp_features": caps.get("sdp_features", previous.get("sdp_features", [])),
+                "sip_video_codec": video_codec,
+                "sip_capabilities_known": binding is not None and binding.capabilities is not None,
+                "camera_entity_id": entities.get("camera", ""),
+                "capabilities": sorted(capabilities),
+                "esphome_id": phone.username, "entities": entities,
+                "managed": True, "registered": bool(bindings),
+                "api_available": bool(getattr(native, "available", False)
+                    and getattr(getattr(native, "client", None), "is_connected", False)),
+            }
         return list(current.values())
 
     async def resolve_target(self, call: ServiceCall) -> Optional[dict]:
@@ -521,12 +578,12 @@ class VoipDeviceResolver:
                 out[role] = eid
         return out
 
-    def _state_value(self, entity_id: str | None, default: str = "") -> str:
+    def _state_value(self, entity_id: str | None) -> str:
         if not entity_id:
-            return default
+            return ""
         state = self.hass.states.get(entity_id)
         if state is None or str(state.state or "").strip().lower() in ("unknown", "unavailable"):
-            return default
+            return ""
         return str(state.state or "").strip()
 
 

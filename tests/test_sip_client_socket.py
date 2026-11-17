@@ -37,6 +37,33 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    def test_browser_audio_message_budget_reserves_renegotiable_encoder_pcm(self):
+        view = _load_audio_ws_runtime_module()
+        self.assertEqual(view._browser_audio_message_limit(None), 4096)
+        for encoding, rate, channels, duration, expected in (
+            ("OPUS", 48000, 2, 2.5, 5761),
+            ("OPUS", 48000, 2, 60, 5761),
+            ("L16", 16000, 1, 20, 5761),
+        ):
+            with self.subTest(encoding=encoding, duration=duration):
+                frame = sdp.RtpPcmFormat(96, encoding, rate, channels, duration)
+                session = view._SoftphoneMediaSession(
+                    call_id="budget", local_rtp_port=40000, remote_rtp_host="",
+                    remote_rtp_port=0, send_format=frame, recv_format=frame,
+                )
+                self.assertEqual(view._browser_audio_message_limit(session), expected)
+                self.assertGreaterEqual(expected, frame.audio_format.nominal_frame_bytes + 1)
+        session.send_format=sdp.RtpPcmFormat(96,"L16",48000,1,10)
+        before_claim=view._browser_audio_message_limit(session)
+        session.send_format=sdp.RtpPcmFormat(98,"OPUS",48000,2,60)
+        self.assertEqual(before_claim,view._browser_audio_message_limit(session))
+        self.assertGreaterEqual(before_claim,session.send_format.audio_format.nominal_frame_bytes+1)
+        session.local_rtp_port=0
+        self.assertEqual(view._browser_audio_message_limit(session),4096)
+        session.local_rtp_port=40000
+        session.conference_room="conference"
+        self.assertEqual(view._browser_audio_message_limit(session),4096)
+
     async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
         pcm = b"".join(
@@ -2702,6 +2729,76 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stream_writer.closed)
         self.assertTrue(client._closed)
 
+    async def test_udp_via_routes_provisional_and_cancel_independently_of_contact(self) -> None:
+        for supports_rport in (False, True):
+            with self.subTest(supports_rport=supports_rport):
+                received = []
+                misrouted = []
+                acked = asyncio.Event()
+
+                class MainListener(asyncio.DatagramProtocol):
+                    def datagram_received(self, data, addr):
+                        misrouted.append(sip.parse_message(data))
+
+                class Peer(asyncio.DatagramProtocol):
+                    def connection_made(self, transport):
+                        self.transport = transport
+                        self.invite = None
+
+                    def respond(self, request, addr, status, reason):
+                        via = sip.parse_via(request.header("Via"))
+                        destination = (via.host, via.port)
+                        via_value = request.header("Via")
+                        if supports_rport:
+                            destination = addr
+                            via_value = via_value.replace(";rport", f";rport={addr[1]}")
+                            via_value += f";received={addr[0]}"
+                        headers = [(name, request.header(name)) for name in ("From", "Call-ID", "CSeq")]
+                        headers.extend((("Via", via_value), ("To", request.header("To") + ";tag=peer")))
+                        self.transport.sendto(sip.build_response(status, reason, headers), destination)
+
+                    def datagram_received(self, data, addr):
+                        request = sip.parse_message(data)
+                        received.append((request, addr))
+                        if request.method == "INVITE":
+                            self.invite = request
+                            self.respond(request, addr, 180, "Ringing")
+                        elif request.method == "CANCEL":
+                            self.respond(request, addr, 200, "OK")
+                            self.respond(self.invite, addr, 487, "Request Terminated")
+                        elif request.method == "ACK":
+                            acked.set()
+
+                loop = asyncio.get_running_loop()
+                main, _ = await loop.create_datagram_endpoint(MainListener, local_addr=("127.0.0.1", 0))
+                peer_transport, _ = await loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
+                main_port = main.get_extra_info("sockname")[1]
+                client = sip_client.SipCallClient(local_ip="127.0.0.1", local_name="HA",
+                    local_sip_port=main_port, local_rtp_port=41000)
+                client.local_contact_uri = f"sip:HA@127.0.0.1:{main_port};transport=udp"
+                try:
+                    result = await client.invite(target="peer", remote_host="127.0.0.1",
+                        remote_sip_port=peer_transport.get_extra_info("sockname")[1], timeout=1)
+                    self.assertEqual(result, "ringing")
+                    invite, source = received[0]
+                    self.assertEqual(sip.parse_sip_uri(invite.header("Contact")).port, main_port)
+                    self.assertEqual(sip.parse_via(invite.header("Via")).port, source[1])
+                    self.assertNotEqual(source[1], main_port)
+                    await client.close()
+                    await asyncio.wait_for(acked.wait(), 1)
+                    self.assertEqual([request.method for request, _ in received], ["INVITE", "CANCEL", "ACK"])
+                    self.assertTrue(all(sip.parse_via(request.header("Via")).port == source[1]
+                                        for request, _ in received))
+                    self.assertEqual(received[1][0].header("Via"), invite.header("Via"))
+                    self.assertEqual(client._invite_task.result(), "cancelled")
+                    self.assertFalse(misrouted)
+                    self.assertIsNone(client.transport)
+                    self.assertTrue(client._closed)
+                finally:
+                    await client.close()
+                    peer_transport.close()
+                    main.close()
+
     async def test_close_completes_deferred_cancel_before_closing_transport(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
@@ -4975,14 +5072,16 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         original_offer = sdp.build_offer(
             "192.168.1.48", "192.168.1.48", 40000, [fmt]
         ).encode()
-        negotiated = sdp.audio_format_to_rtp(fmt, 96)
+        negotiated = sdp.negotiate_directional(original_offer, [fmt], [fmt],
+            local_capabilities=sip_listener.HA_AUDIO_CAPABILITIES)
+        self.assertIsNotNone(negotiated)
         initial_answer = sdp.rewrite_sdp_origin(
             sdp.build_answer_directional(
                 "192.168.1.10",
                 "192.168.1.10",
                 42000,
-                negotiated,
-                negotiated,
+                negotiated.send,
+                negotiated.recv,
                 remote_sdp=original_offer,
             ),
             5151,
@@ -5105,7 +5204,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 "192.168.1.48",
                 45002,
                 [audio_format.AudioFormat(8000, "s16le", 1, 20)],
-            ).encode(),
+            ).replace("L16/8000/1", "SPEEX/8000/1").encode(),
         )
         await endpoint._handle_datagram(incompatible_media_change, addr)
         self.assertEqual(sip.parse_message(sent[-1]).status_code, 488)

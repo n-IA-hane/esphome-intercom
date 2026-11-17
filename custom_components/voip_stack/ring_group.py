@@ -54,12 +54,23 @@ def settle_browser_candidates(
     reason: str,
     route_kind: str,
     keep_endpoint_id: str = "",
+    retain_claim_endpoint_id: str = "",
 ) -> None:
     """Release and publish every browser candidate except one committed winner."""
 
     session = registry.get_session(call_id)
     for leg in browser_legs:
         if leg.endpoint_id == keep_endpoint_id:
+            continue
+        if leg.endpoint_id == retain_claim_endpoint_id:
+            # A different transport of this same account won. Retire only the
+            # HA branch; its shared account claim and conversation survive.
+            if session is not None:
+                registry.observe_leg(
+                    call_id, f"browser:{leg.endpoint_id}", role="ha_softphone",
+                    endpoint_id=leg.endpoint_id, state=state,
+                    generation=session.generation,
+                )
             continue
         registry.release_endpoint_claim(call_id, leg.endpoint_id)
         try:

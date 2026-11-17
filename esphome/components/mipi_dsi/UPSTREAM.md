@@ -1,54 +1,52 @@
 # Upstream alignment
 
-Source baseline: ESPHome `dev` commit `2d0e3faa3d1282d1ec6928d4e76b62db3d37434c`,
-component `esphome/components/mipi_dsi`. Checked on 2026-10-19.
-The machine-readable reference is `esphome/upstream_sources.json`.
+Base: official ESPHome development commit
+`c6f330458a2da2f64788487486bd6d0f8749fafd`,
+`esphome/components/mipi_dsi`. Its runtime and schema match the official
+`373224c141dceadbb67ace263040cbfc802c5968` baseline. Original and local hashes
+are recorded in `esphome/upstream_sources.json`. Model tables, clocks, timings,
+AXI priorities and upstream IDF 5/6 setup are retained.
 
-## Remaining adaptations
+## Bounded display-owner additions
 
-Upstream panel definitions, flash-resident initialization tables, pixel-format
-handling, clipping, rotation and dirty-region updates are retained.
+- `draw_rgb565_transformed` accepts a public PPA operation and a bounded source
+  buffer. It composes the display rotation once, scales and converts directly
+  into the DPI-owned RGB565 framebuffer, then submits that rectangle. The
+  rectangle is logical and the supplied operation has rotation zero. Input
+  pixel modes include packed YUV420; no codec or renderer state lives here.
+- Normal little-endian RGB565 bulk rotation uses the same display owner.
+  A single mutex covers transformation, compatibility-canvas mirroring and
+  panel transfer completion. The producer retains its source until return.
+  Admission is checked after acquiring ownership and again after completion.
+- Completion supports both an ISR callback and the synchronous task callback
+  used by IDF's no-copy submission. A stale binary token is drained before
+  each submit. A rejected submit never waits for a missing callback.
+- `copy_frame_buffer_rgb565` copies the completed, composed framebuffer into
+  caller storage, without exposing a framebuffer pointer or forcing LVGL to
+  redraw. It returns false when busy or when an uncommitted scalar UI update
+  exists. Default output is logical owner orientation. Its optional rotation
+  is additional clockwise rotation, independent of LVGL configuration.
+- A compatibility canvas is seeded from the current DMA framebuffer under the
+  same owner and M2C synchronization, and subsequent direct writes mirror into
+  it. This prevents a later scalar flush from restoring stale background.
 
-The remaining functional adaptations are the qualified settling delays,
-serialized submit/completion ownership, failure handling before waiting for a
-DMA callback, the owned RGB565 transform described below, and diagnostic
-framebuffer capture.
-The old periodic flush counters have been removed.
+Schema capability IDs live under `CORE.data["mipi_dsi"]` as
+`rgb565_transform_ids` and `framebuffer_readback_ids`. Hardware-rotation metadata
+is declared only for the little-endian RGB565 transform path. The provider does
+not configure LVGL acceleration, choose an SDK version, change DMA priorities,
+or own a media lifecycle. There is no optional `use_ppa` presentation path.
 
-The optional `esp_screenshot` component enables a guarded RGB565 framebuffer
-copy. It takes the existing panel submission mutex without waiting, checks cache
-coherency, and normalizes rotation and byte order into the caller's buffer.
-The capture API is excluded when screenshots are absent. It reads the driver
-framebuffer; it does not read back pixels from the physical panel controller.
+## Evidence and limits
 
-RGB565 little-endian displays can perform logical rotation and media transforms
-through one display-owned blocking PPA transaction. This uses the existing
-panel framebuffer and submission mutex, with one normal panel completion.
-Screenshot read-copy remains a separate operation under the same owner; no
-framebuffer write pointer escapes. Native-coordinate blits preserve codec
-output that has already been oriented. An older P4 renderer consumer disables
-the hardware-rotation codegen capability; an unavailable runtime PPA client
-retains the scalar drawing path and its initialized compatibility canvas.
-This adaptation does not change LVGL draw-buffer sizing or the capture API's
-additional output-rotation semantics.
+The complete driver is compiled by ESPHome's canonical C++ host runner with
+public SDK-boundary doubles for IDF 5 and 6. Cases compare pixels with the
+ordinary scalar Display implementation, exercise UI/video ownership and
+readback, and check transfer-error and completion boundaries. The doubles do
+not qualify hardware colour conversion, panel behaviour, speed or PSRAM margin.
+Those require the same firmware and physical workload before promotion.
 
-The retained driver waits are 120 ms after SLEEP_OUT and 20 ms after DISPLAY_ON.
-The generated sequence adds its own waits; for the maintained JD9365 profile
-these make 130 ms and 30 ms respectively. This preserves the previous panel
-behavior; it is not a newly qualified universal timing policy for every panel.
-
-One bulk-drawing implementation serves the old public signature and the current
-Display compatibility bridge. Stable code generation uses a PROGMEM array when
-shared_progmem_array is unavailable. The clipping predicate is the same as
-upstream, inlined for older cores without is_point_clipped().
-
-Compilation and host transfer tests do not qualify physical colors, orientation,
-LVGL/video concurrency or cold initialization. Validate the new capture adapter
-on a physical P4 before a firmware promotion.
-
-## Export the source difference
-
-Use `scripts/export_fork_diff.py` from the project root with an ESPHome checkout
-containing the recorded commit. The export includes functional changes and
-stable-core compatibility adapters; separate the latter before an upstream PR.
-Existing licenses and upstream authorship remain applicable.
+The remaining delta is intended for an explicit upstream proposal. Remove it
+only after the official provider supplies and qualifies these ownership,
+transform and readback contracts together. C++ runtime files retain ESPHome's
+GPLv3 license; Python and other files retain MIT. See
+`licenses/ESPHOME-LICENSE.txt` and `THIRD_PARTY_NOTICES.md`.

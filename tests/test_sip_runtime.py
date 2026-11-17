@@ -11,23 +11,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+# Keep this legacy hass.data adapter out of the shared integration namespace.
+PKG_NAME = "voip_stack_sip_runtime_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
 def _load_module(name: str):
-    if "homeassistant" not in sys.modules:
-        package = types.ModuleType("homeassistant")
-        package.__path__ = []
-        sys.modules["homeassistant"] = package
-    if "homeassistant.core" not in sys.modules:
-        core = types.ModuleType("homeassistant.core")
-        core.HomeAssistant = type("HomeAssistant", (), {})
-        sys.modules["homeassistant.core"] = core
-    if "custom_components" not in sys.modules:
-        root_package = types.ModuleType("custom_components")
-        root_package.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_package
     if PKG_NAME not in sys.modules:
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
@@ -56,13 +45,15 @@ runtime_data.endpoint_directory = lambda hass: hass.data.get(DOMAIN, {}).get(
 runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(DOMAIN, {}).get(
     "sip_endpoint"
 )
-runtime_data.sip_registrar = lambda hass: hass.data.get(DOMAIN, {}).get("sip_registrar")
+runtime_data.sip_registrar = lambda hass: hass.data.get(DOMAIN, {}).get(
+    "sip_registrar"
+)
 runtime_data.sip_trunk = lambda hass: hass.data.get(DOMAIN, {}).get("sip_trunk")
 runtime_data.sip_trunks = lambda hass: {"": runtime_data.sip_trunk(hass)} if runtime_data.sip_trunk(hass) is not None else {}
 sys.modules[runtime_data.__name__] = runtime_data
 sys.modules.pop(f"{PKG_NAME}.sip_runtime", None)
 sip_runtime = _load_module("sip_runtime")
-enable_reused_signaling_flow = sip_runtime.enable_reused_signaling_flow
+enable_reused_tcp_connection = sip_runtime.enable_reused_tcp_connection
 send_bye = sip_runtime.send_bye
 send_final_response = sip_runtime.send_final_response
 sip_servers = sip_runtime.sip_servers
@@ -345,6 +336,29 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "TCP",
         )
 
+    def test_registered_udp_flow_uses_selected_registrar_owner(self) -> None:
+        selected = object()
+        calls = []
+        registrar = SimpleNamespace(
+            select_outbound_flow=lambda username, uri, *, allow_ordinary=False: (
+                calls.append((username, uri, allow_ordinary)) or selected
+            )
+        )
+        hass = SimpleNamespace(data={DOMAIN: {"sip_registrar": registrar}})
+        uri = SimpleNamespace(params=())
+
+        self.assertIs(
+            sip_runtime.select_registered_outbound_flow(
+                hass, uri, entry=SimpleNamespace(id="registered-phone")
+            ),
+            selected,
+        )
+        self.assertEqual(calls, [("registered-phone", uri, True)])
+        self.assertIsNone(sip_runtime.select_registered_outbound_flow(
+            SimpleNamespace(data={DOMAIN: {}}), uri,
+            entry=SimpleNamespace(id="registered-phone"),
+        ))
+
     def test_tcp_contact_reuses_registered_flow_and_releases_dialog(self) -> None:
         tcp_server = _TcpServer()
         hass = SimpleNamespace(
@@ -352,7 +366,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         client = SimpleNamespace(
             dialog_ids=SimpleNamespace(call_id="call-2"),
-            use_reused_signaling_flow=lambda **kwargs: setattr(
+            use_reused_tcp_connection=lambda **kwargs: setattr(
                 client,
                 "reused",
                 kwargs,
@@ -365,7 +379,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(
-            enable_reused_signaling_flow(
+            enable_reused_tcp_connection(
                 hass,
                 client,
                 uri,
@@ -385,7 +399,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
         uri = SimpleNamespace(host="192.0.2.11", port=None, params=())
 
         self.assertFalse(
-            enable_reused_signaling_flow(
+            enable_reused_tcp_connection(
                 hass,
                 client,
                 uri,
@@ -393,18 +407,6 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 default_sip_port=5060,
             )
         )
-
-    def test_unresolved_udp_uri_keeps_the_client_dns_resolver(self) -> None:
-        class UdpEndpoint:
-            def open_reused_dialog(self, *_args):
-                raise AssertionError("An unresolved URI is not a selected signaling flow")
-
-        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": SimpleNamespace(
-            udp_server=SimpleNamespace(endpoint=UdpEndpoint()))}})
-        client = SimpleNamespace(dialog_ids=SimpleNamespace(call_id="dns-call"))
-        uri = SimpleNamespace(host="peer.example.invalid", port=None, params=())
-        self.assertFalse(enable_reused_signaling_flow(hass, client, uri,
-            target="Peer", default_sip_port=5060))
 
 
 if __name__ == "__main__":

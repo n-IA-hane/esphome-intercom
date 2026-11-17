@@ -12,7 +12,7 @@ from PIL import Image
 import pytest
 
 from tests.test_lvgl_settings_composition import expanded_scene
-from tools.render_lvgl import find_id, yaml_input, make_host_config, make_status_config, nodes, strings, references
+from tools.render_lvgl import find_id, number_owner_traits, yaml_input
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +35,26 @@ def test_owner_lookup_uses_declaration_instead_of_an_earlier_script_reference():
     assert find_id({"script": [reference]}, "script", "draw_display") is None
 
 
-@pytest.mark.parametrize("action", ["phone", {"id": "phone"}])
-def test_stop_action_retains_its_typed_phone_owner(action):
-    assert references({"voip_stack.stop": action}) == {"phone"}
+def test_host_number_traits_follow_validated_producers_instead_of_slider_placeholders():
+    config = {"number": [
+        {"platform": "esp_audio_stack", "master_volume": {"id": "master", "unit_of_measurement": "%"}},
+        {"platform": "esp_audio_stack", "_hardware_gain_es8311": True,
+         "input_pga": {"id": "es8311", "unit_of_measurement": "dB"}},
+        {"platform": "esp_audio_stack", "_hardware_gain_es8311": False,
+         "reference_pga": {"id": "es7210", "unit_of_measurement": "dB"}},
+        {"platform": "esp_audio_stack", "mic_gain": {"id": "post", "min_value": -12, "max_value": 24}},
+        {"platform": "template", "id": "custom", "min_value": 2, "max_value": 5, "step": 0.25},
+    ], "lvgl": {"widgets": [{"slider": {"min_value": 0, "max_value": 1}}]}}
+    expected = {"master": (0, 100, 5), "es8311": (0, 36, 6), "es7210": (0, 37.5, 0.5),
+                "post": (-12, 24, 1), "custom": (2, 5, 0.25)}
+    for owner, traits in expected.items():
+        actual = number_owner_traits(config, owner)
+        assert tuple(actual[key] for key in ("min_value", "max_value", "step")) == traits
+    assert number_owner_traits(config, "master")["unit_of_measurement"] == "%"
+    assert number_owner_traits(config, "es8311")["unit_of_measurement"] == "dB"
+    config["number"].append({"platform": "unknown", "id": "unsupported"})
+    with pytest.raises(ValueError, match="Unknown production Number traits"):
+        number_owner_traits(config, "unsupported")
 
 
 @pytest.mark.parametrize("scene,size", [("spot240", 240), ("box360-aec", 360)])
@@ -47,13 +64,12 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     source.write_text(yaml_util.dump(document))
     (tmp_path / "secrets.yaml").write_text("wifi_ssid: fixture-network\nwifi_password: fixture-password\n")
     output = tmp_path / "render"
-    build_parent = (Path(os.environ["LVGL_HOST_BUILD_ROOT"]) / str(size)
-                    if "LVGL_HOST_BUILD_ROOT" in os.environ else tmp_path / "host-cache")
-    command = [sys.executable, str(ROOT / "tools/render_lvgl.py"), "--input", os.path.relpath(source, ROOT),
+    command = [sys.executable, str(ROOT / "tools/render_lvgl.py"), "--input", str(source),
                "--page", "settings_continuous_page", "--width", str(size), "--height", str(size),
-               "--output", os.path.relpath(output, ROOT), "--build-parent",
-               os.path.relpath(build_parent, ROOT), "--round", "--pointer"]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=480, cwd=ROOT)
+               "--output", str(output), "--build-parent",
+               str(Path(os.environ["LVGL_HOST_BUILD_ROOT"]) / str(size))
+               if "LVGL_HOST_BUILD_ROOT" in os.environ else str(tmp_path / "host-cache"), "--round", "--pointer"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=480)
     diagnostics = "\n".join(path.read_text(errors="replace")[-5000:]
                             for path in (output / "compile.log", output / "run.log") if path.exists())
     assert result.returncode == 0, result.stdout + result.stderr + diagnostics
@@ -61,21 +77,27 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     assert len(report["snapshots"]) == 3
     log = (output / "run.log").read_text()
     assert "UI_PROBE owner_sync=pass user_write=pass drag=pass reject=pass" in log
+    assert "UI_PROBE hidden_deferred=pass screen_loaded=pass scroll_deferred=pass scroll_end=pass writes=0" in log
     assert "UI_PROBE overlay_restore=pass" in log
-    assert "UI_OPTIONS flow_header=pass scrollbar_auto=pass" in log
     assert "UI_POINTER source_dialer_gestures=pass suppressed_commands=pass positive_digit_tap=pass" in log
     assert "UI_BOOT registry=1 first_valid=1" in log
     assert "UI_POINTER ordered_navigation=pass bounded_ends=pass real_registry=pass" in log
     assert "UI_POINTER options_body_scroll=pass navigation_suppressed=pass" in log
-    assert "UI_POINTER options_body_boundary=top delta=-1" in log
-    assert "UI_POINTER options_body_boundary=bottom delta=1" in log
     assert "UI_POINTER in_call_gesture=pass hangup_suppressed=pass positive_hangup_tap=pass" in log
     for name in ("master", "playback", "mic"):
         assert f"UI_POINTER slider={name} knob=pass extension=pass track_rejected=pass" in log
     assert "UI_POINTER passive_row_child_switch=pass writes=1" in log
-    assert "UI_POINTER dropdown=mode open=pass select=pass writes=1" in log
-    assert "UI_POINTER mic_value=24 knob=pass extended_topmost=pass no_switch_overlap=pass" in log
-    assert "UI_POINTER mic_value=30 knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+    assert "id: ui_mic_vol_slider" not in (output / "host.yaml").read_text()
+    if scene == "spot240":
+        assert "UI_POINTER microphone_owner=microphone_pga minimum=0 maximum=36" in log
+        for value in (24, 36):
+            assert f"UI_POINTER mic_value={value} knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+        assert "UI_POINTER microphone_caption=Microphone gain (pre-AFE): 36 dB" in log
+    else:
+        assert "UI_POINTER microphone_owner=microphone_pga minimum=0 maximum=37.5" in log
+        for value in (24, 37.5):
+            assert f"UI_POINTER mic_value={value} knob=pass extended_topmost=pass no_switch_overlap=pass" in log
+        assert "UI_POINTER microphone_caption=Microphone input gain: 37.5 dB" in log
     assert report["production_overlay_policy_sha256"]
     assert report["production_page_selector_sha256"]
     assert report["production_settings_registry_boot_sha256"]
@@ -83,126 +105,3 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
         with Image.open(output / (position + ".png")) as image:
             assert image.size == (size, size)
             assert len(image.getcolors(size * size) or []) > 8
-
-
-@pytest.mark.parametrize("scene,page,width,height", [
-    ("box360-aec", "idle_page", 360, 360),
-    ("p4-portrait", "main_page", 800, 1280),
-])
-def test_status_snapshot_copies_production_widgets_fonts_and_header_context(tmp_path, scene, page, width, height):
-    document = expanded_scene(scene, "full")
-    native = document["lvgl"]
-    host, page_hash = make_status_config(document, page, width, height, tmp_path)
-    assert page_hash
-    assert host["display"][0]["dimensions"] == {"width": width, "height": height}
-    names = {"top_clock_label", "top_battery_label", "top_voicemail_label"}
-    expected = [widget for widget in native["top_layer"]["widgets"]
-                if any(str(node.get("id", "")) in names for node in nodes(widget))]
-    assert yaml_util.dump(host["lvgl"]["top_layer"]["widgets"]) == yaml_util.dump(yaml_input(expected))
-    fonts = {str(font["id"]): font for font in document["font"]}
-    for font in host["font"]:
-        assert font == fonts[str(font["id"])]
-    captures = [node["snapshot.take"]["filename"] for node in nodes(host) if "snapshot.take" in node]
-    assert captures == ["off", "on"]
-    assert "api" not in host and "wifi" not in host
-    assert "voip_stack" not in host
-    if scene.startswith("p4"):
-        assert "weather_clock_label" in set(strings(host["lvgl"]["pages"]))
-        assert "weather_date_label" in set(strings(host["lvgl"]["pages"]))
-        label = next(node["label"] for node in nodes(host["lvgl"]["pages"]) if str(node.get("label", {}).get("id")) == "weather_clock_label")
-        assert int(label["x"]) == -30
-
-
-@pytest.mark.parametrize("scene,width,height", [
-    ("p4-landscape", 1280, 800), ("p4-portrait", 800, 1280),
-])
-def test_p4_options_snapshot_keeps_phone_owner_without_dialer_input(tmp_path, scene, width, height):
-    document = expanded_scene(scene, "full")
-    host, page_hash = make_host_config(document, "settings_p4_page", width, height, tmp_path)
-    assert page_hash
-    assert host["ui_fixture"]["phone_id"] == "phone"
-    assert host["ui_fixture"]["conference_ring_id"] == "voip_conference_ring"
-    # Keep the real owner callbacks, including its conference-ring switch.
-    callback = next(script for script in host["script"] if script["id"] == "settings_sync_conference_ring")
-    assert "id(phone).get_conference_ring()" in "\n".join(strings(callback))
-    assert "voip_stack" not in host and "api" not in host
-    pages = [str(page["id"]) for page in host["lvgl"]["pages"]]
-    assert pages.count("settings_p4_page") == 1
-
-
-@pytest.mark.parametrize("scene,width,height", [
-    ("p4-landscape", 1280, 800), ("p4-portrait", 800, 1280),
-])
-def test_p4_options_pointer_scrolls_content_and_exits_at_top(tmp_path, scene, width, height):
-    document = expanded_scene(scene, "full")
-    build_parent = (Path(os.environ.get("LVGL_HOST_BUILD_ROOT", "/var/tmp/voip-builds/p4-options"))
-                    / scene)
-    build_parent.mkdir(parents=True, exist_ok=True)
-    host, page_hash = make_host_config(document, "settings_p4_page", width, height, build_parent)
-    assert page_hash
-    # Keep the production page, controls, callbacks and page transitions. Only
-    # the owners are host fixtures; input uses LVGL's real pointer read_cb.
-    pointer = r'''
-      esphome::ui_fixture::PointerProbe input(lv_display_get_default());
-      auto *wrapper = id(settings_page_wrapper);
-      auto *page = id(settings_p4_page)->obj;
-      auto open = [&]() {
-        id(render_lvgl).show_page(id(settings_p4_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
-        input.pump(50);
-        lv_obj_scroll_to_y(wrapper, 0, LV_ANIM_OFF); input.pump(50);
-      };
-      id(ui_owner_writes) = 0;
-      open();
-      const int x = 8;
-      const int y = lv_display_get_vertical_resolution(lv_display_get_default()) / 2;
-      const int maximum = lv_obj_get_scroll_bottom(wrapper);
-      printf("P4_POINTER range=%d dir=%u\n", maximum, unsigned(lv_obj_get_scroll_dir(wrapper)));
-      if (maximum > 0) {
-        input.swipe(x, y, x, y - 100); input.pump(300);
-        if (lv_screen_active() != page || lv_obj_get_scroll_y(wrapper) <= 0) ::exit(101);
-        input.swipe(x, y, x, y + 80); input.pump(300);
-        if (lv_screen_active() != page) ::exit(102);
-        printf("P4_POINTER body_scroll=pass navigation_suppressed=pass\n");
-      } else {
-        printf("P4_POINTER body_scroll=not_needed content_fits=1\n");
-      }
-      open();
-      const auto page_gestures = input.watch(page, LV_EVENT_GESTURE);
-      input.swipe(x, y, x, y + 100); input.pump(300);
-      printf("P4_POINTER top_body gestures=%llu main=%u scroll=%d\n",
-             static_cast<unsigned long long>(input.count(page_gestures)),
-             unsigned(lv_screen_active() == id(main_page)->obj), int(lv_obj_get_scroll_y(wrapper)));
-      if (lv_screen_active() != id(main_page)->obj) ::exit(103);
-      open();
-      lv_area_t title; lv_obj_get_coords(id(settings_page_header), &title);
-      const int title_x = (title.x1 + title.x2) / 2;
-      const int title_y = (title.y1 + title.y2) / 2;
-      input.swipe(title_x, title_y, title_x, title_y + 100); input.pump(300);
-      if (lv_screen_active() != id(main_page)->obj) ::exit(104);
-      printf("P4_POINTER top_header_exit=pass\n");
-      open();
-      lv_obj_scroll_to_y(wrapper, LV_COORD_MAX, LV_ANIM_OFF); input.pump(50);
-      input.swipe(x, y, x, y - 100); input.pump(300);
-      if (lv_screen_active() != page || id(ui_owner_writes) != 0) ::exit(105);
-      printf("P4_POINTER bottom_stays=pass owner_writes=0 reads=%llu\n",
-             static_cast<unsigned long long>(input.read_count()));
-    '''
-    host["esphome"]["on_boot"][-1]["then"].insert(-1, {"lambda": Lambda(pointer)})
-    path = build_parent / "host.yaml"
-    path.write_text(yaml_util.dump(host))
-    compile_log = tmp_path / "compile.log"
-    with compile_log.open("w") as output:
-        compiled = subprocess.run([sys.executable, "-m", "esphome", "compile", str(path)],
-                                  stdout=output, stderr=subprocess.STDOUT, timeout=480, cwd=ROOT)
-    assert compiled.returncode == 0, compile_log.read_text(errors="replace")[-6000:]
-    executable = build_parent / "build/.pioenvs" / host["esphome"]["name"] / "program"
-    run_log = tmp_path / "run.log"
-    with run_log.open("w") as output:
-        ran = subprocess.run([str(executable)], stdout=output, stderr=subprocess.STDOUT,
-                             timeout=30, cwd=build_parent)
-    log = run_log.read_text(errors="replace")
-    assert ran.returncode == 0, log[-6000:]
-    assert ("P4_POINTER body_scroll=pass navigation_suppressed=pass" in log
-            or "P4_POINTER body_scroll=not_needed content_fits=1" in log)
-    assert "P4_POINTER top_header_exit=pass" in log
-    assert "P4_POINTER bottom_stays=pass owner_writes=0" in log

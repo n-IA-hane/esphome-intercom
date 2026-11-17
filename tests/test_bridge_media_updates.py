@@ -271,6 +271,7 @@ def test_audio_update_stays_staged_until_generation_checked(
     relay = _Relay(old_peer)
     registry.relay = relay
     client = SimpleNamespace(
+        dialog=SimpleNamespace(video_format=None),
         dialog_ids=SimpleNamespace(call_id="dest-1"),
         on_media_update=None,
     )
@@ -287,7 +288,7 @@ def test_audio_update_stays_staged_until_generation_checked(
 
     commit = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=None),
+            client.dialog,
             updated,
             "INVITE",
         )
@@ -297,7 +298,7 @@ def test_audio_update_stays_staged_until_generation_checked(
     assert relay.right is old_peer
 
     registry.current = True
-    pending = asyncio.run(client.on_media_update(SimpleNamespace(video_format=None), updated, "UPDATE"))
+    pending = asyncio.run(client.on_media_update(client.dialog, updated, "UPDATE"))
     registry.relay = object()
     with pytest.raises(RuntimeError, match="owner changed"):
         asyncio.run(pending.commit())
@@ -310,7 +311,7 @@ def test_audio_update_stays_staged_until_generation_checked(
     registry.current = False
     stale_commit = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=None),
+            client.dialog,
             updated,
             "UPDATE",
         )
@@ -354,6 +355,7 @@ def test_audio_and_video_commit_share_one_owner_check(
         old_video,
     )
     client = SimpleNamespace(
+        dialog=SimpleNamespace(video_format=video_format),
         dialog_ids=SimpleNamespace(call_id="dest-2"),
         on_media_update=None,
     )
@@ -373,7 +375,7 @@ def test_audio_and_video_commit_share_one_owner_check(
 
     commit = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=video_format),
+            client.dialog,
             updated,
             "INVITE",
         )
@@ -421,6 +423,7 @@ def test_cross_codec_video_direction_change_uses_owned_transcoders(
         transcode_from=frozenset({"left", "right"}),
     )
     client = SimpleNamespace(
+        dialog=SimpleNamespace(video_format=video_format),
         dialog_ids=SimpleNamespace(call_id="dest-cross-codec"),
         on_media_update=None,
     )
@@ -459,7 +462,7 @@ def test_cross_codec_video_direction_change_uses_owned_transcoders(
 
     commit = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=video_format),
+            client.dialog,
             updated,
             "INVITE",
         )
@@ -545,6 +548,7 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
     monkeypatch.setitem(sys.modules, const.__name__, const)
 
     client = SimpleNamespace(
+        dialog=SimpleNamespace(video_format=None),
         dialog_ids=SimpleNamespace(call_id="dest-add-video"),
         on_media_update=None,
     )
@@ -579,7 +583,7 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
 
     prepared = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=None),
+            client.dialog,
             updated,
             "INVITE",
         )
@@ -616,6 +620,7 @@ def test_destination_reinvite_removes_video_from_both_bridge_legs(
     )
     relay.video_relay = old_video
     client = SimpleNamespace(
+        dialog=SimpleNamespace(video_format=SimpleNamespace(direction="sendrecv")),
         dialog_ids=SimpleNamespace(call_id="dest-remove-video"),
         on_media_update=None,
     )
@@ -635,7 +640,7 @@ def test_destination_reinvite_removes_video_from_both_bridge_legs(
 
     prepared = asyncio.run(
         client.on_media_update(
-            SimpleNamespace(video_format=SimpleNamespace(direction="sendrecv")),
+            client.dialog,
             updated,
             "INVITE",
         )

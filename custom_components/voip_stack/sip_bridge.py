@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import logging
 from typing import Any
 
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp
 from .core.sdp import remote_can_receive, remote_can_send
 from .sip_client import SipCallClient, SipDialog
@@ -26,14 +27,53 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
     """Resolve the still-unanswered caller against the accepted destination."""
     if invite.initial_response_sent:
         return invite
+    preferred = destination.recv_format.audio_format
+    send_formats = [preferred, invite.send_format.audio_format]
+    if invite.local_send_capabilities:
+        # Repacketize a common PCM geometry before changing its sample rate.
+        # Durations must come from this listener's actual transmit policy.
+        shape = (preferred.sample_rate, preferred.pcm_format, preferred.channels)
+        send_formats = [fmt for fmt in dict.fromkeys((preferred, *invite.local_send_capabilities))
+            if fmt in invite.local_send_capabilities
+            and (fmt.sample_rate, fmt.pcm_format, fmt.channels) == shape]
+        if invite.send_format.audio_format in invite.local_send_capabilities:
+            send_formats.append(invite.send_format.audio_format)
+    recv_formats = (destination.send_format.audio_format, invite.recv_format.audio_format)
+    # Preserve our receive preference when only outgoing packet time differs.
+    if (recv_formats[0].sample_rate, recv_formats[0].pcm_format, recv_formats[0].channels) == (
+        recv_formats[1].sample_rate, recv_formats[1].pcm_format, recv_formats[1].channels,
+    ):
+        recv_formats = recv_formats[::-1]
     selected = sdp.negotiate_directional(
         invite.remote_sdp,
-        list(dict.fromkeys((destination.recv_format.audio_format, invite.send_format.audio_format))),
-        list(dict.fromkeys((destination.send_format.audio_format, invite.recv_format.audio_format))),
+        list(dict.fromkeys(send_formats)),
+        list(dict.fromkeys(recv_formats)),
         allow_dahua_pcm=invite.peer_profile == "dahua",
         codec_policy=invite.codec_policy,
+        local_recv_capabilities=invite.local_recv_capabilities or None,
+        local_capabilities=HA_AUDIO_CAPABILITIES,
     )
-    return replace(invite, send_format=selected.send, recv_format=selected.recv) if selected is not None else invite
+    if selected is None:
+        return invite
+
+    def pcm_shape(fmt):
+        pcm = fmt.audio_format
+        return pcm.sample_rate, pcm.pcm_format, pcm.channels
+
+    # Keep the caller's receive geometry when a preference merely moves a
+    # conversion to the opposite direction. Packet-time changes remain valid.
+    if pcm_shape(selected.recv) != pcm_shape(invite.recv_format):
+        original_conversions = sum((
+            pcm_shape(invite.recv_format) != pcm_shape(destination.send_format),
+            pcm_shape(destination.recv_format) != pcm_shape(invite.send_format),
+        ))
+        candidate_conversions = sum((
+            pcm_shape(selected.recv) != pcm_shape(destination.send_format),
+            pcm_shape(destination.recv_format) != pcm_shape(selected.send),
+        ))
+        if candidate_conversions >= original_conversions:
+            return invite
+    return replace(invite, send_format=selected.send, recv_format=selected.recv)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,15 +122,12 @@ def video_bridge_offer_formats(
     """Offer what the source can receive, with bounded transcoding fallbacks."""
 
     source = source_receive or source_send
-    frame_limit = sdp.video_framerate_limit(source_send, source_receive)
-    if source.max_framerate != frame_limit:
-        source = replace(source, max_framerate=frame_limit)
+    # This offer's receive recommendation constrains the opposite camera.
+    # The original receiver is source_send, independently of local caller RX.
+    source = replace(source, max_framerate=source_send.max_framerate)
     if source.encoding == "JPEG" and source.image_attributes is not None:
         attributes = source.image_attributes
         if attributes.send is None and attributes.recv is None:
-            # An inactive local-RX projection is not a camera capability.
-            # The opted-in relay can learn the peer's actual send geometry;
-            # the original caller's receive limits stay on its own relay leg.
             source = replace(source, image_attributes=(
                 sdp.ANY_IMAGE_ATTRIBUTES if enable_transcoding else None))
     if target_codec == "":
@@ -165,7 +202,8 @@ def _video_pair_passthrough_compatible(left_recv, right_send, right_recv, left_s
     )
 
 
-async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, enable_transcoding=False):
+async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, enable_transcoding=False,
+                                          left_peer: VideoRtpPeer | None = None):
     """Negotiate relay media for two offers using the common video contracts."""
     from .media_ports import reserve_sip_video_relay_media
 
@@ -180,7 +218,8 @@ async def async_prepare_invite_pair_video(hass, left_invite, right_invite, *, en
     reservation, sockets = reserve_sip_video_relay_media(hass)
     relay = None
     try:
-        relay = SipVideoRtpRelay(left=invite_video_rtp_peer(left_invite), right=invite_video_rtp_peer(right_invite),
+        relay = SipVideoRtpRelay(left=left_peer if left_peer is not None else invite_video_rtp_peer(left_invite),
+            right=invite_video_rtp_peer(right_invite),
             left_port=reservation.ports[0], right_port=reservation.ports[1],
             left_socket=sockets[0], left_rtcp_socket=sockets[1], right_socket=sockets[2], right_rtcp_socket=sockets[3],
             on_release=lambda _ports: reservation.release())

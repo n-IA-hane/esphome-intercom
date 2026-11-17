@@ -9,23 +9,23 @@ const MODULE_VERSION = (() => {
     return "dev";
   }
 })();
-const { RINGTONE_REPEAT_MS, playVoipRingtone } =
-  await import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const {
-  desiredAudioPaths,
-  normaliseAudioDirection,
-  normaliseAudioMode,
-  resolveSessionFormats,
-  sameAudioFormat,
-} = await import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const {
-  normaliseSoftphoneSelector,
-  softphoneScopeKey,
-  softphoneStateMatches,
-} = await import(`./voip-stack-session-model.js?v=${encodeURIComponent(MODULE_VERSION)}`);
-const { BrowserMediaDevices, exactDeviceConstraint } = await import(
-  `./voip-stack-media-devices.js?v=${encodeURIComponent(MODULE_VERSION)}`
-);
+const [
+  { RINGTONE_REPEAT_MS, playVoipRingtone },
+  {
+    desiredAudioPaths,
+    normaliseAudioDirection,
+    normaliseAudioMode,
+    resolveSessionFormats,
+    sameAudioFormat,
+  },
+  { normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches },
+  { BrowserMediaDevices, exactDeviceConstraint },
+] = await Promise.all([
+  import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-session-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-media-devices.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+]);
 const CONTROL_ACK_TIMEOUT_MS = 3000;
 const AUDIO_NEGOTIATION_TIMEOUT_MS = 3000;
 const BUS_SUBSCRIBE_RETRY_MS = 2000;
@@ -44,6 +44,11 @@ const ACTIVE_SOFTPHONE_STATES = new Set([
   "connecting",
   "in_call",
   "terminating",
+]);
+const TERMINAL_SOFTPHONE_STATES = new Set([
+  "idle", "ended", "failed", "timeout", "busy", "declined", "cancelled",
+  "media_incompatible", "transport_unreachable", "auth_required_unsupported",
+  "protocol_error", "error",
 ]);
 const TERMINAL_CALL_EVENT_TYPES = new Set([
   "ended",
@@ -119,9 +124,8 @@ function mediaClientInstanceId() {
     generated = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
   generated = `media2-${generated}`;
-  // The backend pins every call to this value. Only a real reload reconnects
-  // the previous document. New tabs can copy sessionStorage but must never
-  // inherit an opener's live media lease.
+  // A newly opened window can copy sessionStorage. Only a real reload may
+  // reconnect this document's previous media identity and backend lease.
   try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = generated; } catch (_) {}
   try { sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY, generated); } catch (_) {}
   return generated;
@@ -185,12 +189,15 @@ class VoipStackEngine extends EventTarget {
     this._phoneStateEpoch = 0;
     this._phoneStateFailed = false;
     this._phoneStateRevoked = false;
-    this._phoneStateReady = () => {
+    this._phoneStateReady = (force = false) => {
       if (this._phoneStateRevoked) return;
       this._resetPhoneStateSubscription("runtime_ready");
       this._ensurePhoneStateSubscription();
+      this._resetSoftphoneScopeSubscriptions(force !== true);
+      this._ensureBusSubscriptions(this._busConnection);
     };
     this._phoneStateDisconnected = () => {
+      this._resetSoftphoneScopeSubscriptions();
       this._phoneStates.clear();
       this._phoneStateRevision = null;
       for (const listener of this._phoneStateSubscribers) {
@@ -206,6 +213,11 @@ class VoipStackEngine extends EventTarget {
     this._mediaClientId = mediaClientInstanceId();
     this._mediaIntent = null;
     this._mediaRecoveryAttempts = new Set();
+    // Auto Answer media results are cached in the engine so they survive HA
+    // recreating the card, e.g. on a dashboard view change or during a call;
+    // see checkAutoAnswerMedia().
+    this._autoAnswerMedia = new Map();
+    this._watchedMediaPermissions = new Set();
     // Media ownership belongs to the page-level engine, not to one Lovelace
     // element. Home Assistant may recreate a card while an outbound call is
     // ringing; the replacement must still be able to attach that call's media.
@@ -274,12 +286,7 @@ class VoipStackEngine extends EventTarget {
       if (this._busUnsub) this._busUnsub();
       this._busUnsub = null;
       this._busSubscribePending = false;
-      for (const record of this._softphoneScopeSubscriptions.values()) {
-        try { record.unsub?.(); } catch (_) {}
-        record.unsub = null;
-        record.pending = false;
-        record.invalid = false;
-      }
+      this._resetSoftphoneScopeSubscriptions();
       if (this._busSubscribeRetryTimer) clearTimeout(this._busSubscribeRetryTimer);
       this._busSubscribeRetryTimer = null;
       this._busConnection = conn;
@@ -443,20 +450,49 @@ class VoipStackEngine extends EventTarget {
 
   _ensureSoftphoneScopeSubscription(conn, record) {
     if (!record || record.unsub || record.pending || record.invalid || this._busConnection !== conn) return;
+    const generation = record.generation || 0;
+    const current = () => this._busConnection === conn &&
+      this._softphoneScopeSubscriptions.get(record.key) === record &&
+      (record.generation || 0) === generation;
     record.pending = true;
     const request = { type: WS_SUBSCRIBE_HA_SOFTPHONE };
     if (record.selector.endpoint_id) request.endpoint_id = record.selector.endpoint_id;
     if (record.selector.device_id) request.device_id = record.selector.device_id;
+    let initialSnapshot = true;
     conn.subscribeMessage(
-      (event) => this._onSoftphoneState(event, record.selector),
+      (event) => {
+        if (!current() || record.invalid) return;
+        if (event?.kind === "closed") {
+          // This is a loss of this client's view, not termination of the call.
+          record.invalid = true;
+          try { record.unsub?.(); } catch (_) {}
+          record.unsub = null;
+          const previous = [...this._lastSoftphoneStates.values()].find(
+            state => softphoneStateMatches(state, record.selector),
+          );
+          this._onSoftphoneState({
+            kind: "closed", endpoint_id: event.endpoint_id || previous?.endpoint_id || record.selector.endpoint_id || "",
+            device_id: event.device_id || previous?.device_id || record.selector.device_id || "",
+            state: "unavailable", sip_state: "unavailable", availability: "unavailable",
+            can_control: false, can_attach_media: false, available: false,
+            subscription_error: event.reason || "permissions_revoked",
+          }, record.selector, { authoritative: true, previousCallId: String(previous?.call_id || "") });
+          return;
+        }
+        const previous = initialSnapshot ? [...this._lastSoftphoneStates.values()].find(
+          state => softphoneStateMatches(state, record.selector),
+        ) : null;
+        const context = initialSnapshot
+          ? { authoritative: true, previousCallId: String(previous?.call_id || "") } : null;
+        initialSnapshot = false;
+        this._onSoftphoneState(event, record.selector, context);
+      },
       request,
     ).then((unsub) => {
-      if (this._busConnection === conn && this._softphoneScopeSubscriptions.get(record.key) === record) {
-        record.unsub = unsub;
-      } else {
-        unsub();
-      }
+      if (current() && !record.invalid) record.unsub = unsub;
+      else unsub();
     }).catch((err) => {
+      if (!current()) return;
       if (this._isUnknownEndpointError(err)) {
         record.invalid = true;
         this._onSoftphoneState({
@@ -473,9 +509,21 @@ class VoipStackEngine extends EventTarget {
       console.warn("voip-stack-engine: HA softphone subscription failed", err);
       this._scheduleBusSubscriptionRetry(conn);
     }).finally(() => {
-      record.pending = false;
+      if (current()) record.pending = false;
     });
   }
+
+  _resetSoftphoneScopeSubscriptions(skipPending = false) {
+    for (const record of this._softphoneScopeSubscriptions.values()) {
+      if (skipPending && record.pending) continue;
+      record.generation = (record.generation || 0) + 1;
+      try { record.unsub?.(); } catch (_) {}
+      record.unsub = null;
+      record.pending = false;
+      record.invalid = false;
+    }
+  }
+
 
   get active() {
     return this._state !== "IDLE";
@@ -516,6 +564,7 @@ class VoipStackEngine extends EventTarget {
     else this._ownedSoftphoneCalls.delete(endpoint);
     this._persistOwnedSoftphoneCalls();
     this._syncControlHealthMonitor();
+    this._syncUnmountedSoftphoneState(this._lastSoftphoneStates.get(`endpoint:${endpoint}`));
     return true;
   }
 
@@ -555,6 +604,7 @@ class VoipStackEngine extends EventTarget {
     const endpointId = this._mediaIntent.endpointId;
     this._mediaIntent = null;
     if (!this._ownedSoftphoneCalls.has(endpointId)) void this._discardPreparedAudio();
+    this._syncUnmountedSoftphoneState(this._lastSoftphoneStates.get(`endpoint:${endpointId}`));
     this._releaseUnusedSoftphoneScopes();
     return true;
   }
@@ -572,17 +622,15 @@ class VoipStackEngine extends EventTarget {
       this._persistOwnedSoftphoneCalls();
       this._syncControlHealthMonitor();
       this._releaseUnusedSoftphoneScopes();
+      this._ensureBusSubscriptions(this._busConnection);
     }
   }
 
   _softphoneScopeHasSession(record) {
     const selector = record.selector;
-    let endpointId = selector.endpoint_id;
-    if (!endpointId && selector.device_id) {
-      endpointId = [...this._lastSoftphoneStates.values()].find(
-        (state) => String(state.device_id || state.endpoint_device_id || "") === selector.device_id,
-      )?.endpoint_id;
-    }
+    const endpointId = selector.endpoint_id || [...this._lastSoftphoneStates.values()].find(
+      (state) => String(state.device_id || state.endpoint_device_id || "") === selector.device_id,
+    )?.endpoint_id;
     return Boolean(endpointId && (this.softphoneCallIdFor(endpointId) ||
       this._mediaIntent?.endpointId === endpointId));
   }
@@ -593,6 +641,40 @@ class VoipStackEngine extends EventTarget {
       try { record.unsub?.(); } catch (_) {}
       this._softphoneScopeSubscriptions.delete(key);
     }
+  }
+
+  _syncUnmountedSoftphoneState(state) {
+    if (!state) return;
+    const endpointId = String(state.endpoint_id || "");
+    const owned = this.softphoneCallIdFor(endpointId);
+    if (!owned || this._mediaIntent?.endpointId === endpointId ||
+        this._dashboardOperations.has(endpointId) ||
+        [...this._softphoneSubscribers].some((listener) =>
+          softphoneStateMatches(state, this._softphoneSubscriberSelectors.get(listener) || {}))) return;
+    const callId = String(state.call_id || "");
+    const sync = async () => {
+      if (state.state === "in_call" && callId === owned && state.media_owner !== "other" && state.can_attach_media !== false) {
+        let microphoneAntiAlias = true;
+        try {
+          microphoneAntiAlias = localStorage.getItem(
+            `voip_microphone_anti_alias_${state.device_id || endpointId}`,
+          ) !== "false";
+        } catch (_) {}
+        await this.resumeSession({ ...state, softphone: true,
+          microphone_anti_alias: microphoneAntiAlias }, state.device_id, state);
+      } else if (callId === owned &&
+          TERMINAL_SOFTPHONE_STATES.has(String(state.state || "").toLowerCase())) {
+        // Cached phone idle before INVITE is not a terminal observation of
+        // the newly claimed call. Cleanup needs that exact dialog identity.
+        await this._releaseTerminalMedia(owned, endpointId);
+      }
+    };
+    void sync().catch((error) => {
+      if (error instanceof AudioSetupSupersededError) return;
+      this.dispatchEvent(new CustomEvent("error", {
+        detail: { message: error?.message || String(error) },
+      }));
+    });
   }
 
   _syncControlHealthMonitor() {
@@ -790,7 +872,7 @@ class VoipStackEngine extends EventTarget {
   _mediaAttachOwnedByOther(snapshot, callId) {
     if (!snapshot) return false;
     return (
-      String(snapshot.media_owner || "") === "other" &&
+      (snapshot.can_attach_media === false || String(snapshot.media_owner || "") === "other") &&
       String(snapshot.call_id || "") === String(callId || "") &&
       ACTIVE_SOFTPHONE_STATES.has(String(snapshot.state || "").toLowerCase())
     );
@@ -988,17 +1070,17 @@ class VoipStackEngine extends EventTarget {
       throw new Error("No microphone audio track is available.");
     }
     const settings = track.getSettings?.() || {};
+    if (
+      generation !== this._microphoneSwitchGeneration ||
+      context !== this._audioContext ||
+      captureNode !== this._captureNode
+    ) {
+      stream.getTracks().forEach((item) => item.stop());
+      throw new Error("Microphone selection was superseded");
+    }
     if (!context || !captureNode) {
       stream.getTracks().forEach((item) => item.stop());
     } else {
-      if (
-        generation !== this._microphoneSwitchGeneration ||
-        context !== this._audioContext ||
-        captureNode !== this._captureNode
-      ) {
-        stream.getTracks().forEach((item) => item.stop());
-        throw new Error("Microphone selection was superseded");
-      }
       const source = context.createMediaStreamSource(stream);
       source.connect(captureNode);
       const previousSource = this._source;
@@ -1010,6 +1092,7 @@ class VoipStackEngine extends EventTarget {
     }
     if (remember) this._mediaDevices.commit("audioinput", deviceId, settings);
     else this._mediaDevices.setActive("audioinput", settings.deviceId || deviceId);
+    this.recordAutoAnswerMedia("audio", true);
     await this._mediaDevices.refresh();
     return this.mediaDeviceState;
   }
@@ -1108,7 +1191,7 @@ class VoipStackEngine extends EventTarget {
     await this._discardPreparedAudio();
     const resources = {
       endpointId: this._mediaIntent?.endpointId || "",
-      audioContext: null, mediaStream: null, source: null, captureSink: null,
+      audioContext: null, mediaStream: null, source: null, captureSink: null, readinessNode: null,
       ready: false, cancel: null,
     };
     this._preparedAudio = resources;
@@ -1145,21 +1228,44 @@ class VoipStackEngine extends EventTarget {
       // Load processors before INVITE/answer so immediate RTP does not wait on downloads.
       await this._loadAudioWorklets(context, { capture: needsMicrophone, playback: true });
       assertCurrent();
-      // Confirm actual rendering before SIP starts, including device startup.
-      const probe = context.createBufferSource();
-      probe.buffer = context.createBuffer(1, 1, context.sampleRate);
+      // A running context and a short BufferSource's ended event can precede
+      // processing of the live microphone graph. Admit SIP only after that
+      // graph has reached the audio rendering thread, without choosing a
+      // fabricated PCM format before negotiation.
+      const probe = resources.readinessNode = new AudioWorkletNode(
+        context, "voip-stack-audio-ready", {
+          numberOfInputs: needsMicrophone ? 1 : 0,
+          outputChannelCount: [1],
+          processorOptions: { needsMicrophone },
+        },
+      );
+      resources.source?.connect(probe);
       probe.connect(context.destination);
       try {
         await new Promise((resolve, reject) => {
+          let previousClock = null;
           resources.cancel = () => reject(new Error("Audio preparation cancelled"));
-          probe.onended = resolve;
-          probe.start();
+          probe.port.onmessage = (event) => {
+            if (event.data?.type !== "ready") return;
+            // The initial render can prefill a small hardware buffer before
+            // the device clock actually starts. Wait for its output timestamp,
+            // or a fresh render round-trip when that public API is absent.
+            const timestamp = context.getOutputTimestamp?.();
+            const outputStarted = timestamp
+              ? timestamp.performanceTime > 0 && timestamp.contextTime > 0
+              : previousClock !== null && context.currentTime > previousClock;
+            if (outputStarted) resolve();
+            else {
+              previousClock = context.currentTime;
+              probe.port.postMessage({ type: "check" });
+            }
+          };
+          probe.onprocessorerror = () => reject(new Error("Browser audio preparation failed"));
         });
       } finally {
         resources.cancel = null;
-        probe.onended = null;
-        try { probe.stop(); } catch (_) {}
-        probe.disconnect();
+        probe.port.onmessage = null;
+        probe.onprocessorerror = null;
       }
       assertCurrent();
       resources.ready = true;
@@ -1203,26 +1309,89 @@ class VoipStackEngine extends EventTarget {
     return this._video ? this._video.close() : Promise.resolve();
   }
 
-  async prepareVideoCameraPermission({
-    persistentOnly = false,
-  } = {}) {
-    if (!navigator.mediaDevices?.getUserMedia) return false;
-    if (persistentOnly) {
-      if (!navigator.permissions?.query) return false;
-      try {
-        const permission = await navigator.permissions.query({ name: "camera" });
-        if (permission.state === "granted") return true;
-        return false;
-      } catch (_) {
-        return false;
-      }
+  // Check if the microphone or camera is available to auto-answer a call. We
+  // can't reliably do that without potentially prompting the user for
+  // permission, so we should do it in advance, at a time when a user is likely
+  // to be present to interact with the prompt, rather than waiting until a
+  // call arrives, which could prompt the user with no context.
+  // Each media kind has one result for the whole page, not per card, so
+  // recreating a card on a view change never checks again, and concurrent
+  // callers share one check. A user gesture (recordAutoAnswerMedia) or a
+  // permission change (resetAutoAnswerMedia) replaces it.
+  checkAutoAnswerMedia(kind) {
+    const media = kind === "video" ? "video" : "audio";
+    let entry = this._autoAnswerMedia.get(media);
+    if (!entry) {
+      entry = { result: null, promise: null };
+      this._autoAnswerMedia.set(media, entry);
+      entry.promise = this._probeAutoAnswerMedia(media).then((result) => {
+        // A reset or a user gesture may have replaced this entry while the
+        // probe was running; a stale result must not overwrite it.
+        if (this._autoAnswerMedia.get(media) === entry) {
+          entry.result = result;
+          this._emit();
+        }
+        return result;
+      });
     }
-    // A manual call is allowed to request camera permission.  In particular,
-    // Android/iOS companion WebViews may report `denied` or an unsupported
-    // state through the Permissions API while getUserMedia() can still open
-    // the camera through the native application permission.  The real media
-    // acquisition is authoritative here, as it was before multi-phone
-    // per-endpoint camera preferences were introduced.
+    return entry.promise;
+  }
+
+  autoAnswerMediaResult(kind) {
+    return this._autoAnswerMedia.get(kind === "video" ? "video" : "audio")?.result || null;
+  }
+
+  // The card's Auto Answer and Send Camera UI toggles open the device when
+  // tapped; save that result to avoid trying to open it again.
+  recordAutoAnswerMedia(kind, ready) {
+    const result = { ready: Boolean(ready) };
+    this._autoAnswerMedia.set(kind === "video" ? "video" : "audio", {
+      result,
+      promise: Promise.resolve(result),
+    });
+    this._emit();
+  }
+
+  resetAutoAnswerMedia(kind = "") {
+    if (kind) this._autoAnswerMedia.delete(kind === "video" ? "video" : "audio");
+    else this._autoAnswerMedia.clear();
+    this._emit();
+  }
+
+  // The check behind checkAutoAnswerMedia. If the Permissions API returns
+  // `granted` we can trust it; however, Android/iOS WebViews grant through
+  // the native app while reporting `prompt` or `denied`, so any other state
+  // is checked by attempting to open the device, which may show a permission
+  // prompt (the browser's, or Android's in an app).
+  async _probeAutoAnswerMedia(media) {
+    try {
+      const status = await navigator.permissions?.query?.({
+        name: media === "video" ? "camera" : "microphone",
+      });
+      if (status) this._watchMediaPermission(media, status);
+      if (status?.state === "granted") return { ready: true };
+    } catch (_) {
+      // Unsupported permission names fall through to a real acquisition.
+    }
+    const ready = media === "video"
+      ? await this.prepareVideoCameraPermission()
+      : await this.prepareMicrophonePermission();
+    return { ready };
+  }
+
+  // Desktop browsers fire `change` when site settings change, so a saved
+  // failure can recover without a reload. Android WebViews never fire it.
+  _watchMediaPermission(media, status) {
+    if (this._watchedMediaPermissions.has(media)) return;
+    if (typeof status.addEventListener !== "function") return;
+    this._watchedMediaPermissions.add(media);
+    status.addEventListener("change", () => this.resetAutoAnswerMedia(media));
+  }
+
+  // Check if access to the camera is available, by attempting to open it then
+  // releasing it. This may prompt for permission.
+  async prepareVideoCameraPermission() {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
     let stream = null;
     try {
       const base = {
@@ -1243,6 +1412,25 @@ class VoipStackEngine extends EventTarget {
       return Boolean(stream?.getVideoTracks?.()[0]);
     } catch (err) {
       console.warn("voip-stack-engine: camera permission unavailable; continuing receive-only", err);
+      return false;
+    } finally {
+      for (const track of stream?.getTracks?.() || []) track.stop();
+    }
+  }
+
+  // The microphone counterpart of prepareVideoCameraPermission. Unlike
+  // prepareAudioCall, it releases the microphone straight away instead of
+  // keeping it open for the next call.
+  async prepareMicrophonePermission() {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    let stream = null;
+    try {
+      stream = await this._openAudioInput(
+        this._mediaDevices.preference("audioinput"), { processing: false },
+      );
+      return Boolean(stream?.getAudioTracks?.()[0]);
+    } catch (err) {
+      console.warn("voip-stack-engine: microphone permission unavailable", err);
       return false;
     } finally {
       for (const track of stream?.getTracks?.() || []) track.stop();
@@ -1310,7 +1498,7 @@ class VoipStackEngine extends EventTarget {
 
   _onBusEvent(event) {
     if (event?.event_type === "voip_stack.runtime_ready") {
-      this._phoneStateReady();
+      this._phoneStateReady(true);
       return;
     }
     if (event?.event_type === "voip_stack.activity") {
@@ -1376,24 +1564,20 @@ class VoipStackEngine extends EventTarget {
     };
   }
 
-  _onSoftphoneState(state, subscriptionSelector = null) {
-    if (!state) return;
+  rememberSoftphoneState(state) {
+    if (!state) return false;
     const endpointId = String(state.endpoint_id || "").trim();
     const deviceId = String(state.device_id || state.endpoint_device_id || "").trim();
-    if (!endpointId && !deviceId) return;
+    if (!endpointId && !deviceId) return false;
     const key = endpointId ? `endpoint:${endpointId}` : `device:${deviceId}`;
     this._lastSoftphoneState = state;
     this._lastSoftphoneStates.set(key, state);
-    // An owned session survives its last Lovelace view. Its confirmed media
-    // must therefore also attach when the remote party answers after unmount.
-    const hasLiveView = [...this._softphoneSubscribers].some((listener) =>
-      softphoneStateMatches(state, this._softphoneSubscriberSelectors.get(listener) || {}));
-    if (endpointId && this.softphoneCallIdFor(endpointId) && !hasLiveView) {
-      void this.syncOwnedSoftphoneState({ ...state, endpoint_id: endpointId,
-        device_id: deviceId, softphone: true }, state).catch((error) => {
-        this.dispatchEvent(new CustomEvent("error", { detail: { message: error?.message || String(error) } }));
-      });
-    }
+    return true;
+  }
+
+  _onSoftphoneState(state, subscriptionSelector = null, context = null) {
+    if (!this.rememberSoftphoneState(state)) return;
+    if (state.kind !== "closed") this._syncUnmountedSoftphoneState(state);
     for (const cb of this._softphoneSubscribers) {
       const selector = this._softphoneSubscriberSelectors.get(cb) || {};
       // Dispatch only through the subscription owned by this callback so one
@@ -1403,7 +1587,7 @@ class VoipStackEngine extends EventTarget {
         softphoneScopeKey(selector) !== softphoneScopeKey(subscriptionSelector)
       ) continue;
       if (!softphoneStateMatches(state, selector)) continue;
-      try { cb(state); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
+      try { cb(state, context); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
   }
 
@@ -1443,7 +1627,8 @@ class VoipStackEngine extends EventTarget {
   }
 
   _dashboardIsBrowser(owner) {
-    return Boolean(owner?.softphone || owner?.kind === "browser" || owner?.endpoint_type === "browser");
+    return Boolean(owner?.ha_client_supported || owner?.softphone ||
+      ["browser", "sip_account"].includes(owner?.kind || owner?.endpoint_type));
   }
 
   _browserPhoneInfo(owner) {
@@ -1463,9 +1648,21 @@ class VoipStackEngine extends EventTarget {
       throw new Error("Choose a phone in the dashboard editor.");
     }
     if (this._dashboardIsBrowser(owner)) {
+      const connection = this._busConnection;
+      const scopes = [...this._softphoneScopeSubscriptions.values()]
+        .filter(record => (record.selector.endpoint_id || record.selector.device_id) &&
+          softphoneStateMatches(owner, record.selector))
+        .map(record => [record, record.generation || 0]);
       const state = await this._hass.callWS({ type: "voip_stack/ha_softphone_state",
         device_id: owner.device_id, media_client_id: this.mediaClientId });
-      if (state.endpoint_id) this._lastSoftphoneStates.set(`endpoint:${state.endpoint_id}`, state);
+      // A query sent before revocation cannot repopulate a retracted view.
+      if (connection !== this._busConnection ||
+          this._lastSoftphoneStates.get(`endpoint:${owner.endpoint_id}`)?.kind === "closed" ||
+          scopes.some(([record, generation]) => record.invalid ||
+            (record.generation || 0) !== generation || this._softphoneScopeSubscriptions.get(record.key) !== record)) {
+        throw new Error("The phone state request was superseded.");
+      }
+      this.rememberSoftphoneState(state);
       return state;
     }
     const phone = this._phoneStates.get(owner.endpoint_id) || {};
@@ -1486,8 +1683,10 @@ class VoipStackEngine extends EventTarget {
     this._dashboardOperations.set(endpointId, token);
     try { return await operation(browser); }
     finally {
-      if (this._dashboardOperations.get(endpointId) === token) this._dashboardOperations.delete(endpointId);
+      // Releasing intent can synchronize an unmounted card. Keep this command
+      // as the owner until that release has finished, then sync once below.
       if (browser) this.releaseMediaIntent(token);
+      if (this._dashboardOperations.get(endpointId) === token) this._dashboardOperations.delete(endpointId);
       const committed = this._lastSoftphoneStates.get(`endpoint:${endpointId}`);
       if (browser && committed) await this.dashboardSyncOwner(owner, committed);
       this._emit();
@@ -1509,8 +1708,10 @@ class VoipStackEngine extends EventTarget {
       return this.resumeSession(this._browserPhoneInfo(owner), owner.device_id, snapshot);
     }
     const owned = this.softphoneCallIdFor(endpointId);
-    if (owned && !ACTIVE_SOFTPHONE_STATES.has(String(snapshot.state || "")) &&
-        (!callId || callId === owned)) await this._releaseTerminalMedia(owned, endpointId);
+    if (owned && callId === owned &&
+        TERMINAL_SOFTPHONE_STATES.has(String(snapshot.state || "").toLowerCase())) {
+      await this._releaseTerminalMedia(owned, endpointId);
+    }
   }
 
   async dashboardStartCall(owner, target) {
@@ -1562,7 +1763,6 @@ class VoipStackEngine extends EventTarget {
         throw error;
       }
     });
-    await this.dashboardSyncOwner(owner, result);
     return result;
   }
 
@@ -1603,7 +1803,6 @@ class VoipStackEngine extends EventTarget {
         }
       }
     });
-    await this.dashboardSyncOwner(owner, result);
     return result;
   }
 
@@ -1964,16 +2163,15 @@ class VoipStackEngine extends EventTarget {
     const expectedCallId = this._callId;
     const prepared = this._preparedAudio?.ready ? this._preparedAudio : null;
     if (prepared) this._preparedAudio = null;
-    prepared?.source?.disconnect();
-    prepared?.captureSink?.disconnect();
     const resources = {
       audioContext: prepared?.audioContext || null,
       mediaStream: prepared?.mediaStream || null,
       captureNode: null,
-      captureSink: null,
-      source: null,
+      captureSink: prepared?.captureSink || null,
+      source: prepared?.source || null,
       playbackNode: null,
       playbackAnalyser: null,
+      readinessNode: prepared?.readinessNode || null,
     };
     const assertCurrent = () => {
       if (
@@ -2007,6 +2205,10 @@ class VoipStackEngine extends EventTarget {
       }
 
       if (!capture && resources.mediaStream) {
+        resources.source?.disconnect();
+        resources.captureSink?.disconnect();
+        resources.source = null;
+        resources.captureSink = null;
         for (const track of resources.mediaStream.getTracks()) track.stop();
         resources.mediaStream = null;
       }
@@ -2027,7 +2229,7 @@ class VoipStackEngine extends EventTarget {
           { processing: true },
         );
         assertCurrent();
-        resources.source = resources.audioContext.createMediaStreamSource(resources.mediaStream);
+        resources.source ||= resources.audioContext.createMediaStreamSource(resources.mediaStream);
         resources.captureNode = new AudioWorkletNode(resources.audioContext, "voip-stack-processor", {
           processorOptions: {
             format: formats.tx,
@@ -2041,11 +2243,16 @@ class VoipStackEngine extends EventTarget {
           ) this._sendAudio(event.data.buffer);
         };
         resources.source.connect(resources.captureNode);
-        resources.captureSink = resources.audioContext.createGain();
+        resources.captureSink ||= resources.audioContext.createGain();
         resources.captureSink.gain.value = 0;
-        resources.captureNode
-          .connect(resources.captureSink)
-          .connect(resources.audioContext.destination);
+        resources.captureNode.connect(resources.captureSink);
+        if (prepared?.captureSink) {
+          // Keep the prepared input owner alive while the negotiated capture
+          // node is attached. Remove only its old muted bypass afterwards.
+          resources.source.disconnect(resources.captureSink);
+        } else {
+          resources.captureSink.connect(resources.audioContext.destination);
+        }
       }
 
       if (playback) {
@@ -2075,6 +2282,13 @@ class VoipStackEngine extends EventTarget {
         }
       }
       assertCurrent();
+      // Keep preparation's graph alive until both negotiated paths are wired.
+      if (resources.readinessNode) {
+        resources.readinessNode.port.postMessage({ type: "stop" });
+        try { resources.source?.disconnect(resources.readinessNode); } catch (_) {}
+        resources.readinessNode.disconnect();
+        resources.readinessNode = null;
+      }
       const previous = this._takeAudioResources();
       this._audioMode = audioMode;
       this._microphoneAntiAlias = microphoneAntiAlias;
@@ -2175,8 +2389,13 @@ class VoipStackEngine extends EventTarget {
   async _setupAudioOrAbort(deviceId, deviceInfo, reply, attachKey = "", endpointId = "") {
     let connected = false;
     const callId = String(reply?.call_id || "");
+    const isCurrent = () => !attachKey || this._sessionAttachKey === attachKey;
+    const assertCurrent = () => {
+      if (!isCurrent()) throw new AudioSetupSupersededError();
+    };
     try {
       const beforeAttach = await this._mediaAttachState(callId, endpointId);
+      assertCurrent();
       if (this._mediaAttachOwnedByOther(beforeAttach, callId)) {
         // Only the browser that originated or answered the call may attach
         // media. A spectator can observe call state but must discard its
@@ -2191,7 +2410,9 @@ class VoipStackEngine extends EventTarget {
       let negotiated = null;
       for (let attempt = 0; attempt < MEDIA_RECONNECT_ATTEMPTS; attempt++) {
         try {
+          assertCurrent();
           negotiated = await this._connect(deviceId, callId, endpointId);
+          assertCurrent();
           break;
         } catch (err) {
           const superseded = attachKey && this._sessionAttachKey !== attachKey;
@@ -2237,6 +2458,7 @@ class VoipStackEngine extends EventTarget {
       // real browser media-format/setup failure is still fatal for this leg.
       if (!connected) {
         const afterFailure = await this._mediaAttachState(callId, endpointId);
+        if (!isCurrent()) return false;
         if (this._mediaAttachOwnedByOther(afterFailure, callId)) {
           // The ownership race happened between preflight and WebSocket
           // admission. `_connect()` already discarded its losing socket.
@@ -2246,8 +2468,10 @@ class VoipStackEngine extends EventTarget {
         const expectedTerminalRace =
           this._mediaAttachNoLongerBelongsHere(afterFailure, callId);
         this.releaseSoftphoneSession(callId, endpointId);
-        await this.close("media_attach_conflict");
-        this._forceIdle();
+        const cleanup = this.close("media_attach_conflict");
+        const cleanupGeneration = this._connectGeneration;
+        await cleanup;
+        if (this._connectGeneration !== cleanupGeneration || this._sessionAttachKey) return false;
         if (expectedTerminalRace) return false;
         console.error("voip-stack-engine: audio setup failed", err);
         this.dispatchEvent(new CustomEvent("error", {
@@ -2270,8 +2494,12 @@ class VoipStackEngine extends EventTarget {
           device_id: deviceId,
           reason: "media_incompatible",
         }).catch(() => {});
+        if (!isCurrent()) return false;
       }
-      await this.close("audio_setup_failed");
+      const cleanup = this.close("audio_setup_failed");
+      const cleanupGeneration = this._connectGeneration;
+      await cleanup;
+      if (this._connectGeneration !== cleanupGeneration || this._sessionAttachKey) return false;
       this._setState("ERROR");
       return false;
     }
@@ -2368,10 +2596,13 @@ class VoipStackEngine extends EventTarget {
     // HA device after answer; treating that metadata update as a new attach
     // tears down a healthy RTP/WebSocket pipeline and loses the first video
     // keyframe.
-    const attachKey = `${endpointId}|${statePayload?.call_id || ""}`;
-    if (this._sessionAttachPromise && this._sessionAttachKey === attachKey) {
+    const callKey = `${endpointId}|${statePayload?.call_id || ""}`;
+    if (this._sessionAttachPromise && this._sessionAttachKey?.callKey === callKey) {
       return this._sessionAttachPromise;
     }
+    // The logical leg may reconnect after close with the same Call-ID. Its
+    // new attempt must not share identity with a retired async continuation.
+    const attachKey = { callKey };
     this._sessionAttachKey = attachKey;
     // Defer the actual attach until after `_sessionAttachPromise` has been
     // installed below. `_connect()` synchronously emits an intermediate
@@ -2617,6 +2848,12 @@ class VoipStackEngine extends EventTarget {
   }
 
   async _disposeAudioResources(resources = {}) {
+    if (resources.readinessNode) {
+      resources.readinessNode.port.onmessage = null;
+      resources.readinessNode.onprocessorerror = null;
+      try { resources.readinessNode.port.postMessage({ type: "stop" }); } catch (_) {}
+      try { resources.readinessNode.disconnect(); } catch (_) {}
+    }
     try { resources.captureNode?.disconnect(); } catch (_) {}
     try { resources.captureSink?.disconnect(); } catch (_) {}
     try { resources.source?.disconnect(); } catch (_) {}

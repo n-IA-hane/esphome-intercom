@@ -43,16 +43,12 @@ from .const import (
     TRUNK_INBOUND_MODE_DIRECT,
     TRUNK_INBOUND_MODE_DTMF,
 )
-from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_lifecycle import call_registry as _call_registry
 from .esphome_state_bridge import (
     register_state_event_bridge as _register_esp_state_event_bridge,
 )
 from .peer_snapshot import (
     async_advertise_host as _ha_advertise_host,
-)
-from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
-    EndpointKind,
 )
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
@@ -91,7 +87,9 @@ from .websocket_api import (
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.EVENT,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
@@ -165,6 +163,25 @@ async def async_migrate_entry(
         data.pop("parking_enabled", None)
         data.pop("voicemail_enabled", None)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=4)
+    if config_entry.version < 7:
+        from .phone_config import migrate_browser_accounts
+        try:
+            migrate_browser_accounts(hass, config_entry)
+        except (ValueError, TypeError, KeyError) as error:
+            if str(error) == "phone_identity_conflict":
+                from .repairs import async_sync_phone_identity_issue
+                async_sync_phone_identity_issue(hass, config_entry, error)
+            _LOGGER.error("Cannot migrate VoIP accounts: account configuration or route namespace is invalid")
+            return False
+        hass.config_entries.async_update_entry(config_entry, version=7, minor_version=0)
+    if config_entry.version == 7 and config_entry.minor_version < 1:
+        from .phone_config import migrate_phone_identity_storage
+        try:
+            migrate_phone_identity_storage(hass, config_entry)
+        except (ValueError, TypeError, KeyError):
+            _LOGGER.error("Cannot migrate VoIP phone identities; resolve the reported identity or route conflict")
+            return False
+        hass.config_entries.async_update_entry(config_entry, minor_version=1)
     return True
 
 
@@ -172,25 +189,12 @@ _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
 
 
-def _preferred_phone_device_id(endpoint_registry, configured_device_id: str) -> str:
-    """Resolve the persisted phone or migrate the historical initial phone."""
-
-    selected = endpoint_registry.by_device_id(configured_device_id)
-    if selected is not None and selected.kind is EndpointKind.BROWSER:
-        return selected.device_id
-    initial = endpoint_registry.get(DEFAULT_ENDPOINT_ID)
-    if (
-        initial is not None
-        and initial.kind is EndpointKind.BROWSER
-        and initial.device_id
-    ):
-        return initial.device_id
-    browsers = tuple(
-        endpoint
-        for endpoint in endpoint_registry.endpoints
-        if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
-    )
-    return browsers[0].device_id if len(browsers) == 1 else ""
+def _preferred_phone_device_id(endpoint_registry, configured_device_id: str, *, ha_bound_endpoint_ids=()) -> str:
+    """Keep the setup-facing device DTO of the shared preference policy."""
+    from .runtime_data import select_preferred_phone
+    selected = select_preferred_phone(endpoint_registry, configured_device_id,
+                                       ha_bound_endpoint_ids=ha_bound_endpoint_ids)
+    return selected.device_id if selected is not None else ""
 
 
 async def _handle_purge_devices_service(call: ServiceCall) -> None:
@@ -232,7 +236,9 @@ async def _handle_sip_hangup_service(call: ServiceCall) -> None:
         return
     if "expected_generation" in call.data:
         registry = call_registry(call.hass)
-        if not registry.is_generation_current(call_id, int(call.data["expected_generation"])):
+        expected = int(call.data["expected_generation"])
+        if (not registry.is_generation_current(call_id, expected)
+                and not registry.is_terminated(call_id, generation=expected)):
             raise ServiceValidationError("The selected call has ended or changed generation")
     await _control_phone(call, PhoneOperation.HANGUP)
 
@@ -342,6 +348,7 @@ async def _handle_set_ha_softphone_settings_service(call: ServiceCall) -> None:
         endpoint_id=endpoint_id,
         extension=call.data.get("extension"),
         ring_group=call.data.get("ring_group"),
+        queues=call.data.get("queues"),
         conference_group=call.data.get("conference_group"),
         conference_ring=call.data.get("conference_ring"),
         auto_answer=call.data.get("auto_answer"),
@@ -556,6 +563,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     from .phone_state import async_get_phone_state
     from .call_pickup import async_pickup_call
     from .call_recording import async_start_recording, async_stop_recording, async_get_recording, async_delete_recording
+    from .phone_queue_membership import async_set_phone_queues, async_set_phone_memberships_service
+    from .call_queues import async_set_queue_agent_state, async_get_queue_state, async_configure_queue
+    from .queue_activity import async_get_queue_activity_service, async_get_queue_metrics_service
+    from .paging import async_announce, async_stop_announcement
 
     await async_register_services(
         hass,
@@ -584,6 +595,15 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "transfer": _handle_sip_transfer_service,
             "park": async_park_call,
             "get_phone_state": async_get_phone_state,
+            "set_phone_queues": async_set_phone_queues,
+            "set_phone_memberships": async_set_phone_memberships_service,
+            "set_queue_agent_state": async_set_queue_agent_state,
+            "get_queue_state": async_get_queue_state,
+            "get_queue_activity": async_get_queue_activity_service,
+            "get_queue_metrics": async_get_queue_metrics_service,
+            "configure_queue": async_configure_queue,
+            "announce": async_announce,
+            "stop_announcement": async_stop_announcement,
             "pickup": async_pickup_call,
             "start_recording": async_start_recording,
             "stop_recording": async_stop_recording,
@@ -625,6 +645,13 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
             from .video_ws_view import async_register_video_ws_view
 
             async_register_video_ws_view(hass)
+        if hass.state == CoreState.running:
+            # Assets can change while process-wide services remain registered.
+            # The existing registrar replaces stale URLs/panel and updates the
+            # same Lovelace resource instead of creating a second frontend owner.
+            from .frontend import JSModuleRegistration
+
+            await JSModuleRegistration(hass).async_register()
         return
 
     registration.initialized = True
@@ -678,6 +705,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         data = dict(entry.data)
         data[CONF_INITIAL_PHONE_CREATED] = True
         hass.config_entries.async_update_entry(entry, data=data)
+    from .phone_config import migrate_browser_accounts, phone_endpoint_id, phone_subentry_data
+    migrate_browser_accounts(hass, entry)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
     for configured_endpoint in tuple(endpoint_registry.endpoints):
         async_ensure_endpoint_device(
@@ -729,7 +758,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         entry_runtime_signature=_entry_runtime_signature(entry),
         entry_phone_signature=_entry_phone_signature(entry),
         entry_phone_records={
-            str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
+            phone_endpoint_id(subentry): phone_subentry_data(subentry)
             for subentry in phone_subentries(entry)
         },
         entry_contacts_signature=tuple(contact_dicts(entry)),
@@ -746,20 +775,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .phone_policy_runtime import setup_phone_policy_events
 
     setup_phone_policy_events(hass, entry)
+    from .call_queues import async_setup_queues
+
+    await async_setup_queues(hass, entry)
+    from .group_config import group_records, membership_signature
+    from .paging_config import paging_group_configs
+    entry.runtime_data.entry_group_records = group_records(entry)
+    entry.runtime_data.entry_paging_records = paging_group_configs(entry)
+    entry.runtime_data.entry_membership_signature = membership_signature(hass, entry)
     from .repairs import async_sync_runtime_issues
 
     async_sync_runtime_issues(hass)
     hass.data[DOMAIN]["manual_roster_entries"] = _manual_roster_entries(hass)
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):
-        endpoint = endpoint_registry.get(str(subentry.data.get("endpoint_id") or ""))
-        if endpoint is None or not endpoint.kind.is_softphone:
+        endpoint = endpoint_registry.get(phone_endpoint_id(subentry))
+        if endpoint is None or not endpoint.supports_ha_client:
             continue
         await _async_load_ha_softphone_store(
             hass,
             entry,
             endpoint_id=endpoint.endpoint_id,
-            endpoint_data=dict(subentry.data),
+            endpoint_data=phone_subentry_data(subentry),
         )
     await _async_apply_assist_intents(
         hass,
@@ -779,19 +816,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             f"Failed to bind SIP port {cfg['sip_port']}. Another SIP "
             "endpoint may already be listening on that port."
         )
+    from .account_runtime import recompute_account_availability
+    from .ha_bindings import HaCardBindings
+
+    def bindings_changed(identities):
+        runtime = entry.runtime_data
+        recompute_account_availability(hass, identities)
+        selected = _preferred_phone_device_id(runtime.endpoints,
+            str(entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""),
+            ha_bound_endpoint_ids={endpoint.endpoint_id for endpoint in runtime.endpoints.endpoints
+                if runtime.ha_bindings is not None and runtime.ha_bindings.has_binding(endpoint.endpoint_id)})
+        runtime.preferred_phone_device_id = selected
+        runtime.phones.set_preferred_phone_device_id(selected)
+
+    entry.runtime_data.ha_bindings = HaCardBindings(hass, entry, entry.runtime_data, bindings_changed)
+    await entry.runtime_data.ha_bindings.async_start()
+    recompute_account_availability(hass)
+    bindings_changed(frozenset())
     await _async_start_sip_trunk(hass)
+    from .paging import async_setup_paging
+
+    paging = await async_setup_paging(hass, entry)
+    from .browser_paging import async_originate_browser_paging
+    paging.browser_originate = async_originate_browser_paging
     from .mailbox import async_setup_mailboxes
     await async_setup_mailboxes(hass, entry)
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
     from .phone_services import async_setup_phone_services
     await async_setup_phone_services(hass, entry)
+    from .physical_phone_provisioning import async_reconcile_physical_phones
+    await async_reconcile_physical_phones(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    from .logbook import async_setup_account_activity
+    async_setup_account_activity(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     _register_runtime_shutdown(hass, entry)
-    create_runtime_task(hass, _deferred_phonebook_sync(hass))
-    # Transport subscriptions survive an entry reload. Announce readiness only
-    # after the new runtime and its platforms can serve a fresh snapshot.
+    entry.async_create_background_task(hass, _deferred_phonebook_sync(hass), "voip-phonebook-startup-sync")
+    # Platforms can now serve fresh snapshots after an entry reload.
     hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
     return True
 
@@ -808,10 +872,34 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     """Release media owners before closing the PBX runtime."""
     from .websocket_api import _async_shutdown_all
 
+    runtime = _runtime_data(hass)
+    if runtime is not None:
+        stores = tuple(store for owner in (runtime.ha_bindings, runtime.physical_phones, runtime.queues)
+                       if owner is not None
+                       if (store := getattr(owner, "store", None) or getattr(owner, "_store", None)) is not None)
+        if stores:
+            runtime.entry_stores = stores
+    if runtime is not None and runtime.ha_bindings is not None:
+        bindings, runtime.ha_bindings = runtime.ha_bindings, None
+        await bindings.async_close()
+    queues = runtime.queues if runtime is not None else None
+    if queues is not None:
+        queues.closed = True
+        queues._changed()
     from .phone_services import async_close_phone_services
     await async_close_phone_services(hass)
+    if runtime is not None and runtime.phone_provisioning is not None:
+        await runtime.phone_provisioning.async_close()
+    if runtime is not None and runtime.physical_phones is not None:
+        await runtime.physical_phones.async_close()
+        runtime.physical_phones = None
+    if runtime is not None and runtime.directory is not None:
+        runtime.directory.close()
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
+    if queues is not None:
+        await queues.close()
+        runtime.queues = None
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
@@ -846,6 +934,19 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     from .mailbox import async_remove_entry_mailboxes
 
     await async_remove_entry_mailboxes(hass, entry)
+    from homeassistant.helpers.storage import Store
+
+    runtime = getattr(entry, "runtime_data", None)
+    stores = {store.key: store for store in getattr(runtime, "entry_stores", ())}
+    for name in ("ha_bindings", "physical_phones", "queues"):
+        key = f"voip_stack.{name}.{entry.entry_id}"
+        store = stores.get(key)
+        if store is None:
+            # A disabled/never-loaded entry has no live owner or delayed writer.
+            store = Store(hass, 1, key)
+        await store.async_remove()
+    if runtime is not None:
+        runtime.entry_stores = ()
     bucket = hass.data.get(DOMAIN)
     if not isinstance(bucket, dict):
         return

@@ -13,6 +13,28 @@ from .voip_phase1_support import (
 
 
 class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
+    def test_shared_flow_identity_requires_one_enabled_registered_account(self) -> None:
+        from dataclasses import replace
+
+        registrar = sip_registrar.SipRegistrar(enabled=True,
+            accounts=[sip_registrar.SipAccount(name, name, "test-only") for name in ("alice", "bob")],
+            local_ip="192.0.2.1", local_sip_port=5060)
+        address = ("192.0.2.50", 5062)
+        for name in ("alice", "bob"):
+            registrar.registrations[name] = sip_registrar.SipRegistration(
+                name, f"sip:{name}@192.0.2.50:5062", *address, "UDP", 9999999999)
+        self.assertIsNone(registrar.account_for_source(address, "UDP"))
+        self.assertEqual(registrar.account_for_source(address, "UDP", username="BOB").username, "bob")
+        self.assertIsNone(registrar.account_for_source(address, "UDP", username="unknown"))
+        self.assertIsNone(registrar.account_for_source((address[0], 5063), "UDP", username="bob"))
+        self.assertIsNone(registrar.account_for_source(address, "TCP", username="bob"))
+        registrar.accounts["bob"] = replace(registrar.accounts["bob"], enabled=False)
+        self.assertIsNone(registrar.account_for_source(address, "UDP", username="bob"))
+        self.assertEqual(registrar.account_for_source(address, "UDP").username, "alice")
+        registrar.registrations["alice#2"] = replace(registrar.registrations["alice"],
+            contact_uri="sip:alice-other@192.0.2.50:5062")
+        self.assertEqual(registrar.account_for_source(address, "UDP").username, "alice")
+
     def test_closed_flow_removes_only_its_bindings(self) -> None:
         changes: list[tuple[str, bool]] = []
         registrar = sip_registrar.SipRegistrar(

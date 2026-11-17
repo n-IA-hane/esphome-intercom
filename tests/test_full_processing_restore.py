@@ -204,6 +204,7 @@ def restore_binary(tmp_path_factory, request):
     log.parent.mkdir(parents=True)
     log.write_text(
         "#pragma once\n"
+        "#define ESPHOME_LOG_TAG(name, tag) [[maybe_unused]] static constexpr const char *const name = tag\n"
         "template<typename... Args> inline void test_log(Args &&...) {}\n"
         "#define ESP_LOGD(...) test_log(__VA_ARGS__)\n"
         "#define ESP_LOGE(...) test_log(__VA_ARGS__)\n"

@@ -37,13 +37,13 @@
 # symbols, buffers and managed libraries are absent from this firmware.
 
 substitutions:
-  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
   esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
-  camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"
+  camera_components_source: "github://n-IA-hane/esphome-esp-video-camera@dev"
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
   intercom_idf_ref: "dev"
@@ -59,7 +59,7 @@ substitutions:
 packages:
   device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@dev
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg
 
 api:

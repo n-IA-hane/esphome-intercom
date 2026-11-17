@@ -29,7 +29,7 @@ from .core.audio_format import (
     HA_SIP_PCM_TX_FORMATS,
 )
 from .assist_endpoint import AssistEndpoint
-from .call_forwarder import ForwardRuntime, async_forward_existing_call
+from .call_forwarder import ForwardRuntime, TransferResult, async_forward_existing_call
 from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
 )
@@ -169,7 +169,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         async_build_peer_snapshot as _async_build_peer_snapshot,
     )
     from .sip_runtime import (
-        enable_reused_signaling_flow as _enable_reused_signaling_flow,
+        enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
         send_final_response as _sip_send_final_response,
         uri_transport as _sip_uri_transport,
     )
@@ -182,7 +182,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         SipInviteResult,
         UasDelayedOfferPlan,
     )
-    from .sip_registrar import SipRegistrar, _extract_register_username
+    from .sip_registrar import SipRegistrar
     from .conference_ringing import (
         ConferenceRingRuntime,
         async_ring_conference_members,
@@ -207,31 +207,22 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
-        from .phone_endpoint import EndpointAvailability
+        from .account_runtime import recompute_account_availability
 
         endpoint_registry = endpoint_directory(hass)
         endpoint = endpoint_registry.by_username(username)
-        if (
-            endpoint is not None
-            and endpoint.availability is not EndpointAvailability.UNAVAILABLE
-        ):
-            endpoint_registry.update(
-                endpoint.endpoint_id,
-                availability=(
-                    EndpointAvailability.AVAILABLE
-                    if registered
-                    else EndpointAvailability.OFFLINE
-                ),
-            )
+        if endpoint is not None:
+            recompute_account_availability(hass, endpoint.endpoint_id)
         create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
+    accounts = _sip_accounts(hass)
     from .managed_phones import active_managed_accounts
-    from .store import config_entry as phone_config_entry
-    phone_entry = phone_config_entry(hass)
-    managed = active_managed_accounts(hass, phone_entry) if phone_entry is not None else []
+    from .store import config_entry
+    entry = config_entry(hass)
     registrar = SipRegistrar(
-        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False) or managed),
-        accounts=_sip_accounts(hass),
+        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)
+                     or (entry is not None and active_managed_accounts(hass, entry))),
+        accounts=accounts,
         local_ip=local_ip,
         local_sip_port=int(cfg["sip_port"]),
         on_registration_change=_on_registration_change,
@@ -261,9 +252,15 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         result = await registrar.handle_register(request, addr, transport)
         if 200 <= int(result.status) < 300:
             registrar_expiry.reschedule()
-            from .sip_capabilities import schedule_capability_probe
-            schedule_capability_probe(hass, _extract_register_username(request))
             await _refresh_and_push_phonebook(hass)
+            from .sip_capabilities import schedule_capability_probe
+
+            try:
+                username = parse_sip_uri(request.header("To")).user
+            except ValueError:
+                username = ""
+            if username:
+                schedule_capability_probe(hass, username)
         return result
 
     def _on_flow_closed(host: str, port: int, transport: str) -> None:
@@ -316,7 +313,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         config=cfg,
         route_resolver=route_resolver,
         sip_uri_transport=_sip_uri_transport,
-        enable_reused_signaling_flow=_enable_reused_signaling_flow,
+        enable_reused_tcp_connection=_enable_reused_sip_tcp_connection,
     )
     pbx_runtime.adopt_component("endpoint_dialer", endpoint_dialer)
     _browser_leg_for_member = endpoint_dialer.browser_leg_for_member
@@ -458,8 +455,11 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         trunk_id: str = "",
         precondition=None,
         control_endpoint_id: str = "",
-    ) -> None:
-        await async_forward_existing_call(
+        _resolved_decision=None,
+        _ring_timeout: float | None = None,
+        _queue_offer=None,
+    ) -> asyncio.Task[TransferResult]:
+        return await async_forward_existing_call(
             ForwardRuntime(
                 hass=hass,
                 config=cfg,
@@ -480,6 +480,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             trunk_id=trunk_id,
             precondition=precondition,
             control_endpoint_id=control_endpoint_id,
+            _resolved_decision=_resolved_decision,
+            _ring_timeout=_ring_timeout,
+            _queue_offer=_queue_offer,
         )
 
     async def _run_trunk_inbound_route_guarded(
@@ -616,6 +619,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         local_name = browser_endpoint.name
         endpoint_device_id = browser_endpoint.device_id
         group_name = str(entry.name or entry.id or "")
+        route_kind = str(entry.metadata.get("route_kind") or GROUP_TYPE_RING)
         # A timestamp is not a dialog identifier: two phones can start in the
         # same millisecond.  Use cryptographic entropy just like the normal SIP
         # client path so concurrent HA callers cannot alias one registry entry.
@@ -656,7 +660,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             owner="ha_softphone",
             caller=local_name,
             callee=group_name,
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             endpoint_id=endpoint_id,
             session_device_id=endpoint_device_id,
             source_endpoint_id=endpoint_id,
@@ -694,7 +698,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             leg_id=origin_leg_id,
             peer_name=group_name,
             direction="outgoing",
-            route_kind=GROUP_TYPE_RING,
+            route_kind=route_kind,
             sip_status_code=180,
             last_sip_event="LOCAL_RING_GROUP",
         )
@@ -749,7 +753,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 build_peer_snapshot=_async_build_peer_snapshot,
                 browser_leg_for_member=_browser_leg_for_member,
                 defer_invite_to_softphone=_defer_invite_to_ha_softphone,
-                enable_reused_signaling_flow=_enable_reused_signaling_flow,
+                enable_reused_sip_tcp_connection=_enable_reused_sip_tcp_connection,
                 on_conference_inbound_timeout=_on_conference_inbound_timeout,
                 ring_conference_members=_ring_conference_members,
                 run_ring_group_call=_run_ring_group_call,
@@ -781,9 +785,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             ingress="trunk" if initial.received_via_trunk else "extension",
             origin="trunk" if initial.received_via_trunk else "extension",
         )
+        registry.remember_invite_identity(initial.call_id, initial)
         try:
             ports = reserve_delayed_offer_ports(hass, registry, initial.call_id)
-        except RuntimeError:
+        except (OSError, RuntimeError):
             await EndpointTerminationHandler(hass).terminate_reason(
                 initial.call_id,
                 TerminalReason.TRANSPORT_UNREACHABLE.value,
@@ -878,6 +883,19 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     endpoint_termination = EndpointTerminationHandler(hass)
     _on_terminated = endpoint_termination.handle
 
+    def identity_for_invite(request, initial):
+        from .inbound_identity import apply_inbound_identity
+
+        try:
+            classified = _classified_trunk_invite(initial)
+        except ValueError:
+            return initial  # The routing boundary rejects ambiguous sources.
+        if not classified.received_via_trunk:
+            return classified
+        config = (_get_trunk_config(hass, trunk_id=classified.trunk_id)
+                  if classified.trunk_id else _get_trunk_config(hass))
+        return apply_inbound_identity(classified, config, request)
+
     def codec_policy_for_invite(initial):
         from .core.codec_policy import CodecPolicy
         try:
@@ -901,6 +919,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_invite=_on_invite,
         on_offerless_invite=_on_offerless_invite,
         codec_policy_resolver=codec_policy_for_invite,
+        invite_identity_resolver=identity_for_invite,
         on_terminated=_on_terminated,
         on_register=_on_register,
         on_info=_on_info,

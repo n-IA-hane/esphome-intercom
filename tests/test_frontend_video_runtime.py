@@ -209,8 +209,9 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert 'layout = flowing.get("layout") or {}' in source
     assert "Math.abs(Number(c.width || 0) - sw) <= 2" in source
     assert "!l.vertical_overflow" in source
-    # Ordinary outbound controls are exercised with trusted browser events in
-    # test_frontend_card_browser_layout; this gate owns passive polling cost.
+    start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
+    assert "Promise.resolve(card._startCall())" in start
+    assert "await card._startCall()" not in start
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -822,7 +823,10 @@ assert.deepEqual(
   [h264LowContract.maxWidth, h264LowContract.maxHeight],
   [352, 288],
 );
+// Level 1.3 admits 11880 macroblocks/s over this 396-MB picture.
 assert.equal(h264LowContract.maxFr, 30);
+h264Low._negotiated.send.max_framerate = 20;
+assert.equal(h264Low._cameraCaptureContract().maxFr, 20);
 
 const h264OneB = new Video();
 h264OneB._encoding = "H264";
@@ -1467,6 +1471,178 @@ assert.equal(wire.length, sentBeforeStaleCallback);
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_hardware_camera_encoder_over_bitrate_falls_back_to_software() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
+const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
+const warnings = [];
+const context = vm.createContext({{
+  EventTarget,
+  performance,
+  console: {{ ...console, warn: (message) => warnings.push(String(message)) }},
+  Blob,
+  URL,
+  setTimeout,
+  clearTimeout,
+  CustomEvent: class CustomEvent extends Event {{
+    constructor(type, init) {{ super(type); this.detail = init?.detail; }}
+  }},
+  WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
+}});
+const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async () => modelModule,
+}});
+await module.link((specifier) => {{
+  throw new Error(`unexpected static import: ${{specifier}}`);
+}});
+await module.evaluate();
+const Video = module.namespace.VoipStackVideo;
+
+const track = {{
+  getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
+  stop() {{}},
+}};
+context.navigator = {{
+  mediaDevices: {{
+    async getUserMedia() {{
+      return {{ getVideoTracks: () => [track], getTracks: () => [track] }};
+    }},
+  }},
+}};
+context.MediaStreamTrackProcessor = class {{
+  constructor() {{
+    // The camera never delivers a frame; the test drives encoder output.
+    this.readable = {{ getReader: () => ({{
+      read: () => new Promise(() => {{}}),
+      cancel: async () => {{}},
+    }}) }};
+  }}
+}};
+const encoders = [];
+let softwareSupported = true;
+context.VideoEncoder = class {{
+  static async isConfigSupported(config) {{
+    const supported = config.hardwareAcceleration !== "prefer-software" || softwareSupported;
+    return {{ supported, config }};
+  }}
+  constructor(init) {{
+    this.init = init;
+    this.state = "unconfigured";
+    this.encodeQueueSize = 0;
+    this.configs = [];
+    encoders.push(this);
+  }}
+  configure(config) {{ this.configs.push(config); this.state = "configured"; }}
+  close() {{ this.state = "closed"; }}
+}};
+
+async function startSender() {{
+  const sender = new Video();
+  sender._generation = 3;
+  sender._cameraAllowed = true;
+  sender._cameraEnabled = true;
+  sender._negotiated = {{
+    can_send: true,
+    can_receive: false,
+    send: {{ codec: "vp8", encoding: "VP8", clock_rate: 90000, payload_type: 104 }},
+  }};
+  sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
+  await sender._replaceSender("vp8", 3, "", false);
+  return [sender, encoders.at(-1)];
+}}
+// Emit 15 fps output for a little over 2 s, with frames of laterBytes after
+// the first second, and return how many chunks went out before the encoder
+// was flagged.
+function emit(encoder, bytes, laterBytes = bytes) {{
+  const warned = warnings.length;
+  let flaggedAfter = null;
+  for (let i = 0; i <= 31; i++) {{
+    encoder.init.output({{
+      type: i === 0 ? "key" : "delta",
+      byteLength: i > 15 ? laterBytes : bytes,
+      timestamp: Math.round(i * 1000000 / 15),
+      copyTo(target) {{ target.fill(0); }},
+    }});
+    if (flaggedAfter === null && warnings.length > warned) flaggedAfter = i + 1;
+  }}
+  return flaggedAfter;
+}}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// A hardware encoder at ~16 Mbit/s against a 600 kbit/s target must be
+// switched to software and emit a key frame next. Its first two 135 KB delta
+// frames exceed the 150 KB allowed in the first half second, so it is caught
+// on the third chunk.
+const [overshooting, hardware] = await startSender();
+assert.equal(hardware.configs[0].hardwareAcceleration, "prefer-hardware");
+overshooting._forceCameraKeyFrame = false;
+assert.equal(emit(hardware, 135000), 3);
+await settle();
+assert.equal(hardware.configs.length, 2);
+assert.equal(hardware.configs[1].hardwareAcceleration, "prefer-software");
+assert.equal(hardware.configs[1].bitrate, 600000);
+assert.equal(overshooting._forceCameraKeyFrame, true);
+assert.match(warnings.at(-1), /switching to software encoding/);
+emit(hardware, 135000);
+await settle();
+assert.equal(hardware.configs.length, 2);
+
+// An encoder that starts on target and overshoots later is caught once its
+// total passes 4 times the target over the time elapsed: 60 KB delta frames
+// from 1 s take it past that at 1.4 s, on the 22nd chunk.
+const [, late] = await startSender();
+assert.equal(emit(late, 5000, 60000), 22);
+await settle();
+assert.equal(late.configs.length, 2);
+
+// An encoder moderately over its target, here by 25%, is left alone,
+// including a large first key frame.
+const [, nearTarget] = await startSender();
+nearTarget.init.output({{
+  type: "key", byteLength: 60000, timestamp: 0, copyTo(target) {{ target.fill(0); }},
+}});
+assert.equal(emit(nearTarget, 6250), null);
+await settle();
+assert.equal(nearTarget.configs.length, 1);
+
+// Without a software encoder, keep the hardware one rather than lose video.
+softwareSupported = false;
+const [, noSoftware] = await startSender();
+emit(noSoftware, 135000);
+await settle();
+assert.equal(noSoftware.configs.length, 1);
+assert.equal(noSoftware.state, "configured");
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--experimental-vm-modules",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_jpeg_worker_uses_offscreen_canvas_and_transfers_complete_frame() -> None:
     script = f"""
 import fs from "fs";
@@ -1697,5 +1873,171 @@ assert.equal(posted.at(-1)[0].timestamp, 11);
         capture_output=True,
         text=True,
         timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_camera_sender_falls_back_to_video_element_without_track_processor() -> None:
+    """Safari/WebKit and Firefox lack MediaStreamTrackProcessor."""
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
+const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
+
+async function load(context) {{
+  const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
+  await modelModule.link(() => {{ throw new Error("no imports"); }});
+  await modelModule.evaluate();
+  const module = new vm.SourceTextModule(source, {{
+    context,
+    initializeImportMeta(meta) {{ meta.url = "https://ha.example/voip-stack-video.js?v=x"; }},
+    importModuleDynamically: async () => modelModule,
+  }});
+  await module.link((s) => {{ throw new Error(`unexpected import ${{s}}`); }});
+  await module.evaluate();
+  return module.namespace.VoipStackVideo;
+}}
+
+for (const useRvfc of [true, false]) {{
+  const videos = [];
+  class FakeVideo {{
+    constructor() {{
+      this.style = {{}};
+      this.attrs = {{}};
+      this.readyState = 4;
+      this.videoWidth = 360; // upright portrait, as WebKit reports on iPhone
+      this.videoHeight = 640;
+      this.currentTime = 0;
+      this.paused = true;
+      this.removed = false;
+      this.rvfc = null;
+      videos.push(this);
+      if (useRvfc) {{
+        this.requestVideoFrameCallback = (cb) => {{ this.rvfc = cb; return 1; }};
+        this.cancelVideoFrameCallback = () => {{ this.rvfc = null; }};
+      }}
+    }}
+    setAttribute(k, v) {{ this.attrs[k] = v; }}
+    async play() {{ this.paused = false; }}
+    pause() {{ this.paused = true; }}
+    remove() {{ this.removed = true; }}
+  }}
+  const track = Object.assign(new EventTarget(), {{
+    readyState: "live",
+    stopped: false,
+    getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
+    stop() {{ this.stopped = true; this.readyState = "ended"; }},
+  }});
+  const frames = [];
+  class FakeCanvas {{
+    constructor() {{
+      this.width = 0;
+      this.height = 0;
+      this.drawn = [];
+    }}
+    getContext() {{
+      return {{ fillRect() {{}}, drawImage: (...args) => {{ this.drawn = [args]; }} }};
+    }}
+  }}
+  class FakeVideoFrame {{
+    constructor(src, init) {{
+      assert.ok(src instanceof FakeCanvas, "frames must come from the orientation-correct canvas");
+      assert.equal(src.drawn.length, 1);
+      this.width = src.width;
+      this.height = src.height;
+      this.timestamp = init.timestamp;
+      this.closed = 0;
+      frames.push(this);
+    }}
+    close() {{ this.closed++; }}
+  }}
+  const body = {{ children: [], appendChild(el) {{ this.children.push(el); }} }};
+  const context = vm.createContext({{
+    EventTarget, performance, console, Blob, URL, setTimeout, clearTimeout,
+    setInterval, clearInterval,
+    CustomEvent: class CustomEvent extends Event {{
+      constructor(type, init) {{ super(type); this.detail = init?.detail; }}
+    }},
+    WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
+    EncodedVideoChunk: class {{ constructor(init) {{ Object.assign(this, init); }} }},
+    document: {{
+      createElement: (tag) => {{
+        if (tag === "canvas") return new FakeCanvas();
+        assert.equal(tag, "video");
+        return new FakeVideo();
+      }},
+      body,
+    }},
+    VideoFrame: FakeVideoFrame,
+    navigator: {{ mediaDevices: {{ async getUserMedia() {{
+      return {{ getVideoTracks: () => [track], getTracks: () => [track] }};
+    }} }} }},
+  }});
+  assert.equal(typeof context.MediaStreamTrackProcessor, "undefined");
+  context.Worker = class {{
+    constructor() {{ this.messages = []; workers.push(this); }}
+    postMessage(message, transfer = []) {{
+      this.messages.push([message, transfer]);
+      if (message.type === "configure_jpeg_encoder") {{
+        queueMicrotask(() => this.onmessage({{
+          data: {{ type: "reply", requestId: message.requestId, ok: true }},
+        }}));
+      }}
+    }}
+    terminate() {{}}
+  }};
+  const workers = [];
+  const Video = await load(context);
+  const sender = new Video();
+  sender._codecWorkerUrl = () => "/w.js";
+  sender._generation = 3;
+  sender._cameraAllowed = true;
+  sender._cameraEnabled = true;
+  sender._negotiated = {{
+    can_send: true, can_receive: false,
+    send: {{ codec: "jpeg", encoding: "JPEG", clock_rate: 90000, payload_type: 26 }},
+  }};
+  sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
+  await sender._replaceSender("jpeg", 3, "", false);
+  assert.ok(sender._cameraReader, "fallback reader installed");
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].attrs.playsinline, "");
+  assert.equal(videos[0].muted, true);
+  assert.equal(body.children[0], videos[0]);
+
+  // Drive a frame into the encoder.
+  if (useRvfc) {{
+    await new Promise((r) => setImmediate(r));
+    videos[0].currentTime = 0.1;
+    videos[0].rvfc(0, {{ mediaTime: 0.1 }});
+  }} else {{
+    videos[0].currentTime = 0.1;
+  }}
+  for (let i = 0; i < 40 && !workers[0].messages.some(([m]) => m.type === "encode_jpeg"); i++) {{
+    await new Promise((r) => setTimeout(r, 25));
+  }}
+  assert.ok(workers[0].messages.some(([m]) => m.type === "encode_jpeg"), `frame reached encoder (rvfc=${{useRvfc}})`);
+  assert.equal(frames[0].timestamp, 100000);
+  // Track settings were landscape 640x360 but the upright video is portrait:
+  // the frame must keep the upright orientation instead of being rotated.
+  assert.equal(frames[0].width, 360);
+  assert.equal(frames[0].height, 640);
+  const configure = workers[0].messages.find(([m]) => m.type === "configure_jpeg_encoder")[0];
+  assert.equal(configure.width, 360, "encoder must be configured with the upright size");
+  assert.equal(configure.height, 640);
+
+  await sender._cleanupSender();
+  assert.equal(track.stopped, true);
+  assert.equal(videos[0].removed, true);
+  assert.equal(videos[0].srcObject, null);
+}}
+"""
+    completed = subprocess.run(
+        ["node", "--no-warnings", "--experimental-vm-modules", "--input-type=module", "-e", script],
+        cwd=ROOT, check=False, capture_output=True, text=True, timeout=20,
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout

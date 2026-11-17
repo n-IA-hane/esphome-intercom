@@ -1,0 +1,50 @@
+microOpus
+Copyright 2025-2026 Kevin Ahrendt
+
+This product includes software developed by third parties, listed below.
+Each component retains its original license; see the referenced files for
+the full text. Downstream distributions (source or binary) must preserve
+these notices as required by the respective licenses.
+
+================================================================================
+Opus audio codec (libopus)
+================================================================================
+
+Location in this repository: lib/opus/ (git submodule, v1.6.1)
+License:   BSD-3-Clause (see lib/opus/COPYING)
+Copyright: 2001-2023 Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin,
+           Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding,
+           Erik de Castro Lopo, Mozilla, Amazon
+Upstream:  https://github.com/xiph/opus
+
+The upstream sources are never modified in place. ESP32-specific changes
+(PSRAM-aware allocation, a thread-local pseudostack, and Xtensa DSP
+optimizations) are applied as patches at build time; see patches/ for the
+full set of diffs and added files.
+
+Opus is additionally subject to royalty-free patent licenses specified in
+lib/opus/COPYING. Those grants must be preserved when redistributing.
+
+================================================================================
+microOggDemuxer
+================================================================================
+
+Location in this repository: lib/micro-ogg-demuxer/ (git submodule)
+License:   Apache License 2.0 (see lib/micro-ogg-demuxer/LICENSE)
+Copyright: (c) 2025 Kevin Ahrendt
+
+================================================================================
+Downstream Obligations
+================================================================================
+
+When redistributing microOpus in source or binary form (for example, as
+part of firmware built against the ESP-IDF component), you must:
+
+  1. Retain the Xiph.Org copyright notice and BSD-3-Clause disclaimer from
+     lib/opus/COPYING in your documentation or equivalent legal/about
+     materials, along with the referenced Opus patent-license grants.
+  2. Retain the Apache 2.0 LICENSE text for microOpus wrapper code and
+     micro-ogg-demuxer.
+  3. Not use the names "Xiph.Org Foundation", "Opus", or the names of
+     contributors to endorse or promote derived products without written
+     permission.

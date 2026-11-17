@@ -11,7 +11,7 @@ packages:
 # =============================================================================
 
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
 
 defaults:
   voip_transport: '${ voip_transport | default("udp") }'

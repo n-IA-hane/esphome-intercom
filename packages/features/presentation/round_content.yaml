@@ -1,19 +1,8 @@
 # Common text, animation and voice-display hooks for the round layouts.
 script:
 - id: clear_replying_text
-  then:
-  - lambda: !lambda |-
-      id(wrapped_lines_reply).clear();
-      id(reply_total_pages) = 1;
-      id(reply_page_index) = 0;
-      lv_obj_t* lines[] = {
-        id(reply_line_0), id(reply_line_1), id(reply_line_2), id(reply_line_3), id(reply_line_4),
-        id(reply_line_5), id(reply_line_6), id(reply_line_7), id(reply_line_8), id(reply_line_9)
-      };
-      for (auto *line : lines) {
-        lv_label_set_text(line, "");
-      }
-      lv_label_set_text(id(reply_page_counter), "");
+  then: ${ _round_clear_replying_actions if _fw_voice else [] }
+
 - id: !extend 'ui_va_barge_start'
   then:
   - script.stop: reply_pagination_timer
@@ -56,52 +45,39 @@ script:
           lv_animimg_start(id(idle_anim));
       - delay: 25s
 - id: update_replying_text
-  then:
-  - lambda: !lambda |-
+  then: ${ _round_update_replying_actions if _fw_voice else [] }
+
+- id: reply_pagination_timer
+  mode: restart
+  then: ${ _round_reply_pagination_actions if _fw_voice else [] }
+
+defaults:
+  _round_clear_replying_actions:
+  - lambda: |-
+      id(round_text).clear();
+      id(reply_total_pages) = 1;
+      id(reply_page_index) = 0;
+  _round_update_replying_actions:
+  - lambda: |-
       if (id(current_mode) != 0 ||
           !id(display_visibility).is_visible(id(reply_line_0)) ||
           id(voice_assistant_phase) != ${voice_assist_replying_phase_id}) {
         return;
       }
-      static std::vector<std::string> visible_lines(10);
-      static std::string page_counter_text;
-      lv_obj_t* lines[] = {
-        id(reply_line_0), id(reply_line_1), id(reply_line_2), id(reply_line_3), id(reply_line_4),
-        id(reply_line_5), id(reply_line_6), id(reply_line_7), id(reply_line_8), id(reply_line_9)
-      };
-      const size_t total_rows = 10;
-      const auto &wrapped = id(wrapped_lines_reply);
-      const size_t total_pages = std::max(1, id(reply_total_pages));
-      const size_t cur_page = id(reply_page_index) % total_pages;
-      const size_t start_line = cur_page * total_rows;
-      for (size_t i = 0; i < total_rows; i++) {
-        size_t line_idx = start_line + i;
-        visible_lines[i] = line_idx < wrapped.size() ? wrapped[line_idx] : "";
-        lv_label_set_text_static(lines[i], visible_lines[i].c_str());
+      if (!id(round_text).show_reply(id(reply_page_index))) {
+        ESP_LOGW("round_text", "Cannot update reply page, preserving previous labels");
       }
-      // Update page counter
-      if (total_pages > 1) {
-        page_counter_text = str_sprintf("%d/%d", (int) (cur_page + 1), (int) total_pages);
-        lv_label_set_text_static(id(reply_page_counter), page_counter_text.c_str());
-      } else {
-        page_counter_text.clear();
-        lv_label_set_text_static(id(reply_page_counter), page_counter_text.c_str());
-      }
-- id: reply_pagination_timer
-  mode: restart
-  then:
+  _round_reply_pagination_actions:
   - delay: 14s
   - if:
       condition:
-        lambda: !lambda |-
+        lambda: |-
           return id(current_mode) == 0 &&
                  id(display_visibility).is_visible(id(reply_line_0)) &&
                  id(voice_assistant_phase) == ${voice_assist_replying_phase_id} &&
                  id(reply_total_pages) > 1;
       then:
-      - globals.set:
-          id: reply_page_index
-          value: !lambda |-
-            return id(reply_page_index) + 1;
-      - script.execute: update_replying_text
+      - lambda: |-
+          const int next_page = id(reply_page_index) + 1;
+          if (id(round_text).show_reply(next_page)) id(reply_page_index) = next_page;
       - script.execute: reply_pagination_timer

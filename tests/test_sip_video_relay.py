@@ -2,78 +2,47 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-import importlib.util
 import socket
-import sys
 import types
 import unittest
 from unittest import mock
-from pathlib import Path
 
 import pytest
 
+from custom_components.voip_stack.core import rtp, sdp, video_rtcp
+from custom_components.voip_stack import sip_video_relay
+
 pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
 
-
-ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
-PKG_DIR = ROOT / "custom_components" / "voip_stack"
-CORE_MODULES = {"rtp", "sdp", "video_rtcp"}
-
-
-def _load(name: str):
-    if "custom_components" not in sys.modules:
-        package = types.ModuleType("custom_components")
-        package.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = package
-    if PKG_NAME not in sys.modules:
-        package = types.ModuleType(PKG_NAME)
-        package.__path__ = [str(PKG_DIR)]
-        sys.modules[PKG_NAME] = package
-    is_core = name in CORE_MODULES
-    if is_core and f"{PKG_NAME}.core" not in sys.modules:
-        core_pkg = types.ModuleType(f"{PKG_NAME}.core")
-        core_pkg.__path__ = [str(PKG_DIR / "core")]
-        sys.modules[f"{PKG_NAME}.core"] = core_pkg
-    full_name = f"{PKG_NAME}.{'core.' if is_core else ''}{name}"
-    if full_name in sys.modules:
-        return sys.modules[full_name]
-    path = PKG_DIR / ("core" if is_core else "") / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(full_name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[full_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-rtp = _load("rtp")
-sdp = _load("sdp")
-_load("video_rtcp")
-sip_video_relay = _load("sip_video_relay")
 RtpVideoFormat = sdp.RtpVideoFormat
 video_formats_passthrough_compatible = sdp.video_formats_passthrough_compatible
 SipVideoRtpRelay = sip_video_relay.SipVideoRtpRelay
 VideoRtpPeer = sip_video_relay.VideoRtpPeer
-build_pli = sys.modules[f"{PKG_NAME}.core.video_rtcp"].build_pli
+build_pli = video_rtcp.build_pli
 
 
-@pytest.mark.parametrize("left_direction,right_direction,right_held,expected", [
-    ("inactive", "inactive", False, set()),
-    ("sendonly", "recvonly", False, {"left"}),
-    ("recvonly", "sendonly", False, {"right"}),
-    ("sendrecv", "sendrecv", False, {"left", "right"}),
-    ("sendrecv", "sendrecv", True, {"right"}),
-])
-def test_transcoder_plan_only_owns_negotiated_active_directions(left_direction, right_direction, right_held, expected):
-    relay = SipVideoRtpRelay(
-        left=VideoRtpPeer("192.0.2.1", 10000, 10001,
-            RtpVideoFormat(payload_type=103, encoding="H264", direction=left_direction)),
-        right=VideoRtpPeer("192.0.2.2", 20000, 20001,
-            RtpVideoFormat(payload_type=26, encoding="JPEG", direction=right_direction), connection_held=right_held),
-        left_port=30000, right_port=30002,
+class _Transport:
+    def __init__(self) -> None:
+        self.sent: list[tuple[bytes, tuple[str, int]]] = []
+        self.closed = False
+
+    def sendto(self, data: bytes, addr) -> None:
+        self.sent.append((data, addr))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _format(
+    payload_type: int, *, direction: str = "sendrecv", profile: str = "42e01f"
+) -> RtpVideoFormat:
+    return RtpVideoFormat(
+        payload_type=payload_type,
+        encoding="H264",
+        profile_level_id=profile,
+        packetization_mode=1,
+        direction=direction,
     )
-    assert relay.transcode_directions_for(relay.left, relay.right) == expected
 
 
 @pytest.mark.parametrize("outcome", ["commit", "rollback"])
@@ -139,215 +108,7 @@ def test_direction_update_keeps_unchanged_worker_and_never_duplicates_a_directio
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["commit", "rollback", "cancel_rollback", "concurrent_peer_update", "peer_update_before_commit", "new_failure", "restore_failure", "unsupported"])
-def test_changed_video_contract_stops_old_before_start_and_restores_exclusively(outcome):
-    async def scenario():
-        left = VideoRtpPeer("127.0.0.1", 41000, 41001, RtpVideoFormat(payload_type=104, encoding="VP8"))
-        right = VideoRtpPeer("127.0.0.1", 42000, 42001, RtpVideoFormat(payload_type=26, encoding="JPEG"))
-        # Only this peer's receiver constraint changes; its sent RTP contract
-        # remains the independently negotiated local_video_format.
-        right.local_video_format = right.video_format
-        relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
-        relay.configure_transcoding(types.SimpleNamespace(data={}), "exclusive-codec-owner")
-        relay.started, relay._transcode_slot_claimed = True, True
-        relay._maintain_nat = mock.Mock()
-        alive = {side: set() for side in ("left", "right")}
-        peak = {side: 0 for side in alive}
-        events = []
-        close_entered, allow_close = asyncio.Event(), asyncio.Event()
-
-        class Worker:
-            ready = True
-            def __init__(self, side, target):
-                self.side, self.target = side, target
-                alive[side].add(self)
-                peak[side] = max(peak[side], len(alive[side]))
-                events.append(("start", side, self))
-            async def async_close(self):
-                async def close():
-                    if self in alive[self.side]:
-                        if outcome == "cancel_rollback" and self.target.max_framerate == 7:
-                            close_entered.set()
-                            await allow_close.wait()
-                        alive[self.side].remove(self)
-                        events.append(("stop", self.side, self))
-                # The actual FFmpeg driver also finishes owned cleanup before
-                # propagating cancellation to the generation caller.
-                await sip_video_relay.async_wait_for_cleanup(asyncio.create_task(close()))
-
-        async def build(_loop, new_left, new_right, *, suffix="", directions=None):
-            if outcome in {"new_failure", "restore_failure"} and suffix == "-reoffer":
-                raise RuntimeError("injected new encoder failure")
-            if outcome == "restore_failure" and suffix == "-restore":
-                raise RuntimeError("injected previous encoder failure")
-            selected = relay.transcode_directions_for(new_left, new_right) if directions is None else set(directions)
-            return sip_video_relay._TranscodeGeneration(selected, {
-                side: Worker(side, (new_right if side == "left" else new_left).send_format)
-                for side in selected}, {}, {})
-
-        relay._transcode = await build(None, left, right)
-        original = relay._transcode
-        old_left, old_right = original.transcoders["left"], original.transcoders["right"]
-        changed = replace(right, video_format=replace(right.video_format, max_framerate=7))
-        if outcome == "unsupported":
-            changed = replace(right, video_format=replace(right.video_format, encoding="H265"))
-        with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
-             mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
-             mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
-            try:
-                relay.stage_peer_reconfiguration("right", changed)
-                if outcome == "unsupported":
-                    with pytest.raises(ValueError, match="unsupported"):
-                        await relay.async_prepare_peer_generation(left=left, right=changed)
-                    assert all(kind == "start" for kind, _side, _worker in events)
-                elif outcome == "restore_failure":
-                    with pytest.raises(sip_video_relay.VideoTranscodeRestoreError):
-                        await relay.async_prepare_peer_generation(left=left, right=changed)
-                    assert not alive["left"] and alive["right"] == {old_right}
-                elif outcome == "new_failure":
-                    with pytest.raises(RuntimeError, match="injected new encoder failure"):
-                        await relay.async_prepare_peer_generation(left=left, right=changed)
-                    assert relay._transcode.transcoders["left"].target == right.send_format
-                else:
-                    commit, rollback = await relay.async_prepare_peer_generation(left=left, right=changed)
-                    if outcome == "concurrent_peer_update":
-                        # The existing UAS path commits an independent source
-                        # RTP tuple through this same public peer primitive.
-                        newer_left = replace(left, port=41002)
-                        relay.reconfigure_peer("left", newer_left)
-                    if outcome == "peer_update_before_commit":
-                        newer_left = replace(left, port=41002)
-                        committing = asyncio.create_task(commit())
-                        asyncio.get_running_loop().call_soon(relay.reconfigure_peer, "left", newer_left)
-                        with pytest.raises(RuntimeError, match="changed"):
-                            await committing
-                    elif outcome == "cancel_rollback":
-                        cancelling = asyncio.create_task(rollback())
-                        await close_entered.wait()
-                        cancelling.cancel()
-                        allow_close.set()
-                        with pytest.raises(asyncio.CancelledError):
-                            await cancelling
-                    else:
-                        await (commit() if outcome == "commit" else rollback())
-                    expected = changed if outcome == "commit" else right
-                    assert relay.right is expected
-                    assert relay._transcode.transcoders["left"].target == expected.send_format
-                    if outcome in {"concurrent_peer_update", "peer_update_before_commit"}:
-                        assert relay.left is newer_left
-                assert peak == {"left": 1, "right": 1}
-                assert relay._transcode is original and relay._transcode.transcoders["right"] is old_right
-                if outcome not in {"unsupported", "restore_failure"}:
-                    replacement = next(worker for kind, side, worker in events
-                        if kind == "start" and side == "left" and worker is not old_left)
-                    assert events.index(("stop", "left", old_left)) < events.index(("start", "left", replacement))
-            finally:
-                await relay.stop()
-        assert all(not workers for workers in alive.values())
-    asyncio.run(scenario())
-
-
-def test_explicit_transcoding_adapts_incompatible_jpeg_image_sizes():
-    source = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
-        "26 recv [x=800,y=800]")[1])
-    receiver = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
-        "26 recv [x=[8:8:320],y=[8:8:240]]")[1])
-    legacy = RtpVideoFormat(payload_type=26, encoding="JPEG")
-    relay = SipVideoRtpRelay(
-        left=VideoRtpPeer("192.0.2.1", 10000, 10001, legacy, local_video_format=source),
-        right=VideoRtpPeer("192.0.2.2", 20000, 20001, receiver, local_video_format=legacy),
-        left_port=30000, right_port=30002,
-    )
-    relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-size-contract")
-    assert relay.transcodes_from("left")
-    assert not relay.transcodes_from("right")
-
-
-@pytest.mark.parametrize("source_hint,receiver_hint,opt_in,expected", [
-    ("26 recv [x=800,y=800]", "26 recv [x=[8:8:320],y=[8:8:240]]", False, False),
-    (None, "26 recv [x=[8:8:320],y=[8:8:240]]", True, False),
-    ("26 recv [x=800,y=800]", None, True, False),
-    ("26 recv [x=800,y=800]", "26 recv *", True, False),
-    ("26 recv [x=800,y=800]", "26 recv [x=800,y=800]", True, False),
-    ("26 recv [x=800,y=800]", "26 recv [x=[8:8:320],y=[8:8:240]]", True, True),
-])
-def test_jpeg_size_adaptation_preserves_opt_in_and_legacy_contract(source_hint, receiver_hint, opt_in, expected):
-    def fmt(hint):
-        return RtpVideoFormat(payload_type=26, encoding="JPEG",
-            image_attributes=sdp.parse_imageattr(hint)[1] if hint else None)
-    source, receiver, legacy = fmt(source_hint), fmt(receiver_hint), fmt(None)
-    relay = SipVideoRtpRelay(
-        left=VideoRtpPeer("192.0.2.1", 10000, 10001, legacy, local_video_format=source),
-        right=VideoRtpPeer("192.0.2.2", 20000, 20001, receiver, local_video_format=legacy),
-        left_port=30000, right_port=30002)
-    if opt_in:
-        relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-size-policy")
-    assert ("left" in relay.transcode_directions_for(relay.left, relay.right)) is expected
-
-
-class _Transport:
-    def __init__(self) -> None:
-        self.sent: list[tuple[bytes, tuple[str, int]]] = []
-        self.closed = False
-
-    def sendto(self, data: bytes, addr) -> None:
-        self.sent.append((data, addr))
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def _format(
-    payload_type: int, *, direction: str = "sendrecv", profile: str = "42e01f"
-) -> RtpVideoFormat:
-    return RtpVideoFormat(
-        payload_type=payload_type,
-        encoding="H264",
-        profile_level_id=profile,
-        packetization_mode=1,
-        direction=direction,
-    )
-
-
 class SipVideoRelayTests(unittest.TestCase):
-    def test_jpeg_receiver_reoffer_reuses_generation_commit_and_rollback(self):
-        async def scenario():
-            source = RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=sdp.parse_imageattr(
-                "26 recv [x=800,y=800]")[1])
-            bounded = replace(source, image_attributes=sdp.parse_imageattr(
-                "26 recv [x=[8:8:320],y=[8:8:240]]")[1])
-            self.left.video_format = self.left.local_video_format = source
-            self.right.video_format = self.right.local_video_format = source
-            self.relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-reoffer")
-            self.assertFalse(self.relay.transcoding)
-            self.relay.started = True
-            async def build(_loop, left, right, **_kwargs):
-                return sip_video_relay._TranscodeGeneration(self.relay.transcode_directions_for(left, right), {}, {}, {})
-            with mock.patch.object(self.relay, "_build_transcode_generation", side_effect=build), \
-                 mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
-                 mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
-                try:
-                    shrunk = replace(self.right, video_format=bounded)
-                    self.relay.stage_peer_reconfiguration("right", shrunk)
-                    _commit, rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=shrunk)
-                    self.assertFalse(self.relay.transcoding)
-                    await rollback()
-                    self.assertIs(self.relay.right, self.right)
-                    self.assertFalse(self.relay._transcode_slot_claimed)
-                    self.relay.stage_peer_reconfiguration("right", shrunk)
-                    commit, _rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=shrunk)
-                    await commit()
-                    self.assertTrue(self.relay.transcodes_from("left"))
-                    restored = replace(shrunk, video_format=source)
-                    self.relay.stage_peer_reconfiguration("right", restored)
-                    commit, _rollback = await self.relay.async_prepare_peer_generation(left=self.left, right=restored)
-                    await commit()
-                    self.assertFalse(self.relay.transcoding)
-                    self.assertFalse(self.relay._transcode_slot_claimed)
-                finally:
-                    await self.relay.stop()
-        asyncio.run(scenario())
-
     def setUp(self) -> None:
         self.left = VideoRtpPeer("10.0.0.1", 10000, 10001, _format(102))
         self.right = VideoRtpPeer("10.0.0.2", 20000, 20001, _format(110))
@@ -533,7 +294,7 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(len(self.right_rtcp.sent), 1)
         raw, destination = self.right_rtcp.sent[0]
         self.assertEqual(destination, (self.right.rtcp_host, self.right.rtcp_port))
-        feedback = sys.modules[f"{PKG_NAME}.core.video_rtcp"].parse_compound(raw)[-1]
+        feedback = video_rtcp.parse_compound(raw)[-1]
         self.assertEqual((feedback.packet_type, feedback.fmt), (206, 4))
         self.assertTrue(self.relay.arm_keyframe_request("right"))
         self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
@@ -829,8 +590,8 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertFalse(self.right_rtp.sent)
         self.assertEqual(self.relay.transcoded_input_packets, 2)
 
-    def test_cross_codec_recvonly_owns_only_the_negotiated_direction(self) -> None:
-        """The receiving-only peer cannot feed an active conversion worker."""
+    def test_cross_codec_recvonly_retains_later_send_authorization(self) -> None:
+        """Only the active direction converts, retaining the same relay owner."""
 
         vp8 = RtpVideoFormat(
             payload_type=104,
@@ -847,14 +608,15 @@ class SipVideoRelayTests(unittest.TestCase):
         self.right.video_format = jpeg
         self.right.local_video_format = jpeg
 
-        self.relay.configure_transcoding(
-            types.SimpleNamespace(data={}),
-            "direction-update",
-        )
-
+        owner = types.SimpleNamespace(data={})
+        self.relay.configure_transcoding(owner, "direction-update")
+        self.assertEqual(self.relay._transcode.directions, {"right"})
+        self.assertIs(self.relay._transcode_hass, owner)
+        next_left = replace(self.left, video_format=replace(vp8, direction="sendrecv"))
+        next_right = replace(self.right, video_format=replace(jpeg, direction="sendrecv"))
         self.assertEqual(
-            self.relay._transcode.directions,  # noqa: SLF001
-            {"right"},
+            self.relay.transcode_directions_for(next_left, next_right),
+            {"left", "right"},
         )
 
     def test_cross_codec_startup_packets_wait_for_ffmpeg_input(self) -> None:
@@ -1183,3 +945,187 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("failure", ["prepare_stale", "commit_stale", "cancel_rollback"])
+def test_direction_addition_fences_owner_and_joins_new_worker_cleanup(failure):
+    async def scenario():
+        left = VideoRtpPeer("127.0.0.1", 41000, 41001,
+            RtpVideoFormat(payload_type=104, encoding="VP8", direction="recvonly"))
+        right = VideoRtpPeer("127.0.0.1", 42000, 42001,
+            RtpVideoFormat(payload_type=26, encoding="JPEG"))
+        relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+        relay.configure_transcoding(types.SimpleNamespace(data={}), "direction-fence")
+        relay.started, relay._transcode_slot_claimed = True, True
+        relay._maintain_nat = mock.Mock()
+        alive = {side: set() for side in ("left", "right")}
+        entered, release = asyncio.Event(), asyncio.Event()
+        newer_left = replace(left, port=41002)
+
+        class Worker:
+            ready = True
+            def __init__(self, side):
+                self.side = side
+                alive[side].add(self)
+                assert len(alive[side]) == 1
+            async def async_close(self):
+                if failure == "cancel_rollback" and self.side == "left":
+                    entered.set()
+                    await release.wait()
+                alive[self.side].discard(self)
+
+        original = sip_video_relay._TranscodeGeneration({"right"}, {"right": Worker("right")}, {}, {})
+        relay._transcode = original
+        retained = original.transcoders["right"]
+
+        async def build(_loop, _left, _right, *, directions, **_kwargs):
+            result = sip_video_relay._TranscodeGeneration(set(directions),
+                {side: Worker(side) for side in directions}, {}, {})
+            if failure == "prepare_stale":
+                relay.reconfigure_peer("left", newer_left)
+            return result
+
+        async def no_slot(*_args):
+            pass
+
+        active_left = replace(left, video_format=replace(left.video_format, direction="sendrecv"))
+        with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
+             mock.patch.object(sip_video_relay, "_release_transcoder_slot", side_effect=no_slot):
+            try:
+                relay.stage_peer_reconfiguration("left", active_left)
+                relay.stage_peer_reconfiguration("right", right)
+                if failure == "prepare_stale":
+                    with pytest.raises(RuntimeError, match="changed"):
+                        await relay.async_prepare_peer_generation(left=active_left, right=right)
+                else:
+                    commit, rollback = await relay.async_prepare_peer_generation(left=active_left, right=right)
+                    if failure == "commit_stale":
+                        committing = asyncio.create_task(commit())
+                        asyncio.get_running_loop().call_soon(relay.reconfigure_peer, "left", newer_left)
+                        with pytest.raises(RuntimeError, match="changed"):
+                            await committing
+                    else:
+                        rolling_back = asyncio.create_task(rollback())
+                        await entered.wait()
+                        rolling_back.cancel()
+                        release.set()
+                        with pytest.raises(asyncio.CancelledError):
+                            await rolling_back
+                assert relay._transcode is original
+                assert original.transcoders == {"right": retained}
+                assert alive == {"left": set(), "right": {retained}}
+                assert not relay._staged_peers
+                assert relay.left is (left if failure == "cancel_rollback" else newer_left)
+            finally:
+                release.set()
+                await relay.stop()
+        assert not alive["left"] and not alive["right"]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["commit", "rollback", "cancel_rollback", "concurrent_peer_update", "peer_update_before_commit", "new_failure", "restore_failure", "unsupported"])
+def test_changed_video_contract_stops_old_before_start_and_restores_exclusively(outcome):
+    async def scenario():
+        left = VideoRtpPeer("127.0.0.1", 41000, 41001, RtpVideoFormat(payload_type=104, encoding="VP8"))
+        right = VideoRtpPeer("127.0.0.1", 42000, 42001, RtpVideoFormat(payload_type=26, encoding="JPEG"))
+        # Only this peer's receiver constraint changes; its sent RTP contract
+        # remains the independently negotiated local_video_format.
+        right.local_video_format = right.video_format
+        relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+        relay.configure_transcoding(types.SimpleNamespace(data={}), "exclusive-codec-owner")
+        relay.started, relay._transcode_slot_claimed = True, True
+        relay._maintain_nat = mock.Mock()
+        alive = {side: set() for side in ("left", "right")}
+        peak = {side: 0 for side in alive}
+        events = []
+        close_entered, allow_close = asyncio.Event(), asyncio.Event()
+
+        class Worker:
+            ready = True
+            def __init__(self, side, target):
+                self.side, self.target = side, target
+                alive[side].add(self)
+                peak[side] = max(peak[side], len(alive[side]))
+                events.append(("start", side, self))
+            async def async_close(self):
+                async def close():
+                    if self in alive[self.side]:
+                        if outcome == "cancel_rollback" and self.target.max_framerate == 7:
+                            close_entered.set()
+                            await allow_close.wait()
+                        alive[self.side].remove(self)
+                        events.append(("stop", self.side, self))
+                # The actual FFmpeg driver also finishes owned cleanup before
+                # propagating cancellation to the generation caller.
+                await sip_video_relay.async_wait_for_cleanup(asyncio.create_task(close()))
+
+        async def build(_loop, new_left, new_right, *, suffix="", directions=None):
+            if outcome in {"new_failure", "restore_failure"} and suffix == "-reoffer":
+                raise RuntimeError("injected new encoder failure")
+            if outcome == "restore_failure" and suffix == "-restore":
+                raise RuntimeError("injected previous encoder failure")
+            selected = relay.transcode_directions_for(new_left, new_right) if directions is None else set(directions)
+            return sip_video_relay._TranscodeGeneration(selected, {
+                side: Worker(side, (new_right if side == "left" else new_left).send_format)
+                for side in selected}, {}, {})
+
+        relay._transcode = await build(None, left, right)
+        original = relay._transcode
+        old_left, old_right = original.transcoders["left"], original.transcoders["right"]
+        changed = replace(right, video_format=replace(right.video_format, max_framerate=7))
+        if outcome == "unsupported":
+            changed = replace(right, video_format=replace(right.video_format, encoding="H265"))
+        with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
+             mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
+             mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
+            try:
+                relay.stage_peer_reconfiguration("right", changed)
+                if outcome == "unsupported":
+                    with pytest.raises(ValueError, match="unsupported"):
+                        await relay.async_prepare_peer_generation(left=left, right=changed)
+                    assert all(kind == "start" for kind, _side, _worker in events)
+                elif outcome == "restore_failure":
+                    with pytest.raises(sip_video_relay.VideoTranscodeRestoreError):
+                        await relay.async_prepare_peer_generation(left=left, right=changed)
+                    assert not alive["left"] and alive["right"] == {old_right}
+                elif outcome == "new_failure":
+                    with pytest.raises(RuntimeError, match="injected new encoder failure"):
+                        await relay.async_prepare_peer_generation(left=left, right=changed)
+                    assert relay._transcode.transcoders["left"].target == right.send_format
+                else:
+                    commit, rollback = await relay.async_prepare_peer_generation(left=left, right=changed)
+                    if outcome == "concurrent_peer_update":
+                        # The existing UAS path commits an independent source
+                        # RTP tuple through this same public peer primitive.
+                        newer_left = replace(left, port=41002)
+                        relay.reconfigure_peer("left", newer_left)
+                    if outcome == "peer_update_before_commit":
+                        newer_left = replace(left, port=41002)
+                        committing = asyncio.create_task(commit())
+                        asyncio.get_running_loop().call_soon(relay.reconfigure_peer, "left", newer_left)
+                        with pytest.raises(RuntimeError, match="changed"):
+                            await committing
+                    elif outcome == "cancel_rollback":
+                        cancelling = asyncio.create_task(rollback())
+                        await close_entered.wait()
+                        cancelling.cancel()
+                        allow_close.set()
+                        with pytest.raises(asyncio.CancelledError):
+                            await cancelling
+                    else:
+                        await (commit() if outcome == "commit" else rollback())
+                    expected = changed if outcome == "commit" else right
+                    assert relay.right is expected
+                    assert relay._transcode.transcoders["left"].target == expected.send_format
+                    if outcome in {"concurrent_peer_update", "peer_update_before_commit"}:
+                        assert relay.left is newer_left
+                assert peak == {"left": 1, "right": 1}
+                assert relay._transcode is original and relay._transcode.transcoders["right"] is old_right
+                if outcome not in {"unsupported", "restore_failure"}:
+                    replacement = next(worker for kind, side, worker in events
+                        if kind == "start" and side == "left" and worker is not old_left)
+                    assert events.index(("stop", "left", old_left)) < events.index(("start", "left", replacement))
+            finally:
+                await relay.stop()
+        assert all(not workers for workers in alive.values())
+    asyncio.run(scenario())

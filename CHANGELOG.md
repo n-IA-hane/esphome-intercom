@@ -1,5 +1,283 @@
 # Changelog
 
+## 2026.12.0-dev
+
+### Official component alignment and independent rendering
+
+- Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,
+  using the shared platform owners. Retain the exact official Core 373 preview
+  for qualification without raising unrelated standalone-component minimums.
+- Align the remaining wake-word, Voice Assistant and playback providers with
+  one complete official ESPHome revision. Keep only the documented lifecycle
+  corrections until their upstream replacements are qualified.
+- Publish the focused HTTP completion proposal as
+  [PR22787](https://github.com/esphome/esphome/pull/22787) and contribute the
+  broader player error/replacement policy to
+  [existing PR22118](https://github.com/esphome/esphome/pull/22118#issuecomment-6914576261).
+  MWW [PR22781](https://github.com/esphome/esphome/pull/22781) and Voice Assistant
+  [PR22782](https://github.com/esphome/esphome/pull/22782) remain separate proposals;
+  publication does not mean integration or a qualified official replacement.
+- Record the selected H.264 candidate fork at `176cda6`, on official `08a0b658`,
+  with one default-off Kconfig DB-buffer preference and allocation diagnostic.
+  On the qualified P4 it recovers about 240 KB of internal memory and restores
+  audio-task creation and networking. Duplex H.264 data was verified; the
+  optional vendor Unity case is compiled but not presented as hardware-executed.
+  Propose the narrow allocation option in [Espressif PR28](https://github.com/espressif/esp-h264-component/pull/28).
+- Select the official Espressif GMF provider while retaining ESP-SR 2.6.0.
+  Record renderer and screenshot repositories in the shared qualification
+  catalog and identify development ESPHome installations by their Git commit.
+- Follow ESPHome's recommended P4 SDK without a source pin. Apply the official
+  PPA and SDMMC fixes to checksummed build-local sources for the exact supported
+  5.5.6 and 6.0.3 tags, preserving the installed SDK and original build targets.
+  Keep the official CSI correction in the camera dependency.
+- Declare P4 PSRAM execution through the official framework option so the
+  display and camera drivers share the correct interrupt memory policy.
+- Capture P4's composed UI/video through the display owner's public readback,
+  selected automatically from `lvgl_id` without a forced redraw. Preserve S3
+  LVGL capture, legacy selectors, native actions and one additional output rotation.
+- Move P4 rendering into the independent renderer repository and create the
+  VoIP adapter from the ordinary sink reference. The renderer no longer owns
+  telephone formats, negotiation or transport lifecycle.
+- Retain a minimal upstream-aligned MIPI display adaptation as the single
+  owner of RGB/YUV transforms, framebuffer writes and UI/video serialization.
+  P4 uses its public pixel transaction; S3 retains LVGL image presentation.
+  Propose the generic display API in [PR22789](https://github.com/esphome/esphome/pull/22789)
+  with its [developer documentation](https://github.com/esphome/developers.esphome.io/pull/348).
+- Record default-SDK receive-video windows of 9.696 and 9.941 FPS. Preserve the
+  repeat's strict browser failure with 24 startup audio-playout drops. A matching
+  true-SDK 6.0.3 call measured 9.824 FPS, with strict browser audio passing and
+  no RTP loss. Restore the recommended-SDK candidate after that forward check;
+  physical white flashes and acoustic quality remain unverified.
+
+### Home Assistant configuration and lifecycle
+
+- Wait for the actual browser audio device clock before starting a call or
+  answering, and retain the prepared microphone graph through media setup.
+  The original Casa-to-WS3 path now has zero startup playout drops, with the
+  transmitted tone and received PCM verified independently. No buffer, jitter
+  target, DSP setting or ESP firmware change is required for this correction.
+- Follow only the relevant ESPHome entity changes through HA's indexed state
+  listeners. Preserve device and entity identity during registry changes.
+- Remove entry-owned persistent Stores only when the integration is deleted;
+  ordinary reloads preserve their data and pending saves cannot recreate
+  deleted storage.
+- Use shared native HA form controls in the card editors. Persist VoIP section
+  strategy account selections so configured cards remain callable with every
+  browser closed.
+- Keep native physical-phone forms readable: named model choices and account
+  name/extension summaries replace raw configuration references. Existing
+  canonical associations are unchanged. Refresh actual native form screenshots.
+- Retain an explicit December stable-release checkpoint for the newer Repair
+  ownership and Assist processing APIs. Qualify development Core separately;
+  do not require a household Core development installation.
+
+
+### Preview camera sources and documentation
+
+- Build Dev P4 camera profiles and coordinated CI from the project camera fork,
+  including shared admission before hardware JPEG processing. Camera
+  [upstream PR9](https://github.com/Psix-anp/esphome-esp-video-camera/pull/9) is
+  ready for review with 99 local software checks; those checks do not establish
+  a physical frame-rate gain. Main/stable keep
+  the upstream camera source. The C++ already used by the qualified private P4
+  firmware is now selected by public Dev profiles as well.
+- Keep queue operator controls available in a standalone ESP mirror card, using
+  the existing shared phone-state subscription. Changing to a passive phonebook
+  or removing the card releases its observer without adding another runtime.
+- Add a portrait VoIP Dashboard capture from the official Companion app with
+  illustrative call states. Refresh account/queue documentation and current
+  option screenshots, while retaining labelled historical captures.
+
+### Consistent transfer targets and administrative updates
+
+- Transfer an enabled offline SIP account through the PBX, allowing its normal
+  always/unavailable forwarding policy to run. Disabled and ambiguous targets
+  remain rejected. Resolve built-in parking destinations through the configured
+  parking parser before constructing REFER, including custom access codes.
+- Settle an already-dispatched phone update when only its administrator
+  credentials change. The existing worker tracks its active application task;
+  an orphaned requesting state can be recovered by an explicit administrator
+  retry without automatically repeating a command with an uncertain result.
+- Enforce current account read/control permission on audio and video attachment,
+  including reconnects. Access changes retire only the affected media owners,
+  using the existing lease cleanup and keeping other participants connected.
+- Report rejected ESPHome renames with the existing device Repair. Preserve the
+  issue across unrelated directory refreshes and clear it after a successful
+  correction or device removal.
+- Reuse the display-control descriptors for refresh actions as well as widgets
+  and callbacks. Expanded configuration and generated runtime code are unchanged.
+
+### Call and provisioning lifecycle
+
+- Route transfers to queues, ring groups and paging through the PBX listener,
+  using the same destination resolution as ordinary calls. Preserve restrictions
+  on delegated transfers and share the reduction of failed call attempts.
+- Revoke existing account-state subscriptions when their user loses read access.
+  Cards and popups retract the private call data, while unrelated subscriptions
+  and calls keep running. Control-only changes preserve authorized observation.
+- Resume deferred phone updates from the HA event loop. A single cancellable
+  60-second check exists only while an unsent update waits for an idle phone,
+  including calls on a line that this PBX does not manage.
+- Track a provisioning command once it may have reached the phone. A call or
+  configuration change after dispatch cannot silently replay that revision;
+  an uncertain response is reported for an explicit administrator retry.
+- Request Fanvil updates through its documented, authenticated `AutoP` command.
+  Keep native identity and idle checks, and avoid relying on a GUI login session
+  for configuration writes. Suppress automatic HTTP retries for this command,
+  including the client's normal retry of a GET after a connection failure.
+- Isolate conflicting ESPHome phone names and report the affected device through
+  HA Repairs, allowing other phones and directory updates to continue.
+- Surface supported diagnostic codes, including incompatible LDAP transport,
+  on the provisioning sensor without exposing arbitrary exception details.
+- End the camera fallback reader when its selected video track ends, releasing
+  pending reads and browser resources through the existing sender cleanup.
+- Require the native MasterVolume integration tests against a pinned Audio Stack
+  checkout in CI. Share compatible on-device Switch controls at configuration
+  generation time while retaining their existing owners and behavior.
+
+### Browser camera frame sources
+
+- Supply camera frames through a muted video element when the current browser
+  context has no `MediaStreamTrackProcessor`. Preserve the existing encoder and
+  media ownership paths. Thanks to [Cybul3000](https://github.com/n-IA-hane/esphome-intercom/pull/163)
+  for the contribution and Safari, iOS and Firefox checks.
+- Detect camera encoders that greatly exceed their requested bitrate and try
+  the supported software configuration without changing the negotiated codec.
+  Thanks to [Matt Sullivan](https://github.com/n-IA-hane/esphome-intercom/pull/158)
+  for the contribution and Android tablet measurements.
+- Keep fallback camera timestamps monotonic, preserve image proportions during
+  rotation, and cancel pending playback when its sender is retired. Capture
+  callbacks run only while the encoder is waiting for a frame.
+
+### Account controls
+
+- Update existing HA phones to shared SIP accounts in place, preserving their
+  extensions, dashboards, devices, entity names, preferences and credentials.
+  New records use native HA subentry identities; migration validates the full
+  namespace and reports conflicting saved identities through Repairs.
+- Validate account edits before saving and persist only the requested fields.
+  Concurrent preference changes no longer restore stale extensions or groups.
+  An account name retained by a terminating call cannot be recreated until its
+  aliases are released, without leaving an unusable saved account behind.
+- Preserve the account's no-answer policy and ringing deadline when SIP phones
+  and HA clients share it, including forwarding and late browser answers.
+  A busy SIP terminal no longer ends the whole queue offer while HA can answer;
+  queue outcomes, missed responses and automatic pause follow the account result.
+- Keep the preferred HA account out of unrelated trunk calls, so an outgoing
+  call does not make another extension appear busy.
+- Keep DND feature subscriptions synchronized when a phone addresses its
+  account by extension instead of its SIP username.
+- Accept opaque CSTA device references, including the terminal MAC sent by
+  Fanvil DND controls. Keep authorization on the authenticated SIP account and
+  addressed endpoint, with explicit foreign SIP references still rejected.
+- Finish resolving the latest popup account after an older pending lookup,
+  without requiring a page reload or a second selection.
+- Share the initial account snapshot through the existing page subscription,
+  removing duplicate startup requests. Read-only cards receive their control
+  capability and do not probe microphones or automatically answer calls.
+- Keep an unrelated trunk's last SIP failure out of another account's status.
+  Reuse native device/entity lookup and removal, and update configured HA
+  associations from configuration changes rather than rescanning on call events.
+
+### Managed desk phones
+
+- Adopt a discovered or manually entered physical phone in one native HA form,
+  with an optional existing SIP account. Advanced properties, line assignments
+  and key ordering have separate controls; account and physical-phone entries
+  are labelled distinctly.
+- Choose associated phone lines from the selected model's real capabilities.
+  Reorder keys through their explicit physical positions, preserving unmanaged
+  slots. Share the key-function contract between resolution and rendering,
+  including the action that parks the current call without a BLF subscription.
+- Prepare and request configuration application through the existing worker
+  for qualified profiles with administrator credentials and an idle phone.
+  Preparation, file delivery and an accepted application request remain
+  separate observations. Unqualified models retain their manual application
+  path. Idle systems do not poll phone configuration; the pending-only busy
+  check is described above.
+- Qualify automatic configuration application for Fanvil X3U Pro firmware
+  2.12.20, including physical BLF key reordering without a manual provisioning
+  command or reboot. Existing phones need the updated pinned catalog profile.
+- Expose the application request status and safe error codes on the existing
+  provisioning sensor, without treating an accepted request as device adoption.
+- Label native HA configuration rows explicitly and show readable phone and
+  PBX models while preserving customized account and device names.
+- Preserve LDAP transport mode in provisioning and reject modes the selected
+  model cannot configure. Reuse verified cached profiles without rewriting
+  them and publish new cache files through unique atomic temporary files.
+- Keep provisioning optional: editing an account while it is disabled does
+  not download phone profiles. Redact administrative credentials and private
+  provisioning tokens from diagnostic exports.
+
+### On-device settings
+
+- Show the microphone, AEC-reference and call-transmission gain controls that
+  the selected profile actually provides. The display and Home Assistant use
+  the same controls, including their fractional steps and hardware limits.
+- Share supported audio controls and camera JPEG quality with the P4
+  VoIP-only Options screen. Profiles without a JPEG camera do not present a
+  camera encoding control.
+- Keep display updates event-driven and avoid rewriting unchanged control
+  values. On-device changes require rebuilding the corresponding firmware.
+
+### Coordinated ESP firmware
+
+- Correct DC-filter overflow, idle master-volume alias updates and packed
+  PCM sample alignment in the coordinated Audio and VoIP components.
+- Compact queued Runtime Controller updates and use fixed circular queues
+  while preserving event order, reentrancy limits and feature gates.
+  These device changes require rebuilding and uploading ESP firmware;
+  updating the HA integration alone does not install them.
+
+### Generic I2S microphone wiring
+
+- Expose `audio_mic_channel: left/right` consistently in the generic single-bus,
+  dual-bus and native-I2S microphone profiles. Preserve each profile's existing
+  default and select the same input for Voice Assistant, wake word and VoIP.
+  Thanks to [apaneiro](https://github.com/n-IA-hane/esphome-intercom/issues/162)
+  for the report.
+
+Rolling development preview, recovered incrementally from stable `2026.11.0`.
+Existing PBX functions, including parking, pickup, voicemail,
+BLF and MWI, retain their normal owners and interfaces.
+
+- Add optional global incoming-call popups for an existing HA browser phone,
+  configured per browser or Companion app. X, Esc and Back minimize the same
+  call; the small caller/timer bar reopens it. Restore that bar when an audio
+  call resumes after parking or pickup. Companion uses its existing WebView.
+- Integrate the VoIP Dashboard with shared extension status, contacts and the
+  selected HA or ESP phone's controls. Keep actions visible in portrait layouts
+  and when a video view hides its embedded toolbar. The compact card retains
+  its HA softphone, ESP mirror and phonebook modes.
+- Keep enabled logical HA phones reachable without an open card, and retain
+  browser media through dashboard changes. Browser audio and auto-answer still
+  need a running receiving frontend and media permissions. Scope notification
+  Answer and Decline to the original phone and Call-ID.
+- Restore the canonical shared directory and standard LDAP delivery from
+  existing phone owners. Preserve SIP presence composition, authenticated
+  subscription lifecycles and owned TCP notification retries. Recover managed
+  ESP accounts through the existing private ESPHome API.
+- Preserve negotiated directional audio, receive-packet capacity, per-Contact
+  capabilities and bound RTP socket ownership through routing and media
+  changes. Keep optional browser camera intent separate from receiving video,
+  and recover decoding when a video client reconnects.
+- Include the standard mono 16 kHz PCM, 20 ms alternative in both directions
+  of WS3 Audio FULL, preserving its preferred HA formats. Qualify this offer
+  against the resolved device profile, separately from calls translated by HA.
+- Integrate the maintained S3 JPEG receive profile, preserve source aspect and
+  receiver geometry, and align P4 camera frame rate with the selected profile.
+  P4 display rotation is composed by the declared display owner. Add optional
+  LVGL coordinate-tap diagnostics through the existing device action path.
+- Keep coordinated preview component references and the browser, HA and media
+  regression witnesses in CI. Document the explicit
+  [preview firmware overrides](docs/DEPLOYMENT_GUIDE.md#development-preview-firmware).
+
+Physical checks cover the exercised S3 and P4 profiles and call routes,
+including P4 popup video and S3 audio parking/pickup. They do not establish
+universal hardware, codec or acoustic qualification. Active-video endpoint
+retargeting on ESP is outside this preview's added contract. See the
+[qualification rules](docs/voip_test_matrix.md#incremental-recovery-from-2026110).
+
 ## 2026.11.0
 
 > **VoIP Stack for Home Assistant does not require ESPHome or ESP devices.** You can use the integration with browser softphones and standard SIP phones.

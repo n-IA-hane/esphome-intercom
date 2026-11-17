@@ -69,7 +69,7 @@ session, HA returns `486 Busy Here`.
 The card does not decide routing and does not filter the phonebook. It displays
 the central roster and mirrors HA softphone state.
 
-![Home Assistant calling an ESP endpoint](images/call-from-home-assistant-to-esp.gif)
+See the [historical recording of Home Assistant calling an ESP endpoint](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/call-from-home-assistant-to-esp.gif).
 
 ## ESP mirror card to target
 
@@ -113,15 +113,18 @@ Unexpected log shape:
 - `SIP route requested ...` for ordinary registered endpoint calls. That means
   the call left the canonical dial plan and went into the automation fallback.
 
-![SIP bridge across transport boundaries](images/cross-transport-bridge.gif)
+See the [historical recording of a SIP bridge across transport boundaries](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/cross-transport-bridge.gif).
 
 ## Unknown or unregistered caller
 
-1. Any SIP peer with network reachability sends INVITE to the ESP or HA
-   listener; no phonebook or registration lookup is used as a source allowlist.
+1. A SIP peer with network reachability sends INVITE to the ESP or HA listener.
+   Phonebook membership is not a source allowlist; on an ESP, direct-call
+   admission also follows `registration.accept_direct_calls` independently of
+   its configured accounts.
 2. The receiver validates the SIP transaction, Request-URI, current busy/DND
    state and SDP media.
-3. A directly addressed idle ESP rings when media is compatible. HA resolves
+3. A directly addressed idle ESP rings when direct calls are allowed and media
+   is compatible. HA resolves
    the destination using the same dial plan used for registered callers.
 4. The call proceeds or receives the normal routing/media/status response.
 
@@ -133,8 +136,12 @@ receive. Use network policy when an installation needs that restriction.
 
 1. A call is already established with its original negotiated media.
 2. One peer sends an in-dialog INVITE or UPDATE carrying an SDP offer.
-3. An ESP endpoint returns `488 Not Acceptable Here`; its original dialog and
-   RTP selection remain active.
+3. An ESP endpoint rejects changes to its established audio contract with
+   `488 Not Acceptable Here`, but can accept compatible video add/remove or
+   direction changes through its existing media owner. Active video retargets
+   and incompatible formats remain rejected. Use the
+   [compatibility table](ARCHITECTURE.md#in-dialog-media-compatibility) for the
+   exact scope; a rejected offer preserves the original dialog and media.
 4. An HA-owned dialog validates the offer against the live media owner. A
    compatible audio change or direction/hold/resume update is answered and
    committed once without rerunning the dial plan or creating a second call.
@@ -224,19 +231,23 @@ except itself.
 
 1. Caller dials an external number or a contact with `number`.
 2. HA checks that no internal `extension` owns that target.
-3. HA requires a registered trunk.
+3. HA requires the selected trunk to be enabled and ready: a current
+   registration for a registered trunk, or an active runtime with configured
+   trusted networks for a static trunk.
 4. HA creates a trunk SIP client leg and a relay.
 5. RTP is relayed between local caller and trunk endpoint.
 
-If trunk is not registered, HA rejects with `trunk_unavailable`.
+If the selected trunk is unavailable, HA rejects with `trunk_unavailable`.
+There is no implicit fallback to another provider. See [SIP trunks](SIP_TRUNK.md).
 
 ## Trunk inbound: direct mode
 
-1. A provider or PBX sends an INVITE to the registered HA trunk account.
+1. A provider or PBX sends an INVITE through its configured registered or
+   static trunk. Static ingress must match the configured trusted sources.
 2. HA replaces the provider Request-URI with the configured inbound default
    target.
-3. With automation routing disabled, HA resolves that target immediately
-   through the phonebook.
+3. Without an applicable automation override, HA resolves that target
+   immediately through the phonebook.
 4. The result can ring HA, bridge to an ESP or registered phone, join a ring or
    conference group, or start the configured Assist destination.
 5. HA negotiates and bridges the source and destination media legs when the
@@ -264,11 +275,14 @@ as individual `dtmf` occurrences without interrupting media.
 
 ## Optional automation decision
 
-Automation routing is an experimental, independently configurable override.
-It is disabled by default.
+Use the native VoIP Stack routing triggers for new automations; their matching
+filters can enable the decision window without the legacy event-routing
+option. See the [automation cookbook](AUTOMATION_DIALPLAN.md). The older
+event-based override remains a separately configurable compatibility path and
+is disabled by default.
 
-When enabled, HA publishes one `route_requested` occurrence and waits up to
-1.5 seconds for a decision:
+When the dispatcher admits an applicable override, HA publishes one
+`route_requested` occurrence and waits up to 1.5 seconds for a decision:
 
 - before the default route in Direct mode;
 - before the no-digits fallback in DTMF mode.
@@ -277,18 +291,23 @@ Explicit DTMF extensions never enter this decision path. If no automation
 acts, the original phonebook decision continues. A forward action moves the
 same logical source call and does not create a second inbound call.
 
-The public surface is the `route_requested` type on
+The legacy public surface is the `route_requested` type on
 `event.voip_stack_call`, consumed through Home Assistant's native
 `event.received` trigger. Raw event-bus messages are integration plumbing, not
 a second automation API.
 
-The decision point is not expected for:
+The dispatcher does not open this window for every target or group. In
+particular, the legacy path does not open it for:
 
 - registered endpoint calling another roster target;
 - HA/card calling a roster target;
 - ESP calling a known roster target;
 - an explicit DTMF extension;
-- any inbound call while automation routing is disabled.
+- an inbound call without an enabled legacy option or matching native override.
+
+A matching native routing trigger can admit a registered caller to the window;
+registration alone is not a universal exclusion. Trusted-ingress checks and
+the earlier explicit-extension and routing branches still apply.
 
 ## Unanswered HA forward
 

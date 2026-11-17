@@ -13,7 +13,10 @@ const {
   audioModeLabel,
   normaliseAudioMode,
   normaliseCardConfig,
+  supportsHaClient,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+
+const { ensureNativeForm } = await import(`./voip-stack-form.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 
 class VoipStackCardEditor extends HTMLElement {
   constructor() {
@@ -28,6 +31,7 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   connectedCallback() {
+    void ensureNativeForm().then(() => this._render());
     if (this._hass && !this._devicesLoaded) this._loadDevices();
   }
 
@@ -52,10 +56,8 @@ class VoipStackCardEditor extends HTMLElement {
     const languageChanged = String(this._hass?.language || "") !== String(hass?.language || "");
     this._hass = hass;
     if (hass && !this._devicesLoaded) this._loadDevices();
-    if (languageChanged && this._els) {
-      this._els = null;
-      this._render();
-    }
+    if (languageChanged && this._els) this._els.form.computeLabel = schema => this._fieldLabel(schema.name);
+    this._render();
   }
 
   _normaliseAudioMode(value) {
@@ -111,121 +113,62 @@ class VoipStackCardEditor extends HTMLElement {
 
   _buildSkeleton() {
     this.replaceChildren();
-
-    const style = document.createElement("style");
-    style.textContent = `
-      .form-group { margin-bottom: 16px; }
-      .form-group label { display: block; margin-bottom: 4px; font-weight: 500; color: var(--primary-text-color); }
-      .form-group input, .form-group select {
-        width: 100%; padding: 8px; border: 1px solid var(--divider-color, #ccc);
-        border-radius: 4px; background: var(--card-background-color, white);
-        color: var(--primary-text-color); font-size: 1em; box-sizing: border-box;
-      }
-      .checkbox-group label { display: flex; align-items: center; gap: 8px; }
-      .checkbox-group input { width: auto; padding: 0; }
-      .info { color: var(--secondary-text-color); font-size: 0.85em; margin-top: 8px; }
-      .hidden { display: none; }
-    `;
-    this.appendChild(style);
-
     const wrap = document.createElement("div");
     wrap.style.padding = "16px";
-
-    const modeGroup = document.createElement("div");
-    modeGroup.className = "form-group";
-    const modeLabel = document.createElement("label");
-    modeLabel.textContent = this._t("Card Mode");
-    modeGroup.appendChild(modeLabel);
-    const modeSelect = document.createElement("select");
-    modeSelect.id = "mode-select";
-    const mirrorOpt = document.createElement("option");
-    mirrorOpt.value = "esp_mirror";
-    mirrorOpt.textContent = this._t("ESP mirror");
-    const softphoneOpt = document.createElement("option");
-    softphoneOpt.value = "ha_softphone";
-    softphoneOpt.textContent = this._t("Home Assistant softphone");
-    const phonebookOpt = document.createElement("option");
-    phonebookOpt.value = "phonebook";
-    phonebookOpt.textContent = this._t("VoIP phonebook");
-    modeSelect.append(mirrorOpt, softphoneOpt, phonebookOpt);
-    modeGroup.appendChild(modeSelect);
-    const modeInfo = document.createElement("div");
-    modeInfo.className = "info";
-    modeGroup.appendChild(modeInfo);
-    wrap.appendChild(modeGroup);
-
-    const deviceGroup = document.createElement("div");
-    deviceGroup.className = "form-group";
-    const deviceLabel = document.createElement("label");
-    deviceLabel.textContent = this._t("VoIP Device");
-    deviceGroup.appendChild(deviceLabel);
-    const select = document.createElement("select");
-    select.id = "entity-select";
-    deviceGroup.appendChild(select);
-    const deviceInfo = document.createElement("div");
-    deviceInfo.className = "info";
-    deviceGroup.appendChild(deviceInfo);
-    wrap.appendChild(deviceGroup);
-
-    const nameGroup = document.createElement("div");
-    nameGroup.className = "form-group";
-    const nameLabel = document.createElement("label");
-    nameLabel.textContent = this._t("Card Name (optional)");
-    nameGroup.appendChild(nameLabel);
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.id = "name-input";
-    nameInput.placeholder = this._t("No title");
-    nameGroup.appendChild(nameInput);
-    wrap.appendChild(nameGroup);
-
-    const extendedInfoGroup = document.createElement("div");
-    extendedInfoGroup.className = "form-group checkbox-group";
-    const extendedInfoLabel = document.createElement("label");
-    const extendedInfoInput = document.createElement("input");
-    extendedInfoInput.type = "checkbox";
-    extendedInfoInput.id = "show-extended-info-input";
-    extendedInfoLabel.appendChild(extendedInfoInput);
-    extendedInfoLabel.appendChild(
-      document.createTextNode(` ${this._t("Extended information")}`),
-    );
-    extendedInfoGroup.appendChild(extendedInfoLabel);
-    wrap.appendChild(extendedInfoGroup);
-    const recordingGroup = document.createElement("div");
-    recordingGroup.className = "form-group checkbox-group";
-    const recordingLabel = document.createElement("label");
-    const recordingInput = document.createElement("input");
-    recordingInput.type = "checkbox";
-    recordingLabel.appendChild(recordingInput);
-    recordingLabel.appendChild(document.createTextNode(` ${this._t("Show recording controls")}`));
-    recordingGroup.appendChild(recordingLabel);
-    wrap.appendChild(recordingGroup);
-    recordingInput.onchange = (event) => this._boolChanged("show_recording_controls", event.target.checked);
-
+    const form = document.createElement("ha-form");
+    form.addEventListener("value-changed", event => this._formChanged(event));
+    const modeInfo = document.createElement("p");
+    const deviceInfo = document.createElement("p");
+    for (const hint of [modeInfo, deviceInfo]) {
+      hint.style.cssText = "color:var(--secondary-text-color);font-size:0.9em";
+    }
+    wrap.append(form, modeInfo, deviceInfo);
     this.appendChild(wrap);
+    this._els = { form, modeInfo, deviceInfo };
+  }
 
-    modeSelect.onchange = (event) => this._modeChanged(event.target.value);
-    select.onchange = (event) => this._deviceChanged(event.target.value);
-    nameInput.onchange = (event) => this._nameChanged(event.target.value);
-    extendedInfoInput.onchange = (event) => {
-      this._boolChanged("show_extended_info", event.target.checked);
-    };
+  _fieldLabel(name) {
+    const mode = this._config.mode || this._config.card_mode || "esp_mirror";
+    return this._t({
+      mode: "Card Mode",
+      device_id: mode === "ha_softphone" ? "SIP account" : "VoIP Device",
+      name: "Card Name (optional)", title: "Title (optional)",
+      show_extended_info: "Extended information",
+      show_recording_controls: "Show recording controls",
+    }[name] || name);
+  }
 
-    this._els = {
-      modeSelect,
-      modeInfo,
-      deviceGroup,
-      deviceLabel,
-      select,
-      deviceInfo,
-      nameGroup,
-      nameLabel,
-      nameInput,
-      extendedInfoGroup,
-      extendedInfoInput,
-      recordingGroup,
-      recordingInput,
+  _formData() {
+    return {
+      mode: this._config.mode || this._config.card_mode || "esp_mirror",
+      device_id: this._config.device_id || this._config.entity_id || "",
+      name: this._config.name || "",
+      title: this._config.title || this._config.name || "",
+      show_extended_info: !!this._config.show_extended_info,
+      show_recording_controls: !!this._config.show_recording_controls,
     };
+  }
+
+  _formChanged(event) {
+    const values = event.detail?.value;
+    if (!values || typeof values !== "object") return;
+    const before = this._formData();
+    if (values.mode && values.mode !== before.mode) {
+      this._modeChanged(values.mode);
+      return;
+    }
+    const config = { ...this._config };
+    let changed = false;
+    for (const key of Object.keys(before)) {
+      if (key === "mode" || !Object.hasOwn(values, key) || values[key] === before[key]) continue;
+      changed = true;
+      if (values[key]) config[key] = values[key]; else delete config[key];
+      if (key === "device_id") {
+        delete config.entity_id;
+        delete config.endpoint_id;
+      }
+    }
+    if (changed) this._dispatchConfig(config);
   }
 
   _render() {
@@ -234,88 +177,45 @@ class VoipStackCardEditor extends HTMLElement {
     const mode = this._config.mode || this._config.card_mode || "esp_mirror";
     const softphoneMode = mode === "ha_softphone";
     const phonebookMode = mode === "phonebook";
-    els.modeSelect.value = phonebookMode
-      ? "phonebook"
-      : softphoneMode
-        ? "ha_softphone"
-        : "esp_mirror";
+    const selectableDevices = this._devices.filter((device) =>
+      softphoneMode
+        ? this._isSoftphoneDevice(device) && device.can_control !== false && !!device.device_id
+        : !this._isSoftphoneDevice(device));
+    const configuredDeviceId = String(this._config.device_id || this._config.entity_id || "");
+    const selectedDevice = selectableDevices.find(device => device.device_id === configuredDeviceId);
+    const options = [{ value: "", label: this._t(softphoneMode ? "Preferred SIP account" : "-- Select device --") },
+      ...selectableDevices.map(device => ({ value: device.device_id,
+        label: softphoneMode
+          ? `${device.name || device.endpoint_id || device.device_id}${device.extension ? ` (${device.extension})` : ""}`
+          : `${device.name} (${this._audioModeLabel(device.audio_mode)})` }))];
+    const configuredMissingPhone = configuredDeviceId && !selectedDevice;
+    if (configuredMissingPhone) options.push({ value: configuredDeviceId, label: this._t("Missing phone") });
+    const controlVisible = { field: "mode", operator: "not_eq", value: "phonebook" };
+    els.form.hass = this._hass;
+    els.form.computeLabel = schema => this._fieldLabel(schema.name);
+    els.form.schema = [
+      { name: "mode", selector: { select: { options: [
+        { value: "esp_mirror", label: this._t("ESP mirror") },
+        { value: "ha_softphone", label: this._t("SIP account") },
+        { value: "phonebook", label: this._t("VoIP phonebook") },
+      ] } } },
+      { name: "device_id", visible: controlVisible, selector: { select: { options, mode: "dropdown" } } },
+      { name: "name", visible: controlVisible, selector: { text: {} } },
+      { name: "title", visible: { field: "mode", value: "phonebook" }, selector: { text: {} } },
+      { name: "show_extended_info", visible: controlVisible, selector: { boolean: {} } },
+      { name: "show_recording_controls", visible: { field: "mode", value: "ha_softphone" }, selector: { boolean: {} } },
+    ];
+    els.form.data = this._formData();
     els.modeInfo.textContent = this._t(phonebookMode
       ? "Scrollable view of the shared VoIP phonebook."
       : softphoneMode
-        ? "Home Assistant phone: bind this card to one logical phone, or leave it unselected for the preferred phone."
+        ? "Use any authorized SIP account. Leave unselected to use the preferred account."
         : "ESP mirror card: mirrors one ESP endpoint and presses that ESP's own call, answer and hangup controls.");
-    els.deviceGroup.classList.toggle("hidden", phonebookMode);
-    els.deviceLabel.textContent = this._t(softphoneMode
-      ? "Home Assistant phone"
-      : "VoIP Device");
-
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = this._t(softphoneMode
-      ? "Preferred Home Assistant phone"
-      : "-- Select device --");
-    const newOptions = [placeholder];
-    const selectableDevices = this._devices.filter((device) =>
-      softphoneMode
-        ? this._isSoftphoneDevice(device) && !!device.device_id
-        : !this._isSoftphoneDevice(device));
-    const configuredDeviceId = String(
-      this._config.device_id || this._config.entity_id || "",
-    );
-    const selectedDevice = selectableDevices.find((device) =>
-      configuredDeviceId && device.device_id === configuredDeviceId);
-    for (const device of selectableDevices) {
-      const option = document.createElement("option");
-      option.value = device.device_id;
-      option.textContent = softphoneMode
-        ? `${device.name || device.endpoint_id || device.device_id}${device.extension ? ` (${device.extension})` : ""}`
-        : `${device.name} (${this._audioModeLabel(device.audio_mode)})`;
-      if (selectedDevice === device) option.selected = true;
-      newOptions.push(option);
-    }
-    const configuredMissingPhone = softphoneMode && configuredDeviceId && !selectedDevice;
-    if (configuredMissingPhone) {
-      const missing = document.createElement("option");
-      missing.value = configuredDeviceId;
-      missing.textContent = this._t(`Missing phone: ${configuredDeviceId}`);
-      missing.selected = true;
-      missing.disabled = true;
-      newOptions.push(missing);
-    }
-    els.select.replaceChildren(...newOptions);
-
-    if (!this._devicesLoaded) {
-      els.deviceInfo.textContent = this._t("Loading...");
-    } else if (selectableDevices.length === 0) {
-      els.deviceInfo.textContent = this._t(softphoneMode
-        ? "No additional HA softphones found; the preferred or sole phone will be used."
-        : "No devices found");
-    } else if (configuredMissingPhone) {
-      els.deviceInfo.textContent = this._t(
-        "The configured Home Assistant phone no longer exists. Select another phone or use the preferred phone.");
-    } else if (selectedDevice) {
-      els.deviceInfo.textContent = softphoneMode
-        ? `Phone: ${selectedDevice.name || selectedDevice.device_id}`
-        : `Audio: ${this._normaliseAudioMode(selectedDevice.audio_mode).replace("_", " ")}`;
-    } else {
-      els.deviceInfo.textContent = this._t(softphoneMode
-        ? "Omit the selection to use the preferred Home Assistant phone."
-        : "Required for ESP mirror mode.");
-    }
-
-    els.nameLabel.textContent = this._t(phonebookMode
-      ? "Title (optional)"
-      : "Card Name (optional)");
-    els.nameInput.placeholder = this._t("No title");
-    els.nameInput.value = phonebookMode
-      ? this._config.title || this._config.name || ""
-      : this._config.name || "";
-    els.extendedInfoGroup.classList.toggle("hidden", phonebookMode);
-    els.extendedInfoInput.checked = !!this._config.show_extended_info;
-    if (els.recordingGroup) {
-      els.recordingGroup.classList.toggle("hidden", !softphoneMode);
-      els.recordingInput.checked = !!this._config.show_recording_controls;
-    }
+    els.deviceInfo.hidden = phonebookMode;
+    els.deviceInfo.textContent = this._t(!this._devicesLoaded ? "Loading..."
+      : configuredMissingPhone ? "The configured SIP account no longer exists. Select another account or use the preferred account."
+      : !selectableDevices.length ? (softphoneMode ? "No SIP accounts found." : "No devices found")
+      : softphoneMode ? "Leave unselected to use the preferred SIP account." : "Required for ESP mirror mode.");
   }
 
   _nameChanged(value) {
@@ -326,11 +226,7 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   _isSoftphoneDevice(device) {
-    const type = String(
-      device?.endpoint_type || device?.type || device?.kind || "",
-    ).toLowerCase();
-    return !!device?.softphone || !!device?.endpoint_id &&
-      ["browser", "ha_softphone", "home_assistant", "softphone"].includes(type);
+    return supportsHaClient(device);
   }
 
   _deviceChanged(deviceId) {
@@ -380,6 +276,8 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   _dispatchConfig(config) {
+    this._config = config;
+    this._render();
     this.dispatchEvent(new CustomEvent("config-changed", {
       detail: { config },
       bubbles: true,

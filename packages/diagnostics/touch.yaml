@@ -1,0 +1,32 @@
+# Optional logical display coordinates, cooperative tap or bounded swipe.
+external_components:
+- source: ${ext_components_source}
+  components: [lvgl_touch_diagnostic]
+lvgl_touch_diagnostic:
+  id: diagnostic_touch
+api:
+  actions:
+  - action: touch
+    variables:
+      x: int
+      y: int
+    then:
+    - lvgl_touch_diagnostic.tap:
+        id: diagnostic_touch
+        x: !lambda 'return x;'
+        y: !lambda 'return y;'
+  - action: swipe
+    variables:
+      x1: int
+      y1: int
+      x2: int
+      y2: int
+      duration_ms: int
+    then:
+    - lvgl_touch_diagnostic.swipe:
+        id: diagnostic_touch
+        x1: !lambda 'return x1;'
+        y1: !lambda 'return y1;'
+        x2: !lambda 'return x2;'
+        y2: !lambda 'return y2;'
+        duration_ms: !lambda 'return duration_ms;'

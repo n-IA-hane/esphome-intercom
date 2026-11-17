@@ -2,46 +2,31 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import partial
 
-from homeassistant.components.text import TextEntity, TextMode
+from homeassistant.components.text import TextEntity, TextEntityDescription, TextMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
+from .phone_entity import PhoneEndpointEntity
 from .endpoint_entity_manager import (
     EndpointEntityManager,
     register_endpoint_entity_manager,
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _PhoneTextSetting:
-    key: str
-    translation_key: str
-    icon: str
-    maximum: int
-
-
 _SETTINGS = (
-    _PhoneTextSetting("extension", "phone_endpoint_extension", "mdi:dialpad", 255),
-    _PhoneTextSetting(
-        "ring_group", "phone_endpoint_ring_group", "mdi:phone-ring", 255
-    ),
-    _PhoneTextSetting(
-        "conference_group",
-        "phone_endpoint_conference_group",
-        "mdi:account-group",
-        255,
-    ),
+    TextEntityDescription(key="extension", translation_key="phone_endpoint_extension", icon="mdi:dialpad", native_max=255),
+    TextEntityDescription(key="ring_group", translation_key="phone_endpoint_ring_group", icon="mdi:phone-ring", native_max=255),
+    TextEntityDescription(key="queues", translation_key="phone_endpoint_queues", icon="mdi:human-queue", native_max=240),
+    TextEntityDescription(key="conference_group", translation_key="phone_endpoint_conference_group", icon="mdi:account-group", native_max=255),
 )
 
 
 def _is_browser_phone(endpoint) -> bool:
-    return endpoint.kind.is_softphone
+    return endpoint.supports_ha_client
 
 
 async def async_setup_entry(
@@ -65,50 +50,24 @@ async def async_setup_entry(
         )
 
 
-class PhoneEndpointSettingText(TextEntity):
+class PhoneEndpointSettingText(PhoneEndpointEntity, TextEntity):
     """One editable string setting for a Home Assistant browser phone."""
 
-    _attr_has_entity_name = True
-    _attr_should_poll = False
     _attr_mode = TextMode.TEXT
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, hass, endpoint, registry, *, setting: _PhoneTextSetting) -> None:
-        self.endpoint = endpoint
-        self.registry = registry
-        self.setting = setting
-        self._attr_translation_key = setting.translation_key
-        self._attr_icon = setting.icon
-        self._attr_native_max = setting.maximum
-        self._attr_unique_id = (
-            f"phone_endpoint_{endpoint.endpoint_id}_{setting.key}"
-        )
-        self._attr_device_info = endpoint_device_info(endpoint)
-        self._attr_native_value = str(getattr(endpoint, setting.key, "") or "")
-
-    @callback
-    def async_entity_id_changed(self, old_entity_id: str) -> None:
-        """Keep phone lookup and permissions attached to the renamed entity."""
-        super().async_entity_id_changed(old_entity_id)
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id, old_entity_id
-        )
-        self._linked_entity_id = self.entity_id
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id,
-            getattr(self, "_linked_entity_id", None),
-        )
-        self._linked_entity_id = self.entity_id
+    def __init__(self, hass, endpoint, registry, *, setting: TextEntityDescription) -> None:
+        self.entity_description = setting
+        super().__init__(endpoint, registry, key=setting.key)
+        value = getattr(endpoint, setting.key, "")
+        self._attr_native_value = ", ".join(value) if setting.key == "queues" else str(value or "")
 
     @callback
     def apply_endpoint(self, endpoint) -> None:
-        self.endpoint = endpoint
-        self._attr_native_value = str(
-            getattr(endpoint, self.setting.key, "") or ""
-        )
+        super().apply_endpoint(endpoint)
+        key = self.entity_description.key
+        value = getattr(endpoint, key, "")
+        self._attr_native_value = ", ".join(value) if key == "queues" else str(value or "")
         if self.hass is not None:
             self.async_write_ha_state()
 
@@ -118,5 +77,5 @@ class PhoneEndpointSettingText(TextEntity):
         await async_set_ha_softphone_settings(
             self.hass,
             endpoint_id=self.endpoint.endpoint_id,
-            **{self.setting.key: value},
+            **{self.entity_description.key: value},
         )

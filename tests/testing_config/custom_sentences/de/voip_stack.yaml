@@ -1,0 +1,102 @@
+intents:
+  VoipAnswer:
+    data:
+    - response: default
+      sentences:
+      - anruf annehmen
+      - annehmen
+      slots:
+        voip_response: template
+  VoipCall:
+    data:
+    - response: default
+      sentences:
+      - rufe {target} an
+      - '{target} anrufen'
+      slots:
+        voip_response: template
+  VoipDecline:
+    data:
+    - response: default
+      sentences:
+      - '[anruf ]ablehnen[.]'
+      slots:
+        voip_response: template
+  VoipHangup:
+    data:
+    - response: default
+      sentences:
+      - auflegen
+      - anruf beenden
+      slots:
+        voip_response: template
+language: de
+lists:
+  target:
+    wildcard: true
+responses:
+  intents:
+    VoipAnswer:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Ich weiß nicht, welches\
+        \ VoIP-Gerät den Befehl gehört hat.\",\n  \"missing_target\": \"Welchen VoIP-Kontakt\
+        \ soll ich anrufen?\",\n  \"not_found\": \"Ich finde keinen VoIP-Kontakt namens\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Der VoIP-Kontakt \" ~ slots.target\
+        \ ~ \" ist nicht eindeutig.\",\n  \"ambiguous_area\": \"Der Home-Assistant-Bereich\
+        \ \" ~ slots.target ~ \" ist nicht eindeutig.\",\n  \"area_empty\": \"Im Bereich\
+        \ \" ~ slots.target ~ \" gibt es kein VoIP-Gerät.\",\n  \"ambiguous_area_device\"\
+        : \"Im Bereich \" ~ slots.target ~ \" gibt es mehrere VoIP-Geräte.\",\n  \"\
+        call_failed\": \"Ich konnte \" ~ slots.target ~ \" nicht anrufen.\",\n  \"\
+        hangup_failed\": \"Ich konnte den Anruf nicht beenden.\",\n  \"answer_failed\"\
+        : \"Ich konnte den Anruf nicht annehmen.\",\n  \"decline_failed\": \"Ich konnte\
+        \ den Anruf nicht ablehnen.\",\n  \"VoipCall\": \"Ich rufe \" ~ slots.target\
+        \ ~ \" an.\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Ich nehme den\
+        \ Anruf an.\",\n  \"VoipDecline\": \"Ich lehne den Anruf ab.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipCall:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Ich weiß nicht, welches\
+        \ VoIP-Gerät den Befehl gehört hat.\",\n  \"missing_target\": \"Welchen VoIP-Kontakt\
+        \ soll ich anrufen?\",\n  \"not_found\": \"Ich finde keinen VoIP-Kontakt namens\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Der VoIP-Kontakt \" ~ slots.target\
+        \ ~ \" ist nicht eindeutig.\",\n  \"ambiguous_area\": \"Der Home-Assistant-Bereich\
+        \ \" ~ slots.target ~ \" ist nicht eindeutig.\",\n  \"area_empty\": \"Im Bereich\
+        \ \" ~ slots.target ~ \" gibt es kein VoIP-Gerät.\",\n  \"ambiguous_area_device\"\
+        : \"Im Bereich \" ~ slots.target ~ \" gibt es mehrere VoIP-Geräte.\",\n  \"\
+        call_failed\": \"Ich konnte \" ~ slots.target ~ \" nicht anrufen.\",\n  \"\
+        hangup_failed\": \"Ich konnte den Anruf nicht beenden.\",\n  \"answer_failed\"\
+        : \"Ich konnte den Anruf nicht annehmen.\",\n  \"decline_failed\": \"Ich konnte\
+        \ den Anruf nicht ablehnen.\",\n  \"VoipCall\": \"Ich rufe \" ~ slots.target\
+        \ ~ \" an.\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Ich nehme den\
+        \ Anruf an.\",\n  \"VoipDecline\": \"Ich lehne den Anruf ab.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipDecline:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Ich weiß nicht, welches\
+        \ VoIP-Gerät den Befehl gehört hat.\",\n  \"missing_target\": \"Welchen VoIP-Kontakt\
+        \ soll ich anrufen?\",\n  \"not_found\": \"Ich finde keinen VoIP-Kontakt namens\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Der VoIP-Kontakt \" ~ slots.target\
+        \ ~ \" ist nicht eindeutig.\",\n  \"ambiguous_area\": \"Der Home-Assistant-Bereich\
+        \ \" ~ slots.target ~ \" ist nicht eindeutig.\",\n  \"area_empty\": \"Im Bereich\
+        \ \" ~ slots.target ~ \" gibt es kein VoIP-Gerät.\",\n  \"ambiguous_area_device\"\
+        : \"Im Bereich \" ~ slots.target ~ \" gibt es mehrere VoIP-Geräte.\",\n  \"\
+        call_failed\": \"Ich konnte \" ~ slots.target ~ \" nicht anrufen.\",\n  \"\
+        hangup_failed\": \"Ich konnte den Anruf nicht beenden.\",\n  \"answer_failed\"\
+        : \"Ich konnte den Anruf nicht annehmen.\",\n  \"decline_failed\": \"Ich konnte\
+        \ den Anruf nicht ablehnen.\",\n  \"VoipCall\": \"Ich rufe \" ~ slots.target\
+        \ ~ \" an.\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Ich nehme den\
+        \ Anruf an.\",\n  \"VoipDecline\": \"Ich lehne den Anruf ab.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"
+    VoipHangup:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Ich weiß nicht, welches\
+        \ VoIP-Gerät den Befehl gehört hat.\",\n  \"missing_target\": \"Welchen VoIP-Kontakt\
+        \ soll ich anrufen?\",\n  \"not_found\": \"Ich finde keinen VoIP-Kontakt namens\
+        \ \" ~ slots.target ~ \".\",\n  \"ambiguous\": \"Der VoIP-Kontakt \" ~ slots.target\
+        \ ~ \" ist nicht eindeutig.\",\n  \"ambiguous_area\": \"Der Home-Assistant-Bereich\
+        \ \" ~ slots.target ~ \" ist nicht eindeutig.\",\n  \"area_empty\": \"Im Bereich\
+        \ \" ~ slots.target ~ \" gibt es kein VoIP-Gerät.\",\n  \"ambiguous_area_device\"\
+        : \"Im Bereich \" ~ slots.target ~ \" gibt es mehrere VoIP-Geräte.\",\n  \"\
+        call_failed\": \"Ich konnte \" ~ slots.target ~ \" nicht anrufen.\",\n  \"\
+        hangup_failed\": \"Ich konnte den Anruf nicht beenden.\",\n  \"answer_failed\"\
+        : \"Ich konnte den Anruf nicht annehmen.\",\n  \"decline_failed\": \"Ich konnte\
+        \ den Anruf nicht ablehnen.\",\n  \"VoipCall\": \"Ich rufe \" ~ slots.target\
+        \ ~ \" an.\",\n  \"VoipHangup\": \"OK.\",\n  \"VoipAnswer\": \"Ich nehme den\
+        \ Anruf an.\",\n  \"VoipDecline\": \"Ich lehne den Anruf ab.\"\n} %} {{ messages.get(slots.error\
+        \ or slots.action, messages.call_failed) }}"

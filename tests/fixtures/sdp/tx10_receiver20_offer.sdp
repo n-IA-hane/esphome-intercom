@@ -1,0 +1,15 @@
+v=0
+o=- 1 0 IN IP4 192.0.2.2
+s=VoIP Stack
+c=IN IP4 192.0.2.2
+t=0 0
+m=audio 40000 RTP/AVP 96 97 98
+a=rtpmap:96 L16/16000/1
+a=x-voip-stack-flow:96 sendrecv
+a=rtpmap:97 L16/48000/1
+a=x-voip-stack-flow:97 recv
+a=rtpmap:98 telephone-event/8000
+a=fmtp:98 0-15
+a=x-voip-stack-independent-ptime:1
+a=ptime:10
+a=sendrecv

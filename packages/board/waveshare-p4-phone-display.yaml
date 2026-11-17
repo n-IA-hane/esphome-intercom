@@ -36,7 +36,3 @@ output:
   frequency: 1000Hz
 packages:
   ppa: !include '../lvgl/p4_ppa.yaml'
-external_components:
-- source: ${ext_components_source}
-  components:
-  - mipi_dsi

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+from ipaddress import IPv4Address
 from pathlib import Path
+import struct
+import subprocess
+import sys
+from xml.etree import ElementTree
+
 import pytest
 
 
@@ -26,6 +33,19 @@ def row(time: float, sequence: int, timestamp: int) -> str:
             str(timestamp),
         )
     )
+
+
+def sdp_pdml(*descriptions):
+    root = ElementTree.Element("pdml")
+    for source, fields in descriptions:
+        packet = ElementTree.SubElement(root, "packet")
+        network = ElementTree.SubElement(packet, "proto", name="ip")
+        ElementTree.SubElement(network, "field", name="ip.src", show=source)
+        sdp = ElementTree.SubElement(packet, "proto", name="sdp")
+        ElementTree.SubElement(sdp, "field", name="sdp.connection_info", show=f"IN IP4 {source}")
+        for name, value in fields:
+            ElementTree.SubElement(sdp, "field", name=name, show=value)
+    return ElementTree.tostring(root, encoding="unicode")
 
 
 def test_continuous_rtp_wrap_reports_no_loss() -> None:
@@ -64,10 +84,12 @@ def test_sdp_audio_clock_rates_bind_payload_to_advertised_port(
     monkeypatch, tmp_path
 ) -> None:
     class Result:
-        stdout = (
-            "192.0.2.1\taudio 40000 RTP/AVP 97,video 40002 RTP/AVP 103"
-            "\trtpmap:97 L16/16000/1,rtpmap:103 H264/90000\n"
-        )
+        stdout = sdp_pdml(("192.0.2.1", [
+            ("sdp.media", "audio 40000 RTP/AVP 97"),
+            ("sdp.media_attr", "rtpmap:97 L16/16000/1"),
+            ("sdp.media", "video 40002 RTP/AVP 103"),
+            ("sdp.media_attr", "rtpmap:103 H264/90000"),
+        ]))
 
     monkeypatch.setattr(MODULE.subprocess, "run", lambda *args, **kwargs: Result())
 
@@ -117,11 +139,12 @@ def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, 
     interval = 0.063420327
 
     def capture_result(command, **kwargs):
-        if command[command.index("-Y") + 1] == "sdp":
-            return SimpleNamespace(stdout=(
-                "192.0.2.1\taudio 40000 RTP/AVP 96"
-                "\trtpmap:96 opus/48000/2,ptime:20\n"
-            ))
+        if command[command.index("-T") + 1] == "pdml":
+            return SimpleNamespace(stdout=sdp_pdml(("192.0.2.2", [
+                ("sdp.media", "audio 40002 RTP/AVP 96"),
+                ("sdp.media_attr", "rtpmap:96 opus/48000/2"),
+                ("sdp.media_attr", "ptime:20"),
+            ])))
         return SimpleNamespace(stdout="\n".join(
             row(index * interval, 100 + index, 960 * index)
             for index in range(285)
@@ -132,214 +155,251 @@ def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, 
     assert streams[0]["lost_packets"] == 0
     assert streams[0]["clock_rate"] == 48000
     assert streams[0]["expected_delta_ms"] == 20.0
-    failures = MODULE.evaluate_streams(
+    assert MODULE.evaluate_streams(
         streams, require_streams=1, max_audio_loss=0,
         max_video_loss=None, max_cadence_ratio=1.02,
-    )
-    assert failures == [
-        "192.0.2.1:40000->192.0.2.2:40002 audio continuity unqualified: sample count unavailable for the negotiated codec",
-        "192.0.2.1:40000->192.0.2.2:40002 cadence 3.171x negotiated clock",
-    ]
+    ) == ["192.0.2.1:40000->192.0.2.2:40002 cadence 3.171x negotiated clock"]
 
     interval = 0.02
-    assert MODULE.evaluate_streams(
+    assert not MODULE.evaluate_streams(
         MODULE.analyze_pcap(tmp_path / "call.pcap"),
         require_streams=1, max_audio_loss=0,
         max_video_loss=None, max_cadence_ratio=1.02,
-    ) == ["192.0.2.1:40000->192.0.2.2:40002 audio continuity unqualified: sample count unavailable for the negotiated codec"]
+    )
 
 
-def packet(time, sequence, timestamp, pt=96, *, ssrc="0x12345678", frames=320):
-    import struct
-    payload = struct.pack(">h", sequence % 32767) * frames if pt in (96, 97) else bytes.fromhex("018a0500")
-    return "\t".join((str(time), "192.0.2.1", "40000", "192.0.2.2", "40002",
-                       ssrc, str(pt), str(sequence), str(timestamp), payload.hex()))
-
-
-def capture(monkeypatch, tmp_path, rows, *, extra="", pcm_dir=None):
+@pytest.mark.parametrize("video_first", [False, True])
+def test_same_payload_number_in_separate_media_keeps_its_audio_clock(monkeypatch, tmp_path, video_first):
     from types import SimpleNamespace
-    monkeypatch.setattr(MODULE.shutil, "which", lambda name: name)
-
-    def run(command, **kwargs):
-        if command[command.index("-Y") + 1] == "sdp":
-            return SimpleNamespace(stdout=(
-                "192.0.2.2\taudio 40002 RTP/AVP 96 97 109"
-                "\trtpmap:96 L16/16000/1,rtpmap:97 L16/16000/1,"
-                "rtpmap:109 telephone-event/8000,ptime:20" + extra + "\t192.0.2.2\n"
-            ))
-        return SimpleNamespace(stdout="\n".join(rows))
-    monkeypatch.setattr(MODULE.subprocess, "run", run)
-    return MODULE.analyze_pcap(tmp_path / "call.pcap", pcm_dir=pcm_dir)
+    audio = [("sdp.media", "audio 40000 RTP/AVP 96"),
+             ("sdp.media_attr", "rtpmap:96 L16/16000/1")]
+    video = [("sdp.media", "video 40002 RTP/AVP 96"),
+             ("sdp.media_attr", "rtpmap:96 H264/90000")]
+    data = sdp_pdml(("192.0.2.1", video + audio if video_first else audio + video))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 96): 16000,
+    }
 
 
-def failures(streams, require=1):
-    return MODULE.evaluate_streams(streams, require_streams=require, max_audio_loss=0,
-                                   max_video_loss=None, max_cadence_ratio=1.25)
+def test_multiple_audio_sections_and_rejected_media_keep_independent_payloads(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    data = sdp_pdml(("192.0.2.1", [
+        ("sdp.media", "audio 40000 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1"),
+        ("sdp.media", "audio 40002 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/48000/1"),
+        ("sdp.media", "video 0 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 H264/90000"),
+    ]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 96): 16000, ("192.0.2.1", 40002, 96): 48000,
+    }
 
 
-def test_interleaved_event_sequence_positions_are_not_audio_loss(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.01, 101, 0, 109), packet(.02, 102, 320)])
-    assert streams[0]["lost_packets"] == 0
-    assert streams[0]["audio_missing_samples"] == 0
-    assert streams[1]["media_type"] == "telephone-event"
-    assert not failures(streams)
-    assert failures(streams, require=2) == ["expected at least 2 RTP streams"]
+@pytest.mark.parametrize("conflicting_fields", [
+    [("sdp.media", "video 40000 RTP/AVP 96"), ("sdp.media_attr", "rtpmap:96 H264/90000")],
+    [("sdp.media_attr", "rtpmap:96 L16/48000/1")],
+    [("sdp.media_attr", "rtpmap:96 PCMU/16000/1")],
+])
+def test_ambiguous_same_tuple_payload_fails_closed(monkeypatch, tmp_path, conflicting_fields):
+    from types import SimpleNamespace
+    data = sdp_pdml(("192.0.2.1", [
+        ("sdp.media", "audio 40000 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1"), *conflicting_fields,
+    ]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    with pytest.raises(ValueError, match="Ambiguous SDP"):
+        MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap")
 
 
-def test_lost_event_with_contiguous_audio_does_not_invent_audio_loss(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.02, 102, 320)])
-    assert streams[0]["lost_packets"] == 1
-    assert streams[0]["audio_missing_samples"] == 0
-    assert not failures(streams)
+def test_consistent_repeated_sdp_and_static_audio_clocks_remain_usable(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    fields = [("sdp.media", "audio 40000 RTP/AVP 0 8 9 96"),
+              ("sdp.media_attr", "rtpmap:96 L16/16000/1")]
+    data = sdp_pdml(("192.0.2.1", fields), ("192.0.2.1", fields))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_a, **_k: SimpleNamespace(stdout=data))
+    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 0): 8000, ("192.0.2.1", 40000, 8): 8000,
+        ("192.0.2.1", 40000, 9): 8000, ("192.0.2.1", 40000, 96): 16000,
+    }
 
 
-def test_missing_pcm_is_preserved_even_with_contiguous_sequences(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.04, 101, 640)])
-    assert streams[0]["lost_packets"] == 0
-    assert streams[0]["audio_missing_samples"] == 320
-    assert "missing 320 audio samples" in failures(streams)[0]
+@pytest.mark.parametrize("encoding,clock,step", [("L16", 16000, 320), ("G722", 8000, 160), ("opus", 48000, 960)])
+def test_telephone_event_repeated_timestamp_is_not_an_audio_cadence(monkeypatch, tmp_path, encoding, clock, step):
+    """RFC4733 retains the event-start timestamp across multiple packets."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _: "tshark")
+    data = sdp_pdml(("192.0.2.2", [
+        ("sdp.media", "audio 40002 RTP/AVP 96 120"),
+        ("sdp.media_attr", f"rtpmap:96 {encoding}/{clock}/1"),
+        ("sdp.media_attr", "rtpmap:120 telephone-event/8000"),
+    ]))
+    voice = [row(index * .02, 100 + index*2, 1000 + index * step) for index in range(3)]
+    events = [row(.005 + index * .02, 101 + index*2, 1000*8000//clock+40).replace("\t96\t", "\t120\t") for index in range(3)]
+
+    def captured(command, **kwargs):
+        return SimpleNamespace(stdout=data if command[command.index("-T") + 1] == "pdml" else "\n".join(sorted(voice + events,key=lambda x:float(x.split('\t')[0]))))
+
+    monkeypatch.setattr(MODULE.subprocess, "run", captured)
+    streams = MODULE.analyze_pcap(tmp_path / "mixed.pcap")
+    audio = next(stream for stream in streams if stream["payload_type"] == 96)
+    event = next(stream for stream in streams if stream["payload_type"] == 120)
+    assert audio["media_type"] == "audio" and audio["expected_delta_ms"] == 20
+    assert audio["cadence_ratio"] == 1
+    assert event["media_type"] == "telephone-event"
+    assert event["clock_rate"] == 8000 and event["timestamp_step"] == 0
+    assert "cadence_ratio" not in event
+    assert not MODULE.evaluate_streams(streams, require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.25)
+    assert MODULE.evaluate_streams([event], require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.25) == ["expected at least 1 RTP streams", "Missing or repeated RTP sequence ledger"]
 
 
-def test_reordering_and_both_wraps_with_late_event_remain_contiguous(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 65534, 0xFFFFFEC0), packet(.02, 0, 0),
-        packet(.021, 65535, 0xFFFFFEC0, 109), packet(.04, 1, 320)])
-    assert streams[0]["lost_packets"] == 0
-    assert streams[0]["audio_missing_samples"] == 0
-    assert not failures(streams)
+def test_zero_advance_voice_timestamp_still_fails_closed(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _: "tshark")
+    data = sdp_pdml(("192.0.2.2", [("sdp.media", "audio 40002 RTP/AVP 96"),
+        ("sdp.media_attr", "rtpmap:96 L16/16000/1")]))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda command, **_kwargs:
+        SimpleNamespace(stdout=data if command[command.index("-T") + 1] == "pdml" else "\n".join(
+            row(index * .02, 100 + index, 1000) for index in range(3))))
+    with pytest.raises(ValueError, match="Audio RTP timestamp does not advance"):
+        MODULE.analyze_pcap(tmp_path / "broken-voice.pcap")
 
 
-def test_payload_switch_uses_one_audio_timeline_and_one_flow(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.02, 101, 320, 97)])
-    assert streams[0]["audio_missing_samples"] == 0
-    assert streams[1]["audio_timeline_follower"]
-    assert not failures(streams)
-    assert failures(streams, require=2) == ["expected at least 2 RTP streams"]
+def wire_capture(tmp_path, name, packets, *, signal_source="192.0.2.10",
+                 media_override=False, unknown=False, video=False, ignored_application=False):
+    """Real offline SIP/SDP/RTP, independent of the production sequence/mapping parser."""
+    records = []
+    def udp(source, destination, sport, dport, body):
+        payload = struct.pack("!HHHH", sport, dport, 8+len(body), 0)+body
+        return struct.pack("!BBHHHBBH4s4s",0x45,0,20+len(payload),1,0,64,17,0,
+                           IPv4Address(source).packed,IPv4Address(destination).packed)+payload
+    for source, destination, media_ip, port, response in (
+            (signal_source,"192.0.2.20","192.0.2.1",40000,False),
+            ("192.0.2.20",signal_source,"192.0.2.2",40002,True)):
+        connection = "192.0.2.99" if media_override else media_ip
+        body = f"v=0\r\no=- 1 1 IN IP4 {media_ip}\r\ns=test\r\nc=IN IP4 {connection}\r\nt=0 0\r\n"
+        if ignored_application:
+            body += "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 192.0.2.99\r\n"
+        body += f"m=audio {port} RTP/AVP 9 101 111\r\n"
+        if media_override:
+            body += f"c=IN IP4 {media_ip}\r\n"
+        body += "a=rtpmap:9 G722/8000/1\r\na=rtpmap:101 telephone-event/8000\r\n"
+        if not unknown:
+            body += "a=rtpmap:111 opus/48000/2\r\n"
+        if video:
+            body += f"m=video {port+4} RTP/AVP 26 102\r\n"
+            if media_override:
+                body += f"c=IN IP4 {media_ip}\r\n"
+            body += "a=rtpmap:102 H264/90000\r\n"
+        first = "SIP/2.0 200 OK" if response else "INVITE sip:b@192.0.2.20 SIP/2.0"
+        sip = (first+"\r\nVia: SIP/2.0/UDP "+signal_source+";branch=z9hG4bK-shared-source\r\n"
+               "From: <sip:a@example.invalid>;tag=a\r\nTo: <sip:b@example.invalid>\r\n"
+               "Call-ID: "+name+"@offline.invalid\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n"
+               f"Content-Length: {len(body)}\r\n\r\n"+body).encode()
+        records.append((len(records)*50000,udp(source,destination,5060,5060,sip)))
+    for index, item in enumerate(packets):
+        seq, pt, stamp = item[:3]
+        opts = item[3] if len(item)>3 else {}
+        source, destination = opts.get("source","192.0.2.1"),opts.get("destination","192.0.2.2")
+        sport,dport = opts.get("sport",40000),opts.get("dport",40002)
+        payload = struct.pack("!BBH",1,0x8a,480) if pt==101 else bytes([0x55])*160
+        raw = struct.pack("!BBHII",0x80,pt,seq,stamp,opts.get("ssrc",0x12345678))+payload
+        records.append((1000000+index*20000,udp(source,destination,sport,dport,raw)))
+    # A valid RTCP receiver report must never join the RTP sequence ledger.
+    records.append((1500000,udp("192.0.2.1","192.0.2.2",40001,40003,struct.pack("!BBHI",0x80,201,1,0x12345678))))
+    path = tmp_path/(name+".pcap")
+    with path.open("wb") as file:
+        file.write(struct.pack("<IHHIIII",0xa1b2c3d4,2,4,0,0,65535,101))
+        for at,packet in records:
+            sec,usec=divmod(at,1000000)
+            file.write(struct.pack("<IIII",sec+1700000000,usec,len(packet),len(packet))+packet)
+    return path
 
 
-def test_event_clock_and_ssrc_are_separate_from_pcm(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.01, 1, 700, 109, ssrc="0x22334455"),
-        packet(.02, 101, 320), packet(.03, 2, 700, 109, ssrc="0x22334455")])
-    assert streams[0]["audio_missing_samples"] == 0
-    assert not failures(streams)
+def strict_failures(streams):
+    return MODULE.evaluate_streams(streams,require_streams=1,max_audio_loss=0,
+                                   max_video_loss=None,max_cadence_ratio=1.25)
 
 
-def test_actual_samples_override_advertised_packet_time(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0, frames=160), packet(.01, 101, 160, frames=160)])
-    assert streams[0]["expected_delta_ms"] == 10
-    assert streams[0]["cadence_ratio"] == 1
-    assert not failures(streams)
+@pytest.mark.parametrize("missing",[False,True])
+def test_actual_shared_audio_event_sequence_uses_one_loss_ledger(tmp_path, missing):
+    packets=[(100,9,1000),(101,101,1160),(102,101,1160),(103,9,1480),(104,101,1160),(105,9,1800)]
+    if missing:
+        packets.pop(2)
+    path=wire_capture(tmp_path,"shared",packets,signal_source="192.0.2.1")
+    streams=MODULE.analyze_pcap(path,sip_ports=(5060,))
+    assert {s["media_type"] for s in streams}=={"audio","telephone-event"}
+    if not missing:
+        assert strict_failures(streams)==[]
+    assert all(s["lost_packets"] is None and s["loss_scope"]=="shared_sequence_space" for s in streams)
+    ledgers=[s["sequence_ledger"] for s in streams if "sequence_ledger" in s]
+    assert len(ledgers)==1 and ledgers[0]["lost_packets"]==int(missing)
+    failures=strict_failures(streams)
+    assert len(failures)==int(missing)
+    if missing:
+        assert "payload type unknown" in failures[0] and "audio packets" not in failures[0]
+    cli=subprocess.run([sys.executable,str(PATH),str(path),"--output",str(tmp_path/"shared.json"),
+                        "--sip-port","5060","--max-loss","0"],capture_output=True,text=True)
+    assert cli.returncode==int(missing),cli.stderr
+    assert json.loads(cli.stdout)["status"]==("failed" if missing else "passed")
 
 
-def test_audio_clock_change_is_explicitly_unqualified(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0), packet(.02, 101, 320, 97)],
-        extra=",rtpmap:97 L16/8000/1")
-    assert streams[0]["audio_missing_packets"] is None
-    assert "audio continuity unqualified" in failures(streams)[0]
+@pytest.mark.parametrize("signal_source,override,nat_source",[
+    ("192.0.2.1",False,False),("192.0.2.10",False,False),
+    ("192.0.2.10",True,False),("192.0.2.10",False,True)])
+def test_real_sdp_receiver_connection_binds_audio_without_assuming_source(tmp_path, signal_source, override, nat_source):
+    opts={"source":"192.0.2.77"} if nat_source else {}
+    path=wire_capture(tmp_path,"split",[(100,9,1000,opts),(102,9,1320,opts),(103,9,1480,opts)],
+                      signal_source=signal_source,media_override=override)
+    streams=MODULE.analyze_pcap(path,sip_ports=(5060,))
+    assert streams[0]["media_type"]=="audio" and streams[0]["clock_rate"]==8000
+    assert streams[0]["lost_packets"]==1
+    assert any("lost 1 audio packets" in failure for failure in strict_failures(streams))
+    if signal_source=="192.0.2.10" and not override and not nat_source:
+        cli=subprocess.run([sys.executable,str(PATH),str(path),"--output",str(tmp_path/"split.json"),
+                            "--sip-port","5060","--max-loss","0"],capture_output=True,text=True)
+        assert cli.returncode==1 and json.loads(cli.stdout)["streams"][0]["media_type"]=="audio"
 
 
-def test_wav_is_sorted_and_keeps_real_timestamp_holes(tmp_path):
-    import shutil
-    import struct
-    import wave
-    import pytest
-    if not shutil.which("ffmpeg"):
-        pytest.skip("ffmpeg unavailable")
-    rows = [packet(.04, 102, 640), packet(0, 100, 0), packet(.041, 102, 640)]
-    streams = MODULE.analyze_rows(rows, with_records=True)
-    streams[0]["_format"] = {"encoding": "L16", "clock": 16000, "channels": 1, "ptime": 20}
-    MODULE._audio_continuity(streams, tmp_path / "pcm")
-    assert streams[0]["audio_missing_samples"] == 320
-    with wave.open(streams[0]["pcm_wav"]) as source:
-        assert source.getnframes() == 960
-        assert source.readframes(960) == struct.pack("<h", 100) * 320 + bytes(640) + struct.pack("<h", 102) * 320
+def test_unmapped_dynamic_payload_fails_closed_instead_of_becoming_video(tmp_path):
+    path=wire_capture(tmp_path,"unknown",[(1,111,0),(3,111,1920)],unknown=True)
+    streams=MODULE.analyze_pcap(path,sip_ports=(5060,))
+    assert streams[0]["media_type"]=="unknown"
+    assert any("unknown" in failure.lower() for failure in strict_failures(streams))
 
 
-def test_unknown_receiver_payload_cannot_become_a_passing_video_stream(monkeypatch, tmp_path):
-    streams = capture(monkeypatch, tmp_path, [packet(0, 100, 0, 110)])
-    assert streams[0]["media_type"] == "unknown"
-    assert any("absent from receiver SDP" in reason for reason in failures(streams))
+def test_real_bidirectional_sources_ssrc_and_known_video_remain_separate(tmp_path):
+    packets=[(1,9,1000),(2,9,1160),(1,9,1000,{"source":"192.0.2.2","destination":"192.0.2.1","sport":40002,"dport":40000}),
+             (2,9,1160,{"source":"192.0.2.2","destination":"192.0.2.1","sport":40002,"dport":40000}),
+             (10,26,9000,{"sport":40004,"dport":40006}),(11,26,10800,{"sport":40004,"dport":40006})]
+    streams=MODULE.analyze_pcap(wire_capture(tmp_path,"bidirectional",packets,video=True),sip_ports=(5060,))
+    assert sorted(s["media_type"] for s in streams)==["audio","audio","video"]
+    assert all(s["lost_packets"]==0 and s["packets"]==2 for s in streams)
+    assert strict_failures(streams)==[]
 
 
-@pytest.mark.parametrize("scenario", ["continuous", "lost-event", "lost-audio", "wrap-reorder", "icmp-quote",
-    "empty-keepalive", "nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"])
-def test_real_pcap_decodes_both_pcm_directions_with_interleaved_events(tmp_path, scenario):
-    import socket
-    import struct
-    import shutil
-    import wave
-    if not shutil.which("tshark") or not shutil.which("ffmpeg"):
-        pytest.skip("Wireshark and FFmpeg required")
-    packets = []
-    a, b = "192.0.2.1", "192.0.2.2"
+def test_sequence_reorder_across_wrap_does_not_invent_a_second_cycle():
+    streams=MODULE.analyze_rows([row(i*.02,seq,1000+i*320) for i,seq in enumerate((65534,0,65535,1,2))])
+    assert streams[0]["lost_packets"]==0
+    assert streams[0]["sequence_ledger"]["reordered_packets"]==1
 
-    def udp(time, source, target, source_port, target_port, payload):
-        header = struct.pack("!HHHH", source_port, target_port, len(payload) + 8, 0)
-        ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, len(payload) + 28, 0, 0, 64, 17, 0,
-                         socket.inet_aton(source), socket.inet_aton(target))
-        packets.append((time, bytes.fromhex("0200000000010200000000020800") + ip + header + payload))
 
-    def sip(first, host, port, tag):
-        body = (f"v=0\r\no=- 1 1 IN IP4 {host}\r\ns=oracle\r\nc=IN IP4 {host}\r\nt=0 0\r\n"
-                f"m=audio {port} RTP/AVP 96 109\r\na=rtpmap:96 L16/16000/1\r\n"
-                "a=rtpmap:109 telephone-event/8000\r\na=fmtp:109 0-15\r\na=ptime:10\r\n")
-        return (first + "\r\nVia: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKtest\r\n"
-                "From: <sip:a@192.0.2.1>;tag=a\r\nTo: <sip:b@192.0.2.2>" + tag + "\r\n"
-                "Call-ID: pcap-oracle\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n"
-                f"Content-Length: {len(body)}\r\n\r\n" + body).encode()
-    udp(0, a, b, 5060, 5060, sip("INVITE sip:b@192.0.2.2 SIP/2.0", a, 40000, ""))
-    udp(.001, b, a, 5060, 5060, sip("SIP/2.0 200 OK", b, 40002, ";tag=b"))
-    seq = 65534 if scenario == "wrap-reorder" else 100
-    timestamp = 0xFFFFFF60 if scenario == "wrap-reorder" else 0
+def test_non_rtp_media_connection_does_not_replace_session_inheritance(tmp_path):
+    path=wire_capture(tmp_path,"non-rtp",[(1,9,1000),(2,9,1160)],ignored_application=True)
+    streams=MODULE.analyze_pcap(path,sip_ports=(5060,))
+    assert streams[0]["media_type"]=="audio"
+    assert strict_failures(streams)==[]
 
-    def rtp(pt, sequence, ts, ssrc, payload):
-        return struct.pack("!BBHII", 0x80, pt, sequence & 65535, ts & 0xFFFFFFFF, ssrc) + payload
 
-    udp(.01, a, b, 40000, 40002, rtp(96, seq, timestamp, 1, struct.pack(">h", 10) * 160))
-    for index in range(3):
-        if scenario == "lost-event" and index == 1:
-            continue
-        arrival = .021 if scenario == "wrap-reorder" and index == 2 else .012 + index * .002
-        udp(arrival, a, b, 40000, 40002, rtp(109, seq + 1 + index, 100, 1, bytes.fromhex("018a0500")))
-    if scenario != "lost-audio":
-        udp(.02, a, b, 40000, 40002, rtp(96, seq + 4, timestamp + 160, 1, struct.pack(">h", 20) * 160))
-    udp(.03, a, b, 40000, 40002, rtp(96, seq + 5, timestamp + 320, 1, struct.pack(">h", 30) * 160))
-    for index in range(3):
-        udp(.01 + index * .01, b, a, 40002, 40000,
-            rtp(96, 200 + index, index * 160, 2, struct.pack(">h", 40) * 160))
-    unknown_failure = scenario in {"nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"}
-    if scenario in {"empty-keepalive", "nonempty-unknown", "mixed-unknown", "unrelated-empty", "truncated-unknown"}:
-        payload = b"bad" if scenario in {"nonempty-unknown", "truncated-unknown"} else b""
-        udp(.04, a, b, 40000, 40010 if scenario == "unrelated-empty" else 40002,
-            rtp(127, seq + 6, timestamp + 320, 1, payload))
-        if scenario == "truncated-unknown":
-            time, raw = packets[-1]
-            packets[-1] = time, raw[:-3]
-        if scenario == "mixed-unknown":
-            udp(.041, a, b, 40000, 40002, rtp(127, seq + 7, timestamp + 320, 1, b"bad"))
-    if scenario == "icmp-quote":
-        # An ICMP error quotes the original datagram. Its nested RTP must
-        # never become another media packet or an unknown-codec stream.
-        quoted = packets[-1][1][14:]
-        icmp = struct.pack("!BBHI", 3, 3, 0, 0) + quoted
-        ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, len(icmp) + 20, 0, 0, 64, 1, 0,
-                         socket.inet_aton(a), socket.inet_aton(b))
-        packets.append((.04, bytes.fromhex("0200000000010200000000020800") + ip + icmp))
-    path = tmp_path / "bidirectional.pcap"
-    with path.open("wb") as output:
-        output.write(struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
-        for time, raw in sorted(packets):
-            output.write(struct.pack("<IIII", 1, round(time * 1000000), len(raw), len(raw)))
-            output.write(raw)
-    streams = MODULE.analyze_pcap(path, pcm_dir=tmp_path / "pcm")
-    audio = [stream for stream in streams if stream["media_type"] == "audio"]
-    assert len(audio) == 2
-    assert audio[0]["audio_missing_samples"] == (160 if scenario == "lost-audio" else 0)
-    assert audio[1]["audio_missing_samples"] == 0
-    assert bool(failures(streams, require=2)) is (scenario == "lost-audio" or unknown_failure)
-    if scenario == "empty-keepalive":
-        keepalives = [stream for stream in streams if stream["media_type"] == "rtp-keepalive"]
-        assert len(keepalives) == 1 and keepalives[0]["rtp_keepalive_packets"] == 1
-        assert failures(streams, require=3) == ["expected at least 3 RTP streams"]
-    with wave.open(audio[0]["pcm_wav"]) as source:
-        middle = bytes(320) if scenario == "lost-audio" else struct.pack("<h", 20) * 160
-        assert source.readframes(480) == struct.pack("<h", 10) * 160 + middle + struct.pack("<h", 30) * 160
+def test_shared_unknown_payload_cannot_bypass_the_single_source_loss_gate(tmp_path):
+    path=wire_capture(tmp_path,"shared-unknown",[(1,9,1000),(3,111,960),(4,9,1480)],unknown=True)
+    streams=MODULE.analyze_pcap(path,sip_ports=(5060,))
+    failures=strict_failures(streams)
+    assert any("unknown SDP" in reason for reason in failures)
+    assert len([reason for reason in failures if "lost 1" in reason])==1

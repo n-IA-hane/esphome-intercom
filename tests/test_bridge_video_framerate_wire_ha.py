@@ -20,6 +20,7 @@ from tests.test_automation_originate_ha import lab as lab
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("caller_fps", [2, 15])
 @pytest.mark.parametrize("receiver_hint,transcoding,peer_attributes,source_calls,expected_resize", [
     pytest.param("26 recv [x=[8:8:320],y=[8:8:240]]", True, True, False, True, id="receiver-originates"),
     pytest.param("26 recv [x=800,y=800]", True, True, False, False, id="matching-size"),
@@ -30,7 +31,7 @@ pytestmark = pytest.mark.ha
     pytest.param("26 recv [x=[8:8:320],y=[8:8:240]]", True, True, True, True, id="source-originates"),
 ])
 async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
-    lab, monkeypatch, receiver_hint, transcoding, peer_attributes, source_calls, expected_resize,
+    lab, monkeypatch, receiver_hint, transcoding, peer_attributes, source_calls, expected_resize, caller_fps,
 ):
     """A receiver-originated real SIP call must resize the opposite RTP path."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
@@ -83,7 +84,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
     monkeypatch.setattr(camera, "answer", answer)
     caller_hint = ("26 send [x=800,y=800] recv [x=[8:8:800],y=[8:8:800]]"
         if source_calls else receiver_hint)
-    receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10,
+    receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=caller_fps,
         image_attributes=sdp.parse_imageattr(caller_hint)[1] if caller_hint else None)
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Bounded JPEG receiver",
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],
@@ -110,19 +111,22 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
                 assert b"a=imageattr:" not in camera.invites[0].body
         assert relay.transcodes_from("left") == (expected_resize and source_calls)
         assert relay.transcodes_from("right") == (expected_resize and not source_calls)
-        assert relay.left.send_format.max_framerate == relay.right.recv_format.max_framerate == 10
+        assert relay.left.send_format.max_framerate == relay.right.recv_format.max_framerate == caller_fps
+        assert relay.right.send_format.max_framerate == 10
+        if source_calls and not expected_resize:
+            assert relay.left.recv_format.max_framerate == 10
+        encoder = await asyncio.create_subprocess_exec("ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=red:size=800x800:rate=10", "-frames:v", "1", "-an",
+            "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-threads", "1", "-huffman", "default",
+            "-force_duplicated_matrix", "1", "-f", "image2pipe", "pipe:1",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        jpeg, error = await asyncio.wait_for(encoder.communicate(), 5)
+        assert encoder.returncode == 0, error.decode()
+        assert video_rtp.jpeg_dimensions(jpeg) == (800, 800)
         if expected_resize:
             destination = relay.right if source_calls else relay.left
             plan = sdp.jpeg_image_plan(destination.send_format, 800, 800)
             assert (plan.width, plan.height) == (240, 240)
-            encoder = await asyncio.create_subprocess_exec("ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=c=red:size=800x800:rate=10", "-frames:v", "1", "-an",
-                "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-threads", "1", "-huffman", "default",
-                "-force_duplicated_matrix", "1", "-f", "image2pipe", "pipe:1",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            jpeg, error = await asyncio.wait_for(encoder.communicate(), 5)
-            assert encoder.returncode == 0, error.decode()
-            assert video_rtp.jpeg_dimensions(jpeg) == (800, 800)
             input_socket = caller_video if source_calls else remote_video
             output_socket = remote_video if source_calls else caller_video
             relay_port = relay.left_port if source_calls else relay.right_port
@@ -155,6 +159,31 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
             assert relay.transcoded_output_packets > 0
             assert lab.calls.resource_for(call_id, "relay") is audio_relay
             assert (caller.dialog.send_format, caller.dialog.recv_format) == original_audio
+        else:
+            assert not relay.transcoding and lab.runtime.media.transcoder is None
+            input_socket = caller_video if source_calls else remote_video
+            output_socket = remote_video if source_calls else caller_video
+            relay_port = relay.left_port if source_calls else relay.right_port
+            sent = video_rtp.packetize_jpeg(jpeg, payload_type=26, sequence=13,
+                timestamp=90000, ssrc=0x11223344)
+            for packet in sent:
+                await lab.hass.loop.sock_sendto(input_socket, rtp.build_packet(packet), ("127.0.0.1", relay_port))
+            received = []
+            decoder = video_rtp.JpegDepacketizer()
+            frame = None
+            async with asyncio.timeout(2):
+                while len(received) < len(sent):
+                    raw = await lab.hass.loop.sock_recv(output_socket, 65535)
+                    if len(raw) == 20 and raw[:8] == b"\x00\x11\x00\x00\x21\x12\xa4\x42":
+                        continue
+                    packet = rtp.parse_packet(raw)
+                    received.append(packet.payload)
+                    decoded = decoder.push(packet)
+                    if decoded is not None:
+                        frame = decoded
+            assert received == [packet.payload for packet in sent]
+            assert frame is not None and video_rtp.jpeg_dimensions(frame.data) == (800, 800)
+            assert relay.transcoded_output_packets == 0
         assert caller.bye()
         session = lab.calls.get_session(call_id)
         await asyncio.wait_for(session.termination_started.wait(), 3)
@@ -175,12 +204,13 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
         caller_video.close()
 
 
+@pytest.mark.parametrize("caller_fps", [10, 2])
 @pytest.mark.parametrize("direction,receiver_limit", [
     pytest.param("sendonly", 2, id="direction-only-unchanged-receiver"),
     pytest.param("sendrecv", 2, id="unchanged-direction"),
     pytest.param("sendonly", 5, id="fresh-receiver-budget"),
 ])
-async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, direction, receiver_limit):
+async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, direction, receiver_limit, caller_fps):
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
         udp.bind(("127.0.0.1", 0))
@@ -201,7 +231,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
         audio = next(fmt for fmt in sdp.offered_pcm_formats(request.body)
             if fmt.encoding == "L16" and fmt.sample_rate == 16000)
         video = sdp.offered_video_formats(request.body)[0]
-        assert video.max_framerate == 10
+        assert video.max_framerate == caller_fps
         limit = 2 if len(receiver.invites) == 1 else receiver_limit
         body = sdp.build_answer_directional("127.0.0.1", "127.0.0.1",
             receiver.rtp_socket.getsockname()[1], audio, audio, remote_sdp=request.body,
@@ -214,7 +244,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent camera caller",
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],
         local_video_rtp_port=35004,
-        video_formats=(sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10),))
+        video_formats=(sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=caller_fps),))
     answers = []
     read_response = caller._read_response
 
@@ -239,9 +269,9 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
         relay = lab.calls.resource_for(call_id, "relay")
         destination = lab.calls.sip_client_for(lab.calls.bridge_for(call_id)[1])
         # This is the actual asymmetric contract: the decoder answer is 2,
-        # while the distinct local receive contract still comes from offer 10.
+        # while the distinct local receive contract still comes from our offer.
         assert destination.dialog.send_video_format.max_framerate == 2
-        assert destination.dialog.recv_video_format.max_framerate == 10
+        assert destination.dialog.recv_video_format.max_framerate == caller_fps
 
         candidate = await caller.async_prepare_video_reinvite(local_video_rtp_port=35004,
             video_formats=caller.video_formats, video_direction=direction)
@@ -256,7 +286,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
             while relay.video_relay.left.recv_format.max_framerate != receiver_limit:
                 await asyncio.sleep(0)
         assert destination.dialog.send_video_format.max_framerate == receiver_limit
-        assert destination.dialog.recv_video_format.max_framerate == 10
+        assert destination.dialog.recv_video_format.max_framerate == caller_fps
         assert len(receiver.invites) == (1 if direction == "sendrecv" else 2)
         assert caller.bye()
         session = lab.calls.get_session(call_id)

@@ -144,7 +144,8 @@ def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
         endpoint_id="kitchen",
         device_id="device-kitchen",
         call_id="call-1",
-        registry=SimpleNamespace(),
+        registry=SimpleNamespace(get_session=lambda _call_id: SimpleNamespace(
+            metadata={"source_endpoint_id": "caller"}, endpoint_claims={"kitchen": "destination"})),
     )
 
     asyncio.run(termination.async_hangup_browser_call(hass, command))

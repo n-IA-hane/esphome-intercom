@@ -96,6 +96,9 @@ font:
   - 󰖁
   - 󰟴
   - "\U000F061C"
+  - "\U000F06CB"
+  - "\U000F05E9"
+  - "\U000F006E"
 - file: https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf
   id: font_weather_icon_sm
   size: 36
@@ -592,40 +595,37 @@ defaults:
     }
 
     const bool contacts_were_hidden = lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN);
-    set_hidden(id(call_idle_group), true);
-    set_hidden(id(call_keypad_group), true);
-    set_hidden(id(call_ringing_in_group), true);
-    set_hidden(id(call_ringing_out_group), true);
-    set_hidden(id(call_in_call_group), true);
-    set_hidden(id(call_ended_group), true);
+    lv_obj_t *visible_call_group = id(call_idle_group);
 
     if (id(call_ended_active) && !id(phone).is_active()) {
       // ui_call_ended owns the tile for ~4 s after a terminated
       // call so the user reads the reason regardless of the runtime state
       // state already returning to IDLE.
-      set_hidden(id(call_ended_group), false);
+      visible_call_group = id(call_ended_group);
     } else if (call_state == "ringing") {
       set_label(id(call_ringing_in_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_in_group), false);
+      visible_call_group = id(call_ringing_in_group);
     } else if (call_state == "calling" || call_state == "remote_ringing") {
       set_label(id(call_ringing_out_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_ringing_out_group), false);
+      visible_call_group = id(call_ringing_out_group);
     } else if (call_state == "in_call" && id(voip_keypad_visible)) {
       lv_obj_set_y(id(call_keypad_group), 0);
-      set_hidden(id(call_keypad_group), false);
+      visible_call_group = id(call_keypad_group);
     } else if (call_state == "in_call" || call_state == "connecting") {
       set_label(id(call_in_call_peer_label), id(peer_name).c_str());
-      set_hidden(id(call_in_call_group), false);
+      visible_call_group = id(call_in_call_group);
     } else {
       if (id(voip_keypad_visible)) {
         lv_obj_set_y(id(call_keypad_group), 0);
-        set_hidden(id(call_keypad_group), false);
+        visible_call_group = id(call_keypad_group);
       } else {
         lv_obj_set_y(id(call_idle_group), 0);
         lv_obj_set_y(id(call_keypad_group), id(main_layout)[11]);
-        set_hidden(id(call_idle_group), false);
+        visible_call_group = id(call_idle_group);
       }
     }
+    lv_obj_t *call_groups[] = {id(call_idle_group), id(call_keypad_group), id(call_ringing_in_group), id(call_ringing_out_group), id(call_in_call_group), id(call_ended_group)};
+    for (auto *group : call_groups) set_hidden(group, group != visible_call_group);
     if (contacts_were_hidden && !lv_obj_has_flag(id(call_idle_group), LV_OBJ_FLAG_HIDDEN))
       id(contacts_list_view).refresh();
 
@@ -678,10 +678,22 @@ defaults:
       auto set_quick_button = [&](lv_obj_t *btn, lv_obj_t *label, bool active,
                                   uint32_t on_color, uint32_t off_color,
                                   const char *on_text, const char *off_text) {
-        lv_obj_set_style_bg_color(btn, lv_color_hex(active ? on_color : off_color), LV_PART_MAIN);
-        lv_obj_set_style_border_width(btn, active ? 2 : 0, LV_PART_MAIN);
-        lv_obj_set_style_border_color(btn, lv_color_hex(active ? 0xFFFFFF : off_color), LV_PART_MAIN);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        // Preserve explicit local ownership even when a theme currently has
+        // the same value. A later theme update must not change this control.
+        auto set_color = [](lv_obj_t *object, lv_style_prop_t property, lv_color_t value, auto setter) {
+          lv_style_value_t current;
+          if (lv_obj_get_local_style_prop(object, property, &current, LV_PART_MAIN) != LV_STYLE_RES_FOUND ||
+              !lv_color_eq(current.color, value))
+            setter(object, value, LV_PART_MAIN);
+        };
+        set_color(btn, LV_STYLE_BG_COLOR, lv_color_hex(active ? on_color : off_color), lv_obj_set_style_bg_color);
+        const int32_t border_width = active ? 2 : 0;
+        lv_style_value_t current;
+        if (lv_obj_get_local_style_prop(btn, LV_STYLE_BORDER_WIDTH, &current, LV_PART_MAIN) != LV_STYLE_RES_FOUND ||
+            current.num != border_width)
+          lv_obj_set_style_border_width(btn, border_width, LV_PART_MAIN);
+        set_color(btn, LV_STYLE_BORDER_COLOR, lv_color_hex(active ? 0xFFFFFF : off_color), lv_obj_set_style_border_color);
+        set_color(label, LV_STYLE_TEXT_COLOR, lv_color_hex(0xFFFFFF), lv_obj_set_style_text_color);
         set_label(label, active ? on_text : off_text);
       };
 
@@ -1294,7 +1306,7 @@ defaults:
         if (!${ '(id(phone).is_idle() || id(phone).can_send_dtmf())' if _fw_voip else 'true' } || id(voip_keypad_visible)) return;
         id(voip_keypad_visible) = true;
         const bool in_call = ${ 'id(phone).is_in_call()' if _fw_voip else 'false' };
-        lv_label_set_text(id(call_keypad_action_label), in_call ? "HANG UP" : "CALL");
+        lv_label_set_text(id(call_keypad_action_label), in_call ? "\U000F03F5" : "\U000F03F2");
         lv_obj_set_style_bg_color(id(call_keypad_action_button), lv_color_hex(in_call ? 0xEF4444 : 0x22C55E), LV_PART_MAIN);
         const int name_width = lv_obj_get_width(id(call_keypad_group)) - 48;
         lv_obj_set_width(id(call_keypad_value_label), in_call ? std::max(40, name_width - 110) : name_width);
@@ -1870,9 +1882,14 @@ defaults:
               id: call_idle_header_label
               align: TOP_MID
               y: 20
-              text: Keyboard
+              width: !lambda |-
+                lv_point_t size;
+                lv_text_get_size(&size, "Keyboard", id(font_ui_medium).get_lv_font(), 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
+                return size.x;
+              text: "\U000F061C"
               text_color: 8160255
-              text_font: font_ui_medium
+              text_font: font_action_icon
+              text_align: CENTER
               clickable: true
               gesture_bubble: false
               on_click:
@@ -1913,9 +1930,14 @@ defaults:
               id: call_keypad_header_label
               align: TOP_MID
               y: 20
-              text: Back
+              text: "\U000F06CB"
               text_color: 8160255
-              text_font: font_ui_medium
+              text_font: font_action_icon
+              width: !lambda |-
+                lv_point_t size;
+                lv_text_get_size(&size, "Back", id(font_ui_medium).get_lv_font(), 0, 0, INT32_MAX, LV_TEXT_FLAG_NONE);
+                return size.x;
+              text_align: CENTER
               clickable: true
               gesture_bubble: false
               on_click:
@@ -2013,9 +2035,9 @@ defaults:
               widgets:
               - label:
                   align: CENTER
-                  text: CLEAR
+                  text: "\U000F05E9"
                   text_color: 15067115
-                  text_font: font_small
+                  text_font: font_action_icon
           - button:
               id: call_keypad_action_button
               align: BOTTOM_MID
@@ -2046,9 +2068,9 @@ defaults:
               - label:
                   align: CENTER
                   id: call_keypad_action_label
-                  text: CALL
+                  text: "\U000F03F2"
                   text_color: 16777215
-                  text_font: font_small
+                  text_font: font_action_icon
           - button:
               align: BOTTOM_RIGHT
               x: -22
@@ -2066,9 +2088,9 @@ defaults:
               widgets:
               - label:
                   align: CENTER
-                  text: DEL
+                  text: "\U000F006E"
                   text_color: 15067115
-                  text_font: font_ui_medium
+                  text_font: font_action_icon
       - obj:
           id: call_ringing_in_group
           width: 1

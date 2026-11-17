@@ -18,9 +18,17 @@
 packages:
   ota_idf_backend: !include ../ota/idf_backend.yaml
 
+# Coordinated Intercom providers use the complete official Core 12 baseline.
+esphome:
+  min_version: 2026.12.0
+
 esp32:
   framework:
     type: esp-idf
+    # Pin the official revision used for the S3 candidate; the version alone
+    # does not identify the framework checkout.
+    version: 5.5.6
+    source: github://espressif/esp-idf@dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5
     sdkconfig_options:
       # esp-sr requires 64KB data cache with 64B line on S3.
       # ref: managed_components/espressif__esp-sr/esp_process_sdkconfig.c:26-31

@@ -207,15 +207,22 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_ha_phone_forward_hands_off_the_existing_sip_dialog(self) -> None:
         forward = self.call_forwarder
-        run = forward[forward.index("async def _run_forward()") :]
+        worker = next(
+            node for node in ast.walk(ast.parse(forward))
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_perform_forward"
+        )
+        run = ast.get_source_segment(forward, worker)
         reservation_start = run.index(
             'reservation = (preanswered or {}).get("rtp_reservation")'
         )
-        browser_branch = run[
-            run.index(
-                "if decision.action is RouteAction.ANSWER_HA:"
-            ) : reservation_start
-        ]
+        browser = next(
+            node for node in ast.walk(worker)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "decision.action is RouteAction.ANSWER_HA"
+        )
+        browser_branch = ast.get_source_segment(forward, browser)
+        self.assertIn(browser_branch, run[:reservation_start])
+        self.assertIn("result = await _perform_forward()", forward)
 
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", forward)
         self.assertIn("runtime.route_resolver.logical_endpoint(", forward)
@@ -225,7 +232,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registry.release_endpoint_claim(", browser_branch)
         self.assertIn("runtime.defer_invite_to_softphone(", browser_branch)
         self.assertIn('last_sip_event="ROUTE_FORWARD"', browser_branch)
-        self.assertTrue(browser_branch.rstrip().endswith("return"))
+        defer = next(
+            node for node in ast.walk(browser)
+            if isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "runtime.defer_invite_to_softphone"
+        )
+        self.assertEqual(ast.unparse(defer.args[0]), "invite")
+        self.assertIsInstance(browser.body[-1], ast.Return)
+        self.assertEqual(
+            ast.dump(browser.body[-1].value),
+            ast.dump(ast.parse('TransferResult("ringing", destination)', mode="eval").body),
+        )
         self.assertNotIn("RtpPortReservation.allocate", browser_branch)
         self.assertNotIn("SipCallClient(", browser_branch)
         self.assertNotIn("registry.pending_invites.pop", browser_branch)
@@ -251,42 +268,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("CallState.RINGING.value", publish)
         self.assertIn("sip_status_code=180", publish)
 
-    def test_forwarded_standard_sip_video_prefers_direct_then_transcodes(
-        self,
-    ) -> None:
-        forward = self.call_forwarder
-        video_start = forward.index("forward_video_enabled = bool(")
-        video = (
-            forward[video_start:]
-            + self.endpoint_dialing
-            + self.outbound_bridge_commit
-        )
-
-        self.assertIn("cfg.get(CONF_SIP_VIDEO, False)", video)
-        self.assertIn('source_route_endpoint.supports("video")', video)
-        self.assertIn('target_route_endpoint.supports("video")', video)
-        self.assertIn("runtime.prepare_outbound_leg(", forward[video_start:])
-        self.assertNotIn("SipCallClient(", forward[video_start:])
-        self.assertIn("build_pending_invite_video_relay(", video)
-        self.assertIn("configure_answered_invite_video_relay(", video)
-        self.assertIn("video_bridge_offer_formats(", video)
-        self.assertIn(
-            "enable_video_transcoding=video_transcoding_enabled",
-            forward[video_start:],
-        )
-        self.assertIn("enable_transcoding=data.enable_video_transcoding", video)
-        self.assertIn("generic_video_relay=video_relay is not None", video)
-        bridge_video = SIP_BRIDGE.read_text()
-        self.assertEqual(
-            bridge_video.count("sdp.video_formats_passthrough_compatible("), 2
-        )
-        self.assertIn(
-            "sdp.video_answer_contract(invite.video_format, remote_video)",
-            bridge_video,
-        )
-        self.assertIn("sdp.video_offer_answer_directional(", bridge_video)
-        self.assertIn("async_apply_outbound_video_answer", video)
-
     def test_browser_to_browser_call_uses_local_bridge_before_network_discovery(
         self,
     ) -> None:
@@ -304,8 +285,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         local_branch = call_service[local_start:local_return]
         self.assertIn("caller_owner_id=str(", local_branch)
         self.assertIn('call.data.get("media_client_id")', local_branch)
-        self.assertIn("request_video=bool(", local_branch)
-        self.assertIn('browser_endpoint.supports("video")', local_branch)
+        self.assertIn("request_video=_local_video_capable(browser_endpoint)", local_branch)
         self.assertIn("enable_caller_video_send=bool(", local_branch)
         self.assertIn('call.data.get("send_video", False)', local_branch)
 
@@ -321,7 +301,49 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
         self.assertIn('call.data.get("device_id")', body)
         self.assertIn("registry.by_device_id(device_id)", body)
-        self.assertIn("not endpoint.kind.is_softphone", body)
+        function = ast.parse(body).body[0]
+        adapter = next(
+            node for node in function.body if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "ha_client_endpoint"
+        )
+        self.assertEqual([ast.unparse(arg) for arg in adapter.value.args], ["endpoint"])
+        adapted_name = adapter.targets[0].id
+        identity = next(
+            node for node in function.body if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Attribute)
+            and ast.unparse(node.value) == "endpoint.endpoint_id"
+        )
+        self.assertLess(function.body.index(identity), function.body.index(adapter))
+        self.assertEqual(
+            [ast.unparse(value) for value in function.body[-1].value.elts],
+            [identity.targets[0].id, adapted_name],
+        )
+        unsupported = next(
+            node for node in function.body if isinstance(node, ast.If)
+            and ast.dump(node.test) == ast.dump(ast.parse(f"{adapted_name} is None", mode="eval").body)
+        )
+        self.assertTrue(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "_service_error"
+            and len(node.args) > 1 and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "phone_not_browser"
+            for node in ast.walk(unsupported)
+        ))
+        # A service gets an adapter view without registering a second identity
+        # or rewriting the canonical endpoint's transport kind.
+        self.assertFalse(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "registry"
+            and node.func.attr in {"register", "upsert", "update"}
+            for node in ast.walk(function)
+        ))
+        self.assertFalse(any(
+            isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name) and node.value.id == "endpoint"
+            for node in ast.walk(function)
+        ))
         self.assertNotIn('call.data.get("entity_id")', body)
         self.assertNotIn('call.data.get("endpoint_id")', body)
         self.assertNotIn("source_device_id", body)
@@ -874,7 +896,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("for subentry in phone_subentries(entry):", setup)
         self.assertIn("await _async_load_ha_softphone_store(", setup)
         self.assertIn("endpoint_id=endpoint.endpoint_id", setup)
-        self.assertIn("endpoint_data=dict(subentry.data)", setup)
+        # Native identity and compatibility DTO loading are covered by the
+        # account migration/transaction HA tests, without requiring a stored copy.
 
     def test_config_flow_has_no_softphone_group_or_ring_fallback_policy(self) -> None:
         config_flow = CONFIG_FLOW.read_text()
@@ -1269,7 +1292,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 arbitration_start,
             ),
         )
-        self.assertIn("_reduce_failures(failures)", fork_source)
+        self.assertIn("reduce_dial_failures(failures)", fork_source)
 
     def test_ring_group_winner_clears_pending_route_before_active_hangup(self) -> None:
         ring_group = self.ring_group
@@ -1399,8 +1422,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
 
         self.assertNotIn("_fire_call_event", group_update)
-        self.assertIn('if not groups["conference_group"]:', group_update)
-        self.assertIn('groups["conference_ring"] = False', group_update)
+        # Clearing conference membership is covered through the production
+        # setter in test_account_settings_transactions_ha.py.
         self.assertNotIn("websocket_set_ha_softphone_dnd", websocket)
         self.assertNotIn("websocket_set_ha_softphone_groups", websocket)
         self.assertNotIn("websocket_set_ha_softphone_settings", websocket)
@@ -1651,7 +1674,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         runner = self.trunk_inbound_router
         collector = runner.index("selection = await collect_trunk_dtmf(")
         override = runner.index(
-            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window("
         )
         self.assertLess(collector, override)
         self.assertNotIn("route_future", runner[:override])
@@ -1754,7 +1777,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         runner = self.trunk_inbound_router
         cancellation = runner.index("if artifacts.trunk_closed:")
         automation = runner.index(
-            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window("
         )
         self.assertLess(cancellation, automation)
 

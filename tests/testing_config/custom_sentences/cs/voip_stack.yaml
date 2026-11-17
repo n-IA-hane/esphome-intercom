@@ -1,0 +1,102 @@
+intents:
+  VoipAnswer:
+    data:
+    - response: default
+      sentences:
+      - přijmi hovor
+      - zvedni to
+      - přijmout
+      slots:
+        voip_response: template
+  VoipCall:
+    data:
+    - response: default
+      sentences:
+      - zavolej {target}
+      - volej {target}
+      - zavolej na {target}
+      slots:
+        voip_response: template
+  VoipDecline:
+    data:
+    - response: default
+      sentences:
+      - odmítni hovor
+      - odmítnout
+      slots:
+        voip_response: template
+  VoipHangup:
+    data:
+    - response: default
+      sentences:
+      - típni to
+      - zavěsit
+      - ukonči hovor
+      slots:
+        voip_response: template
+language: cs
+lists:
+  target:
+    wildcard: true
+responses:
+  intents:
+    VoipAnswer:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Nevím, které VoIP zařízení\
+        \ to slyšelo.\",\n  \"missing_target\": \"Komu mám zavolat?\",\n  \"not_found\"\
+        : \"Nenašel jsem kontakt s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous\"\
+        : \"Existuje více kontaktů s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous_area\"\
+        : \"Existuje více oblastí s názvem \" ~ slots.target ~ \".\",\n  \"area_empty\"\
+        : \"V oblasti \" ~ slots.target ~ \" není žádné VoIP zařízení.\",\n  \"ambiguous_area_device\"\
+        : \"V oblasti \" ~ slots.target ~ \" je více než jedno VoIP zařízení.\",\n\
+        \  \"call_failed\": \"Volání kontaktu \" ~ slots.target ~ \" se nezdařilo.\"\
+        ,\n  \"hangup_failed\": \"Zavěšení se nezdařilo.\",\n  \"answer_failed\":\
+        \ \"Hovor se nepodařilo spojit.\",\n  \"decline_failed\": \"Odmítnutí se nezdařilo.\"\
+        ,\n  \"VoipCall\": \"Volám \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"\
+        Zavěšuji.\",\n  \"VoipAnswer\": \"Přijímám hovor.\",\n  \"VoipDecline\": \"\
+        Odmítám hovor.\"\n} %} {{ messages.get(slots.error or slots.action, messages.call_failed)\
+        \ }}"
+    VoipCall:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Nevím, které VoIP zařízení\
+        \ to slyšelo.\",\n  \"missing_target\": \"Komu mám zavolat?\",\n  \"not_found\"\
+        : \"Nenašel jsem kontakt s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous\"\
+        : \"Existuje více kontaktů s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous_area\"\
+        : \"Existuje více oblastí s názvem \" ~ slots.target ~ \".\",\n  \"area_empty\"\
+        : \"V oblasti \" ~ slots.target ~ \" není žádné VoIP zařízení.\",\n  \"ambiguous_area_device\"\
+        : \"V oblasti \" ~ slots.target ~ \" je více než jedno VoIP zařízení.\",\n\
+        \  \"call_failed\": \"Volání kontaktu \" ~ slots.target ~ \" se nezdařilo.\"\
+        ,\n  \"hangup_failed\": \"Zavěšení se nezdařilo.\",\n  \"answer_failed\":\
+        \ \"Hovor se nepodařilo spojit.\",\n  \"decline_failed\": \"Odmítnutí se nezdařilo.\"\
+        ,\n  \"VoipCall\": \"Volám \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"\
+        Zavěšuji.\",\n  \"VoipAnswer\": \"Přijímám hovor.\",\n  \"VoipDecline\": \"\
+        Odmítám hovor.\"\n} %} {{ messages.get(slots.error or slots.action, messages.call_failed)\
+        \ }}"
+    VoipDecline:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Nevím, které VoIP zařízení\
+        \ to slyšelo.\",\n  \"missing_target\": \"Komu mám zavolat?\",\n  \"not_found\"\
+        : \"Nenašel jsem kontakt s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous\"\
+        : \"Existuje více kontaktů s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous_area\"\
+        : \"Existuje více oblastí s názvem \" ~ slots.target ~ \".\",\n  \"area_empty\"\
+        : \"V oblasti \" ~ slots.target ~ \" není žádné VoIP zařízení.\",\n  \"ambiguous_area_device\"\
+        : \"V oblasti \" ~ slots.target ~ \" je více než jedno VoIP zařízení.\",\n\
+        \  \"call_failed\": \"Volání kontaktu \" ~ slots.target ~ \" se nezdařilo.\"\
+        ,\n  \"hangup_failed\": \"Zavěšení se nezdařilo.\",\n  \"answer_failed\":\
+        \ \"Hovor se nepodařilo spojit.\",\n  \"decline_failed\": \"Odmítnutí se nezdařilo.\"\
+        ,\n  \"VoipCall\": \"Volám \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"\
+        Zavěšuji.\",\n  \"VoipAnswer\": \"Přijímám hovor.\",\n  \"VoipDecline\": \"\
+        Odmítám hovor.\"\n} %} {{ messages.get(slots.error or slots.action, messages.call_failed)\
+        \ }}"
+    VoipHangup:
+      default: "{% set messages = {\n  \"unknown_origin\": \"Nevím, které VoIP zařízení\
+        \ to slyšelo.\",\n  \"missing_target\": \"Komu mám zavolat?\",\n  \"not_found\"\
+        : \"Nenašel jsem kontakt s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous\"\
+        : \"Existuje více kontaktů s názvem \" ~ slots.target ~ \".\",\n  \"ambiguous_area\"\
+        : \"Existuje více oblastí s názvem \" ~ slots.target ~ \".\",\n  \"area_empty\"\
+        : \"V oblasti \" ~ slots.target ~ \" není žádné VoIP zařízení.\",\n  \"ambiguous_area_device\"\
+        : \"V oblasti \" ~ slots.target ~ \" je více než jedno VoIP zařízení.\",\n\
+        \  \"call_failed\": \"Volání kontaktu \" ~ slots.target ~ \" se nezdařilo.\"\
+        ,\n  \"hangup_failed\": \"Zavěšení se nezdařilo.\",\n  \"answer_failed\":\
+        \ \"Hovor se nepodařilo spojit.\",\n  \"decline_failed\": \"Odmítnutí se nezdařilo.\"\
+        ,\n  \"VoipCall\": \"Volám \" ~ slots.target ~ \".\",\n  \"VoipHangup\": \"\
+        Zavěšuji.\",\n  \"VoipAnswer\": \"Přijímám hovor.\",\n  \"VoipDecline\": \"\
+        Odmítám hovor.\"\n} %} {{ messages.get(slots.error or slots.action, messages.call_failed)\
+        \ }}"

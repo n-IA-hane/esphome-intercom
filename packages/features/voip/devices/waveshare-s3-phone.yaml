@@ -26,18 +26,18 @@ voip_stack:
   buffers_in_psram: true
   signaling_buffers_in_psram: true
   audio:
-    tx:
-      codec: ${voip_audio_codec}
-      sample_rate: ${voip_tx_sample_rate}
-      pcm_format: s16le
-      channels: 1
-      frame_ms: ${voip_frame_ms}
-    rx:
-      codec: ${voip_audio_codec}
-      sample_rate: ${voip_rx_sample_rate}
-      pcm_format: s16le
-      channels: 1
-      frame_ms: ${voip_frame_ms}
+    codecs:
+      - codec: ${voip_audio_codec}
+        tx:
+          - sample_rate: ${voip_tx_sample_rate}
+            pcm_format: s16le
+            channels: 1
+            frame_ms: ${voip_tx_frame_ms}
+        rx:
+          - sample_rate: ${voip_rx_sample_rate}
+            pcm_format: s16le
+            channels: 1
+            frame_ms: ${voip_rx_frame_ms}
   microphone: mic_main
   speaker: voip_speaker_input
   dc_offset_removal: false

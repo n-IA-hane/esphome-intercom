@@ -1,0 +1,20 @@
+# Existing camera runtime API. This is the requested encoder quality, not a
+# hardware readback. The capture owner applies it between JPEG frames.
+substitutions:
+  p4_jpeg_quality: ${ p4_jpeg_quality | default(10) }
+  _settings_camera_jpeg_quality: true
+number:
+  - platform: template
+    id: p4_camera_jpeg_quality
+    name: Camera JPEG Quality
+    icon: mdi:camera-iris
+    entity_category: config
+    mode: SLIDER
+    min_value: 1
+    max_value: 63
+    step: 1
+    initial_value: ${p4_jpeg_quality}
+    restore_value: true
+    optimistic: true
+    on_value:
+      - lambda: id(p4_camera).set_runtime_jpeg_quality(static_cast<int>(x));

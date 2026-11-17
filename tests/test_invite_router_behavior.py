@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -16,38 +15,6 @@ from custom_components.voip_stack.sip_listener import SipInvite
 
 
 pytestmark = pytest.mark.ha
-
-
-@pytest.mark.parametrize("signaling_transport", ["UDP", "TCP"])
-@pytest.mark.parametrize("matching_port", [False, True])
-async def test_local_application_caller_requires_owned_signaling_tuple(
-    monkeypatch, signaling_transport, matching_port,
-):
-    from custom_components.voip_stack import voicemail
-    from custom_components.voip_stack.sip_listener import SipInviteResult
-
-    _patch_route_prefix(monkeypatch)
-    runtime = _runtime()
-    runtime.inbound_route_decision.return_value = RouteDecision(RouteAction.VOICEMAIL, target="*97")
-    invite = replace(_invite(), source_host="127.0.0.1", source_port=32123,
-                     signaling_transport=signaling_transport)
-    owner = SimpleNamespace(get_extra_info=lambda name: (
-        "127.0.0.1", 32123 if matching_port else 32124
-    ) if name == "sockname" else None)
-    client = SimpleNamespace(transport=owner if signaling_transport == "UDP" else None,
-                             writer=owner if signaling_transport == "TCP" else None)
-    session = SimpleNamespace(metadata={"source_endpoint_id": "browser:desk"})
-    registry = SimpleNamespace(component=lambda _: None, artifact_items=lambda _: iter(()),
-                               sip_client_for=lambda _: client, get_session=lambda _: session)
-    monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
-    route = AsyncMock(return_value=SipInviteResult(200, "OK"))
-    monkeypatch.setattr(voicemail, "route_voicemail_call", route)
-
-    result = await invite_router.route_invite(runtime, invite)
-
-    assert result.status == 200
-    routed = route.call_args.args[1]
-    assert routed.identified_source_endpoint_id == ("browser:desk" if matching_port else "")
 
 
 def _invite() -> SipInvite:
@@ -87,7 +54,7 @@ def _runtime() -> invite_router.InviteRuntime:
         build_peer_snapshot=AsyncMock(return_value=[]),
         browser_leg_for_member=Mock(),
         defer_invite_to_softphone=Mock(),
-        enable_reused_signaling_flow=Mock(),
+        enable_reused_sip_tcp_connection=Mock(),
         on_conference_inbound_timeout=Mock(),
         ring_conference_members=Mock(),
         run_ring_group_call=Mock(),
@@ -152,6 +119,26 @@ async def test_route_retransmit_keeps_pending_decision(
 
 
 @pytest.mark.asyncio
+async def test_discovery_does_not_reselect_listener_authoritative_audio(monkeypatch):
+    from custom_components.voip_stack.peer import Peer
+
+    _patch_route_prefix(monkeypatch, pending_routes={"call-1": object()})
+    known = Peer(name="Alice", host="192.0.2.10",
+        sip_audio_tx_formats=("L16/16000/1/10",),
+        sip_audio_rx_formats=("L16/48000/1/10",))
+    monkeypatch.setattr(invite_router, "_peer_for_target", lambda *_: known)
+    authoritative = _invite()
+    reject_reselection = Mock(side_effect=AssertionError("routing cannot renegotiate audio"))
+    monkeypatch.setattr(invite_router.sip_sdp, "negotiate_directional", reject_reselection)
+
+    result = await invite_router.route_invite(_runtime(), authoritative)
+
+    assert result.status == 100
+    reject_reselection.assert_not_called()
+    assert authoritative.send_format.encoding == authoritative.recv_format.encoding == "PCMA"
+
+
+@pytest.mark.asyncio
 async def test_route_retransmit_keeps_existing_ringing_invite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -196,7 +183,7 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     runtime.is_ha_target = Mock(return_value=False)
     runtime.get_trunk_config = Mock(return_value={"trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
     runtime.inbound_route_decision = Mock(side_effect=lambda invite, *_: initial if invite.routing_target == "601" else selected_fallback)
-    monkeypatch.setattr(invite_router, "registration_data", lambda h: SimpleNamespace(route_trigger_filters={}))
+    runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     request = AsyncMock(return_value=AutomationRoute(action="decline"))
     monkeypatch.setattr(invite_router, "request_route_override", request)
     monkeypatch.setattr(invite_router, "automation_rejection", lambda **kw: SipInviteResult(603, "Decline", to_tag=""))
@@ -233,7 +220,7 @@ async def test_restricted_registered_caller_cannot_egress_after_route_override(m
     registry = SimpleNamespace(component=lambda _: None, artifact_items=lambda _: iter(()), get_session=lambda _: None,
                                sip_client_for=lambda _: None)
     monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
-    monkeypatch.setattr(invite_router, "registration_data", lambda _: SimpleNamespace(route_trigger_filters={}))
+    runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     monkeypatch.setattr(invite_router, "request_route_override", AsyncMock(return_value=SimpleNamespace(
         action="forward" if override else "", destination="441234567890" if override else "",
     )))

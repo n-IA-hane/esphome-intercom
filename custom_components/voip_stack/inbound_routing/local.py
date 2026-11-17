@@ -263,7 +263,7 @@ async def route_local_group(
             owner="router",
             caller=invite.caller,
             callee=invite.target,
-            route_kind=GROUP_TYPE_RING,
+            route_kind=str(decision.entry.metadata.get("route_kind") or GROUP_TYPE_RING),
             source_endpoint_id=source_endpoint_id,
         )
         registry.add_leg(

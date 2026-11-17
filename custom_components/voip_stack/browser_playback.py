@@ -12,6 +12,7 @@ class BrowserPlayback:
         self._connection: object | None = None
         self._ready = False
         self._closed = False
+        self._detaches = 0
         self._changed = asyncio.Event()
 
     def attach(self, connection: object) -> None:
@@ -30,10 +31,14 @@ class BrowserPlayback:
         if self._connection is connection:
             self._connection = None
             self._ready = False
+            self._detaches += 1
             self._changed.set()
 
-    async def wait_ready(self) -> None:
+    async def wait_ready(self, *, fail_on_detach=False) -> None:
+        detached = self._detaches
         while not self._closed:
+            if fail_on_detach and self._detaches != detached:
+                raise ConnectionError("The prepared browser media connection ended")
             if self._ready:
                 return
             self._changed.clear()

@@ -8,6 +8,7 @@ import contextlib
 from dataclasses import dataclass, field
 import json
 import logging
+from math import ceil
 import socket
 from pathlib import Path
 import threading
@@ -20,11 +21,14 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp
+from .core.sip_stun import is_stun_message
 from .audio_ws import decode_audio_frame, encode_audio_frame
 from .browser_playback import BrowserPlayback
 from .call_projection import publish_esp_media_route
 from .config import debug_mode, media_capture_enabled
-from .core.audio_format import HA_SIP_PCM_FORMATS
+from .core.audio_format import HA_SIP_PCM_FORMATS, MAX_PCM_FRAME_BYTES
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, OPUS_ENCODER_FRAME_MS
+from .core.sdp import RtpPcmFormat
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
     DEBUG_CAPTURE_MAX_PENDING_WRITES,
@@ -69,9 +73,8 @@ _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 15
 _DEBUG_TIMING_MAX_SAMPLES = 4096
 _AUDIO_OWNER_HANDOFF_TIMEOUT = 5.0
-# The largest supported browser PCM frame is stereo 48 kHz/s16le/20 ms
-# (3,840 bytes) plus the one-byte framing tag.  Keep a small fixed ceiling so
-# aiohttp never buffers multi-megabyte payloads on this real-time endpoint.
+# Keep control/conference small. SIP reserves the bounded PCM encoder envelope
+# before prepare, so a claim handoff or re-INVITE cannot outgrow its reader.
 _MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096
 _BROWSER_PLAYOUT_TARGET_MS = 60
 _BROWSER_PLAYOUT_MAX_MS = 200
@@ -115,6 +118,7 @@ class _SoftphoneMediaSession:
     send_format: Any
     recv_format: Any
     rtp_socket: socket.socket | None = None
+    rtp_reservation: Any = None
     recv_formats: tuple[Any, ...] = ()
     send_formats: tuple[Any, ...] = ()
     match_received_codec: bool = False
@@ -136,13 +140,33 @@ class _SoftphoneMediaSession:
     update_event: asyncio.Event = field(default_factory=asyncio.Event)
     handoff_transport: Callable[[Callable], Any] | None = None
     observe_audio: Callable | None = None
+    application_playback: Any = None
 
 
-def _rx_queue_frame_limit(frame_ms: int) -> int:
+def _browser_audio_message_limit(session: _SoftphoneMediaSession | None) -> int:
+    """Reserve only the real encoder input needed by a renegotiable SIP leg."""
+    if session is None or session.conference_room or not session.local_rtp_port:
+        return _MAX_BROWSER_AUDIO_MESSAGE_BYTES
+    frame_bytes = int(session.send_format.audio_format.nominal_frame_bytes)
+    if not 0 < frame_bytes <= MAX_PCM_FRAME_BYTES:
+        raise ValueError("negotiated browser PCM frame exceeds the local size bound")
+    wire_budget = HA_AUDIO_CAPABILITIES.transmit_payload_bytes
+    # Linear PCM/L24 needs at most 4/3 of wire bytes; G.711 needs twice that.
+    encoder_bytes = max((wire_budget * 4 + 2) // 3, wire_budget * 2)
+    for candidate in (
+        RtpPcmFormat(9, "G722", 8000, 1, wire_budget * 1000 / 8000),
+        RtpPcmFormat(98, "OPUS", 48000, 2, max(OPUS_ENCODER_FRAME_MS)),
+    ):
+        if HA_AUDIO_CAPABILITIES.supports_rtp(candidate):
+            encoder_bytes = max(encoder_bytes, candidate.audio_format.nominal_frame_bytes)
+    return max(_MAX_BROWSER_AUDIO_MESSAGE_BYTES, frame_bytes + 1, encoder_bytes + 1)
+
+
+def _rx_queue_frame_limit(frame_ms: int | float) -> int:
     """Keep roughly 160 ms of receive jitter across negotiated ptimes."""
 
-    value = max(1, int(frame_ms))
-    return max(4, min(16, (160 + value - 1) // value))
+    value = max(1.0, float(frame_ms))
+    return max(4, min(16, ceil(160 / value)))
 
 
 class _RtpAudioProtocol(asyncio.DatagramProtocol):
@@ -150,13 +174,15 @@ class _RtpAudioProtocol(asyncio.DatagramProtocol):
         self,
         queue: asyncio.Queue[tuple[bytes, tuple[str, int]]],
         *,
-        frame_ms: int,
+        frame_ms: int | float,
     ) -> None:
         self.queue = queue
         self.frame_limit = _rx_queue_frame_limit(frame_ms)
         self.dropped_packets = 0
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         while self.queue.qsize() >= self.frame_limit:
             try:
                 self.queue.get_nowait()
@@ -166,7 +192,7 @@ class _RtpAudioProtocol(asyncio.DatagramProtocol):
         if put_drop_oldest(self.queue, (data, addr)):
             self.dropped_packets += 1
 
-    def reconfigure_frame_ms(self, frame_ms: int) -> None:
+    def reconfigure_frame_ms(self, frame_ms: int | float) -> None:
         """Apply a new duration bound without swapping a queue waiter."""
 
         self.frame_limit = _rx_queue_frame_limit(frame_ms)
@@ -397,6 +423,8 @@ class VoipAudioWebSocketView(HomeAssistantView):
         hass: HomeAssistant = context.hass
         endpoint_id = context.endpoint_id
         local_bridge = context.local_bridge
+        _local_call, current_session = prepared.resolve_current()
+        max_msg_size = _browser_audio_message_limit(current_session)
 
         try:
             async with async_claimed_media_websocket(
@@ -404,7 +432,7 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 context,
                 prepared.registry,
                 channel="audio",
-                max_msg_size=_MAX_BROWSER_AUDIO_MESSAGE_BYTES,
+                max_msg_size=max_msg_size,
                 timeout=_AUDIO_OWNER_HANDOFF_TIMEOUT,
                 local_call=prepared.local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
@@ -417,7 +445,8 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 local_call, session = prepared.resolve_current()
                 if local_call is not None:
                     lease = prepared.acquire_local_lease(media_owner)
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     await _run_local_audio_session(
                         hass,
                         ws,
@@ -426,7 +455,8 @@ class VoipAudioWebSocketView(HomeAssistantView):
                     )
                 else:
                     assert session is not None
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     if session.rtp_socket is not None:
                         client = prepared.registry.sip_client_for(session.call_id)
                         if client is not None and getattr(client, "audio_rtp_socket", None) is session.rtp_socket:
@@ -471,7 +501,8 @@ def _active_softphone_media_session(
         return None
     call_id = active.call_id
     registry = active.registry
-    item = registry.resource_for(call_id, "softphone_media") if call_id else None
+    item = (registry.resource_for(call_id, f"softphone_media_endpoint:{endpoint_id}")
+            or registry.resource_for(call_id, "softphone_media")) if call_id else None
     if item is not None and item.get("endpoint_id") not in (None, "", endpoint_id):
         item = None
 
@@ -496,6 +527,22 @@ def _active_softphone_media_session(
         return _emit
 
     if item is not None:
+        application_playback = item.get("application_playback")
+        if application_playback is not None:
+            from .browser_paging import BROWSER_PAGING_PCM, BrowserPagingMedia
+
+            application = registry.resource_for(call_id, "browser_paging")
+            current = registry.get_session(call_id)
+            if (not isinstance(application_playback, BrowserPagingMedia)
+                    or application is None or application.media is not application_playback
+                    or current is None or not current.live or current.owner != "paging"
+                    or current.metadata.get("application") != "browser_paging"
+                    or current.metadata.get("endpoint_id") != endpoint_id):
+                return None
+            fmt = RtpPcmFormat(96, "L16", BROWSER_PAGING_PCM.sample_rate, 1, BROWSER_PAGING_PCM.frame_ms)
+            return _SoftphoneMediaSession(call_id=call_id, local_rtp_port=0,
+                remote_rtp_host="", remote_rtp_port=0, send_format=fmt, recv_format=fmt,
+                local_audio_direction="recvonly", application_playback=application_playback)
         if item.get("rtp_loopback"):
             rtp_source = item.get("audio_rtp_source")
             if not isinstance(rtp_source, rtp.AudioRtpSenderState):
@@ -544,6 +591,7 @@ def _active_softphone_media_session(
             return _SoftphoneMediaSession(
                 call_id=invite.call_id,
                 local_rtp_port=local_rtp_port,
+                rtp_reservation=item.get("rtp_reservation"),
                 remote_rtp_host=invite.remote_rtp_host,
                 remote_rtp_port=int(invite.remote_rtp_port),
                 send_format=invite.send_format,
@@ -765,6 +813,10 @@ async def _run_audio_session(
     endpoint_id: str,
     playback=None,
 ) -> None:
+    if session.application_playback is not None:
+        await _run_application_audio_session(hass, ws, session,
+            handoff_requested=handoff_requested, endpoint_id=endpoint_id, playback=playback)
+        return
     if session.conference_queue is not None:
         await _run_conference_audio_session(
             hass,
@@ -774,12 +826,14 @@ async def _run_audio_session(
             endpoint_id=endpoint_id,
         )
         return
-    frame_ms = max(1, int(session.recv_format.audio_format.frame_ms))
+    frame_ms = max(1.0, float(session.recv_format.audio_format.frame_ms))
     queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=16)
     protocol = _RtpAudioProtocol(queue, frame_ms=frame_ms)
     loop = asyncio.get_running_loop()
     bound_socket = session.rtp_socket
     session.rtp_socket = None
+    if bound_socket is None and session.rtp_reservation is not None:
+        bound_socket = session.rtp_reservation.take_audio_socket(session.local_rtp_port)
     try:
         if bound_socket is not None:
             transport, _ = await loop.create_datagram_endpoint(lambda: protocol, sock=bound_socket)
@@ -959,7 +1013,7 @@ async def _run_audio_session(
                 else None
             )
             protocol.reconfigure_frame_ms(
-                int(session.recv_format.audio_format.frame_ms)
+                session.recv_format.audio_format.frame_ms
             )
             remote_rtp_host = str(session.remote_rtp_host)
             remote_rtp_port = int(session.remote_rtp_port)
@@ -1194,9 +1248,9 @@ async def _run_audio_session(
         nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
         observed_generation = int(session.media_generation)
         tx_frames: deque[bytes] = deque()
-        frame_ms = int(session.send_format.audio_format.frame_ms)
-        target_frames = max(1, _BROWSER_PLAYOUT_TARGET_MS // frame_ms)
-        max_frames = max(target_frames, _BROWSER_PLAYOUT_MAX_MS // frame_ms)
+        frame_ms = max(1.0, float(session.send_format.audio_format.frame_ms))
+        target_frames = max(1, int(_BROWSER_PLAYOUT_TARGET_MS // frame_ms))
+        max_frames = max(target_frames, int(_BROWSER_PLAYOUT_MAX_MS // frame_ms))
         last_pcm = b""
         plc_active = False
         silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
@@ -1278,9 +1332,9 @@ async def _run_audio_session(
             observed_generation = int(session.media_generation)
             await refresh_media_state(observed_generation)
             tx_frames.clear()
-            frame_ms = int(session.send_format.audio_format.frame_ms)
-            target_frames = max(1, _BROWSER_PLAYOUT_TARGET_MS // frame_ms)
-            max_frames = max(target_frames, _BROWSER_PLAYOUT_MAX_MS // frame_ms)
+            frame_ms = max(1.0, float(session.send_format.audio_format.frame_ms))
+            target_frames = max(1, int(_BROWSER_PLAYOUT_TARGET_MS // frame_ms))
+            max_frames = max(target_frames, int(_BROWSER_PLAYOUT_MAX_MS // frame_ms))
             silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
             last_pcm = b""
             plc_active = False
@@ -1526,6 +1580,67 @@ async def _run_audio_session(
             _schedule_debug_capture_write(hass, debug_capture, counters)
         if caller_cancelled:
             raise asyncio.CancelledError
+
+
+async def _run_application_audio_session(hass, ws, session, *, endpoint_id, playback,
+                                          handoff_requested=None):
+    """Deliver call-owned paging PCM, with no browser capture or RTP loopback."""
+    media = session.application_playback
+
+    async def output():
+        loop = asyncio.get_running_loop()
+        while not media.closed.is_set():
+            await playback.wait_ready()
+            pcm = await media.tx_queue.get()
+            try:
+                await ws.send_bytes(encode_audio_frame(pcm))
+                media.counters["ws_tx"] += 1
+                media.last_output_deadline = loop.time() + session.recv_format.audio_format.frame_ms / 1000
+                await asyncio.sleep(max(0, media.last_output_deadline - loop.time()))
+            finally:
+                media.tx_queue.task_done()
+
+    async def controls():
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                try:
+                    payload = json.loads(str(msg.data))
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(payload, dict) and payload.get("type") == "audio_ready":
+                    playback.ready(ws)
+            elif msg.type == WSMsgType.BINARY:
+                # A recipient cannot inject microphone PCM into the announcement.
+                media.counters["drop_direction"] += 1
+            elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                return
+
+    call_ended, remove_listener = _listen_for_call_end(hass, session.call_id, endpoint_id)
+    tasks = set()
+    try:
+        await ws.send_json({"state": "in_call", "call_id": session.call_id,
+            "tx_format": session.send_format.audio_format.wire_token(),
+            "rx_format": session.recv_format.audio_format.wire_token(),
+            "selected_tx_format": session.send_format.audio_format.wire_token(),
+            "selected_rx_format": session.recv_format.audio_format.wire_token(),
+            "audio_direction": "recvonly", "video_active": False})
+        tasks = {asyncio.create_task(output()), asyncio.create_task(controls()),
+                 asyncio.create_task(call_ended.wait()), asyncio.create_task(media.closed.wait())}
+        if handoff_requested is not None:
+            tasks.add(asyncio.create_task(handoff_requested.wait()))
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if not task.cancelled() and task.exception() is not None and not media.closed.is_set():
+                media.counters["tx_error"] += 1
+                task.result()
+    finally:
+        remove_listener()
+        for task in tasks:
+            task.cancel()
+        await async_wait_for_cleanup(asyncio.gather(*tasks, return_exceptions=True))
+        ws.force_close()
+        if handoff_requested is None or not handoff_requested.is_set():
+            await media.stop("browser_disconnected")
 
 
 async def _run_conference_audio_session(

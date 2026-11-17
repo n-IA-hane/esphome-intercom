@@ -20,7 +20,7 @@ _KNOWN_REQUIRED = frozenset({0x0001, 0x0006, 0x0008, 0x0009, 0x000A, 0x0014, 0x0
 
 def is_stun_message(data: bytes) -> bool:
     """Recognize RFC 5389 UDP framing, without authenticating its attributes."""
-    if len(data) < 20:
+    if len(data) < 20 or data[0] > 3:
         return False
     kind, length, cookie = struct.unpack_from("!HHI", data)
     return kind & 0xC000 == 0 and cookie == _MAGIC_COOKIE and length % 4 == 0 and len(data) == 20 + length

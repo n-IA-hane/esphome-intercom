@@ -12,6 +12,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .authorization import async_require_service_admin
 from .automation_context import current_execution
 from .call_projection import publish_bridge_projection
+from .call_deadlines import CallDeadline
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import TerminationIntent
 from .fsm import CallState
@@ -26,7 +27,7 @@ class AutomationCall(LocalCallApplication):
 
     owner: ClassVar[str] = "automation"
     controller: str = ""
-    deadline: asyncio.TimerHandle | None = None
+    deadline: CallDeadline | None = None
     operation: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -54,10 +55,11 @@ class AutomationCall(LocalCallApplication):
             # The native HA execution owns its waits until completion or cancellation.
             return
         delay = float(self.contact.metadata.get("automation_timeout", 30))
-        self.deadline = self.hass.loop.call_later(
-            delay,
+        self.deadline = CallDeadline(
+            call_registry(self.hass), self.session, f"deadline:automation:{self.session.call_id}",
             lambda: self.session.create_task(self.expire(), name="automation-timeout"),
         )
+        self.deadline.arm(self.hass.loop, delay)
 
     async def expire(self) -> None:
         self.deadline = None

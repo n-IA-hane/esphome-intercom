@@ -169,6 +169,20 @@ class ClaimedMediaWebSocket:
     websocket: Any
     owner: MediaWebSocketOwner
     media_session: MediaWebSocketSession
+    validate: Callable[[], None]
+
+    async def prepare(self, request):
+        from aiohttp import web
+        from homeassistant.exceptions import Unauthorized
+
+        self.validate()
+        await self.websocket.prepare(request)
+        try:
+            self.validate()
+        except (Unauthorized, web.HTTPException):
+            self.owner.revoke()
+            return False
+        return True
 
 
 @asynccontextmanager
@@ -195,22 +209,70 @@ async def async_claimed_media_websocket(
         client_id=context.client_id,
     )
     media = require_runtime_data(context.hass).media
-    async with async_media_websocket_session(
-        media,
-        registry,
-        context.call_id,
-        context.endpoint_id,
-        owner,
-        channel=channel,
-        timeout=timeout,
-        shutdown_event=media.shutdown,
-        pin_client_identity=local_call is None,
-        local_bridge=(
-            context.local_bridge if local_call is not None else None
-        ),
-        publish_state=publish_state,
-    ) as media_session:
-        yield ClaimedMediaWebSocket(ws, owner, media_session)
+    from homeassistant.auth import EVENT_USER_REMOVED
+    from homeassistant.core import callback
+    from homeassistant.exceptions import Unauthorized
+
+    from .authorization import POLICY_CONTROL, POLICY_READ, require_http_control, require_user_endpoint_permission
+    from .phone_state import phone_state_observer
+    from .runtime_data import runtime_data
+
+    runtime = require_runtime_data(context.hass)
+    call = registry.get_session(context.call_id)
+    generation = call.generation if call is not None else None
+    revoked = False
+
+    def validate():
+        if revoked:
+            raise Unauthorized(user_id=context.user_id)
+        require_http_control(request)
+        for policy in (POLICY_READ, POLICY_CONTROL):
+            require_user_endpoint_permission(context.hass, request.get("hass_user"),
+                runtime.endpoints.get(context.endpoint_id), policy)
+        current = registry.get_session(context.call_id)
+        if (runtime_data(context.hass) is not runtime or runtime.sip is not registry
+                or runtime.media.shutdown.is_set() or current is not call
+                or current is None or current.generation != generation or not current.live):
+            raise web.HTTPConflict(text="media call changed before attachment")
+
+    @callback
+    def access_changed(update):
+        nonlocal revoked
+        event = update.access_event
+        if (event is not None and event.event_type == EVENT_USER_REMOVED
+                and event.data.get("user_id") == context.user_id):
+            revoked = True
+        try:
+            if update.closed:
+                raise Unauthorized(user_id=context.user_id)
+            validate()
+        except (Unauthorized, web.HTTPException):
+            # Only this request's owner is retired; existing token-based cleanup
+            # cannot remove another user's or a later generation's lease.
+            owner.revoke()
+
+    validate()
+    detach_access = phone_state_observer(context.hass).subscribe(access_changed, kind="projection")
+    try:
+        async with async_media_websocket_session(
+            media,
+            registry,
+            context.call_id,
+            context.endpoint_id,
+            owner,
+            channel=channel,
+            timeout=timeout,
+            shutdown_event=media.shutdown,
+            pin_client_identity=local_call is None,
+            local_bridge=(
+                context.local_bridge if local_call is not None else None
+            ),
+            publish_state=publish_state,
+        ) as media_session:
+            validate()
+            yield ClaimedMediaWebSocket(ws, owner, media_session, validate)
+    finally:
+        detach_access()
 
 
 def resolve_media_websocket_request(request: Any) -> MediaWebSocketRequestContext:
@@ -262,7 +324,10 @@ async def async_authorize_media_websocket_request(
 
     from aiohttp import web
 
-    from .authorization import async_require_media_controller
+    from .authorization import POLICY_CONTROL, POLICY_READ, async_require_media_controller, require_user_endpoint_permission
+    endpoint = require_runtime_data(context.hass).endpoints.get(context.endpoint_id)
+    for policy in (POLICY_READ, POLICY_CONTROL):
+        require_user_endpoint_permission(context.hass, request.get("hass_user"), endpoint, policy)
     registry = call_projection(context.hass)
     if registry is None:
         raise web.HTTPConflict(text="HA softphone call registry is unavailable")
@@ -272,6 +337,7 @@ async def async_authorize_media_websocket_request(
         context.call_id,
         request.get("hass_user"),
         endpoint_id=context.endpoint_id,
+        endpoint=endpoint,
     )
     return registry
 

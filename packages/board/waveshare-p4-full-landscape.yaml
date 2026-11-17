@@ -1,6 +1,6 @@
 # P4 audio-board hardware and connectivity; display and camera are selected separately.
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   name: ${name}
   friendly_name: ${friendly_name}
   build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape

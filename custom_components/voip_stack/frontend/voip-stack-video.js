@@ -26,6 +26,13 @@ const MAX_DECODE_QUEUE_FRAMES = 8;
 const CODEC_SETUP_TIMEOUT_MS = 3000;
 const MEDIA_CLEANUP_TIMEOUT_MS = 500;
 const JPEG_CAMERA_QUALITY = 0.72;
+const CAMERA_BITRATE = 600000;
+// EncoderRateGuard watches a camera encoder's first 2s of output for more
+// than 4 times its target rate, totalling at least 0.5s worth of data at
+// that rate.
+const ENCODER_RATE_WINDOW_SECONDS = 2;
+const ENCODER_RATE_MIN_WINDOW_SECONDS = 0.5;
+const ENCODER_OVERSHOOT_FACTOR = 4;
 
 class VideoFrameCadence {
   constructor() {
@@ -72,6 +79,166 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   ]).finally(() => {
     if (timer && cancel) cancel(timer);
   });
+}
+
+// Use the same reader contract when this context has no track processor.
+// Each pending read arms at most one callback; a slow encoder cannot build
+// a queue of captured frames or keep an otherwise idle timer running.
+function createVideoElementFrameReader(stream, framerate, track) {
+  let target = {};
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("muted", "");
+  Object.assign(video.style, {
+    position: "fixed", width: "1px", height: "1px", opacity: "0",
+    pointerEvents: "none", left: "0", top: "0",
+  });
+  video.srcObject = stream;
+  document.body.appendChild(video);
+  const canvas = document.createElement("canvas");
+  const context2d = canvas.getContext("2d", { alpha: false });
+  let cancelled = false, waiter = null, callbackId = null, timer = null;
+  let rejectStartup = null, lastTime = -1, lastTimestamp = -1;
+  const intervalMs = Math.max(10, Math.round(1000 / Math.max(1, framerate || 15)));
+  const useRvfc = typeof video.requestVideoFrameCallback === "function";
+  const finish = (result) => {
+    const resolve = waiter;
+    waiter = null;
+    resolve?.(result);
+  };
+  const emit = (mediaTime) => {
+    if (track.readyState === "ended") { cleanup(); return; }
+    if (cancelled || !waiter || !(video.readyState >= 2)) return;
+    try {
+      const seconds = Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
+      // Zero is a valid first media timestamp. Mixing it with performance.now()
+      // made the next frame jump backwards to a different clock origin.
+      const candidate = Number.isFinite(seconds) && seconds >= 0
+        ? Math.round(seconds * 1e6) : Math.max(0, lastTimestamp + intervalMs * 1000);
+      const timestamp = Math.max(lastTimestamp + 1, candidate);
+      const sourceWidth = video.videoWidth, sourceHeight = video.videoHeight;
+      if (!(sourceWidth > 0 && sourceHeight > 0) || !context2d) return;
+      const width = Math.max(2, (Number(target.width) || sourceWidth) & ~1);
+      const height = Math.max(2, (Number(target.height) || sourceHeight) & ~1);
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      // drawImage honours display orientation. Letterbox a later rotation or
+      // aspect change instead of stretching it into the negotiated geometry.
+      const scale = Math.min(width / sourceWidth, height / sourceHeight);
+      const drawnWidth = sourceWidth * scale, drawnHeight = sourceHeight * scale;
+      context2d.fillStyle = "black";
+      context2d.fillRect(0, 0, width, height);
+      context2d.drawImage(video, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+      const frame = new VideoFrame(canvas, { timestamp });
+      lastTimestamp = timestamp;
+      finish({ value: frame, done: false });
+    } catch (_) { /* Retry only while the existing read is pending. */ }
+  };
+  const onVideoFrame = (_now, metadata) => {
+    callbackId = null;
+    emit(metadata?.mediaTime);
+    arm();
+  };
+  const onTimer = () => {
+    timer = null;
+    const time = video.currentTime;
+    if (time !== lastTime) { lastTime = time; emit(time); }
+    arm();
+  };
+  const arm = () => {
+    if (track.readyState === "ended") { cleanup(); return; }
+    if (cancelled || !waiter || callbackId !== null || timer !== null) return;
+    if (useRvfc) callbackId = video.requestVideoFrameCallback(onVideoFrame);
+    else timer = setTimeout(onTimer, intervalMs);
+  };
+  const cleanup = () => {
+    if (cancelled) return;
+    cancelled = true;
+    track.removeEventListener("ended", cleanup);
+    rejectStartup?.(new Error("Camera frame reader cancelled"));
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    if (callbackId !== null) {
+      try { video.cancelVideoFrameCallback?.(callbackId); } catch (_) {}
+      callbackId = null;
+    }
+    try { video.pause(); } catch (_) {}
+    video.srcObject = null;
+    try { video.remove(); } catch (_) {}
+    finish({ done: true });
+  };
+  track.addEventListener("ended", cleanup);
+  return {
+    async start() {
+      let timeout;
+      try {
+        if (track.readyState === "ended") cleanup();
+        if (cancelled) throw new Error("Camera frame reader cancelled");
+        await Promise.race([
+          video.play(),
+          new Promise((_resolve, reject) => {
+            rejectStartup = reject;
+            timeout = setTimeout(() => reject(new Error("Camera playback did not start")), CODEC_SETUP_TIMEOUT_MS);
+          }),
+        ]);
+        if (cancelled) throw new Error("Camera frame reader cancelled");
+      } catch (error) { cleanup(); throw error; }
+      finally { clearTimeout(timeout); rejectStartup = null; }
+    },
+    get size() {
+      return video.videoWidth > 0 && video.videoHeight > 0
+        ? { width: video.videoWidth, height: video.videoHeight } : null;
+    },
+    setTarget(next) { target = next || {}; },
+    read() {
+      if (track.readyState === "ended") cleanup();
+      if (cancelled) return Promise.resolve({ done: true });
+      if (waiter) return Promise.reject(new Error("Camera frame read already pending"));
+      return new Promise((resolve) => { waiter = resolve; arm(); });
+    },
+    cancel() { cleanup(); return Promise.resolve(); },
+  };
+}
+
+// Some Android hardware encoders ignore the configured bitrate on camera
+// frames and send many times the target, which backs slower network paths up.
+// Flag the encoder as soon as its delta frames exceed 4 times the target,
+// since everything sent before the switch delays live video.
+class EncoderRateGuard {
+  constructor(targetBitrate) {
+    this.targetBitrate = targetBitrate;
+    // Bits per second of delta frames when the encoder was flagged.
+    this.measuredBitrate = null;
+    this.overTarget = false;
+    this.done = false;
+    this.deltaBytes = 0;
+    this.startUs = null;
+  }
+
+  // Process each encoded chunk until the encoder is flagged or the window ends.
+  addChunk(chunk) {
+    if (this.done) return;
+    const timestamp = Number(chunk.timestamp || 0);
+    if (this.startUs === null) this.startUs = timestamp;
+    const elapsedSeconds = (timestamp - this.startUs) / 1000000;
+    // Key frames are large on any encoder, so only monitor delta frames.
+    if (chunk.type !== "key") this.deltaBytes += chunk.byteLength;
+    // Trigger only once delta frames total at least 0.5s worth at 4 times the
+    // target, so a normal encoder's first few frames can't trip it.
+    const windowSeconds = Math.max(elapsedSeconds, ENCODER_RATE_MIN_WINDOW_SECONDS);
+    const allowedBytes =
+      this.targetBitrate / 8 * ENCODER_OVERSHOOT_FACTOR * windowSeconds;
+    if (this.deltaBytes > allowedBytes) {
+      // Log the rate actually sent, not the rate over the minimum window.
+      this.measuredBitrate = this.deltaBytes * 8 / Math.max(elapsedSeconds, 0.001);
+      this.overTarget = true;
+      this.done = true;
+    } else if (elapsedSeconds >= ENCODER_RATE_WINDOW_SECONDS) {
+      this.done = true;
+    }
+  }
 }
 
 export class VoipStackVideo extends EventTarget {
@@ -995,6 +1162,8 @@ export class VoipStackVideo extends EventTarget {
   }
 
   async _replaceSender(codec, generation, deviceId, exact) {
+    this._senderSetupReader?.cancel();
+    this._senderSetupReader = null;
     const switchGeneration = ++this._senderSwitchGeneration;
     const senderGeneration = ++this._senderSerial;
     let setup = this._prepareSender(
@@ -1070,8 +1239,13 @@ export class VoipStackVideo extends EventTarget {
     deviceId,
   ) {
     const send = this._mediaContract("send");
+    const hasTrackProcessor = typeof MediaStreamTrackProcessor !== "undefined";
+    const hasVideoElementCapture =
+      typeof VideoFrame !== "undefined" &&
+      typeof document !== "undefined" &&
+      typeof document.createElement === "function";
     if (
-      typeof MediaStreamTrackProcessor === "undefined" ||
+      !(hasTrackProcessor || hasVideoElementCapture) ||
       !navigator.mediaDevices?.getUserMedia ||
       (send.encoding === "JPEG" && typeof Worker === "undefined") ||
       (send.encoding !== "JPEG" && typeof VideoEncoder === "undefined")
@@ -1093,7 +1267,22 @@ export class VoipStackVideo extends EventTarget {
       }
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error("No browser camera track available");
-      const settings = track.getSettings();
+      let settings = track.getSettings();
+      if (!hasTrackProcessor) {
+        reader = createVideoElementFrameReader(
+          stream,
+          Number(settings.frameRate) || 15,
+          track,
+        );
+        this._senderSetupReader = reader;
+        await reader.start();
+        // getSettings() can report the unrotated sensor size while the video
+        // element (and therefore our frames) is upright. Configure the encoder
+        // with the orientation we will actually feed it, otherwise WebCodecs
+        // rescales the frames and the picture looks stretched.
+        const size = reader.size;
+        if (size) settings = { ...settings, ...size };
+      }
       const {
         width,
         height,
@@ -1116,14 +1305,19 @@ export class VoipStackVideo extends EventTarget {
           () => this._senderSetupIsCurrent(generation, switchGeneration),
         );
       } else {
-        const encoderConfig = await this._supportedConfig(VideoEncoder, {
+        const baseConfig = {
           codec,
           width,
           height,
           framerate,
-          bitrate: 600000,
+          bitrate: CAMERA_BITRATE,
           ...(send.encoding === "H264" ? { avc: { format: "annexb" } } : {}),
-        }, send.encoding === "H264");
+        };
+        const encoderConfig = await this._supportedConfig(
+          VideoEncoder,
+          baseConfig,
+          send.encoding === "H264",
+        );
         if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
           throw new Error("SIP video session was superseded or camera transmission was disabled");
         }
@@ -1134,13 +1328,25 @@ export class VoipStackVideo extends EventTarget {
         if (!support?.supported) {
           throw new Error(`Browser cannot encode negotiated SIP video ${codec}`);
         }
+        const configured = support.config || encoderConfig;
+        let rateGuard = configured.hardwareAcceleration === "prefer-software"
+          ? null
+          : new EncoderRateGuard(CAMERA_BITRATE);
         encoder = new VideoEncoder({
-          output: (chunk) => this._sendEncodedChunk(
-            chunk,
-            generation,
-            senderGeneration,
-            encoder,
-          ),
+          output: (chunk) => {
+            rateGuard?.addChunk(chunk);
+            if (rateGuard?.overTarget) {
+              void this._fallBackToSoftwareEncoder(
+                encoder,
+                this._encoderCandidates(baseConfig, send.encoding === "H264")[1],
+                rateGuard.measuredBitrate,
+                generation,
+                senderGeneration,
+              );
+              rateGuard = null;
+            }
+            this._sendEncodedChunk(chunk, generation, senderGeneration, encoder);
+          },
           error: () => {
             if (
               generation !== this._generation ||
@@ -1151,10 +1357,14 @@ export class VoipStackVideo extends EventTarget {
             this._emit();
           },
         });
-        encoder.configure(support.config || encoderConfig);
+        encoder.configure(configured);
       }
-      const processor = new MediaStreamTrackProcessor({ track });
-      reader = processor.readable.getReader();
+      if (hasTrackProcessor) {
+        const processor = new MediaStreamTrackProcessor({ track });
+        reader = processor.readable.getReader();
+      } else {
+        reader.setTarget({ width, height });
+      }
       if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
@@ -1172,6 +1382,7 @@ export class VoipStackVideo extends EventTarget {
         settings,
       };
     } finally {
+      if (this._senderSetupReader === reader) this._senderSetupReader = null;
       if (!prepared) {
         if (reader) await reader.cancel().catch(() => {});
         if (encoder && encoder.state !== "closed") encoder.close();
@@ -1188,7 +1399,18 @@ export class VoipStackVideo extends EventTarget {
     // decoder until the next IDR. Our bounded encode queue still drops raw
     // frames before admission, which preserves a valid encoded dependency
     // chain without allowing latency to grow.
-    const candidates = realtimeHardware
+    for (const candidate of this._encoderCandidates(base, realtimeHardware)) {
+      try {
+        const support = await codecClass.isConfigSupported(candidate);
+        if (support?.supported) return support.config || candidate;
+      } catch (_) {}
+    }
+    return base;
+  }
+
+  // Hardware first, then software, then the browser's choice.
+  _encoderCandidates(base, realtimeHardware = false) {
+    return realtimeHardware
       ? [
           { ...base, hardwareAcceleration: "prefer-hardware", latencyMode: "realtime" },
           { ...base, hardwareAcceleration: "prefer-software", latencyMode: "quality" },
@@ -1199,13 +1421,28 @@ export class VoipStackVideo extends EventTarget {
           { ...base, hardwareAcceleration: "prefer-software", latencyMode: "realtime" },
           { ...base, latencyMode: "realtime" },
         ];
-    for (const candidate of candidates) {
-      try {
-        const support = await codecClass.isConfigSupported(candidate);
-        if (support?.supported) return support.config || candidate;
-      } catch (_) {}
+  }
+
+  // Reconfigure a camera encoder that EncoderRateGuard caught far over its
+  // bitrate. The next frame is a key frame, so receivers resync cleanly.
+  async _fallBackToSoftwareEncoder(encoder, config, bitrate, generation, senderGeneration) {
+    console.warn(
+      `voip-stack-video: camera encoder sent ${Math.round(bitrate / 1000)} kbit/s ` +
+      `for a ${CAMERA_BITRATE / 1000} kbit/s target, switching to software encoding`,
+    );
+    try {
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (
+        !support?.supported ||
+        !this._senderIsCurrent(generation, senderGeneration) ||
+        this._encoder !== encoder ||
+        encoder.state !== "configured"
+      ) return;
+      encoder.configure(support.config || config);
+      this._forceCameraKeyFrame = true;
+    } catch (_) {
+      // Keep the hardware encoder: too much video beats no video.
     }
-    return base;
   }
 
   async _encodeCamera(
@@ -1696,6 +1933,8 @@ export class VoipStackVideo extends EventTarget {
     this._senderSwitchGeneration++;
     this._senderGeneration = ++this._senderSerial;
     this._senderSetupPromise = null;
+    this._senderSetupReader?.cancel();
+    this._senderSetupReader = null;
     const resources = this._takeSenderResources();
     this._cameraSettings = {};
     this._canSend = false;

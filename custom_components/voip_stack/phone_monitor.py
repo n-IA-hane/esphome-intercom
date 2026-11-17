@@ -8,6 +8,38 @@ from .authorization import require_websocket_endpoint_read
 from .phone_state import phone_state_dto, phone_state_observer
 
 
+class PhoneSubscriptionAccess:
+    """Shared read boundary for phone streams, independent of media ownership."""
+
+    def __init__(self, hass, connection):
+        self.hass = hass
+        self.connection = connection
+        self.revoked = False
+
+    @property
+    def active(self):
+        user = self.connection.user
+        return bool(not self.revoked and user is not None and getattr(user, "id", "")
+                    and getattr(user, "is_active", True))
+
+    def terminal_reason(self, update):
+        event = update.access_event
+        user_id = getattr(self.connection.user, "id", None)
+        if (event is not None and event.event_type == EVENT_USER_REMOVED
+                and event.data.get("user_id") == user_id):
+            self.revoked = True
+        return "runtime_unloaded" if update.closed else "permissions_revoked" if not self.active else ""
+
+    def readable(self, endpoint):
+        if not self.active or endpoint is None:
+            return False
+        try:
+            require_websocket_endpoint_read(self.hass, self.connection, endpoint)
+        except Unauthorized:
+            return False
+        return True
+
+
 class PhoneStateSubscription:
     """Stream a snapshot and changed DTOs, retaining no routing/media ownership.
 
@@ -25,34 +57,18 @@ class PhoneStateSubscription:
         self.revision = 0
         self.sent = {}
         self.closed = False
-        self.revoked = False
+        self.access = PhoneSubscriptionAccess(hass, connection)
         self.observer = None
         self.unsubscribe = None
 
-    def _user_active(self):
-        user = self.connection.user
-        return bool(
-            not self.revoked and user is not None and getattr(user, "id", "")
-            and getattr(user, "is_active", True)
-        )
-
     def _readable(self, endpoint_id):
-        if not self._user_active():
-            return False
-        endpoint = self.hass_runtime.endpoints.get(endpoint_id)
-        if endpoint is None:
-            return False
-        try:
-            require_websocket_endpoint_read(self.hass, self.connection, endpoint)
-        except Unauthorized:
-            return False
-        return True
+        return self.access.readable(self.hass_runtime.endpoints.get(endpoint_id))
 
     @callback
     def start(self):
         from .runtime_data import require_runtime_data
 
-        if not self._user_active():
+        if not self.access.active:
             raise Unauthorized(permission="read", user_id=getattr(self.connection.user, "id", None))
         self.hass_runtime = require_runtime_data(self.hass)
         self.observer = phone_state_observer(self.hass)
@@ -73,9 +89,7 @@ class PhoneStateSubscription:
         if event is not None and event.event_type in (EVENT_USER_UPDATED, EVENT_USER_REMOVED):
             if event.data.get("user_id") != self.connection.user.id:
                 return
-            if event.event_type == EVENT_USER_REMOVED:
-                self.revoked = True
-        terminal = "runtime_unloaded" if update.closed else "permissions_revoked" if not self._user_active() else ""
+        terminal = self.access.terminal_reason(update)
         try:
             if terminal:
                 self.connection.send_event(self.msg_id, {"kind": "closed", "reason": terminal})

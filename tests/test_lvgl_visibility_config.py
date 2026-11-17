@@ -79,9 +79,7 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
     # The Box has no status-LED ring; its amplifier already owns GPIO38.
     config = device_config(tmp_path, [item for item in FULL if item != "status_led"] + ["display"],
                            "yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml")
-    text = config.read_text().replace("packages:\n", "packages:\n  video_page: !include " +
-        str(ROOT / "packages/voip/s3_video_call_page.yaml") + "\n", 1)
-    config.write_text(text)
+    # The maintained device already includes its video_receive page.
     result = subprocess.run(
         [sys.executable, "-m", "esphome", "compile", "--only-generate", str(config)],
         capture_output=True, text=True, timeout=180,
@@ -91,7 +89,10 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
     assert "target = call_video_page->obj" in code
     assert "s3_video->attach_video_container(call_video_surface)" in code
     assert "call_video_hangup = lv_button_create(call_video_page->obj)" in code
-    control = re.search(r"lv_obj_add_flag\(call_video_hangup, LV_OBJ_FLAG_CLICKABLE\);(.*?)"
+    # The official LVGL9 generator uses the explicit flag setter; LVGL8 used
+    # add_flag. Both must make this exact control clickable before its action.
+    control = re.search(r"(?:lv_obj_set_clickable\(call_video_hangup, true\)|"
+                        r"lv_obj_add_flag\(call_video_hangup, LV_OBJ_FLAG_CLICKABLE\));(.*?)"
                         r"LvglComponent::add_event_cb\(call_video_hangup,", code, re.S)
     assert control is not None
     assert "voip_stack::StopAction<bool, lv_event_t *>" in control[1]

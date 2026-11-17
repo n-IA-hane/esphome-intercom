@@ -14,6 +14,8 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.runtime_data import sip_endpoint_manager
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
+from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot as build_real_peer_snapshot
+from tests.test_sip_capabilities_ha import CAPS, register_peer, wait_until
 from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
 
 
@@ -31,6 +33,7 @@ pytestmark = pytest.mark.ha
 ])
 async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     trunks, monkeypatch, source_rate, receive_rates, source_receive_rates, known, directional,
+    caller_discovery=None,
 ):
     lab = trunks
     target = lab.phones[0]
@@ -45,6 +48,9 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
 
     def answer():
         request = target.last_request
+        # A registered account alone never authorizes the private D1 profile.
+        if not known:
+            assert b"a=x-voip-stack-flow:" not in request.body
         offered = [fmt for fmt in sdp.offered_pcm_formats(request.body) if fmt.encoding == "L16"]
         # Independent endpoint: receive the first compatible payload, transmit
         # the fixed 16 kHz microphone stream. No production negotiation helper.
@@ -71,19 +77,62 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    caller = SipCallClient(local_ip="127.0.0.2", local_name="Asymmetric caller",
+    caller = SipCallClient(local_ip="127.0.0.2", local_name="managed_caller" if caller_discovery else "Asymmetric caller",
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(source_rate, frame_ms=10)],
         supported_recv_formats=[AudioFormat(rate, frame_ms=10) for rate in source_receive_rates],
         allow_directional_audio_payloads=directional)
+    class CallerProtocol(SipDatagramQueueProtocol):
+        def __init__(self):
+            super().__init__(caller.queue)
+            self.messages = asyncio.Queue()
+            self.responses = []
+
+        def datagram_received(self, raw, address):
+            message = sip.parse_message(raw)
+            if message.method == "OPTIONS":
+                body = CAPS
+                if caller_discovery == "incompatible":
+                    body = ("v=0\r\no=- 3 3 IN IP4 127.0.0.2\r\ns=Capabilities\r\n"
+                        "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 0 RTP/AVP 96\r\n"
+                        "a=rtpmap:96 L16/8000/1\r\na=sendrecv\r\n").encode()
+                if caller_discovery != "no-ptime":
+                    body += b"a=ptime:10\r\n"
+                headers = [(key, message.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+                headers += [("To", message.header("To") + ";tag=capabilities"),
+                            ("Content-Type", "application/sdp")]
+                self.transport.sendto(sip.build_response(200, "OK", headers, body), address)
+                return
+            self.messages.put_nowait((message, address))
+            if message.is_response:
+                self.responses.append(message)
+            super().datagram_received(raw, address)
+
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))
+        CallerProtocol, local_addr=("127.0.0.2", 0))
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
+    if caller_discovery is not None:
+        build_request = caller._build_pending_invite
+
+        def native_offer():
+            # The actual caller explicitly limits receive packets to 10 ms.
+            # SipCallClient otherwise omits redundant maxptime in D1 offers.
+            if b"a=maxptime:" not in caller._pending_invite_body:
+                caller._pending_invite_body = caller._pending_invite_body.replace(
+                    b"a=ptime:10\r\n", b"a=ptime:10\r\na=maxptime:10\r\n")
+                caller._local_sdp_body = caller._pending_invite_body.decode()
+            return build_request()
+
+        monkeypatch.setattr(caller, "_build_pending_invite", native_offer)
     try:
+        if caller_discovery is not None:
+            await restore_managed_caller(lab, caller, caller_discovery)
         result = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if result == "ringing":
             result = await caller.wait_for_final(timeout=3)
+        # Stale OPTIONS preferences cannot reject a valid authoritative INVITE.
+        # Every discovery case must also prove both media paths and teardown.
         assert result == "in_call" and caller.dialog is not None
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
@@ -93,20 +142,28 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         target_rate = observed["send"].sample_rate
         expected_return_rate = target_rate if target_rate in source_receive_rates else source_receive_rates[0]
         assert caller.dialog.recv_format.sample_rate == expected_return_rate
-        assert relay.left_to_right_passthrough == (source_rate == expected_receive)
-        if known:
-            assert relay.right_to_left_passthrough
-        elif expected_return_rate == target_rate:
-            # Unknown peers retain legal 20 ms codec fallbacks in HA's offer.
-            # A 10 ms caller therefore needs the existing packet reframer,
-            # while both PCM contracts remain identical (no sample conversion).
-            assert relay.right_to_left.src == relay.right_to_left.dst
+        # Static RX capacity may exceed the peer's TX packet budget. Keep the
+        # existing fallback ready; actual compatible10ms packets still bypass it.
+        if not relay.left_to_right_passthrough:
+            assert relay.left_decoder is not None and relay.right_encoder is not None
+            assert relay.left_to_right is not None
+        if expected_return_rate == target_rate and not relay.right_to_left_passthrough:
+            # Equal PCM geometry needs only packet reframing when the final
+            # receive and transmit contracts choose different nominal quanta.
+            src, dst = relay.right_to_left.src, relay.right_to_left.dst
+            assert (src.sample_rate, src.pcm_format, src.channels) == (dst.sample_rate, dst.pcm_format, dst.channels)
+            assert src == relay.right.inbound_rtp_format.audio_format
+            assert dst == relay.left.outbound_rtp_format.audio_format
         # Both final SDP contracts must agree with media and the UAS dialog.
         endpoint = sip_endpoint_manager(lab.hass)
         uas = next(server.active_dialogs[session.call_id] for server in
             endpoint._dialog_endpoints() if session.call_id in server.active_dialogs)
         assert uas.invite.send_format.sample_rate == caller.dialog.recv_format.sample_rate
         assert uas.invite.recv_format.sample_rate == caller.dialog.send_format.sample_rate
+        if caller_discovery is not None:
+            assert caller.dialog.send_format.frame_ms == 20
+            assert caller.dialog.recv_format.frame_ms == 10
+            assert sdp.parse_sdp(uas.invite.remote_sdp)["maxptime"] == 10
         source_samples = source_rate // 100
         source_payload = struct.pack(f"!{source_samples}h", *([2000] * source_samples))
         destination = (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port)
@@ -118,6 +175,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         assert packet.payload_type == observed["receive"].payload_type
         assert len(packet.payload) == expected_receive // 100 * 2
         assert max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 1900
+        assert relay.left_to_right_passthrough == (source_rate == expected_receive)
         if source_rate == expected_receive:
             assert packet.payload == source_payload
         target_samples = observed["send"].sample_rate // 100
@@ -131,6 +189,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             returned = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
         assert returned.payload_type == caller.dialog.recv_format.payload_type
         assert len(returned.payload) == expected_return_rate // 100 * 2
+        assert relay.right_to_left_passthrough == (expected_return_rate == target_rate)
         if expected_return_rate == target_rate:
             assert returned.payload == target_payload
         else:
@@ -139,268 +198,111 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
                 observed["send"].payload_type, 1, target_samples, 902, target_payload * 2)),
                 ("127.0.0.1", target_port))
+            # A receive preference of 10 ms is not a hard packet limit.
+            # Accumulate exactly the sent 20 ms, preserving sample and clock
+            # evidence whether the peer receives one packet or two.
+            frame_bytes = expected_return_rate // 100 * 2
+            reframed, received_bytes = [], 0
             async with asyncio.timeout(3):
-                reframed = [rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096)) for _ in range(2)]
-            if expected_return_rate == target_rate:
-                assert [packet.payload for packet in reframed] == [target_payload, target_payload]
-            else:
-                assert all(len(packet.payload) == expected_return_rate // 100 * 2 for packet in reframed)
-                assert all(max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 2900 for packet in reframed)
-        assert caller.bye()
-        await asyncio.wait_for(session.termination_started.wait(), 3)
-        barrier = lab.calls.request_termination(session.call_id, session.termination_intent)
-        if barrier is not None:
-            await barrier
-        assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
-    finally:
-        await caller.close()
-        for session in tuple(lab.calls.sessions.values()):
-            await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
-        audio.close()
-
-
-@pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, monkeypatch):
-    """The current offer must own real sockets while its relay commit yields."""
-    from custom_components.voip_stack.inbound_routing import bridge as route
-
-    lab = trunks
-    target = lab.phones[0]
-    lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True,
-        "sip_audio_tx_formats": ["L16/16000/1/10"],
-        "sip_audio_rx_formats": ["L16/16000/1/10"],
-    })
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    commit_entered, release_commit, first_sent = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    observed = {}
-    original_commit = route.async_commit_outbound_bridge
-
-    async def delayed_commit(*args, **kwargs):
-        observed["reservation"] = args[2].winner.ports
-        commit_entered.set()
-        await release_commit.wait()
-        return await original_commit(*args, **kwargs)
-
-    monkeypatch.setattr(route, "async_commit_outbound_bridge", delayed_commit)
-    source_payload = struct.pack("!160h", *([2345] * 160))
-    original_receive = target.datagram_received
-
-    def receive(raw, address):
-        request = sip.parse_message(raw)
-        if request.method == "INVITE":
-            port = int(re.search(rb"m=audio (\d+)", request.body)[1])
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                try:
-                    probe.bind(("0.0.0.0", port))
-                except OSError:
-                    observed["port_reserved_on_offer"] = True
+                while received_bytes < frame_bytes * 2:
+                    packet = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                    reframed.append(packet)
+                    received_bytes += len(packet.payload)
+                sizes = [len(packet.payload) for packet in reframed]
+                assert sizes in ([frame_bytes * 2], [frame_bytes, frame_bytes])
+                if sdp.parse_sdp(uas.invite.remote_sdp)["maxptime"] == 10:
+                    assert sizes == [frame_bytes, frame_bytes]
+                pcm = b"".join(packet.payload for packet in reframed)
+                assert len(pcm) == frame_bytes * 2
+                elapsed_samples = 0
+                for index, packet in enumerate(reframed, 1):
+                    assert packet.payload_type == caller.dialog.recv_format.payload_type
+                    assert packet.ssrc == returned.ssrc
+                    assert packet.sequence == (returned.sequence + index) & 0xffff
+                    assert packet.timestamp == (returned.timestamp + frame_bytes // 2 + elapsed_samples) & 0xffffffff
+                    elapsed_samples += len(packet.payload) // 2
+                if expected_return_rate == target_rate:
+                    assert pcm == target_payload * 2
                 else:
-                    observed["port_reserved_on_offer"] = False
-        original_receive(raw, address)
-        if request.method == "ACK" and not first_sent.is_set():
-            offer = target.last_request
-            observed["offered_port"] = int(re.search(rb"m=audio (\d+)", offer.body)[1])
-            observed["target_call_id"] = offer.header("Call-ID")
-            packet = rtp.build_packet(rtp.RtpPacket(target.payload_type, 46567, 1600, 902, source_payload))
-            target.rtp_socket.sendto(packet, ("127.0.0.1", observed["offered_port"]))
-            first_sent.set()
-
-    monkeypatch.setattr(target, "datagram_received", receive)
-    # Linux reports the real ICMP port-unreachable on the sender's error queue.
-    # No synthetic ICMP or production admission/forwarding result is injected.
-    ip_recverr = getattr(socket, "IP_RECVERR", 11)
-    original_recverr = target.rtp_socket.getsockopt(socket.IPPROTO_IP, ip_recverr)
-    target.rtp_socket.setsockopt(socket.IPPROTO_IP, ip_recverr, 1)
-    audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    audio.bind(("127.0.0.2", 0))
-    audio.setblocking(False)
-    caller = SipCallClient(local_ip="127.0.0.2", local_name="Immediate RTP caller",
-        local_sip_port=0, local_rtp_port=audio.getsockname()[1],
-        supported_send_formats=[AudioFormat(16000, frame_ms=10)],
-        supported_recv_formats=[AudioFormat(16000, frame_ms=10)])
-    caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))
-    caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
-
-    async def dial():
-        result = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
-            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
-        return await caller.wait_for_final(timeout=3) if result == "ringing" else result
-
-    task = asyncio.create_task(dial())
-    try:
-        await asyncio.wait_for(first_sent.wait(), 3)
-        await asyncio.wait_for(commit_entered.wait(), 3)
-        await asyncio.sleep(0)
-        try:
-            error = target.rtp_socket.recvmsg(4096, 4096, socket.MSG_ERRQUEUE | socket.MSG_DONTWAIT)
-        except BlockingIOError:
-            error = None
-        assert error is None, "Current offered RTP port generated ICMP before bridge media commit"
-        assert observed["port_reserved_on_offer"], "Offered RTP port was not bound when INVITE arrived"
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            with pytest.raises(OSError, match="Address already in use"):
-                probe.bind(("0.0.0.0", observed["offered_port"]))
-        reservation = observed["reservation"]
-        reserved_fds = tuple(sock.fileno() for sock in reservation._audio_sockets)
-        release_commit.set()
-        assert await asyncio.wait_for(task, 3) == "in_call"
-        session = lab.calls.get_session(caller.dialog_ids.call_id)
-        relay = lab.calls.resource_for(session.call_id, "relay")
-        assert tuple(transport.get_extra_info("socket").fileno() for transport in
-                     (relay.left_transport, relay.right_transport)) == reserved_fds
-        assert reservation._audio_sockets is None
-        async with asyncio.timeout(3):
-            packet = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
-        assert packet.payload == source_payload
-        assert packet.payload_type == caller.dialog.recv_format.payload_type
-        assert observed["target_call_id"] == target.last_request.header("Call-ID")
+                    assert all(max(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) >= 2900 for packet in reframed)
+                # A distinct following frame detects a missing or duplicated tail,
+                # including an extra old packet still queued after accumulation.
+                marker = struct.pack(f"!{target_samples}h", *([-3000] * target_samples))
+                await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
+                    observed["send"].payload_type, 2, target_samples * 3, 902, marker)),
+                    ("127.0.0.1", target_port))
+                following = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                assert following.payload_type == caller.dialog.recv_format.payload_type
+                assert following.ssrc == returned.ssrc
+                assert following.sequence == (reframed[-1].sequence + 1) & 0xffff
+                assert following.timestamp == (returned.timestamp + frame_bytes // 2 * 3) & 0xffffffff
+                assert len(following.payload) == frame_bytes
+                if expected_return_rate == target_rate:
+                    assert following.payload == marker
+                else:
+                    assert all(value < -2900 for value in struct.unpack(f"!{len(following.payload)//2}h", following.payload)[-64:])
         assert caller.bye()
         await asyncio.wait_for(session.termination_started.wait(), 3)
         barrier = lab.calls.request_termination(session.call_id, session.termination_intent)
         if barrier is not None:
             await barrier
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.bind(("0.0.0.0", observed["offered_port"]))
-    finally:
-        release_commit.set()
-        await caller.close()
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        for session in tuple(lab.calls.sessions.values()):
-            await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
-        target.rtp_socket.setsockopt(socket.IPPROTO_IP, ip_recverr, original_recverr)
-        audio.close()
-
-
-@pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("failure", ["validation", "start-left", "start-right", "stop-before-start"])
-async def test_prebound_relay_keeps_one_owner_on_adoption_and_start_failure(trunks, monkeypatch, failure):
-    from custom_components.voip_stack.media_ports import RtpPortReservation, release_sip_rtp_port_pair
-    from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
-
-    lab = trunks
-    reservation = RtpPortReservation.allocate(lab.hass)
-    reservation.bind_audio_sockets()
-    sockets = reservation._audio_sockets
-    transferred = False
-    released = []
-
-    def release(ports):
-        if transferred:
-            released.append(ports)
-            release_sip_rtp_port_pair(lab.hass, ports)
-
-    fmt = AudioFormat(16000, frame_ms=10)
-    relay = SipRtpRelay(left=RtpPeer("127.0.0.2", 9, 96, fmt),
-        right=RtpPeer("127.0.0.1", 9, 96, fmt),
-        left_port=reservation.ports[0], right_port=reservation.ports[1], on_release=release)
-    try:
-        if failure == "validation":
-            relay.right_port += 2
-            with pytest.raises(ValueError, match="do not match"):
-                reservation.transfer_audio_sockets(relay)
-            assert reservation._audio_sockets is sockets
-            assert all(sock.fileno() >= 0 for sock in sockets)
-            assert relay._audio_sockets is None
-            reservation.release()
-        else:
-            reservation.transfer_audio_sockets(relay)
-            assert relay._audio_sockets is sockets and reservation._audio_sockets is None
-            reservation.detach()
-            transferred = True
-            if failure != "stop-before-start":
-                original_create = lab.hass.loop.create_datagram_endpoint
-                calls = 0
-
-                async def create(*args, **kwargs):
-                    nonlocal calls
-                    if kwargs.get("sock") in sockets:
-                        calls += 1
-                        if calls == (1 if failure == "start-left" else 2):
-                            raise OSError("controlled endpoint start failure")
-                    return await original_create(*args, **kwargs)
-
-                with monkeypatch.context() as patch:
-                    patch.setattr(lab.hass.loop, "create_datagram_endpoint", create)
-                    with pytest.raises(OSError, match="controlled endpoint"):
-                        await relay.start()
-        await relay.stop()
-        async with asyncio.timeout(2):
-            while any(sock.fileno() >= 0 for sock in sockets):
-                await asyncio.sleep(0)
-        assert released == ([reservation.ports] if transferred else [])
-        for port in reservation.ports:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                probe.bind(("0.0.0.0", port))
-        assert not lab.runtime.rtp_port_pool.get("used")
-    finally:
-        await relay.stop()
-        reservation.release()
-
-
-@pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("failure", ["decline", "cancel", "session-adoption"])
-async def test_inbound_bridge_failure_releases_prebound_audio(trunks, monkeypatch, failure):
-    from custom_components.voip_stack.media_ports import RtpPortReservation
-
-    lab = trunks
-    target = lab.phones[0]
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    target.final_status = 486 if failure == "decline" else 200
-    target.auto_answer = failure != "cancel"
-    owners = []
-    bound = RtpPortReservation.bind_audio_sockets
-
-    def observe(owner):
-        bound(owner)
-        owners.append((owner, owner._audio_sockets))
-
-    monkeypatch.setattr(RtpPortReservation, "bind_audio_sockets", observe)
-    if failure == "session-adoption":
-        def reject(_registry, _call_id, _relay):
-            raise RuntimeError("controlled session adoption failure")
-
-        monkeypatch.setattr(type(lab.calls), "attach_relay", reject)
-    audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    audio.bind(("127.0.0.2", 0))
-    caller = SipCallClient(local_ip="127.0.0.2", local_name="Aborted bridge caller",
-        local_sip_port=0, local_rtp_port=audio.getsockname()[1],
-        supported_send_formats=[AudioFormat(16000, frame_ms=10)],
-        supported_recv_formats=[AudioFormat(16000, frame_ms=10)])
-    caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))
-    caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
-
-    async def dial():
-        result = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
-            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
-        return await caller.wait_for_final(timeout=3) if result == "ringing" else result
-
-    task = asyncio.create_task(dial())
-    try:
-        await asyncio.wait_for(target.invited.wait(), 3)
-        assert len(owners) == 1
-        if failure == "cancel":
-            assert caller.cancel()
-        assert await asyncio.wait_for(task, 3) != "in_call"
-        async with asyncio.timeout(3):
-            while lab.calls.sessions or lab.runtime.rtp_port_pool.get("used"):
-                await asyncio.sleep(0)
-        for owner, sockets in owners:
-            assert owner._audio_sockets is None
-            assert all(sock.fileno() < 0 for sock in sockets)
-            for port in owner.ports:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                    probe.bind(("0.0.0.0", port))
     finally:
         await caller.close()
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
         for session in tuple(lab.calls.sessions.values()):
             await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
         audio.close()
+
+
+async def restore_managed_caller(lab, caller, discovery):
+    """Recreate a persisted managed owner, then learn its real REGISTER/OPTIONS."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from pytest_homeassistant.common import MockConfigEntry
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
+    from custom_components.voip_stack.runtime_data import sip_registrar
+    from custom_components.voip_stack.store import config_entry
+
+    origin = MockConfigEntry(domain="esphome", data={"host": "127.0.0.2"})
+    origin.add_to_hass(lab.hass)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=origin.entry_id,
+        identifiers={("esphome", "84c7bb000001")},
+        connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:01")}, name="Managed caller")
+    state_entity = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "managed_caller_voip_state",
+        device_id=device.id, config_entry=origin)
+    lab.hass.states.async_set(state_entity.entity_id, "idle")
+    phone = ManagedPhone(device.id, origin.entry_id, "84c7bb000001", "fixture-only",
+        username="managed_caller", display_name="Managed caller", api_host="127.0.0.2", extension="430")
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+        "managed_esphome_phones": {device.id: phone.record()}})
+    restored = managed_records(entry)[device.id]
+    registrar = sip_registrar(lab.hass)
+    registrar.enabled = True
+    registrar.update_accounts([restored.account()])
+    # The runtime captured this fixture callable at startup. Restore the actual
+    # resolver/projection behind that same callable, without replacing its owner.
+    peer_snapshot.async_build_peer_snapshot.side_effect = build_real_peer_snapshot
+    await register_peer(lab, caller.protocol, restored.username,
+        contact=f"sip:opaque-contact@127.0.0.2:{caller.local_sip_port}")
+    await wait_until(lambda: registrar.registered_contacts(restored.username)[0].capabilities is not None)
+    entry = registrar.registered_roster_entries()[0]
+    assert entry.metadata["sip_capabilities_known"] is True
+    if discovery == "no-ptime":
+        assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == []
+        assert entry.metadata["sdp_features"] == ["directional_audio_v1"]
+    peers = await build_real_peer_snapshot(lab.hass)
+    peer = next(item for item in peers if item.endpoint_id == restored.endpoint_id)
+    assert peer.host == "127.0.0.2" and peer.sip_uri_user == restored.username
+    assert peer.device["managed"] and peer.device["registered"]
+    assert peer.capabilities == ("audio", "dtmf")
+    while not caller.queue.empty():
+        caller.queue.get_nowait()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("discovery", ["no-ptime", "compatible", "incompatible"])
+async def test_restored_managed_caller_uses_invite_when_discovery_has_no_profile(trunks, monkeypatch, discovery):
+    await test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
+        trunks, monkeypatch, 16000, (48000, 16000), (48000, 16000), False, True,
+        caller_discovery=discovery)

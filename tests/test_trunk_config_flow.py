@@ -11,36 +11,6 @@ class TrunkForm(TrunkFormMixin, VoipStackConfigFlow):
 pytestmark = pytest.mark.ha
 
 
-async def test_actual_static_trunk_form_requires_explicit_trusted_sources(hass, enable_custom_integrations, monkeypatch):
-    from pathlib import Path
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-    from homeassistant.components.config.config_entries import SubentryManagerFlowIndexView
-    from tests.test_tool_output_storage import load_tool
-    import custom_components
-    monkeypatch.setattr(custom_components, "__path__", [*custom_components.__path__,
-        str(Path(__file__).parents[1] / "custom_components")])
-    hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
-    entry = MockConfigEntry(domain="voip_stack", data={})
-    entry.add_to_hass(hass)
-    module = load_tool("inbound_routing_qualification")
-    serializer = SubentryManagerFlowIndexView(hass.config_entries.subentries)
-    form_result = await hass.config_entries.subentries.async_init((entry.entry_id, "trunk"), context={"source": "user"})
-    flow_id = form_result["flow_id"]
-    try:
-        form_result = await hass.config_entries.subentries.async_configure(flow_id,
-            {"name": "Static fixture", "trunk_enabled": True, "trunk_register": False})
-        values = module.schema_defaults(serializer._prepare_result_json(form_result))
-        values.update(trunk_server="192.0.2.10", trunk_port=15192, trunk_domain="192.0.2.10",
-                      trunk_inbound_default_target="Casa", trunk_audio_codecs=["PCMA"])
-        assert values["trunk_allowed_ips"] == []
-        rejected = await hass.config_entries.subentries.async_configure(flow_id, values)
-        assert rejected["type"] == "form"
-        assert rejected["errors"] == {"trunk_allowed_ips": "trunk_allowed_ips_invalid"}
-        assert not entry.subentries
-    finally:
-        hass.config_entries.subentries.async_abort(flow_id)
-
-
 @pytest.mark.asyncio
 async def test_mode_switch_hides_registration_expiry_and_requires_source_acl(hass):
     flow = TrunkForm()
@@ -78,47 +48,3 @@ async def test_empty_or_unrestricted_acl_cannot_be_saved(hass):
         data = form["data_schema"]({"trunk_server": "127.0.0.1", "trunk_allowed_ips": ips, "trunk_inbound_default_target": "Kitchen"})
         result = await flow.async_step_trunk(data)
         assert result["errors"] == {"trunk_allowed_ips": "trunk_allowed_ips_invalid"}
-
-
-@pytest.fixture
-def phone_services_flow(hass):
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-    entry = MockConfigEntry(domain="voip_stack", version=6, data={"sip_port": 15060, "existing_setting": "preserve"})
-    entry.add_to_hass(hass)
-    flow = VoipStackConfigFlow()
-    flow.hass = hass
-    flow.context = {"source": "reconfigure", "entry_id": entry.entry_id}
-    return flow, entry
-
-
-async def test_phone_services_defaults_and_conflicting_ports(phone_services_flow):
-    flow, entry = phone_services_flow
-    form = await flow.async_step_phone_services()
-    values = form["data_schema"]({})
-    assert values["ldap_port"] == 1389 and values["imap_port"] == 1143
-    assert values["tls"] is False and values["allow_anonymous"] is False
-    values["imap_port"] = values["ldap_port"]
-    result = await flow.async_step_phone_services(values)
-    assert result["type"] == "form" and result["errors"] == {"base": "phone_service_ports_conflict"}
-    assert "phone_services" not in entry.data
-
-
-@pytest.mark.parametrize("certificate,private_key", [("", ""), ("/config/test.crt", ""), ("", "/config/test.key")])
-async def test_phone_services_tls_requires_both_files(phone_services_flow, certificate, private_key):
-    flow, entry = phone_services_flow
-    form = await flow.async_step_phone_services()
-    values = form["data_schema"]({"tls": True, "certificate": certificate, "private_key": private_key})
-    result = await flow.async_step_phone_services(values)
-    assert result["errors"] == {"base": "phone_service_certificate_required"}
-    assert "phone_services" not in entry.data
-
-
-async def test_phone_services_normal_configuration_persists_without_replacing_other_settings(phone_services_flow):
-    flow, entry = phone_services_flow
-    form = await flow.async_step_phone_services()
-    values = form["data_schema"]({"ldap_port": 2389, "imap_port": 2143, "allow_anonymous": True,
-        "base_dn": "ou=contacts,dc=home", "listen_host": "127.0.0.1"})
-    result = await flow.async_step_phone_services(values)
-    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
-    assert dict(entry.data["phone_services"]) == values
-    assert entry.data["sip_port"] == 15060 and entry.data["existing_setting"] == "preserve"

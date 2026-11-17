@@ -1,112 +1,136 @@
-"""Persisted ownership of automatically configured ESPHome SIP accounts."""
+"""Private, config-entry-backed ownership of managed ESPHome SIP accounts."""
 
-from __future__ import annotations
-
-from dataclasses import asdict, dataclass, field
 from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
+import re
 
 from .sip_registrar import SipAccount, normalize_username
+from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
 CONF_MANAGED_PHONES = "managed_esphome_phones"
 MANAGED_ACCOUNT_ID = "ha"
-AUTO_REGISTER_ACTION = "set_ha_display_name"
+MANAGED_ACTIONS = frozenset({"set_ha_display_name", "set_account", "register_account"})
+
+
+def normalize_mac(value: object) -> str:
+    """Accept only a complete MAC, independently of its presentation."""
+    mac = str(value or "").replace(":", "").replace("-", "").casefold()
+    if re.fullmatch(r"[0-9a-f]{12}", mac) is None:
+        raise ValueError("Managed phones require a complete MAC")
+    return mac
 
 
 @dataclass(frozen=True, slots=True)
 class ManagedPhone:
-    """One physical phone owns one credential and one logical endpoint."""
+    """A credential and its physical owner, never a public directory record."""
 
     device_id: str
     origin_entry_id: str
     mac: str
-    username: str
     password: str = field(repr=False)
+    username: str = ""
+    endpoint_id: str = ""
     display_name: str = ""
     route_id: str = ""
     api_host: str = ""
     extension: str = ""
-    sip_transport: str = "udp"
+    ring_group: str = ""
+    queues: tuple[str, ...] = ()
+    conference_group: str = ""
+    conference_ring: bool = False
+    active: bool = True
+    membership_pending: dict[str, str] = field(default_factory=dict)
+    membership_observed: dict[str, str] = field(default_factory=dict)
 
-    @property
-    def endpoint_id(self) -> str:
-        return f"esphome:{self.device_id}"
+    def __post_init__(self):
+        object.__setattr__(self, "queues", normalize_phone_queues(self.queues))
+        for name in ("membership_pending", "membership_observed"):
+            object.__setattr__(self, name, normalize_membership_tracking(getattr(self, name)))
+        mac = normalize_mac(self.mac)
+        username = normalize_username(self.username or f"esp_{mac}")
+        endpoint_id = self.endpoint_id or f"esphome:{self.device_id}"
+        if (not isinstance(self.device_id, str) or not self.device_id
+                or not isinstance(self.origin_entry_id, str) or not self.origin_entry_id
+                or not isinstance(self.password, str) or not 1 <= len(self.password) <= 128
+                or len(username.encode()) > 64 or not isinstance(endpoint_id, str)
+                or not 1 <= len(endpoint_id) <= 255 or endpoint_id != endpoint_id.strip()
+                or any(ord(char) < 32 or ord(char) == 127 for char in endpoint_id)):
+            raise ValueError("Invalid managed phone ownership")
+        object.__setattr__(self, "mac", mac)
+        object.__setattr__(self, "username", username)
+        object.__setattr__(self, "endpoint_id", endpoint_id)
 
     def account(self) -> SipAccount:
-        return SipAccount(
-            username=self.username, display_name=self.display_name or self.username,
-            password=self.password, extension=self.extension, endpoint_id=self.endpoint_id,
-        )
+        return SipAccount(username=self.username, display_name=self.display_name,
+            password=self.password, extension=self.extension, ring_group=self.ring_group,
+            conference_group=self.conference_group, conference_ring=self.conference_ring)
 
     def record(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_record(cls, value: Mapping) -> ManagedPhone:
-        required = ("device_id", "origin_entry_id", "mac", "username", "password")
-        if any(not isinstance(value.get(key), str) or not value[key] for key in required):
-            raise ValueError("Incomplete managed phone ownership")
-        username = normalize_username(value["username"])
-        if len(username) > 64 or len(value["password"]) > 128:
-            raise ValueError("Managed phone identity exceeds the firmware bounds")
-        return cls(**{
-            key: str(value.get(key, descriptor.default))
-            for key, descriptor in cls.__dataclass_fields__.items()
-        })
+        record = asdict(self)
+        record["queues"] = list(self.queues)
+        return record
 
 
 def managed_records(entry) -> dict[str, ManagedPhone]:
-    """Read only valid records, retaining no additional account database."""
+    """Read the owning config entry without another credential database."""
     records = {}
-    for key, value in entry.data.get(CONF_MANAGED_PHONES, {}).items():
-        if not isinstance(value, Mapping):
+    for key, raw in entry.data.get(CONF_MANAGED_PHONES, {}).items():
+        if not isinstance(raw, Mapping):
             continue
         try:
-            phone = ManagedPhone.from_record(value)
+            phone = ManagedPhone(**{name: raw[name] for name in ManagedPhone.__dataclass_fields__ if name in raw})
+            if phone.device_id != key or not isinstance(raw.get("username"), str) or not raw["username"]:
+                continue
+            records[key] = phone
         except (TypeError, ValueError):
             continue
-        if key == phone.device_id:
-            records[key] = phone
     return records
 
 
-def active_managed_accounts(hass, entry) -> list[SipAccount]:
-    """An origin removed while we were unloaded must never regain access."""
-    return [
-        phone.account() for phone in managed_records(entry).values()
-        if (origin := hass.config_entries.async_get_entry(phone.origin_entry_id)) is not None
-        and origin.domain == "esphome"
-        and managed_phone_mode(hass, origin, phone.device_id, phone.mac) is not False
-    ]
+def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
+    """Only a complete, MAC-verified native inventory can change firmware mode.
 
-
-def managed_phone_mode(hass, origin, device_id: str, mac: str, *, require_inventory=False) -> bool | None:
-    """Derive ownership from ESPHome's last complete, MAC-verified inventory.
-
-    ESPHome retains this inventory on disconnect. Bootstrap of a replacement
-    API owner keeps the provisioner's last verified decision. Neither case is
-    a firmware change. There is no second persisted account database.
+    ESPHome retains this inventory on disconnect. A replacement API owner with
+    an incomplete inventory cannot silently reactivate a suspended credential.
     """
-    from .runtime_data import runtime_data
-
-    def normalize_mac(value):
-        return str(value).replace(":", "").replace("-", "").casefold()
-
-    runtime = runtime_data(hass)
-    modes = getattr(getattr(runtime, "phone_provisioning", None), "_firmware_modes", {})
-    key = (getattr(origin, "entry_id", ""), device_id, normalize_mac(mac))
-    previous = None if require_inventory else modes.get(key)
     native = getattr(origin, "runtime_data", None)
     complete = getattr(native, "first_connect_done", None)
-    if complete is None or not complete.is_set():
-        return previous
     info = getattr(native, "device_info", None)
-    if info is None or not mac or normalize_mac(info.mac_address) != normalize_mac(mac):
-        return previous
+    if complete is None or not complete.is_set() or info is None:
+        return None
+    try:
+        if normalize_mac(info.mac_address) != normalize_mac(mac):
+            return None
+    except ValueError:
+        return None
     services = getattr(native, "services", None)
     if not isinstance(services, Mapping):
-        return previous
-    names = {service.name for service in services.values()}
-    mode = {AUTO_REGISTER_ACTION, "set_account"} <= names
-    if not require_inventory or mode or key in modes:
-        modes[key] = mode
-    return mode
+        return None
+    return MANAGED_ACTIONS <= {service.name for service in services.values()}
+
+
+def active_managed_accounts(hass, entry) -> list[SipAccount]:
+    """A suspended or permanently removed owner cannot regain SIP access."""
+    from homeassistant.helpers import device_registry as dr
+
+    accounts = []
+    for phone in managed_records(entry).values():
+        origin = hass.config_entries.async_get_entry(phone.origin_entry_id)
+        device = dr.async_get(hass).async_get(phone.device_id)
+        if (phone.active and origin is not None and origin.domain == "esphome"
+                and device is not None and origin.entry_id == device.config_entry_id
+                and any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(mac) == phone.mac
+                        for kind, mac in device.connections)
+                and managed_phone_mode(hass, origin, phone.device_id, phone.mac) is not False):
+            accounts.append(phone.account())
+    return accounts
+
+
+def managed_route_mappings(entry) -> list[dict]:
+    """Reserve physical identities even offline, without exposing credentials."""
+    return [{"id": phone.endpoint_id, "name": phone.display_name, "username": phone.username,
+             "extension": phone.extension, "ring_group": phone.ring_group,
+             "conference_group": phone.conference_group,
+             "voicemail": {"enabled": bool(entry.data.get("esphome_mailboxes", {})
+                 .get(phone.endpoint_id, {}).get("enabled"))}}
+            for phone in managed_records(entry).values()]

@@ -127,6 +127,7 @@ def build_dialog_request(
     route_set: tuple[str, ...] = (),
     contact_uri: str = "",
     transport: str = "UDP",
+    via_sent_by: tuple[str, int | None] | None = None,
     local_display_name: str = "",
     remote_display_name: str = "",
     extra_headers: tuple[tuple[str, str], ...] = (),
@@ -152,6 +153,7 @@ def build_dialog_request(
         contact_uri=contact_uri or local_uri,
         content_type=content_type,
         transport=transport,
+        via_sent_by=via_sent_by,
         local_display_name=local_display_name,
         remote_display_name=remote_display_name,
     )

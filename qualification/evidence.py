@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 from pathlib import Path
+from tools.rtp_pcap_evidence import sequence_statistics
 
 from .registry import EXECUTOR_JOBS, SCENARIOS
+
+MEASURED_HIL_SCENARIO = "esp-to-ha-answer-hangup"
+MIN_TRANSPORT_WINDOW_SECONDS = 20
 
 
 class EvidenceError(RuntimeError):
@@ -265,21 +271,191 @@ def _contains_passed_scenarios(
     return set(required).issubset(passed)
 
 
-def _hil_passed(payload: object, job: str, scenario_id: str) -> bool:
+def _bound_artifact(reference: object, root: Path) -> bytes:
+    """Read the exact producer artifact, confined to the evidence directory."""
+    if not isinstance(reference, dict):
+        raise EvidenceError("missing measured artifact")
+    relative = Path(str(reference.get("path") or ""))
+    path = (root / relative).resolve()
+    if relative.is_absolute() or ".." in relative.parts or root not in path.parents:
+        raise EvidenceError("measured artifact escapes evidence root")
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise EvidenceError("measured artifact is unavailable") from error
+    if (not raw or reference.get("bytes") != len(raw)
+            or reference.get("sha256") != hashlib.sha256(raw).hexdigest()):
+        raise EvidenceError("measured artifact hash or size mismatch")
+    return raw
+
+
+def validate_hil_measurement(
+    result: dict[str, object], *, plan: dict[str, object],
+    candidate_id: str, root: Path, require_redial: bool,
+) -> None:
+    """Validate transport observations, never acoustic or decoded-audio proof.
+
+    A producer writes a run-bound receipt with call-scoped capture/report pairs.
+    Reports retain the existing rtp_pcap_evidence fields and add call_id/run_id;
+    tx/rx select the two negotiated streams by their independent wire tuples.
+    """
+    root = root.resolve()
+    if result.get("scenario") != MEASURED_HIL_SCENARIO:
+        raise EvidenceError(f"no measured validator for HIL scenario: {result.get('scenario')}")
+    try:
+        actor_start, actor_end = result["started_monotonic"], result["finished_monotonic"]
+        if (any(type(value) not in (int, float) or not math.isfinite(value)
+                for value in (actor_start, actor_end)) or actor_end <= actor_start):
+            raise EvidenceError("missing observed actor monotonic interval")
+        snapshots = result["snapshots"]
+        for snapshot in (snapshots["pre"], snapshots["post"]):
+            counts = snapshot["resource_counts"]
+            if (snapshot.get("state") != "idle" or snapshot.get("active_dialogs") != 0
+                    or snapshot.get("call_scoped_quiescent") is not True
+                    or not isinstance(counts, dict) or not counts
+                    # runtime_diagnostics keeps this integration-lifetime task
+                    # count outside its call_scoped_keys. Compare its baseline.
+                    or any(type(value) is not int or value < 0
+                           or (key != "runtime_tasks" and value != 0)
+                           for key, value in counts.items())):
+                raise EvidenceError("call resources did not return to the measured baseline")
+        if snapshots["pre"]["resource_counts"] != snapshots["post"]["resource_counts"]:
+            raise EvidenceError("call resource inventory changed")
+        receipt = json.loads(_bound_artifact(result.get("measurement_receipt"), root))
+        expected = {
+            "schema_version": 1, "plan_id": plan.get("plan_id"),
+            "head": plan.get("head"), "candidate_id": candidate_id,
+            "scenario": result.get("scenario"), "run_id": result.get("run_id"),
+        }
+        if (not candidate_id or not expected["run_id"] or not isinstance(receipt, dict)
+                or any(receipt.get(key) != value for key, value in expected.items())):
+            raise EvidenceError("measured receipt identity mismatch")
+        sessions = receipt.get("sessions")
+        if not isinstance(sessions, list) or len(sessions) < (2 if require_redial else 1):
+            raise EvidenceError("missing measured call or redial session")
+        call_ids, captures = set(), set()
+        previous_cleanup = None
+        for number, session in enumerate(sessions):
+            call_id = session["call_id"]
+            if not isinstance(call_id, str) or not call_id or call_id in call_ids:
+                raise EvidenceError("redial must have a distinct Call-ID")
+            call_ids.add(call_id)
+            times = [session[key] for key in ("started_at", "connected_at", "ended_at", "quiescent_at")]
+            if (any(type(value) not in (int, float) or not math.isfinite(value) for value in times)
+                    or not times[0] <= times[1] < times[2] <= times[3]):
+                raise EvidenceError("invalid measured session timeline")
+            # These are host CLOCK_MONOTONIC observations from the local actor
+            # and producer, never device clocks or timestamps from another host.
+            if times[0] < actor_start or times[3] > actor_end:
+                raise EvidenceError("measured session is outside the actor monotonic interval")
+            if previous_cleanup is not None and not 0 <= times[0] - previous_cleanup <= 1.0:
+                raise EvidenceError("redial did not start immediately after cleanup")
+            previous_cleanup = times[3]
+            if session.get("states") != ["in_call", "idle"]:
+                raise EvidenceError("missing measured ESP state transitions")
+            capture = _bound_artifact(session.get("capture"), root)
+            capture_hash = hashlib.sha256(capture).hexdigest()
+            if capture_hash in captures:
+                raise EvidenceError("capture was reused across call sessions")
+            captures.add(capture_hash)
+            report = json.loads(_bound_artifact(session.get("rtp_report"), root))
+            if (report.get("status") != "passed" or report.get("failures") != []
+                    or report.get("pcap_sha256") != capture_hash
+                    or report.get("call_id") != call_id
+                    or report.get("run_id") != expected["run_id"]):
+                raise EvidenceError("RTP report is not bound to this call capture")
+            selected = []
+            for direction in ("tx", "rx"):
+                selection = session[direction]
+                streams = [stream for stream in report["streams"] if all(
+                    stream.get(key) == selection.get(key)
+                    for key in ("source", "destination", "ssrc", "payload_type")
+                )]
+                if len(streams) != 1:
+                    raise EvidenceError("missing directional RTP stream")
+                stream = streams[0]
+                if (not all(isinstance(selection.get(key), str) and selection[key]
+                            for key in ("source", "destination", "ssrc"))
+                        or type(stream.get("packets")) is not int or stream["packets"] < 2
+                        or type(stream.get("payload_type")) is not int
+                        or not 0 <= stream["payload_type"] <= 127
+                        or stream.get("media_type") != "audio"
+                        or type(stream.get("clock_rate")) is not int or stream["clock_rate"] <= 0
+                        or type(selection.get("clock_rate")) is not int
+                        or stream["clock_rate"] != selection["clock_rate"]
+                        or stream.get("expected_delta_ms") != selection["ptime_ms"]
+                        or type(selection["ptime_ms"]) not in (int, float)
+                        or not math.isfinite(selection["ptime_ms"]) or selection["ptime_ms"] <= 0
+                        or type(stream.get("duration_seconds")) not in (int, float)
+                        or not math.isfinite(stream["duration_seconds"])
+                        or stream["duration_seconds"] <= 0):
+                    raise EvidenceError("missing measured RTP packets or negotiated format")
+                duration = stream["duration_seconds"]
+                if (duration > times[2] - times[1]
+                        or (number == 0 and duration < MIN_TRANSPORT_WINDOW_SECONDS)
+                        or sequence_statistics(stream, report["streams"])["lost_packets"] != 0
+                        or type(stream.get("timestamp_step")) is not int
+                        or stream.get("timestamp_step") != stream["clock_rate"] * selection["ptime_ms"] / 1000
+                        or duration * 1000 / (stream["packets"] - 1) / selection["ptime_ms"] > 1.25):
+                    raise EvidenceError("RTP observation window, loss or cadence is invalid")
+                selected.append(stream)
+            if (selected[0]["source"] != selected[1]["destination"]
+                    or selected[0]["destination"] != selected[1]["source"]
+                    or selected[0]["source"] == selected[0]["destination"]):
+                raise EvidenceError("RTP streams do not prove both directions")
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise EvidenceError("invalid measured HIL receipt") from error
+
+
+def hil_artifact_paths(artifacts: list[Path], root: Path) -> list[Path]:
+    """Include every measured input in the existing final job hash manifest."""
+    root = root.resolve()
+    measured = []
+    for artifact in artifacts:
+        payload = _load(artifact) if artifact.suffix == ".json" else None
+        jobs = payload.get("jobs", {}) if isinstance(payload, dict) else {}
+        for job in ("hil-s3", "hil-p4"):
+            for result in jobs.get(job, {}).get("results", []):
+                reference = result.get("measurement_receipt")
+                receipt = json.loads(_bound_artifact(reference, root))
+                references = [reference, *[session[key] for session in receipt["sessions"]
+                    for key in ("capture", "rtp_report")]]
+                for reference in references:
+                    _bound_artifact(reference, root)
+                    path = root / reference["path"]
+                    if path not in measured:
+                        measured.append(path)
+    return measured
+
+
+def _hil_passed(
+    payload: object, job: str, scenario_id: str, *, plan: dict[str, object],
+    candidate_id: str, root: Path,
+) -> bool:
     jobs = payload.get("jobs") if isinstance(payload, dict) else None
     record = jobs.get(job) if isinstance(jobs, dict) else None
-    if not isinstance(record, dict) or record.get("status") != "passed":
+    if (not isinstance(record, dict) or record.get("status") != "passed"
+            or payload.get("plan_id") != plan.get("plan_id")
+            or payload.get("head") != plan.get("head")
+            or payload.get("candidate_id") != candidate_id):
         return False
     for result in record.get("results", []):
         if not isinstance(result, dict) or result.get("scenario") != scenario_id:
             continue
         snapshots = result.get("snapshots")
         post = snapshots.get("post") if isinstance(snapshots, dict) else None
-        return (
+        quiescent = (
             result.get("status") == "passed"
             and isinstance(post, dict)
             and post.get("call_scoped_quiescent") is True
         )
+        if quiescent:
+            try:
+                validate_hil_measurement(result, plan=plan, candidate_id=candidate_id,
+                    root=root, require_redial="immediate-redial" in CLAIMS[(scenario_id, job)]["postconditions"])
+            except EvidenceError:
+                return False
+        return quiescent
     return False
 
 
@@ -287,6 +463,7 @@ def derive_scenario_evidence(
     job: str,
     plan: dict[str, object],
     artifacts: list[Path],
+    *, candidate_id: str = "", artifact_root: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return only claims supported by a successful, job-specific artifact."""
 
@@ -324,8 +501,13 @@ def derive_scenario_evidence(
                 f"{job} did not prove exact scenarios for {scenario_id}: "
                 f"{', '.join(required)}"
             )
+        if job.startswith("hil-") and scenario_id != MEASURED_HIL_SCENARIO:
+            raise EvidenceError(f"{job} has no measured validator for planned scenario {scenario_id}")
         if job.startswith("hil-") and not any(
-            _hil_passed(payload, job, scenario_id) for payload in payloads
+            _hil_passed(payload, job, scenario_id, plan=plan,
+                candidate_id=candidate_id, root=artifact_root or path.parent)
+            for path in artifacts if path.suffix == ".json"
+            for payload in [_load(path)]
         ):
             raise EvidenceError(
                 f"{job} did not prove planned scenario {scenario_id} and quiescence"

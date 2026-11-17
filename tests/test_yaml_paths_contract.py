@@ -1,10 +1,11 @@
 import os
-import json
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 import subprocess
 from types import ModuleType
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,10 @@ def test_check_file_limits_the_expected_mode_gate() -> None:
     failures = [
         line for line in (result.stdout + result.stderr).splitlines() if line.startswith("FAIL:")
     ]
-    assert failures == [f"FAIL: {target} ({expected}, expected {opposite})"]
+    assert f"FAIL: {target} ({expected}, expected {opposite})" in failures
+    # One selected file may fail multiple guards, but no other file may leak
+    # into this scoped mode/source check.
+    assert all(line.startswith(f"FAIL: {target} (") for line in failures)
 
 
 def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
@@ -79,21 +83,18 @@ def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
     assert source == "../../../../esphome-esp-video-camera/components"
 
 
-def test_remote_camera_source_uses_the_coordinated_owner(tmp_path: Path) -> None:
-    yaml_paths = _load_yaml_paths()
+@pytest.mark.parametrize("ref,expected", [
+    ("dev", "n-IA-hane/esphome-esp-video-camera@dev"),
+    ("main", "Psix-anp/esphome-esp-video-camera@main"),
+    ("v2026.12.0", "Psix-anp/esphome-esp-video-camera@main"),
+    ("v2026.12.0-dev", "n-IA-hane/esphome-esp-video-camera@dev"),
+])
+def test_remote_camera_source_follows_the_selected_channel(tmp_path: Path, ref, expected) -> None:
+    tool = _load_yaml_paths()
     config = tmp_path / "camera.yaml"
-    config.write_text(
-        "external_components:\n"
-        "  - source: placeholder\n"
-        "    components: [esp_video_camera]\n"
-    )
-
-    for ref, owner in (("dev", "n-IA-hane"), ("main", "Psix-anp")):
-        yaml_paths.rewrite_camera(config, ref)
-        assert (
-            f"source: github://{owner}/esphome-esp-video-camera@{ref}"
-            in config.read_text()
-        )
+    config.write_text("external_components:\n  - source: placeholder\n    components: [esp_video_camera]\n")
+    tool.rewrite_camera(config, ref)
+    assert f"source: github://{expected}" in config.read_text()
 
 
 def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> None:
@@ -104,10 +105,53 @@ def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> N
     assert tool.selected([maintained, private], str(private)) == [private]
 
 
+def test_managed_files_include_new_public_yaml_and_exclude_gitignored_work(tmp_path: Path) -> None:
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("yamls/private.yaml\npackages/private.yaml\n")
+    for folder in ("yamls", "packages"):
+        directory = tmp_path / folder
+        directory.mkdir()
+        for name in ("tracked.yaml", "new-phone.yaml", "private.yaml", "phone-local.yaml", "secrets.yaml"):
+            (directory / name).write_text("substitutions: {}\n")
+        subprocess.run(["git", "add", f"{folder}/tracked.yaml"], cwd=tmp_path, check=True)
+        assert tool.managed_files(directory) == sorted([
+            directory / "new-phone.yaml", directory / "tracked.yaml"
+        ])
+
+
+def test_standalone_native_example_checks_exact_channel_and_roundtrips(tmp_path: Path) -> None:
+    tool = _load_yaml_paths()
+    example = tmp_path / 'native-phone.yaml'
+    example.write_text('esphome:\n  name: native-phone\nexternal_components:\n'
+                       '  - source: github://n-IA-hane/esphome-voip-stack@main\n'
+                       '    components: [voip_stack]\n')
+    assert tool.mode(example) == 'remote'
+    assert list(tool.source_errors(example, 'dev', True)) == ['source channel main, expected dev']
+    tool.rewrite_sources(example, 'dev')
+    assert '@dev' in example.read_text()
+    assert list(tool.source_errors(example, 'dev', True)) == []
+    tool.rewrite_sources(example, 'local')
+    assert tool.mode(example) == 'local'
+    assert '@dev' not in example.read_text()
+    tool.rewrite_sources(example, 'main')
+    assert tool.mode(example) == 'remote'
+    assert list(tool.source_errors(example, 'main', True)) == []
+
+
+def test_coordinated_sources_include_the_tracked_native_example() -> None:
+    tool = _load_yaml_paths()
+    repository = tool.REPOS['voip_stack_components_source'][1]
+    expected = repository / 'examples/native-full-duplex.yaml'
+    if not expected.is_file():
+        return  # An Intercom-only checkout has no sibling examples to update.
+    assert expected in tool.standalone_examples()
+
+
 def test_remote_check_follows_package_includes(tmp_path: Path) -> None:
     tool = _load_yaml_paths()
     tool.ROOT = tmp_path
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     (tmp_path / 'yamls').mkdir()
     (tmp_path / 'packages').mkdir()
     (tmp_path / 'yamls/device.yaml').write_text(
@@ -117,7 +161,6 @@ def test_remote_check_follows_package_includes(tmp_path: Path) -> None:
     (tmp_path / 'packages/voice.yaml').write_text(
         'packages:\n  controller: !include ../../undeclared-repository/controller.yaml\n'
     )
-    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/voice.yaml'], check=True)
     assert tool.check('remote', None) == 1
 
 
@@ -129,10 +172,9 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
     tool.rewrite_yaml(config, 'local')
     text = config.read_text()
     for key in ('ext_components_source', 'voip_stack_components_source', 'audio_stack_components_source',
-                'esp_screenshot_components_source', 'esp_video_renderer_components_source'):
+                'runtime_controller_components_source', 'esp_video_renderer_components_source',
+                'esp_screenshot_components_source'):
         assert key + ':' in text
-    assert str(tool.relative(config.parent, tool.ROOT.parent / 'esphome-screenshot/esphome/components')) in text
-    assert str(tool.relative(config.parent, tool.ROOT.parent / 'esphome-video-renderer/esphome/components')) in text
     assert 'camera_components_source:' in text
     assert 'intercom_idf_root:' in text
     assert '!include ' in text
@@ -140,8 +182,8 @@ def test_single_device_entrypoint_gets_all_local_and_remote_source_overrides(tmp
     text = config.read_text()
     assert 'packages/devices/waveshare-p4-phone-jpeg.yaml@dev' in text
     assert 'github://n-IA-hane/esphome-audio-stack@dev' in text
-    assert 'github://n-IA-hane/esphome-screenshot@dev' in text
     assert 'github://n-IA-hane/esphome-video-renderer@dev' in text
+    assert 'github://n-IA-hane/esphome-screenshot@dev' in text
     assert 'github://n-IA-hane/esphome-esp-video-camera@dev' in text
     assert 'intercom_idf_ref: "dev"' in text
     assert 'intercom_idf_root: ""' in text
@@ -156,79 +198,161 @@ def test_camera_source_variable_is_owned_by_the_top_level_profile(tmp_path):
     assert config.read_text() == text
 
 
-def test_tracked_public_package_defaults_are_online_and_coordinated():
+def test_remote_ref_check_rejects_mixed_component_channels(tmp_path):
     tool = _load_yaml_paths()
-    version = json.loads((ROOT / 'custom_components/voip_stack/manifest.json').read_text())['version']
-    expected = 'dev' if version.endswith('-dev') else 'main'
-    wrong = {str(path.relative_to(ROOT)): refs for path in tool.tracked_package_files()
-             if (refs := tool.owned_remote_refs(path)) and set(refs) != {expected}}
-    assert not wrong, wrong
-
-
-def test_remote_default_rewrite_preserves_upstream_and_local_mode_inputs(tmp_path):
-    tool = _load_yaml_paths()
-    path = tmp_path / 'device.yaml'
-    path.write_text('substitutions:\n'
-        '  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main\n'
-        '  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/\n'
-        '  camera_components_source: github://Psix-anp/esphome-esp-video-camera@main\n'
-        '  playback_diagnostics_source: \'${ source | default("github://n-IA-hane/esphome-intercom@main") }\'\n')
-    tool.rewrite_remote_defaults(path, 'dev')
-    text = path.read_text()
-    assert set(tool.owned_remote_refs(path)) == {'dev'}
-    assert 'github://Psix-anp/esphome-esp-video-camera@main' in text
-    tool.rewrite_remote_defaults(path, 'main')
-    assert set(tool.owned_remote_refs(path)) == {'main'}
-
-
-def test_public_camera_default_round_trip_preserves_an_explicit_upstream_override(tmp_path):
-    tool = _load_yaml_paths()
-    path = tmp_path / 'device.yaml'
-    path.write_text('substitutions:\n'
-        '  camera_components_source: \'${ camera_components_source | default("github://n-IA-hane/esphome-esp-video-camera@dev") }\'\n'
-        '  custom_source: github://Psix-anp/esphome-esp-video-camera@main\n')
-    tool.rewrite_remote_defaults(path, 'main')
-    assert 'default("github://Psix-anp/esphome-esp-video-camera@main")' in path.read_text()
-    tool.rewrite_remote_defaults(path, 'dev')
-    assert 'default("github://n-IA-hane/esphome-esp-video-camera@dev")' in path.read_text()
-    assert 'custom_source: github://Psix-anp/esphome-esp-video-camera@main' in path.read_text()
-
-
-def test_package_selection_ignores_untracked_private_overlays(tmp_path):
-    tool = _load_yaml_paths()
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    (tmp_path / 'packages').mkdir()
-    public = tmp_path / 'packages/public.yaml'
-    private = tmp_path / 'packages/private-local.yaml'
-    public.write_text('substitutions: {}\n')
-    private.write_text('substitutions: {}\n')
-    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/public.yaml'], check=True)
     tool.ROOT = tmp_path
-    assert tool.tracked_package_files() == [public]
-    private.write_text('external_components:\n  - source: private-camera\n    components: [esp_video_camera]\n')
-    (tmp_path / 'yamls').mkdir()
-    assert tool.camera_files() == []
-    assert tool.selected(tool.tracked_package_files(), str(private)) == [private]
-
-
-def test_local_mode_keeps_public_remote_defaults(tmp_path, monkeypatch):
-    tool = _load_yaml_paths()
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     (tmp_path / 'yamls').mkdir()
     (tmp_path / 'packages').mkdir()
-    path = tmp_path / 'packages/device.yaml'
-    text = 'substitutions:\n  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev\n'
-    path.write_text(text)
-    subprocess.run(['git', '-C', str(tmp_path), 'add', 'packages/device.yaml'], check=True)
-    tool.ROOT = tmp_path
-    monkeypatch.setattr('sys.argv', [str(ROOT / 'scripts/yaml_paths.sh'), 'local'])
-    assert tool.main() == 0
-    assert path.read_text() == text
+    config = tmp_path / 'yamls/device.yaml'
+    text = ('substitutions:\n'
+            '  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"\n'
+            '  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"\n'
+            '  camera_components_source: "github://n-IA-hane/esphome-esp-video-camera@dev"\n'
+            'packages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/phone.yaml@dev\n')
+    config.write_text(text)
+    assert tool.check('remote', None, 'dev') == 1
+    config.write_text(text.replace('esphome-voip-stack@main', 'esphome-voip-stack@dev'))
+    assert tool.check('remote', None, 'dev') == 0
 
 
-def test_unquoted_assets_follow_the_selected_remote_ref(tmp_path):
+def test_package_defaults_and_direct_sources_follow_channel_without_changing_includes(tmp_path):
     tool = _load_yaml_paths()
-    path = tmp_path / 'device.yaml'
-    path.write_text('substitutions:\n  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/\n')
-    tool.rewrite_yaml(path, 'dev')
-    assert 'https://github.com/n-IA-hane/esphome-intercom/raw/dev/' in path.read_text()
+    package = tmp_path / "fragment.yaml"
+    original = ('substitutions:\n'
+                '  esp_video_renderer_components_source: ${ esp_video_renderer_components_source | default("github://n-IA-hane/esphome-video-renderer@main") }\n'
+                'packages:\n  audio: !include ../audio/profile.yaml\n'
+                'external_components:\n  - source: github://n-IA-hane/esphome-esp-video-camera@main\n'
+                '  - source:\n      type: git\n      url: https://github.com/n-IA-hane/esphome-screenshot.git\n      ref: main\n'
+                '  - source: github://Psix-anp/esphome-esp-video-camera@main\n')
+    package.write_text(original)
+    tool.rewrite_sources(package, "dev")
+    text = package.read_text()
+    assert 'default("github://n-IA-hane/esphome-video-renderer@dev")' in text
+    assert 'audio: !include ../audio/profile.yaml' in text
+    assert 'github://n-IA-hane/esphome-esp-video-camera@dev' in text
+    assert '      ref: dev' in text
+    assert 'github://Psix-anp/esphome-esp-video-camera' not in text
+    assert list(tool.source_errors(package, "dev", True)) == []
+    package.write_text(text.replace('      ref: dev', '      ref: main'))
+    assert list(tool.source_errors(package, "dev", True)) == ['git source channel main, expected dev']
+
+
+def test_package_default_round_trip_preserves_expression(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    directory = tmp_path / 'packages'
+    directory.mkdir()
+    package = directory / 'source.yaml'
+    original = 'substitutions:\n  ext_components_source: ${ ext_components_source | default("github://n-IA-hane/esphome-intercom@dev") }\n'
+    package.write_text(original)
+    tool.rewrite_sources(package, 'local')
+    assert 'default("' + str(tool.URLS['github://n-IA-hane/esphome-intercom'] / 'esphome/components') + '")' in package.read_text()
+    assert list(tool.source_errors(package, 'dev', True)) == ['absolute local source path in public YAML']
+    tool.rewrite_sources(package, 'dev')
+    assert package.read_text() == original
+
+
+def test_global_managed_files_exclude_debug_not_ready_and_private(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    directory = tmp_path / 'yamls'
+    (directory / 'debug').mkdir(parents=True)
+    for relative in ('phone.yaml', 'phone-local.yaml', 'secrets.yaml', 'future_NOT_READY.yaml', 'debug/test.yaml'):
+        (directory / relative).write_text('substitutions: {}\n')
+    assert tool.yaml_files() == [directory / 'phone.yaml']
+
+
+def test_relative_sources_do_not_require_optional_checkouts(tmp_path):
+    tool = _load_yaml_paths()
+    assert tool.relative(tmp_path / 'project/yamls', tmp_path / 'native/esphome/components') == '../../native/esphome/components'
+
+
+def test_global_ref_gate_checks_package_defaults(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path
+    (tmp_path / 'yamls').mkdir()
+    (tmp_path / 'packages').mkdir()
+    (tmp_path / 'yamls/device.yaml').write_text('packages:\n  device: github://n-IA-hane/esphome-intercom/packages/phone.yaml@dev\n')
+    package = tmp_path / 'packages/phone.yaml'
+    package.write_text('substitutions:\n  ext_components_source: github://n-IA-hane/esphome-intercom@main\n')
+    assert tool.check('remote', None, 'dev') == 1
+    tool.rewrite_sources(package, 'dev')
+    assert tool.check('remote', None, 'dev') == 0
+
+
+def test_absent_local_gmf_keeps_registry_dependency(tmp_path):
+    tool = _load_yaml_paths()
+    tool.ROOT = tmp_path / "intercom"
+    tool.ROOT.mkdir()
+    config = tool.ROOT / "device.yaml"
+    config.write_text("substitutions: {}\npackages:\n  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-afe.yaml@dev\n")
+    tool.rewrite_yaml(config, "local")
+    assert 'gmf_ai_audio_source: ""' in config.read_text()
+    local_gmf = tmp_path / "esp-gmf/elements/gmf_ai_audio"
+    local_gmf.mkdir(parents=True)
+    tool.rewrite_yaml(config, "local")
+    assert f'gmf_ai_audio_source: "{local_gmf}"' in config.read_text()
+
+
+@pytest.mark.parametrize("ref,expected", [("dev", "n-IA-hane/esphome-esp-video-camera@dev"),
+                                          ("main", "Psix-anp/esphome-esp-video-camera@main")])
+def test_camera_package_defaults_includes_and_nested_git_roundtrip(tmp_path, ref, expected):
+    tool = _load_yaml_paths()
+    config = tmp_path / "waveshare-p4-camera.yaml"
+    camera = tool.CAMERA_ROOT
+    config.write_text('substitutions:\n  camera_components_source: ${ camera_components_source | default("github://Psix-anp/esphome-esp-video-camera@main") }\n'
+        'packages:\n  camera: !include ' + tool.relative(tmp_path, camera / 'packages/camera.yaml') + '\n'
+        'external_components:\n  - source:\n      type: git\n      url: https://github.com/Psix-anp/esphome-esp-video-camera.git\n      ref: main\n')
+    original_include = '!include ' + tool.relative(tmp_path, camera / 'packages/camera.yaml')
+    tool.rewrite_sources(config, ref)
+    assert f'default("github://{expected}")' in config.read_text()
+    assert f'url: https://github.com/{expected.split("@")[0]}.git' in config.read_text()
+    assert list(tool.source_errors(config, ref, True)) == []
+    tool.rewrite_yaml(config, ref)
+    assert f'github://{expected.split("@")[0]}/packages/camera.yaml@{expected.split("@")[1]}' in config.read_text()
+    tool.rewrite_yaml(config, 'local')
+    tool.rewrite_sources(config, 'local')
+    assert original_include in config.read_text()
+    assert '  camera_components_source: \"' + tool.relative(tmp_path, camera / 'components') + '\"' in config.read_text()
+    tool.rewrite_yaml(config, ref)
+    tool.rewrite_sources(config, ref)
+    assert list(tool.source_errors(config, ref, True)) == []
+
+
+@pytest.mark.parametrize("channel,source", [
+    ("dev", "Psix-anp/esphome-esp-video-camera@main"),
+    ("dev", "n-IA-hane/esphome-esp-video-camera@main"),
+    ("main", "n-IA-hane/esphome-esp-video-camera@dev"),
+])
+def test_camera_checker_rejects_wrong_owner_or_ref(tmp_path, channel, source):
+    tool = _load_yaml_paths()
+    config = tmp_path / "camera.yaml"
+    config.write_text(f'external_components:\n  - source: github://{source}\n    components: [esp_video_camera]\n')
+    assert list(tool.source_errors(config, channel, True))
+    tool.rewrite_camera(config, channel)
+    assert list(tool.source_errors(config, channel, True)) == []
+
+
+def test_exact_manifest_preserves_per_repository_revisions(tmp_path: Path) -> None:
+    import json
+    tool = _load_yaml_paths()
+    catalog = json.loads((ROOT / "qualification/sources.json").read_text())
+    components = {
+        name: {"repository": source["repository"], "sha": str(index) * 40}
+        for index, (name, source) in enumerate(
+            ((name, source) for name, source in catalog["repositories"].items()
+             if name != "esphome-intercom"), 1)
+    }
+    components["esphome-esp-video-camera"]["repository"] = "n-IA-hane/esphome-esp-video-camera"
+    manifest = tmp_path / "sources.json"
+    manifest.write_text(json.dumps({"version": 1, "backend_sha": "a" * 40,
+                                    "components": components}))
+    tool.load_manifest(manifest)
+    config = tmp_path / "dependencies.yaml"
+    config.write_text("\n".join(
+        f"{name}: github://{item['repository']}@dev" for name, item in components.items()
+    ) + "\n")
+    tool.rewrite_sources(config, "main")
+    assert not list(tool.source_errors(config, "main", True))
+    for name, item in components.items():
+        assert f"github://{item['repository']}@{item['sha']}" in config.read_text()

@@ -2,6 +2,8 @@ const VERSION = (() => { try { return new URL(import.meta.url).searchParams.get(
 const { normaliseDashboardConfig, dashboardTranslate } = await import(`./voip-stack-dashboard-model.js?v=${encodeURIComponent(VERSION)}`);
 const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VERSION)}`);
 
+const { ensureNativeForm } = await import(`./voip-stack-form.js?v=${encodeURIComponent(VERSION)}`);
+
 class VoipStackDashboardCardEditor extends HTMLElement {
   constructor() {
     super();
@@ -13,6 +15,8 @@ class VoipStackDashboardCardEditor extends HTMLElement {
     this._loaded = false;
     this._error = "";
   }
+
+  connectedCallback() { void ensureNativeForm().then(() => this._render()); }
 
   _t(text) { return dashboardTranslate(this._hass?.language, text, (value) => voipStackTranslate(this._hass, value)); }
   setConfig(config) { this._config = normaliseDashboardConfig(config); this._render(); }
@@ -34,7 +38,7 @@ class VoipStackDashboardCardEditor extends HTMLElement {
       if (this._hass?.connection !== connection) return;
       this._devices = (response?.devices || []).filter((device) => {
         const kind = String(device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome"));
-        return device.device_id && ["browser", "ha_softphone", "esphome"].includes(kind);
+        return device.device_id && ["browser", "ha_softphone", "sip_account", "esphome"].includes(kind);
       });
       this._loaded = true;
       this._error = "";
@@ -50,38 +54,54 @@ class VoipStackDashboardCardEditor extends HTMLElement {
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 
+  _formChanged(event) {
+    const values = event.detail?.value;
+    if (!values || typeof values !== "object") return;
+    const config = { ...this._config };
+    let changed = false;
+    for (const key of ["device_id", "title"]) {
+      if (!Object.hasOwn(values, key) || values[key] === (this._config[key] || "")) continue;
+      changed = true;
+      if (values[key]) config[key] = values[key]; else delete config[key];
+    }
+    if (!changed) return;
+    this._config = config;
+    this._render();
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
   _render() {
     const root = this.shadowRoot;
-    root.replaceChildren();
-    const style = document.createElement("style");
-    style.textContent = `:host{display:block;padding:14px;color:var(--primary-text-color)}label{display:block;margin:0 0 7px;font-weight:500}select,input{box-sizing:border-box;width:100%;font:inherit;padding:11px;border:1px solid var(--divider-color);border-radius:7px;background:var(--card-background-color);color:var(--primary-text-color)}.field+.field{margin-top:18px}.hint{font-size:13px;color:var(--secondary-text-color);margin-top:9px}.error{color:var(--error-color)}button{font:inherit;min-height:44px;margin-top:12px;background:transparent;color:var(--primary-color);border:1px solid var(--divider-color);border-radius:6px;padding:8px 12px}option{background-color:Canvas;color:CanvasText}`;
-    root.append(style);
-    const field = (label, id) => {
-      const row = document.createElement("div"); row.className = "field";
-      const title = document.createElement("label"); title.htmlFor = id; title.textContent = this._t(label); row.append(title); root.append(row); return row;
-    };
-    const ownerField = field("Calling phone", "owner-select");
-    const select = document.createElement("select"); select.id = "owner-select"; select.required = true;
-    const empty = document.createElement("option"); empty.value = ""; empty.textContent = this._t("Choose a phone"); select.append(empty);
-    for (const device of this._devices) {
-      const option = document.createElement("option"); option.value = device.device_id;
-      option.textContent = `${device.name || device.device_id}${device.extension ? ` (${device.extension})` : ""}`;
-      select.append(option);
+    if (!this._form) {
+      const form = this._form = document.createElement("ha-form");
+      form.style.cssText = "display:block;padding:14px";
+      form.addEventListener("value-changed", event => this._formChanged(event));
+      const hint = this._hint = document.createElement("p");
+      hint.style.cssText = "color:var(--error-color);padding:0 14px";
+      const retry = this._retry = document.createElement("ha-button");
+      retry.textContent = this._t("Reload phones");
+      retry.addEventListener("click", () => { this._error = ""; this._load(); });
+      root.append(form, hint, retry);
     }
+    const options = [{ value: "", label: this._t("Choose a phone") },
+      ...this._devices.map(device => ({ value: device.device_id,
+        label: `${device.name || device.device_id}${device.extension ? ` (${device.extension})` : ""}` }))];
     const selected = this._config.device_id || "";
-    if (selected && !this._devices.some((device) => device.device_id === selected)) {
-      const missing = document.createElement("option"); missing.value = selected; missing.disabled = true;
-      missing.textContent = `${this._t("Missing phone")}: ${selected}`; select.append(missing);
+    if (selected && !this._devices.some(device => device.device_id === selected)) {
+      options.push({ value: selected, label: this._t("Missing phone") });
     }
-    select.value = selected; select.onchange = () => this._changed("device_id", select.value); ownerField.append(select);
-    const titleField = field("Title (optional)", "dashboard-title"); const input = document.createElement("input");
-    input.id = "dashboard-title"; input.type = "text"; input.value = this._config.title || "";
-    input.onchange = () => this._changed("title", input.value); titleField.append(input);
-    if (this._error) {
-      const error = document.createElement("p"); error.className = "hint error"; error.textContent = this._error; root.append(error);
-      const retry = document.createElement("button"); retry.type = "button"; retry.textContent = this._t("Reload phones"); retry.onclick = () => { this._error = ""; this._load(); }; root.append(retry);
-    }
+    this._form.hass = this._hass;
+    this._form.computeLabel = schema => this._t(schema.name === "device_id" ? "Calling phone" : "Title (optional)");
+    this._form.schema = [
+      { name: "device_id", required: true, selector: { select: { options, mode: "dropdown" } } },
+      { name: "title", selector: { text: {} } },
+    ];
+    this._form.data = { device_id: selected, title: this._config.title || "" };
+    this._hint.hidden = !this._error;
+    this._hint.textContent = this._error;
+    this._retry.hidden = !this._error;
   }
+
 }
 
 if (!customElements.get("voip-stack-dashboard-card-editor")) {

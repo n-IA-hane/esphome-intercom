@@ -111,9 +111,14 @@ class _ConferenceLeg:
 
 
 class _ConferenceRtpProtocol(asyncio.DatagramProtocol):
-    def __init__(self, room: "ConferenceRoom", leg_id: str) -> None:
+    def __init__(self, room: "ConferenceRoom", leg_id: str, *, paused: bool = False) -> None:
         self.room = room
         self.leg_id = leg_id
+        self.paused = paused
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        if self.paused:
+            transport.pause_reading()
 
     def datagram_received(self, data: bytes, addr) -> None:
         self.room.handle_rtp(self.leg_id, data, addr)
@@ -240,12 +245,16 @@ class ConferenceRoom:
         local_ports = port_reservation.ports
         transport: asyncio.DatagramTransport | None = None
         leg: _ConferenceLeg | None = None
+        bound_socket = None
         try:
             loop = asyncio.get_running_loop()
+            bound_socket = port_reservation.take_audio_socket(int(dialog.local_rtp_port))
             transport, _ = await loop.create_datagram_endpoint(
-                lambda: _ConferenceRtpProtocol(self, call_id),
-                local_addr=("0.0.0.0", int(dialog.local_rtp_port)),
+                lambda: _ConferenceRtpProtocol(self, call_id, paused=True),
+                **({"sock": bound_socket} if bound_socket is not None
+                   else {"local_addr": ("0.0.0.0", int(dialog.local_rtp_port))}),
             )
+            bound_socket = None
             if self._closed or (call_id not in self.legs and len(self.legs) >= MAX_CONFERENCE_LEGS):
                 transport.close()
                 transport = None
@@ -275,6 +284,7 @@ class ConferenceRoom:
                 connection_held=dialog.remote_audio_connection_held,
             )
             self.legs[call_id] = leg
+            transport.resume_reading()
             if self._task is None or self._task.done():
                 self._task = self.hass.async_create_task(self._mix_loop())
             if was_empty:
@@ -282,6 +292,8 @@ class ConferenceRoom:
             self._fire("conference_participant_joined", call_id, caller=caller, count=len(self.legs))
             return True
         except BaseException:
+            if bound_socket is not None:
+                bound_socket.close()
             if leg is not None and self.legs.get(call_id) is leg:
                 self.legs.pop(call_id, None)
             if transport is not None:
@@ -630,7 +642,7 @@ class ConferenceRoom:
         target: str = "",
     ) -> None:
         endpoint = endpoint_directory(self.hass).get(endpoint_id)
-        if endpoint is None or not endpoint.kind.is_softphone:
+        if endpoint is None or not endpoint.supports_ha_client:
             raise ValueError(f"endpoint {endpoint_id!r} is not a browser phone")
         self._ha_softphone_announced[call_id] = endpoint_id
         registry = call_registry(self.hass)
@@ -668,7 +680,7 @@ class ConferenceRoom:
             if not endpoint_id:
                 continue
             endpoint = endpoint_registry.get(endpoint_id)
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
                 continue
             session = registry.get_session(softphone_call_id)
             if session is None:
@@ -883,7 +895,7 @@ class ConferenceManager:
             for endpoint_id in endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is None or (
-                    not endpoint.kind.is_softphone
+                    not endpoint.supports_ha_client
                     or endpoint.dnd
                     or endpoint.availability
                     is not EndpointAvailability.AVAILABLE
@@ -931,7 +943,7 @@ class ConferenceManager:
             for endpoint_id in ring_endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is None or (
-                    not endpoint.kind.is_softphone
+                    not endpoint.supports_ha_client
                     or endpoint.dnd
                     or endpoint.availability
                     is not EndpointAvailability.AVAILABLE

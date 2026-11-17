@@ -9,6 +9,7 @@ set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LVGL_SOURCE}" lvgl)
+set_target_properties(lvgl PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lvgl/lib")
 
 add_executable(visibility_oracle runtime.cpp)
 target_compile_features(visibility_oracle PRIVATE cxx_std_17)

@@ -15,6 +15,13 @@ from .voip_phase1_support import (
 
 
 class SipUriTest(unittest.TestCase):
+    def test_logical_endpoint_colon_is_escaped_as_user_data(self) -> None:
+        user = "mailbox.esphome:fixture-device"
+        uri = sip.SipUri(user, "192.0.2.1", 5060)
+        self.assertEqual(str(uri), "sip:mailbox.esphome%3Afixture-device@192.0.2.1:5060")
+        self.assertEqual(sip.parse_sip_uri(str(uri)).user, user)
+        self.assertEqual(str(sip.parse_sip_uri(str(uri))), str(uri))
+
     def test_subscription_target_refresh_responses_supply_contact_and_route_set(self):
         for method in ("SUBSCRIBE", "NOTIFY"):
             with self.subTest(method=method):

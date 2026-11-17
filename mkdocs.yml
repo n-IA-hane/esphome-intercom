@@ -3,7 +3,7 @@ site_description: SIP phones, calls and automations in Home Assistant, with opti
 repo_url: https://github.com/n-IA-hane/esphome-intercom
 repo_name: n-IA-hane/esphome-intercom
 extra:
-  source_ref: main
+  source_ref: dev
 docs_dir: docs
 site_dir: site
 hooks:
@@ -25,26 +25,33 @@ nav:
   - Get started:
       - Phones and basic concepts: CONCEPTS.md
       - User guide: USER_GUIDE.md
+      - Shared directory and phone status: PHONEBOOK_PROTOCOL.md
       - Installation and firmware: DEPLOYMENT_GUIDE.md
       - Documentation map: README.md
   - Calls and routing:
       - PBX walkthrough: PBX_WORKFLOWS.md
       - Phone defaults: PHONE_ROUTING.md
       - Automations: AUTOMATION_DIALPLAN.md
+      - Office automation patterns: OFFICE_AUTOMATIONS.md
       - Assist voice commands: ASSIST_INTENTS.md
       - Voicemail: VOICEMAIL.md
       - Parking and pickup: CALL_PARKING.md
       - Conversation recording: CALL_RECORDING.md
       - SIP trunks: SIP_TRUNK.md
       - Groups and conferences: GROUPS.md
+      - Group devices and call queues: GROUPS_AND_QUEUES.md
+      - Paging announcements: PAGING.md
+      - Incoming numbers and DID routing: INBOUND_NUMBERS.md
+      - LDAP on desk phones: LDAP_PHONES.md
       - Video: SIP_VIDEO.md
       - Dahua door stations: DAHUA.md
       - ESP with a classic PBX: CLASSIC_PBX.md
   - ESP firmware:
-      - Standard phone services: ESP_PHONE_SERVICES.md
+      - Registered accounts and lines: ESP_REGISTRATION.md
       - Phone entities and migration: ESP_ENTITY_SURFACE.md
       - Sound and announcement actions: ESPHOME_SOUND_ACTIONS.md
-      - Display screenshots: ESP_SCREENSHOT.md
+      - Screenshots and display inspection: ESP_SCREENSHOT.md
+      - Announcement diagnostics: playback_diagnostics.md
       - P4 hardware and media: P4_HARDWARE_AND_MEDIA.md
       - Espressif dependencies: ESPRESSIF_COMPONENTS.md
   - Reference:
@@ -53,12 +60,12 @@ nav:
       - Architecture: ARCHITECTURE.md
       - Call flows: CALL_FLOWS.md
       - Destination resolution: DIALPLAN_RESOLVER.md
-      - Phonebook protocol: PHONEBOOK_PROTOCOL.md
       - ESP SIP profile: voip_profile.md
       - Qualification matrix: voip_test_matrix.md
       - Troubleshooting: troubleshooting.md
       - Tests and diagnostics: TESTING_AND_DEBUG.md
       - Upgrade notes: BREAKING_CHANGES.md
+      - 2026.12 development preview: WHATS_NEW_2026_12_0_DEV.md
 validation:
   nav:
     omitted_files: info

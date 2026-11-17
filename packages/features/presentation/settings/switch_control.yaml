@@ -1,0 +1,55 @@
+# One existing Switch owner, expanded at configuration time.
+# Refresh only updates the widget; only user on_change writes the owner.
+widgets:
+  - obj:
+      width: ${_settings_control_width}
+      height: SIZE_CONTENT
+      min_height: ${_settings_row_height}
+      clickable: false
+      bg_opa: TRANSP
+      border_width: 0
+      pad_all: 0
+      scrollable: false
+      layout:
+        type: FLEX
+        flex_flow: ROW
+        flex_align_main: SPACE_BETWEEN
+        flex_align_cross: CENTER
+      widgets:
+        - label:
+            width: ${_settings_label_width}
+            text: ${control_label}
+            text_align: LEFT
+            text_color: 16777215
+            text_font: ${_settings_font}
+            long_mode: WRAP
+        - switch:
+            id: ${widget_id}
+            width: ${_settings_switch_width}
+            height: ${_settings_switch_height}
+            on_change:
+              - lambda: !lambda |-
+                  if (x == id(${switch_id}).state) return;
+                  if (x) id(${switch_id}).turn_on();
+                  else id(${switch_id}).turn_off();
+              - script.execute: ${sync_id}
+package:
+  script:
+    - id: ${sync_id}
+      then:
+        - if:
+            condition:
+              lambda: !lambda |-
+                return lv_disp_get_scr_act(nullptr) == id(${_settings_page_id})->obj &&
+                       !lv_obj_is_scrolling(id(settings_page_wrapper)) &&
+                       lv_obj_has_state(id(${widget_id}), LV_STATE_CHECKED) != id(${switch_id}).state;
+            then:
+              - lvgl.widget.update:
+                  id: ${widget_id}
+                  state:
+                    checked: !lambda |-
+                      return id(${switch_id}).state;
+callback: >-
+  id(${switch_id}).add_on_state_callback([](bool) { id(${sync_id}).execute(); });
+refresh:
+  - script.execute: ${sync_id}

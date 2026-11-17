@@ -21,7 +21,8 @@ The microphone wiring is documented in Espressif's
 The codec driver maps the two-channel standard-I2S output to MIC1/MIC2;
 confirm both physical channels using the level sensors below.
 
-The initial AFE mode is `fd_low_cost`, with both microphones, AEC and speech
+The current FULL AFE package starts in `sr_high_perf` and offers the SR low-cost
+alternative, with both microphones, AEC and speech
 enhancement enabled. Dual-mic speech enhancement takes priority over standalone
 noise suppression in ESP-SR. AGC is disabled in this initial profile, as in the
 maintained dual-mic reference configuration. The inherited codec gain is 30 dB;
@@ -30,8 +31,10 @@ its acoustic suitability on this board still needs measurement.
 ## What to test
 
 1. Preserve your device name, secrets and board-specific customizations. Build
-   the dual-mic YAML with ESPHome 2026.9.0 or newer. It uses the maintained stable
-   component sources; no experimental GMF manager patch is required.
+   the dual-mic YAML with ESPHome 2026.10.0 or newer. Use the component/package
+   sources matching your selected release; see
+   [preview source selection](../../../docs/DEPLOYMENT_GUIDE.md#development-preview-firmware).
+   No additional speculative GMF manager patch is required.
 2. After flashing, confirm the device stays connected and the new firmware
    remains installed instead of rolling back.
 3. Look for **Microphone Left Level** and **Microphone Right Level** in the

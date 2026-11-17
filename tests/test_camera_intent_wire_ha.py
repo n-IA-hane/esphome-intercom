@@ -1,6 +1,7 @@
 """Camera intent uses real SIP exchanges and retains one call's media leases."""
 
 import asyncio
+import json
 import re
 import socket
 from unittest.mock import AsyncMock
@@ -16,12 +17,34 @@ from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_automation_originate_ha import lab as lab
-from tests.test_sip_options_capabilities_ha import CAPS
+from tests.test_sip_capabilities_ha import CAPS as BASE_CAPS
+
+# This independent peer explicitly supports the concrete D1 quantum it answers.
+CAPS = BASE_CAPS + b"a=ptime:10\r\n"
 
 pytestmark = pytest.mark.ha
 
 
-async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_generation(lab, monkeypatch):
+async def bootstrap_camera_phone_configuration(lab):
+    """Mirror canonical account/store setup before exercising persistent actions."""
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentry_data
+    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.websocket_api import _async_load_ha_softphone_store
+
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry,
+        data={**entry.data, CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
+    for endpoint in lab.runtime.endpoints.endpoints:
+        subentry = _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
+            "endpoint_id": endpoint.endpoint_id, "kind": endpoint.kind.value, "name": endpoint.name,
+            "username": endpoint.username, "password": "fixture-only", "extension": endpoint.extension,
+            "send_video": endpoint.send_video, "video_enabled": True,
+        })
+        await _async_load_ha_softphone_store(lab.hass, entry, endpoint_id=endpoint.endpoint_id,
+                                            endpoint_data=phone_subentry_data(subentry))
+
+
+async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_generation(lab, monkeypatch, tmp_path):
     """Wire and ownership proof; no browser or synthetic RTP counter is used."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
@@ -45,6 +68,7 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
         username="camera-wire-receiver", kind=EndpointKind.SIP_ACCOUNT)
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.register(receiver)
+    await bootstrap_camera_phone_configuration(lab)
     assert not any(item.kind is EndpointKind.ESPHOME for item in lab.runtime.endpoints.endpoints)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True
@@ -66,7 +90,9 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
                 if message.is_response:
                     replies.put_nowait(message)
                     return
-                headers = [(key, message.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+                via = re.sub(r";rport(?=;|$)", f";rport={address[1]}", message.header("Via"))
+                via += f";received={address[0]}"
+                headers = [("Via", via), *[(key, message.header(key)) for key in ("From", "Call-ID", "CSeq")]]
                 to = message.header("To")
                 headers.append(("To", to if ";tag=" in to else to + ";tag=wire-receiver"))
                 body = b""
@@ -82,10 +108,11 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
                         receive = re.search(rb"a=rtpmap:(\d+) L16/48000(?:/1)?\r", message.body)[1].decode()
                         send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
                         assert b"a=ptime:10\r\n" in message.body
-                        video_offer = message.body.split(b"m=video", 1)[1]
-                        video = ("m=video 35002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=recvonly\r\n"
+                        video_offer = message.body.partition(b"m=video")[2]
+                        video = (("m=video 35002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=recvonly\r\n"
                             if b"a=sendrecv" in video_offer else
                             "m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=inactive\r\n")
+                            if video_offer else "")
                         body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Wire receiver\r\n"
                             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                             f"m=audio 35000 RTP/AVP {receive} {send}\r\n"
@@ -169,7 +196,22 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
         assert call_ids[0] != call_ids[1]
         observed = [(request.method, request.header("Call-ID")) for request, _address in requests]
         assert [method for method, _call in observed] == ["INVITE", "ACK"] * 4 + ["BYE", "INVITE", "ACK", "BYE"]
-        assert {address[1] for request, address in requests if request.method == "INVITE"} == {listener_port}
+        trace = [{"method": request.method, "call_id": request.header("Call-ID"),
+                  "cseq": request.header("CSeq"), "via": request.header("Via"), "source": list(address)}
+                 for request, address in requests]
+        (tmp_path / "udp-dialog-trace.json").write_text(json.dumps(trace, indent=2))
+        for selected_call_id in call_ids:
+            dialog_requests = [(request, address) for request, address in requests
+                               if request.header("Call-ID") == selected_call_id]
+            assert len({address for _request, address in dialog_requests}) == 1
+            assert {request.method for request, _address in dialog_requests} == {"INVITE", "ACK", "BYE"}
+            for request, address in dialog_requests:
+                sent_by = request.header("Via").split(";", 1)[0].split()[-1]
+                # Both are live owners in this fixture: the standard HA UDP
+                # listener authenticated REGISTER; this call's socket received
+                # its rport responses and retained the same tuple throughout.
+                assert int(sent_by.rsplit(":", 1)[1]) in {listener_port, address[1]}
+                assert ";rport" in request.header("Via")
         first = [request for request, _address in requests if request.method == "INVITE" and request.header("Call-ID") == call_ids[0]]
         assert [int(request.header("CSeq").split()[0]) for request in first] == sorted({int(request.header("CSeq").split()[0]) for request in first})
         assert len({re.search(rb"m=audio (\d+)", request.body)[1] for request in first}) == 1

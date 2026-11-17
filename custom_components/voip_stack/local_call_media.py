@@ -273,6 +273,8 @@ class LocalCallMedia:
                 raise RuntimeError("Local call media session is already closed")
             loop = asyncio.get_running_loop()
             bound_socket, self._rtp_socket = self._rtp_socket, None
+            if bound_socket is None:
+                bound_socket = self.reservation.take_audio_socket(self.local_rtp_port)
             try:
                 transport, _ = await loop.create_datagram_endpoint(
                     lambda: _LocalRtpProtocol(self),
@@ -530,6 +532,18 @@ class LocalCallMedia:
             with contextlib.suppress(asyncio.QueueEmpty):
                 self.rx_queue.get_nowait()
 
+    async def input_pcm_stream(self):
+        """Let one application consume the existing bounded decoded input."""
+        if self._accepting_input:
+            raise RuntimeError("Local call audio already has an input consumer")
+        self._drain_rx()
+        self._accepting_input = True
+        try:
+            while not self.closed.is_set():
+                yield await self.rx_queue.get()
+        finally:
+            self._accepting_input = False
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "call_id": self.invite.call_id,
@@ -575,6 +589,17 @@ class LocalCallMedia:
         ):
             raise RuntimeError("Local call media already has a consumer or is closed")
         self._consumer_task = self.hass.async_create_task(consumer())
+
+    async def stop_consumer(self):
+        """Detach application work while retaining the same RTP transport."""
+        tasks = (self._consumer_task, self._tts_task)
+        self._consumer_task = self._tts_task = None
+        for task in tasks:
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+        await asyncio.gather(*(task for task in tasks if task is not None and task is not asyncio.current_task()),
+                             return_exceptions=True)
+        self._accepting_input = False
 
     def _start_application(self) -> None:
         """Attach the initial consumer under the transport startup lock."""

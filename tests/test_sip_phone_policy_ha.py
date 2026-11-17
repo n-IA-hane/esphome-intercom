@@ -15,25 +15,12 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
-@pytest.mark.parametrize("destination_kind", ["sip_account", "browser"])
 async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
-    trunks, registered_phones, destination_kind
+    trunks, registered_phones
 ):
     runtime = trunks
-    destination_id = "transfer_b"
-    if destination_kind == "browser":
-        from custom_components.voip_stack.phone_config import endpoint_from_data
-        from custom_components.voip_stack.roster import RosterEntry
-        destination_id = "casa"
-        logical = endpoint_from_data(config_entry(runtime.hass), {
-            "endpoint_id": destination_id, "name": destination_id, "kind": "browser",
-        })
-        runtime.runtime.endpoints.register(logical)
-        runtime.roster.append(RosterEntry(destination_id,
-            metadata={"local_ha": True, "endpoint_id": destination_id}))
-        assert logical.is_available and not runtime.runtime.softphone_presence
     runtime.runtime.endpoints.update(
-        destination_id,
+        "transfer_b",
         policy=PhonePolicy.from_data(
             {
                 "ringing_timeout": 1,
@@ -43,7 +30,7 @@ async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
     )
     setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
     caller, original, replacement = registered_phones
-    await asyncio.to_thread(caller.command, f"/dial {destination_id}")
+    await asyncio.to_thread(caller.command, "/dial transfer_b")
     async with asyncio.timeout(3):
         while not runtime.calls.sessions:
             await asyncio.sleep(0.01)
@@ -61,7 +48,7 @@ async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
         and source.generation == generation
     )
     assert source.state == "in_call"
-    assert not runtime.runtime.endpoints.get(destination_id).active_call_id
+    assert not runtime.runtime.endpoints.get("transfer_b").active_call_id
     assert runtime.runtime.endpoints.get("transfer_c").active_call_id == identity
     assert caller.read().count("Call established") == 1
     assert "Call established" not in original.read()
@@ -148,16 +135,15 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
     runtime = trunks
     destination_id = "transfer_b"
     if destination_kind.startswith("browser"):
-        from dataclasses import replace
-        from custom_components.voip_stack.phone_config import endpoint_from_data
+        from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
         from custom_components.voip_stack.roster import RosterEntry
 
         destination_id = "casa"
-        logical = endpoint_from_data(config_entry(runtime.hass), {
-            "endpoint_id": destination_id, "name": destination_id, "kind": "browser",
-        })
-        runtime.runtime.endpoints.register(replace(logical, device_id="browser-casa"))
-        assert logical.is_available and not runtime.runtime.softphone_presence
+        runtime.runtime.endpoints.register(PhoneEndpoint(
+            endpoint_id=destination_id, name=destination_id,
+            device_id="browser-casa", kind=EndpointKind.BROWSER,
+            availability="available",
+        ))
         runtime.roster.append(RosterEntry(
             destination_id, metadata={"local_ha": True, "endpoint_id": destination_id},
         ))
@@ -758,17 +744,18 @@ async def test_immediate_sip_failure_obeys_only_matching_phone_policy(
     phone = runtime.phones[0]
     from custom_components.voip_stack.roster import RosterEntry
 
-    runtime.roster.append(
-        RosterEntry(
-            "bedroom0",
-            sip_uri=f"sip:bedroom0@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
-            metadata={
-                "endpoint_id": "sip:bedroom0",
-                "endpoint_kind": "sip_account",
-                "registered": True,
-            },
-        )
+    destination_index = next(index for index, row in enumerate(runtime.roster)
+                             if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
+    runtime.roster[destination_index] = RosterEntry(
+        "bedroom0",
+        sip_uri=f"sip:bedroom0@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
+        metadata={
+            "endpoint_id": "sip:bedroom0",
+            "endpoint_kind": "sip_account",
+            "registered": True,
+        },
     )
+    runtime.runtime.directory.replace(runtime.roster)
     receive = phone.datagram_received
 
     def reject(raw, address):

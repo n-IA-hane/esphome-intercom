@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -22,11 +23,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "tools"))
-
-from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
-
-TEST_CAPTURE_DIR = CAPTURE_ROOT / "ha-softphone-matrix"
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -235,7 +233,7 @@ class BareSip:
         video_codec: str = "",
         wait_for_registration: bool = True,
     ) -> None:
-        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
         if dtmf_mode and dtmf_mode not in {"auto", "info", "rtpevent"}:
             raise ValueError(f"unsupported bareSIP DTMF mode: {dtmf_mode}")
         self._temporary_config: tempfile.TemporaryDirectory[str] | None = None
@@ -312,27 +310,12 @@ class BareSip:
                         accounts,
                     )
                 if video_codec:
-                    lines = []
-                    for line in accounts.splitlines(keepends=True):
-                        if line.lstrip().startswith("#") or not line.strip():
-                            lines.append(line)
-                            continue
-                        # Quoted display names and opaque auth parameters may
-                        # contain semicolons or SIP-looking text of their own.
-                        line = re.sub(
-                            r'("(?:\\.|[^"\\])*"|;video_codecs=(?:"(?:\\.|[^"\\])*"|[^;>\r\n]*))',
-                            lambda match: match[0] if match[0].startswith('"') else "",
-                            line, flags=re.IGNORECASE,
-                        )
-                        line, replaced = re.subn(
-                            r'^((?:[^"<\r\n]|"(?:\\.|[^"\\])*")*<sips?:[^>\r\n]*>)',
-                            rf"\g<1>;video_codecs={codec}",
-                            line, count=1, flags=re.IGNORECASE,
-                        )
-                        if not replaced:
-                            raise ValueError("Video codec selection requires a bracketed SIP account URI")
-                        lines.append(line)
-                    accounts = "".join(lines)
+                    accounts = re.sub(r";video_codecs=[^;>]+", "", accounts)
+                    accounts = re.sub(
+                        r">",
+                        f";video_codecs={video_codec.strip().upper()}>",
+                        accounts,
+                    )
                 accounts_path.write_text(accounts, encoding="utf-8")
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
@@ -348,6 +331,13 @@ class BareSip:
         os.set_blocking(self.master, False)
         self.output = ""
         self.call_established = False
+        self._console_lock = threading.Lock()
+        self._console_chunks: list[str] = []
+        self._console_stop = threading.Event()
+        self._console_reader = threading.Thread(
+            target=self._drain_console, name="baresip-console", daemon=True
+        )
+        self._console_reader.start()
         try:
             self.wait_for("registered successfully" if wait_for_registration else "baresip is ready.", 8)
         except BaseException:
@@ -357,19 +347,32 @@ class BareSip:
             self.close()
             raise
 
-    def read(self) -> str:
-        while True:
-            ready, _, _ = select.select([self.master], [], [], 0)
-            if not ready:
-                break
+    def _drain_console(self) -> None:
+        # Baresip writes UI output synchronously. Keep its PTY flowing even
+        # while the caller waits on device state or a fixed media interval.
+        while not self._console_stop.is_set():
             try:
+                ready, _, _ = select.select([self.master], [], [], 0.1)
+                if not ready:
+                    if self.proc.poll() is not None:
+                        break
+                    continue
                 chunk = os.read(self.master, 65536)
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
+                continue
+            except OSError:
                 break
             if not chunk:
                 break
-            self.output += chunk.decode(errors="replace")
-        return self.output
+            with self._console_lock:
+                self._console_chunks.append(chunk.decode(errors="replace"))
+
+    def read(self) -> str:
+        with self._console_lock:
+            if self._console_chunks:
+                self.output += "".join(self._console_chunks)
+                self._console_chunks.clear()
+            return self.output
 
     def wait_for(self, needle: str, timeout: float) -> str:
         deadline = time.monotonic() + timeout
@@ -438,8 +441,16 @@ class BareSip:
                         os.killpg(self.proc.pid, signal.SIGKILL)
                     with suppress(subprocess.TimeoutExpired):
                         self.proc.wait(timeout=2)
-        with suppress(OSError):
-            os.close(self.master)
+        self._console_reader.join(timeout=1)
+        self._console_stop.set()
+        self._console_reader.join(timeout=1)
+        if self._console_reader.is_alive():
+            raise RuntimeError("Owned bareSIP console reader did not stop")
+        self.read()
+        if self.master >= 0:
+            with suppress(OSError):
+                os.close(self.master)
+            self.master = -1
         if self._temporary_config is not None:
             self._temporary_config.cleanup()
             self._temporary_config = None
@@ -560,11 +571,10 @@ def dial_browser_inbound() -> BareSip:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(TEST_CAPTURE_DIR / "ha_softphone_matrix.json")
+        "--out", default=str(ROOT / "test_captures" / "ha_softphone_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     args = parser.parse_args()
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     from ha_playwright_auth import context_kwargs
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright

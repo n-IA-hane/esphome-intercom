@@ -11,18 +11,19 @@ ship prebuilt firmware binaries for these Espressif audio components.
 
 ## ESPHome integration and compatibility
 
-Maintained firmware profiles require ESPHome 2026.10.0 or newer. They use
-upstream `spi` and `audio_http`: PSRAM DMA and persistent HTTP ring buffers
-are included in ESPHome through PRs
+Development profiles use the complete official ESPHome source recorded in
+[the stabilization baseline](STABILIZATION.md). Upstream `spi` and `audio_http`
+include PSRAM DMA and persistent HTTP ring buffers through PRs
 [#18699](https://github.com/esphome/esphome/pull/18699) and
 [#18708](https://github.com/esphome/esphome/pull/18708).
 Spotpear enables `psram_dma: true` on its display, rather than changing SPI
 behavior for every device.
 
-Maintained profiles use the official ESPHome audio, mixer, resampler,
-`speaker_source`, Voice Assistant, Micro Wake Word, microphone, speaker and OTA
-providers. They do not replace those component directories or rewrite the
-HTTP/Sendspin dependency sources. The ESPHome 2026.10.0 baseline resolves
+Audio, mixer, resampler, microphone, speaker and OTA use the native ESPHome
+providers. HTTP, `speaker_source`, Voice Assistant and Micro Wake Word retain
+only the explicit residual corrections recorded in `esphome/upstream_sources.json`
+until qualified upstream replacements are available. They do not rewrite the
+HTTP/Sendspin dependency sources. The recorded development baseline resolves
 esp-audio-libs 4.0.1, micro-decoder 0.4.0 and sendspin-cpp 0.9.3.
 
 The audio path adds the project-owned `esp_audio_stack`, optional `esp_aec` or
@@ -30,12 +31,37 @@ The audio path adds the project-owned `esp_audio_stack`, optional `esp_aec` or
 `firmware_feature_check` validates feature names and dependencies; it creates no
 runtime task or audio owner.
 
-The P4 `mipi_dsi` adaptation remains separate. It serializes LVGL/direct video
-submissions and exposes the immutable framebuffer to the narrow P4 renderer.
-Its provenance is recorded in its own `UPSTREAM.md`. `p4_framebuffer_capture`
-and `runtime_diag` remain explicit diagnostics, not production media owners.
+P4 uses an explicitly recorded `mipi_dsi` adaptation of the official ESPHome
+provider for serialized UI/video writes and composed-frame readback. Its
+[upstream notes](../esphome/components/mipi_dsi/UPSTREAM.md) describe the remaining
+delta and removal condition. The standalone
+[ESP Screenshot component](ESP_SCREENSHOT.md) selects coherent public readback
+when that display advertises it, and uses normal LVGL capture on other displays.
+The separate optional [`p4_framebuffer_capture`](../esphome/components/p4_framebuffer_capture/README.md)
+diagnostic requires a driver with the proposed public rendered-frame copy API;
+it is rejected during configuration when that capability is absent.
+`runtime_diag` remains optional. Neither diagnostic owns production media.
 The GMF dependency constraint used by AFE also remains separately documented
 below; retiring ESPHome audio providers does not remove that vendor pin.
+
+### Development P4 SDK policy
+
+P4 follows the selected ESPHome version's recommended ESP-IDF without a
+framework source override. The manifest records official v5.5.6 commit
+`880a203ae603d08a94d06aa01e0d6761958e5e9e` as a resolved qualification reference,
+not as an SDK pin. The installed framework is never patched.
+
+For exact SDK 5.5.6 and 6.0.3, `p4_sdmmc_reset` and `p4_ppa_backport` retain two
+official corrections, the
+[SDMMC reset-order fix](https://github.com/espressif/esp-idf/commit/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5)
+and [PPA engine/completion fix](https://github.com/espressif/esp-idf/commit/9da8ff53f751f6682f69897d886f3a9946deed31)
+in checksummed build-local copies on the original IDF targets. The supported
+6.0.3 source is official tag commit `76f5dedd9950a3012fee8fb7d5586df21fc67802`,
+which still needs both fixes. Their release6 counterparts are `2c454e88`
+and `9e43423b`. A recognized already-fixed source needs no copy. These helpers
+add no hook for other SDK versions; that no-op alone does not establish that
+another tag contains the fixes or has been qualified. Remove each backport when
+the normal recommended SDK supplies and qualifies the corresponding correction.
 
 Sendspin uses the native ESPHome client, including its pairing controls and
 stream-generation handling. See [Music Assistant pairing](../packages/README.md#pair-sendspin-with-music-assistant).
@@ -59,22 +85,34 @@ The current audio stack uses these Espressif components:
 | `espressif/esp_audio_effects` | `esp_audio_stack` | Espressif MIT-style license, restricted to Espressif products | Provides `esp_ae_rate_cvt`, `esp_ae_bit_cvt` and data weaver APIs used for RX/TX conversion and layout. |
 | `espressif/esp_codec_dev` | `esp_audio_stack` codec-backed builds | Apache-2.0 | Provides codec control and shared I2S device configuration; Audio Stack owns TX DMA refill and completion. P4 and WS3 use ES7210/ES8311 through it; Spotpear single-mic uses ES8311 input/output through it. The generic codec wrapper also exposes ES8388, ES8374 and ES8389 where the board wiring matches those drivers. Generic no-codec builds use `esp_driver_i2s` directly. |
 
-The optional P4 H.264 profile additionally resolves
-`espressif/esp_h264` 1.3.6 for hardware encode/software decode and
+The optional development P4 H.264 profile selects the
+[maintained candidate branch](https://github.com/n-IA-hane/esp-h264-component/tree/fix/hw-encoder-db-spiram)
+at `176cda67716c24deef0e76e4451048981e154bd4`, based on official
+`08a0b6588fa02bc1b16351fa7a0afc7ade1dc657` (`esp_h264` 1.5.0). Its one
+technical Kconfig delta, `ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM`, defaults off and
+prefers SPIRAM only for the hardware encoder's deblocking buffer. Reference and
+db_tmp allocations remain internal DMA. A one-time allocation-placement log
+reports the chosen memory; codec, alignment and allocator APIs stay at that
+base. The branch is public. Default-SDK P4 boot, internal-memory recovery and duplex
+wire media are qualified; the optional vendor Unity case has not been run on
+hardware. Return to an official revision when the same placement policy is
+available and qualified. Keep the producer option while its default remains
+INTERNAL-first; removing the fork does not imply removing that option.
+
+The profile also resolves
 `espressif/esp_image_effects` 1.1.0 for its optimized I420-to-O_UYY_E_VYY
-conversion. `p4_video_renderer` feeds that PPA-native layout directly to the
-ESP-IDF PPA scale/rotate/color-conversion transaction; JPEG and audio-only
+conversion. `p4_video_renderer` hands that PPA-native layout to the display
+owner's ESP-IDF scale/rotate/color-conversion transaction; JPEG and audio-only
 profiles do not resolve either H.264 dependency. `esp_h264` is Apache-2.0;
 `esp_image_effects` uses Espressif Modified MIT and is restricted to Espressif
 products. The corresponding notices are retained under `licenses/`.
 
 Each wrapper declares its supported version range or exact dependency pin.
 The current development processors explicitly select ESP-SR 2.6.0. The AFE
-integration retains the pinned GMF AI Audio 1.1.1 fork because its manifest
-accepts 2.6.0, while the official 1.1.1 manifest still requires `2.5.*`.
-The direct Manager path uses official runtime APIs and no longer calls the
-fork's custom element-output callback. Removing that API dependency does not
-remove the remaining dependency-version constraint. The firmware's generated
+integration selects official GMF at commit `5adde3e2`, whose manifest accepts
+ESP-SR 2.6.*. Its manager implementation matches the former provider; the DSP
+version stays explicitly pinned while the provider is changed. The wrapper uses
+the official Manager API rather than the element pipeline. The firmware's generated
 `dependencies.lock` records the complete resolved versions and source hashes.
 Do not infer automatic use of the latest registry release from the component
 name, or substitute a new major API without checking its wrapper and lifecycle.
@@ -110,6 +148,10 @@ a Voice Assistant, media-player, microphone/speaker, or custom callback build.
 The cross-component validation only runs when both `esp_audio_stack` and
 `voip_stack` appear in the same YAML, to prevent double ownership of AEC or
 DC-offset correction.
+
+![Shared music, TTS, wake word, Voice Assistant and VoIP audio pipeline](images/shared-audio-aec-pipeline.png)
+
+_Shared audio paths for music, TTS, wake word, Voice Assistant and VoIP._
 
 ## Naming and license boundaries
 
@@ -175,7 +217,10 @@ The current generated-code snapshots confirm:
   `esp_audio_stack` facade, but creates separate ESP-IDF I2S simplex channels
   for RX and TX. This path is only compiled when YAML uses `rx_bus` and `tx_bus`.
 
-![AFE runtime controls exposed through Home Assistant](images/afe-controls.png)
+For the earlier Home Assistant entity layout, see the
+[historical AFE runtime controls capture](https://github.com/n-IA-hane/esphome-intercom/blob/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/afe-controls.png).
+
+![Wake-word barge-in and media ducking](images/ducking-barge-in.gif)
 
 ## Source audit findings
 
@@ -244,16 +289,29 @@ Do not treat all Espressif components the same:
   (`complexity` and `perf_type`), but no public "allocate in PSRAM" knob. Our
   wrapper controls the scratch buffers it owns and opens all converter handles
   before the first realtime frame.
-- The public dual-mic full-experience targets use a hybrid bridge-buffer
-  placement: keep the per-frame AFE feed scratch and fetch output ring internal,
-  move the larger AFE feed staging ring to PSRAM, and place ESPHome-owned audio
-  and VoIP frame buffers in PSRAM. DMA descriptors and I2S driver buffers
-  remain internal. This is the current WS3/P4 baseline for HTTPS media plus TTS
-  plus VoIP stress.
+- Placement is profile-specific. Current P4 FULL keeps AFE feed scratch and
+  staging ring internal; the headless Waveshare S3 AFE profile places both in
+  PSRAM. P4 FULL also keeps VoIP frame buffers internal, while the S3 profile
+  selects PSRAM for them. Other Audio Stack buffers and task stacks have their
+  own settings. DMA descriptors and I2S driver buffers remain internal. Read the
+  selected device/audio profile rather than applying one historical stress
+  configuration to every board.
 
 Runtime test interpretation: PSRAM use inside GMF/esp-sr is expected. If a test
 crashes or glitches, first capture the stack and memory snapshot; do not fork or
 override Espressif allocation policy without evidence.
+
+Spotpear Ball V2 FULL sets the standard IDF
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` threshold to `512`. Eligible generic
+allocations above that size prefer PSRAM, leaving more internal memory available
+for allocations that require it, including TLS/AES DMA buffers. Explicit DMA
+requirements and the internal-memory reserve remain unchanged. With Sendspin
+radio, a VoIP call and an Assist HTTPS reply running together, the measured
+largest free DMA block after TTS increased from 7,424 to 21,504 bytes compared
+with the previous `4096` threshold; a warm repeat retained 21,504 bytes. Both
+policies completed TTS in that comparison, so this demonstrates additional
+headroom rather than a guarantee against every allocation failure. See IDF's
+[allocation policy](https://github.com/espressif/esp-idf/blob/v5.5.6/components/heap/heap_caps.c).
 
 ## Migration matrix
 
@@ -292,16 +350,14 @@ codec-private analog register scripts, and raw multi-channel microphone output
 as a standard ESPHome microphone. Those require separate backend/component work;
 exposing them as inert options would make custom builds harder to debug.
 
-## Future work
+## Stereo microphones and software reference
 
-- **Dual I2S microphones with software AEC reference**: Espressif AFE can
-  consume interleaved `MMR` frames (two microphone channels plus playback
-  reference). A future `esp_audio_stack` mode can build that frame explicitly
-  from a stereo INMP441-style microphone bus (`MM`) and the existing software
-  reference path (`R`, for example `aec_reference: previous_frame`). This is
-  separate from the current single-mic `MR` AEC path and should be implemented
-  only after release validation, because it changes the AFE feed layout and
-  needs hardware tests with a real two-mic board.
+The existing STD I2S path supports `rx_slot_mode: stereo` with
+`rx_mic_slots: [left, right]`. The BOX-3 AFE profile uses two microphone channels
+plus the software playback reference, with `mic_num: 2`. It does not use the
+ES8311 stereo DAC-reference mode or a hardware TDM reference slot. Its current
+configuration is documented in the [experimental BOX-3 guide](../yamls/experimental/esp32-s3-box-3/README.md);
+implementation support is not physical qualification of every stereo MEMS board.
 
 ## Practical rule
 

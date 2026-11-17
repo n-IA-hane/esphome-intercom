@@ -1,19 +1,26 @@
 # Phones, contacts and calls
 
-You can make your first call without reading a SIP manual. These are the names
-you will see in the editor, and when they matter.
+Home Assistant hosts the PBX independently of ESP hardware or another PBX.
+SIP accounts, their physical and HA clients, ESP endpoints and trunks share its
+routing and call applications. You can start with two room or app phones and
+add external equipment later.
+
+![Illustration of Home Assistant as the local SIP and PBX hub](images/home-assistant-local-sip-pbx.png)
+
+These are the names you will see in the editor, and when they matter.
 
 ## The everyday terms
 
 | Term | What it means | Example |
 | --- | --- | --- |
-| Phone | Something that places or receives calls and has its own state. | The HA browser phone named Reception, a SIP handset or an ESP. |
+| Phone | A callable account or ESP endpoint, selected by its visible name. | Reception, used by an HA card and a registered handset. |
 | Card | The dashboard controls for a phone. It is not another phone by itself. | Two cards can show Reception; the browser that answers owns its audio. |
 | Calling phone | The local phone that will place a call. Select it by name. | Reception. |
 | Destination | Who you want that phone to call. | Kitchen, extension 101, a group or an external number. |
 | Contact | A phonebook entry telling the PBX how to reach a destination. | A named door station or delivery driver's number. |
 | Extension | An optional local dial-plan number. Each destination needs a distinct one. | 101 for Kitchen. |
-| SIP account | Credentials a normal SIP phone uses to register with HA. | An account for a desk phone or Zoiper. |
+| SIP account | The callable identity, with its extension, policies, calls and client credentials. | Reception, shared by a desk phone and an HA card. |
+| Physical phone | A hardware client with its own model, lines and programmable keys. | A desk phone whose line 1 uses Reception. |
 | Trunk | A connection from HA to a provider or another PBX. | A work telephone line. It is not a room phone. |
 | Automation contact | A callable destination handled by HA automations; also a backend announcement caller. | Welcome or Wakeup-Caller. |
 | Mailbox | The messages stored for one phone by HA's voicemail feature. | Kitchen's unanswered-call messages. |
@@ -21,6 +28,18 @@ you will see in the editor, and when they matter.
 | Conference | Several callers share an audio conversation. | Everyone joins the same named room. |
 
 ![Controls choose a local phone and a destination through HA](images/phone-control-path.svg)
+
+## Doorbells, room phones and app phones
+
+A door station can call a room phone or a ring group. Room phones can call each
+other, and an Automation contact can supply a greeting or announcement. Add a
+provider trunk only for calls that need that external line. Each route uses the
+media capabilities of its participants; an audio conference stays audio-only.
+
+![Illustration of doorbell and room-to-room calling](images/voip-doorbell-room-to-room.png)
+
+For installation and the stable/preview requirements of each frontend, see the
+[user guide](USER_GUIDE.md).
 
 ## What do I actually select?
 
@@ -40,9 +59,15 @@ Choose the displayed phone in the picker.
 
 ## Where the work happens
 
-Home Assistant owns its phonebook, routing defaults, voicemail and call
-applications. Cards show those phones and send controls to the backend. Each
-phone still has its own card; you do not need a single central popup.
+Home Assistant owns the persistent directory, routing defaults, voicemail and
+call applications. Cards and the Dashboard control those backend phones.
+Opening a view does not create a second phone identity. Browser media belongs
+to the browser or Companion session that answers or originates the call.
+Each room phone can have its own view and controls.
+An enabled account is online when it has a valid SIP registration or a saved HA
+association. Closing a browser or hiding a view does not remove that saved
+association. An account with neither is offline. Browser media opens separately
+when a client originates or answers; DND, busy and queue state still apply.
 
 An ESP is optional. With VoIP firmware it is a physical SIP phone. A Full ESP
 profile can also run its own wake-word Voice Assistant and media player. That
@@ -54,8 +79,8 @@ mirror does not turn your phone's microphone into that ESP's microphone.
 
 If an ESP calls another IP directly, HA's routing rules do not control that
 call. Use an HA-managed route when voicemail, forwarding or another PBX feature
-must apply. ESP firmware can also work as a direct or registered endpoint of a
-[classic PBX](CLASSIC_PBX.md).
+must apply. ESP firmware can use [registered PBX accounts](ESP_REGISTRATION.md)
+or work as a static endpoint of a [classic PBX](CLASSIC_PBX.md).
 
 ## When you need the protocol terms
 
@@ -70,15 +95,18 @@ must apply. ESP firmware can also work as a direct or registered endpoint of a
 | BLF | A phone's busy-lamp display, based on SIP dialog-state subscriptions. |
 | REFER | A SIP transfer request. It does not itself prove the other telephone can complete the transfer. |
 
-The existing ESPHome API connection carries device controls and managed account
-settings, using its configured encryption policy. Current managed firmware
-reads the shared phonebook through LDAP; older firmware receives JSON updates.
-SIP/RTP is a separate call path: a working API connection alone does
+HA's encrypted ESPHome API connection carries device controls and phonebook
+updates. SIP/RTP is a separate call path: a working API connection alone does
 not prove that call signaling and media can reach the peer across networks.
 See [network setup](DEPLOYMENT_GUIDE.md#network) when a phone rings but its audio
 cannot travel in one or both directions.
 
 ## Advanced identifiers
+
+Account and physical inventory references are owned by their native HA
+configuration records. New drafts retain the same reference when confirmed;
+upgrades preserve existing references and entities. Editing a name or extension
+does not recreate the account or hardware device.
 
 The guides use visible names first. For integrations and complex automations,
 `device_id` identifies the local HA device, `endpoint_id` identifies a logical

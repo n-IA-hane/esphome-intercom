@@ -18,7 +18,7 @@ def source_file(path: str) -> bool:
 def export_diff(component: str, upstream: Path, workspace: Path) -> str:
     manifest = json.loads((ROOT / 'esphome/upstream_sources.json').read_text())
     entry = manifest['components'][component]
-    revision = manifest['revision']
+    revision = entry.get('upstream_revision', manifest['revision'])
     prefix = f'esphome/components/{component}'
     local = workspace / entry['local_repository']
     directory = local / prefix

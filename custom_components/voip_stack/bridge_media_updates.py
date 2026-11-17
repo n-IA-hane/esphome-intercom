@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any
@@ -49,32 +50,77 @@ async def prepare_source_video_update(hass, call_id, *, source_client=None, **kw
     return PreparedEndpointVideoReinvite(source_client, None, previous, candidate)
 
 
-async def prepare_owned_video_generation(registry, session, video, *, left, right):
+async def prepare_owned_video_generation(registry, session, video, *, left, right, compensate_committed=False):
     """A lost converter rollback is fatal only to its still-current SIP owner."""
     from .endpoint_session import TerminationIntent
     from .sip_video_relay import VideoTranscodeRestoreError
 
     owner = registry.resource_for(session.call_id, "relay")
     generation = session.generation
+    previous_left, previous_right = (video.left, video.right) if compensate_committed else (None, None)
+
+    def owns_video():
+        return (registry.is_generation_current(session.call_id, generation)
+            and registry.resource_for(session.call_id, "relay") is owner
+            and getattr(owner, "video_relay", None) is video)
+
+    def owns_candidate():
+        return owns_video() and video.left is left and video.right is right
+
+    def terminate_restore_failure():
+        if owns_video():
+            registry.request_termination(session.call_id,
+                TerminationIntent("video_converter_restore_failed"), generation=generation)
 
     async def apply(operation):
         try:
             return await operation
         except VideoTranscodeRestoreError:
-            if (registry.is_generation_current(session.call_id, generation)
-                    and registry.resource_for(session.call_id, "relay") is owner
-                    and getattr(owner, "video_relay", None) is video):
-                registry.request_termination(session.call_id,
-                    TerminationIntent("video_converter_restore_failed"), generation=generation)
+            terminate_restore_failure()
             raise
 
     commit, rollback = await apply(video.async_prepare_peer_generation(left=left, right=right))
 
+    committed = False
+
     async def commit_owned():
-        await apply(commit())
+        nonlocal committed
+        try:
+            await apply(commit())
+        finally:
+            committed = bool(compensate_committed and video.left is left and video.right is right)
 
     async def rollback_owned():
+        nonlocal committed
         await apply(rollback())
+        if not committed or not owns_candidate() or video._staged_peers:
+            return
+        committed = False
+        undos, stages = [], {}
+        restore_rollback = None
+        try:
+            for side, peer in (("left", previous_left), ("right", previous_right)):
+                _, undo = video.stage_peer_reconfiguration(side, peer)
+                undos.append(undo)
+                stages[side] = video._staged_peers[side]
+            restore_commit, restore_rollback = await video.async_prepare_peer_generation(
+                left=previous_left, right=previous_right)
+            if not owns_candidate() or any(video._staged_peers.get(side) is not stage
+                    for side, stage in stages.items()):
+                await restore_rollback()
+                return
+            await restore_commit()
+        except BaseException as error:
+            if restore_rollback is not None:
+                await restore_rollback()
+            if (not isinstance(error, asyncio.CancelledError) and owns_candidate()
+                    and all(stages.get(side) is stage for side, stage in video._staged_peers.items())):
+                terminate_restore_failure()
+                raise VideoTranscodeRestoreError("Previous video generation could not be restored") from error
+            raise
+        finally:
+            for undo in reversed(undos):
+                undo()
 
     return commit_owned, rollback_owned
 
@@ -135,25 +181,30 @@ class BridgeMediaUpdateBinder:
                         _, undo = video.stage_peer_reconfiguration(staged_side, peer)
                         undo_stages.append(undo)
                     commit_video, rollback_video = await prepare_owned_video_generation(
-                        registry, session, video, left=left, right=right,
+                        registry, session, video, left=left, right=right, compensate_committed=True,
                     )
                 except BaseException:
                     for undo in reversed(undo_stages):
                         undo()
                     raise
 
-            async def commit():
+            def require_current(*, video_committed=False):
                 if (not registry.is_generation_current(source_call_id, generation)
                         or registry.resource_for(source_call_id, "relay") is not relay
                         or client.on_media_update is not prepare or client.dialog is not previous
                         or getattr(relay, side) is not previous_peer
                         or getattr(relay, "video_relay", None) is not video
                         or (video is not None and (
-                            video.left is not previous_video_left or video.right is not previous_video_right))):
+                            video.left is not (left if video_committed else previous_video_left)
+                            or video.right is not (right if video_committed else previous_video_right)))):
                     raise RuntimeError("bridge media ownership changed before commit")
-                commit_peer()
+
+            async def commit():
+                require_current()
                 if commit_video is not None:
                     await commit_video()
+                    require_current(video_committed=True)
+                commit_peer()
 
             def published(actual):
                 if (registry.is_generation_current(source_call_id, generation)
@@ -467,6 +518,7 @@ class BridgeMediaUpdateBinder:
                 ) = await prepare_owned_video_generation(registry, session, video_relay,
                     left=source_video_peer,
                     right=next_video_peer,
+                    compensate_committed=True,
                 )
             elif removing_video:
                 if video_relay is None:
@@ -507,7 +559,7 @@ class BridgeMediaUpdateBinder:
                     await staged_video_relay.stop()
                 return None
 
-            async def commit() -> None:
+            def require_current(*, video_committed=False) -> None:
                 if not registry.is_generation_current(
                     source_call_id,
                     call_generation,
@@ -515,16 +567,24 @@ class BridgeMediaUpdateBinder:
                     raise RuntimeError(
                         "SIP bridge media update belongs to a terminated call"
                     )
-                if registry.resource_for(source_call_id, "relay") is not relay or relay.right is not previous_audio_peer or (
+                if (registry.resource_for(source_call_id, "relay") is not relay
+                        or client.dialog is not previous or client.on_media_update is not prepare
+                        or relay.right is not previous_audio_peer
+                        or getattr(relay, "video_relay", None) is not (None if adding_video else video_relay)
+                        or (
                     previous_video_peer is not None
-                    and video_relay.right is not previous_video_peer
-                ):
+                    and video_relay.right is not (next_video_peer if video_committed else previous_video_peer)
+                )):
                     raise RuntimeError("SIP bridge media owner changed before commit")
+
+            async def commit() -> None:
+                require_current()
+                if commit_video_generation is not None:
+                    await commit_video_generation()
+                    require_current(video_committed=True)
                 commit_audio()
                 if adding_video:
                     relay.attach_video_relay(video_relay)
-                if commit_video_generation is not None:
-                    await commit_video_generation()
                 if removing_video:
                     relay.video_relay = None
                     await video_relay.stop()

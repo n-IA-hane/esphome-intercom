@@ -18,8 +18,8 @@ from homeassistant.core import HomeAssistant
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, external_call_denied, is_trunk_uri, trunk_available
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
-from .automation_routing import matches_call
+from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
+from .automation_routing import has_native_route_window
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -32,9 +32,7 @@ from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_routing import (
     peer_for_target as _peer_for_target,
     roster_from_peers as _roster_from_peers,
-    sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
 )
-from .fsm import TerminalReason
 from .inbound_routing.automation import (
     automation_rejection,
     request_route_override,
@@ -82,7 +80,7 @@ class InviteRuntime:
     build_peer_snapshot: Callable[..., Any]
     browser_leg_for_member: Callable[..., Any]
     defer_invite_to_softphone: Callable[..., None]
-    enable_reused_signaling_flow: Callable[..., Any]
+    enable_reused_sip_tcp_connection: Callable[..., Any]
     on_conference_inbound_timeout: Callable[..., Any]
     ring_conference_members: Callable[..., Any]
     run_ring_group_call: Callable[..., Any]
@@ -116,30 +114,8 @@ async def route_invite(
     caller_peer = _peer_for_target(caller_identity, peers)
     if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
         caller_peer = None
-    caller_profile = _sip_target_rtp_audio_profile(caller_peer, None) if caller_peer is not None else None
-    if caller_profile is not None:
-        # Capability discovery is optional; the listener already negotiated
-        # the actual offer when no additional peer constraints are known.
-        send_candidates = list(caller_profile.send_formats)
-        recv_candidates = list(caller_profile.recv_formats)
-        selected = sip_sdp.negotiate_directional(
-            invite.remote_sdp,
-            send_candidates,
-            recv_candidates,
-            allow_dahua_pcm=invite.peer_profile == "dahua",
-        )
-        if selected is None:
-            _LOGGER.info(
-                "SIP INVITE from %s rejected: roster directional PCM profile is incompatible",
-                invite.caller or invite.source_host,
-            )
-            return SipInviteResult(
-                488,
-                "Not Acceptable Here",
-                to_tag="",
-                decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
-        invite = replace(invite, send_format=selected.send, recv_format=selected.recv)
+    # The listener selected audio from this INVITE and the local backend.
+    # Discovery identifies the caller here; it cannot renegotiate that audio.
     application = _call_registry(hass).component("sip_application")
     gruu = dict(invite.request_uri.params).get("gr")
     local_instance = application is not None and gruu and gruu == application.gruu_id
@@ -185,12 +161,16 @@ async def route_invite(
         if caller_roster_entry is not None
         else ""
     ).strip()
-    source_endpoint = (
-        endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
-    )
     identified_source = source_endpoint_id if not trunk_invite and (
         registered_source or caller_peer is not None or caller_is_known_roster_endpoint
     ) else ""
+    # Directory names describe a caller; only the verified ingress owns a phone.
+    source_endpoint_id = identified_source
+    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
+    if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
+        from .queue_agent import route_queue_agent_call
+        return await route_queue_agent_call(runtime, invite, registry,
+                                            source_endpoint if identified_source and not trunk_invite else None)
     from .esphome_origination import apply_correlated_invite, CorrelationError
     try:
         requested_trunk = apply_correlated_invite(registry, invite, identified_source)
@@ -245,11 +225,13 @@ async def route_invite(
     local_client = registry.sip_client_for(invite.call_id)
     local_session = registry.get_session(invite.call_id)
     if local_client is not None and local_session is not None and invite.source_host in {local_ip, "127.0.0.1", "::1"}:
-        transport = getattr(local_client, "writer" if invite.signaling_transport == "TCP" else "transport", None)
+        transport = getattr(local_client, "transport", None)
         address = transport.get_extra_info("sockname") if transport is not None else None
         if address and int(address[1]) == invite.source_port:
             identified_source = str(local_session.metadata.get("source_endpoint_id") or "")
-    if identified_source:
+    source_endpoint_id = identified_source
+    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
+    if invite.identified_source_endpoint_id != identified_source:
         invite = replace(invite, identified_source_endpoint_id=identified_source)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
@@ -289,6 +271,11 @@ async def route_invite(
     if not trunk_direct_preprocessed and decision.action is RouteAction.AUTOMATION:
         from .automation_call import route_automation_call
         return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
+    if not trunk_direct_preprocessed and decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+        from .queue_call import route_queue_call
+        from .paging import route_paging_call
+        handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+        return await handler(runtime, invite, decision, registry, source_endpoint)
     if not trunk_direct_preprocessed and decision.action is RouteAction.ASSIST:
         called_extension = (
             str(decision.entry.extension or invite.routing_target)
@@ -326,13 +313,7 @@ async def route_invite(
         )
         if trunk_result is not None:
             return trunk_result
-    native_override = any(matches_call({
-        "caller": invite.caller,
-        "callee": decision.target or invite.target,
-        "destination": decision.entry.display_name if decision.entry is not None else invite.target,
-        "called_extension": invite.routing_target if trunk_invite else (decision.entry.extension if decision.entry is not None else invite.target),
-        "ingress": "trunk" if trunk_invite else "extension",
-    }, options) for options in registration_data(hass).route_trigger_filters.values())
+    native_override = has_native_route_window(hass, invite, decision, trunk_invite=trunk_invite)
     automation_route = await request_route_override(
         runtime=runtime,
         invite=invite,
@@ -398,6 +379,11 @@ async def route_invite(
         if decision.action is RouteAction.AUTOMATION:
             from .automation_call import route_automation_call
             return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
+        if decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+            from .queue_call import route_queue_call
+            from .paging import route_paging_call
+            handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+            return await handler(runtime, invite, decision, registry, source_endpoint)
         if decision.action is RouteAction.ASSIST:
             called_extension = (
                 str(decision.entry.extension or route_destination)
@@ -488,6 +474,17 @@ async def route_invite(
     ):
         return invalid_target
     if not force_ha_softphone:
+        from .account_dialing import account_dial_decision
+
+        account_decision = account_dial_decision(hass, decision)
+        if account_decision is not decision:
+            return await route_local_group(
+                runtime=runtime, invite=invite, decision=account_decision,
+                peers=peers, roster_entries=roster_entries,
+                source_endpoint=source_endpoint, source_endpoint_id=source_endpoint_id,
+                registry=registry,
+            )
+    if not force_ha_softphone:
         route_session = registry.ensure_session(invite.call_id, event_only=True)
         if rejected_route := reject_route_decision(
             hass=hass,
@@ -517,7 +514,7 @@ async def route_invite(
             trunk_config=trunk_cfg,
             bridge_to_trunk=bridge_to_trunk,
             source_endpoint=source_endpoint,
-            target_endpoint=target_endpoint or preferred_browser_phone(hass),
+            target_endpoint=target_endpoint,
             resolved_callee=resolved_callee,
             trunk_invite=trunk_invite,
             registry=registry,

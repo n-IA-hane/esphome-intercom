@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 import logging
 import re
+import secrets
 import ssl
 import unicodedata
 
@@ -41,6 +42,8 @@ class Limits:
     frame_seconds: float = 10.0
     search_seconds: float = 3.0
     write_seconds: float = 5.0
+    cursors_per_connection: int = 4
+    cursor_seconds: float = 60.0
 
 
 def _unescape(value: str) -> str:
@@ -158,9 +161,12 @@ class LdapDirectoryServer:
 
     def __init__(self, directory: PhoneDirectory, authenticate_callback: Authenticate, *,
                  base_dn: str = DEFAULT_BASE_DN, allow_anonymous: bool = False,
-                 uri_for: Callable[[RosterEntry], str] | None = None, limits: Limits | None = None) -> None:
+                 uri_for: Callable[[RosterEntry], str] | None = None, limits: Limits | None = None,
+                 authorize_callback=None, owner_callback=None) -> None:
         self.directory = directory
         self.authenticate = authenticate_callback
+        self.authorize = authorize_callback
+        self.owner_current = owner_callback
         self.base_dn = base_dn
         self._base_key = _dn_key(base_dn)
         if not self._base_key:
@@ -172,12 +178,14 @@ class LdapDirectoryServer:
         self._connections: set[_Connection] = set()
         self._lifecycle = asyncio.Lock()
         self._closing = True
+        self.starttls_context = None
 
     @property
     def port(self) -> int | None:
         return self._listener.sockets[0].getsockname()[1] if self._listener and self._listener.sockets else None
 
-    async def async_start(self, host: str, port: int, *, ssl_context: ssl.SSLContext | None = None) -> None:
+    async def async_start(self, host: str, port: int, *, ssl_context: ssl.SSLContext | None = None,
+                          starttls_context: ssl.SSLContext | None = None) -> None:
         async with self._lifecycle:
             if self._listener is not None:
                 return
@@ -185,6 +193,7 @@ class LdapDirectoryServer:
             if ssl_context is not None:
                 options["ssl_handshake_timeout"] = self.limits.bind_seconds
             self._listener = await asyncio.start_server(self._connected, host, port, **options)
+            self.starttls_context = starttls_context
             self._closing = False
 
     async def async_close(self) -> None:
@@ -193,6 +202,7 @@ class LdapDirectoryServer:
             listener, self._listener = self._listener, None
             if listener is not None:
                 listener.close()
+                listener.close_clients()  # Includes implicit-TLS handshakes not accepted yet.
             # Python 3.14's Server.wait_closed also waits for client transports.
             # Release our owned streams and tasks before awaiting that barrier.
             await asyncio.gather(*(connection.close() for connection in tuple(self._connections)))
@@ -202,7 +212,7 @@ class LdapDirectoryServer:
     async def async_revoke_endpoint(self, endpoint_id: str, *, username: str = "") -> None:
         """Revoke active and, when username is supplied, pending authentications."""
         targets = [connection for connection in self._connections
-                   if connection.endpoint_id == endpoint_id or
+                   if (endpoint_id and connection.endpoint_id == endpoint_id) or
                    (username and connection.bind_username.casefold() == username.casefold())]
         await asyncio.gather(*(connection.close() for connection in targets))
 
@@ -280,30 +290,51 @@ class _Connection:
         self.server = server
         self.reader, self.writer = reader, writer
         self.endpoint_id = ""
+        self.principal = None
         self.bind_username = ""
         self._generation = 0
         self._closed = False
         self._write_lock = asyncio.Lock()
         self._searches: dict[int, asyncio.Task] = {}
+        self._cursors = {}
         self._task: asyncio.Task | None = None
 
     async def close(self) -> None:
         self._closed = True
         self._generation += 1
+        self._cursors.clear()
         current = asyncio.current_task()
         tasks = [task for task in (*self._searches.values(), self._task) if task and task is not current]
         for task in tasks:
             task.cancel()
-        self.writer.close()
+        if not self.writer.is_closing():
+            self.writer.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        with suppress(OSError, TimeoutError, ConnectionError):
+        try:
             async with asyncio.timeout(self.server.limits.write_seconds):
-                await self.writer.wait_closed()
+                await asyncio.shield(self.writer.wait_closed())
+        except TimeoutError:
+            # A revoked TLS peer may never answer close_notify. Release the
+            # owned transport after the same bounded graceful-close budget.
+            self.writer.transport.abort()
+            with suppress(OSError, TimeoutError, ConnectionError):
+                async with asyncio.timeout(self.server.limits.write_seconds):
+                    await asyncio.shield(self.writer.wait_closed())
+        except (OSError, ConnectionError):
+            pass
 
     async def _send(self, frame: bytes, generation: int | None = None) -> None:
         async with self._write_lock:
             if self._closed or (generation is not None and generation != self._generation):
+                return
+            if (self.server.directory.closed
+                    or (self.server.owner_current is not None and not self.server.owner_current())
+                    or (self.principal is not None and self.server.authorize is not None
+                        and not self.server.authorize(self.principal))):
+                self._closed = True
+                if not self.writer.is_closing():
+                    self.writer.close()
                 return
             self.writer.write(frame)
             async with asyncio.timeout(self.server.limits.write_seconds):
@@ -349,6 +380,8 @@ class _Connection:
             raise codec.LdapProtocolError("Message identity is already in use")
         if request.operation == "bindRequest":
             await self._bind(request)
+        elif request.operation == "extendedReq":
+            await self._extended(request)
         elif request.operation == "searchRequest":
             if len(self._searches) >= self.server.limits.searches_per_connection:
                 await self._send(codec.encode_result(request.message_id, "searchResDone", 51, diagnostic="Search limit reached"))
@@ -367,12 +400,16 @@ class _Connection:
             self._searches.pop(identity)
         if not task.cancelled() and task.exception() is not None:
             _LOGGER.warning("LDAP search stopped (%s)", type(task.exception()).__name__)
-            self.writer.close()
+            self._closed = True
+            if self._task is not None and not self._task.cancelling():
+                self._task.cancel()
 
     async def _bind(self, request) -> None:
         self._generation += 1
         self.endpoint_id = ""
+        self.principal = None
         self.bind_username = ""
+        self._cursors.clear()
         tasks = tuple(self._searches.values())
         for task in tasks:
             task.cancel()
@@ -395,8 +432,11 @@ class _Connection:
                         identity = await self.server.authenticate(self.bind_username, request.password)
                     if not identity:
                         code = 49
-                    elif not self._closed:
-                        self.endpoint_id = identity
+                    elif (not self._closed and (self.server.authorize is None or self.server.authorize(identity))):
+                        self.principal = identity
+                        self.endpoint_id = identity if isinstance(identity, str) else identity.endpoint_id
+                    else:
+                        code = 49
                 except (ValueError, LDAPInvalidDnError):
                     code = 49
                 except TimeoutError:
@@ -406,50 +446,116 @@ class _Connection:
                     code = 52
         await self._send(codec.encode_result(request.message_id, "bindResponse", code))
 
+    async def _extended(self, request) -> None:
+        code = 2
+        if request.critical_control:
+            code = 12
+        elif request.extended_name == codec.START_TLS:
+            if request.extended_value_present:
+                code = 2
+            elif self.writer.get_extra_info("ssl_object") is not None or self._searches:
+                code = 1
+            elif self.server.starttls_context is None:
+                code = 52
+            else:
+                code = 0
+        await self._send(codec.encode_result(request.message_id, "extendedResp", code))
+        if code == 0:
+            self._generation += 1
+            self.principal = None
+            self.endpoint_id = self.bind_username = ""
+            self._cursors.clear()
+            await self.writer.start_tls(self.server.starttls_context,
+                ssl_handshake_timeout=self.server.limits.bind_seconds,
+                ssl_shutdown_timeout=self.server.limits.write_seconds)
+
     async def _search(self, request, generation) -> None:
         code = 0
+        cookie = b"" if request.page_size is not None else None
         try:
             if request.critical_control:
                 code = 12
             elif not request.base_dn:
-                if request.scope != 0:
+                if request.page_cookie:
+                    code = 53
+                elif request.scope != 0:
                     code = 32
                 else:
                     attributes = {"objectclass": (b"top",), "supportedldapversion": (b"3",),
-                                  "namingcontexts": (self.server.base_dn.encode(),)}
-                    if matches(request.filter, attributes) is True:
+                                  "namingcontexts": (self.server.base_dn.encode(),),
+                                  "supportedcontrol": (codec.PAGED_RESULTS.encode(),)}
+                    if self.server.starttls_context is not None:
+                        attributes["supportedextension"] = (codec.START_TLS.encode(),)
+                    if request.page_size != 0 and matches(request.filter, attributes) is True:
                         await self._send(codec.encode_entry(request.message_id, "",
                             self.server.select_attributes(attributes, request.attributes), types_only=request.types_only), generation)
             elif not self.endpoint_id and not self.server.allow_anonymous:
                 code = 50
             else:
-                base = _dn_key(request.base_dn)
-                rows = tuple(self.server.records())
-                if not any(_dn_key(dn) == base for dn, _ in rows):
-                    code = 32
-                else:
-                    limit = min(request.size_limit or self.server.limits.results, self.server.limits.results)
-                    seconds = min(request.time_limit or self.server.limits.search_seconds, self.server.limits.search_seconds)
-                    deadline = asyncio.get_running_loop().time() + seconds
-                    sent = 0
-                    for index, (dn, attributes) in enumerate(rows):
-                        if asyncio.get_running_loop().time() >= deadline:
-                            code = 3
-                            break
-                        name = _dn_key(dn)
-                        under = len(name) >= len(base) and name[-len(base):] == base
-                        selected = name == base if request.scope == 0 else under and len(name) == len(base) + 1 if request.scope == 1 else under
-                        if selected and matches(request.filter, attributes) is True:
-                            if sent >= limit:
-                                code = 4
-                                break
-                            await self._send(codec.encode_entry(request.message_id, dn,
-                                self.server.select_attributes(attributes, request.attributes), types_only=request.types_only), generation)
-                            sent += 1
-                        if index % 16 == 15:
-                            await asyncio.sleep(0)  # Yield work; no periodic worker.
+                code, cookie = await self._search_directory(request, generation)
         except codec.LdapProtocolError:
             code = 11
         except (ValueError, LDAPInvalidDnError):
             code = 34
-        await self._send(codec.encode_result(request.message_id, "searchResDone", code), generation)
+        await self._send(codec.encode_result(request.message_id, "searchResDone", code, page_cookie=cookie), generation)
+
+    async def _search_directory(self, request, generation):
+        now = asyncio.get_running_loop().time()
+        directory_generation = self.server.directory.generation
+        signature = (request.base_dn, request.scope, request.deref_aliases, request.size_limit, request.time_limit,
+                     request.types_only, request.filter, request.attributes)
+        self._cursors = {key: value for key, value in self._cursors.items() if value[3] > now}
+        offset = 0
+        paged = request.page_size is not None
+        if request.page_cookie:
+            previous = self._cursors.pop(request.page_cookie, None)
+            if previous is None or previous[:1] != (signature,) or previous[2] != directory_generation or previous[4] != generation:
+                return 53, b""
+            offset = previous[1]
+        if paged and request.page_size == 0:
+            return 0, b""
+        if paged and len(self._cursors) >= self.server.limits.cursors_per_connection:
+            return 51, b""
+        base = _dn_key(request.base_dn)
+        rows = self.server.records()
+        limit = min(request.size_limit or self.server.limits.results, self.server.limits.results)
+        page_limit = min(request.page_size, limit) if paged else limit
+        seconds = min(request.time_limit or self.server.limits.search_seconds, self.server.limits.search_seconds)
+        deadline = now + seconds
+        matched = sent = 0
+        base_exists = more = False
+        code = 0
+        for index, (dn, attributes) in enumerate(rows):
+            if asyncio.get_running_loop().time() >= deadline:
+                code = 3
+                break
+            if generation != self._generation or self._closed:
+                return 0, b"" if paged else None
+            if directory_generation != self.server.directory.generation:
+                return 53, b"" if paged else None
+            name = _dn_key(dn)
+            base_exists |= name == base
+            under = len(name) >= len(base) and name[-len(base):] == base
+            selected = name == base if request.scope == 0 else under and len(name) == len(base) + 1 if request.scope == 1 else under
+            if selected and matches(request.filter, attributes) is True:
+                matched += 1
+                if matched > offset:
+                    if matched > limit:
+                        code = 4
+                        break
+                    if sent >= page_limit:
+                        more = True
+                        break
+                    await self._send(codec.encode_entry(request.message_id, dn,
+                        self.server.select_attributes(attributes, request.attributes), types_only=request.types_only), generation)
+                    sent += 1
+            if index % 16 == 15:
+                await asyncio.sleep(0)
+        if not base_exists:
+            code = 32
+        cookie = b"" if paged else None
+        if more and not code:
+            cookie = secrets.token_bytes(16)
+            self._cursors[cookie] = (signature, offset + sent, directory_generation,
+                                    now + self.server.limits.cursor_seconds, generation)
+        return code, cookie

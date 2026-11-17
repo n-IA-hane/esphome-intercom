@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scripts.candidate_lock import candidate_id as compute_candidate_id
 from scripts.qualification_plan import plan_id as compute_plan_id
-from qualification.evidence import CLAIMS
+from qualification.evidence import CLAIMS, EvidenceError, derive_scenario_evidence, hil_artifact_paths
 from qualification.registry import EXECUTOR_JOBS, regression_ledger
 
 
@@ -88,6 +88,7 @@ def verify(
     for extra_job in sorted(set(job_results).difference(required_jobs)):
         errors.append(f"qualification result was not required: {extra_job}")
     verified_jobs: dict[str, object] = {}
+    measured_hil_claims: dict[str, list[dict[str, object]]] = {}
     for job in required_jobs:
         result = job_results.get(job)
         if not isinstance(result, dict):
@@ -127,6 +128,18 @@ def verify(
                 errors.append(f"job artifact size mismatch: {job}/{relative}")
             checked_artifacts.append({"path": str(relative), "sha256": actual})
         verified_jobs[job] = {"status": status, "artifacts": checked_artifacts}
+        if status == "success" and job in {"hil-s3", "hil-p4"}:
+            paths = [artifact_root / record["path"] for record in checked_artifacts]
+            try:
+                measured_hil_claims[job] = derive_scenario_evidence(
+                    job, plan, paths, candidate_id=candidate_id, artifact_root=artifact_root,
+                )
+                recorded = {path.resolve() for path in paths}
+                if any(path.resolve() not in recorded
+                       for path in hil_artifact_paths(paths, artifact_root)):
+                    errors.append(f"measured HIL inputs are missing from job artifact hashes: {job}")
+            except (EvidenceError, OSError, ValueError, TypeError, KeyError) as error:
+                errors.append(f"measured HIL evidence is invalid: {job} ({error})")
 
     planned_scenarios = {
         str(scenario.get("id") or ""): scenario
@@ -174,6 +187,8 @@ def verify(
             continue
         normalized: dict[str, list[str]] = {}
         invalid = False
+        measured = next((item for item in measured_hil_claims.get(job, [])
+                         if item["scenario_id"] == scenario_id), None)
         for field in ("executors", "oracles", "postconditions"):
             values = claim.get(field, [])
             if not isinstance(values, list) or not all(
@@ -185,6 +200,8 @@ def verify(
             values = sorted(set(values))
             unsupported = set(values).difference(map(str, contract.get(field, [])))
             unsupported.update(set(values).difference(supported[field]))
+            if job in {"hil-s3", "hil-p4"}:
+                unsupported.update(set(values).difference(measured[field] if measured else ()))
             if unsupported:
                 errors.append(
                     f"scenario evidence exceeds contract: {scenario_id}/{field}"

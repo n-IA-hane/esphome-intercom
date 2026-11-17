@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import partial
 import logging
-import traceback
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .entity_identity import phonebook_state
+from .directory_runtime import routing_snapshot
 
 from .trunk_policy import external_call_denied, is_any_trunk_uri, trunk_available
 from .peer_media_profile import resolve_peer_media_profile
@@ -39,13 +37,15 @@ from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
-    ha_router_decision,
+    EndpointRouteResolver,
     peer_video_codec,
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
+    supports_directional_audio_payloads as _supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
@@ -82,8 +82,7 @@ from .service_endpoints import (
 )
 from .service_errors import service_error as _service_error
 from .sip_runtime import (
-    enable_reused_signaling_flow as _enable_reused_signaling_flow,
-    select_registered_outbound_flow,
+    enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
     uri_transport as _sip_uri_transport,
 )
 from .softphone_commands import (
@@ -95,6 +94,11 @@ from .websocket_api import (
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _local_video_capable(endpoint) -> bool:
+    # Receive negotiation is independent from permission to transmit a camera.
+    return bool(endpoint is not None and endpoint.supports("video"))
 
 
 async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> None:
@@ -141,7 +145,10 @@ async def _async_resolve_browser_destination(
         return route, target, None
     endpoint_id = str((route.entry.metadata or {}).get("endpoint_id") or "").strip()
     endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
-    if endpoint is None or not endpoint.kind.is_softphone:
+    if endpoint is not None and not endpoint.kind.is_softphone:
+        from .phone_endpoint import ha_client_endpoint
+        endpoint = ha_client_endpoint(endpoint)
+    if endpoint is None:
         return route, target, None
     if endpoint.endpoint_id == source_endpoint_id:
         raise _service_error(
@@ -184,7 +191,6 @@ async def async_originate_browser_call(
     force_ha_bridge: bool = False,
 ) -> None:
     """Originate a standards SIP call from one Home Assistant browser phone."""
-    from .roster import parse_roster_json
     from .core.sip import SipUri, parse_sip_uri, sip_default_port
     from .sip_client import SIP_TIMER_B, SipCallClient
 
@@ -221,13 +227,13 @@ async def async_originate_browser_call(
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
         trunk_available(trunk)
     )
-    sensor = phonebook_state(hass)
-    roster_json = (
-        str(sensor.attributes.get("roster_json") or "") if sensor is not None else ""
-    )
-    contacts = parse_roster_json(roster_json) if roster_json else []
-    resolve_route = partial(ha_router_decision, hass, source_endpoint_id=endpoint_id,
-                            trunk_id=trunk_selection.identity)
+    try:
+        contacts = routing_snapshot(require_runtime_data(hass))
+    except ValueError as error:
+        raise _service_error("Phone directory is unavailable", "phone_unavailable", phone=target) from error
+    resolve_route = EndpointRouteResolver(hass, str(cfg.get("advertise_host") or ""),
+        int(cfg.get("sip_port") or 5060), source_endpoint_id=endpoint_id,
+        trunk_id=trunk_selection.identity).route
     route = resolve_route(target, contacts)
     from .inbound_routing.targets import resolve_phone_target
 
@@ -270,12 +276,7 @@ async def async_originate_browser_call(
                 hass,
                 endpoint_id,
                 browser_destination.endpoint_id,
-                request_video=bool(
-                    browser_endpoint is not None
-                    and browser_endpoint.supports("video")
-                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
-                    and call.data.get("send_video", False)
-                ),
+                request_video=_local_video_capable(browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)
@@ -355,6 +356,8 @@ async def async_originate_browser_call(
     use_trunk = route.action is RouteAction.TRUNK and trunk_ready
     if route.action is RouteAction.TRUNK and not use_trunk:
         raise trunk_selection.unavailable_error()
+    from .account_dialing import account_dial_decision
+    route = account_dial_decision(hass, route)
     if route.action is RouteAction.GROUP and route.entry is not None:
         group_type = str((route.entry.metadata or {}).get("group_type") or "")
         if group_type == "ring":
@@ -373,12 +376,7 @@ async def async_originate_browser_call(
                 context=getattr(call, "context", None),
                 endpoint_id=endpoint_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
-                request_video=bool(
-                    browser_endpoint is not None
-                    and browser_endpoint.supports("video")
-                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
-                    and call.data.get("send_video", False)
-                ),
+                request_video=_local_video_capable(browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)
@@ -515,8 +513,7 @@ async def async_originate_browser_call(
         str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
-    generic_audio_profile = use_trunk or (peer_profile.is_dahua and not native_audio_endpoint)
-    if generic_audio_profile:
+    if use_trunk or (peer_profile.is_dahua and not native_audio_endpoint):
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
@@ -528,11 +525,9 @@ async def async_originate_browser_call(
         or entry_metadata.get("device_id")
         or ""
     ).strip()
-    # Unknown remote capabilities keep local video in the offer. A successful
-    # capability description can optimize a known audio-only destination.
-    source_video_enabled = browser_endpoint is None or browser_endpoint.supports(
-        "video"
-    )
+    # Unknown remote capabilities are negotiated by the same video owner
+    # used for group and forwarded legs; explicit audio-only peers decline.
+    source_video_enabled = browser_endpoint is None or browser_endpoint.supports("video")
     target_video_contract = peer_video_codec(None, route.entry)
     target_video_enabled = target_video_contract != ""
     video_capable = (
@@ -664,8 +659,18 @@ async def async_originate_browser_call(
         include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
         or use_trunk
         or video_enabled
-        or sip_target_has_unspecified_audio(None, route.entry, dest_device),
-        allow_directional_audio_payloads=not generic_audio_profile,
+        or sip_target_offer_common_audio(None, route.entry, dest_device),
+        allow_directional_audio_payloads=_supports_directional_audio_payloads(
+            None,
+            route.entry,
+        )
+        or bool(
+            rtp_audio_profile is not None
+            and "directional_audio_v1" in rtp_audio_profile.sdp_features
+        ),
+        independent_audio_ptime=supports_independent_audio_ptime(None, route.entry)
+        or bool(rtp_audio_profile is not None
+            and "independent_audio_ptime_v1" in rtp_audio_profile.sdp_features),
         peer_user_agent=str(entry_metadata.get("user_agent") or ""),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
@@ -683,9 +688,9 @@ async def async_originate_browser_call(
         if reuse_registered_trunk_flow(trunk, client):
             _LOGGER.info("SIP trunk registered UDP flow reused for outbound call")
     else:
-        from .sip_runtime import configure_local_contact
+        from .sip_runtime import configure_local_contact, select_registered_outbound_flow
         configure_local_contact(hass, client)
-        _enable_reused_signaling_flow(
+        _enable_reused_sip_tcp_connection(
             hass,
             client,
             uri,
@@ -794,11 +799,6 @@ async def async_originate_browser_call(
             timeout=SIP_TIMER_B if use_trunk else 8.0,
         )
     except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.
-        _LOGGER.error(
-            "SIP call setup failed type=%s stack=%s", type(err).__name__,
-            " > ".join(f"{frame.filename.rsplit('/', 1)[-1]}:{frame.name}:{frame.lineno}"
-                       for frame in traceback.extract_tb(err.__traceback__)),
-        )
         await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
             TerminalReason.TRANSPORT_UNREACHABLE.value,

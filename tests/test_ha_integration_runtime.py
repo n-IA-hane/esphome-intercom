@@ -13,7 +13,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
+
+from .support.ha_frontend import prepare_frontend_dependency
 
 
 DOMAIN = "voip_stack"
@@ -23,6 +25,7 @@ INTEGRATION_DEPENDENCIES = {
     "lovelace",
     "network",
 }
+
 pytestmark = pytest.mark.ha
 
 
@@ -115,7 +118,10 @@ async def test_phonebook_unique_names_do_not_notify(hass):
 
 def _prepare_integration_dependencies(hass: HomeAssistant) -> None:
     """Provide dependency surfaces without starting unrelated HA services."""
+    # These service tests model completed dependency setup, locally. The real
+    # frontend-before-VoIP lifecycle is exercised by test_popup_frontend_ha.
     hass.config.components.update(INTEGRATION_DEPENDENCIES)
+    prepare_frontend_dependency(hass)
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
 
@@ -539,20 +545,20 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     entry.add_to_hass(hass)
     entry.runtime_data = runtime
 
-    endpoint_entity = "text_sensor.s3_voip_endpoint"
+    state_entity = "text_sensor.s3_voip_state"
     extension_entity = "text.s3_voip_extension"
     groups_entity = "text.s3_voip_ring_groups"
     conference_entity = "text.s3_voip_conference_groups"
     conference_ring_entity = "switch.s3_voip_conference_ring"
     entities = {
-        "voip_endpoint": endpoint_entity,
+        "voip_state": state_entity,
         "voip_extension": extension_entity,
         "voip_ring_groups": groups_entity,
         "voip_conference_groups": conference_entity,
         "voip_conference_ring": conference_ring_entity,
     }
     for entity_id, value in (
-        (endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex"),
+        (state_entity, "idle"),
         (extension_entity, "669"),
         (groups_entity, "home"),
         (conference_entity, "all"),
@@ -583,7 +589,7 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     assert sensor._stable_phonebook_peers([]) == []
     assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
 
-    hass.states.async_set(endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex")
+    hass.states.async_set(state_entity, "idle")
     restoring = Peer(
         name="S3",
         host="192.0.2.11",
@@ -699,6 +705,7 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
     from custom_components.voip_stack.phone_endpoint import (
         EndpointAvailability,
         EndpointKind,
+        PhoneEndpoint,
     )
     from custom_components.voip_stack.repairs import (
         MEDIA_CAPTURE_ISSUE_ID,
@@ -713,8 +720,8 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
         trunk_config={},
         endpoints=SimpleNamespace(
             endpoints=(
-                SimpleNamespace(
-                    kind=EndpointKind.ESPHOME, sip_uri_user="esp-health", name="ESP health", extension="",
+                PhoneEndpoint(
+                    endpoint_id="esphome:health", kind=EndpointKind.ESPHOME, username="esp-health", name="ESP health", extension="",
                     availability=EndpointAvailability.AVAILABLE,
                 ),
             )
@@ -818,11 +825,11 @@ async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
     reload_entry.assert_not_awaited()
 
 
-async def test_new_entry_bootstraps_one_normal_named_browser_phone(
+async def test_new_entry_bootstraps_one_normal_named_account(
     hass: HomeAssistant,
 ) -> None:
     from custom_components.voip_stack.phone_config import (
-        CONF_PHONE_ENDPOINT_ID,
+        phone_endpoint_id,
         CONF_PHONE_KIND,
         CONF_PHONE_NAME,
         async_bootstrap_browser_phone,
@@ -835,8 +842,10 @@ async def test_new_entry_bootstraps_one_normal_named_browser_phone(
     created = async_bootstrap_browser_phone(hass, entry)
 
     assert created is not None
-    assert created.data[CONF_PHONE_ENDPOINT_ID].startswith("browser:")
-    assert created.data[CONF_PHONE_KIND] == "browser"
+    assert phone_endpoint_id(created) == "sip:" + created.subentry_id
+    assert created.data[CONF_PHONE_KIND] == "sip_account"
+    assert created.data["username"] and created.data["password"]
+    assert not created.data.get("ha_bindings")
     assert created.data[CONF_PHONE_NAME] == "Casa"
     assert async_bootstrap_browser_phone(hass, entry) is None
     assert len(entry.subentries) == 1
@@ -853,7 +862,7 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 6
+    assert entry.version == 7 and entry.minor_version == 1
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
 
@@ -1124,7 +1133,7 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
     )
 
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 6 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == 1
     assert dict(entry.data) == {"sip_port": 5060}
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
@@ -1157,13 +1166,40 @@ async def test_duplicate_extension_repair_names_conflicts_and_clears(hass):
 async def test_flow_namespace_includes_discovered_esphome_extensions(hass):
     from custom_components.voip_stack.config_flow import _entry_route_mappings
     from custom_components.voip_stack.config_validation import route_namespace_conflicts
-    from custom_components.voip_stack.phone_endpoint import EndpointKind
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     entry.runtime_data = SimpleNamespace(endpoints=SimpleNamespace(endpoints=(
-        SimpleNamespace(kind=EndpointKind.ESPHOME, sip_uri_user="ball", name="Spotpear", extension="1000"),
+        PhoneEndpoint(endpoint_id="esphome:ball", kind=EndpointKind.ESPHOME, username="ball", name="Spotpear", extension="1000"),
     )))
     mappings = _entry_route_mappings(entry, {}, include_assist=False)
     assert route_namespace_conflicts(candidate_routes=("1000",), existing=mappings)
     assert not route_namespace_conflicts(candidate_routes=("1001",), existing=mappings)
+
+
+async def test_identity_repair_uses_native_subentry_ownership_when_available(hass):
+    from inspect import signature
+    from homeassistant.config_entries import ConfigSubentry
+    from homeassistant.helpers import issue_registry as ir
+    from custom_components.voip_stack.phone_config import PhoneIdentityConflict
+    from custom_components.voip_stack.repairs import async_sync_phone_identity_issue
+
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    child = ConfigSubentry(subentry_type="phone", title="Desk", unique_id="phone:canonical", data={})
+    hass.config_entries.async_add_subentry(entry, child)
+    error = PhoneIdentityConflict("Desk", "canonical", "conflict", subentry_id=child.subentry_id)
+    async_sync_phone_identity_issue(hass, entry, error)
+    issues = ir.async_get(hass)
+    key = (DOMAIN, "phone_identity_conflict_" + entry.entry_id)
+    assert issues.issues[key].config_entry_id == entry.entry_id
+    native_subentry = "config_subentry_id" in signature(ir.async_create_issue).parameters
+    assert getattr(issues.issues[key], "config_subentry_id", None) == (child.subentry_id if native_subentry else None)
+    hass.config_entries.async_remove_subentry(entry, child.subentry_id)
+    await hass.async_block_till_done()
+    if native_subentry:
+        assert key not in issues.issues
+    else:
+        assert key in issues.issues  # Stable11.1 keeps the existing entry owner.
+    async_sync_phone_identity_issue(hass, entry)

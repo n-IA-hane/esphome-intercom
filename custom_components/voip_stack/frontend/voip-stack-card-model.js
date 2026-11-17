@@ -32,7 +32,9 @@ export function targetFromRosterEntry(entry) {
     capabilities: formatListFromMetadata(metadata.capabilities)
       .map((value) => value.toLowerCase()),
     camera_entity_id: String(metadata.camera_entity_id || "").trim(),
-    sip_video_codec: String(metadata.sip_video_codec || "").trim().toLowerCase(),
+    sip_video_codec: metadata.sip_video_codec == null
+      ? metadata.sip_video_codec
+      : String(metadata.sip_video_codec).trim().toLowerCase(),
     audio_mode: metadata.audio_mode || "full_duplex",
     tx_formats: formatListFromMetadata(metadata.tx_formats),
     rx_formats: formatListFromMetadata(metadata.rx_formats),
@@ -41,6 +43,20 @@ export function targetFromRosterEntry(entry) {
     max_payload_bytes: metadata.max_payload_bytes,
     roster: true,
   };
+}
+
+export function queueDeclarationText(value) {
+  return Array.isArray(value) ? value.filter(item => typeof item === "string").join(", ") : String(value || "").trim();
+}
+
+export function availableQueueNames(entries = []) {
+  return [...new Set(entries.filter(entry => entry?.enabled !== false && entry?.metadata?.virtual_endpoint === "queue")
+    .map(entry => String(entry.name || entry.metadata?.name || "").trim()).filter(Boolean))].sort();
+}
+
+export function isPagingAutoAnswer(snapshot = {}) {
+  return !!String(snapshot.announcement_id || "").trim() && snapshot.answer_mode === "auto" &&
+    snapshot.audio_direction === "recvonly";
 }
 
 export function terminalPeerLabel(snapshot = {}) {
@@ -98,6 +114,11 @@ export function softphoneSnapshotSupersedes(current, next) {
   const currentState = String(current.state || "").toLowerCase();
   const nextState = String(next.state || "").toLowerCase();
   const terminal = TERMINAL_CALL_STATES.has(nextState);
+  const currentGeneration = Number(current.generation || 0);
+  const nextGeneration = Number(next.generation || 0);
+  if (currentCallId === nextCallId && currentGeneration > 0 && nextGeneration > 0 && currentGeneration !== nextGeneration) {
+    return nextGeneration > currentGeneration;
+  }
   if (
     currentCallId
     && ACTIVE_CALL_STATES.has(currentState)
@@ -241,6 +262,12 @@ export function formatVideoFailureReason(reason) {
       return reason ? String(reason).replaceAll("_", " ") : "";
   }
 }
+export function supportsHaClient(device = {}) {
+  const kind = String(device.kind || device.endpoint_type || device.type || "").toLowerCase();
+  return device.ha_client_supported === true || device.softphone === true ||
+    ["sip_account", "browser", "ha_softphone", "home_assistant", "softphone"].includes(kind);
+}
+
 export function normaliseCardConfig(rawConfig = {}) {
   const config = { ...rawConfig };
   delete config.endpoint_id;

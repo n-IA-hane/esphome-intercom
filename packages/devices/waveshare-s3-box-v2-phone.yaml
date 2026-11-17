@@ -1,0 +1,44 @@
+# Standalone V2 phone: reuse board/audio calibration and the existing phone UI.
+# No Runtime Controller, Assist, MWW, Sendspin or FULL application composition.
+defaults:
+  _phone: !include '../features/voip/devices/spotpear-ball-v2-phone.yaml'
+  _phone_packages:
+    callbacks: ${_phone.packages.callbacks}
+    call_settings: ${_phone.packages.call_settings}
+    voip_transport: ${_phone.packages.voip_transport}
+    ringtone_asset: ${_phone.packages.ringtone_asset}
+  _phone_ui: !include '../features/presentation/devices/spotpear-ball-v2-phone.yaml'
+  _phone_display: !include '../board/waveshare_s3_box_v2_display.yaml'
+  _phone_diagnostics: !include '../diagnostics/native.yaml'
+packages:
+  feature_validation: !include ../profiles/feature_validation.yaml
+  hardware: !include '../board/waveshare_s3_box_v2.yaml'
+  audio: !include '../audio/profiles/waveshare-s3-box-v2-aec.yaml'
+  # V2 audio already owns microphone mute. Reuse every phone binding except
+  # its duplicate mute entity; call controls are included separately below.
+  telephone: ${ dict(_phone, packages=_phone_packages) if 'voip' in firmware_features else {} }
+  call_buttons: !include '../voip/call_buttons.yaml'
+  display_hardware: ${ _phone_display if 'voip' in firmware_features and 'display' in firmware_features else {} }
+  display: ${ _phone_ui if 'voip' in firmware_features and 'display' in firmware_features else {} }
+  diagnostics: ${ _phone_diagnostics if 'diagnostics' in firmware_features else {} }
+  status: !include '../features/voip/no_status_light.yaml'
+  maintenance: !include '../features/shared/standalone_phone_maintenance.yaml'
+substitutions:
+  _v2_afe: false
+  _v2_average: ${ (mic_mix | lower) == 'average' }
+  v2_compiler_optimization: PERF
+  aec_initial_mode: voip_high_perf
+  firmware_maintenance_stop_inputs:
+    - speaker.stop: ringtone_speaker
+    - speaker.stop: ringtone_speaker_mix
+  firmware_phone_has_ringtone: true
+  firmware_phone_has_display: true
+  firmware_phone_redraw:
+    - script.execute: draw_display
+# The phone UI calls this standby hint usb_connected; it is a voltage
+# heuristic, not USB detection. Copy V2 state without another ADC or polling loop.
+binary_sensor:
+  - platform: copy
+    id: usb_connected
+    source_id: battery_above_standby_threshold
+    internal: true

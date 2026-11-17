@@ -1,9 +1,10 @@
 """Execute the shared contact renderer against independent SIP state inputs."""
 from pathlib import Path
+import os
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-VOIP = ROOT.parent / "esphome-voip-stack"
+VOIP = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack"))
 
 
 def test_contact_renderer_separates_presence_from_call_activity(tmp_path):

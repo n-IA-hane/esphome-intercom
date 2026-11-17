@@ -11,6 +11,7 @@ import struct
 from typing import Any, Awaitable, Callable
 
 from .core import rtp
+from .core.sip_stun import is_stun_message
 from .core.sdp import (
     RtpVideoFormat,
     remote_can_receive,
@@ -232,6 +233,28 @@ class SipVideoRtpRelay:
         reason = str(error) or type(error).__name__
         self.rtp_drop_reasons[reason] = self.rtp_drop_reasons.get(reason, 0) + 1
 
+    def pending_media_sockets(self, side: str) -> dict:
+        """Borrow pre-bound descriptors for discovery before media starts."""
+        if self.started or self._start_task is not None or self._stop_requested:
+            raise RuntimeError("Media discovery must precede relay startup")
+        return {name: self._sockets[(side, rtcp)] for name, rtcp in (
+            ("video", False), ("video_rtcp", True)
+        )}
+
+    @staticmethod
+    def _socket(port: int) -> socket.socket:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setblocking(False)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
+            sock.bind(("0.0.0.0", int(port)))
+            return sock
+        except BaseException:
+            sock.close()
+            raise
+
     def reverse_held_sides(self) -> None:
         """Keep the retained peer on the left when a held bridge changes owner."""
         if (not self.started or self._start_task is not None or self._stop_requested
@@ -261,20 +284,6 @@ class SipVideoRtpRelay:
         self._keyframe_requests = {
             "right" if side == "left" else "left": value for side, value in self._keyframe_requests.items()
         }
-
-    @staticmethod
-    def _socket(port: int) -> socket.socket:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.setblocking(False)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, _RTP_IP_TOS)
-            sock.bind(("0.0.0.0", int(port)))
-            return sock
-        except BaseException:
-            sock.close()
-            raise
 
     @staticmethod
     def _loopback_socket_pair() -> tuple[socket.socket, socket.socket]:
@@ -390,11 +399,12 @@ class SipVideoRtpRelay:
         return self._stop_requested or self._released
 
     def configure_transcoding(self, hass: Any, call_id: str) -> None:
-        """Authorize conversion for active negotiated directions.
+        """Configure every incompatible negotiated direction for FFmpeg.
 
-        Retain the budget owner even for initial passthrough. Later RFC 3264
-        offers prepare only the required directions through the same relay
-        generation; inactive parked media owns no conversion worker.
+        A later RFC 3264 offer may change ``recvonly`` or ``sendonly`` to
+        ``sendrecv`` without changing codecs.  Provision both codec paths at
+        bridge creation so that such a direction change is an atomic peer
+        update, not a second media lifecycle.
         """
 
         if self.started or self._start_task is not None:
@@ -500,14 +510,18 @@ class SipVideoRtpRelay:
         if not self.started or self._stop_requested:
             return
         for side, peer in (("left", self.left), ("right", self.right)):
-            transport = self._transports.get((side, False))
-            if transport is None or peer.connection_held or not peer.port:
+            if peer.connection_held:
                 continue
-            indication = struct.pack("!HHI", 0x0011, 0, 0x2112A442) + secrets.token_bytes(12)
-            try:
-                transport.sendto(indication, (peer.host, peer.port))
-            except OSError as err:
-                _LOGGER.debug("Video NAT indication failed side=%s: %s", side, err)
+            for rtcp, host, port in ((False, peer.host, peer.port),
+                                     (True, peer.rtcp_host, peer.rtcp_port)):
+                transport = self._transports.get((side, rtcp))
+                if transport is None or port <= 0:
+                    continue
+                indication = struct.pack("!HHI", 0x0011, 0, 0x2112A442) + secrets.token_bytes(12)
+                try:
+                    transport.sendto(indication, (host, port))
+                except OSError as err:
+                    _LOGGER.debug("Video NAT indication failed side=%s rtcp=%s: %s", side, rtcp, err)
         # A peer may install its RTP tuple only after the SDP transaction ACK.
         # Probe promptly until the negotiated sender is observed, then maintain
         # the mapping at the ordinary interval. The peer's RTP latch owns this
@@ -1021,6 +1035,8 @@ class SipVideoRtpRelay:
         self.prepare_peer_reconfiguration(side, peer)()
 
     def handle_rtp(self, side: str, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         if self._stop_requested:
             self.ignored_after_stop += 1
             return
@@ -1160,6 +1176,8 @@ class SipVideoRtpRelay:
         self.rtcp_forwarded += 1
 
     def handle_rtcp(self, side: str, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         if self._transcode.directions:
             self.transcode_rtcp_dropped += 1
             return

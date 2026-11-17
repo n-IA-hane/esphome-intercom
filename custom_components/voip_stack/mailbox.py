@@ -23,7 +23,7 @@ EVENT_VOICEMAIL_CHANGED = "voip_stack_voicemail_changed"
 
 
 def mailbox_display_name(endpoint):
-    """Name the mailbox service separately from the phone that owns it."""
+    """Keep the mailbox service distinct from its owning phone."""
     return f"Voicemail: {endpoint.name}" if endpoint is not None else "Voicemail"
 
 
@@ -236,7 +236,6 @@ async def _remove_mailbox(hass, endpoint_id):
         archive = await get_archive(hass)
     if archive is not None:
         await archive.remove_mailbox(endpoint_id)
-        await archive.imap_forget(endpoint_id)
     entry = config_entry(hass)
     if entry is not None and endpoint_id in entry.data.get(CONF_ESPHOME_MAILBOXES, {}):
         settings = dict(entry.data[CONF_ESPHOME_MAILBOXES])
@@ -250,48 +249,30 @@ async def _remove_mailbox(hass, endpoint_id):
 async def async_setup_mailboxes(hass, entry):
     """Observe persistent ownership and publish state without an idle polling task."""
     from homeassistant.core import callback
-    from homeassistant.helpers.device_registry import EVENT_DEVICE_REGISTRY_UPDATED
-    from .endpoint_lifecycle import create_runtime_task
     runtime = require_runtime_data(hass)
 
     @callback
     def changed(event):
         from .websocket_api import _publish_ha_softphone_state, _ha_softphone_store
 
-        endpoint_id = str(event.data.get("endpoint_id") or "")
-        if runtime.imap_server is not None:
-            runtime.imap_server.notify_changed(endpoint_id)
-        if runtime.phone_provisioning is not None:
-            runtime.phone_provisioning.schedule()
-        endpoint = runtime.endpoints.get(endpoint_id)
-        if endpoint is not None and endpoint.kind.is_softphone:
+        endpoint = runtime.endpoints.get(str(event.data.get("endpoint_id") or ""))
+        if endpoint is not None and endpoint.supports_ha_client:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
 
-    @callback
-    def device_removed(event):
-        if event.data.get("action") != "remove":
-            return
-        if runtime.phone_provisioning is not None:
-            # The phone owner coordinates revocation, protocol sessions and
-            # files. This fallback serves standalone mailbox consumers only.
-            return
-        endpoint = runtime.endpoints.by_device_id(event.data["device_id"])
-        if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
-            create_runtime_task(hass, async_remove_mailbox(hass, endpoint.endpoint_id))
-
     entry.async_on_unload(hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, changed))
-    entry.async_on_unload(hass.bus.async_listen(EVENT_DEVICE_REGISTRY_UPDATED, device_removed))
+    from .esphome_provisioning import setup_provisioning
+    setup_provisioning(hass, entry)
     await async_refresh_mailbox_state(hass)
 
 
 async def async_remove_entry_mailboxes(hass, entry):
     """Remove this entry's mailboxes after normal integration shutdown."""
-    from .phone_config import phone_subentries
+    from .phone_config import phone_endpoint_id, phone_subentries
     from .session_cleanup import async_wait_for_cleanup
 
     path = archive_path(hass)
-    identities = {str(item.data.get("endpoint_id") or "") for item in phone_subentries(entry)}
+    identities = {phone_endpoint_id(item) for item in phone_subentries(entry)}
     identities.update(entry.data.get(CONF_ESPHOME_MAILBOXES, {}))
     identities.discard("")
     if path is None or not identities:
@@ -326,8 +307,6 @@ async def async_refresh_mailbox_state(hass):
             or any(child.data.get("voicemail", {}).get("enabled") for child in phone_subentries(entry))):
         await get_archive(hass)
     for endpoint in runtime.endpoints.endpoints:
-        if endpoint.kind.is_softphone:
+        if endpoint.supports_ha_client:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
-    if runtime.phone_provisioning is not None:
-        runtime.phone_provisioning.schedule()

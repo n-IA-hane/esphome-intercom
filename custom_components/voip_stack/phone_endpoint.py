@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from .phone_policy import PhonePolicy
+from .phone_queue_membership import normalize_phone_queues
 
 
 DEFAULT_ENDPOINT_ID = "default"
@@ -122,6 +123,7 @@ class PhoneEndpoint:
     send_video: bool = False
     offline_policy: OfflinePolicy = OfflinePolicy.UNAVAILABLE
     ring_group: str = ""
+    queues: tuple[str, ...] = ()
     conference_group: str = ""
     conference_ring: bool = False
     offline_forward_target: str = ""
@@ -129,6 +131,7 @@ class PhoneEndpoint:
     policy: PhonePolicy = field(default_factory=PhonePolicy)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "queues", normalize_phone_queues(self.queues))
         if not isinstance(self.policy, PhonePolicy):
             raise EndpointValidationError("policy must be a PhonePolicy")
         object.__setattr__(
@@ -218,6 +221,11 @@ class PhoneEndpoint:
         return self.extension or self.name
 
     @property
+    def supports_ha_client(self) -> bool:
+        """Managed accounts can attach HA media without becoming another phone."""
+        return self.kind in {EndpointKind.SIP_ACCOUNT, EndpointKind.BROWSER}
+
+    @property
     def has_active_call(self) -> bool:
         """Return whether this endpoint currently owns a logical call."""
         return bool(self.active_call_id)
@@ -230,3 +238,13 @@ class PhoneEndpoint:
     def supports(self, capability: object) -> bool:
         """Return whether a normalized capability is advertised."""
         return str(capability or "").strip().casefold() in self.capabilities
+
+
+def ha_client_endpoint(endpoint: PhoneEndpoint | None) -> PhoneEndpoint | None:
+    """Return an unregistered browser transport view of the canonical account."""
+    if endpoint is None or not endpoint.supports_ha_client:
+        return None
+    if endpoint.kind is EndpointKind.BROWSER:
+        return endpoint
+    return replace(endpoint, kind=EndpointKind.BROWSER,
+                   offline_policy=OfflinePolicy.UNAVAILABLE, offline_forward_target="")

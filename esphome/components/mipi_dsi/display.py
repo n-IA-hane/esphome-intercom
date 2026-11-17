@@ -12,7 +12,12 @@ from esphome.components.const import (
     CONF_DRAW_ROUNDING,
 )
 from esphome.components.display import CONF_SHOW_TEST_CARD
-from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
+from esphome.components.esp32 import (
+    CONF_EXECUTE_FROM_PSRAM,
+    VARIANT_ESP32P4,
+    add_idf_sdkconfig_option,
+    only_on_variant,
+)
 from esphome.components.mipi import (
     COLOR_ORDERS,
     CONF_COLOR_DEPTH,
@@ -38,23 +43,24 @@ from esphome.components.mipi import (
 )
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_ADVANCED,
     CONF_AUTO_CLEAR_ENABLED,
     CONF_COLOR_ORDER,
     CONF_DIMENSIONS,
     CONF_ENABLE_PIN,
+    CONF_FRAMEWORK,
     CONF_ID,
     CONF_INIT_SEQUENCE,
-    CONF_LAMBDA,
-    CONF_RAW_DATA_ID,
     CONF_INVERT_COLORS,
     CONF_MODEL,
     CONF_RESET_PIN,
     CONF_ROTATION,
     CONF_TRANSFORM,
     CONF_WIDTH,
+    KEY_ESP32,
 )
-from esphome.final_validate import full_config
 from esphome.core import CORE
+from esphome.final_validate import full_config
 from esphome.types import ConfigType
 
 from . import mipi_dsi_ns, models
@@ -88,7 +94,7 @@ COLOR_DEPTHS = {
 }
 
 
-def model_schema(config: ConfigType) -> cv.All:
+def model_schema(config: ConfigType) -> cv.Schema:
     model = MODELS[config[CONF_MODEL].upper()]
     transform = model.transform_schema()
     # CUSTOM model will need to provide a custom init sequence
@@ -100,17 +106,14 @@ def model_schema(config: ConfigType) -> cv.All:
     # Dimensions are optional if the model has a default width
     cv_dimensions = cv.Optional if model.get_default(CONF_WIDTH) else cv.Required
     pixel_modes = (PIXEL_MODE_16BIT, PIXEL_MODE_24BIT, "16", "24")
-    schema = display.FULL_DISPLAY_SCHEMA.extend(
+    return display.FULL_DISPLAY_SCHEMA.extend(
         {
             model.option(CONF_RESET_PIN, cv.UNDEFINED): pins.gpio_output_pin_schema,
             cv.GenerateID(): cv.declare_id(MipiDsi),
-            cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
             cv_dimensions(CONF_DIMENSIONS): dimension_schema(
                 model.get_default(CONF_DRAW_ROUNDING, 1)
             ),
-            model.option(CONF_ENABLE_PIN, cv.UNDEFINED): cv.ensure_list(
-                pins.gpio_output_pin_schema
-            ),
+            **display.enable_pin_schema(model, config),
             model.option(CONF_COLOR_ORDER, MODE_BGR): cv.enum(COLOR_ORDERS, upper=True),
             model.option(CONF_DRAW_ROUNDING, 2): power_of_two,
             model.option(CONF_PIXEL_MODE, PIXEL_MODE_16BIT): cv.one_of(
@@ -144,25 +147,6 @@ def model_schema(config: ConfigType) -> cv.All:
             model.option(CONF_VSYNC_FRONT_PORCH): cv.int_,
         }
     )
-    return cv.All(
-        schema,
-        cv.only_on_esp32,
-        only_on_variant(supported=[VARIANT_ESP32P4]),
-    )
-
-
-def _owned_rgb565_rotation(config: ConfigType) -> bool:
-    if get_color_depth(config) != 16 or config[CONF_BYTE_ORDER] != BYTE_ORDER_LITTLE:
-        return False
-    # CORE.raw_config is the complete merged package graph before component
-    # schema validation. Only domain presence is needed here, never partial
-    # validated config or unresolved IDs. Component manifests are already loaded.
-    if "p4_video_renderer" not in (CORE.raw_config or {}):
-        return True
-    from esphome.loader import get_component
-
-    consumer = get_component("p4_video_renderer")
-    return consumer is not None and getattr(consumer.module, "MIPI_NATIVE_COORDINATE_BLITS", False)
 
 
 @model_schema_extractor(MODELS, model_schema)
@@ -173,17 +157,29 @@ def _config_schema(config: ConfigType) -> ConfigType:
         },
         extra=cv.ALLOW_EXTRA,
     )(config)
-    config = model_schema(config)(config)
+    config = cv.All(cv.only_on_esp32, only_on_variant(supported=[VARIANT_ESP32P4]))(
+        config
+    )
+    # Check before the schema, which would fail on default pins of a missing expander
     model = MODELS[config[CONF_MODEL].upper()]
     model.check_requirements()
+    config = model_schema(config)(config)
     width, height, _offset_width, _offset_height, _pad_width, _pad_height = (
         model.get_dimensions(config)
     )
+    rgb565 = get_color_depth(config) == 16
+    transform = rgb565 and config[CONF_BYTE_ORDER] == BYTE_ORDER_LITTLE
+    # Keep ID objects until the normal ID pass resolves generated names.
+    capabilities = CORE.data.setdefault(DOMAIN, {})
+    if rgb565:
+        capabilities.setdefault("framebuffer_readback_ids", []).append(config[CONF_ID])
+    if transform:
+        capabilities.setdefault("rgb565_transform_ids", []).append(config[CONF_ID])
     display.add_metadata(
         config[CONF_ID],
         width,
         height,
-        has_hardware_rotation=_owned_rgb565_rotation(config),
+        has_hardware_rotation=transform,
         byte_order=config[CONF_BYTE_ORDER],
         has_writer=requires_buffer(config)
         or config.get(CONF_AUTO_CLEAR_ENABLED) is True,
@@ -208,6 +204,15 @@ FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 async def to_code(config: ConfigType) -> None:
+    if get_color_depth(config) == 16 and config[CONF_BYTE_ORDER] == BYTE_ORDER_LITTLE:
+        cg.add_define("USE_MIPI_DSI_RGB565_OWNED_TRANSFORM")
+    # While flash is written (NVS, OTA) the cache is off; a DSI interrupt that waits for it makes the
+    # panel miss a frame, seen as a white flash. Code run from PSRAM does not wait for the flash.
+    if not CORE.config[KEY_ESP32][CONF_FRAMEWORK][CONF_ADVANCED][
+        CONF_EXECUTE_FROM_PSRAM
+    ]:
+        add_idf_sdkconfig_option("CONFIG_LCD_DSI_ISR_CACHE_SAFE", True)
+
     model = MODELS[config[CONF_MODEL].upper()]
     color_depth = COLOR_DEPTHS[get_color_depth(config)]
     pixel_mode = int(config[CONF_PIXEL_MODE].removesuffix("bit"))
@@ -215,16 +220,11 @@ async def to_code(config: ConfigType) -> None:
         model.get_dimensions(config)
     )
     var = cg.new_Pvariable(config[CONF_ID], width, height, color_depth, pixel_mode)
-    if display.get_display_metadata(config[CONF_ID]).has_hardware_rotation:
-        cg.add_define("USE_MIPI_DSI_RGB565_OWNED_TRANSFORM")
     cg.add(var.set_big_endian(config[CONF_BYTE_ORDER] == BYTE_ORDER_BIG))
 
     sequence = model.get_sequence(config)
     cg.add(var.set_model(config[CONF_MODEL]))
-    if hasattr(cg, "shared_progmem_array"):
-        table = cg.shared_progmem_array("mipi_dsi_init_sequence", cg.uint8, sequence)
-    else:
-        table = cg.progmem_array(config[CONF_RAW_DATA_ID], sequence)
+    table = cg.shared_progmem_array("mipi_dsi_init_sequence", cg.uint8, sequence)
     cg.add(var.set_init_sequence(table, len(sequence)))
     cg.add(var.set_invert_colors(config[CONF_INVERT_COLORS]))
     cg.add(var.set_hsync_pulse_width(config[CONF_HSYNC_PULSE_WIDTH]))
@@ -236,9 +236,7 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_pclk_frequency(config[CONF_PCLK_FREQUENCY] / 1.0e6))
     cg.add(var.set_lanes(int(config[CONF_LANES])))
     cg.add(var.set_lane_bit_rate(config[CONF_LANE_BIT_RATE] / 1.0e6))
-    if reset_pin := config.get(CONF_RESET_PIN):
-        reset = await cg.gpio_pin_expression(reset_pin)
-        cg.add(var.set_reset_pin(reset))
+    await cg.add_pin(var.set_reset_pin, config.get(CONF_RESET_PIN))
     if enable_pin := config.get(CONF_ENABLE_PIN):
         enable = [await cg.gpio_pin_expression(pin) for pin in enable_pin]
         cg.add(var.set_enable_pins(enable))
@@ -246,6 +244,4 @@ async def to_code(config: ConfigType) -> None:
     if model.rotation_as_transform(config):
         config[CONF_ROTATION] = 0
     await display.register_display(var, config)
-    if lamb := config.get(CONF_LAMBDA):
-        lambda_ = await cg.process_lambda(lamb, [(display.DisplayRef, "it")], return_type=cg.void)
-        cg.add(var.set_writer(lambda_))
+    await display.add_writer(var, config)

@@ -106,10 +106,10 @@ async def async_call_action(
         context=context,
     )
     _LOGGER.info(
-        "ESP SIP phone %s action=%s fields=%s",
+        "ESP SIP phone %s action=%s data=%s",
         device.get("name"),
         action,
-        sorted(data or {}),
+        data or {},
     )
 
 

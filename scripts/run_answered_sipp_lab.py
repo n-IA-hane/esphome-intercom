@@ -15,7 +15,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
 from ha_softphone_matrix import BareSip  # noqa: E402
 from ha_voip_lab.auth import lab_token  # noqa: E402
 from live_voip_qualification import HaWs, candidate_revision  # noqa: E402
@@ -75,7 +74,8 @@ def run_answered_case(
     ha_url: str,
     token: str,
 ) -> dict[str, object]:
-    callee = BareSip(callee_config, headless_audio=True)
+    callee = None
+    process = None
     started = time.monotonic()
     command = [
         "sipp",
@@ -97,14 +97,15 @@ def run_answered_case(
         "-trace_stat",
         "-nostdin",
     ]
-    process = subprocess.Popen(
-        command,
-        cwd=capture_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
     try:
+        callee = BareSip(callee_config, headless_audio=True)
+        process = subprocess.Popen(
+            command,
+            cwd=capture_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         state = callee.wait_for_any(("Incoming call", "Call established"), 8)
         if "call established" not in state.lower():
             callee.command("/accept")
@@ -129,10 +130,26 @@ def run_answered_case(
             "cleanup": cleanup,
         }
     finally:
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=3)
-        callee.close()
+        try:
+            if process is not None:
+                try:
+                    if process.poll() is None:
+                        try:
+                            process.terminate()
+                        finally:
+                            try:
+                                process.communicate(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                try:
+                                    process.kill()
+                                finally:
+                                    process.communicate(timeout=3)
+                finally:
+                    if process.stdout is not None:
+                        process.stdout.close()
+        finally:
+            if callee is not None:
+                callee.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,7 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=CAPTURE_ROOT / "sipp-answered-lab",
+        default=ROOT / "test_captures" / "sipp-answered-lab",
     )
     parser.add_argument(
         "--quiescence-only",
@@ -166,7 +183,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     token = lab_token(args.ha_url, args.credentials)
     if args.quiescence_only:
         print(json.dumps(asyncio.run(runtime_quiescence(args.ha_url, token))))
@@ -176,7 +193,17 @@ def main() -> int:
         ("callee_bye", ROOT / "tests/sipp/answered-remote-bye.xml", 16064),
     )
     results: list[dict[str, object]] = []
+    failed_case: str | None = None
     for name, scenario, local_port in cases:
+        if failed_case is not None:
+            results.append({
+                "scenario": name,
+                "status": "not_run",
+                "reason": "previous_case_failed",
+                "blocked_by": failed_case,
+            })
+            print(f"NOT_RUN {name}")
+            continue
         try:
             result = run_answered_case(
                 name,
@@ -194,11 +221,14 @@ def main() -> int:
             result = {"scenario": name, "status": "failed", "error": str(error)}
         results.append(result)
         print(f"{result['status'].upper()} {name}")
+        if result["status"] != "passed":
+            failed_case = name
     artifact = {
         "schema_version": 2,
         "created_at": datetime.now(UTC).isoformat(),
         "candidate": candidate_revision(),
         "results": results,
+        "aborted_after": failed_case,
     }
     (args.out_dir / "summary.json").write_text(
         json.dumps(artifact, indent=2), encoding="utf-8"

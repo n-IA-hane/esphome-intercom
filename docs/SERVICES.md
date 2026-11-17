@@ -1,5 +1,10 @@
 # Home Assistant services
 
+For the 2026.12 development additions, see [group and queue actions](GROUPS_AND_QUEUES.md#actions)
+and [paging announcements](PAGING.md). Group declarations, operator login and
+announcement jobs are separate operations; changing one does not unregister a
+phone or change its global autoanswer preference.
+
 The `voip_stack.*` services are the public control surface for the HA
 softphone, central phonebook, local SIP endpoint accounts and automation
 fallback routing.
@@ -18,6 +23,53 @@ Use [phone defaults](PHONE_ROUTING.md) for a persistent rule such as a ringing
 timeout. Use a [call automation](AUTOMATION_DIALPLAN.md) when the result depends
 on time, presence or keypad input. The reference below explains exact fields,
 call context and failure behavior for more complex sequences.
+
+## Group membership, operators and paging
+
+| Action | Required fields | Behavior |
+| --- | --- | --- |
+| `voip_stack.set_phone_memberships` | `phone`, `field`, `value` | Set `ring_group` or `queues` on the selected phone. `value` accepts comma-separated names or a list; empty removes memberships. |
+| `voip_stack.set_phone_queues` | `phone`, `queues` | Queue-specific form of the same membership operation. New valid names create automatic queue devices. |
+| `voip_stack.set_queue_agent_state` | `queue`, `phone`, `state` | Use `available`, `paused` or `logged_out` without changing membership; optional `reason` records the pause reason until the next state change. |
+| `voip_stack.get_queue_state` | `queue` | Return policy, waiting count and member availability; optional `phone` filters the members. |
+| `voip_stack.get_queue_activity` | `queue` | Read Recorder events with optional `since`, `until`, `limit` and `cursor`. |
+| `voip_stack.get_queue_metrics` | `queue` | Read admission-cohort metrics with optional `since` and `until`. |
+| `voip_stack.configure_queue` | `queue` | Update `enabled`, `max_waiting`, `max_wait`, `ring_timeout`, `no_agent_wait`, `retry_delay`, `wrap_up`, `fallback`, `hold_media`, `strategy`, `agent_order`, `auto_pause_after`, `fallback_full`, `fallback_timeout`, `fallback_no_agents`, `fallback_disabled` or `fallback_removed`. |
+| `voip_stack.announce` | `targets` and either TTS or media | Supply `message` with `tts_entity_id`, or `media`. Optional `language`, `options`, `answer_timeout`, `timeout` and `wait` control delivery. |
+| `voip_stack.stop_announcement` | `announcement_id` | Stop only that announcement; repeating the request is safe. |
+
+Phone selectors accept a VoIP endpoint identity, device ID or unambiguous name.
+Queue selectors accept a stable group ID, name or extension. Policy and full
+queue inspection require administrative access; phone operations respect its
+existing control permissions. Offline ESP membership changes remain pending
+until the native text control can confirm them.
+
+`strategy` accepts `ring_all` (default), `round_robin`, `longest_idle` or
+`ordered`. `agent_order` lists stable phone identities in preferred ringing
+order; other members follow, without changing membership. `auto_pause_after`
+is disabled at `0`. A positive value pauses the operator in this queue after
+that many consecutive offers that actually rang and timed out. Busy, offline,
+DND, cancellations and losing legs do not count; answering or setting the
+operator available clears the counter. Automatic pause records `reason: no_answer`.
+
+The specific exit destinations `fallback_full`, `fallback_timeout`,
+`fallback_no_agents`, `fallback_disabled` and `fallback_removed` inherit the
+common `fallback` when empty. They distinguish a full queue, maximum wait,
+no available operators, a disabled queue and a removed queue.
+
+Both history actions require administrative access and use Home Assistant
+Recorder. `since` and `until` accept ISO timestamps with timezones. The default
+window is the last 24 hours, with a maximum of 31 days. Activity defaults to
+`limit: 100` (maximum 1000); pass its returned `next_cursor` as `cursor` with
+the same queue and window to read the next page. Metrics count admissions in
+`[since, until)` and evaluate their outcomes as of `until`, separating pending,
+answered, abandoned, timed-out, transferred and rejected calls. Recorder
+retention and event exclusions apply; without Recorder, history is unavailable
+while calls continue to work.
+
+See [group devices and queues](GROUPS_AND_QUEUES.md) for limits, operator states
+and BLF keys. See [paging](PAGING.md) for announcement results and the requirements
+for unattended speakerphone or browser playback.
 
 ## Phone state and pickup
 
@@ -132,6 +184,10 @@ Optional:
 - `send_video`: offer the selected browser phone's camera when SIP video is
   enabled. Receiving video does not require this flag.
 - `ha_bridge`: force HA to anchor the route when that is valid.
+- `trunk_id`: select a named outgoing line. Per-call selection wins over the
+  phone preference, then the global default. An unavailable selected line fails
+  instead of silently using another provider. Choose the line through the
+  device picker; see [line selection](SIP_TRUNK.md#choose-an-outgoing-line).
 
 `voip_stack.call` supports Home Assistant's optional action response. When a
 caller requests a response, it receives the authoritative logical-phone
@@ -165,6 +221,18 @@ destination using its previous trunk; the automation keeps its original call
 reference. `trunk_id` can select another configured line for the forwarded
 destination. The original `answer_timeout` remains the total answer deadline
 and is not restarted by forwarding.
+
+The failure policy covers routing preflight as well as a destination that rings
+and fails. Once an operation has accepted a valid, authorized source call,
+an unknown destination, unavailable line or routing loop produces a failed
+transfer result and applies `resume`, `terminate` or `busy` to that source.
+Invalid action arguments, stale call guards, non-forwardable sources and denied
+permissions remain action errors and do not terminate a valid existing call.
+
+Forwarding can replace a pending SIP destination after a 183 with audio. The
+caller keeps its negotiated media contract and port ownership during the move;
+the retired destination cannot change the replacement through late responses.
+If `resume` needs the retired destination again, a new SIP transaction is used.
 
 See [Automation Dial Plan](AUTOMATION_DIALPLAN.md) for complete examples.
 
@@ -243,9 +311,11 @@ Enable or disable Auto Answer on the selected logical HA phone. The value is
 persisted in that phone's config subentry and exposed by its native **Auto
 answer** switch. Every card bound to the phone sees the same setting; clearing
 one browser's cache does not reset it. A browser still needs persistent
-microphone permission before it can answer automatically. The receiving card
-must also remain loaded in a running browser/app view. If opening its dashboard
-view loads the card, that can be the moment it answers the waiting call.
+microphone permission before it can answer automatically. Its receiving HA
+frontend must be active, with a card loaded or, in the preview, global call
+popups enabled for that phone. Opening a receiving view can therefore be the
+moment it answers a waiting call. The logical phone's availability alone does
+not supply audio. See [account availability](USER_GUIDE.md#account-availability-and-closed-browsers).
 
 ### `voip_stack.set_send_video`
 
@@ -262,9 +332,10 @@ phone. Select the Phone in the HA action editor; it supplies `device_id`.
 
 - `forward_to`: always forward future calls to this contact, extension or SIP URI.
 - `busy_to`: forward when busy or Do not disturb is enabled.
-- `unavailable_to`: forward when the destination is unavailable, for example a
-  SIP phone without a reachable registration. An enabled browser phone can ring
-  without an attached card; use its no-answer policy for that case.
+- `unavailable_to`: forward when the endpoint is unavailable or the SIP attempt
+  reports temporary unavailability. In the preview, closing a browser card does
+  not make its enabled logical phone unavailable; use a no-answer rule if no
+  receiving browser answers.
 - `ringing_timeout`: seconds before the no-answer action; zero disables the limit.
 - `no_answer_action`: `hangup`, `forward` or `voicemail`, required when enabling a new timeout.
 - `no_answer_to`: destination required for `forward`; for `voicemail`, an enabled phone mailbox, defaulting to this phone when empty.
@@ -293,8 +364,11 @@ redirect the attempt to another supported SIP or ESPHome phone. The `call`
 action still returns the same application call reference, so the following
 `tts_say` and `hangup` need no changes. Its `answer_timeout` covers all attempts
 together. Synthesis starts only after the selected phone answers; a failed
-replacement ends the action and releases both attempts. This development path
-does not yet resume a cancelled destination or support a mailbox replacement.
+replacement ends the action and releases both attempts. An explicit forward
+with `on_failure: resume` can start a fresh attempt to the previous destination,
+within that original answer deadline. A no-answer policy cannot replace this
+still-ringing announcement destination with a mailbox; handing an answered
+Automation call to voicemail is a separate action.
 
 ### `voip_stack.set_ha_softphone_settings`
 
@@ -719,8 +793,10 @@ deletion. An empty recording creates no message.
 `pin` accepts 4 to 10 digits, or an empty value to disable access from another
 mailbox. Only a salted PIN hash is persisted. The shared menu voice and language
 are configured once in the integration's native reconfiguration flow, not in
-each mailbox. Enabling the global voicemail feature requires an available TTS
-entity and a supported prompt language. Current prompt translations cover
+each mailbox. An available TTS entity and supported prompt language are needed
+for spoken mailbox access and navigation. Depositing a message with the recording
+tone or recorded greeting does not require TTS, and there is no global voicemail
+enable switch. Current prompt translations cover
 English, Italian, German and Portuguese, filtered against the selected engine's
 supported languages.
 
@@ -794,7 +870,7 @@ complete examples, supported STT input and attachment handling.
 
 ## Park an established call
 
-`voip_stack.park` parks the selected phone's established audio or SIP audio/video call. `device_id`
+`voip_stack.park` parks the selected phone's current audio call. `device_id`
 selects the phone, `slot` optionally selects a configured parking slot, and
 `call_id` / `expected_generation` can identify a specific current call. The
 optional action response contains `slot`, `call_id` and `generation`.
@@ -802,10 +878,6 @@ The selected phone must own the call. Parking is available by default; configure
 its numbers and resolve any reported dial-plan conflicts. Retrieve the caller through the normal call action or SIP dialer
 using the slot number. See [Call parking](CALL_PARKING.md) for configuration,
 examples and the current development verification boundary.
-
-SIP video retains the existing dialog and pauses while parked. The retrieving
-phone must have video enabled, and incompatible codecs require supported video
-transcoding. This does not extend directed pickup or conferences to video.
 
 
 ## Conversation recording
@@ -821,3 +893,34 @@ See [Record a conversation](CALL_RECORDING.md) for examples and media scope.
 
 `voip_stack.delete_recording` accepts the same `device_id` and `recording_id`
 and removes the recording together with its metadata.
+
+## Physical phone provisioning
+
+These actions require administrative access and enabled phone provisioning.
+Select a configured physical phone with `device_id` or `phone_id`, except when
+refreshing the catalog.
+
+- `voip_stack.provision_phone` queues configuration preparation, waiting until
+  the bound lines are idle. It does not reboot or reset the phone.
+- `voip_stack.get_phone_provisioning_state` returns desired and downloaded
+  revisions. Optional `include_url` defaults to `false`; `true` also returns
+  the private `provisioning_url`, which contains a device credential.
+- `voip_stack.refresh_phone_profiles` takes no fields and refreshes the catalog
+  index. Existing phones keep their pinned profile revision.
+- `voip_stack.rotate_phone_provisioning_token` invalidates the phone's previous
+  download URL and queues preparation with a new credential. Retrieve and
+  configure the replacement URL before the next download.
+
+`downloaded` means HA served a file; it does not prove the phone applied its
+settings. See [physical phone provisioning](PHONE_PROVISIONING.md) for setup,
+manual URL configuration and state meanings.
+
+## Saved card associations
+
+`voip_stack.reload_card_associations` takes no fields and requires administrative
+access. It reloads saved dashboard declarations, including YAML dashboards, and
+recomputes account availability from those declarations and current SIP
+registrations. It does not reload the PBX or interrupt calls. Storage dashboard
+edits already trigger reconciliation through HA events; this action provides an
+explicit reload after changing a YAML file. See
+[accounts and clients](ACCOUNTS_AND_CLIENTS.md).

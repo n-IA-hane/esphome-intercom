@@ -24,6 +24,17 @@ from custom_components.voip_stack.sip_listener import SipInvite
 pytestmark = pytest.mark.ha
 
 
+async def test_automation_idle_deadline_uses_the_session_resource_owner(application):
+    app, registry, _peer, _released = application
+    app.arm_deadline()
+    name = "deadline:automation"
+    try:
+        assert registry.resource_for(app.session.call_id, name) is app.deadline
+    finally:
+        app.cancel_deadline()
+    assert registry.resource_for(app.session.call_id, name) is None
+
+
 @pytest.fixture
 def application(hass, monkeypatch, socket_enabled):
     registry = SipEndpointRuntime(allow_dark_sessions=True)
@@ -454,7 +465,7 @@ async def test_confirmed_call_handoff_changes_owner_without_second_answer(applic
 
 
 async def test_forward_to_another_automation_reuses_media_and_releases_old_controller(application, monkeypatch):
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import call_forwarder
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.endpoint_routing import EndpointRouteResolver

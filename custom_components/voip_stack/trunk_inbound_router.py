@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
@@ -32,7 +32,9 @@ from .endpoint_routing import (
     roster_from_peers,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
+    supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from .fsm import (
     CallState,
@@ -62,12 +64,18 @@ from .core.sip import parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 from .sip_runtime import (
-    enable_reused_signaling_flow,
+    enable_reused_tcp_connection,
+    select_registered_outbound_flow,
     send_final_response,
     uri_transport,
 )
 from .trunk_dtmf import collect_trunk_dtmf
 from .trunk_routing import async_request_inbound_destination, trunk_default_target
+from .automation_routing import has_native_route_window
+
+if TYPE_CHECKING:
+    from .call_forwarder import TransferResult
+
 
 _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
@@ -83,7 +91,7 @@ class TrunkInboundRuntime:
     local_ip: str
     ha_peer_name: str
     route_resolver: EndpointRouteResolver
-    forward_existing_call: Callable[..., Awaitable[None]]
+    forward_existing_call: Callable[..., Awaitable[asyncio.Task[TransferResult]]]
     defer_invite_to_softphone: Callable[..., None]
     start_local_assist_bridge: Callable[..., Awaitable[Any]]
 
@@ -144,6 +152,7 @@ async def async_route_trunk_invite(
             invite,
             info_queue=info_queue,
             source_rtp_port=source_relay_port,
+            rtp_socket=bridge_ports.audio_socket(source_relay_port),
             routes=routes,
             timeout=timeout,
             terminator=terminator,
@@ -162,7 +171,9 @@ async def async_route_trunk_invite(
 
     # Explicit digits always select the canonical phonebook route. Only
     # the no-digits fallback may be overridden by an automation.
-    if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):
+    if not digits and (configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED) or has_native_route_window(
+        hass, invite, trunk_invite=True, default_destination=trunk_default_target(configured_trunk)
+    )):
         automation_decision = await async_request_inbound_destination(
             hass,
             invite,
@@ -274,6 +285,15 @@ async def async_route_trunk_invite(
         from .automation_call import route_automation_call
         await route_automation_call(runtime, invite, decision, registry, None)
         return
+    if decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
+        from .queue_call import route_queue_call
+        from .paging import route_paging_call
+        handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
+        result = await handler(runtime, invite, decision, registry, None)
+        if result.status >= 300:
+            await terminate_source("application_rejected", status=result.status,
+                                   answered=bool((registry.resource_for(invite.call_id, "preanswered") or {}).get("final_response_sent")))
+        return
     if decision.action is RouteAction.ASSIST:
         registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)
@@ -345,7 +365,7 @@ async def async_route_trunk_invite(
             peers,
             roster,
         ) or preferred_browser_phone(hass)
-        if target_endpoint is not None and target_endpoint.kind.is_softphone:
+        if target_endpoint is not None and target_endpoint.supports_ha_client:
             runtime.defer_invite_to_softphone(
                 invite,
                 route_kind="trunk",
@@ -520,8 +540,13 @@ async def async_route_trunk_invite(
             if rtp_audio_profile is not None
             else None
         ),
-        include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
-        allow_directional_audio_payloads=True,
+        include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
+        allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
+        independent_audio_ptime=supports_independent_audio_ptime(
+            peer_target, decision.entry
+        ),
         signaling_transport=uri_transport(bridge_uri),
         peer_user_agent=str(
             (
@@ -556,12 +581,15 @@ async def async_route_trunk_invite(
     )
     from .sip_runtime import configure_local_contact
     configure_local_contact(hass, client)
-    enable_reused_signaling_flow(
+    enable_reused_tcp_connection(
         hass,
         client,
         bridge_uri,
         target=destination,
         default_sip_port=int(cfg["sip_port"]),
+        selected_flow=select_registered_outbound_flow(
+            hass, bridge_uri, entry=decision.entry, peer=peer_target
+        ),
     )
     result = await client.invite(
         target=bridge_uri.user,

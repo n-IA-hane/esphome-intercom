@@ -22,21 +22,33 @@ voip_stack:
   use_ha_as_first_contact: true
   id: phone
   audio:
-    tx:
-      sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
-    rx:
-      sample_rate: 48000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
-    rx_formats:
-    - sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
+    codecs:
+      - codec: pcm
+        tx:
+          # Prefer 16 kHz / 20 ms TX (50 packets/s); keep 10 ms as a compatible alternative.
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
+        rx:
+          # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
+          # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
+          - sample_rate: 48000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
   microphone_source:
     microphone: i2s_mics
     channels: 0

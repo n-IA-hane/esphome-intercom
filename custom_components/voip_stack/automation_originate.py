@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
@@ -26,32 +27,38 @@ from .pbx_routing import roster_entry_for_target
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .phonebook_runtime import registered_roster_entries
 from .runtime_data import require_runtime_data
-from .sip_runtime import enable_reused_signaling_flow, uri_transport
+from .sip_runtime import enable_reused_tcp_connection, uri_transport
 from .trunk_policy import is_trunk_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
 
 
-async def _dial_attempt(hass, registry, session, attempt, destination, timeout):
+async def _dial_attempt(hass, registry, session, attempt, destination, timeout, *, answer_mode="", audio_direction="sendrecv"):
     """Arbitrate an outgoing leg and route decisions with the existing fork."""
     client = attempt.client
     decision = hass.loop.create_future()
-    registry.set_pending_route(session.call_id, {"future": decision, "outgoing_automation": True})
+    if not answer_mode:
+        registry.set_pending_route(session.call_id, {"future": decision, "outgoing_automation": True})
 
     async def dial():
         # Bind the advertised media port before SIP can allocate an ephemeral
         # socket or the peer can send its first RTP packet (RFC 3264, 5.1).
-        client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
+        client.audio_rtp_socket = attempt.ports.take_audio_socket(client.local_rtp_port)
+        if client.audio_rtp_socket is None:
+            client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
         result = await client.invite(
             target=attempt.uri.user, target_display_name=destination,
             remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
             request_uri=str(attempt.uri), timeout=timeout,
+            **({"answer_mode": answer_mode, "audio_direction": audio_direction}
+               if answer_mode or audio_direction != "sendrecv" else {}),
         )
         if result in {"ringing", "calling", "remote_ringing"}:
             registry.transition(session.call_id, state=CallState.REMOTE_RINGING.value,
                                 expected_generation=session.generation)
             publish_bridge_projection(hass, session, event_type="remote_ringing",
                                       direction="outgoing", route_kind="automation")
-            result = await client.wait_for_final(timeout=timeout)
+            remaining = max(0.0, client.invite_sent_at + timeout - hass.loop.time()) if answer_mode else timeout
+            result = await client.wait_for_final(timeout=remaining)
         if result == "in_call" and session.owner == "automation":
             registry.transition(session.call_id, state=CallState.IN_CALL.value,
                                 expected_generation=session.generation)
@@ -74,6 +81,10 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout):
     async def close_control(_mode):
         return None
 
+    # Paging already uses the shared retain-all fork at the job level. Keep
+    # this one branch's timeout at first INVITE, after transport preparation.
+    if answer_mode:
+        return await dial(), None
     fork = DialForkController(session, (
         DialCandidate(client.dialog_ids.call_id, dial, close, endpoint_id=attempt.endpoint_id),
         DialCandidate("route-control", reroute, close_control, control=True),
@@ -87,6 +98,13 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout):
 
 async def async_originate_automation_call(call: ServiceCall) -> dict:
     """Return a call token only after final acceptance and local media binding."""
+    return await async_originate_application_call(call)
+
+
+async def async_originate_application_call(
+    call: ServiceCall, *, source=None, answer_mode="", audio_direction="sendrecv",
+) -> dict:
+    """Share the existing application originate owner with server-side paging."""
     await async_require_service_admin(call.hass, call)
     if call.data.get("device_id"):
         raise ServiceValidationError("Choose either a calling phone or an Automation contact")
@@ -99,8 +117,9 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
     registry = call_registry(hass)
     peers = await async_build_peer_snapshot(hass)
     entries = roster_from_peers(hass, peers, registered_roster_entries(hass))
-    source = roster_entry_for_target(str(call.data['source_automation']), entries)
-    if source is None or not source.enabled or source.metadata.get('virtual_endpoint') != 'automation':
+    supplied_source = source is not None
+    source = source or roster_entry_for_target(str(call.data['source_automation']), entries)
+    if source is None or not source.enabled or (not supplied_source and source.metadata.get('virtual_endpoint') != 'automation'):
         raise ServiceValidationError("Select an enabled Automation contact as the calling identity")
     destination = str(call.data['destination']).strip()
     from .inbound_routing.targets import resolve_phone_target
@@ -127,7 +146,7 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
     dialer = EndpointDialer(
         hass=hass, local_ip=local_ip, config=runtime.transport_config,
         route_resolver=resolver, sip_uri_transport=uri_transport,
-        enable_reused_signaling_flow=enable_reused_signaling_flow,
+        enable_reused_tcp_connection=enable_reused_tcp_connection,
     )
     def prepare(target):
         if dialer.browser_leg_for_member(target, peers, entries) is not None:
@@ -172,7 +191,10 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
             raise ServiceValidationError("The destination cannot receive an outgoing automation call")
         return candidate
 
-    attempt = prepare(destination)
+    try:
+        attempt = prepare(destination)
+    except OSError as error:
+        raise ServiceValidationError("The destination RTP port is unavailable") from error
     client = attempt.client
     call_id = client.dialog_ids.call_id
     session = None
@@ -258,9 +280,14 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
             ))
 
         timeout = float(call.data.get('answer_timeout', 30))
-        async with asyncio.timeout(timeout):
+        # Paging's INVITE transaction starts its answer budget after preparation.
+        # The paging job independently bounds DNS/media preparation and cleanup.
+        async with (nullcontext() if answer_mode else asyncio.timeout(timeout)):
             while True:
-                outcome, route = await _dial_attempt(hass, registry, session, attempt, destination, timeout)
+                outcome, route = await _dial_attempt(
+                    hass, registry, session, attempt, destination, timeout,
+                    answer_mode=answer_mode, audio_direction=audio_direction,
+                )
                 if outcome.disposition is DialDisposition.ANSWERED:
                     break
                 if outcome.disposition is not DialDisposition.REROUTE:

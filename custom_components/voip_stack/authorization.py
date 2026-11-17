@@ -56,8 +56,9 @@ def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]
             registry = er.async_get(hass)
             entity_ids.update(
                 str(item.entity_id)
-                for item in registry.entities.values()
-                if str(getattr(item, "device_id", "") or "") == device_id
+                for item in er.async_entries_for_device(
+                    registry, device_id, include_disabled_entities=True
+                )
             )
         except (AttributeError, ImportError):
             pass
@@ -95,6 +96,13 @@ def _require_endpoint_permission(
             user_id=user_id or None,
         )
     return user_id
+
+
+def require_user_endpoint_permission(hass: Any, user: Any, endpoint: Any, policy: str) -> str:
+    """Share the live user/account boundary across state and media adapters."""
+    if user is None or not getattr(user, "is_active", True) or endpoint is None:
+        raise Unauthorized(permission=policy, user_id=getattr(user, "id", None))
+    return _require_endpoint_permission(hass, user, endpoint, policy)
 
 
 def _require_explicit_entity_permission(
@@ -233,7 +241,7 @@ def require_websocket_endpoint_read(
     endpoint: Any,
 ) -> str:
     """Require read access to the selected logical phone."""
-    return _require_endpoint_permission(
+    return require_user_endpoint_permission(
         hass,
         getattr(connection, "user", None),
         endpoint,
@@ -247,7 +255,7 @@ def require_websocket_endpoint_control(
     endpoint: Any,
 ) -> str:
     """Require control access to the selected logical phone."""
-    return _require_endpoint_permission(
+    return require_user_endpoint_permission(
         hass,
         getattr(connection, "user", None),
         endpoint,
@@ -342,6 +350,7 @@ async def async_require_media_controller(
     user: Any,
     *,
     endpoint_id: str = "",
+    endpoint: Any | None = None,
 ) -> str:
     """Authorize a media attachment against the call's sticky controller.
 
@@ -359,6 +368,13 @@ async def async_require_media_controller(
         lock = asyncio.Lock()
         registry.media_controller_lock = lock
     async with lock:
+        if endpoint is not None:
+            from .runtime_data import endpoint_directory
+
+            endpoint = endpoint_directory(hass).get(str(endpoint_id or "").strip())
+            _require_entity_permission(hass, user, POLICY_CONTROL)
+            for policy in (POLICY_READ, POLICY_CONTROL):
+                require_user_endpoint_permission(hass, user, endpoint, policy)
         session_id = registry.resolve_session_id(str(call_id or "").strip())
         session = registry.sessions.get(session_id)
         if session is None:

@@ -84,7 +84,7 @@ std::exit(ok && !id(invalid_stop) &&
     document = {
         'esphome': {'name': 'ota-host-regression', 'includes': ['<cstdio>', '<cstdlib>', '<cstring>', '<thread>', '<chrono>'],
                     'on_boot': {'priority': -100, 'then': [{'lambda': Lambda(setup)}, {'delay': '500ms'}, {'lambda': Lambda(check)}]}},
-        'host': {}, 'logger': {'level': 'ERROR'},
+        'host': {}, 'logger': {'level': 'ERROR', 'boot_log_level': 'ERROR'},
         'globals': [{'id': name, 'type': kind, 'initial_value': initial} for name, kind, initial in (
             ('g_ota_in_progress', 'bool', 'false'), ('audio_idle', 'bool', 'false'),
             ('display_paused', 'bool', 'false'), ('audio_starts', 'int', '0'),

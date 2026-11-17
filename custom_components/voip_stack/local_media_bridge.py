@@ -72,7 +72,7 @@ class LocalMediaBridge:
     video_peers: tuple | None = None
 
     @classmethod
-    async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None):
+    async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None, right_port=None):
         """Bind only the spare reserved port, leaving live application media alone."""
         relay, sock = None, right_socket
         try:
@@ -85,14 +85,16 @@ class LocalMediaBridge:
                 raise ValueError("Local application handoff requires an owned video update")
             relay = SipRtpRelay(
                 left=application_rtp_peer(invite), right=application_rtp_peer(remote_invite),
-                left_port=media.local_rtp_port, right_port=media.reservation.ports[1],
+                left_port=media.local_rtp_port, right_port=right_port if right_port is not None else media.reservation.ports[1],
             )
             result = cls(media, invite, relay, transport, video_relay=video, video_update=video_update,
                          video_peers=(video.left, video.right) if video is not None else None)
+            if sock is None and right_port is None:
+                sock = media.reservation.take_audio_socket(relay.right_port)
             if sock is None:
                 sock = relay._rtp_socket(relay.right_port)
             relay.right_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
-                lambda: _RelayProtocol(relay, "right"), sock=sock,
+                lambda: _RelayProtocol(relay, "right", paused=True), sock=sock,
             )
             sock = None
             result.validate()
@@ -133,6 +135,7 @@ class LocalMediaBridge:
             self.transport.set_protocol(old_protocol)
             raise
         self.relay.left_transport = transport
+        self.relay.right_transport.resume_reading()
         left, clock = self.relay.left, self.media.rtp_source
         left.sequence, left.timestamp, left.ssrc = clock.sequence, clock.timestamp, clock.ssrc
         left.clock_rate = clock.clock_rate

@@ -17,10 +17,40 @@ is the wire-format reference for custom firmware and integrations, not a request
 to replace your whole roster JSON by hand. See [basic concepts](CONCEPTS.md)
 for the difference between a phone, contact, extension and external number.
 
-The 2026.11.1 managed phone packages read the canonical directory through LDAP.
-The JSON fields below remain the shared routing representation and the delivery
-contract for older firmware. See [standard phone services](ESP_PHONE_SERVICES.md)
-for LDAP mapping, BLF subscriptions and account provisioning.
+## Standard LDAP directory
+
+LDAP and the persistent managed-phone directory require **2026.11.1-dev**;
+use matching preview firmware for managed ESP directory provisioning. SIP BLF,
+presence and voicemail MWI are separate services already present in stable.
+
+Home Assistant owns one persistent directory. The phonebook sensor, JSON
+compatibility format and LDAP service are projections of the same contacts,
+not separate contact databases. Managed phone identities remain listed while
+offline; availability describes current reachability without deleting identity.
+Names and extensions can change while a phone keeps its stable identifier.
+
+Open **VoIP Stack > Reconfigure > LDAP directory** to configure the listener,
+base DN, anonymous-search policy and certificate/key paths. The TLS option
+selects implicit LDAPS; a certificate and key also permit StartTLS on the normal
+listener. Simple bind without TLS exposes credentials on the network. Enabled
+phone accounts authenticate independently of whether a SIP registration is
+currently active; revoked or removed accounts lose access.
+
+The defaults are TCP port `1389`, base DN `ou=phonebook,dc=voip` and anonymous
+searches disabled. Configure a compatible SIP phone's LDAP client with the HA
+host and the selected listener settings. This is a standard directory service,
+not an alternative SIP registration or call-control channel.
+
+Compatible managed ESP firmware receives its directory configuration privately
+and refreshes after effective directory changes. A successful query replaces
+the phone's LDAP snapshot atomically. A temporary connection/listener failure
+retains its last valid snapshot; administrative disabling is a separate action.
+HA Repairs reports listener or TLS setup failures.
+
+Entries retain their phone, group or service kind. Only eligible phone entries
+are automatic BLF targets. LDAP contact records and public roster metadata do
+not contain account passwords. SIP voicemail access and MWI are separate from
+the directory service.
 
 ## ESP static contacts
 
@@ -61,16 +91,14 @@ Rules:
 - Name-only entries are logical targets and can be resolved or bridged by HA.
 - A numeric target from an ESP is routed to HA. HA resolves `extension` as an
   internal target and `number` as an external trunk target.
-- The HA-managed directory is the recommended path: LDAP for current managed
-  phones, native JSON delivery for older firmware.
-  Static contacts are local additions for offline/custom installs, not a second
-  central roster.
+- LDAP is the standard shared phonebook for compatible managed ESP firmware.
+  The sensor/JSON interface remains available for HA clients and compatibility.
+  Static contacts remain local additions for offline or custom installations.
 
 The ESP-local schema is intentionally smaller than the HA central-contact
 schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
 membership, and media capabilities are authored on HA or discovered from
-endpoint identities, then normalized in the shared directory before LDAP or
-legacy JSON delivery exposes them to ESPs.
+endpoint entities, then normalized before HA pushes the roster to ESPs.
 
 The contact `name` is the only user-facing identity field required by an ESP
 static contact. Users do not need to provide a second underscore-safe version
@@ -88,15 +116,16 @@ in their standard SIP roles without asking the YAML author to duplicate them.
 
 ## HA roster
 
-HA owns one canonical `PhoneDirectory`, also projected by
-`sensor.voip_phonebook`. It contains ESP peers,
-HA itself, local SIP endpoints registered to HA, manual phone endpoints,
-trunk-routed external targets when configured, and groups.
+![Shared phonebook and endpoint resolution](images/phonebook-endpoint.png)
 
-Current managed phones are discovered through their native provisioning actions
-and standard SIP registration. OPTIONS advertises capabilities, while call SDP
-remains authoritative. The endpoint text sensor is a legacy opt-in for older
-integrations. It does not contain group lists. If
+HA owns the central directory and its `sensor.voip_phonebook` projection. It
+contains managed ESP identities, logical HA phones, configured local SIP
+accounts, manual contacts, callable services, groups and configured external
+targets. A saved identity does not require an active Contact binding. Routing
+still checks the destination's actual availability and call policy.
+
+ESP discovery starts from `text_sensor platform: voip_stack type: endpoint`.
+That endpoint state is deliberately short and does not contain group lists. If
 an ESP participates in PBX groups, HA reads `text platform: voip_stack
 type: ring_groups`, `text platform: voip_stack type: conference_groups` and
 `switch platform: voip_stack conference_ring` from the same ESPHome device.
@@ -124,7 +153,7 @@ Routing is data-driven:
 - `address` or `sip_uri` describes a direct SIP endpoint;
 - `extension` is a local/internal alias used by HA routing and inbound DTMF;
 - `number` is an external/public number used through the optional trunk;
-- registered SIP accounts retain their directory identity while offline;
+- registered SIP accounts become callable contacts while registered;
 - HA and discovered ESP entries are generated automatically.
 - group entries are generated automatically from endpoint or manual-contact
   membership declarations.
@@ -193,12 +222,11 @@ ESPHome also exposes native API actions such as
 `esphome.<slug>_set_contacts`, `esphome.<slug>_flush_contacts` and
 `esphome.<slug>_update_contacts`. These are local ESP actions: they change only
 that device's mirror/manual entries. In HA-managed installs, prefer the central
-`voip_stack.*` services above. Managed LDAP phones read the canonical directory;
-older firmware receives its `sensor.voip_phonebook` projection.
+`voip_stack.*` services above and let HA push `sensor.voip_phonebook` to the
+devices.
 
-For older firmware, HA pushes the canonical roster whenever the phonebook
-sensor changes. It also refreshes after ESPHome registers an
-`esphome.<slug>_set_roster_json` service,
+HA pushes the canonical roster whenever the phonebook sensor changes. It also
+refreshes after ESPHome registers an `esphome.<slug>_set_roster_json` service,
 which covers the common reboot timing where a device's endpoint sensor appears
 before its action service is callable. `voip_stack.push_phonebook` remains a
 diagnostic/manual recovery tool, not the normal synchronization path.
@@ -221,18 +249,19 @@ affecting the call.
 - `name` resolves through the phonebook.
 - Phone/number targets require HA routing.
 - `ha_bridge: true` forces HA to act as a SIP bridge.
-- If HA has a registered trunk, external numbers and unresolved number-like
-  targets can route through the trunk.
+- External numbers and unresolved number-like targets can use the selected
+  available trunk. Registered trunks need a usable registration; static trunks
+  use their configured route without REGISTER.
 - Inbound trunk DTMF digits resolve against phonebook `extension` values. No
   DTMF route hint means "use the configured inbound default target". A
   received explicit route hint that cannot be resolved terminates as
   `route_not_found`; it does not silently fall back to HA or another target.
-- When the experimental automation override is enabled, HA automations select
-  the initial target from the `route_requested` occurrence on
-  `event.voip_stack_call` by calling
-  `voip_stack.select_inbound_destination`. `voip_stack.route` is the advanced
-  action for explicitly pending route decisions, not the ordinary initial
-  destination selector.
+- A matching native `voip_stack.route_requested` trigger opens a bounded
+  initial decision window; its action selects the target with
+  `voip_stack.select_inbound_destination`. Legacy Event Entity rules use the
+  experimental automation-routing opt-in. `voip_stack.route` remains the
+  advanced action for explicitly pending decisions. See the
+  [automation cookbook](AUTOMATION_DIALPLAN.md#override-the-initial-destination).
 - Missing or incompatible media routes must fail explicitly with SIP terminal
   reasons such as `media_incompatible` or `transport_unreachable`.
 

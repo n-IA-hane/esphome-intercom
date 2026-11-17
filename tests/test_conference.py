@@ -16,7 +16,7 @@ import voluptuous as vol
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+PKG_NAME = "voip_stack_conference_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {"rtp", "sdp", "sip"}
 
@@ -58,6 +58,7 @@ def _install_ha_fakes() -> None:
         exceptions, "Unauthorized", _FakeUnauthorized
     )
     exceptions.UnknownUser = getattr(exceptions, "UnknownUser", _FakeUnauthorized)
+    exceptions.ConfigEntryError = getattr(exceptions, "ConfigEntryError", type("ConfigEntryError", (Exception,), {}))
     config_entries.ConfigEntry = getattr(config_entries, "ConfigEntry", type("ConfigEntry", (), {}))
     config_entries.ConfigSubentry = getattr(
         config_entries, "ConfigSubentry", type("ConfigSubentry", (), {})
@@ -73,10 +74,6 @@ def _install_ha_fakes() -> None:
 
 def _load_module(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        root_pkg = types.ModuleType("custom_components")
-        root_pkg.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = root_pkg
     if PKG_NAME not in sys.modules:
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
@@ -150,6 +147,7 @@ class _FakeBus:
 
 class _FakeHass:
     def __init__(self, *, activate_calls: bool = True) -> None:
+        self.loop = asyncio.get_running_loop()
         endpoints = endpoint_registry_module.EndpointRegistry()
         endpoints.register(
             phone_endpoint.PhoneEndpoint(
@@ -170,12 +168,14 @@ class _FakeHass:
             calls=None,
             endpoints=endpoints,
             preferred_phone_device_id="ha-softphone",
+            ha_bindings=None,
             sip=None,
             shutdown_task=None,
             rtp_port_pool={},
             next_rtp_port=0,
             softphones={},
             softphone_presence={},
+            sip_bridge_state={},
             media=types.SimpleNamespace(
                 sessions_for=lambda _channel: {},
                 owners_for=lambda _channel: {},
@@ -192,8 +192,8 @@ class _FakeHass:
     def async_create_task(self, coro):
         return asyncio.create_task(coro)
 
-    def async_create_background_task(self, coro, _name):
-        return asyncio.create_task(coro)
+    def async_create_background_task(self, coro, name, eager_start=True):
+        return asyncio.create_task(coro, name=name, eager_start=eager_start)
 
 
 def _test_runtime(hass):

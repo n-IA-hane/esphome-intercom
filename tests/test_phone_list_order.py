@@ -21,7 +21,7 @@ def test_contact_projection_reorders_without_mutating_book_selection_or_watch_or
     shipped = by_id(production["phone_list_view"], "contacts_list_view")
     build = Path(os.environ.get("PHONE_LIST_HOST_BUILD", str(tmp_path / "host"))).resolve()
     build.mkdir(parents=True, exist_ok=True)
-    voip = ROOT.parent / "esphome-voip-stack/esphome/components/voip_stack"
+    voip = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack")) / "esphome/components/voip_stack"
     inputs = build / "order_inputs.h"
     inputs.write_text(
         '#define USE_ESP32\n#define USE_ESPHOME_VOIP_BLF\n'

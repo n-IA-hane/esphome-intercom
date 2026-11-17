@@ -1,0 +1,38 @@
+# Voice content is the only publisher of round request/reply text.
+# Media and Sendspin own their separate track/artwork labels.
+external_components:
+  - source: ${ext_components_source}
+    components: [lvgl_round_text]
+lvgl_round_text:
+  id: round_text
+  buffers_in_psram: true
+defaults:
+  _round_text_request_actions:
+  - lambda: |-
+      lv_obj_t* lines[] = {
+        id(think_line_0), id(think_line_1), id(think_line_2), id(think_line_3), id(think_line_4),
+        id(think_line_5), id(think_line_6), id(think_line_7), id(think_line_8), id(think_line_9)
+      };
+      id(round_text).bind_thinking(lines);
+      id(round_text).set_thinking_font(lv_obj_get_style_text_font(lines[0], LV_PART_MAIN));
+      if (!id(round_text).set_thinking(x, id(chord_widths_cache).data(), id(chord_widths_cache).size())) {
+        ESP_LOGW("round_text", "Cannot update thinking text, preserving previous labels");
+      }
+  _round_text_response_actions:
+  - lambda: |-
+      if (x == "..." && id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) return;
+      lv_obj_t* lines[] = {
+        id(reply_line_0), id(reply_line_1), id(reply_line_2), id(reply_line_3), id(reply_line_4),
+        id(reply_line_5), id(reply_line_6), id(reply_line_7), id(reply_line_8), id(reply_line_9)
+      };
+      id(round_text).bind_reply(lines, id(reply_page_counter));
+      id(round_text).set_reply_font(lv_obj_get_style_text_font(lines[0], LV_PART_MAIN));
+      if (id(round_text).set_reply(x, id(chord_widths_cache).data(), id(chord_widths_cache).size())) {
+        id(reply_page_index) = 0;
+        id(reply_total_pages) = id(round_text).total_pages();
+      } else {
+        ESP_LOGW("round_text", "Cannot update reply text, preserving previous page");
+      }
+substitutions:
+  _round_text_request_actions: ${_round_text_request_actions}
+  _round_text_response_actions: ${_round_text_response_actions}

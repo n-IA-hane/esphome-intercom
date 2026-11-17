@@ -266,42 +266,49 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
     def test_snapshot_exposes_every_owned_runtime_resource(self) -> None:
-        registry = _registry()
-        registry.bind_endpoint_registry(_EndpointRegistryStub())
-        registry.upsert("call-1", state="in_call", owner="bridge")
-        registry.add_leg("call-1", "source", role="caller", state="in_call")
-        registry.add_leg("call-1", "destination", role="callee", state="in_call")
-        registry.set_pending_route("call-1", {})
-        registry.set_pending_invite("call-1", object())
-        registry.attach_media("call-1", {}, provisional=True)
-        registry.attach_media("call-1", {})
-        registry.attach_sip_client("call-1", "destination", object())
-        watcher = mock.Mock()
-        registry.attach_client_watcher("destination", watcher)
-        registry.attach_relay("call-1", object())
-        registry.set_bridge_link("call-1", "destination")
-        registry.claim_endpoint("call-1", "office", role="source")
-        registry.claim_endpoint("call-1", "kitchen", role="destination")
+        async def exercise() -> None:
+            registry = _registry()
+            registry.bind_endpoint_registry(_EndpointRegistryStub())
+            registry.upsert("call-1", state="in_call", owner="bridge")
+            registry.add_leg("call-1", "source", role="caller", state="in_call")
+            registry.add_leg("call-1", "destination", role="callee", state="in_call")
+            registry.set_pending_route("call-1", {})
+            registry.set_pending_invite("call-1", object())
+            registry.attach_media("call-1", {}, provisional=True)
+            registry.attach_media("call-1", {})
+            registry.attach_sip_client("call-1", "destination", object())
+            watcher = asyncio.create_task(asyncio.Event().wait())
+            registry.attach_client_watcher("destination", watcher)
+            try:
+                registry.attach_relay("call-1", object())
+                registry.set_bridge_link("call-1", "destination")
+                registry.claim_endpoint("call-1", "office", role="source")
+                registry.claim_endpoint("call-1", "kitchen", role="destination")
 
-        self.assertEqual(
-            registry.snapshot()["resource_counts"],
-            {
-                "sessions": 1,
-                "legs": 2,
-                "pending_routes": 1,
-                "pending_invites": 1,
-                "preanswered": 1,
-                "softphone_media": 1,
-                "sip_clients": 1,
-                "client_watchers": 1,
-                "relays": 1,
-                "bridges": 1,
-                "endpoint_claims": 2,
-            },
-        )
+                self.assertEqual(
+                    registry.snapshot()["resource_counts"],
+                    {
+                        "sessions": 1,
+                        "legs": 2,
+                        "pending_routes": 1,
+                        "pending_invites": 1,
+                        "preanswered": 1,
+                        "softphone_media": 1,
+                        "sip_clients": 1,
+                        "client_watchers": 1,
+                        "relays": 1,
+                        "bridges": 1,
+                        "endpoint_claims": 2,
+                    },
+                )
 
-        with self.assertRaisesRegex(RuntimeError, "before PBX shutdown"):
-            registry.clear_runtime()
+                with self.assertRaisesRegex(RuntimeError, "before PBX shutdown"):
+                    registry.clear_runtime()
+            finally:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+        asyncio.run(exercise())
 
     def test_only_one_terminal_observer_owns_teardown(self) -> None:
         registry = _registry()

@@ -12,10 +12,11 @@ import subprocess
 
 import pytest
 
+from tests.lvgl_host_source import lvgl_source_tag
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/lvgl_visibility"
-LVGL_COMPONENT_SHA = "184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae"
 CASES = ("matrix", "hidden", "script_only", "bootstrap", "transition", "top", "generic", "owner_paused",
          "unrelated_events")
 pytestmark = [pytest.mark.diagnostic_reference, pytest.mark.integration, pytest.mark.timeout(180)]
@@ -31,9 +32,7 @@ def visibility_binary(tmp_path_factory):
     source_value = os.environ.get("LVGL_HOST_SOURCE", "")
     assert source_value, "Provide LVGL_HOST_SOURCE from the Box build's managed_components/lvgl__lvgl"
     source = Path(source_value).resolve()
-    identity = source / ".component_hash"
-    assert identity.is_file(), f"Missing managed LVGL source identity: {identity}"
-    assert identity.read_text().strip() == LVGL_COMPONENT_SHA, "Expected the reviewed official LVGL 9.5.0 source"
+    lvgl_source_tag(source)
     compiler = shutil.which("g++")
     assert compiler, "The real LVGL host contract requires g++"
     work = tmp_path_factory.mktemp("lvgl-visibility")
@@ -69,4 +68,4 @@ def visibility_binary(tmp_path_factory):
 def test_real_lvgl_visibility_contract(visibility_binary, case):
     result = subprocess.run([str(visibility_binary), case], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == f"PASS real_lvgl_9_5 {case}"
+    assert result.stdout.strip() == f"PASS {lvgl_source_tag(Path(os.environ['LVGL_HOST_SOURCE']))} {case}"

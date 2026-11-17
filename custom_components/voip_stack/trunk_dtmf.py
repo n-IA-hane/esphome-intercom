@@ -30,6 +30,7 @@ async def collect_trunk_dtmf(
     routes: dict[str, str],
     timeout: float,
     terminator: str = "",
+    rtp_socket=None,
 ) -> TrunkDtmfSelection:
     """Race SIP INFO and negotiated RFC 4733 without leaking the losing task."""
 
@@ -59,6 +60,7 @@ async def collect_trunk_dtmf(
                     first_digit_timeout=max(_FIRST_DIGIT_TIMEOUT, timeout),
                     terminator=terminator,
                     remote_host=invite.remote_rtp_host,
+                    rtp_socket=rtp_socket,
                 ).collect(),
                 name=f"voip-trunk-rtp-dtmf-{invite.call_id}",
             )

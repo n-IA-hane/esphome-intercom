@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from inspect import isawaitable
 import ssl
 import logging
+
+SIP_UDP_SAFE_REQUEST_BYTES = 1300
 
 
 async def default_tls_context() -> ssl.SSLContext:
@@ -49,7 +50,7 @@ class SipResponseMailbox:
         return item
 
     def fail(self, error):
-        """Wake this transaction on an observed failure of its owned flow."""
+        """Wake only a transaction owned by the failed transport flow."""
         if self.queue.full():
             self.queue.get_nowait()
         self.queue.put_nowait(error)
@@ -113,9 +114,7 @@ class SipMessageDispatcher:
                             mailbox.deliver(item)
                             break
                     else:
-                        preparation = self.on_unmatched(message, addr)
-                        if isawaitable(preparation):
-                            await preparation
+                        self.on_unmatched(message, addr)
                 elif len(self.requests) >= (32 if self.is_control(message, addr) else 24):
                     self.reject_request(message, addr)
                 else:

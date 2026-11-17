@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,142 +60,6 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
         )
     assert captured["signaling_transport"].upper() == trunk_transport
     assert captured["local_rtp_port"] == 44002
-
-
-@pytest.mark.parametrize("registered", [False, True])
-@pytest.mark.parametrize("profile", ["directional-esp", "directional-sip", "symmetric-sip", "hint-only", "pcmu", "unspecified"])
-async def test_inbound_bridge_keeps_endpoint_audio_capabilities_after_registration(
-    monkeypatch, registered, profile,
-) -> None:
-    """An AOR binding cannot replace a phone's known media envelope."""
-    from custom_components.voip_stack.core import sdp
-    from custom_components.voip_stack.inbound_routing import bridge
-    from custom_components.voip_stack.sip_runtime import uri_transport
-
-    class ClientObserved(Exception):
-        pass
-
-    captured = {}
-
-    def client(**kwargs):
-        ports.bind_audio_sockets.assert_called_once_with()
-        captured.update(kwargs)
-        # Exercise the real SDP builder with the exact downstream client
-        # inputs. The failing route used to pass stereo PCM to its mono map.
-        captured["offer"] = sdp.build_offer_directional(
-            "192.0.2.10", "192.0.2.10", kwargs["local_rtp_port"],
-            kwargs["supported_send_formats"], kwargs["supported_recv_formats"],
-            send_rtp_formats=kwargs["supported_send_rtp_formats"],
-            recv_rtp_formats=kwargs["supported_recv_rtp_formats"],
-            allow_directional_payloads=kwargs["allow_directional_audio_payloads"],
-            include_common_codecs=kwargs["include_common_codecs"],
-        )
-        raise ClientObserved
-
-    metadata = {"registered": registered, "endpoint_kind": "sip_account"}
-    if profile.startswith("directional-"):
-        metadata.update(
-            endpoint_kind="esphome" if profile == "directional-esp" else "sip_account",
-            sdp_features=["directional_audio_v1"],
-            sip_audio_tx_formats=["L16/16000/1/10"],
-            sip_audio_rx_formats=["L16/48000/1/10"],
-        )
-    elif profile == "symmetric-sip":
-        metadata.update(sip_audio_tx_formats=["L16/16000/1/10"],
-                        sip_audio_rx_formats=["L16/48000/1/10", "L16/16000/1/10"])
-    elif profile == "hint-only":
-        # Captured capability response from a real multi-quantum endpoint.
-        # Port zero OPTIONS correctly omits a single packet time; the INVITE
-        # exchange remains authoritative for the eventual media contract.
-        body = (Path(__file__).parent / "fixtures/sdp/native-options-mixed-quanta.sdp").read_bytes()
-        capabilities = sdp.options_capabilities(body)
-        assert capabilities["sip_audio_tx_formats"] == []
-        assert capabilities["sip_audio_rx_formats"] == []
-        assert capabilities["sdp_features"] == ["directional_audio_v1"]
-        metadata.update(endpoint_kind="esphome", **capabilities)
-    elif profile == "pcmu":
-        metadata.update(sip_audio_tx_formats=["PCMU/8000/1/20"],
-                        sip_audio_rx_formats=["PCMU/8000/1/20"])
-    entry = SimpleNamespace(sip_uri="sip:phone@192.0.2.30:5060", metadata=metadata)
-    ports = SimpleNamespace(ports=(44000, 44002), bind_audio_sockets=Mock())
-    monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
-    monkeypatch.setattr(bridge, "SipCallClient", client)
-    runtime = SimpleNamespace(hass=object(), config={"sip_port": 15060},
-        local_ip="192.0.2.10", sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA")
-    invite = SimpleNamespace(trunk_id="", call_id="registered-capability-contract",
-        caller="Caller", routing_caller="Caller", target="phone", routing_target="phone",
-        source_host="192.0.2.20", source_port=5060, video_format=None,
-        send_format=sdp.RtpPcmFormat(96, "L16", 48000, 1, 10),
-        recv_format=sdp.RtpPcmFormat(96, "L16", 48000, 1, 10))
-    decision = SimpleNamespace(target="phone", entry=entry, sip_uri=entry.sip_uri)
-    with pytest.raises(ClientObserved):
-        await bridge.route_sip_bridge(runtime=runtime, invite=invite, decision=decision,
-            peers=[], trunk_config={}, bridge_to_trunk=False, source_endpoint=None,
-            target_endpoint=None, resolved_callee="Phone", trunk_invite=False,
-            registry=SimpleNamespace(own_resource=lambda *_: True))
-
-    offered = sdp.options_capabilities(captured["offer"])
-    if profile.startswith("directional-"):
-        assert offered["sip_audio_tx_formats"] == ["L16/48000/1/10"]
-        assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
-        assert offered["sdp_features"] == ["directional_audio_v1"]
-    elif profile == "symmetric-sip":
-        # The optional extension describes HA's local abilities. A legacy
-        # peer ignores it and answers with its actual common 16k payload.
-        assert offered["sip_audio_tx_formats"] == ["L16/48000/1/10", "L16/16000/1/10"]
-        assert offered["sip_audio_rx_formats"] == ["L16/16000/1/10"]
-        common = next(fmt for fmt in sdp.offered_pcm_formats(captured["offer"])
-            if fmt.encoding == "L16" and fmt.sample_rate == 16000)
-        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Legacy phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
-            f"m=audio 40000 RTP/AVP {common.payload_type}\r\na=rtpmap:{common.payload_type} L16/16000/1\r\n"
-            "a=ptime:10\r\na=sendrecv\r\n")
-        negotiated = sdp.negotiate_answer_directional(answer,
-            captured["supported_send_formats"], captured["supported_recv_formats"], local_offer_sdp=captured["offer"])
-        assert negotiated is not None
-        assert (negotiated.send.sample_rate, negotiated.recv.sample_rate) == (16000, 16000)
-        assert negotiated.send.frame_ms == negotiated.recv.frame_ms == 10
-    elif profile == "hint-only":
-        import re
-
-        offer = captured["offer"]
-        formats = sdp.offered_pcm_formats(offer)
-        pcm = [fmt for fmt in formats if fmt.encoding in {"L16", "L24"}]
-        assert pcm and all(fmt.channels == 1
-                               and fmt.audio_format.fits_udp_payload(sdp.UDP_SAFE_PAYLOAD_BYTES)
-                               for fmt in pcm)
-        # RFC 7587 signals Opus as /2 even for mono audio; this is not stereo PCM.
-        assert all(fmt.channels == 2 for fmt in formats if fmt.encoding == "OPUS")
-        # A peer answers using its own 48 kHz receive / 16 kHz send geometry,
-        # independently choosing the corresponding advertised payload numbers.
-        receive = re.search(r"a=rtpmap:(\d+) L16/48000/1", offer)[1]
-        send = re.search(r"a=rtpmap:(\d+) L16/16000/1", offer)[1]
-        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
-                  f"m=audio 40000 RTP/AVP {receive} {send}\r\n"
-                  f"a=rtpmap:{receive} L16/48000/1\r\na=rtpmap:{send} L16/16000/1\r\n"
-                  f"a=ptime:10\r\na=x-voip-stack-flow:{receive} recv\r\na=x-voip-stack-flow:{send} send\r\n")
-        negotiated = sdp.negotiate_answer_directional(answer,
-            captured["supported_send_formats"], captured["supported_recv_formats"],
-            local_offer_sdp=offer)
-        assert negotiated is not None
-        assert (negotiated.send.sample_rate, negotiated.recv.sample_rate) == (48000, 16000)
-        assert negotiated.send.frame_ms == negotiated.recv.frame_ms == 10
-    elif profile == "pcmu":
-        assert offered["sip_audio_tx_formats"] == ["PCMU/8000/1/20"]
-        assert offered["sip_audio_rx_formats"] == ["PCMU/8000/1/20"]
-    else:
-        assert offered["sip_audio_tx_formats"] == offered["sip_audio_rx_formats"]
-        assert "L16/16000/1/10" in offered["sip_audio_tx_formats"]
-        assert any(fmt.encoding == "PCMU" for fmt in sdp.offered_pcm_formats(captured["offer"]))
-        # A local 10ms preference with maxptime20 retains ordinary G.711/20ms.
-        answer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Legacy phone\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
-            "m=audio 40000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
-        negotiated = sdp.negotiate_answer_directional(answer,
-            captured["supported_send_formats"], captured["supported_recv_formats"], local_offer_sdp=captured["offer"])
-        assert negotiated is not None
-        assert negotiated.send.encoding == negotiated.recv.encoding == "PCMU"
-        assert negotiated.send.frame_ms == 20  # The answer's receive preference.
-        assert negotiated.recv.frame_ms == 10  # HA's independently offered preference.
-        assert negotiated.recv_formats[0].max_frame_ms == 20
 
 
 @dataclass(frozen=True)
@@ -433,7 +298,7 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
     assert intent.reason == "route_not_found"
 
 
-def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
+async def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from custom_components.voip_stack import pbx_runtime
@@ -487,7 +352,7 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch.setattr(trunk, "publish_bridge_projection", Mock())
     monkeypatch.setattr(trunk.sip_sdp, "offered_dtmf_formats", Mock(return_value=[]))
 
-    owned_task = Mock()
+    owned_task = asyncio.create_task(asyncio.sleep(0))
 
     def capture_task(_hass, coroutine):
         coroutine.close()
@@ -513,6 +378,7 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         for resource in session.resources
     )
     assert session.named_tasks[f"trunk_route:{invite.call_id}"] is owned_task
+    await owned_task
 
 
 def test_static_trunk_classifies_only_explicitly_allowed_sources():

@@ -8,60 +8,50 @@ voip_stack:
   audio_task_stacks_in_psram: false
   buffers_in_psram: false
   audio:
-    tx:
-      sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
-    tx_formats:
-    - sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 16
-    rx:
-      sample_rate: 48000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
-    rx_formats:
-    - sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 10
-    - sample_rate: 32000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 16
-    - sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 16
-    - sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 32
+    codecs:
+      - codec: pcm
+        tx:
+          # Prefer 16 kHz / 20 ms TX (50 packets/s); keep 10 ms as a compatible alternative.
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
+        rx:
+          # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
+          # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
+          - sample_rate: 48000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
   microphone: mic_main
   speaker: voip_speaker_input
   ringing_timeout: 30s
   delete_contact_missing_from:
     updates_number: 1
-defaults:
-  _p4_phone_direct_input:
-    packages:
-      input: !include
-        file: ../../shared/direct_input.yaml
-        vars:
-          input_id: voip_speaker_input
-          input_buffer_duration: 128ms
-    speaker:
-    - id: !extend voip_speaker_input
-      task_stack_in_psram: false
+speaker:
+- platform: resampler
+  id: voip_speaker_input
+  output_speaker: hw_speaker
+  bits_per_sample: 16
+  task_stack_in_psram: false
+  buffer_duration: 128ms
 external_components:
 - source: ${voip_stack_components_source}
   components:
   - voip_stack
 packages:
-  playback_input: ${_p4_phone_direct_input}
   entities: !include '../../../voip/entities_full_duplex.yaml'
   settings: !include '../../../voip/call_settings.yaml'
   transport: !include '../../../voip/transport.yaml'

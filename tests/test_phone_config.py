@@ -4,16 +4,25 @@
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import field, make_dataclass
+from itertools import count
 from pathlib import Path
 import sys
 import types
+from unittest.mock import patch
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "custom_components.voip_stack"
+PKG_NAME = "voip_stack_phone_config_test"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
+_SUBENTRY_IDS = count(1)
+_ConfigSubentry = make_dataclass("ConfigSubentry", [
+    ("data", object), ("subentry_type", str), ("title", str),
+    ("unique_id", object, field(default=None)),
+    ("subentry_id", str, field(default_factory=lambda: f"{next(_SUBENTRY_IDS):026d}")),
+], frozen=True, kw_only=True)
 
 
 def _install_ha_fakes() -> None:
@@ -29,7 +38,7 @@ def _install_ha_fakes() -> None:
         config_entries, "ConfigEntry", type("ConfigEntry", (), {})
     )
     config_entries.ConfigSubentry = getattr(
-        config_entries, "ConfigSubentry", type("ConfigSubentry", (), {})
+        config_entries, "ConfigSubentry", _ConfigSubentry
     )
     core = sys.modules.setdefault(
         "homeassistant.core", types.ModuleType("homeassistant.core")
@@ -37,14 +46,11 @@ def _install_ha_fakes() -> None:
     core.HomeAssistant = getattr(
         core, "HomeAssistant", type("HomeAssistant", (), {})
     )
+    core.callback = getattr(core, "callback", lambda function: function)
 
 
 def _load(name: str):
     _install_ha_fakes()
-    if "custom_components" not in sys.modules:
-        package = types.ModuleType("custom_components")
-        package.__path__ = [str(ROOT / "custom_components")]
-        sys.modules["custom_components"] = package
     if PKG_NAME not in sys.modules:
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
@@ -58,13 +64,86 @@ def _load(name: str):
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[full_name] = module
-    spec.loader.exec_module(module)
+    # Other pure-test loaders leave a no-argument ConfigSubentry placeholder.
+    # Capture HA's constructor contract only in this isolated test package.
+    with patch.object(sys.modules["homeassistant.config_entries"], "ConfigSubentry", _ConfigSubentry):
+        spec.loader.exec_module(module)
     return module
 
 
 phone_config = _load("phone_config")
 phone_endpoint = _load("phone_endpoint")
 endpoint_registry = _load("endpoint_registry")
+
+
+def test_phone_config_loader_ignores_foreign_module_and_subentry_placeholders(monkeypatch):
+    config_entries = sys.modules["homeassistant.config_entries"]
+    placeholder = type("ConfigSubentry", (), {})
+    foreign = types.ModuleType("custom_components.voip_stack.phone_config")
+    with patch.dict(sys.modules, {foreign.__name__: foreign}), patch.object(config_entries, "ConfigSubentry", placeholder):
+        monkeypatch.setattr(sys.modules[__name__], "PKG_NAME", "voip_stack_phone_config_cold_test")
+        isolated = _load("phone_config")
+        original = isolated.draft_phone_subentry({"kind": "sip_account", "name": "Desk"})
+        renamed = isolated.draft_phone_subentry({"kind": "sip_account", "name": "Renamed"}, previous=original)
+        assert isolated is not foreign
+        assert config_entries.ConfigSubentry is placeholder
+        assert isolated.phone_endpoint_id(original).startswith("sip:")
+        assert isolated.phone_endpoint_id(renamed) == isolated.phone_endpoint_id(original)
+        assert renamed.subentry_id == original.subentry_id
+        assert original.data["name"] == "Desk" and renamed.data["name"] == "Renamed"
+
+
+@pytest.mark.parametrize(
+    ("kind", "enabled", "expected"),
+    [
+        ("browser", True, "available"),
+        ("browser", False, "unavailable"),
+        ("sip_account", True, "offline"),
+        ("sip_account", False, "unavailable"),
+    ],
+)
+def test_configured_availability_is_independent_of_browser_cards(kind, enabled, expected):
+    endpoint = phone_config.endpoint_from_data(
+        types.SimpleNamespace(data={}),
+        {"endpoint_id": "phone", "name": "Phone", "kind": kind, "enabled": enabled},
+    )
+    assert endpoint.availability.value == expected
+
+
+@pytest.mark.parametrize("card_count", [0, 2])
+@pytest.mark.parametrize("kind", ["browser", "sip_account"])
+def test_configured_enable_cycle_preserves_policy_and_call_identity(card_count, kind):
+    subentry = types.SimpleNamespace(
+        subentry_type=phone_config.PHONE_SUBENTRY_TYPE,
+        subentry_id="phone", unique_id="phone:stable", title="Phone",
+        data={"endpoint_id": "stable", "name": "Phone", "kind": kind,
+              "enabled": False, "username": "desk",
+              "call_policy": {"unavailable": {"kind": "contact", "target": "backup"}}},
+    )
+    entry = types.SimpleNamespace(
+        data={}, options={}, subentries={"phone": subentry},
+        runtime_data=types.SimpleNamespace(
+            softphone_presence={"stable": card_count}, softphones={},
+        ),
+    )
+    hass = types.SimpleNamespace(data={"voip_stack": {}})
+    registry = phone_config.async_setup_endpoint_registry(hass, entry)
+    _bind_runtime(entry, registry)
+    original_policy = registry.require("stable").policy
+    assert registry.require("stable").availability.value == "unavailable"
+    registry.update("stable", device_id="stable-device")
+    registry.claim_call("stable", "existing-call")
+    subentry.data["enabled"] = True
+    phone_config.sync_registry_from_entry(hass, entry)
+    endpoint = registry.require("stable")
+    assert endpoint.availability.value == ("available" if kind == "browser" else "offline")
+    assert endpoint.active_call_id == "existing-call"
+    assert endpoint.device_id == "stable-device"
+    assert endpoint.policy == original_policy
+    subentry.data["enabled"] = False
+    phone_config.sync_registry_from_entry(hass, entry)
+    assert registry.require("stable").availability.value == "unavailable"
+    assert registry.require("stable").policy == original_policy
 
 
 def test_phone_policy_survives_rename_and_config_roundtrip():
@@ -148,37 +227,6 @@ def test_browser_phone_persists_auto_answer_and_send_video() -> None:
 
     assert endpoint.auto_answer is True
     assert endpoint.send_video is True
-
-
-@pytest.mark.parametrize("kind,enabled,expected", [
-    ("browser", True, "available"), ("browser", False, "unavailable"),
-    ("sip_account", True, "offline"),
-])
-def test_configured_logical_browser_is_available_without_a_card(kind, enabled, expected):
-    endpoint = phone_config.endpoint_from_data(types.SimpleNamespace(data={}), {
-        "endpoint_id": "logical", "kind": kind, "name": "Logical",
-        "username": "logical", "enabled": enabled,
-    })
-    assert endpoint.availability.value == expected
-
-
-def test_registry_reconcile_restores_logical_browser_after_last_card_disconnected():
-    subentry = types.SimpleNamespace(
-        subentry_type=phone_config.PHONE_SUBENTRY_TYPE, subentry_id="logical-phone",
-        unique_id="phone:logical", title="Logical", data={
-            "endpoint_id": "logical", "kind": "browser", "name": "Logical", "enabled": True,
-        },
-    )
-    entry = types.SimpleNamespace(data={}, options={}, subentries={subentry.subentry_id: subentry})
-    hass = types.SimpleNamespace(data={"voip_stack": {}})
-    registry = phone_config.async_setup_endpoint_registry(hass, entry)
-    _bind_runtime(entry, registry)
-    assert registry.require("logical").is_available
-    registry.update("logical", availability="offline", device_id="stable-device")
-    phone_config.sync_registry_from_entry(hass, entry)
-    assert registry.require("logical").is_available
-    assert registry.require("logical").device_id == "stable-device"
-    assert entry.runtime_data.softphone_presence == {}
 
 
 def test_legacy_store_fills_only_settings_missing_from_entry_options() -> None:

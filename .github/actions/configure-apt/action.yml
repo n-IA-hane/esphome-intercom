@@ -1,0 +1,59 @@
+name: Configure hosted Ubuntu APT
+description: Bound APT acquisition and prefer a verified mirror without replacing provider sources.
+runs:
+  using: composite
+  steps:
+    - name: Configure and report effective APT mirrors and timeouts
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "${GITHUB_ACTIONS:-}" = true
+        test "${RUNNER_OS:-}" = Linux
+        test "${RUNNER_ARCH:-}" = X64
+        echo 'Original Ubuntu mirror list'
+        cat /etc/apt/apt-mirrors.txt
+        # Match actions/runner-images e06ccbf configure-apt.sh. This filename
+        # sorts after its zz-retries, so the verified bounds remain effective.
+        sudo tee /etc/apt/apt.conf.d/zz-voip-stack-network >/dev/null <<'EOF'
+        Acquire::Retries "1";
+        Acquire::http::Timeout "15";
+        Acquire::https::Timeout "15";
+        EOF
+        # Prefer the independent Kernel Archives HTTPS mirror for signed Ubuntu
+        # content; provider sources, suites, components and keys stay unchanged.
+        sudo python3 - <<'PY'
+        from pathlib import Path
+        import re
+
+        path = Path("/etc/apt/apt-mirrors.txt")
+        if not path.is_file():
+            raise SystemExit("The hosted Ubuntu mirror file is missing")
+        lines = path.read_bytes().splitlines(keepends=True)
+        records = [line.split() for line in lines if line.strip() and not line.lstrip().startswith(b"#")]
+        if not records:
+            raise SystemExit("The hosted Ubuntu mirror file has no mirror entries")
+        if any(not re.match(rb"[A-Za-z][A-Za-z0-9+.-]*:", fields[0]) for fields in records):
+            raise SystemExit("The hosted Ubuntu mirror file has invalid URI syntax")
+        mirror = b"https://mirrors.edge.kernel.org/ubuntu/"
+        output = []
+        found = False
+        for line in lines:
+            fields = line.split()
+            if fields and fields[0] == mirror:
+                # APT 3.x uses unsigned priorities sorted ascending: zero is
+                # the minimum. Only this action's entry is normalized; retain
+                # its other metadata and every provider-owned byte unchanged.
+                metadata = [field for field in fields[1:] if not field.startswith(b"priority:")]
+                output.append(mirror + b"\tpriority:0" +
+                              (b" " + b" ".join(metadata) if metadata else b"") + b"\n")
+                found = True
+            else:
+                output.append(line)
+        if not found:
+            output.insert(0, mirror + b"\tpriority:0\n")
+        path.write_bytes(b"".join(output))
+        PY
+        echo 'Effective APT acquisition configuration'
+        apt-config dump Acquire::Retries Acquire::http::Timeout Acquire::https::Timeout
+        echo 'Effective Ubuntu mirror list'
+        cat /etc/apt/apt-mirrors.txt

@@ -43,7 +43,7 @@ and switch between the available cameras without changing the active SIP call.
 Future releases will continue consolidating media-device discovery and
 selection across browsers and mobile platforms.
 
-![Home Assistant VoIP card media-device options](images/voip-card-media-device-options-2026-9-0.jpg)
+![Home Assistant VoIP card media-device options](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/ded4014ab83e1c73333b377e867490450afaa24b/docs/images/voip-card-media-device-options-2026-9-0.jpg)
 
 ## ESPHome P4 videophone
 

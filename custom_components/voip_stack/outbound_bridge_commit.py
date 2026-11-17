@@ -31,6 +31,7 @@ from .sip_bridge import (
 )
 from .sip_runtime import send_final_response
 from .softphone_termination import async_terminate_sip_bridge_session
+from .pending_sip_destination import RetainedSourceMedia
 
 if TYPE_CHECKING:
     from .endpoint_session import EndpointCallSession
@@ -76,6 +77,7 @@ class BridgeCommitData:
     local_endpoint_id: str = ""
     source_client: Any | None = None
     prepared_media: Any | None = None
+    retained_media: RetainedSourceMedia | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +214,16 @@ async def async_commit_outbound_bridge(
             _require_current()
 
         failure_reason = TerminalReason.TRANSPORT_UNREACHABLE.value
-        if data.prepared_media is not None:
+        if data.retained_media is not None:
+            data.retained_media.validate(registry)
+            relay = data.retained_media.relay
+            if registry.resource_for(invite.call_id, "relay") is not relay or client.dialog is None:
+                raise RuntimeError("early bridge media owner changed")
+            relay_adopted = True
+            from .sip_bridge import dialog_rtp_peer
+            relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(client.dialog))()
+            relay._on_release = _release_ports
+        elif data.prepared_media is not None:
             relay = data.prepared_media.commit()
             relay._on_release = _release_ports
         elif data.source_client is not None:
@@ -246,9 +257,11 @@ async def async_commit_outbound_bridge(
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
-        transfer_audio = getattr(winner.ports, "transfer_audio_sockets", None)
-        if transfer_audio is not None:
-            transfer_audio(relay)
+        reservations = (winner.ports, *(item for item in data.detach_reservations if item is not winner.ports))
+        for reservation in reservations:
+            transfer_audio = getattr(reservation, "transfer_audio_sockets", None)
+            if transfer_audio is not None:
+                transfer_audio(relay, ports=(data.source_relay_port, data.dest_relay_port))
         source_media = registry.resource_for(invite.call_id, "preanswered") or {}
         audio_source = source_media.get("audio_rtp_source")
         if isinstance(audio_source, AudioRtpSenderState):
@@ -268,7 +281,8 @@ async def async_commit_outbound_bridge(
             session.add_resource(f"retired_local_media:{id(old_media):x}", old_media,
                 lambda _reason: old_media.stop(), stage=CleanupStage.MEDIA)
             registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=old_media)
-        registry.attach_relay(invite.call_id, relay)
+        if data.retained_media is None:
+            registry.attach_relay(invite.call_id, relay)
         relay_adopted = True
         if data.prepared_media is not None and data.prepared_media.video_update is not None:
             await data.prepared_media.video_update.commit()

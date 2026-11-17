@@ -1,67 +1,305 @@
 {
   "repository": "esphome/esphome",
-  "revision": "2d0e3faa3d1282d1ec6928d4e76b62db3d37434c",
+  "revision": "373224c141dceadbb67ace263040cbfc802c5968",
   "components": {
+    "speaker_source": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
+      "adaptations": [
+        "Retire a terminal source error through the existing STOP and IDLE cleanup",
+        "Preserve queued media and replacement ownership without retrying failed items"
+      ],
+      "public_proposal": true,
+      "source_sha256": {
+        "speaker_source_media_player.cpp": "afb36c056475cf153c2cced1edc0cd4caa5b3b4960360a6c73eb870fdcff4a9d",
+        "speaker_source_media_player.h": "fbaf27f15a286889350665aa8dd52386e57986c53c84103044fcf8ef147618de",
+        "__init__.py": "4fa995c014fb6c85b01dbbcb037c5d3dcb4cc3f85525c4a7326b9c30e57d7fef",
+        "media_player.py": "1e0cc7c4f6c521f6a14f9d09cd5d8bd569009ad212e7ef2c6a51180b8c67d19a"
+      },
+      "upstream_source_sha256": {
+        "speaker_source_media_player.h": "fbaf27f15a286889350665aa8dd52386e57986c53c84103044fcf8ef147618de",
+        "speaker_source_media_player.cpp": "4045c0c43a95f1713a6d7ce0c1aebc5db878b8fbe45a5fd6b799c4eb8359c762",
+        "media_player.py": "1e0cc7c4f6c521f6a14f9d09cd5d8bd569009ad212e7ef2c6a51180b8c67d19a",
+        "__init__.py": "4fa995c014fb6c85b01dbbcb037c5d3dcb4cc3f85525c4a7326b9c30e57d7fef"
+      },
+      "removal_condition": "Qualified official ESPHome covers current and pending terminal ERROR cleanup, the reviewed repeat policy and delayed ERROR/IDLE after playlist replacement; PR22118 alone is narrower and does not establish equivalence. Remove the provider and selection together only after those contracts are qualified.",
+      "proposal_status": "contribution_posted",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22118#issuecomment-6914576261",
+      "proposal_head": "0772fe5368500b8144422f42bb68cbf449756f7e",
+      "upstream_pr_url": "https://github.com/esphome/esphome/pull/22118",
+      "upstream_pr_head": "b28b4d025a7d75ca15ec16c3003e1638efec59f7",
+      "proposal_scope": "Follow-up contribution for current-source terminal ERROR and replacement ownership; repeat-skip is proposed policy, not accepted upstream behaviour"
+    },
+    "voice_assistant": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
+      "adaptations": [
+        "Emit on_idle once on a real noncontinuous transition to IDLE",
+        "Publish desired state before callbacks so a newly started run retains its owner"
+      ],
+      "public_proposal": true,
+      "source_sha256": {
+        "voice_assistant.h": "6c068c427442dacb47b56392564db62a2c0b5e88b92c3e8d341874a38234bbc2",
+        "voice_assistant.cpp": "4cb4520f0e92061c32a948ea2142ef22d228724a68faf0e363b41bf94fcc6fbb",
+        "__init__.py": "7f705fbd9fdc504c7d2bfdfb25b4847674fb3efcd169fdfa88ee7a16c97da7dd"
+      },
+      "upstream_source_sha256": {
+        "voice_assistant.h": "6c068c427442dacb47b56392564db62a2c0b5e88b92c3e8d341874a38234bbc2",
+        "voice_assistant.cpp": "d9879c5b3045ae2dce833b331f635a6a70f88bd039473f4c6061b3a765cb2ba4",
+        "__init__.py": "7f705fbd9fdc504c7d2bfdfb25b4847674fb3efcd169fdfa88ee7a16c97da7dd"
+      },
+      "removal_condition": "An official ESPHome revision includes PR22782 or equivalent noncontinuous IDLE notification and reentrant desired-state ordering; qualify Speaker/MediaPlayer completion, restart callbacks and existing disconnect policy, then remove this provider and its external selection together.",
+      "proposal_status": "open",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22782",
+      "proposal_head": "a0df8ac2286173112b66bb85826db6a834f3ad42"
+    },
+    "audio_http": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
+      "adaptations": [
+        "Join completed decoder and reader workers before publishing natural IDLE",
+        "Disable the old loop before callbacks may start another playback"
+      ],
+      "public_proposal": true,
+      "source_sha256": {
+        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
+        "audio_http_media_source.cpp": "2296b3c243502d2af6b6ed8ea211f9bd98e44c96a6add60149389fba09b512ba",
+        "media_source.py": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0",
+        "__init__.py": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
+      },
+      "upstream_source_sha256": {
+        "media_source.py": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0",
+        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
+        "audio_http_media_source.cpp": "0f65a8c5b8bb20c1190840b43e20e96763689fbce3d4b64000b814e08d23503c",
+        "__init__.py": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
+      },
+      "removal_condition": "An official ESPHome revision includes PR22787 or equivalent retirement of completed HTTP workers before natural IDLE and callback-safe loop ordering; qualify EOF and immediate listener restart, then remove the provider and its external selection together.",
+      "proposal_status": "open",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22787",
+      "proposal_head": "227ea5fd8f2e46482889200118ade90cdcee8fe0"
+    },
+    "micro_wake_word": {
+      "local_repository": "esphome-intercom",
+      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
+      "esphome_baseline": "2026.12.0.dev0",
+      "adaptations": [
+        "Reset the input stride phase and pending probability after successful creation of a new interpreter"
+      ],
+      "public_proposal": true,
+      "source_sha256": {
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "streaming_model.h": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83",
+        "preprocessor_settings.h": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6",
+        "micro_wake_word.h": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27",
+        "streaming_model.cpp": "62b11c99f864f0df6e21f4b6ab94de67402c0e6fa5c3976693a21b171fc87cb7",
+        "model_data.cpp": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59",
+        "micro_wake_word.cpp": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f",
+        "__init__.py": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
+      },
+      "upstream_source_sha256": {
+        "streaming_model.h": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83",
+        "streaming_model.cpp": "5cfae0c48b83a893fa1d4b07dee2ee4aebea4731e432cf7563a5fb2990ee875d",
+        "preprocessor_settings.h": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6",
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "model_data.cpp": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59",
+        "micro_wake_word.h": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27",
+        "micro_wake_word.cpp": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f",
+        "__init__.py": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
+      },
+      "removal_condition": "An official ESPHome revision includes PR22781 or equivalent input-stride and pending-score resets after successful interpreter creation; qualify model reload and ordinary probability resets, then remove this provider and its external selection together.",
+      "proposal_status": "open",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22781",
+      "proposal_head": "eb96825b450e1fc30ae2feaacf195ceeffef6ea3"
+    },
     "mipi_dsi": {
       "local_repository": "esphome-intercom",
+      "upstream_revision": "c6f330458a2da2f64788487486bd6d0f8749fafd",
       "adaptations": [
-        "Qualified panel settling intervals",
-        "Serialized transfer completion and error ownership",
-        "Diagnostic framebuffer access",
-        "Stable bulk drawing and code-generation APIs"
+        "Driver-owned RGB565 output with one public PPA scale/conversion/rotation transaction and bounded logical input",
+        "One serialized UI/video submission owner with task/ISR-aware completion and coherent compatibility canvas",
+        "Nonblocking logical framebuffer readback into caller-owned storage without exposing the panel buffer"
       ],
-      "public_proposal": false
+      "public_proposal": true,
+      "source_sha256": {
+        "__init__.py": "25346a4de794b846917afa56c9853b33133bd319db1b0064001e3ae9ba14c502",
+        "display.py": "5c82c26d7906513ea3c3f19b9b20d2e77be5d2f03e17d406528e028547fc63f9",
+        "mipi_dsi.cpp": "44cb010354dee85ab1e6166c552af3ad6953de21b24a7647cdb373cd41721336",
+        "mipi_dsi.h": "3e3273ddd5b7bd118ecbc013c93e14ee847d1ae1e2080196811112fa77b3cf0c",
+        "models/__init__.py": "10e35f0f679fb9d18d5fbbde4e72f7a113f5112d65757b73b5df533dc2c9cc94",
+        "models/guition.py": "35cc4ea1b6b5784d452f835c1f5236b00ede214ee83e23369dd5c2d644ba0d3f",
+        "models/m5stack.py": "3588119d261735d0a23213ea3daedfa2b472a6ba33e8d0fc87da9324dbf02cbc",
+        "models/seeed.py": "c9e3205a95cf2e033f2fea80859ac8f40980dbe60e5cfaa9005853544c140032",
+        "models/waveshare.py": "95a531af535ef98468942351fd1ca226acbf9422cdb80baf77af15712bdb63bb"
+      },
+      "upstream_source_sha256": {
+        "__init__.py": "25346a4de794b846917afa56c9853b33133bd319db1b0064001e3ae9ba14c502",
+        "display.py": "441c0552de89144af743f49275f7a7884ef4e8e1b02484665ab81ea1197e1b8d",
+        "mipi_dsi.cpp": "ab2d6af09887880e875979253409773a3bdf038d1655ecee680e6dc764848e2b",
+        "mipi_dsi.h": "62894958b36ac76d969bef10bd79bcba931e61b91f16412b8d5d3a931c04f741",
+        "models/__init__.py": "10e35f0f679fb9d18d5fbbde4e72f7a113f5112d65757b73b5df533dc2c9cc94",
+        "models/guition.py": "35cc4ea1b6b5784d452f835c1f5236b00ede214ee83e23369dd5c2d644ba0d3f",
+        "models/m5stack.py": "3588119d261735d0a23213ea3daedfa2b472a6ba33e8d0fc87da9324dbf02cbc",
+        "models/seeed.py": "c9e3205a95cf2e033f2fea80859ac8f40980dbe60e5cfaa9005853544c140032",
+        "models/waveshare.py": "95a531af535ef98468942351fd1ca226acbf9422cdb80baf77af15712bdb63bb"
+      },
+      "removal_condition": "An official ESPHome provider supplies and qualifies the same owned-transform, serialized UI/video and composed-readback contracts together",
+      "proposal_status": "open",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22789",
+      "proposal_head": "5f5a5bf2489fe937c64e7f08be09f4b3b8569a2b",
+      "documentation_proposal_url": "https://github.com/esphome/developers.esphome.io/pull/348"
     }
   },
   "dependencies": {
     "gmf_ai_audio": {
-      "upstream_revision": "255fb531ddc97ff5e1e113dad97c88f70d6297be",
-      "adaptations": [
-        "ESP-SR 2.6.0 dependency constraint"
-      ],
+      "repository": "espressif/esp-gmf",
+      "upstream_revision": "5adde3e2a214d643635ae036e30c2fa5e89f41b3",
+      "adaptations": [],
       "public_proposal": false,
-      "runtime_contract": "Official AFE manager callbacks. No element pipeline or custom element-output callback is used by the wrapper."
+      "runtime_contract": "Official AFE manager callbacks; ESP-SR remains pinned to 2.6.0"
     }
   },
   "build_baseline": {
-    "esphome": "2026.10.0",
+    "esphome": "2026.12.0.dev0",
     "esp_idf": "5.5.6",
     "sendspin": "0.9.3",
     "audio_libs": "4.0.1",
-    "micro_decoder": "0.4.0"
+    "micro_decoder": "0.4.0",
+    "esphome_revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "esp_idf_selection": "esphome_recommended",
+    "esp_idf_qualification_reference": {
+      "repository": "espressif/esp-idf",
+      "version": "5.5.6",
+      "tag": "v5.5.6",
+      "revision": "880a203ae603d08a94d06aa01e0d6761958e5e9e",
+      "framework_override": false,
+      "scope": "Resolved source identity for the recorded qualification; not an SDK pin or proof for another SDK tag"
+    }
   },
   "native_components": [
     "audio",
     "audio_file",
-    "audio_http",
     "media_source",
     "microphone",
-    "micro_wake_word",
     "mixer",
     "ota",
     "resampler",
     "sendspin",
-    "speaker",
-    "speaker_source",
-    "voice_assistant"
+    "speaker"
   ],
   "native_provider_baseline": {
     "distribution": "esphome",
-    "version": "2026.10.0",
-    "source_policy": "Use the installed official ESPHome providers without local source overrides or vendor source replacement helpers."
+    "version": "2026.12.0.dev0",
+    "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "source_policy": "Install complete official ESPHome and follow its recommended ESP-IDF. Recorded component adaptations and build-local official fixes are explicit temporary exceptions; qualification revisions do not select the framework."
   },
   "retired_local_providers": [
     "audio",
-    "micro_wake_word",
     "mixer",
     "ota",
-    "resampler",
-    "speaker_source",
-    "voice_assistant"
+    "resampler"
   ],
   "retired_adapters": [
     "audio_dsp_iram",
     "audio_http_compat",
     "sendspin_compat"
-  ]
+  ],
+  "official_video_dependencies": {
+    "esp_video": {
+      "repository": "espressif/esp-video-components",
+      "revision": "79ae6117e58e0cf831c8e96820af72e877b5fb82",
+      "path": "esp_video"
+    },
+    "esp_h264": {
+      "repository": "n-IA-hane/esp-h264-component",
+      "revision": "176cda67716c24deef0e76e4451048981e154bd4",
+      "path": "esp_h264",
+      "upstream_repository": "espressif/esp-h264-component",
+      "upstream_revision": "08a0b6588fa02bc1b16351fa7a0afc7ade1dc657",
+      "source_kind": "maintained_fork",
+      "adaptations": [
+        "Default-off hardware-encoder deblocking-buffer SPIRAM preference; internal DMA reference and temporary buffers unchanged",
+        "One INFO allocation-placement diagnostic at encoder creation"
+      ],
+      "removal_condition": "Return the neutral codec helper to an official Espressif revision after equivalent DB placement is available and SDK/HIL-qualified without starving internal DMA owners. Remove the fork selection then; retain the producer option while the official default is INTERNAL-first. Remove that override only when the official allocation policy independently preserves the qualified internal memory budget.",
+      "public_proposal": true,
+      "qualification": "default_IDF_5_5_6_P4_boot_and_duplex_wire_qualified; canonical_Unity_compiled_not_hardware_executed",
+      "proposal_status": "open",
+      "candidate_url": "https://github.com/n-IA-hane/esp-h264-component/tree/fix/hw-encoder-db-spiram",
+      "technical_option": "ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM",
+      "option_default": false,
+      "allocation_scope": "Hardware encoder deblocking buffer preference only; reference and db_tmp remain INTERNAL|DMA",
+      "proposal_url": "https://github.com/espressif/esp-h264-component/pull/28",
+      "proposal_head": "5ceb19dfebb72c0a94193052716e35db1698c9d9"
+    }
+  },
+  "build_backports": {
+    "p4_sdmmc_reset": {
+      "repository": "espressif/esp-idf",
+      "official_fix_revision": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+      "apply_when": {
+        "variant": "ESP32P4",
+        "framework": "esp-idf",
+        "versions": [
+          "5.5.6",
+          "6.0.3"
+        ]
+      },
+      "scope": "build_directory_only",
+      "installed_sdk_modified": false,
+      "outside_supported_version": "no_build_hook; fix presence and qualification must be checked separately for each SDK tag",
+      "adaptation": "Reset SDMMC before memory-bus and other peripheral resets using a build-local system_internal.c copy",
+      "source_sha256": {
+        "__init__.py": "313dce7861e4a72cadd51453cbf4ac471788f168818fd3cc02e7e870eb705671",
+        "p4_sdmmc_reset.cmake": "7c440402a87e037205996c7987741dae20b0453654a21b4d3e1f6c1af8326aa5"
+      },
+      "removal_condition": "The ESPHome-recommended official SDK contains and qualifies this fix, making the build-local backport unnecessary",
+      "source_references": {
+        "5.5.6": {
+          "tag": "v5.5.6",
+          "revision": "880a203ae603d08a94d06aa01e0d6761958e5e9e"
+        },
+        "6.0.3": {
+          "tag": "v6.0.3",
+          "revision": "76f5dedd9950a3012fee8fb7d5586df21fc67802"
+        }
+      },
+      "official_release6_fix_revision": "2c454e88e7439d872659f5ffa4e409988c9e37b3",
+      "already_fixed_policy": "Known official fixed-source or identical reset-order-copy SHA256 skips copying; unknown source fails closed"
+    },
+    "p4_ppa_backport": {
+      "repository": "espressif/esp-idf",
+      "official_fix_revision": "9da8ff53f751f6682f69897d886f3a9946deed31",
+      "apply_when": {
+        "variant": "ESP32P4",
+        "framework": "esp-idf",
+        "versions": [
+          "5.5.6",
+          "6.0.3"
+        ]
+      },
+      "scope": "build_directory_only",
+      "installed_sdk_modified": false,
+      "outside_supported_version": "no_build_hook; fix presence and qualification must be checked separately for each SDK tag",
+      "adaptation": "Apply the exact official engine-idle/completion patch to four build-local PPA C sources and their private header",
+      "source_sha256": {
+        "__init__.py": "2e22adb128593905495f8f5effdcc89fb2c28173ea06503353621c902d961e4b",
+        "p4_ppa_backport.cmake": "dd9729d1ef9eadc332510269123f11b278ca3aeb873027a4abf0ad0497f6875f",
+        "9da8ff53.patch": "9e504cbcf1878dee91aa16fcafa6cf763799d5300df32de89479eb265daf25f6",
+        "p4_ppa_backport.json": "57e52efdf36c6b3e24ba560774167351a2222ee607f14c08e23bbf3d36649ed5"
+      },
+      "removal_condition": "The ESPHome-recommended official SDK contains and qualifies this fix, making the build-local backport unnecessary",
+      "already_fixed_policy": "Reverse-check the exact official patch and skip copies/source replacement when it is already present",
+      "source_references": {
+        "5.5.6": {
+          "tag": "v5.5.6",
+          "revision": "880a203ae603d08a94d06aa01e0d6761958e5e9e"
+        },
+        "6.0.3": {
+          "tag": "v6.0.3",
+          "revision": "76f5dedd9950a3012fee8fb7d5586df21fc67802"
+        }
+      },
+      "official_release6_fix_revision": "9e43423b2b9fab1c363b4ba9361527513de17255"
+    }
+  }
 }

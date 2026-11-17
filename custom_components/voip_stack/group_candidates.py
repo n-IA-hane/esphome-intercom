@@ -157,7 +157,10 @@ async def async_prepare_group_candidates(
                     )
                 continue
             result.browser_legs.append(browser_leg)
-            continue
+            # A logical account may offer both HA and SIP. The HA candidate
+            # must not hide its registered Contacts or acquire a second claim.
+            if endpoint is None or endpoint.kind.is_softphone:
+                continue
         logical_endpoint = (
             runtime.logical_endpoint_for_member(member, peers, roster_entries)
             if runtime.logical_endpoint_for_member is not None
@@ -183,16 +186,15 @@ async def async_prepare_group_candidates(
                 )
                 continue
 
-        targets = (
-            build_sip_contact_targets(
-                (member,),
-                roster_entries,
-                policy=ring_policy,
-                exclude_endpoint_id=source_endpoint_id,
-            )
-            if detailed_preflight
-            else ()
-        ) or (None,)
+        targets = build_sip_contact_targets(
+            (member,),
+            roster_entries,
+            policy=ring_policy or RingPolicy(),
+            exclude_endpoint_id=source_endpoint_id,
+        )
+        if not targets and browser_leg is not None:
+            continue
+        targets = targets or (None,)
         for contact_order, target in enumerate(targets):
             if len(result.attempts) >= MAX_GROUP_ATTEMPTS:
                 if detailed_preflight:
@@ -211,7 +213,7 @@ async def async_prepare_group_candidates(
                 "local_rtp_port_index": 1,
                 "invite": invite,
             }
-            if detailed_preflight:
+            if detailed_preflight or target is not None:
                 candidate_id = (
                     target.candidate_id
                     if target is not None
@@ -221,6 +223,7 @@ async def async_prepare_group_candidates(
                     uri_override=target.uri if target is not None else "",
                     endpoint_id_override=getattr(target, "endpoint_id", ""),
                     peer_user_agent_override=getattr(target, "user_agent", ""),
+                    roster_entry_override=getattr(target, "roster_entry", None),
                     candidate_id=candidate_id,
                     tier=target.tier if target is not None else member_tier,
                     order=(
@@ -244,7 +247,7 @@ async def async_prepare_group_candidates(
                 continue
             if not detailed_preflight:
                 leg.candidate_id = leg.candidate_id or f"forward:{member_order}"
-                leg.order = member_order
+                leg.order = target.order if target is not None else member_order
                 result.attempts.append(leg)
                 continue
             if leg.endpoint_id == source_endpoint_id:

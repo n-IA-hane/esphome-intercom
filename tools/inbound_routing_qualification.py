@@ -23,19 +23,15 @@ import sys
 import threading
 import time
 from typing import Any, Callable
-from uuid import uuid4
 
 import aiohttp
 import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools"))
-
-from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
-
-TEST_CAPTURE_DIR = CAPTURE_ROOT / "inbound-routing"
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -129,25 +125,6 @@ class HomeAssistantApi:
     def delete(self, path: str, *, allow_missing: bool = False) -> Any:
         return self.request("DELETE", path, allow_missing=allow_missing)
 
-    def ws(self, command: dict[str, Any]) -> Any:
-        """Execute one public HA registry command without exposing auth data."""
-        async def execute():
-            async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(
-                    f"{self.base_url.replace('http', 'ws', 1)}/api/websocket"
-                ) as websocket:
-                    await websocket.receive_json(timeout=5)
-                    await websocket.send_json({"type": "auth", "access_token": self._token})
-                    if (await websocket.receive_json(timeout=5)).get("type") != "auth_ok":
-                        raise RuntimeError("Home Assistant WebSocket authentication failed")
-                    await websocket.send_json({"id": 1, **command})
-                    response = await websocket.receive_json(timeout=20)
-                    if not response.get("success"):
-                        code = (response.get("error") or {}).get("code", "unknown")
-                        raise RuntimeError(f"Home Assistant registry command failed ({code})")
-                    return response.get("result")
-        return asyncio.run(execute())
-
     def state(self, entity_id: str) -> dict[str, Any]:
         return self.get(f"/api/states/{entity_id}")
 
@@ -171,7 +148,7 @@ class BareSip:
         *,
         wait_registered: bool = True,
     ) -> None:
-        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
             ["baresip", "-f", str(config)],
@@ -364,18 +341,12 @@ class FlowSnapshot:
         video: dict[str, Any] | None,
         assist: dict[str, Any] | None,
         trunk: dict[str, Any] | None,
-        native_trunks: bool = False,
-        baseline_subentries: tuple[str, ...] = (),
     ) -> None:
         self.entry_id = entry_id
         self.base = base
         self.video = video
         self.assist = assist
         self.trunk = trunk
-        self.native_trunks = native_trunks
-        self._baseline_subentries = frozenset(baseline_subentries)
-        self._owned_title = f"VoIP qualification {uuid4().hex}"
-        self._owned_trunk = None
 
     @classmethod
     def capture(cls, api: HomeAssistantApi) -> FlowSnapshot:
@@ -391,110 +362,35 @@ class FlowSnapshot:
             },
         )
         flow_id = str(result["flow_id"])
-        native = result.get("type") == "menu"
-        captured = {}
-        try:
-            if native:
-                if "user" not in result.get("menu_options", ()):
-                    raise RuntimeError("VoIP Stack reconfigure menu has no user step")
-                result = api.post(f"/api/config/config_entries/flow/{flow_id}", {"next_step_id": "user"})
-            for _ in range(4):
-                step = result.get("step_id")
-                if result.get("type") != "form" or step not in {"user", "video", "assist", "trunk"}:
-                    raise RuntimeError(f"Unexpected VoIP Stack capture step: {step}")
-                captured[step] = values = schema_defaults(result)
-                base = captured["user"]
-                # Never submit the terminal form: capture is read-only. These
-                # flags select the actual optional steps of both native menus
-                # and the supported former sequential forms.
-                more = (step == "user" and base.get("sip_video")) or (
-                    step in {"user", "video"} and base.get("assist_endpoint_enabled")) or (
-                    not native and step != "trunk" and base.get("trunk_enabled"))
-                if not more:
-                    break
-                result = api.post(f"/api/config/config_entries/flow/{flow_id}", values)
-            else:
-                raise RuntimeError("VoIP Stack capture exceeded its known steps")
-        finally:
-            api.delete(f"/api/config/config_entries/flow/{flow_id}", allow_missing=True)
-        baseline = api.ws({"type": "config_entries/subentries/list", "entry_id": entry_id}) if native else ()
-        return cls(entry_id=entry_id, base=captured["user"], video=captured.get("video"),
-                   assist=captured.get("assist"), trunk=captured.get("trunk"), native_trunks=native,
-                   baseline_subentries=tuple(item["subentry_id"] for item in baseline))
-
-    def _find_owned_trunk(self, api):
-        records = api.ws({"type": "config_entries/subentries/list", "entry_id": self.entry_id})
-        current = next((item for item in records if item["subentry_id"] == self._owned_trunk), None)
-        if current is not None and (current.get("title") != self._owned_title
-                                    or current.get("subentry_type") != "trunk"):
-            raise RuntimeError("Qualification trunk ownership changed")
-        owned = [item for item in records if item.get("subentry_type") == "trunk"
-                 and item.get("title") == self._owned_title
-                 and item["subentry_id"] not in self._baseline_subentries]
-        if len(owned) > 1:
-            raise RuntimeError("Qualification trunk ownership is ambiguous")
-        return owned[0]["subentry_id"] if owned else None
-
-    def _remove_owned_trunk(self, api):
-        identity = self._find_owned_trunk(api)
-        if identity is None:
-            self._owned_trunk = None
-            return
-        if self._owned_trunk is not None and identity != self._owned_trunk:
-            raise RuntimeError("Qualification trunk identity changed")
-        api.ws({"type": "config_entries/subentries/delete", "entry_id": self.entry_id,
-                "subentry_id": identity})
-        self._owned_trunk = None
-
-    def _apply_native_trunk(self, api, overrides, trunk_override):
-        if self._owned_trunk is None and trunk_override is None:
-            raise RuntimeError("Native qualification requires an explicit test-owned trunk_override")
-        if self._owned_trunk is not None and self._find_owned_trunk(api) != self._owned_trunk:
-            raise RuntimeError("Qualification trunk is no longer owned")
-        path = "/api/config/config_entries/subentries/flow"
-        request = {"handler": [self.entry_id, "trunk"]}
-        if self._owned_trunk is not None:
-            request["subentry_id"] = self._owned_trunk
-        result = api.post(path, request)
-        flow_path = f"{path}/{result['flow_id']}"
-        try:
-            if result.get("type") != "form" or result.get("step_id") != "user":
-                raise RuntimeError("Unexpected native trunk identity form")
-            identity = schema_defaults(result)
-            identity.update(name=self._owned_title, trunk_enabled=True, make_default=False)
-            identity["trunk_register"] = (trunk_override or {}).get("trunk_register", identity.get("trunk_register", True))
-            # Older supported trunk forms omit make_default entirely.
-            if "make_default" not in {field["name"] for field in result.get("data_schema", ())}:
-                identity.pop("make_default")
-            result = api.post(flow_path, identity)
-            if result.get("type") != "form" or result.get("step_id") != "trunk":
-                raise RuntimeError("Unexpected native trunk configuration form")
-            values = schema_defaults(result)
-            allowed = {field["name"] for field in result.get("data_schema", ())}
-            if set(overrides) - allowed:
-                raise RuntimeError("Native trunk form does not expose the requested controls")
-            values.update((key, value) for key, value in {**(trunk_override or {}), **overrides}.items()
-                          if key in allowed)
-            result = api.post(flow_path, values)
-            if result.get("type") not in {"create_entry", "abort"} or (
-                result.get("type") == "abort" and result.get("reason") != "reconfigure_successful"):
-                def code(value):
-                    return value if (isinstance(value, str) and value.isascii() and len(value) <= 80
-                                     and value.replace("_", "").isalnum()) else "unknown"
-                errors = ",".join(sorted({code(value) for value in (result.get("errors") or {}).values()}))
-                # Report only flow identifiers and validation codes. The
-                # returned form/schema can carry current credential defaults.
-                raise RuntimeError("Native qualification trunk was not committed "
-                    f"(type={code(result.get('type'))}, step={code(result.get('step_id'))}, errors={errors or 'none'})")
-            self._owned_trunk = self._find_owned_trunk(api)
-            if self._owned_trunk is None:
-                raise RuntimeError("Committed qualification trunk is missing")
-        except BaseException:
-            self._remove_owned_trunk(api)
-            raise
-        finally:
-            if result.get("type") in {"form", "menu"}:
-                api.delete(flow_path, allow_missing=True)
+        base = schema_defaults(result)
+        result = api.post(f"/api/config/config_entries/flow/{flow_id}", base)
+        video = None
+        if result.get("step_id") == "video":
+            video = schema_defaults(result)
+            result = api.post(f"/api/config/config_entries/flow/{flow_id}", video)
+        assist = None
+        if result.get("step_id") == "assist":
+            assist = schema_defaults(result)
+            result = api.post(f"/api/config/config_entries/flow/{flow_id}", assist)
+        if result.get("type") == "abort":
+            return cls(
+                entry_id=entry_id,
+                base=base,
+                video=video,
+                assist=assist,
+                trunk=None,
+            )
+        if result.get("step_id") != "trunk":
+            raise RuntimeError(f"unexpected flow while capturing trunk: {result}")
+        trunk = schema_defaults(result)
+        # Deliberately do not submit the last form: capture must not reload HA.
+        return cls(
+            entry_id=entry_id,
+            base=base,
+            video=video,
+            assist=assist,
+            trunk=trunk,
+        )
 
     def apply(
         self,
@@ -507,17 +403,6 @@ class FlowSnapshot:
         terminator: str | None = None,
         trunk_override: dict[str, Any] | None = None,
     ) -> None:
-        overrides = {key: value for key, value in {
-            "trunk_inbound_mode": mode, "automation_routing_enabled": automation,
-            "trunk_inbound_default_target": default_target, "trunk_dtmf_timeout_ms": timeout_seconds,
-            "trunk_dtmf_terminator": terminator,
-        }.items() if value is not None}
-        if self.native_trunks:
-            if not overrides and trunk_override is None:
-                self._remove_owned_trunk(api)
-            else:
-                self._apply_native_trunk(api, overrides, trunk_override)
-            return
         result = api.post(
             "/api/config/config_entries/flow",
             {
@@ -527,30 +412,49 @@ class FlowSnapshot:
             },
         )
         flow_id = str(result["flow_id"])
-        flow_path = f"/api/config/config_entries/flow/{flow_id}"
-        try:
-            base = dict(self.base)
-            if trunk_override is not None:
-                base["trunk_enabled"] = True
-            result = api.post(flow_path, base)
-            if result.get("step_id") == "video":
-                result = api.post(flow_path, dict(self.video or {}))
-            if result.get("step_id") == "assist":
-                result = api.post(flow_path, dict(self.assist or {}))
-            if result.get("step_id") == "trunk":
-                trunk = schema_defaults(result)
-                allowed = {field["name"] for field in result.get("data_schema", ())}
-                if set(overrides) - allowed:
-                    raise RuntimeError("Legacy trunk form does not expose the requested controls")
-                trunk.update((key, value) for key, value in {
-                    **(self.trunk or {}), **(trunk_override or {}), **overrides,
-                }.items() if key in allowed)
-                result = api.post(flow_path, trunk)
-            if result.get("type") != "abort" or result.get("reason") != "reconfigure_successful":
-                raise RuntimeError(f"VoIP Stack reconfigure failed at step {result.get('step_id')}")
-        finally:
-            if result.get("type") in {"form", "menu"}:
-                api.delete(flow_path, allow_missing=True)
+        base = dict(self.base)
+        if trunk_override is not None:
+            base["trunk_enabled"] = True
+        result = api.post(f"/api/config/config_entries/flow/{flow_id}", base)
+        if result.get("step_id") == "video":
+            result = api.post(
+                f"/api/config/config_entries/flow/{flow_id}",
+                dict(self.video or {}),
+            )
+        if result.get("step_id") == "assist":
+            result = api.post(
+                f"/api/config/config_entries/flow/{flow_id}",
+                dict(self.assist or {}),
+            )
+        if result.get("step_id") == "trunk":
+            trunk = schema_defaults(result)
+            allowed = set(trunk)
+            trunk.update(
+                (key, value)
+                for key, value in (self.trunk or {}).items()
+                if key in allowed
+            )
+            trunk.update(
+                (key, value)
+                for key, value in (trunk_override or {}).items()
+                if key in allowed
+            )
+            if mode is not None:
+                trunk["trunk_inbound_mode"] = mode
+            if automation is not None:
+                trunk["automation_routing_enabled"] = automation
+            if default_target is not None:
+                trunk["trunk_inbound_default_target"] = default_target
+            if timeout_seconds is not None:
+                trunk["trunk_dtmf_timeout_ms"] = timeout_seconds
+            if terminator is not None:
+                trunk["trunk_dtmf_terminator"] = terminator
+            result = api.post(f"/api/config/config_entries/flow/{flow_id}", trunk)
+        if (
+            result.get("type") != "abort"
+            or result.get("reason") != "reconfigure_successful"
+        ):
+            raise RuntimeError(f"VoIP Stack reconfigure failed: {result}")
         wait_for(
             lambda: next(
                 (
@@ -860,7 +764,7 @@ def trace_types(trace: EventTrace, call_id: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(TEST_CAPTURE_DIR / "inbound_routing_matrix.json")
+        "--out", default=str(ROOT / "test_captures" / "inbound_routing_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument(
@@ -868,7 +772,6 @@ def main() -> int:
         help="rename the single selected case in the evidence artifact",
     )
     args = parser.parse_args()
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     api = HomeAssistantApi()
     snapshot = FlowSnapshot.capture(api)
     def optional_automation_state(entity_id: str) -> bool | None:
@@ -1290,11 +1193,8 @@ def main() -> int:
         while active:
             active.pop().close()
         cleanup_automations(api)
-        try:
+        with suppress(Exception):
             snapshot.apply(api)
-        except Exception as error:
-            results.append({"name": "restore_integration_configuration", "status": "fail",
-                            "error": f"Configuration restore failed ({type(error).__name__})"})
         if old_automation_was_on is not None:
             with suppress(Exception):
                 set_automation(api, OLD_AUTOMATION, old_automation_was_on)

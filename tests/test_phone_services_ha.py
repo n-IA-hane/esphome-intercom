@@ -1,66 +1,60 @@
-"""Standard listeners share the native account and own their entire lifecycle."""
+"""Standard LDAP composition through public HA setup and private native RPC."""
 
-import asyncio
-import imaplib
+from unittest.mock import AsyncMock
 
 import pytest
-from homeassistant.helpers import issue_registry as ir
+from aioesphomeapi import UserService, UserServiceArg, UserServiceArgType
 
-from custom_components.voip_stack import phone_services
-from custom_components.voip_stack.managed_phones import managed_records
-from .test_esphome_provisioning_ha import phone_lab as phone_lab
+from .test_managed_phones_ha import (
+    custom_integration_path as custom_integration_path,
+    phone_lab as phone_lab,
+    managed as managed,
+    phone_record as phone_record,
+)
 
 pytestmark = pytest.mark.ha
 
 
-async def test_standard_listeners_accept_same_native_account_and_close(phone_lab, tmp_path, socket_enabled):
+def directory_actions(native):
+    fields = [(name, UserServiceArgType.INT if name == "port" else UserServiceArgType.BOOL
+               if name in {"tls", "enabled"} else UserServiceArgType.STRING)
+              for name in ("server", "port", "base_dn", "bind_dn", "account_id", "tls", "enabled")]
+    native.services = {**native.services,
+        10: UserService(name="configure_directory", key=10,
+                        args=[UserServiceArg(name=name, type=kind) for name, kind in fields]),
+        11: UserService(name="refresh_ldap_directory", key=11, args=[])}
+
+
+async def test_public_entry_setup_starts_ldap_and_privately_configures_native(phone_lab, monkeypatch, socket_enabled):
+    from custom_components import voip_stack
+    from custom_components.voip_stack import mailbox
     lab = phone_lab
-    lab.hass.config.media_dirs = {"local": str(tmp_path)}
-    lab.hass.config_entries.async_update_entry(lab.entry, data={
-        "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0, "imap_port": 0},
-    })
-    await lab.controller.async_close()
-    await phone_services.async_setup_phone_services(lab.hass, lab.entry)
-    controller = lab.runtime.phone_provisioning
+    directory_actions(lab.native.runtime_data)
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0}})
+    for name in ("_async_setup_shared", "_async_apply_assist_intents", "_async_start_sip_trunk",
+                 "_deferred_phonebook_sync"):
+        monkeypatch.setattr(voip_stack, name, AsyncMock())
+    monkeypatch.setattr(mailbox, "async_setup_mailboxes", AsyncMock())
+    monkeypatch.setattr(lab.hass.config_entries, "async_forward_entry_setups", AsyncMock())
+
+    async def sip(_hass):
+        lab.entry.runtime_data.sip = lab.runtime.sip
+        return True
+
+    monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", sip)
     try:
-        await controller.async_sync()
-        phone = managed_records(lab.entry)[lab.device.id]
-        assert controller.directory_enabled and controller.imap_enabled
-        assert await controller.authenticate(phone.username, phone.password.encode()) == phone.endpoint_id
-        ldap_port = lab.runtime.ldap_server.port
-        imap_port = lab.runtime.imap_server.port
-        assert ldap_port and imap_port and ldap_port != imap_port
-
-        def inbox():
-            with imaplib.IMAP4("127.0.0.1", imap_port, timeout=3) as client:
-                assert client.login(phone.username, phone.password)[0] == "OK"
-                assert client.select("INBOX")[0] == "OK"
-                assert client.uid("SEARCH", None, "ALL")[0] == "OK"
-        await lab.hass.async_add_executor_job(inbox)
+        assert await voip_stack.async_setup_entry(lab.hass, lab.entry)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        server = getattr(lab.entry.runtime_data, "ldap_server", None)
+        assert server is not None and server.port
+        configure = [data for action, data in lab.sent if action == "configure_directory"]
+        assert configure and configure[-1] == dict(server="127.0.0.1", port=server.port,
+            base_dn="ou=phonebook,dc=voip", bind_dn="uid={username},ou=accounts,ou=phonebook,dc=voip",
+            account_id="ha", tls=False, enabled=True)
+        assert any(action == "refresh_ldap_directory" for action, _data in lab.sent)
+        assert not lab.events
     finally:
-        await phone_services.async_close_phone_services(lab.hass)
-        archive = lab.runtime.sip.component("media_archive")
-        if archive is not None:
-            await archive.close()
-    assert lab.runtime.imap_server is None and lab.runtime.ldap_server is None
-    for port in (ldap_port, imap_port):
-        with pytest.raises(OSError):
-            await asyncio.open_connection("127.0.0.1", port)
-    assert lab.runtime.sip.phase.value == "active"
-
-
-async def test_invalid_tls_creates_repair_and_preserves_call_engine(phone_lab):
-    lab = phone_lab
-    lab.hass.config_entries.async_update_entry(lab.entry, data={"phone_services": {
-        "tls": True, "certificate": "/invalid-test-certificate", "private_key": "/invalid-test-key",
-    }})
-    await lab.controller.async_close()
-    await phone_services.async_setup_phone_services(lab.hass, lab.entry)
-    try:
-        assert not lab.runtime.phone_provisioning.directory_enabled
-        assert not lab.runtime.phone_provisioning.imap_enabled
-        assert lab.runtime.ldap_server is None and lab.runtime.imap_server is None
-        assert lab.runtime.sip.phase.value == "active"
-        assert ("voip_stack", "phone_service_tls") in ir.async_get(lab.hass).issues
-    finally:
-        await phone_services.async_close_phone_services(lab.hass)
+        owner = getattr(lab.entry.runtime_data, "phone_services", None)
+        if owner is not None:
+            await owner.async_close()

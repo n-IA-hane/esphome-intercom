@@ -26,6 +26,7 @@ from .service_endpoints import (
 from .fsm import TerminalReason
 from .route_decisions import set_pending_route_decision
 from .runtime_data import conference_component
+from .service_errors import service_error
 from .websocket_api import _ha_softphone_store
 
 
@@ -89,6 +90,23 @@ async def async_resolve_browser_call_command(
         and registry.is_terminated_for_endpoint(call_id, endpoint_id)
     )
     if call_id and not already_terminated and not call_belongs_to_endpoint(registry, call_id, endpoint_id):
+        if getattr(call, "service", "") == "answer":
+            projection = _ha_softphone_store(hass, endpoint_id)
+            projected_call_id = str(
+                projection.get("call_id") or projection.get("last_terminal_call_id") or ""
+            ).strip()
+            # A forward retires this callee without ending the caller's session.
+            # Its last projection refines the error, never call ownership.
+            if (
+                projected_call_id == call_id
+                and projection.get("state") == "idle"
+                and projection.get("terminal_reason") == "forwarded"
+            ):
+                raise service_error(
+                    f"Call {call_id} is no longer ringing on this phone",
+                    "call_not_ringing",
+                    call_id=call_id,
+                )
         raise ServiceValidationError(
             f"call_id {call_id} belongs to another phone endpoint"
         )

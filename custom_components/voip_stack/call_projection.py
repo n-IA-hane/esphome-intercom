@@ -33,6 +33,7 @@ class CallProjectionEvent:
 
 _RESERVED_FIELDS = {"state", "sip_state", "call_id", "caller", "callee", "endpoint_id"}
 _TERMINAL_PHONE_PROJECTIONS = "terminal_phone_projections"
+_BRIDGE_PRESENTATION = "bridge_presentation"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -83,7 +84,15 @@ class CallStatePublisher:
         endpoint_ids.update(endpoint for scope, endpoint in deliveries if scope == "phone")
         for endpoint_id in endpoint_ids:
             endpoint = runtime.endpoints.get(endpoint_id)
-            if endpoint is None or not endpoint.kind.is_softphone:
+            if endpoint is None or not endpoint.supports_ha_client:
+                continue
+            if not endpoint.kind.is_softphone and not any(
+                leg.endpoint_id == endpoint_id and leg.role == "ha_softphone"
+                and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                for leg in session.legs.values()
+            ):
+                # Native SIP accounts are projected by PhoneStateObserver.
+                # Only an actual HA transport needs the browser media store.
                 continue
             if deliveries.get(("phone", endpoint_id)) == snapshot:
                 continue
@@ -111,7 +120,14 @@ class CallStatePublisher:
                 peer_name=session.callee if source else session.caller,
                 event_type="state_changed",
             )
-        if snapshot not in deliveries.values():
+        presentation = session.metadata.get(_BRIDGE_PRESENTATION)
+        described = (isinstance(presentation, dict) and presentation.get("context") == (
+            snapshot.owner, snapshot.state, snapshot.callee, snapshot.route_kind))
+        if described and deliveries.get((_BRIDGE_PRESENTATION, "")) != presentation:
+            publish_bridge_projection(self.hass, session,
+                **{**presentation["details"], "route_kind": snapshot.route_kind})
+            deliveries[(_BRIDGE_PRESENTATION, "")] = presentation
+        elif snapshot not in deliveries.values():
             publish_bridge_projection(self.hass, session, route_kind=session.route_kind,
                                       event_type="state_changed")
 
@@ -127,6 +143,18 @@ def bind_state_publisher(hass, registry):
     if registry.component("state_publisher") is None:
         publisher = CallStatePublisher(hass, registry)
         registry.adopt_component("state_publisher", publisher, closer=publisher.close)
+
+
+def stage_bridge_presentation(session, **details):
+    """Describe an accepted operation for its existing state publisher."""
+    if not session.live:
+        return False
+    session.update_metadata(**{_BRIDGE_PRESENTATION: {
+        "operation": session.event_context.sequence,
+        "context": (session.owner, session.state, session.callee, session.route_kind),
+        "details": dict(details),
+    }})
+    return True
 
 
 def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:

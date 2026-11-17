@@ -4,18 +4,13 @@ voip_stack:
   task_stacks_in_psram: true
   buffers_in_psram: true
   audio:
-    tx:
-      codec: opus
-      sample_rate: 48000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
-    rx:
-      codec: opus
-      sample_rate: 48000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
+    codecs:
+      - codec: opus
+        rx:
+          - sample_rate: 48000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
   speaker: hw_speaker
   dc_offset_removal: false
   delete_contact_missing_from:

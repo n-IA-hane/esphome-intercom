@@ -2,12 +2,12 @@
 
 VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
-is a supported `2026.8.0` capability. ESPHome profiles remain audio-only unless
-a video source or sink is configured. ESP32-S3 profiles with a supported native
-camera can transmit RTP/JPEG; the optional software JPEG renderer can display
-remote video through LVGL on an S3. Camera transmission and display reception
-are qualified separately for the available S3 boards. Qualified ESP32-P4 profiles can transmit and receive RTP/JPEG or
-H.264 video without changing the audio contract.
+is available to compatible endpoints. ESPHome profiles remain audio-only unless
+a video source or sink is configured. A supported ESP32-S3 camera can transmit
+RTP/JPEG; a supported S3 display can receive JPEG through `esp_video_renderer`.
+These are independent roles, so a receive-only display does not gain a camera.
+ESP32-S3 does not decode H.264. P4 profiles select JPEG or H.264 transmit and
+receive paths without replacing their audio contract.
 
 Video is disabled by default and does not alter an audio-only installation.
 Open the VoIP Stack integration, choose **Reconfigure**, then enable
@@ -26,6 +26,11 @@ offers two independent capabilities:
 If video setup, decoding, camera permission or transcoding fails, the SIP
 dialog and browser audio remain active whenever audio negotiation succeeded.
 
+The S3 receive renderer and current managed account/directory paths belong to
+the coordinated preview. Stable camera-only firmware does not gain a receive
+display through a HACS update. Follow
+[preview source selection](DEPLOYMENT_GUIDE.md#development-preview-firmware).
+
 ## Start with one picture
 
 1. Make a working audio call between the two endpoints first.
@@ -37,42 +42,28 @@ dialog and browser audio remain active whenever audio negotiation succeeded.
 4. During the call, turn either camera off to stop that direction. Turning your
    camera off does not prohibit receiving the other party's video.
 
-## JPEG image-size negotiation
+![Doorbell video-call demonstration in the VoIP Dashboard](images/voip-dashboard-gate-demo.png)
 
-JPEG endpoints can use the standard RFC 6236 `imageattr` SDP attribute to
-request an image size suitable for their decoder and display. Home Assistant's
-default JPEG offer includes `a=imageattr:26 send * recv *`, allowing the peer to
-answer with its receive preferences. Sending and receiving keep independent
-image-size contracts, including after a video re-offer.
-
-With optional SIP video transcoding enabled, an encoded JPEG bridge can resize
-either media direction, including when the phone receiving video starts the call.
-
-The browser sender fits the camera picture into the selected receive bounds
-before JPEG compression. It preserves the picture's proportions and avoids
-upscaling. The JPEG canvas uses dimensions divisible by eight, adding minimal
-black padding when necessary. For example, a 640x360 picture can become 320x180
-content inside a 320x184 JPEG. The existing worker performs the resize; the ESP
-retains its bounded decoder buffers.
-
-No extra YAML setting is needed for this negotiation. Peers that omit the
-attribute retain the existing behavior, while unsupported optional preferences
-leave the audio call available. Frame rate remains a separate SDP setting.
-
-The SDP `framerate` recommendation belongs to the negotiated media path, not
-to a global phone-system limit. A display profile advertising 10 FPS keeps
-that budget; a compatible peer advertising 25 FPS can use 25. When no frame
-rate is declared, the browser's preferred capture rate is 30 FPS without an
-extra fixed maximum, subject to the actual camera and codec capabilities.
-Compatible RTP relay preserves the source cadence. Capture and conversion
-respect receiver limits without discarding nominal-rate frames just because
-of small timing variations, or duplicating a slow source to fill the limit.
-See [SDP frame-rate semantics](https://www.rfc-editor.org/rfc/rfc8866.html#section-6.13).
+_Dashboard doorbell-call demonstration using an illustrative gate-camera feed._
 
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
 The codec matrix below explains what happens when endpoints support different
 formats; it is not a checklist you must complete for every call.
+
+## Direct media and conversion
+
+Each leg negotiates its codec, direction, dimensions and cadence through SDP.
+A compatible encoded path is preferred even when transcoding is enabled.
+Conversion is used when the negotiated codec or image constraints require it;
+it is not enabled merely because a phone registered or lacks legacy discovery
+metadata. A JPEG browser frame may also require Huffman-table normalization
+before RFC 2435 packetization.
+
+For example, a compatible JPEG call can pass through HA without video decode
+and re-encode. An upstream H.264 call can be converted by HA to JPEG for an S3
+sink when video transcoding is enabled. Disabling conversion does not authorize
+an incompatible video contract; audio can remain active when video is rejected.
 
 ## Capability matrix
 
@@ -130,42 +121,31 @@ simultaneous camera web stream. A later [HA-to-S3 retest by @jayfan0](https://gi
 confirmed immediate S3 camera video after updating the HA integration. That
 reported call lasted 64 minutes before an unexplained disconnect without debug
 logs, so it is not evidence of unrestricted long-uptime behavior. Both reports
-concern the S3's outgoing camera stream, independently of which side dialed;
-they do not add remote-video rendering on S3 screens.
+concern the S3's outgoing camera stream, independently of which side dialed.
+S3 receive display support is provided separately by the JPEG renderer
+described below.
 
 If a camera call remains without video, collect one HA-to-S3 SIP capture and the ESP diagnostic log:
 check the INVITE's `m=video` and direction, the answer's video port and direction,
 then RTP delivery. See [Testing and debugging](TESTING_AND_DEBUG.md).
 
-### Receiving video on a FULL round S3 display
+## ESP32-S3 receive display
 
-The optional software JPEG renderer can display incoming video independently
-from a local camera. For the maintained FULL round layouts, add:
+The maintained S3 JPEG receive package connects the standalone
+[`esp_video_renderer`](https://github.com/n-IA-hane/esphome-video-renderer) to the
+existing VoIP video sink and LVGL call surface. It decodes complete JPEG images
+and returns the display to its ordinary UI after the video session ends.
+A board may configure a camera source independently if it has one.
 
-```yaml
-packages:
-  incoming_video: github://n-IA-hane/esphome-intercom/packages/voip/s3_video_call_page.yaml@dev
-```
+Spotpear FULL configures a 240x240 receive envelope; Box V2 FULL configures
+320x240. Their device packages currently request up to 10 FPS, while the generic
+receive package has its own conservative defaults. Display plus VoIP selects
+this receive path on those supported FULL boards; no camera is inferred.
 
-Use the coordinated development component sources for this package. It creates
-one black video page at boot and reuses the existing call-page router and End
-call action. The first decoded frame selects that page; hangup restores the
-normal call or terminal page. Clock, battery and other top-layer widgets are
-hidden during video. The existing status renderer selects their visibility on
-the next page. The timer overlay is displayed only on supported assistant pages;
-the timer itself continues while a video call is shown.
-
-The renderer owns JPEG buffers, decoding and image presentation. The page
-package controls only presentation and keeps the existing video MWW policy.
-Without this FULL layout, the lower-level `s3_video_jpeg.yaml` package still
-accepts an application-owned LVGL container.
-
-Display profiles use native screen/layout events to stop offscreen avatar
-activity, suspend text pagination and suppress scrolling labels while hidden.
-Animations resume only when their view is visible. This adds no polling task
-and leaves call termination and functional timers independent. The existing
-P4 hardware video path is unchanged; software validation of these visibility
-hooks is separate from physical P4 qualification.
+The selected dimensions and `framerate` bound resource use and admission; they
+do not guarantee an achieved panel frame rate. A camera-only S3 installation
+needs the receive renderer and a suitable display to show incoming video.
+An H.264 upstream leg requires HA conversion to JPEG, not an H.264 decoder on S3.
 
 ## ESP32-P4 video endpoints
 
@@ -182,6 +162,11 @@ The full profile also publishes the same JPEG source as a standard ESPHome
 camera entity. Home Assistant can render that entity through its normal camera
 platform, while negotiated calls use RTP/JPEG in both directions without a
 second capture pipeline.
+
+Maintained FULL profiles pause Micro Wake Word during negotiated video without
+changing its saved enable setting. The usual startup/readiness guards decide
+whether recognition resumes after video ends. Assist, music, TTS and calls keep
+their existing application and audio bindings.
 
 ### What the P4 sends and displays
 
@@ -204,28 +189,38 @@ The two video directions are independent and can run at the same time:
 
 Presentation follows the video media clock. Capture, decode and display use
 bounded queues, persistent workers and reusable buffers so that a slow frame
-cannot create an ever-growing delay. Video work is kept out of the ESPHome main
-loop, and JPEG and H.264 dependencies remain gated by the selected firmware
-profile.
+cannot create an ever-growing delay. Decode work remains on its worker. Surface publication and the LVGL image
+are coordinated by the main loop; JPEG conversion uses its bounded PPA step
+before publication. JPEG and H.264 dependencies remain gated by the selected
+firmware profile.
 
-The renderer also owns the transition between the normal LVGL interface and
-the call image. It enters the video view only for an accepted receive stream,
-can return to audio-only during the same dialog, and restores the idle page and
-navigation controls after hangup. Qualification therefore checks signaling,
-RTP/codec processing and physical-panel presentation separately.
+The renderer emits first-frame and stream-ended events. The package automations
+own call pages and navigation, including video removal and hangup. Rendering
+itself has no SIP or call state. Qualification checks signaling, RTP/codec
+processing and physical-panel presentation separately.
 
 Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
-gates the unused source, decoder, buffers and managed libraries at compile
-time.
+gates the unused source, decoder, buffers and managed libraries at compile time.
 
-H.264 receive uses the P4 direct display path. `display_id` is therefore
-required on `p4_video_renderer` when `codec: h264`; ESPHome rejects the YAML at
-validation time if it is missing. JPEG can present through the LVGL image path
-or an optional direct display. In either case, receiving RTP packets or
-decoding frames is not considered display success: the presentation counter or
-a framebuffer capture must also prove that frames reached the panel.
+Both P4 codecs now publish an image through LVGL. `display_id` supplies the
+bounded surface geometry; LVGL owns the orientation and display transfer. A
+worker never writes directly to the panel. Receiving packets or decoding frames
+is not display success: presented-frame evidence and a complete
+[screenshot](ESP_SCREENSHOT.md) must cover the visible composition. Physical
+panel delivery remains a separate qualification.
 
-The profile supports:
+The renderer is loaded from `esphome-video-renderer`, including the neutral
+`video_renderer` module. `voip_stack.video.sink` references the renderer ID and
+creates its transport adapter automatically. On S3, remove the old `voip:` block
+inside `esp_video_renderer` and replace a reference to its old adapter ID with
+the existing renderer ID. The shipped packages apply this migration.
+
+## Home Assistant video capabilities
+
+The following list describes HA browser and SIP bridge behavior, not additional
+P4 decoder codecs. P4 remains limited to its selected JPEG or H.264 profile.
+
+The HA profile supports:
 
 - incoming and outgoing calls owned by the Home Assistant softphone;
 - `sendrecv`, `sendonly`, `recvonly` and `inactive` SDP directions;
@@ -264,8 +259,8 @@ For inbound trunk video, **Direct to default destination** reaches the selected
 phone without digit-collection delay. **DTMF extension selection** can also
 preserve video when the initial trunk offer contains a compatible video stream:
 HA pre-binds and advertises the audio/video ports while collecting digits, then
-hands those exact sockets to the selected HA browser phone. Selecting an ESP,
-Assist or another audio-only target releases the unused video resources.
+hands those exact sockets to the selected HA browser phone. Selecting an
+audio-only destination releases the unused video resources.
 
 With RTP/AVP there may be no negotiated key-frame feedback. A browser that
 attaches after DTMF collection can therefore wait until the remote sender's
@@ -278,6 +273,33 @@ PSTN leg or an audio-only ITSP may remove video while leaving audio usable.
 When a PBX bridges two HA instances, exact-codec H.264, VP8 or JPEG can remain
 passthrough; this integration does not require both homes to share one HA
 instance.
+
+### External media address on a trunk
+
+The trunk's **Media NAT mode** (`trunk_media_nat`) controls the media destinations
+advertised to that PBX on outgoing calls:
+
+- **Automatic** (`auto`, the default for new trunks) uses Home Assistant's
+  configured STUN servers for a public IPv4 peer. It sends Binding requests on
+  the actual bound media sockets before their media readers
+  start, then advertises each validated address and port separately. Translated
+  RTP and RTCP ports need not be consecutive. Private LAN/VPN peers retain the
+  local media destinations without contacting an Internet STUN server.
+- **Direct** (`direct`) keeps the local media address and ports, without STUN.
+  Use it when the peer can already route to HA's advertised media sockets.
+- **Manual** (`manual`) requires **Outbound media IPv4 address**
+  (`trunk_outbound_media_address`). It must be HA's actual reachable address,
+  not the provider's address, and the advertised RTP/RTCP port numbers must be
+  reachable unchanged. Existing saved address overrides retain this manual
+  behavior. Update the override if the public egress address changes.
+
+Automatic discovery validates every required socket and does not substitute a
+guessed public address or port when discovery fails. STUN mapping discovery is
+not ICE connectivity negotiation or a TURN relay, and does not configure router
+port forwarding or guarantee reachability through every NAT/firewall. Working
+audio through symmetric RTP does not establish that an independent receive-only
+video stream can reach its advertised destination. These per-trunk settings do
+not change ordinary LAN calls.
 
 ### Dahua door-station interoperability
 
@@ -318,18 +340,20 @@ mode is enabled. The normal card does not cover the picture with diagnostics.
 The tune button beside Hangup selects the microphone, audio output and camera
 owned by the current browser or Companion App session. Camera replacement is
 atomic: the existing sender remains active until the replacement track and
-encoder are ready. The Hangup control keeps its responsive dimensions and
-pulses subtly from received audio only; it is not driven by the local
-microphone.
+encoder are ready. Hangup remains the explicit call-termination control;
+audio-reactive decoration is separate from whether that action works and is
+not a measurement of audible playback.
 
 Camera transmission has two gates. The integration-level option must first be
 enabled, then **Send Camera** must be enabled on that logical HA phone. The
 preference survives cache clearing and is shared by every card bound to the
 same phone; camera permission remains local to the browser that owns media.
 Permission denial stops only the outgoing camera track. Incoming video, audio
-and call controls continue independently. Reloading the dashboard during
-ringing or an established call transfers media ownership to the new card and
-releases the old WebSocket deterministically.
+and call controls continue independently. The page/window owns browser media
+and shares it across its cards, Dashboard and popup. Changing views does not
+create a second call; an ordinary reload can recover the same window's call.
+A new window or duplicated tab has its own media identity. Keep the receiving
+frontend running and respect mobile background-suspension limits.
 
 ## Direct and transcoded media paths
 
@@ -391,13 +415,11 @@ release that single slot instead of failing the next video offer.
 There is no intermediate recording or complete video file. FFmpeg receives
 and emits RTP continuously on loopback. The transcode path is intentionally
 bounded to one active call and at most one subprocess per incompatible active
-direction. Every subprocess uses one encoder thread. Browser VP8 output uses
-an envelope up to 1280x720, 700 kbit/s target and 900 kbit/s maximum, subject
-to the receiver's format parameters. SIP H.264 output follows the receiver's
-level envelope and uses a bounded low-latency baseline profile. SIP JPEG uses
-the negotiated image-size plan, with an 800x800 fallback. There is no generic
-10- or 15-FPS transcode ceiling: source timestamps are retained, and a real
-receiver or codec frame-rate limit only removes excess input pictures.
+direction. Every subprocess uses one encoder thread. VP8 output uses at most
+1280x720, a 700 kbit/s target and 900 kbit/s maximum. SIP H.264 output follows
+the receiver's level envelope and uses a bounded low-latency baseline profile.
+SIP JPEG output uses at most 800x800. Cadence follows the negotiated receiver
+and codec limits; transcoding does not invent frames to meet a fixed rate.
 A second simultaneous transcode call remains audio-only
 instead of starting unbounded codec workers.
 
@@ -424,7 +446,8 @@ informational, not legal advice.
 - Permit camera access only when HA must transmit video. A remote `sendonly`
   door station needs no HA camera permission.
 - Keep SIP and RTP on a trusted LAN or VPN. This profile uses unencrypted
-  SIP/RTP and does not add SRTP, ICE, STUN or TURN.
+  SIP/RTP. Existing keepalives do not provide SRTP, ICE, TURN or automatic
+  router configuration.
 - Allow the configured HA RTP range through local firewalls. A video call
   reserves an additional even RTP/odd RTCP pair alongside audio media.
 
@@ -432,8 +455,8 @@ informational, not legal advice.
 
 This profile does not claim support for:
 
-- general hardware qualification of ESP32-S3 camera boards; the community
-  results and remaining reverse-direction check are described above;
+- general hardware qualification of ESP32-S3 camera/display boards; the
+  identified community results and their remaining limits are described above;
 - video through Assist, conference rooms or ring-group legs that traverse
   standard SIP/RTP endpoints (a local HA browser caller can retain direct
   browser video when another local browser phone wins the ring group);
@@ -441,10 +464,11 @@ This profile does not claim support for:
 - VP9, AV1, MxPEG or other proprietary payloads;
 - more than one simultaneous server-side transcode;
 - more than one browser owning the same active HA video stream;
-- SRTP, DTLS, ICE, STUN or TURN;
+- SRTP, DTLS, ICE or TURN;
 - RTCP multiplexing, generic NACK retransmission or bandwidth adaptation;
-- call recording or a call-snapshot service. Qualified P4 profiles may expose
-  their camera separately through the normal ESPHome camera entity;
+- video recording or a generic call-snapshot service. [Audio recording](CALL_RECORDING.md)
+  is separate. Supported ESP profiles may expose their camera normally or use
+  the independent [screenshot diagnostic](ESP_SCREENSHOT.md);
 - arbitrary codec replacement on an established video stream. Compatible
   audio-to-video add/remove is negotiated transactionally through re-INVITE;
 - IPv6 RTP media.
@@ -460,13 +484,11 @@ service.
 
 SIP video is covered by the maintained test matrix and has been exercised on
 real browser-to-browser, HA-to-HA and video-capable trunk calls, including
-bidirectional media, re-INVITE and cleanup. Qualified ESP32-P4 JPEG and H.264
-profiles have also passed real incoming and outgoing bidirectional calls with
-clean teardown. The cross-codec bridge has passed simultaneous H.264-to-JPEG
-and JPEG-to-H.264 media with audio in both directions, zero RTP loss in the
-qualification capture and no retained FFmpeg or call resources after hangup.
-Compatibility with a particular third-party phone or door station still
-depends on its exact codec, SDP and RTP behavior.
+bidirectional media, re-INVITE and cleanup. ESP profile and cross-codec results
+apply to the exact boards, firmware and routes used for each qualification.
+They do not establish a guaranteed panel frame rate or universal PBX support.
+Compatibility with a particular phone or door station depends on its codec,
+SDP, media-address configuration and actual RTP/RTCP delivery.
 
 The protocol work follows
 [RFC 3264 offer/answer](https://www.rfc-editor.org/rfc/rfc3264),

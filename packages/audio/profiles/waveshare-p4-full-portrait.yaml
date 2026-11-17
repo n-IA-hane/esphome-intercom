@@ -1,4 +1,7 @@
 # Physical audio/backend configuration; local GMF selection is explicit.
+substitutions:
+  # NS4150B Tst is 120ms typical; 250ms is a configurable candidate margin.
+  speaker_amplifier_settle_ms: "250"
 esp_audio_stack:
   audio_task_stack_in_psram: false
   i2s_lrclk_pin: ${i2s_lrclk_pin}
@@ -63,6 +66,9 @@ speaker:
   bits_per_sample: 16
   timeout: 1s
   buffer_duration: 128ms
+  amplifier_settle_time: !lambda |-
+    return id(audio_stack_speaker_idle_powerdown).is_running()
+               ? 0 : ${speaker_amplifier_settle_ms};
 switch:
 - platform: template
   name: Speaker Mute
@@ -76,21 +82,45 @@ switch:
       level: INFO
       tag: mute
       format: 'Speaker mute ON: DAC muted, amplifier off'
-  - speaker.mute_on: hw_speaker
-  - delay: 50ms
-  - output.turn_off: speaker_enable
+  - script.execute: audio_stack_speaker_mute_transition
   on_turn_off:
   - logger.log:
       level: INFO
       tag: mute
       format: 'Speaker mute OFF: amplifier on, DAC unmuted'
+  - script.execute: audio_stack_speaker_mute_transition
+script:
+- id: audio_stack_speaker_mute_transition
+  mode: restart
+  then:
+  # A new intention cancels the preceding branch and all of its delays.
+  - script.stop: audio_stack_speaker_idle_powerdown
   - if:
       condition:
-        speaker.is_playing: hw_speaker
+        switch.is_on: speaker_mute
       then:
-      - output.turn_on: speaker_enable
-      - delay: 50ms
-  - speaker.mute_off: hw_speaker
+      - speaker.mute_on: hw_speaker
+      - delay: ${speaker_amplifier_settle_ms}ms
+      - if:
+          condition:
+            switch.is_on: speaker_mute
+          then:
+          - output.turn_off: speaker_enable
+      else:
+      - if:
+          condition:
+            # Parent intent includes the facade's settling STARTING state.
+            lambda: return id(hw_speaker).get_parent()->is_speaker_running();
+          then:
+          - output.turn_on: speaker_enable
+          - delay: ${speaker_amplifier_settle_ms}ms
+          - if:
+              condition:
+                switch.is_off: speaker_mute
+              then:
+              - speaker.mute_off: hw_speaker
+          else:
+          - speaker.mute_off: hw_speaker
 external_components:
 - source: ${audio_stack_components_source}
   components:
@@ -99,6 +129,7 @@ external_components:
 packages:
   mute: !include '../../features/shared/microphone_mute.yaml'
   controls: !include '../../esp_audio_stack/controls.yaml'
+  hardware_gain: !include '../../esp_audio_stack/hardware_gain_controls.yaml'
   afe_controls: !include '../../esp_afe/dual_mic_entities.yaml'
   amplifier: !include '../../esp_audio_stack/speaker_power_output.yaml'
   gmf_source: !include '../gmf_source.yaml'

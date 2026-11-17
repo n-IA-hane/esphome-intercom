@@ -3,6 +3,8 @@
 from pathlib import Path
 import os
 import re
+import subprocess
+import sys
 
 import pytest
 import esphome.config_validation as cv
@@ -12,7 +14,9 @@ from tests.native_profile import profile, by_id, nodes, action_id, text as value
 
 ROOT = Path(__file__).resolve().parents[1]
 VOIP_COMPONENTS = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack")) / "esphome" / "components"
-P4_RENDERER_COMPONENT = VOIP_COMPONENTS / "p4_video_renderer"
+P4_RENDERER_COMPONENT = Path(os.environ.get(
+    "ESP_VIDEO_RENDERER_REPO", ROOT.parent / "esphome-video-renderer"
+)) / "esphome/components/p4_video_renderer"
 H264_SOURCE_COMPONENT = VOIP_COMPONENTS / "esp_h264_video_source"
 JPEG_SOURCE_COMPONENT = VOIP_COMPONENTS / "esp_jpeg_video_source"
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(240)]
@@ -129,7 +133,8 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
     for relative in (*PHYSICAL_AUDIO_STACK_PROFILES,
                      'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'):
         audio = profile(relative).get('voip_stack', {}).get('audio', {})
-        formats = audio.get('rx_formats', [])
+        formats = [fmt for codec in audio.get('codecs', [])
+                   if codec['codec'] == 'pcm' for fmt in codec.get('rx', [])]
         if formats:
             assert any((f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
                        == (16000, 's16le', 1, 10) for f in formats), relative
@@ -137,18 +142,24 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
     assert checked >= 3
 
 
-@pytest.mark.parametrize("relative", [
-    "full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
-    "full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml",
+@pytest.mark.parametrize('relative', [
+    'full-experience/single-bus/waveshare-s3-full-afe.yaml',
+    'full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml',
+    'full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml',
 ])
-def test_p4_full_accepts_standard_20ms_pcm_without_losing_10ms_primary(relative) -> None:
-    audio = profile(relative)["voip_stack"]["audio"]
-    for direction in ("tx", "rx"):
-        assert any((int(fmt["sample_rate"]), fmt["pcm_format"], int(fmt["channels"]), int(fmt["frame_ms"]))
-                   == (16000, "s16le", 1, 20) for fmt in audio[f"{direction}_formats"]), relative
-        assert int(audio[direction]["frame_ms"]) == 10
-    assert int(audio["tx"]["sample_rate"]) == 16000
-    assert int(audio["rx"]["sample_rate"]) == 48000
+def test_full_profiles_declare_independent_pcm_preferences(relative: str) -> None:
+    audio = profile(relative)['voip_stack']['audio']
+    assert not {'tx', 'rx', 'tx_formats', 'rx_formats'} & audio.keys()
+    assert len(audio['codecs']) == 1
+    pcm = audio['codecs'][0]
+    assert pcm['codec'] == 'pcm'
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['tx']] == [
+        (16000, 20), (16000, 10),
+    ]
+    assert [(f['sample_rate'], f['frame_ms']) for f in pcm['rx']] == [
+        (48000, 10), (16000, 20), (16000, 10),
+    ]
 
 
 def test_physical_audio_stack_speakers_bound_silent_tx_lifecycle() -> None:
@@ -180,8 +191,12 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert any(node.get('text') == '\U000F006E' for node in nodes(dialer))
     assert 'voip_dial_backspace' in values_text(dialer)
     assert "if (x == 2) return '#';" in values_text(dialer)
-    assert any(node.get('text') == '*' for node in nodes(dialer))
-    assert 'id(phone).send_dtmf' in values_text(config['script'])
+    row = by_id(dialer, 'call_dial_row_del0hash')
+    assert [button['text'] for button in row['rows'][0]['buttons']] == ['*', '0', '#', '\U000F006E']
+    dispatch = values_text(row['on_click'])
+    for route in ("return x == 3;", "if (x == 0) return '*';",
+                  "if (x == 1) return '0';", "if (x == 2) return '#';"):
+        assert route in dispatch
     code = values_text(config['script'])
     assert 'circle_half_chord' not in code
     contacts = by_id(config['phone_list_view'], 'contacts_list_view')
@@ -203,7 +218,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert int(phone['rx_task_stack_size']) == 12288
     providers = {name for provider in config['external_components'] for name in provider['components']}
     assert 'voice_assistant' in config
-    assert 'voice_assistant' not in providers
+    assert {'voice_assistant', 'speaker_source', 'audio_http'} <= providers
     assert 'speaker' not in providers
     assert by_id(config['display'], 's3_box_lcd')['psram_dma'] is True
 
@@ -219,7 +234,6 @@ def test_standalone_ringtone_uses_the_file_source_and_player_owner(relative) -> 
     assert float(player['volume_initial']) == 1.0
     pipeline = player['announcement_pipeline']
     assert pipeline['sources'] == ['ringtone_file_source']
-    assert sum(row.get('id') == 'speaker_media_player' for row in config['media_player']) == 1
     assert int(pipeline['sample_rate']) == 48000
     assert int(pipeline['num_channels']) == 1
     assert by_id(config['media_source'], 'ringtone_file_source')['platform'] == 'audio_file'
@@ -252,12 +266,18 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     actions = config['lvgl']['on_boot']
     if isinstance(actions, dict):
         actions = actions['then']
-    layout_actions = [action_id(action, 'script.execute') for action in actions
-                      if action_id(action, 'script.execute') in {'compute_layout_metrics', 'reposition_widgets'}]
-    assert layout_actions == ['compute_layout_metrics', 'reposition_widgets']
+    boot_scripts = [action_id(action, 'script.execute') for action in actions]
+    metrics_index = boot_scripts.index('compute_layout_metrics')
+    reposition_index = boot_scripts.index('reposition_widgets')
+    assert metrics_index < reposition_index
+    assert 'id(s3_video).attach_video_container(id(call_video_surface));' in values_text(actions[:metrics_index])
     options = by_id(config['lvgl']['pages'], 'ui_aec_mode_dd')['options']
     assert options == ['sr_low_cost', 'sr_high_perf']
     assert options == by_id(config['select'], 'aec_mode_select')['options']
+    mode_sync = values_text(by_id(config['script'], 'settings_sync_mode'))
+    assert 'id(aec_mode_select).current_option()' in mode_sync
+    assert 'lvgl.dropdown.update' in mode_sync and 'get_selected_index()' in mode_sync
+    assert 'lv_dropdown_set_options' not in mode_sync
 
 
 def _master_volume_boot_writes(boot, scripts=()):
@@ -323,16 +343,18 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     config = profile(P4_LANDSCAPE_FULL_AFE)
     providers = {name for provider in config['external_components'] for name in provider['components']}
     assert 'voice_assistant' in config
-    assert 'voice_assistant' not in providers
-    assert {'mipi_dsi', 'esp_video_camera',
+    assert {'voice_assistant', 'speaker_source', 'audio_http'} <= providers
+    assert {'esp_video_camera', 'video_renderer',
             'esp_jpeg_video_source', 'p4_video_renderer'} <= providers
+    assert 'mipi_dsi' in providers
+    assert any(display['platform'] == 'mipi_dsi' for display in config['display'])
     assert 'speaker' not in providers
     assert 'esp_h264_video_source' not in providers
     camera = config['esp_video_camera']
     for key, expected in {'id': 'p4_camera', 'name': 'P4 Camera', 'i2c_id': 'internal_i2c',
                           'device': 'jpeg', 'resolution': '800x800', 'jpeg_quality': 10,
                           'max_framerate': 10, 'rotation': 270, 'buffer_count': 2}.items():
-        assert camera[key] == expected
+        assert (float(camera[key]) if key == 'max_framerate' else camera[key]) == expected
     assert config['esp_afe']['output_prebuffer_frames'] == 1
     assert 'gmf_output_delay_samples' not in config['esp_afe']
     video = config['voip_stack']['video']
@@ -370,6 +392,91 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     update = (ROOT / 'packages/board/esp32p4_c6_update.yaml').read_text()
     assert 'platform: esp32_hosted' in update and 'http_request:' in update and 'update_interval: 6h' in update
 
+
+def test_p4_full_jpeg_framerate_override_reaches_camera_and_media_owners(tmp_path) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    original = yaml_util.load_yaml(P4_LANDSCAPE_FULL_AFE)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'],
+                         str(P4_LANDSCAPE_FULL_AFE.relative_to(ROOT)))
+    document = yaml_util.load_yaml(path)
+    document['substitutions']['p4_sip_jpeg_fps'] = '20'
+    path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert float(resolved['esp_video_camera']['max_framerate']) == 20
+    assert int(resolved['esp_jpeg_video_source']['framerate']) == 20
+    assert int(resolved['p4_video_renderer']['framerate']) == 20
+    assert int(resolved['voip_stack']['video']['framerate']) == 20
+    assert resolved['esp_video_camera']['resolution'] == '800x800'
+    assert resolved['esp_video_camera']['jpeg_quality'] == 10
+    assert resolved['esp_video_camera']['buffer_count'] == 2
+
+
+@pytest.mark.parametrize('entrypoint', [
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml',
+    'waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml',
+])
+@pytest.mark.parametrize('override', [None, 20])
+def test_ws3_full_public_profile_includes_qualified_jpeg_receive(tmp_path, entrypoint, override) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/' + entrypoint
+    original = yaml_util.load_yaml(ROOT / relative)
+    path = device_config(tmp_path, original['substitutions']['firmware_features'], relative)
+    if override is not None:
+        document = yaml_util.load_yaml(path)
+        document['substitutions']['s3_sip_jpeg_fps'] = str(override)
+        path.write_text(yaml_util.dump(document))
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    renderer = resolved['esp_video_renderer']
+    expected_rate = override or 10
+    assert (int(renderer['width']), int(renderer['height']), int(renderer['framerate'])) == (320, 240, expected_rate)
+    assert renderer['id'] == 's3_video' and 'voip' not in renderer
+    video = resolved['voip_stack']['video']
+    assert (video['codec'], video['sink']) == ('jpeg', renderer['id'])
+    assert (int(video['width']), int(video['height']), int(video['framerate'])) == (320, 240, expected_rate)
+    assert by_id(resolved['lvgl']['pages'], 'call_video_page')
+    assert by_id(resolved['lvgl']['pages'], 'call_video_surface')
+    assert resolved['voip_stack']['on_video_start'] == [{'script.execute': 'suspend_mww_for_video'}]
+    assert resolved['voip_stack']['on_video_end'] == [{'script.execute': 'resume_mww_after_video'}]
+    assert any('micro_wake_word.stop' in action
+               for action in by_id(resolved['script'], 'suspend_mww_for_video')['then'])
+
+
+@pytest.mark.parametrize('without', ['display', 'voip'])
+def test_ws3_public_profile_omits_jpeg_receiver_without_both_features(tmp_path, without) -> None:
+    from esphome import yaml_util
+    from tests.test_package_composition import device_config
+
+    relative = 'yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml'
+    original = yaml_util.load_yaml(ROOT / relative)
+    removed = {without} | ({'directory', 'blf', 'mwi'} if without == 'voip' else set())
+    features = [name for name in original['substitutions']['firmware_features'] if name not in removed]
+    path = device_config(tmp_path, features, relative)
+    expanded = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(path)],
+                              capture_output=True, text=True, timeout=180)
+    assert expanded.returncode == 0, expanded.stdout + expanded.stderr
+    resolved_path = tmp_path / 'expanded.yaml'
+    resolved_path.write_text(expanded.stdout)
+    resolved = yaml_util.load_yaml(resolved_path)
+    assert 'esp_video_renderer' not in resolved
+    assert 'video' not in resolved.get('voip_stack', {})
+    providers = {name for provider in resolved['external_components'] for name in provider['components']}
+    assert 'esp_video_renderer' not in providers
+
+
 def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
     sdk = config['esp32']['framework']['sdkconfig_options']
@@ -377,7 +484,7 @@ def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
                              'DYNAMIC_TX_BUFFER_NUM': '64', 'TX_BA_WIN': '32', 'RX_BA_WIN': '32'}.items():
         assert sdk['CONFIG_WIFI_RMT_' + suffix] == expected
     assert sdk['CONFIG_LWIP_TCPIP_RECVMBOX_SIZE'] == '64'
-    assert 'master_volume' not in values_text(config['esphome']['on_boot'])
+    assert not _master_volume_boot_writes(config['esphome']['on_boot'], config.get('script', []))
     assert tuple(int(config['esp_afe'][key]) for key in ('task_priority', 'feed_task_priority', 'fetch_task_priority')) == (18, 18, 18)
 
 
@@ -476,330 +583,103 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
         assert not (YAMLS / 'full-experience/single-bus' / obsolete).exists()
 
 
-def test_p4_videophone_contact_list_uses_typed_owner_snapshots() -> None:
+def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     config = profile('voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml')
-    navigation = []
-    for node in nodes(config['lvgl']):
-        for event in ('on_swipe_left', 'on_swipe_right'):
-            if event in node and any('voip_stack.next_contact' in action or 'voip_stack.prev_contact' in action
-                                     for action in nodes(node[event])):
-                navigation.append(node[event])
-    assert not navigation
-    lists = by_id(config['phone_list_view'], 'contacts_list_view')
-    assert 'get_contact(index)' in values_text(lists['render_row'])
-    assert 'contact->stable_id()' in values_text(lists['render_row'])
-    assert 'call_contact(row_id)' in values_text(lists['on_select'])
-    assert 'pickup_contact(row_id)' in values_text(lists['on_select'])
-    assert by_id(config['lvgl'], 'phone_contacts_container')
+    contacts = by_id(config['phone_list_view'], 'contacts_list_view')
+    assert contacts['parent_id'] == 'phone_contacts_container'
+    assert 'contact->stable_id()' in values_text(contacts['row_key'])
+    assert 'row.set_id(contact->stable_id())' in values_text(contacts['render_row'])
+    assert 'row.set_name(contact->name)' in values_text(contacts['render_row'])
+    selection = contacts['on_select']
+    assert 'if (!id(phone).is_idle()) return;' in values_text(selection)
+    assert 'id(phone).call_contact(row_id);' in values_text(selection)
+    assert 'id(phone).pickup_contact(row_id);' in values_text(selection)
+    assert 'get_current_destination()' not in values_text(selection)
+    assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(selection))
     callback = config['voip_stack']['on_destination_changed']
     assert 'id(videophone_peer) = destination;' in values_text(callback)
     assert any(action_id(node, 'script.execute') == 'update_status' for node in nodes(callback))
+    status = values_text(by_id(config['script'], 'update_status'))
+    assert 'idle ? id(phone).get_current_destination() : id(phone).get_active_peer_name()' in status
+    assert 'if (!idle) id(videophone_peer) = peer;' in status
+    assert 'lv_label_set_text(id(videophone_peer_label), peer.c_str());' in status
 
 
-def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> None:
+def test_shared_h264_codec_dependency_and_encoder_memory_policy() -> None:
+    renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
+    neutral_codec = (P4_RENDERER_COMPONENT.parent / "video_renderer" / "__init__.py").read_text()
+    dependency_config = (VOIP_COMPONENTS / "voip_stack" / "__init__.py").read_text()
+    source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
+    h264_package = (ROOT / "packages/voip/p4_video_h264.yaml").read_text()
+    assert "video_renderer.add_h264_component()" in renderer_config
+    assert "voip_stack.add_h264_component()" in source_config
+    assert "from esphome.components.video_renderer import add_h264_component" in dependency_config
+    assert 'url="https://github.com/n-IA-hane/esp-h264-component.git"' in neutral_codec
+    assert 'ref="176cda67716c24deef0e76e4451048981e154bd4"' in neutral_codec
+    assert 'name="espressif/esp_h264", path=str(repository / "esp_h264")' in neutral_codec
+    assert "CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM" not in h264_package
+    assert 'add_idf_sdkconfig_option("CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM", True)' in source_config
+
+
+def test_p4_video_workers_use_display_owned_mainloop_presentation() -> None:
     renderer_cpp = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
     renderer_header = (P4_RENDERER_COMPONENT / "p4_video_renderer.h").read_text()
+    renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
+    adapter = (VOIP_COMPONENTS / "voip_stack" / "video_renderer_adapter.h").read_text()
     source_cpp = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
     source_header = (H264_SOURCE_COMPONENT / "esp_h264_video_source.h").read_text()
+    h264_package = (ROOT / "packages/voip/p4_video_h264.yaml").read_text()
 
-    assert "static constexpr int kPpaScaleUnits = 16" in renderer_cpp
-    assert "container_width * kPpaScaleUnits / content_width" in renderer_cpp
-    assert "container_height * kPpaScaleUnits / content_height" in renderer_cpp
-    assert "const auto output_fits" in renderer_cpp
-    assert "this->surface_capacity_bytes_" in renderer_cpp
-    assert "config.scale_x = scale;" in renderer_cpp
-    assert "config.scale_y = scale;" in renderer_cpp
-    assert "return width <= pixel_capacity / height;" in renderer_cpp
+    # Functional driver ownership and main-loop/lease behavior are exercised
+    # by the canonical MIPI58 and Renderer42 gates. This composition contract
+    # guards the repository boundary, not a second model of either pipeline.
+    assert "public video_renderer::EncodedFrameRenderer" in renderer_header
+    assert "static constexpr size_t surface_count_{1};" in renderer_header
+    assert "kH264AccessUnitQueueDepth = 3" in renderer_header
+    assert "kMaxAccessUnitBytes = 128 * 1024" in renderer_header
     assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in renderer_cpp
     assert "xTaskNotifyGive(this->rx_task_handle_)" in renderer_cpp
-    assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in renderer_cpp
-    assert "this->cadence_.accept(access_unit.timestamp_90khz)" in renderer_cpp
-    h264_decode = renderer_cpp[
-        renderer_cpp.index("bool P4VideoRenderer::decode_h264_access_unit_(") :
-        renderer_cpp.index("void P4VideoRenderer::rx_task_()")
-    ]
-    assert h264_decode.index("esp_h264_dec_process(") < h264_decode.index(
-        "this->cadence_.accept(output.pts)"
-    ) < h264_decode.index("this->render_i420_(")
-    assert "dropping before\n    // decode would corrupt" in h264_decode
-    assert "static constexpr uint8_t kTaskPriority = 17;" in renderer_header
-    assert "this, kTaskPriority, 1, kTaskStackInPsram" in renderer_cpp
-    assert "static constexpr bool kTaskStackInPsram = true;" in renderer_header
-    assert "static constexpr bool kTaskStackInPsram = false;" in renderer_header
-    assert (
-        "static constexpr size_t kMaxAccessUnitBytes = 128 * 1024;"
-        in renderer_header
-    )
-    assert (
-        "static constexpr size_t kH264AccessUnitQueueDepth = 3;"
-        in renderer_header
-    )
+    assert "vTaskDelay" not in renderer_cpp
     assert "xQueueCreateStatic(" in renderer_cpp
-    assert "xQueueSend(this->h264_au_queue_" in renderer_cpp
     assert "xQueueReceive(this->h264_au_queue_" in renderer_cpp
-    assert "A full bounded queue means the decoder has fallen behind." in renderer_cpp
-    assert "xRingbuffer" not in renderer_cpp
-    assert "RingbufHandle_t" not in renderer_header
-    renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
-    source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
-    assert 'add_idf_component(name="espressif/esp_jpeg"' not in renderer_config
-    assert 'add_lv_use("image", "label")' in renderer_config
-    assert "voip_stack.add_h264_component()" in renderer_config
-    assert "voip_stack.add_h264_component()" in source_config
-    dependency_config = (VOIP_COMPONENTS / "voip_stack" / "__init__.py").read_text()
-    assert 'url="https://github.com/n-IA-hane/esp-h264-component.git"' in dependency_config
-    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in dependency_config
-    assert 'name="espressif/esp_h264", path=str(repository / "esp_h264")' in dependency_config
-    assert (
-        'add_idf_component(name="espressif/esp_image_effects", ref="1.1.0")'
-        in renderer_config
-    )
-    assert "--wrap=esp_h264_malloc_prefer" not in source_config
-    assert "release_callback" in renderer_cpp
     assert "memcpy(slot.data, access_unit.data" not in renderer_cpp
-    h264_package = (
-        ROOT / "packages" / "voip" / "p4_video_h264.yaml"
-    ).read_text()
-    assert (
-        len(re.findall(r"(?m)^  task_stacks_in_psram: true$", h264_package)) == 1
-    )
-    renderer_yaml = h264_package[
-        h264_package.index("p4_video_renderer:") :
-        h264_package.index("voip_stack:")
-    ]
-    assert "task_stacks_in_psram" not in renderer_yaml
-    assert "audio_task_stacks_in_psram: false" in h264_package
-    assert "buffers_in_psram: false" in h264_package
-    assert 'p4_video_width: "400"' in h264_package
-    assert 'p4_video_height: "400"' in h264_package
-    assert 'p4_video_fps: "10"' in h264_package
-    assert 'p4_video_rx_width: "352"' in h264_package
-    assert 'p4_video_rx_height: "288"' in h264_package
-    assert 'p4_camera_fps: "10"' in h264_package
-    assert 'p4_h264_gop: "10"' in h264_package
-    assert "max_framerate: ${p4_camera_fps}" in h264_package
     assert "jpeg_new_decoder_engine" in renderer_cpp
     assert "jpeg_decoder_process" in renderer_cpp
-    assert "ppa_do_scale_rotate_mirror" in renderer_cpp
-    assert "this->direct_display_->draw_pixels_at(" in renderer_cpp
-    assert "lv_image_create(container)" in renderer_cpp
-    assert "lv_image_set_src(" in renderer_cpp
-    assert "lv_img_create" not in renderer_cpp
-    assert "lv_img_set_src" not in renderer_cpp
-    assert "LV_EVENT_REFR_READY" in renderer_cpp
-    assert "display_refresh_ready_callback_" in renderer_cpp
-    assert "this->presentation_in_flight_.store(true" in renderer_cpp
-    renderer_loop = renderer_cpp[
-        renderer_cpp.index("void P4VideoRenderer::loop()") :
-        renderer_cpp.index("void P4VideoRenderer::dump_config()")
-    ]
-    # A stale generation can be discarded before presentation. The current
-    # surface's failure-release branch must still follow the completed attempt.
-    presentation_start = renderer_loop.index("const bool presented =")
-    presentation = renderer_loop[
-        presentation_start:renderer_loop.index("#else", presentation_start)
-    ]
-    failed_release = presentation[presentation.index("if (!presented)"):]
-    assert presentation.index("this->commit_direct_surface_(pending)") < presentation.index("if (!presented)")
-    assert "int expected = pending;" in failed_release
-    assert "this->pending_surface_.compare_exchange_strong(" in failed_release
-    assert "expected, -1, std::memory_order_acq_rel" in failed_release
-    stale_release = renderer_loop[
-        renderer_loop.index("if (pending >= 0 && !pending_current)"):
-        renderer_loop.index("if (this->rx_running_.load")
-    ]
-    assert "this->pending_surface_.compare_exchange_strong(" in stale_release
-    assert "commit_direct_surface_" not in stale_release
-    assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
-        renderer_loop.index("const bool page_active")
-    )
-    assert renderer_loop.index("const bool page_active") < (
-        renderer_loop.index("this->commit_direct_surface_(pending)")
-    )
-    attach_container = renderer_cpp[
-        renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
-        renderer_cpp.index(
-            "void P4VideoRenderer::display_refresh_ready_callback_("
-        )
-    ]
-    assert attach_container.index("lv_obj_update_layout(") < (
-        attach_container.index("this->refresh_direct_display_layout_()")
-    )
-    assert "display_id: main_display" in h264_package
-    assert "display_rotation: 270" in h264_package
-    refresh_ready = renderer_cpp[
-        renderer_cpp.index("void P4VideoRenderer::on_display_refresh_ready_()") :
-        renderer_cpp.index(
-            "voip_stack::VideoCapability\n"
-            "P4VideoRenderer::get_receive_video_capability()"
-        )
-    ]
-    assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in (
-        refresh_ready
-    )
-    assert "this->enable_loop_soon_any_context();" in refresh_ready
-    assert "vTaskDelay" not in renderer_cpp
-    assert "MALLOC_CAP_SPIRAM" in renderer_cpp
-    assert "xSemaphoreCreateMutexStatic(&this->presentation_mutex_storage_)" in (
-        renderer_cpp
-    )
-    assert (
-        "if (this->rx_running_.load(std::memory_order_acquire) &&"
-        in renderer_cpp
-    )
-    assert "xSemaphoreTake(this->presentation_mutex_, 0)" in renderer_cpp
-    deactivate = renderer_cpp[
-        renderer_cpp.index("bool P4VideoRenderer::set_video_active(bool active)") :
-        renderer_cpp.index("bool P4VideoRenderer::consume_video_access_unit(")
-    ]
-    assert deactivate.index(
-        "xSemaphoreTake(this->presentation_mutex_, 0)"
-    ) < deactivate.index("this->pending_surface_.store(-1")
-    assert deactivate.rindex("xSemaphoreGive(this->presentation_mutex_)") < (
-        deactivate.rindex("this->video_ended_pending_.store(true")
-    )
-    assert renderer_loop.index(
-        "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
-    ) < renderer_loop.index("lv_obj_invalidate(lv_screen_active())")
-    assert "StaticSemaphore_t presentation_mutex_storage_{};" in renderer_header
-    assert "kH264Level30MaxMacroblocks = 1620" in renderer_header
-    assert "h264_receive_profile_level_id_" in renderer_header
-    assert "h264_optimized_yuv_bytes_() const" in renderer_header
-    assert "kTaskStopTimeoutTicks" in renderer_header
-    assert "pdMS_TO_TICKS" not in renderer_cpp
-    assert "const bool rotated_orientation" in renderer_cpp
-    assert "!configured_orientation && !rotated_orientation" in renderer_cpp
-    assert "macroblocks_w * macroblocks_h <=" in renderer_cpp
-    assert '{396, 6000, "42c00c"}' in renderer_cpp
-    assert "bilateral level asymmetry" in renderer_cpp
-    assert "alloc_psram_dma(h264_yuv_bytes)" in renderer_cpp
-    assert '#include "esp_imgfx_color_convert.h"' in renderer_header
     assert "ESP_IMGFX_PIXEL_FMT_I420" in renderer_cpp
-    assert "ESP_IMGFX_PIXEL_FMT_O_UYY_E_VYY" in renderer_cpp
     assert "esp_imgfx_color_convert_process(" in renderer_cpp
-    assert "i420_to_optimized_yuv420_" not in renderer_cpp
-    assert "i420_to_optimized_yuv420_" not in renderer_header
-    assert "input.raw_data.len -= input.consume;" in renderer_cpp
-    assert "decoder_reset_pending_" in renderer_header
-    assert "Failed to reset H.264 decoder for recovery IDR" in renderer_cpp
-    assert "struct H264AccessUnitSlot" in renderer_header
-    assert "uint32_t session_generation{0};" in renderer_header
-    assert "uint32_t loss_generation{0};" in renderer_header
-    assert "compare_exchange_strong(" in renderer_cpp
-    assert 'add_idf_sdkconfig_option("CONFIG_ESP_H264_DECODER_IRAM", True)' in (
-        renderer_config
-    )
-    assert 'add_idf_sdkconfig_option("CONFIG_ESP_H264_DUAL_TASK", False)' in (
-        renderer_config
-    )
-    assert "CONFIG_ESP_H264_DUAL_TASK_CORE" not in (
-        renderer_config
-    )
-    assert "CONFIG_ESP_H264_DUAL_TASK_PRIORITY" not in (
-        renderer_config
-    )
-    h264_source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
-    assert "CONFIG_ESP_H264_DUAL_TASK" not in h264_source_config
-    renderer_setup = renderer_cpp[
-        renderer_cpp.index("void P4VideoRenderer::setup()") :
-        renderer_cpp.index("void P4VideoRenderer::loop()")
-    ]
-    assert "this->configure_i420_converter_(this->width_, this->height_)" in (
-        renderer_setup
-    )
-    assert "this->allocate_session_resources_()" in renderer_setup
-    assert "this->mark_failed();" in renderer_setup
-    renderer_start = renderer_cpp[
-        renderer_cpp.index("bool P4VideoRenderer::start_video(") :
-        renderer_cpp.index("bool P4VideoRenderer::set_video_active(")
-    ]
-    assert "this->allocate_session_resources_()" not in renderer_start
-    assert "this->start_rx_task_()" not in renderer_start
-    assert "void P4VideoRenderer::prepare_surface_(" in renderer_cpp
-    render_i420_start = renderer_cpp.index(
-        "bool P4VideoRenderer::render_i420_("
-    )
-    render_i420 = renderer_cpp[
-        render_i420_start :
-        renderer_cpp.index(
-            "void P4VideoRenderer::prepare_surface_(",
-            render_i420_start,
-        )
-    ]
-    assert "esp_h264_dec_get_resolution(parameters, &resolution)" in renderer_cpp
-    assert (
-        "static_cast<uint16_t>(resolution.width),\n"
-        "                                    static_cast<uint16_t>(resolution.height)"
-        in renderer_cpp
-    )
-    assert "this->compute_h264_surface_geometry_(" in render_i420
-    assert "config.out.buffer = this->surfaces_[output_index];" in render_i420
-    assert "config.out.pic_w = geometry.surface_width;" in render_i420
-    assert "config.out.pic_h = geometry.surface_height;" in render_i420
-    assert "config.out.block_offset_x" not in render_i420
-    assert "config.out.block_offset_y" not in render_i420
-    assert "geometry.scale_units" in render_i420
-    assert "config.scale_x = scale;" in render_i420
-    assert "config.scale_y = scale;" in render_i420
-    assert "session_generation !=" in render_i420
-    assert "xSemaphoreTake(this->presentation_mutex_, 0)" in (
-        render_i420
-    )
-    assert "kH264SurfaceWidth) / width" not in render_i420
-    assert "get_frame_buffer()" not in render_i420
-    assert "this->prepare_surface_(output_index, geometry);" in render_i420
-    assert "this->commit_direct_surface_(output_index)" in render_i420
-    assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
-        render_i420
-    )
-    direct_present = renderer_cpp[
-        renderer_cpp.index("bool P4VideoRenderer::present_surface_direct_(") :
-        renderer_cpp.index(
-            "uint16_t P4VideoRenderer::jpeg_storage_width_",
-            renderer_cpp.index(
-                "bool P4VideoRenderer::present_surface_direct_("
-            ),
-        )
-    ]
-    assert "this->surface_layout_area_[index] != layout_area" in direct_present
-    assert "this->surface_native_size_[index] != native_size" in direct_present
-    assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
-    assert "this->surface_content_width_[index]" in direct_present
-    assert "this->surface_content_height_[index]" in direct_present
-    native_blit = renderer_cpp[
-        renderer_cpp.index("bool P4VideoRenderer::present_native_rgb565_("):
-        renderer_cpp.index("bool P4VideoRenderer::present_surface_direct_(")
-    ]
-    assert "this->present_native_rgb565_(native_x, native_y, output_width," in direct_present
-    assert "this->owned_display_->draw_native_rgb565(x, y, width, height, pixels," in native_blit
-    assert "this->direct_display_->draw_pixels_at(x, y, width, height, pixels," in native_blit
-    assert "display::COLOR_ORDER_RGB" in native_blit
-    assert "display::COLOR_BITNESS_565, false" in native_blit
-    assert "display_rotation_" not in native_blit
-    assert "this->surfaces_[index]" in direct_present
-    assert "const int content_width = kH264SurfaceWidth;" not in (
-        direct_present
-    )
-    stop_video = renderer_cpp[
-        renderer_cpp.index("void P4VideoRenderer::stop_video()") :
-        renderer_cpp.rindex("namespace esphome::p4_video_renderer")
-    ]
-    assert "this->rx_session_prepared_.store(false" in stop_video
-    assert "this->stop_rx_task_();" not in stop_video
-    assert "this->stop_rx_task_();" in renderer_setup
-    assert "SIP teardown never joins it" in stop_video
-    assert "free_codec_resources_();" not in stop_video
-    assert "this->decoded_rgb565_" not in renderer_cpp
-    jpeg_decode = renderer_cpp[
-        renderer_cpp.index("jpeg_decoder_process(") :
-        renderer_cpp.index("if (decode_error == ESP_OK")
-    ]
-    assert "this->surfaces_[output_index]" in jpeg_decode
-    assert "static_cast<uint32_t>(expected_size)" in jpeg_decode
-    assert "static_cast<uint32_t>(this->surface_capacity_bytes_)" not in (
-        jpeg_decode
-    )
-    assert "class P4VideoRenderer" in renderer_header
+    assert "PPA_SRM_ROTATION_ANGLE_0" in renderer_cpp
+    assert "mipi_dsi::MipiDsi *display_" in renderer_header
+    assert "rgb565_transform_ids" in renderer_config
+    assert "draw_rgb565_transformed(" in renderer_cpp
+    assert "ppa_do_scale_rotate_mirror" not in renderer_cpp
+    assert "ppa_register_client" not in renderer_cpp
+    assert "lv_image_create(" not in renderer_cpp
+    assert "lv_image_set_src(" not in renderer_cpp
+    assert "draw_pixels_at" not in renderer_cpp
+    assert "LV_EVENT_REFR_READY" in renderer_cpp
+    loop = renderer_cpp.split("void P4VideoRenderer::loop()", 1)[1].split("void P4VideoRenderer::dump_config()", 1)[0]
+    assert "generation ==" in loop
+    assert loop.index("const bool page_active") < loop.index("this->present_surface_direct_(pending)")
+    assert loop.index("this->present_surface_direct_(pending)") < loop.index("this->pending_surface_.compare_exchange_strong")
+    refresh = renderer_cpp.split("void P4VideoRenderer::on_display_refresh_ready_()", 1)[1].split("P4VideoRenderer::get_capabilities()", 1)[0]
+    assert "this->enable_loop_soon_any_context();" in refresh
+    assert "draw_rgb565_transformed" not in refresh
+    worker = renderer_cpp.split("void P4VideoRenderer::rx_task_()", 1)[1].split("bool P4VideoRenderer::configure_i420_converter_", 1)[0]
+    assert "draw_rgb565_transformed" not in worker
+    assert "present_surface_direct_" not in worker
+    prepare = renderer_cpp.split("bool P4VideoRenderer::prepare(", 1)[1].split("bool P4VideoRenderer::set_active", 1)[0]
+    assert "allocate_session_resources_()" not in prepare
+    assert "start_rx_task_()" not in prepare
+    assert "this->allocate_session_resources_()" in renderer_cpp.split("void P4VideoRenderer::loop()", 1)[0]
+    stop = renderer_cpp.split("void P4VideoRenderer::stop()", 1)[1].split("void P4VideoRenderer::dump_state()", 1)[0]
+    assert "this->rx_session_prepared_.store(false" in stop
+    assert "stop_rx_task_()" not in stop
+    assert "free_codec_resources_()" not in stop
+    decode = renderer_cpp.split("bool P4VideoRenderer::decode_h264_access_unit_", 1)[1].split("void P4VideoRenderer::rx_task_()", 1)[0]
+    assert decode.index("esp_h264_dec_process(") < decode.index("cadence_.accept(output.pts)") < decode.index("this->render_i420_(")
+    assert "this->cadence_.accept(unit.timestamp_90khz)" in adapter
+    assert "h264_profile_level_id" in adapter
+    assert "display_id: main_display" in h264_package
 
     assert "class EspH264VideoSource" in source_header
     assert "public esp_video_camera::RawVideoFrameConsumer" in source_header
@@ -831,10 +711,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "copy_total_bytes=%llu" in renderer_cpp
     assert "esp_h264_enc_set_bitrate" in source_cpp
     assert "__wrap_esp_h264_malloc_prefer" not in source_cpp
-    assert (
-        'CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM: "y"'
-        in h264_package
-    )
     assert "capability.max_bitrate_bps" in source_cpp
     assert "ppa_unregister_client(this->ppa_)" in source_cpp
     source_setup = source_cpp[
@@ -969,52 +845,41 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
 
 
 def test_p4_video_boundaries_fail_closed() -> None:
-    dsi_cpp = (
-        ROOT / "esphome" / "components" / "mipi_dsi" / "mipi_dsi.cpp"
-    ).read_text()
-    dsi_header = (
-        ROOT / "esphome" / "components" / "mipi_dsi" / "mipi_dsi.h"
-    ).read_text()
     jpeg_source = (JPEG_SOURCE_COMPONENT / "esp_jpeg_video_source.cpp").read_text()
     h264_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
     h264_source = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
     renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
+    renderer = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
 
-    submit = dsi_cpp[
-        dsi_cpp.index("bool MipiDsi::submit_bitmap_(") :
-        dsi_cpp.index("void MipiDsi::write_to_display_(")
-    ]
-    assert "xSemaphoreCreateBinaryStatic(&this->io_lock_storage_)" in dsi_cpp
-    assert "StaticSemaphore_t io_lock_storage_{};" in dsi_header
-    assert "xSemaphoreCreateMutexStatic(&this->submit_mutex_storage_)" in dsi_cpp
-    assert "StaticSemaphore_t submit_mutex_storage_{};" in dsi_header
-    assert submit.index("xSemaphoreTake(this->submit_mutex_") < submit.index(
-        "esp_lcd_panel_draw_bitmap("
-    )
-    assert "xSemaphoreTake(this->io_lock_, 0)" in submit
-    assert submit.rindex("xSemaphoreTake(this->io_lock_, portMAX_DELAY)") < submit.rindex(
-        "xSemaphoreGive(this->submit_mutex_)"
-    )
-    assert submit.index("if (err != ESP_OK)") < submit.rindex(
-        "xSemaphoreTake(this->io_lock_, portMAX_DELAY)"
-    )
-    assert "portMAX_DELAY" in submit
-    assert ".num_fbs = 1" in dsi_cpp
-    assert "prepare_direct_frame_buffers" not in dsi_cpp
-    assert "present_direct_frame_buffer" not in dsi_cpp
     assert "capability.width == this->width_" in jpeg_source
     assert "capability.height == this->height_" in jpeg_source
     assert "capability.max_fps == 0" in jpeg_source
     assert "this->active_bitrate_.store(this->bitrate_" in h264_source
     for source in (h264_config, renderer_config):
         assert "only_on_variant(supported=[VARIANT_ESP32P4])" in source
+    submit = renderer.split("bool P4VideoRenderer::submit_frame(", 1)[1].split("bool P4VideoRenderer::start_rx_task_", 1)[0]
+    h264, jpeg = submit.split("#else", 1)
+    assert "access_unit.release_callback == nullptr" in h264
+    rejected_queue = h264.split("if (xQueueSend", 1)[1].split("if (access_unit.key_frame)", 1)[0]
+    assert "slot.access_unit = {};" in rejected_queue
+    assert "release()" not in rejected_queue
+    assert "access_unit.size > kMaxAccessUnitBytes" in h264
+    assert "access_unit.size > this->rx_au_capacity_" in jpeg
+    assert "memcpy(this->rx_au_, access_unit.data, access_unit.size)" in jpeg
+    assert "access_unit.release();" in jpeg
+    assert "required > this->surface_capacity_bytes_" in renderer
+    assert "width <= this->max_decode_width_" in renderer
+    assert "macroblocks_w * macroblocks_h <= kH264Level30MaxMacroblocks" in renderer
+    assert re.search(r"surface_layout_size_\[pending\]\s*==\s*this->layout_size_", renderer)
+    assert "session_generation !=" in renderer
 
 
 def test_native_full_and_audio_stack_full_have_reciprocal_pcm_formats() -> None:
     def formats(path, direction):
         audio = profile(path)['voip_stack']['audio']
         return {(f['sample_rate'], f['pcm_format'], f['channels'], f['frame_ms'])
-                for f in [audio[direction], *audio.get(direction + '_formats', [])]}
+                for codec in audio['codecs'] if codec['codec'] == 'pcm'
+                for f in codec.get(direction, [])}
     native = 'full-experience/esphome-native/generic-s3-full-esphome-native.yaml'
     other = 'full-experience/single-bus/waveshare-s3-full-afe.yaml'
     assert formats(native, 'tx') & formats(other, 'rx')

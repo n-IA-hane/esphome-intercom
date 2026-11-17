@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -16,6 +17,7 @@ pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
     playwright = pytest.importorskip("playwright.sync_api")
+    asset_version = "qualified-frontend-revision"
     loaded = []
 
     class Handler(SimpleHTTPRequestHandler):
@@ -43,8 +45,8 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{server.server_port}/README.md")
-                result = page.evaluate("""async () => {
-                  const {voipStackEngine: engine} = await import('/custom_components/voip_stack/frontend/voip-stack-engine.js');
+                result = page.evaluate("""async (version) => {
+                  const {voipStackEngine: engine} = await import(`/custom_components/voip_stack/frontend/voip-stack-engine.js?v=${encodeURIComponent(version)}`);
                   const started = performance.now();
                   await engine.prepareAudioCall();
                   const preparationMs = performance.now() - started;
@@ -96,7 +98,7 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
                     tap.disconnect();
                     await engine.close();
                   }
-                }""")
+                }""", asset_version)
             finally:
                 browser.close()
     finally:
@@ -104,6 +106,7 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
         thread.join(timeout=2)
         server.server_close()
     assert len(loaded) == 2
+    assert all(parse_qs(urlsplit(path).query) == {"v": [asset_version]} for path in loaded)
     assert result["preparationMs"] >= 250
     assert result["reused"]
     assert result["rate"] in (44100, 48000)

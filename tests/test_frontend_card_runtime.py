@@ -40,29 +40,24 @@ const entityIds = await import(pathToFileURL({json.dumps(str(CARD.with_name("voi
 
 let source = fs.readFileSync({json.dumps(str(CARD))}, "utf8");
 source = source
-  .replace(/const \{{ VoipEntityIds \}} = await import\(`\.\/voip-stack-entity-ids\.js[^;]+;/, "const {{ VoipEntityIds }} = globalThis.__entityIds;")
+  .replace(/import\(`\.\/voip-stack-entity-ids\.js[^`]+`\)/, "Promise.resolve(globalThis.__entityIds)")
   .replace(
-    /const \{{ voipStackTranslate \}} = await import\(`\.\/voip-stack-i18n\.js[^;]+;/,
-    "const {{ voipStackTranslate }} = globalThis.__i18n;",
+    /import\(`\.\/voip-stack-i18n\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__i18n)",
   )
-  .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
+  .replace(/import\(`\.\/voip-phonebook-card\.js[^`]+`\)/, "Promise.resolve({{}})")
   .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
-    /const \{{\s*buildMainCardSkeleton[\s\S]*?\}} = await import\(`\.\/voip-stack-card-view\.js[^;]+;/,
-    "const {{ buildMainCardSkeleton, buildUnconfiguredCardSkeleton }} = globalThis.__cardView;",
+    /import\(`\.\/voip-stack-card-view\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardView)",
   )
   .replace(
-    /const \{{ voipStackEngine \}} = await import\(`\.\/voip-stack-engine\.js[^;]+;/,
-    "const {{ voipStackEngine }} = globalThis.__engine;",
+    /import\(`\.\/voip-stack-engine\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__engine)",
   )
   .replace(
-    /const \{{\s*audioModeLabel[\s\S]*?\}} = await import\(`\.\/voip-stack-card-model\.js[^;]+;/,
-    `const {{
-      audioModeLabel, formatCallDuration, formatEndReason,
-      formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
-      mirroredEndpointPeerLabel, normaliseAudioMode, normaliseTransport, reasonKey,
-      softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
-    }} = globalThis.__cardModel;`,
+    /import\(`\.\/voip-stack-card-model\.js[^`]+`\)/,
+    "Promise.resolve(globalThis.__cardModel)",
   )
   .replace(/await import[^;]*voip-stack-dashboard-card[^;]*;/, "")
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");
@@ -75,12 +70,14 @@ let cameraPermissionChecks = 0;
 let audioPermissionChecks = 0;
 const engine = {{
   configure() {{}},
+  rememberSoftphoneState() {{}},
   phoneStateFor(endpointId, deviceId) {{
     return destinationPhones.get(endpointId) || [...destinationPhones.values()].find(phone => phone.device_id === deviceId) || null;
   }},
   subscribePhoneStates(listener) {{ destinationListeners.add(listener); return () => destinationListeners.delete(listener); }},
   subscribeSoftphoneState() {{ return () => {{}}; }},
   subscribeCallEvents() {{ return () => {{}}; }},
+
   async terminateSoftphoneCall(service, scope) {{
     const {{ endpoint_id, ...data }} = scope;
     serviceCalls.push(["voip_stack", service, data]);
@@ -164,6 +161,22 @@ const engine = {{
   async resumeSession() {{ return true; }},
   async prepareVideoCameraPermission() {{ cameraPermissionChecks++; return false; }},
   async prepareAudioCall() {{ audioPermissionChecks++; return true; }},
+  // Mirrors the engine's page-wide cache. A pending promise in autoAnswerMedia
+  // stands for a permission prompt that is still open.
+  autoAnswerMedia: {{ audio: {{ ready: true }}, video: {{ ready: true }} }},
+  autoAnswerMediaChecks: [],
+  autoAnswerMediaSettled: new Map(),
+  async checkAutoAnswerMedia(kind) {{
+    this.autoAnswerMediaChecks.push(kind);
+    if (this.autoAnswerMediaSettled.has(kind)) return this.autoAnswerMediaSettled.get(kind);
+    const result = await this.autoAnswerMedia[kind];
+    this.autoAnswerMediaSettled.set(kind, result);
+    return result;
+  }},
+  autoAnswerMediaResult(kind) {{ return this.autoAnswerMediaSettled.get(kind) || null; }},
+  recordAutoAnswerMedia(kind, ready) {{
+    this.autoAnswerMediaSettled.set(kind, {{ ready }});
+  }},
   async startHaSoftphone() {{ throw new Error("not configured"); }},
 }};
 
@@ -270,6 +283,8 @@ const context = vm.createContext({{
   window: {{
     customCards: [],
     innerHeight: 800,
+    addEventListener() {{}},
+    removeEventListener() {{}},
     location: {{ href: "https://ha.example/", protocol: "https:", host: "ha.example" }},
     scrollBy() {{}},
   }},
@@ -278,6 +293,24 @@ const module = new vm.SourceTextModule(source, {{ context }});
 await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Card = module.namespace.VoipStackCard;
+
+// A stale legacy endpoint sensor must not hide a phone discovered by state.
+const stateOnly = new Card();
+stateOnly.config = {{ mode: "esp_mirror", device_id: "state-phone" }};
+stateOnly._availableDevices = [{{ device_id: "state-phone", entities: {{
+  voip_state: "sensor.phone_state", voip_endpoint: "sensor.old_endpoint",
+}} }}];
+stateOnly._hass = {{ states: {{
+  "sensor.phone_state": {{ state: "idle" }},
+  "sensor.old_endpoint": {{ state: "unavailable" }},
+}} }};
+assert.equal(stateOnly._isEspUnavailable(), false);
+stateOnly._hass.states["sensor.phone_state"].state = "unavailable";
+stateOnly._hass.states["sensor.old_endpoint"].state = "legacy route";
+assert.equal(stateOnly._isEspUnavailable(), true);
+stateOnly._hass.states["sensor.phone_state"].state = "idle";
+delete stateOnly._hass.states["sensor.old_endpoint"];
+assert.equal(stateOnly._isEspUnavailable(), false);
 
 // The compact card alone observes authoritative phone state. A roster can
 // retain an enabled ESP while list_devices omits it and the monitor is offline.
@@ -706,10 +739,13 @@ autoAnswerCard._rosterEntries = [{{
 autoAnswerCard._softphoneTargetDeviceId = "device-test";
 let automaticAnswer = null;
 autoAnswerCard._answer = async (options) => {{ automaticAnswer = options; }};
+// The toggle saves its microphone success for the page-wide check, which the
+// ringing call below reuses.
+engine.autoAnswerMediaSettled.delete("audio");
 await autoAnswerCard._toggleAutoAnswer();
 assert.equal(microphonePermissionRequests, 1);
 assert.equal(autoAnswerCard._autoAnswer, true);
-assert.equal(autoAnswerCard._autoAnswerMicReady, true);
+assert.deepEqual(engine.autoAnswerMediaResult("audio"), {{ ready: true }});
 assert.equal(serviceCalls.at(-1)[0], "voip_stack");
 assert.equal(serviceCalls.at(-1)[1], "set_auto_answer");
 assert.equal(serviceCalls.at(-1)[2].device_id, "device-casa");
@@ -725,8 +761,8 @@ autoAnswerCard._applySoftphoneSnapshot({{
   audio_direction: "sendrecv",
   sequence: 1,
 }});
-await Promise.resolve();
-await Promise.resolve();
+// _tryAutoAnswer now awaits the page media check before answering.
+await settle();
 assert.equal(automaticAnswer?.callId, "auto-answer-A");
 
 // A denied permission cannot leave a checked preference that will silently
@@ -739,13 +775,151 @@ deniedAutoAnswerCard.config = {{
 }};
 microphonePermissionError = new Error("permission denied");
 const deniedServiceCount = serviceCalls.length;
+// A failed toggle leaves Auto Answer off, so it saves nothing for the check.
+engine.autoAnswerMediaSettled.delete("audio");
 await deniedAutoAnswerCard._toggleAutoAnswer();
 microphonePermissionError = null;
 assert.equal(deniedAutoAnswerCard._autoAnswer, false);
-assert.equal(deniedAutoAnswerCard._autoAnswerMicReady, false);
+assert.equal(engine.autoAnswerMediaResult("audio"), null);
 assert.equal(storage.has("voip_auto_answer_device-denied"), false);
 assert.equal(serviceCalls.length, deniedServiceCount);
 assert.match(deniedAutoAnswerCard._errorMsg, /was not enabled.*permission denied/i);
+
+// A WebView reports "prompt" forever, so after a reload or a view change the
+// card can't rely on the permission state. The page-wide media check settles
+// the microphone and camera as soon as the phone has a controller, and the
+// ringing call then answers with video. The card itself doesn't consult the
+// Permissions API, so a "prompt" state here must not stop the answer.
+microphonePermissionState = "prompt";
+function ringingWebviewCard() {{
+  const webview = makeCard();
+  webview.config = {{ mode: "ha_softphone", device_id: "device-webview" }};
+  const answers = [];
+  webview._answer = async (options) => {{ answers.push(options); }};
+  return {{ webview, answers }};
+}}
+const webviewIdle = {{
+  endpoint_id: "default",
+  device_id: "device-webview",
+  auto_answer: true,
+  state: "idle",
+  capabilities: ["audio", "video"],
+  video_camera_send_enabled: true,
+  send_video: true,
+  sequence: 1,
+}};
+const webviewRinging = {{
+  ...webviewIdle,
+  state: "ringing",
+  direction: "incoming",
+  call_id: "webview-call",
+  audio_direction: "sendrecv",
+  video_offered: true,
+  sequence: 2,
+}};
+// Enough microtask turns for the media check, the answer guards and _answer.
+async function settle() {{
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+}}
+engine.autoAnswerMediaChecks.length = 0;
+const recreated = ringingWebviewCard();
+recreated.webview._applySoftphoneSnapshot(webviewIdle);
+assert.deepEqual(engine.autoAnswerMediaChecks, ["audio", "video"]);
+recreated.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(recreated.answers.length, 1);
+assert.equal(recreated.answers[0].callId, "webview-call");
+assert.equal(recreated.answers[0].videoPermission, true);
+assert.equal(recreated.webview._autoAnswerMediaWarning(), "");
+
+// A permission prompt still open keeps the call ringing. Granting permission
+// while the call is ringing answers the call; granting it after the call stops
+// ringing does not answer the ended call.
+let allowMicrophone;
+engine.autoAnswerMediaSettled.clear();
+engine.autoAnswerMedia.audio = new Promise((resolve) => {{ allowMicrophone = resolve; }});
+const prompted = ringingWebviewCard();
+prompted.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(prompted.answers.length, 0);
+// This call ends before the prompt is answered.
+const ended = ringingWebviewCard();
+ended.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+ended.webview._applySoftphoneSnapshot({{
+  ...webviewRinging, state: "idle", terminal_reason: "cancelled", sequence: 3,
+}});
+// Disarming Auto Answer while the same permission prompt is open must also
+// invalidate the automatic attempt, even if the call keeps ringing.
+const disarmedPending = ringingWebviewCard();
+disarmedPending.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+disarmedPending.webview._applySoftphoneSnapshot({{
+  ...webviewRinging, auto_answer: false, sequence: 3,
+}});
+allowMicrophone({{ ready: true }});
+await settle();
+assert.equal(prompted.answers.length, 1);
+assert.equal(ended.answers.length, 0);
+assert.equal(disarmedPending.answers.length, 0);
+
+// Phones without Auto Answer never open media unattended.
+engine.autoAnswerMediaChecks.length = 0;
+const disarmed = ringingWebviewCard();
+disarmed.webview._applySoftphoneSnapshot({{ ...webviewIdle, auto_answer: false }});
+assert.equal(engine.autoAnswerMediaChecks.length, 0);
+assert.equal(disarmed.webview._autoAnswerMediaWarning(), "");
+
+// An unavailable camera answers receive-only; an unavailable microphone leaves
+// the call ringing for a manual answer. Both explain themselves on the card
+// instead of in a dialog.
+engine.autoAnswerMedia = {{
+  audio: {{ ready: true }},
+  video: {{ ready: false }},
+}};
+engine.autoAnswerMediaSettled.clear();
+const noCamera = ringingWebviewCard();
+noCamera.webview._applySoftphoneSnapshot(webviewIdle);
+noCamera.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(noCamera.answers.length, 1);
+assert.equal(noCamera.answers[0].videoPermission, false);
+assert.match(noCamera.webview._autoAnswerMediaWarning(), /camera/);
+assert.equal(noCamera.webview._errorMsg, "");
+engine.autoAnswerMedia = {{
+  audio: {{ ready: false }},
+  video: {{ ready: true }},
+}};
+engine.autoAnswerMediaSettled.clear();
+const noMicrophone = ringingWebviewCard();
+noMicrophone.webview._applySoftphoneSnapshot(webviewIdle);
+noMicrophone.webview._applySoftphoneSnapshot(webviewRinging);
+await settle();
+assert.equal(noMicrophone.answers.length, 0);
+assert.match(noMicrophone.webview._autoAnswerMediaWarning(), /microphone could not be opened/);
+
+// Enabling Auto Answer by hand proves the microphone with a user gesture,
+// which replaces the remembered failure.
+noMicrophone.webview._autoAnswer = false;
+await noMicrophone.webview._toggleAutoAnswer();
+assert.deepEqual(engine.autoAnswerMediaResult("audio"), {{ ready: true }});
+assert.equal(noMicrophone.webview._autoAnswerMediaWarning(), "");
+// The fake engine is shared, so restore working media for the tests below.
+engine.autoAnswerMedia = {{
+  audio: {{ ready: true }},
+  video: {{ ready: true }},
+}};
+engine.autoAnswerMediaSettled.clear();
+
+// ESP mirror cards answer by pressing the ESP's Call button, so the browser's
+// microphone permission must not stop them auto-answering.
+microphonePermissionState = "prompt";
+const espAutoAnswer = makeCard();
+espAutoAnswer.config = {{ mode: "esp_mirror", device_id: "device-esp" }};
+let espAnswers = 0;
+espAutoAnswer._answer = async () => {{ espAnswers++; }};
+await espAutoAnswer._tryAutoAnswer();
+assert.equal(espAnswers, 1);
 
 // Cache-local state cannot override the logical phone. Two cards project the
 // same backend preference even with an empty browser storage.
@@ -1192,8 +1366,7 @@ assert.equal(transfer._softphoneSnapshot.call_id,"next-call");
 assert.equal(transfer._transferDraft,null);
 
 
-// The backend advertises video parking for its supported SIP media owner.
-// Older backends and local browser video retain their safe disabled control.
+// Video parking is unsupported and must not expose an actionable Park button.
 const videoParking = makeCard();
 videoParking._els.parkBtn = new FakeElement();
 videoParking._els.parkingNotice = new FakeElement();
@@ -1201,13 +1374,6 @@ videoParking._softphoneSnapshot = {{...base,state:"in_call",parking:{{enabled:tr
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, true);
 assert.equal(videoParking._els.parkBtn.title, "Parking requires an audio-only call");
-videoParking._softphoneSnapshot.parking.video_supported = true;
-videoParking._render();
-assert.equal(videoParking._els.parkBtn.disabled, false);
-assert.equal(videoParking._els.parkBtn.title, "Park call");
-videoParking._softphoneSnapshot.parking.video_supported = false;
-videoParking._render();
-assert.equal(videoParking._els.parkBtn.disabled, true);
 videoParking._softphoneSnapshot.video_active = false;
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, false);
@@ -1243,6 +1409,21 @@ assert.equal(card._softphoneSnapshot.state, "in_call");
 assert.equal(card._applySoftphoneSnapshot({{
   ...base, state: "idle", call_id: base.call_id, sequence: 0, revision: 0,
 }}), true);
+
+// After HA restarts, a fresh endpoint query may legitimately have no terminal
+// Call-ID history. Only an explicitly reconciled read of this card's old call
+// may clear it; delayed pushes and reads for a different/new call stay blocked.
+const resetView=makeCard();
+resetView._applySoftphoneSnapshot({{...base,state:"in_call",sequence:50}});
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:"another-call"}}),false);
+resetView._starting=true;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),false);
+resetView._starting=false;
+assert.equal(resetView._applySoftphoneSnapshot({{...base,state:"idle",call_id:""}},
+  {{authoritative:true,previousCallId:base.call_id}}),true);
+assert.equal(resetView._softphoneSnapshot.state,"idle");
 
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
@@ -1330,6 +1511,78 @@ releaseLookup({{ device_id: "__voip_stack_ha_softphone__" }});
 await pendingAnswer;
 assert.equal(serviceCalls.length, serviceCount);
 assert.equal(race._softphoneSnapshot.call_id, "race-B");
+
+// The phone's no-answer route may commit while microphone/worklet preflight
+// is still pending. The retired receiver must not send an Answer or Hangup.
+const forwardedPreflight = makeCard();
+forwardedPreflight.config.device_id = "device-casa";
+const ringingCasa = {{
+  endpoint_id: "browser:casa", device_id: "device-casa",
+  state: "ringing", direction: "incoming", call_id: "local-deadline",
+  caller: "Test", callee: "Casa", sequence: 10, revision: 3,
+}};
+forwardedPreflight._applySoftphoneSnapshot(ringingCasa);
+const preflightCommands = [];
+forwardedPreflight._hass.callService = async (...args) => preflightCommands.push(args);
+let enterPreflight, releasePreflight;
+const preflightEntered = new Promise(resolve => {{ enterPreflight = resolve; }});
+const previousPrepareAudioCall = engine.prepareAudioCall;
+engine.prepareAudioCall = async () => {{
+  audioPermissionChecks++;
+  enterPreflight();
+  await new Promise(resolve => {{ releasePreflight = resolve; }});
+  return true;
+}};
+const preparingAnswer = forwardedPreflight._answer();
+await preflightEntered;
+forwardedPreflight._onSoftphoneState({{
+  ...ringingCasa, state: "idle", terminal_reason: "forwarded",
+  last_sip_event: "ROUTE_FORWARD", sequence: 11, revision: 4,
+}});
+releasePreflight();
+await preparingAnswer;
+assert.equal(preflightCommands.length, 0);
+assert.equal(forwardedPreflight._softphoneSnapshot.state, "idle");
+assert.equal(forwardedPreflight._starting, false);
+assert.equal(engine.ownsSoftphoneSession("local-deadline", "browser:casa"), false);
+assert.equal(engine.mediaIntent, null);
+engine.prepareAudioCall = previousPrepareAudioCall;
+
+// The final local ringing check cannot reserve backend state. If voicemail
+// wins after the request is sent, the rejection releases only Casa's intent;
+// it must not compensate with Hangup or acquire the caller's application media.
+const forwardedRequest = makeCard();
+forwardedRequest.config.device_id = "device-casa";
+forwardedRequest._applySoftphoneSnapshot({{ ...ringingCasa, call_id: "local-in-flight" }});
+const requestCommands = [];
+let enterAnswerRequest, rejectAnswerRequest;
+const answerRequestEntered = new Promise(resolve => {{ enterAnswerRequest = resolve; }});
+forwardedRequest._hass.callService = async (...args) => {{
+  requestCommands.push(args);
+  assert.equal(args[1], "answer");
+  enterAnswerRequest();
+  await new Promise((_resolve, reject) => {{ rejectAnswerRequest = reject; }});
+}};
+const inFlightAnswer = forwardedRequest._answer();
+await answerRequestEntered;
+assert.equal(requestCommands.length, 1);
+assert.equal(requestCommands[0][2].device_id, "device-casa");
+assert.equal(requestCommands[0][2].call_id, "local-in-flight");
+forwardedRequest._onSoftphoneState({{
+  ...ringingCasa, call_id: "local-in-flight", state: "idle",
+  terminal_reason: "forwarded", last_sip_event: "ROUTE_FORWARD",
+  sequence: 12, revision: 5,
+}});
+const lateAnswerError = new Error("call_id local-in-flight belongs to another phone endpoint");
+rejectAnswerRequest(lateAnswerError);
+await inFlightAnswer;
+assert.equal(requestCommands.length, 1, "late Answer must not issue a compensating Hangup");
+assert.equal(forwardedRequest._softphoneSnapshot.state, "idle");
+assert.equal(forwardedRequest._starting, false);
+assert.equal(forwardedRequest._errorMsg, lateAnswerError.message);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:casa"), false);
+assert.equal(engine.ownsSoftphoneSession("local-in-flight", "browser:test"), false);
+assert.equal(engine.mediaIntent, null);
 
 // Home Assistant may recreate the Lovelace element while an Answer request is
 // in flight.  The page-level engine owns the media session, so the detached
@@ -1642,6 +1895,10 @@ assert.equal(esp.endpoint_kind, "esphome");
 assert.deepEqual(esp.capabilities, ["audio", "dtmf"]);
 assert.equal(esp.camera_entity_id, "camera.kitchen_esp");
 assert.equal(esp.sip_video_codec, "");
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:null,capabilities:["audio","dtmf"]}}}}).sip_video_codec,null);
+assert.equal(model.targetFromRosterEntry({{metadata:{{sip_video_codec:" JPEG "}}}}).sip_video_codec,"jpeg");
+assert.equal(model.targetFromRosterEntry({{metadata:{{capabilities:["audio","video"]}}}}).sip_video_codec,undefined);
+
 
 assert.equal(model.normaliseTransport("sip_tcp"), "TCP");
 assert.equal(model.normaliseTransport(" UDP "), "UDP");
@@ -1798,3 +2055,77 @@ if (resolver._pending) await resolver._pending;
 assert.equal(resolver.phonebook, "sensor.new_server");
 '''
     subprocess.run(["node", "--input-type=module", "-e", script], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_native_editors_and_section_strategy_preserve_canonical_selections():
+    """Control only the native ha-form boundary, execute the actual editors."""
+    script = r'''
+import assert from 'node:assert/strict';
+class Element extends EventTarget {
+  constructor(){super();this.children=[];this.style={};this.hidden=false;}
+  append(...items){this.children.push(...items);}
+  appendChild(item){this.append(item);return item;}
+  replaceChildren(...items){this.children=[...items];}
+  attachShadow(){this.shadowRoot=new Element();return this.shadowRoot;}
+  get childElementCount(){return this.children.length;}
+}
+globalThis.HTMLElement=Element;
+globalThis.window=globalThis;
+if(!globalThis.CustomEvent)globalThis.CustomEvent=class extends Event{constructor(type,init={}){super(type,init);this.detail=init.detail;}};
+const definitions=new Map();
+globalThis.customElements={get:name=>definitions.get(name),define:(name,value)=>definitions.set(name,value)};
+globalThis.document={createElement:name=>{const Type=definitions.get(name);const item=Type?new Type():new Element();item.localName=name;return item;}};
+let nativeLoads=0;
+globalThis.loadCardHelpers=async()=>({createCardElement:()=>({constructor:{async getConfigElement(){nativeLoads++;customElements.define('ha-form',class extends Element{});}}})});
+const base=__FRONTEND__;
+const {ensureNativeForm}=await import(base+'/voip-stack-form.js');
+await Promise.all([ensureNativeForm(),ensureNativeForm()]);
+assert.equal(nativeLoads,1);
+const requests=[];
+let devices=[{endpoint_id:'account-A',device_id:'device-A',kind:'sip_account',name:'Reception',extension:'201'},
+ {endpoint_id:'esp-A',device_id:'esp-device',kind:'esphome',name:'Kitchen',audio_mode:'full_duplex'}];
+const connection={sendMessagePromise:async request=>{requests.push(request);assert.equal(request.type,'voip_stack/list_devices');return{devices};}};
+const hass={connection,language:'en',config:{components:['voip_stack']},callWS:request=>connection.sendMessagePromise(request)};
+await import(base+'/voip-stack-card-editor.js');
+const Editor=customElements.get('voip-stack-card-editor');const editor=new Editor();
+editor.setConfig({type:'custom:voip-stack-card',mode:'ha_softphone',device_id:'device-A',name:'Original',show_extended_info:true,custom_user_option:{keep:true}});
+editor.hass=hass;await new Promise(resolve=>setImmediate(resolve));
+const form=editor._els.form;
+assert.equal(form.localName,'ha-form');
+assert.equal(form.data.device_id,'device-A');
+const choices=form.schema.find(field=>field.name==='device_id').selector.select.options;
+assert(choices.some(option=>option.value==='device-A'&&option.label.includes('Reception')));
+assert(!choices.some(option=>option.value==='esp-device'));
+assert.equal(form.schema.find(field=>field.name==='show_recording_controls').visible.value,'ha_softphone');
+const changes=[];editor.addEventListener('config-changed',event=>changes.push(event.detail.config));
+form.dispatchEvent(new CustomEvent('value-changed',{detail:{value:{name:'Renamed'}}}));
+assert.equal(changes.at(-1).device_id,'device-A');assert.equal(changes.at(-1).show_extended_info,true);
+assert.deepEqual(changes.at(-1).custom_user_option,{keep:true});assert.equal(changes.at(-1).name,'Renamed');
+editor.setConfig({...changes.at(-1),device_id:'missing-device'});
+assert.equal(editor._els.form.data.device_id,'missing-device');
+assert(editor._els.form.schema.find(field=>field.name==='device_id').selector.select.options.some(option=>option.value==='missing-device'&&option.label==='Missing phone'));
+await import(base+'/voip-stack-dashboard-card-editor.js');
+const DashEditor=customElements.get('voip-stack-dashboard-card-editor');const dash=new DashEditor();
+dash.setConfig({type:'custom:voip-stack-dashboard-card',device_id:'device-A',title:'Calls'});dash.hass=hass;await new Promise(resolve=>setImmediate(resolve));
+assert.equal(dash._form.localName,'ha-form');
+const dashboardChanges=[];dash.addEventListener('config-changed',event=>dashboardChanges.push(event.detail.config));
+dash._form.dispatchEvent(new CustomEvent('value-changed',{detail:{value:{title:'Operator'}}}));
+assert.equal(dashboardChanges.at(-1).device_id,'device-A');assert.equal(dashboardChanges.at(-1).title,'Operator');
+await import(base+'/voip-stack-section-strategy.js');
+const strategy=customElements.get('ll-strategy-section-voip-stack');
+assert.equal(window.customStrategies.filter(item=>item.type==='voip-stack'&&item.strategyType==='section').length,1);
+assert.deepEqual(strategy.getStubConfig(),{type:'custom:voip-stack',account_ids:[]});
+const config={type:'custom:voip-stack',account_ids:['account-A']};
+let section=await strategy.generate(config,hass);
+assert.deepEqual(section.cards,[{type:'custom:voip-stack-card',mode:'ha_softphone',device_id:'device-A'}]);
+devices=[{...devices[0],device_id:'new-device-A',name:'Reception renamed'}];
+section=await strategy.generate(config,hass);
+assert.equal(section.cards[0].device_id,'new-device-A');assert.deepEqual(config.account_ids,['account-A']);
+devices=[];section=await strategy.generate(config,hass);
+assert.equal(section.cards.length,1);assert.equal(section.cards[0].type,'markdown');
+assert(requests.every(request=>request.type==='voip_stack/list_devices'));
+editor.disconnectedCallback();
+'''.replace("__FRONTEND__", json.dumps(CARD.parent.as_uri()))
+    result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -28,12 +28,40 @@ FORMAT_TEXT = vol.All(cv.string, vol.Length(max=128))
 FORMAT_LIST = vol.All([FORMAT_TEXT], vol.Length(max=32))
 PORT = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
 SAMPLE_RATE = vol.All(vol.Coerce(int), vol.Range(min=8000, max=192000))
+
+
+def _activity_limit(value):
+    """Keep integer limits compatible with HA's service validation adapter."""
+    if isinstance(value, bool):
+        raise vol.Invalid("Activity limit must be an integer between 1 and 1000")
+    try:
+        limit = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise vol.Invalid("Activity limit must be an integer between 1 and 1000") from error
+    if not 1 <= limit <= 1000 or (isinstance(value, float) and value != limit):
+        raise vol.Invalid("Activity limit must be an integer between 1 and 1000")
+    return limit
 PAYLOAD_BYTES = vol.All(vol.Coerce(int), vol.Range(min=64, max=65507))
 SEQUENCE = vol.All(vol.Coerce(int), vol.Range(min=0, max=2**31 - 1))
 
 
 async def async_register_services(hass: HomeAssistant, handlers: dict[str, object]) -> None:
-    phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT}
+    async def reload_card_associations(call):
+        """Re-read saved dashboards, including YAML, without reloading calls."""
+        from homeassistant.exceptions import ServiceValidationError
+        from .runtime_data import runtime_data
+
+        await async_require_service_admin(hass, call)
+        runtime = runtime_data(hass)
+        if runtime is None or runtime.ha_bindings is None:
+            raise ServiceValidationError("VoIP Stack account associations are not ready")
+        await runtime.ha_bindings.async_reload()
+
+    hass.services.async_register(
+        DOMAIN, "reload_card_associations", reload_card_associations, schema=vol.Schema({})
+    )
+    phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT,
+                             vol.Optional("line_id"): IDENTIFIER_TEXT}
     purge_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -250,6 +278,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             **phone_selector_fields,
             vol.Optional("extension"): IDENTIFIER_TEXT,
             vol.Optional("ring_group"): SHORT_TEXT,
+            vol.Optional("queues"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT]),
             vol.Optional("conference_group"): SHORT_TEXT,
             vol.Optional("conference_ring"): cv.boolean,
             vol.Optional("auto_answer"): cv.boolean,
@@ -329,6 +358,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         "select_inbound_destination",
         "set_deadline",
         "cancel_deadline",
+        "configure_queue", "get_queue_state", "announce", "stop_announcement",
+        "get_queue_activity", "get_queue_metrics",
     }
 
     def handler_for(name: str):
@@ -348,6 +379,54 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         return _handle
 
     hass.services.async_register(DOMAIN, "purge_devices", handler_for("purge_devices"), schema=purge_schema)
+    hass.services.async_register(DOMAIN, "set_phone_queues", handler_for("set_phone_queues"),
+        schema=vol.Schema({vol.Required("phone"): IDENTIFIER_TEXT,
+                           vol.Required("queues"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT])}, extra=vol.PREVENT_EXTRA))
+    hass.services.async_register(DOMAIN, "set_phone_memberships", handler_for("set_phone_memberships"),
+        schema=vol.Schema({vol.Required("phone"): IDENTIFIER_TEXT,
+            vol.Required("field"): vol.In(["queues", "ring_group"]),
+            vol.Required("value"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT])}, extra=vol.PREVENT_EXTRA))
+    hass.services.async_register(DOMAIN, "set_queue_agent_state", handler_for("set_queue_agent_state"),
+        schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT, vol.Required("phone"): IDENTIFIER_TEXT,
+            vol.Required("state"): vol.In(["available", "paused", "logged_out"]), vol.Optional("reason"): SHORT_TEXT}, extra=vol.PREVENT_EXTRA))
+    hass.services.async_register(DOMAIN, "get_queue_state", handler_for("get_queue_state"),
+        schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT, vol.Optional("phone"): IDENTIFIER_TEXT}, extra=vol.PREVENT_EXTRA),
+        supports_response=SupportsResponse.ONLY)
+    activity_window_fields = {vol.Required("queue"): IDENTIFIER_TEXT,
+        vol.Optional("since"): SHORT_TEXT, vol.Optional("until"): SHORT_TEXT}
+    hass.services.async_register(DOMAIN, "get_queue_activity", handler_for("get_queue_activity"),
+        schema=vol.Schema({**activity_window_fields,
+            vol.Optional("limit", default=100): _activity_limit,
+            vol.Optional("cursor"): URI_TEXT}, extra=vol.PREVENT_EXTRA), supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "get_queue_metrics", handler_for("get_queue_metrics"),
+        schema=vol.Schema(activity_window_fields, extra=vol.PREVENT_EXTRA), supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "configure_queue", handler_for("configure_queue"),
+        schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT,
+            vol.Optional("enabled"): cv.boolean,
+            vol.Optional("max_waiting"): vol.All(vol.Coerce(int), vol.Range(min=1, max=64)),
+            vol.Optional("max_wait"): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600)),
+            vol.Optional("ring_timeout"): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
+            vol.Optional("no_agent_wait"): vol.All(vol.Coerce(float), vol.Range(min=0, max=120)),
+            vol.Optional("retry_delay"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=120)),
+            vol.Optional("wrap_up"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
+            vol.Optional("fallback"): SHORT_TEXT, vol.Optional("hold_media"): URI_TEXT,
+            vol.Optional("strategy"): vol.In(["ring_all", "round_robin", "longest_idle", "ordered"]),
+            vol.Optional("agent_order"): vol.All([IDENTIFIER_TEXT], vol.Length(max=128)),
+            vol.Optional("auto_pause_after"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+            **{vol.Optional(f"fallback_{reason}"): SHORT_TEXT for reason in
+               ("full", "timeout", "no_agents", "disabled", "removed")}}, extra=vol.PREVENT_EXTRA))
+    hass.services.async_register(DOMAIN, "announce", handler_for("announce"),
+        schema=vol.Schema({vol.Required("targets"): vol.All([IDENTIFIER_TEXT], vol.Length(min=1, max=16)),
+            vol.Optional("tts_entity_id"): cv.entity_id, vol.Optional("message"): vol.All(cv.string, vol.Length(min=1, max=4096)),
+            vol.Optional("language"): SHORT_TEXT, vol.Optional("options", default=dict): dict,
+            vol.Optional("media"): vol.Any(URI_TEXT, dict),
+            vol.Optional("answer_timeout", default=5): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
+            vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+            vol.Optional("busy_policy", default="skip"): vol.In(["skip"]), vol.Optional("wait", default=True): cv.boolean}, extra=vol.PREVENT_EXTRA),
+        supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(DOMAIN, "stop_announcement", handler_for("stop_announcement"),
+        schema=vol.Schema({vol.Required("announcement_id"): IDENTIFIER_TEXT}, extra=vol.PREVENT_EXTRA),
+        supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "set_phone_settings", handler_for("set_phone_settings"), schema=set_phone_settings_schema)
     hass.services.async_register(DOMAIN, "set_voicemail_settings", handler_for("set_voicemail_settings"), schema=voicemail_settings_schema)
     hass.services.async_register(DOMAIN, "send_to_voicemail", handler_for("send_to_voicemail"), schema=send_voicemail_schema)

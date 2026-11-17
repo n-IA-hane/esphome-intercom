@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.voip_stack import async_migrate_entry
 from custom_components.voip_stack.parking_config import parking_settings, normalize_parking_config
@@ -14,6 +14,9 @@ from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.voicemail_config import require_voicemail_config
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from .test_voicemail_ha import custom_integrations as custom_integrations
+
+from .support.ha_frontend import prepare_frontend_dependency
+
 
 pytestmark = pytest.mark.ha
 
@@ -35,7 +38,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
     })
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == 1
     assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav"}
     assert entry.data["voicemail"] == {"tts_entity_id": "tts.existing", "language": "it"}
     assert entry.data["esphome_mailboxes"]["esp"]["enabled"]
@@ -46,6 +49,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
 
 async def test_installation_needs_neither_tts_nor_application_switches(hass, custom_integrations):
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(hass)
     form = await hass.config_entries.flow.async_init("voip_stack", context={"source": "user"})
     values = form["data_schema"]({})
     assert "parking_enabled" not in values and "voicemail_enabled" not in values
@@ -56,10 +60,11 @@ async def test_installation_needs_neither_tts_nor_application_switches(hass, cus
 
 async def test_reconfigure_has_separate_resource_panels(lab, custom_integrations):
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     entry = config_entry(lab.hass)
     menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id})
     assert menu["type"] == "menu"
-    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services"}
+    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services", "phone_provisioning"}
     form = await lab.hass.config_entries.flow.async_configure(menu["flow_id"], {"next_step_id": "parking"})
     assert form["step_id"] == "parking" and "enabled" not in form["data_schema"]({})
 
@@ -129,6 +134,7 @@ async def test_parking_edit_preserves_current_call_and_transport(lab, custom_int
     session = lab.calls.upsert("parked-config", state="in_call", owner="parking")
     parked = lot.reserve(session, slot="701")
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
     try:
         menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source":"reconfigure", "entry_id":entry.entry_id})
         form = await lab.hass.config_entries.flow.async_configure(menu["flow_id"], {"next_step_id":"parking"})

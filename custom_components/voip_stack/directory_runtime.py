@@ -1,81 +1,245 @@
-"""Assemble the single LDAP directory consumed by HA and physical phones."""
-
-from __future__ import annotations
+"""Canonical phonebook composition shared by routing and public consumers."""
 
 from dataclasses import replace
 
-from .phone_directory import PhoneDirectory
-from .phone_endpoint import EndpointKind
+from .const import DOMAIN
+from .phone_directory import PhoneDirectory, public_metadata
+from .phone_endpoint import EndpointKind, EndpointAvailability, PhoneEndpoint
 from .roster import RosterEntry
-from .runtime_data import require_runtime_data
+from .runtime_data import require_runtime_data, runtime_data
 
 
-async def async_refresh_directory(hass, *, peers=None, registered=None) -> tuple[RosterEntry, ...]:
-    """Keep persistent destinations even when their current binding is offline."""
+def routing_snapshot(runtime):
+    """Join configured identities with current binding owners without I/O."""
+    directory = getattr(runtime, "directory", None)
+    if directory is None or directory.closed:
+        raise ValueError("Phone directory is unavailable")
+    entries = list(directory.snapshot())
+    sip_runtime = getattr(runtime, "sip", None)
+    registrar = sip_runtime.component("registrar") if sip_runtime is not None else None
+    if registrar is None:
+        return entries
+    from .endpoint_routing import merge_registered_entries
+
+    registered = registrar.registered_roster_entries()
+    configured = []
+    for row in entries:
+        endpoint = runtime.endpoints.get(row.metadata.get("endpoint_id", ""))
+        username = endpoint.username if endpoint is not None else row.id
+        if username.casefold() in registrar.accounts and (
+                row.metadata.get("registered") or row.metadata.get("sip_contacts")):
+            # An old derived view cannot retain a departed Contact or lend its
+            # learned capabilities to another registration of the same account.
+            if endpoint is None:
+                continue
+            row = _endpoint_entry(endpoint)
+        configured.append(row)
+    entries = merge_registered_entries(configured, registered, runtime.endpoints)
+    result = []
+    for row in entries:
+        endpoint = runtime.endpoints.get(row.metadata.get("endpoint_id", ""))
+        if endpoint is not None and endpoint.supports_ha_client:
+            bindings = runtime.ha_bindings
+            bound = endpoint.kind.is_softphone or bool(bindings and bindings.has_binding(endpoint.endpoint_id))
+            row = replace(row, metadata={**row.metadata, "ha_client_supported": True, "ha_binding": bound,
+                                        "local_ha": bound and not bool(row.metadata.get("sip_contacts"))})
+        result.append(row)
+    return result
+
+
+def restore_esp_identities(hass, runtime):
+    """Rebuild physical identities from their existing HA owners, even offline."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from .device_resolver import entity_role
+    from .managed_phones import managed_records
+    from .phone_config import esphome_phone_policy
+    from .store import config_entry
+    from .endpoint_registry import EndpointCollisionError
+    from .repairs import ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX, async_sync_esphome_endpoint_collision_issue
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = config_entry(hass)
+    records = managed_records(entry) if entry is not None else {}
+    entities = er.async_get(hass)
+    devices = dr.async_get(hass)
+    eligible_devices = set()
+    owned_devices = (device for origin in hass.config_entries.async_entries("esphome")
+                     for device in dr.async_entries_for_config_entry(devices, origin.entry_id))
+    for device in owned_devices:
+        origin = hass.config_entries.async_get_entry(device.config_entry_id)
+        if origin is None or origin.domain != "esphome":
+            continue
+        provisioner = runtime.phone_provisioning
+        if provisioner is not None and provisioner.is_removed(origin.entry_id, device.id):
+            continue
+        phone = records.get(device.id)
+        native_entities = [entity for entity in er.async_entries_for_device(entities, device.id)
+                           if entity.platform == "esphome"]
+        roles = {entity_role(entity): entity for entity in native_entities}
+        if "voip_state" not in roles:
+            continue
+        eligible_devices.add(device.id)
+        if runtime.endpoints.by_device_id(device.id) is not None:
+            # No attempt was made to apply its desired name/aliases here.
+            # Only the provisioner's successful sync can clear that conflict.
+            continue
+        fields = {}
+        for role, field in (("voip_extension", "extension"), ("voip_ring_groups", "ring_group"),
+                            ("voip_conference_groups", "conference_group"), ("voip_conference_ring", "conference_ring")):
+            state = hass.states.get(roles[role].entity_id) if role in roles else None
+            fallback = getattr(phone, field, False if field == "conference_ring" else "")
+            value = state.state if state is not None and state.state not in {"unknown", "unavailable"} else fallback
+            fields[field] = str(value).casefold() in {"on", "true", "1"} if field == "conference_ring" else str(value)
+        endpoint_id = phone.endpoint_id if phone is not None else f"esphome:{device.id}"
+        candidate = PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
+            name=(device.name_by_user or (phone.display_name if phone is not None else "")
+                  or device.name or origin.title or (phone.username if phone is not None else "ESPHome")),
+            username=phone.username if phone is not None else str(origin.data.get("device_name") or ""),
+            kind=EndpointKind.ESPHOME, entity_ids=frozenset(entity.entity_id for entity in native_entities),
+            availability=EndpointAvailability.OFFLINE, capabilities=frozenset({"audio", "dtmf"}),
+            policy=esphome_phone_policy(entry, endpoint_id), **fields)
+        try:
+            runtime.endpoints.register(candidate)
+        except EndpointCollisionError as error:
+            async_sync_esphome_endpoint_collision_issue(hass, device.id, name=candidate.name, error=error)
+        else:
+            async_sync_esphome_endpoint_collision_issue(hass, device.id)
+    # The issue registry owns diagnostics. Reconcile its derived rows after
+    # every restore, clearing only removed or no-longer-phone devices here.
+    for domain, issue_id in tuple(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX):
+            device_id = issue_id.removeprefix(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX)
+            if device_id not in eligible_devices:
+                async_sync_esphome_endpoint_collision_issue(hass, device_id)
+
+
+def _endpoint_entry(endpoint):
+    browser = endpoint.kind.is_softphone
+    return RosterEntry(id=endpoint.username or endpoint.sip_uri_user, name=endpoint.name,
+        extension=endpoint.extension, ha_bridge=True,
+        enabled=endpoint.availability is not EndpointAvailability.UNAVAILABLE,
+        metadata={"endpoint_id": endpoint.endpoint_id, "endpoint_kind": endpoint.kind.value,
+                  "device_id": endpoint.device_id, "account_id": "ha", "local_ha": browser,
+                  "capabilities": sorted(endpoint.capabilities), "registered": False,
+                  "availability": endpoint.availability.value,
+                  "ring_group": endpoint.ring_group, "conference_group": endpoint.conference_group,
+                  "conference_ring": endpoint.conference_ring, "call_policy": endpoint.policy.as_data()})
+
+
+def compose_directory_entries(hass, peers, registered):
+    """Use current wire bindings and persistent identities in one composition."""
     from .endpoint_routing import assemble_directory_entries
-    from .peer_snapshot import async_build_peer_snapshot
+    from .groups import collect_groups
+
+    runtime = require_runtime_data(hass)
+    normalized = []
+    for peer in peers:
+        endpoint = runtime.endpoints.get(peer.endpoint_id) if peer.endpoint_id else None
+        if endpoint is None and peer.device_id:
+            endpoint = runtime.endpoints.by_device_id(peer.device_id)
+        if isinstance(endpoint, PhoneEndpoint):
+            peer = replace(peer, endpoint_id=endpoint.endpoint_id, endpoint_kind=endpoint.kind.value)
+        normalized.append(peer)
+    candidates = assemble_directory_entries(hass, normalized, registered)
+    entries = {}
+    for row in candidates:
+        if row.metadata.get("auto") and row.metadata.get("group_type"):
+            continue
+        identity = str(row.metadata.get("endpoint_id") or row.id).casefold()
+        entries[identity] = row
+    for endpoint in runtime.endpoints.endpoints:
+        if isinstance(endpoint, PhoneEndpoint) and endpoint.endpoint_id.casefold() not in entries:
+            entries[endpoint.endpoint_id.casefold()] = _endpoint_entry(endpoint)
+    if runtime.queues is not None:
+        runtime.queues.refresh()
+        for row in runtime.queues.roster_entries():
+            entries[row.metadata["endpoint_id"]] = row
+    from .paging_config import paging_group_entries
+
+    from .store import config_entry
+    entry = config_entry(hass)
+    if entry is not None:
+        for row in paging_group_entries(entry):
+            entries[row.metadata["endpoint_id"]] = row
+        from .group_config import group_roster_entries
+        for row in group_roster_entries(hass, entry):
+            entries[row.metadata["endpoint_id"]] = row
+    for group in collect_groups([], entries.values(), [], existing_entries=entries.values()).values():
+        entries[f"group:{group.group_type}:{group.name}".casefold()] = RosterEntry(
+            id=group.name, name=group.name, ha_bridge=True, enabled=bool(group.members),
+            metadata={"endpoint_kind": "group", "group_type": group.group_type, "members": group.members,
+                      "ring_members": group.ring_members, "auto": group.auto})
+    result = []
+    for row in entries.values():
+        metadata = public_metadata(row.metadata)
+        endpoint = runtime.endpoints.get(metadata.get("endpoint_id", ""))
+        if metadata.get("group_type") or metadata.get("virtual_endpoint") in {"ring_group", "conference"}:
+            kind = "group"
+            identity = metadata.get("endpoint_id") or f"group:{metadata.get('group_type') or 'explicit'}:{row.id}"
+        elif metadata.get("virtual_endpoint"):
+            kind = "service"
+            service = str(metadata["virtual_endpoint"])
+            identity = metadata.get("endpoint_id") or (
+                "service:assist_pipeline" if service == "assist_pipeline" else f"service:{service}:{row.id}")
+        elif isinstance(endpoint, PhoneEndpoint):
+            from .account_runtime import account_has_ha_binding
+
+            kind, identity = endpoint.kind.value, endpoint.endpoint_id
+            metadata.update(account_id="ha", availability=endpoint.availability.value)
+            if endpoint.supports_ha_client:
+                bound = endpoint.kind.is_softphone or account_has_ha_binding(hass, identity)
+                # A bare account routes to the deferred HA offer; one with
+                # Contacts is composed by the common fork instead.
+                metadata.update(ha_client_supported=True, ha_binding=bound,
+                                local_ha=bound and not bool(metadata.get("sip_contacts")))
+        else:
+            # Explicit static phone metadata may declare its account context.
+            # Unknown contacts never become phones because of a URI or label.
+            kind = str(metadata.get("endpoint_kind") or "contact")
+            if kind not in {"esphome", "browser", "sip_account"} or not (
+                    metadata.get("endpoint_id") and metadata.get("account_id")):
+                kind = "contact"
+            identity = metadata.get("endpoint_id") or f"contact:{row.id}"
+        metadata.update(endpoint_id=str(identity), endpoint_kind=kind)
+        result.append(replace(row, metadata=metadata))
+    return result
+
+
+async def async_refresh_directory(hass, *, peers=None, registered=None):
+    """Publish only while the runtime and latest refresh still own the result."""
+    from .peer_snapshot import async_build_peer_snapshot, async_advertise_host
     from .phonebook_runtime import registered_roster_entries
 
     runtime = require_runtime_data(hass)
     if runtime.directory is None:
         runtime.directory = PhoneDirectory()
+    directory = runtime.directory
+    if directory.closed:
+        return None
+    generation = directory.begin_refresh()
+    restore_esp_identities(hass, runtime)
     if peers is None:
         peers = await async_build_peer_snapshot(hass)
+    if runtime_data(hass) is not runtime or runtime.directory is not directory or directory.closed:
+        return None
     if registered is None:
         registered = registered_roster_entries(hass)
-    normalized = []
-    for peer in peers:
-        # Discovery can precede endpoint-id migration. Resolve physical peer
-        # identities before assembly; manual contacts and virtual destinations
-        # never enter this normalization path.
-        endpoint = runtime.endpoints.get(peer.endpoint_id) if peer.endpoint_id else None
-        if endpoint is None and peer.device_id:
-            endpoint = runtime.endpoints.by_device_id(peer.device_id)
-        if endpoint is None and not peer.is_ha and peer.endpoint_kind in {"", "esphome", "sip_account"}:
-            endpoint = runtime.endpoints.by_username(peer.sip_uri_user or peer.name)
-        if endpoint is not None:
-            peer = replace(peer, endpoint_id=endpoint.endpoint_id, endpoint_kind=endpoint.kind.value)
-        normalized.append(peer)
-    candidates = assemble_directory_entries(hass, normalized, registered)
-    entries = {}
-    for entry in candidates:
-        identity = str(entry.metadata.get("endpoint_id") or entry.id)
-        previous = entries.get(identity)
-        if previous is not None:
-            metadata = {**previous.metadata, **entry.metadata}
-            entry = replace(entry, metadata=metadata)
-        entries[identity] = entry
-    for endpoint in runtime.endpoints.endpoints:
-        if endpoint.endpoint_id in entries:
-            continue
-        # Configured phones are directory identities, not a snapshot of live
-        # transports. Reachability remains a separate SIP/BLF concern.
-        entries[endpoint.endpoint_id] = RosterEntry(
-            id=endpoint.username or endpoint.endpoint_id,
-            name=endpoint.name, extension=endpoint.extension,
-            metadata={"endpoint_id": endpoint.endpoint_id,
-                      "endpoint_kind": endpoint.kind.value,
-                      "device_id": endpoint.device_id,
-                      "local_ha": endpoint.kind is EndpointKind.BROWSER,
-                      "capabilities": sorted(endpoint.capabilities)},
-        )
-    runtime.directory.replace(entries.values())
-    return runtime.directory.snapshot()
+    entries = compose_directory_entries(hass, peers, registered)
+    host = str(runtime.transport_config.get("advertise_host") or "")
+    if not host:
+        host = next((peer.host for peer in peers if peer.is_ha and peer.host), "") or await async_advertise_host(hass)
+    if (runtime_data(hass) is not runtime or runtime.directory is not directory
+            or not directory.owns_refresh(generation)):
+        return None
+    directory.advertise_host = host
+    directory.replace(entries, refresh_generation=generation)
+    return directory.snapshot()
 
 
-def directory_uri(hass, entry: RosterEntry) -> str:
-    """LDAP callers dial the PBX's canonical name, retaining its call policy."""
-    from .config import transport_config
+def directory_uri(hass, row):
+    """Return a canonical PBX address while retaining the row's call policy."""
     from .core.sip import SipUri
 
-    cfg = transport_config(hass)
-    host = str(cfg.get("advertise_host") or "")
-    if not host:
-        provisioning = require_runtime_data(hass).phone_provisioning
-        host = getattr(provisioning, "advertise_host", "")
-    if not host:
-        return entry.sip_uri
-    endpoint_id = str(entry.metadata.get("endpoint_id") or "")
-    endpoint = require_runtime_data(hass).endpoints.get(endpoint_id) if endpoint_id else None
-    target = endpoint.username if endpoint is not None and endpoint.username else entry.id
-    return str(SipUri(scheme="sip", user=target, host=host, port=int(cfg["sip_port"])))
+    runtime = require_runtime_data(hass)
+    host = runtime.transport_config.get("advertise_host") or getattr(runtime.directory, "advertise_host", "")
+    return str(SipUri(row.id, host, int(runtime.transport_config["sip_port"]))) if host else row.sip_uri

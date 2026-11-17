@@ -19,7 +19,7 @@ from custom_components.voip_stack.local_softphone_runtime import (
 )
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
-from custom_components.voip_stack.sip_runtime import enable_reused_signaling_flow, uri_transport
+from custom_components.voip_stack.sip_runtime import enable_reused_tcp_connection, uri_transport
 from custom_components.voip_stack.core import rtp
 
 from .test_automation_originate_ha import lab as lab
@@ -38,13 +38,14 @@ async def browser_lab(lab, monkeypatch):
         ))
         lab.roster.append(RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
     lab.hass.states.async_set("sensor.voip_phonebook", "4", {"roster_json": dump_roster_json(lab.roster)})
+    lab.runtime.directory.replace(lab.roster)
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
     monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: lab.roster)
     resolver = EndpointRouteResolver(hass=lab.hass, local_ip="127.0.0.1", sip_port=5099)
     dialer = EndpointDialer(lab.hass, "127.0.0.1", lab.runtime.transport_config,
-                           resolver, uri_transport, enable_reused_signaling_flow)
+                           resolver, uri_transport, enable_reused_tcp_connection)
     lab.forward = call_forwarder.ForwardRuntime(
         hass=lab.hass, config=lab.runtime.transport_config, local_ip="127.0.0.1",
         route_resolver=resolver, browser_leg_for_member=dialer.browser_leg_for_member,
@@ -129,14 +130,10 @@ async def test_outgoing_browser_forward_preserves_caller_and_closes_old_sip_leg(
                 samples = struct.unpack(f"!{len(payload) // 2}h", payload)
                 assert max(samples) >= 950
                 destination_port = int(re.search(rb"m=audio (\d+)", lab.phones[1].invites[0].body)[1])
-                # The independent phone answers with the offered packet time.
-                # Generate that actual wire quantum rather than assuming 20ms.
-                packet_time = int(re.search(rb"a=ptime:(\d+)", lab.phones[1].invites[0].body)[1])
-                reverse_samples = 16000 * packet_time // 1000
                 for index in range(3):
                     reverse = rtp.build_packet(rtp.RtpPacket(
-                        lab.phones[1].payload_type, index, index * reverse_samples, 2002,
-                        struct.pack(f"!{reverse_samples}h", *([5000] * reverse_samples)),
+                        lab.phones[1].payload_type, index, index * 320, 2002,
+                        struct.pack("!320h", *([5000] * 320)),
                     ))
                     await lab.hass.loop.sock_sendto(lab.phones[1].rtp_socket, reverse,
                                                   ("127.0.0.1", destination_port))

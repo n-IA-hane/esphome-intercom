@@ -12,6 +12,28 @@ import yaml
 from scripts.run_hil_qualification import HilError, _lab_lock, run_hil
 
 
+def _measurement_source() -> str:
+    """An explicit synthetic producer for wrapper contract tests only."""
+    return (
+        "import json, os, sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n"
+        "from tests.test_qualification_pipeline import write_measured_hil_fixture\n"
+        "receipt=write_measured_hil_fixture(Path(os.environ['HIL_EVIDENCE_ROOT']), "
+        "time_origin=float(os.environ['HIL_ACTOR_STARTED_MONOTONIC']), "
+        "run_id=os.environ['HIL_RUN_ID'], scenario=os.environ['HIL_SCENARIO_ID'], "
+        "candidate_id=os.environ['HIL_CANDIDATE_ID'], plan_id=os.environ['HIL_PLAN_ID'], "
+        "head=os.environ['HIL_HEAD'])\n"
+        "Path(os.environ['HIL_MEASUREMENT_RECEIPT']).write_text(json.dumps(receipt))\n"
+    )
+
+
+@pytest.fixture
+def measured_actor_clock(monkeypatch):
+    """Advance the actor's local clock for synthetic 20 s wire fixtures."""
+    times = iter((1000.0,))
+    monkeypatch.setattr("scripts.run_hil_qualification.monotonic", lambda: next(times, 1046.0))
+
+
 def _plan(*jobs: str) -> dict[str, object]:
     return {
         "plan_id": "plan",
@@ -148,13 +170,13 @@ def test_lab_lock_rejects_parallel_owner(tmp_path: Path) -> None:
             pass
 
 
-def test_required_scenario_collects_pre_peak_post_evidence(tmp_path: Path) -> None:
+def test_required_scenario_collects_pre_peak_post_evidence(tmp_path: Path, measured_actor_clock) -> None:
     scenario = tmp_path / "scenario.py"
     scenario.write_text(
         "import os, time\n"
         "assert float(os.environ['VOIP_TEST_VOLUME_PERCENT']) <= 1\n"
         "print('private output is hashed, not copied')\n"
-        "time.sleep(0.05)\n",
+        "time.sleep(0.05)\n" + _measurement_source(),
         encoding="utf-8",
     )
 
@@ -174,9 +196,45 @@ def test_required_scenario_collects_pre_peak_post_evidence(tmp_path: Path) -> No
     assert "private output" not in json.dumps(artifact)
 
 
-def test_hardware_variant_can_install_attested_ota_artifact(tmp_path: Path) -> None:
-    scenario = tmp_path / "scenario.py"
+def test_successful_command_without_measured_receipt_is_not_hil_pass(tmp_path: Path) -> None:
+    scenario = tmp_path / "state_only.py"
     scenario.write_text("pass\n", encoding="utf-8")
+
+    artifact = run_hil(
+        _plan("hil-s3"), _hardware(tmp_path, scenario),
+        environment=dict(os.environ), **_evidence(tmp_path),
+    )
+
+    assert artifact["status"] == "failed"
+    assert artifact["jobs"]["hil-s3"]["results"][0]["exit_code"] == 0
+
+
+def test_wrapper_rejects_a_receipt_from_an_earlier_actor_run(tmp_path: Path) -> None:
+    scenario = tmp_path / "stale.py"
+    scenario.write_text(_measurement_source() +
+        "receipt['run_id']='previous-run'\n"
+        "Path(os.environ['HIL_MEASUREMENT_RECEIPT']).write_text(json.dumps(receipt))\n",
+        encoding="utf-8")
+    artifact = run_hil(_plan("hil-s3"), _hardware(tmp_path, scenario),
+        environment=dict(os.environ), **_evidence(tmp_path))
+    assert artifact["status"] == "failed"
+    assert "identity mismatch" in artifact["jobs"]["hil-s3"]["results"][0]["measurement_error"]
+
+
+def test_measurement_window_cannot_exceed_real_actor_runtime(tmp_path: Path) -> None:
+    scenario = tmp_path / "impossible_window.py"
+    scenario.write_text(_measurement_source(), encoding="utf-8")
+    artifact = run_hil(_plan("hil-s3"), _hardware(tmp_path, scenario),
+        environment=dict(os.environ), **_evidence(tmp_path))
+    result = artifact["jobs"]["hil-s3"]["results"][0]
+    assert result["duration_seconds"] < 20
+    assert artifact["status"] == "failed"
+    assert "outside the actor monotonic interval" in result["measurement_error"]
+
+
+def test_hardware_variant_can_install_attested_ota_artifact(tmp_path: Path, measured_actor_clock) -> None:
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text(_measurement_source(), encoding="utf-8")
     hardware = _hardware(tmp_path, scenario)
     firmware = hardware["devices"]["ws3"]["firmware"]
     firmware["artifact_kind"] = "ota"
@@ -225,10 +283,10 @@ def test_example_p4_variants_install_ota_artifacts() -> None:
 
 
 def test_selected_hardware_job_does_not_execute_other_required_jobs(
-    tmp_path: Path,
+    tmp_path: Path, measured_actor_clock,
 ) -> None:
     scenario = tmp_path / "scenario.py"
-    scenario.write_text("pass\n", encoding="utf-8")
+    scenario.write_text(_measurement_source(), encoding="utf-8")
 
     artifact = run_hil(
         _plan("hil-s3", "hil-p4"),
@@ -243,12 +301,12 @@ def test_selected_hardware_job_does_not_execute_other_required_jobs(
 
 
 def test_one_device_runs_required_scenarios_on_sequential_firmware_variants(
-    tmp_path: Path,
+    tmp_path: Path, measured_actor_clock,
 ) -> None:
     first = tmp_path / "first.py"
     second = tmp_path / "second.py"
-    first.write_text("pass\n", encoding="utf-8")
-    second.write_text("pass\n", encoding="utf-8")
+    first.write_text(_measurement_source(), encoding="utf-8")
+    second.write_text(_measurement_source(), encoding="utf-8")
     hardware = _hardware(tmp_path, first)
     device = hardware["devices"]["ws3"]
     install = device.pop("firmware")
@@ -294,7 +352,8 @@ def test_one_device_runs_required_scenarios_on_sequential_firmware_variants(
     )
 
     job = artifact["jobs"]["hil-s3"]
-    assert artifact["status"] == "passed"
+    assert artifact["status"] == "failed"
+    assert "no measured validator" in job["results"][1]["measurement_error"]
     assert [item["profile"] for item in job["firmware"]] == [
         "waveshare-s3-full",
         "waveshare-s3-second",

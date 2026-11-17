@@ -24,6 +24,24 @@ substitutions:
   firmware_phone_has_display: true
   firmware_phone_redraw:
   - script.execute: update_status
+  # Early UI capability map mirrors the selected control packages below.
+  # This selects views only; Number defaults and DSP calibration stay with their owners.
+  _fw_voice: false
+  _fw_wake_word: false
+  _fw_voip: ${ 'voip' in firmware_features }
+  _fw_playback: false
+  _fw_sendspin: false
+  settings_input_gain_id: microphone_pga
+  settings_reference_gain_id: reference_pga
+  settings_microphone_gain_id: mic_gain
+  settings_voip_gain_id: ''
+  settings_aec_switch_id: aec_switch
+  settings_processing_mode_id: ''
+  settings_ns_switch_id: ''
+  settings_agc_switch_id: ''
+  settings_vad_switch_id: ''
+  settings_home_page_id: videophone_page
+  settings_options_back_button: true
 defaults:
   _p4_phone: !include '../features/voip/devices/waveshare-p4-phone.yaml'
   _p4_phone_display: !include '../board/waveshare-p4-phone-display.yaml'

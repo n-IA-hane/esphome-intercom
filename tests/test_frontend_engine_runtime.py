@@ -75,22 +75,17 @@ const sessionModel = await import(pathToFileURL({json.dumps(str(SESSION_MODEL))}
 
 let source = fs.readFileSync({json.dumps(str(ENGINE))}, "utf8");
 source = source.replace(
-  /const \{{ RINGTONE_REPEAT_MS, playVoipRingtone \}} =\s*await import\([^;]+;/,
-  "const RINGTONE_REPEAT_MS = 4000; const playVoipRingtone = () => {{}};",
+  /import\(`\.\/ringtone\.js[^`]+`\)/,
+  "Promise.resolve({{ RINGTONE_REPEAT_MS: 4000, playVoipRingtone: () => {{}} }})",
 ).replace(
-  /const \{{\s*desiredAudioPaths[\s\S]*?\}} = await import\(`\.\/voip-stack-media-model\.js[^;]+;/,
-  `const {{
-    desiredAudioPaths, normaliseAudioDirection, normaliseAudioMode,
-    parsePcmFormat, resolveSessionFormats, sameAudioFormat,
-  }} = globalThis.__mediaModel;`,
+  /import\(`\.\/voip-stack-media-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__mediaModel)",
 ).replace(
-  /const \{{\s*normaliseSoftphoneSelector[\s\S]*?\}} = await import\(`\.\/voip-stack-session-model\.js[^;]+;/,
-  `const {{
-      normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches,
-    }} = globalThis.__sessionModel;`,
+  /import\(`\.\/voip-stack-session-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__sessionModel)",
 ).replace(
-  /const \{{ BrowserMediaDevices, exactDeviceConstraint \}} = await import\([\s\S]*?\);/,
-  "const {{ BrowserMediaDevices, exactDeviceConstraint }} = globalThis.__deviceModel;",
+  /import\(`\.\/voip-stack-media-devices\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__deviceModel)",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();
@@ -251,13 +246,27 @@ context.navigator.mediaDevices = {{
   }},
 }};
 let outputStarted;
+let inputProcessed;
+let outputTime = 0;
+let readinessChecks = 0;
 let contextCloses = 0;
+class PreparedReadinessNode {{
+  constructor(_context, name) {{
+    assert.equal(name, "voip-stack-audio-ready");
+    this.port = {{onmessage: null, postMessage(value) {{if(value.type === "check") readinessChecks++;}}}};
+    inputProcessed = () => this.port.onmessage?.({{data: {{type: "ready"}}}});
+  }}
+  connect(node) {{return node;}}
+  disconnect() {{}}
+}}
 class PreparedContext {{
   constructor() {{
     this.audioWorklet = {{ addModule: async () => {{}} }};
     preparationOrder.push("output");
     this.state = "running"; this.sampleRate = 48000; this.destination = {{}};
+    this.currentTime = 0;
   }}
+  getOutputTimestamp() {{return {{contextTime:outputTime,performanceTime:outputTime}};}}
   async resume() {{}}
   createMediaStreamSource() {{ return {{ connect(node) {{ return node; }}, disconnect() {{}} }}; }}
   createGain() {{ return {{ gain: {{value: 1}}, connect(node) {{return node;}}, disconnect() {{}} }}; }}
@@ -269,15 +278,21 @@ class PreparedContext {{
   async close() {{contextCloses++; this.state="closed";}}
 }}
 context.window.AudioContext = PreparedContext;
+context.AudioWorkletNode = PreparedReadinessNode;
 const intentToken = {{}};
 audioPreflight._ownedSoftphoneCalls.clear();
 assert.equal(audioPreflight.tryAcquireMediaIntent("kitchen", intentToken),true);
 let prepared = false;
 const preparing = audioPreflight.prepareAudioCall().then(()=>{{prepared=true;}});
 for(let i=0;i<30;i++) await Promise.resolve();
-assert.equal(prepared, false, "Do not dial before the audio output has rendered");
-assert.equal(typeof outputStarted, "function");
-outputStarted();await preparing;
+assert.equal(prepared, false, "A running context must not admit SIP before the actual input graph processes");
+assert.equal(typeof outputStarted, "undefined", "BufferSource ended is not actual worklet readiness");
+assert.equal(typeof inputProcessed, "function");
+inputProcessed();
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(prepared,false,"First worklet process can belong to prerender before device output starts");
+assert.equal(readinessChecks,1,"Recheck on a subsequent render callback without a timer");
+outputTime=1;inputProcessed();await preparing;
 assert.equal(audioTrackStops, 0, "Retain the initialized microphone for the call");
 assert.equal(audioPreflight._preparedAudio.ready, true);
 assert.deepEqual(preparationOrder,["input","output"]);
@@ -311,6 +326,24 @@ await assert.rejects(latePreparation,/cancelled/i);
 assert.equal(lateStops,1,"A late microphone grant must be released after cancellation");
 assert.equal(audioPreflight._preparedAudio,null);
 context.navigator.mediaDevices.getUserMedia=originalInput;
+const playbackOnlyPrepare = audioPreflight.prepareAudioCall({{needsMicrophone:false}});
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(audioPreflight._preparedAudio.mediaStream,null,"Playback-only preparation must not acquire a microphone");
+inputProcessed();await playbackOnlyPrepare;
+await audioPreflight._discardPreparedAudio();
+const outputTimestamp = PreparedContext.prototype.getOutputTimestamp;
+delete PreparedContext.prototype.getOutputTimestamp;
+let fallbackPrepared=false;
+const fallbackPrepare=audioPreflight.prepareAudioCall({{needsMicrophone:false}}).then(()=>{{fallbackPrepared=true;}});
+for(let i=0;i<30;i++) await Promise.resolve();
+audioPreflight._preparedAudio.audioContext.currentTime=1;
+inputProcessed();
+for(let i=0;i<30;i++) await Promise.resolve();
+assert.equal(fallbackPrepared,false,"Without output timestamps, require advancement after the first round-trip");
+audioPreflight._preparedAudio.audioContext.currentTime=2;
+inputProcessed();await fallbackPrepare;
+await audioPreflight._discardPreparedAudio();
+PreparedContext.prototype.getOutputTimestamp=outputTimestamp;
 
 
 // sessionStorage is only a reload/handoff hint. A backend snapshot is
@@ -431,17 +464,7 @@ const signedPaths = [];
 const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
-let navigationType = "reload";
-context.performance = {{ getEntriesByType: () => [{{type:navigationType}}] }};
-const migratedIds = [];
-for (let page = 0; page < 2; page++) {{
-  session.set("voip_stack_media_client_id", "copied-legacy-token-1234");
-  context.__voipStackMediaClientId = undefined;
-  migratedIds.push(new Engine()._mediaClientId);
-}}
-assert.notEqual(migratedIds[0], migratedIds[1],
-  "Reloading two already-cloned legacy windows must separate their identities");
-assert.ok(migratedIds.every(id => id.startsWith("media2-")));
+context.performance = {{ getEntriesByType: () => [{{type:"reload"}}] }};
 session.set("voip_stack_media_client_id", "media2-copied-session-token-1234");
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
@@ -468,27 +491,6 @@ assert.equal(
   "kitchen",
 );
 
-// Opening/duplicating a tab copies sessionStorage, including call hints.
-// It is a new media client, not an authorized reconnect of the original page.
-navigationType = "navigate";
-session.set("voip_stack_media_client_id", signedA._mediaClientId);
-context.__voipStackMediaClientId = undefined;
-const cloned = new Engine();
-assert.notEqual(cloned._mediaClientId, signedA._mediaClientId);
-assert.equal(new Engine()._mediaClientId, cloned._mediaClientId,
-  "Cards and SPA views in one document keep one media identity");
-navigationType = "reload";
-context.__voipStackMediaClientId = undefined;
-assert.equal(new Engine()._mediaClientId, cloned._mediaClientId,
-  "Reloading the new tab reconnects only its own media identity");
-navigationType = "back_forward";
-context.__voipStackMediaClientId = undefined;
-assert.notEqual(new Engine()._mediaClientId, cloned._mediaClientId,
-  "A new history document cannot inherit an opener's media identity");
-navigationType = "reload";
-session.set("voip_stack_media_client_id", signedA._mediaClientId);
-context.__voipStackMediaClientId = signedA._mediaClientId;
-
 // Snapshot replay and delivery are isolated by explicit endpoint identity.
 const isolated = new Engine();
 const defaultStates = [];
@@ -512,6 +514,65 @@ isolated._onSoftphoneState({{ call_id: "D", state: "ringing" }}, {{ endpoint_id:
 assert.deepEqual(kitchenStates, ["K"]);
 assert.deepEqual(kitchenDeviceStates, ["K"]);
 assert.deepEqual(defaultStates, []);
+
+// A reconnect receives a new authoritative snapshot from its subscription.
+// No independent GET may race that snapshot or multiply across card views.
+{{
+  const observers = [new Engine(), new Engine()];
+  const state = {{endpoint_id:"browser:casa",device_id:"device-casa",call_id:"user-call-A",
+    state:"in_call",sequence:10,revision:12,send_video:true}};
+  const seen = [[], []];
+  const connections = observers.map((observer,index) => {{
+    const listeners = new Map();
+    const connection = {{
+      requests:0,activeSubscriptions:0,holdAck:false,
+      addEventListener(name,callback){{listeners.set(name,callback);}},
+      removeEventListener(name){{listeners.delete(name);}},
+      subscribeMessage: (callback,request) => {{
+        connection.requests++;connection.activeSubscriptions++;
+        connection.softphoneCallback=callback;
+        const snapshot=request.device_id==='other-device'
+          ? {{endpoint_id:"browser:other",device_id:"other-device",state:"idle",call_id:""}} : {{...state}};
+        const acknowledge=()=>{{queueMicrotask(()=>callback(snapshot));return()=>{{connection.activeSubscriptions--;}};}};
+        return connection.holdAck ? new Promise(resolve=>{{connection.finishAck=()=>resolve(acknowledge());}})
+          : Promise.resolve(acknowledge());
+      }},
+    }};
+    observer.configure({{connection,callWS:async()=>{{throw Error('Unexpected bootstrap GET');}}}});
+    const release=observer.subscribeSoftphoneState(value=>seen[index].push(value),{{device_id:"device-casa"}});
+    return {{connection,listeners,release}};
+  }});
+  await new Promise(resolve=>setImmediate(resolve));
+  connections[1].listeners.get("disconnected")();
+  Object.assign(state,{{state:"idle",sequence:11,revision:13,terminal_reason:"local_hangup"}});
+  connections[0].connection.softphoneCallback({{...state}});
+  assert.equal(seen[1].at(-1).state,"in_call");
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seen[1].at(-1).state,"idle","missed hangup is recovered without F5");
+  connections[1].connection.holdAck=true;
+  connections[1].listeners.get("ready")();
+  await new Promise(resolve=>setImmediate(resolve));
+  const requests=connections[1].connection.requests;
+  connections[1].listeners.get("ready")();
+  assert.equal(connections[1].connection.requests,requests,'one pending subscription per account');
+  connections[1].connection.finishAck();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(connections[1].connection.activeSubscriptions,1);
+  connections[1].connection.softphoneCallback({{...state,state:"in_call",call_id:"new-call-B",sequence:1,revision:1}});
+  const oldCallback=connections[1].connection.softphoneCallback;
+  connections[1].release();
+  const seenCount=seen[1].length;
+  connections[1].connection.holdAck=false;
+  const otherSeen=[];
+  const releaseOther=observers[1].subscribeSoftphoneState(value=>otherSeen.push(value),{{device_id:"other-device"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  oldCallback({{...state,state:"in_call"}});
+  assert.equal(seen[1].length,seenCount,'retired callback cannot reach a new account');
+  assert.equal(otherSeen.length,1);assert.equal(otherSeen[0].device_id,"other-device");
+  releaseOther();connections[0].release();
+  assert.equal(connections[1].connection.activeSubscriptions,0);
+}}
 
 // Browser media claims and UI controllers are endpoint-local. Two logical
 // phones can therefore coexist without one endpoint releasing the other.
@@ -612,29 +673,46 @@ assert.equal(missingRetrySchedules, 0);
 assert.equal(missingStates.at(-1).state, "unavailable");
 assert.equal(missingStates.at(-1).terminal_reason, "unknown_endpoint");
 
-// Permission probing is independent from preference storage: camera intent is
-// supplied by the authoritative logical-phone snapshot.
-let mediaRequests = 0;
-context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
-context.navigator.mediaDevices = {{
-  getUserMedia: async () => {{ mediaRequests++; throw new Error("must not prompt"); }},
-}};
-const permission = new Engine();
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true }}),
-  false,
-);
-assert.equal(mediaRequests, 0);
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true, endpointId: "kitchen" }}),
-  false,
-);
-assert.equal(mediaRequests, 0);
+// Revoking a view retracts cached caller data and never hangs up another owner.
+const revoked = new Engine();
+const revokedStates = [];
+const keepStates = [];
+const callbacks = new Map();
+let detached = 0;
+const revocationConnection = {{ subscribeMessage: async (cb, request) => {{
+  callbacks.set(request.endpoint_id, cb);
+  return () => {{ detached++; }};
+}} }};
+revoked._busConnection = revocationConnection;
+revoked.subscribeSoftphoneState(state => revokedStates.push(state), {{ endpoint_id: "private" }});
+revoked.subscribeSoftphoneState(state => keepStates.push(state), {{ endpoint_id: "other" }});
+await new Promise(resolve => setTimeout(resolve, 0));
+callbacks.get("private")({{ endpoint_id: "private", device_id: "private-device", state: "ringing",
+  call_id: "secret-call", caller: "secret-number", generation: 99 }});
+callbacks.get("other")({{ endpoint_id: "other", state: "in_call", call_id: "unrelated-call" }});
+let completePrivateRead;
+revoked._hass = {{ callWS: () => new Promise(resolve => {{ completePrivateRead = resolve; }}) }};
+const pendingPrivateRead = revoked._dashboardSnapshot({{kind:"sip_account",endpoint_id:"private",device_id:"private-device"}});
+const privateReadOutcome = pendingPrivateRead.then(() => "accepted", () => "superseded");
+revoked._syncUnmountedSoftphoneState = () => assert.fail("revocation is not a call outcome");
+callbacks.get("private")({{ kind: "closed", reason: "permissions_revoked", endpoint_id: "private" }});
+completePrivateRead({{endpoint_id:"private",device_id:"private-device",state:"ringing",call_id:"secret-call",caller:"secret-number"}});
+assert.equal(await privateReadOutcome, "superseded");
+assert.equal(detached, 1);
+assert.equal(revokedStates.at(-1).state, "unavailable");
+assert.equal(revokedStates.at(-1).can_control, false);
+assert.equal(revokedStates.at(-1).call_id, undefined);
+assert.equal(revokedStates.at(-1).caller, undefined);
+assert.equal(revoked._lastSoftphoneStates.get("endpoint:private").caller, undefined);
+assert.equal(keepStates.at(-1).call_id, "unrelated-call");
+callbacks.get("private")({{ endpoint_id: "private", state: "ringing", call_id: "late" }});
+assert.equal(revokedStates.at(-1).call_id, undefined);
 
-// A granted preflight does not start the camera twice. The negotiated sender
-// performs the single real acquisition after the call is established.
+// Camera preflight ignores the Permissions API state: it opens the camera once,
+// then releases that one temporary stream.
+let mediaRequests = 0;
 let stopped = 0;
-context.navigator.permissions = {{ query: async () => ({{ state: "granted" }}) }};
+context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
 context.navigator.mediaDevices = {{
   getUserMedia: async () => {{
     mediaRequests++;
@@ -642,22 +720,107 @@ context.navigator.mediaDevices = {{
     return {{ getVideoTracks() {{ return [track]; }}, getTracks() {{ return [track]; }} }};
   }},
 }};
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: true }}),
-  true,
-);
-assert.equal(mediaRequests, 0);
-assert.equal(stopped, 0);
-
-// An explicit user action with a prompt-state permission still probes the
-// camera, then releases that one temporary stream.
-context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
-assert.equal(
-  await permission.prepareVideoCameraPermission({{ persistentOnly: false }}),
-  true,
-);
+const permission = new Engine();
+assert.equal(await permission.prepareVideoCameraPermission(), true);
 assert.equal(mediaRequests, 1);
 assert.equal(stopped, 1);
+
+// The microphone check also releases its stream straight away.
+// prepareAudioCall would keep the microphone open for the next call.
+let microphoneStopped = 0;
+const savedMediaDevices = context.navigator.mediaDevices;
+context.navigator.mediaDevices = {{
+  getUserMedia: async ({{ audio }}) => {{
+    assert.ok(audio);
+    const track = {{ stop() {{ microphoneStopped++; }} }};
+    return {{ getAudioTracks() {{ return [track]; }}, getTracks() {{ return [track]; }} }};
+  }},
+}};
+const microphone = new Engine();
+microphone.prepareAudioCall = async () => {{ throw new Error("must not prepare a call"); }};
+context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
+assert.equal((await microphone.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(microphoneStopped, 1);
+assert.equal(microphone._preparedAudio, null);
+// A refused microphone returns false rather than throwing, because the probe
+// does not catch errors from it.
+context.navigator.mediaDevices = {{
+  getUserMedia: async () => {{ throw new Error("Permission denied"); }},
+}};
+assert.equal(await new Engine().prepareMicrophonePermission(), false);
+context.navigator.mediaDevices = savedMediaDevices;
+
+// A granted Permissions API state is trusted without opening media.
+const autoAnswer = new Engine();
+let audioAttempts = 0;
+autoAnswer.prepareMicrophonePermission = async () => {{
+  audioAttempts++;
+  return true;
+}};
+context.navigator.permissions = {{ query: async () => ({{ state: "granted" }}) }};
+assert.equal((await autoAnswer.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(audioAttempts, 0);
+
+// WebViews report "prompt" or "denied" while the native app grants access, so
+// every other state is settled by one real acquisition shared by all cards on
+// the page.
+for (const state of ["prompt", "denied"]) {{
+  const webview = new Engine();
+  let attempts = 0;
+  webview.prepareMicrophonePermission = async () => {{ attempts++; return true; }};
+  context.navigator.permissions = {{ query: async () => ({{ state }}) }};
+  const [first, second] = await Promise.all([
+    webview.checkAutoAnswerMedia("audio"),
+    webview.checkAutoAnswerMedia("audio"),
+  ]);
+  assert.equal(first.ready, true);
+  assert.equal(second.ready, true);
+  assert.equal((await webview.checkAutoAnswerMedia("audio")).ready, true);
+  assert.equal(attempts, 1);
+  assert.equal(webview.autoAnswerMediaResult("audio").ready, true);
+}}
+// The camera check is shared the same way, so the camera opens only once.
+mediaRequests = 0;
+stopped = 0;
+const cameraCheck = new Engine();
+assert.equal((await cameraCheck.checkAutoAnswerMedia("video")).ready, true);
+assert.equal((await cameraCheck.checkAutoAnswerMedia("video")).ready, true);
+assert.equal(mediaRequests, 1);
+assert.equal(stopped, 1);
+
+// A failure is remembered for the page, so a reload is the only unattended
+// retry. A permission change or a user gesture settles it again.
+let permissionChange = null;
+context.navigator.permissions = {{
+  query: async () => ({{
+    state: "prompt",
+    addEventListener(type, listener) {{
+      if (type === "change") permissionChange = listener;
+    }},
+  }}),
+}};
+const blocked = new Engine();
+let blockedAttempts = 0;
+blocked.prepareMicrophonePermission = async () => {{
+  blockedAttempts++;
+  return false;
+}};
+const blockedResult = await blocked.checkAutoAnswerMedia("audio");
+assert.equal(blockedResult.ready, false);
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, false);
+assert.equal(blockedAttempts, 1);
+// Desktop browsers fire `change` after a site-settings edit.
+permissionChange();
+assert.equal(blocked.autoAnswerMediaResult("audio"), null);
+blocked.prepareMicrophonePermission = async () => {{ blockedAttempts++; return true; }};
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(blockedAttempts, 2);
+// Record a failure, then a switch's success: the success replaces it without
+// probing again.
+blocked.recordAutoAnswerMedia("audio", false);
+blocked.recordAutoAnswerMedia("audio", true);
+assert.equal((await blocked.checkAutoAnswerMedia("audio")).ready, true);
+assert.equal(blockedAttempts, 2);
 
 // A rejected WebSocket ownership claim did not attach media, so it must not
 // send BYE for the dialog owned by the newer card.
@@ -666,20 +829,29 @@ const services = [];
 const ownershipErrors = [];
 ownership._hass = {{ callService: async (...args) => services.push(args) }};
 ownership._connect = async () => {{ throw new Error("HTTP 409 owner conflict"); }};
-ownership.close = async () => {{}};
+let releaseOwnershipClose, enteredOwnershipClose;
+const ownershipCloseEntered = new Promise(resolve => {{ enteredOwnershipClose = resolve; }});
+ownership.close = () => {{
+  enteredOwnershipClose();
+  return new Promise(resolve => {{ releaseOwnershipClose = resolve; }});
+}};
 ownership._setState = () => {{}};
 ownership.addEventListener("error", (event) => ownershipErrors.push(event.detail));
 ownership.claimSoftphoneSession("call-A", "default");
-assert.equal(
-      await ownership._setupAudioOrAbort(
+let ownershipSetupFinished = false;
+const ownershipSetup = ownership._setupAudioOrAbort(
         "phone-device",
         {{ device_id: "phone-device" }},
         {{ call_id: "call-A" }},
         "",
         "default",
-  ),
-  false,
-);
+  ).then(result => {{ ownershipSetupFinished = true; return result; }});
+await ownershipCloseEntered;
+await Promise.resolve();
+assert.equal(ownershipSetupFinished, false, "Setup must await its media cleanup barrier");
+releaseOwnershipClose();
+assert.equal(await ownershipSetup, false);
+ownership.close = async () => {{}};
 assert.deepEqual(services, []);
 assert.equal(ownership.ownsSoftphoneSession("call-A", "default"), false);
 assert.equal(ownership._state, "IDLE");
@@ -725,6 +897,31 @@ assert.equal(
 assert.equal(spectatorConnects, 0);
 assert.deepEqual(spectatorErrors, []);
 assert.equal(spectator.ownsSoftphoneSession("spectator-call", "test"), false);
+
+// A global Send Camera preference does not turn a passive shared-phone view
+// into a camera owner. Exercise the full resume path before the video boundary.
+const savedCameraInput=context.navigator.mediaDevices.getUserMedia;
+let sharedCameraRequests=0, sharedVideoLoads=0;
+context.navigator.mediaDevices.getUserMedia=async options=>{{
+  assert.equal(options.video,true);sharedCameraRequests++;
+  return {{getTracks:()=>[{{stop(){{}}}}]}};
+}};
+const sharedVideo=()=>({{active:false,callId:"",async start(payload){{
+  if(payload.send_video)await context.navigator.mediaDevices.getUserMedia({{video:true,audio:false}});
+}},async close(){{}}}});
+spectator._loadVideo=async()=>{{sharedVideoLoads++;return sharedVideo();}};
+await spectator.resumeSession({{endpoint_id:"test"}},"test-device",{{
+  endpoint_id:"test",call_id:"spectator-call",state:"in_call",video_active:true,send_video:true,
+}});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(sharedVideoLoads,0);
+assert.equal(sharedCameraRequests,0,"passive PC must not request camera for another browser's call");
+const actualVideoOwner=new Engine();
+actualVideoOwner._callId="spectator-call";actualVideoOwner._endpointId="test";
+actualVideoOwner._loadVideo=async()=>sharedVideo();
+await actualVideoOwner._ensureVideo({{endpoint_id:"test",call_id:"spectator-call",video_active:true,send_video:true}});
+assert.equal(sharedCameraRequests,1,"the established owner alone starts its video source");
+context.navigator.mediaDevices.getUserMedia=savedCameraInput;
 
 // A media attach racing the terminal state is also expected: after BYE there
 // is no call left to attach and therefore no user-facing media error.
@@ -1018,9 +1215,11 @@ class RuntimeAudioContext {{
     this.state = "running";
     this.destination = {{}};
     this.loadedModules = [];
+    this.sourcesCreated = 0;
     this.audioWorklet = {{ addModule: async (url) => {{this.loadedModules.push(url);}} }};
   }}
   async resume() {{ this.state = "running"; }}
+  getOutputTimestamp() {{return {{contextTime:1,performanceTime:1}};}}
   createBuffer() {{ return {{}}; }}
   createBufferSource() {{
     const node = {{connect() {{}}, disconnect() {{}}, stop() {{}},
@@ -1028,6 +1227,7 @@ class RuntimeAudioContext {{
     return node;
   }}
   createMediaStreamSource() {{
+    this.sourcesCreated++;
     return {{ connect(target) {{ return target; }}, disconnect() {{}} }};
   }}
   createGain() {{
@@ -1040,6 +1240,9 @@ class RuntimeWorkletNode {{
     this.name = name;
     this.options = options;
     this.port = {{ onmessage: null, postMessage() {{}} }};
+    if (name === "voip-stack-audio-ready") {{
+      Promise.resolve().then(() => this.port.onmessage?.({{data: {{type:"ready"}}}}));
+    }}
   }}
   connect(target) {{ return target; }}
   disconnect() {{}}
@@ -1102,6 +1305,7 @@ releaseModules();
 await prepareSession;
 const preparedContext = preparedSession._preparedAudio.audioContext;
 const preparedStream = preparedSession._preparedAudio.mediaStream;
+const preparedSource = preparedSession._preparedAudio.source;
 const preparedRequests = microphoneRequests;
 assert.equal(preparedContext.loadedModules.length, 2, "Processors must load before dialing");
 preparedContext.audioWorklet.addModule = async () => {{throw new Error("Late worklet download after dialing");}};
@@ -1113,6 +1317,8 @@ await preparedSession._setupAudio({{audio_mode: "full_duplex"}}, {{
 assert.equal(microphoneRequests, preparedRequests, "Reuse input instead of opening it twice");
 assert.equal(preparedSession._mediaStream, preparedStream);
 assert.equal(preparedSession._audioContext, preparedContext);
+assert.equal(preparedSession._source, preparedSource,"Keep the ready microphone graph owner after SIP answer");
+assert.equal(preparedContext.sourcesCreated,1,"Do not restart the source after the websocket opens");
 assert.equal(preparedSession._preparedAudio, null);
 await preparedSession.close();
 microphoneRequests=0;stoppedTracks=0;
@@ -1301,6 +1507,25 @@ assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20
 assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
 assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
 await asymmetric.close("test-complete");
+// A Dashboard query can return a cached idle before the new INVITE commits.
+// Only a terminal observation of the exact owned dialog may release its media.
+const cleanupSessionBackup = new Map(session);
+const dashboardCleanup = new Engine();
+const cleanupOwner = {{device_id:"cleanup-device",endpoint_id:"cleanup",softphone:true}};
+dashboardCleanup.claimSoftphoneSession("new-dialog","cleanup");
+const dashboardReleases=[];
+dashboardCleanup._releaseTerminalMedia=async(callId,endpointId)=>dashboardReleases.push([callId,endpointId]);
+for(const snapshot of [
+ {{endpoint_id:"cleanup",state:"idle",call_id:""}},
+ {{endpoint_id:"cleanup",state:"ended",call_id:"old-dialog"}},
+ {{endpoint_id:"other",state:"ended",call_id:"new-dialog"}},
+ {{endpoint_id:"cleanup",state:"unexpected",call_id:"new-dialog"}},
+]) await dashboardCleanup.dashboardSyncOwner(cleanupOwner,snapshot);
+assert.equal(dashboardReleases.length,0);
+await dashboardCleanup.dashboardSyncOwner(cleanupOwner,{{endpoint_id:"cleanup",state:"ended",call_id:"new-dialog"}});
+assert.deepEqual(dashboardReleases,[["new-dialog","cleanup"]]);
+dashboardCleanup.releaseSoftphoneSession("new-dialog","cleanup");
+session.clear();for(const [key,value] of cleanupSessionBackup)session.set(key,value);
 
 // An operator view is passive and shares one subscription between cards.
 const dashboard = new Engine();
@@ -1609,6 +1834,18 @@ const model = await import(pathToFileURL({json.dumps(str(MEDIA_MODEL))}));
 assert.deepEqual(model.parsePcmFormat("48000:s16le:2:20"), {{
   sampleRate: 48000, pcmFormat: "s16le", channels: 2, frameMs: 20,
 }});
+for (const frameMs of [2.5, 15, 32, 40]) {{
+  assert.deepEqual(model.parsePcmFormat(`48000:s16le:1:${{frameMs}}`), {{
+    sampleRate: 48000, pcmFormat: "s16le", channels: 1, frameMs,
+  }});
+}}
+assert.equal(model.parsePcmFormat("22050:s24le:2:20").sampleRate, 22050);
+assert.equal(model.parsePcmFormat("50000:s16le:1:1.1").frameMs, 1.1);
+assert.equal(model.pcmFrameSamples(50000, 1.1), 55);
+assert.throws(() => model.parsePcmFormat("50000:s16le:1:1.10000001"), /whole PCM frames/);
+for (const token of ["192001:s16le:1:20", "0:s16le:1:20", "16000.5:s16le:1:20", "48000:s16le:1:1001", "48000:s16le:1:0", "48000:s16le:1:NaN"]) {{
+  assert.throws(() => model.parsePcmFormat(token));
+}}
 assert.throws(() => model.parsePcmFormat("48000:f32le:2:20"), /unsupported PCM/);
 assert.throws(() => model.parsePcmFormat("44100:s16le:2:16"), /whole PCM frames/);
 assert.deepEqual(model.resolveSessionFormats({{

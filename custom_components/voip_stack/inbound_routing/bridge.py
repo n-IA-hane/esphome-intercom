@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
 from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
+from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..config import trunk_identity_uri as _trunk_identity_uri
 from ..const import (
     CONF_SIP_VIDEO,
@@ -37,7 +38,9 @@ from ..endpoint_routing import (
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_has_unspecified_audio,
+    sip_target_offer_common_audio,
+    supports_directional_audio_payloads,
+    supports_independent_audio_ptime,
 )
 from ..fsm import (
     CallState,
@@ -56,6 +59,7 @@ from ..outbound_bridge_commit import (
     BridgeCommitPolicy,
     async_commit_outbound_bridge,
 )
+from ..pending_sip_destination import RetainedSourceMedia
 from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts, sip_trunk
 from ..trunk_signaling import reuse_registered_trunk_flow
@@ -64,8 +68,11 @@ from ..sip_bridge import (
     bridge_source_audio,
     build_pending_invite_video_relay,
     video_bridge_offer_formats,
+    invite_rtp_peer,
+    dialog_rtp_peer,
 )
-from ..sip_client import SIP_TIMER_B, SipCallClient
+from ..sip_client import SIP_TIMER_B, SipCallClient, PreparedDialogMediaUpdate
+from ..sip_rtp_bridge import SipRtpRelay
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -84,7 +91,7 @@ class BridgeRuntime(Protocol):
     config: dict[str, Any]
     local_ip: str
     ha_peer_name: Callable[..., str]
-    enable_reused_signaling_flow: Callable[..., Any]
+    enable_reused_sip_tcp_connection: Callable[..., Any]
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
     terminate_sip_bridge: Callable[..., Any]
@@ -215,9 +222,7 @@ async def route_sip_bridge(
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
-    directional_audio = not bridge_to_trunk
-    use_generic_audio_profile = bridge_to_trunk
-    if use_generic_audio_profile:
+    if bridge_to_trunk:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
         rtp_audio_profile = None
@@ -227,7 +232,7 @@ async def route_sip_bridge(
     if not bridge_to_trunk and sip_send_formats and sip_recv_formats:
         rtp_audio_profile = bridge_audio_profile(
             invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
-            include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
+            include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
         )
         sip_send_formats = list(rtp_audio_profile.send_formats)
         sip_recv_formats = list(rtp_audio_profile.recv_formats)
@@ -329,10 +334,15 @@ async def route_sip_bridge(
         if bridge_to_trunk
         else "",
         include_common_codecs=(
-            use_generic_audio_profile
-            or sip_target_has_unspecified_audio(peer_target, decision.entry)
+            bridge_to_trunk
+            or sip_target_offer_common_audio(peer_target, decision.entry)
         ),
-        allow_directional_audio_payloads=directional_audio,
+        allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
+        independent_audio_ptime=supports_independent_audio_ptime(
+            peer_target, decision.entry
+        ),
         peer_user_agent=(
             str((decision.entry.metadata or {}).get("user_agent") or "")
             if bridge_to_softphone and decision.entry is not None
@@ -356,12 +366,14 @@ async def route_sip_bridge(
         allow_video_transcoding=video_transcoding_enabled,
     )
     if bridge_to_trunk:
+        from ..trunk_media import borrow_pending_media
+        borrow_pending_media(client, bridge_ports, video_relay)
         selected_trunk_id = getattr(decision, "trunk_id", "")
         reuse_registered_trunk_flow(sip_trunk(hass, selected_trunk_id) if selected_trunk_id else sip_trunk(hass), client)
     else:
         from ..sip_runtime import configure_local_contact, select_registered_outbound_flow
         configure_local_contact(hass, client)
-        runtime.enable_reused_signaling_flow(
+        runtime.enable_reused_sip_tcp_connection(
             hass,
             client,
             decision_uri,
@@ -438,6 +450,75 @@ async def route_sip_bridge(
         if video_relay is not None:
             await video_relay.stop()
         return SipInviteResult(487, "Request Terminated", to_tag="")
+    early_relay = None
+    early_answer_sdp = ""
+
+    def owns_provisional_media(session):
+        leg = session.legs.get(client.dialog_ids.call_id) if session is not None else None
+        return bool(session is not None and session.live and leg is not None and leg.dialog is client)
+
+    async def prepare_provisional_media(candidate):
+        current = registry.get_session(invite.call_id, generation=call_generation)
+        if not owns_provisional_media(current):
+            return None
+        # Video keeps its existing final-answer negotiation. This adapter
+        # prepares only the audio contract already offered by the caller.
+        if invite.video_format is not None or candidate.video_format is not None:
+            return None
+        previous = early_relay
+        relay = previous or SipRtpRelay(left=invite_rtp_peer(invite), right=dialog_rtp_peer(candidate),
+            left_port=source_relay_port, right_port=dest_relay_port,
+            debug=bool(cfg.get("debug_mode", False)))
+        prior_peer = relay.right
+        update = relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(candidate)) if previous is not None else None
+
+        def require_current():
+            session = registry.get_session(invite.call_id, generation=call_generation)
+            if not owns_provisional_media(session) or client.dialog is not None:
+                raise RuntimeError("provisional media call owner changed")
+            if previous is not None and registry.resource_for(invite.call_id, "relay") is not relay:
+                raise RuntimeError("provisional relay owner changed")
+
+        async def commit():
+            nonlocal early_relay, early_answer_sdp
+            require_current()
+            if previous is None:
+                bridge_ports.bind_audio_sockets()
+                bridge_ports.transfer_audio_sockets(relay)
+                registry.attach_relay(invite.call_id, relay)
+                early_relay = relay
+                await relay.start()
+                require_current()
+            elif update is not None:
+                update()
+            answer = build_answer_directional(local_ip, local_ip, source_relay_port,
+                invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp,
+                dtmf=first_offered_dtmf_format(invite.remote_sdp))
+            if not runtime.send_final_response(hass, invite.call_id, 183, "Session Progress", answer_sdp=answer):
+                raise RuntimeError("source no longer accepts provisional media")
+            early_answer_sdp = answer
+            relay.prime_silence("right")
+
+        async def rollback():
+            nonlocal early_relay
+            if previous is None:
+                if (registry.resource_for(invite.call_id, "relay") is relay
+                        and not owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):
+                    return
+                await relay.stop()
+                session = registry.get_session(invite.call_id, generation=call_generation)
+                if session is not None and session.live and registry.resource_for(invite.call_id, "relay") is relay:
+                    registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=relay)
+                if early_relay is relay:
+                    early_relay = None
+            elif (registry.is_generation_current(invite.call_id, call_generation)
+                    and registry.resource_for(invite.call_id, "relay") is relay
+                    and owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):
+                relay.prepare_peer_reconfiguration("right", prior_peer)()
+
+        return PreparedDialogMediaUpdate(commit, rollback)
+
+    client.on_provisional_media = prepare_provisional_media
     registry.attach_sip_client(invite.call_id, client.dialog_ids.call_id, client,
         state=CallState.CALLING.value,
         trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
@@ -552,7 +633,7 @@ async def route_sip_bridge(
             if video_relay is not None:
                 await video_relay.stop()
             return
-        if not bridge_to_trunk:
+        if not bridge_to_trunk and early_relay is None:
             invite = bridge_source_audio(invite, client.dialog)
             session.artifacts.caller_invite = invite
         winner = OutboundLeg(
@@ -584,6 +665,9 @@ async def route_sip_bridge(
                     release_port_pairs=(bridge_ports.ports,),
                     detach_reservations=reservations,
                     enable_video_transcoding=video_transcoding_enabled,
+                    retained_media=(RetainedSourceMedia(session.token, early_relay, bridge_ports,
+                        invite, invite.initial_response_sent, client.dialog_ids.call_id)
+                        if early_relay is not None else None),
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,
@@ -675,6 +759,7 @@ async def route_sip_bridge(
     if session is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")
     session.artifacts.caller_invite = invite
+    registry.remember_invite_identity(invite.call_id, invite)
     session.update_metadata(inbound_trunk_id=invite.trunk_id,
                             outbound_trunk_id=getattr(decision, "trunk_id", "") if bridge_to_trunk else "")
     session.legs[client.dialog_ids.call_id].trunk_id = getattr(decision, "trunk_id", "") if bridge_to_trunk else ""
@@ -698,9 +783,9 @@ async def route_sip_bridge(
                 direction="incoming",
                 route_kind=decision.action.value,
                 sip_uri=str(decision_uri),
-                sip_status_code=180,
+                sip_status_code=183 if early_answer_sdp else 180,
                 last_sip_event="SIP_RESPONSE",
             )
-    return SipInviteResult(180 if result in {"ringing", "in_call"} else 100,
-                           "Ringing" if result in {"ringing", "in_call"} else "Trying",
-                           to_tag="", defer_final=True)
+    return SipInviteResult(183 if early_answer_sdp else 180 if result in {"ringing", "in_call"} else 100,
+                           "Session Progress" if early_answer_sdp else "Ringing" if result in {"ringing", "in_call"} else "Trying",
+                           answer_sdp=early_answer_sdp, to_tag="", defer_final=True)

@@ -14,6 +14,7 @@ from .endpoint_session import (
     CleanupStage,
     EndpointCallSession,
     ManagedResource,
+    LegPhase,
     SessionHandoff,
     TerminationIntent,
 )
@@ -241,6 +242,16 @@ async def async_commit_answer(
     )
 
 
+def confirm_existing_caller_leg(runtime: CallRuntimeApi, session: EndpointCallSession, wire_call_id: str) -> None:
+    """Confirm only the existing source SIP leg inside the answer claim."""
+    leg = session.legs.get(wire_call_id)
+    if (leg is not None and leg.role == "caller" and leg.sip_call_id == wire_call_id
+            and leg.endpoint_id == session.metadata.get("source_endpoint_id")
+            and leg.phase in {LegPhase.NEW, LegPhase.INVITING, LegPhase.RINGING}):
+        runtime.observe_leg(session.call_id, leg.leg_id, role=leg.role,
+            state=CallState.IN_CALL.value, generation=session.generation)
+
+
 async def async_commit_runtime_answer(
     runtime: CallRuntimeApi,
     call_id: str,
@@ -264,7 +275,7 @@ async def async_commit_runtime_answer(
     if session is None:
         return AnswerCommitResult(False, False, "stale_call")
     def claim() -> bool:
-        return runtime.transition(
+        claimed = runtime.transition(
             call_id,
             state=CallState.IN_CALL.value,
             owner=owner,
@@ -276,7 +287,11 @@ async def async_commit_runtime_answer(
             source_endpoint_id=source_endpoint_id,
             dest_endpoint_id=dest_endpoint_id,
             media_client_id=media_client_id,
-        ) is not None
+        )
+        if claimed is None:
+            return False
+        confirm_existing_caller_leg(runtime, claimed, call_id)
+        return True
 
     return await async_commit_answer(
         session,

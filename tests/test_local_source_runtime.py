@@ -48,7 +48,7 @@ async def test_native_automation_takes_browser_caller_without_a_second_sip_call(
     hass, monkeypatch, socket_enabled, hangup_before_audio_ready,
 ):
     from homeassistant.core import Context, ServiceCall
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import automation_call, peer_snapshot, local_application
     from custom_components.voip_stack.automation_context import CallExecution, current_execution
     from custom_components.voip_stack.core import rtp

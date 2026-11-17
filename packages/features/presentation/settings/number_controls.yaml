@@ -1,0 +1,49 @@
+# Reusable Number binding data, resolved in the consuming page context.
+master: !include
+  file: number_control.yaml
+  vars:
+    number_id: master_volume
+    control_label: Master volume
+    label_id: ui_speaker_value_label
+    slider_id: ui_speaker_vol_slider
+    sync_id: settings_sync_speaker
+camera: !include
+  file: number_control.yaml
+  vars:
+    number_id: ${ 'p4_camera_jpeg_quality' if _settings_camera_jpeg_quality else 'master_volume' }
+    control_label: Camera JPEG quality
+    label_id: ui_camera_jpeg_quality_value_label
+    slider_id: ui_camera_jpeg_quality_slider
+    sync_id: settings_sync_camera_quality
+mic: !include
+  file: number_control.yaml
+  vars:
+    number_id: ${ settings_microphone_gain_id or 'master_volume' }
+    control_label: ${settings_microphone_gain_label}
+    label_id: ui_mic_value_label
+    slider_id: ui_mic_vol_slider
+    sync_id: settings_sync_mic
+input: !include
+  file: number_control.yaml
+  vars:
+    number_id: ${ settings_input_gain_id or 'master_volume' }
+    control_label: ${settings_input_gain_label}
+    label_id: ui_input_gain_value_label
+    slider_id: ui_input_gain_slider
+    sync_id: settings_sync_input_gain
+reference: !include
+  file: number_control.yaml
+  vars:
+    number_id: ${ settings_reference_gain_id or 'master_volume' }
+    control_label: ${settings_reference_gain_label}
+    label_id: ui_reference_gain_value_label
+    slider_id: ui_reference_gain_slider
+    sync_id: settings_sync_reference_gain
+voip: !include
+  file: number_control.yaml
+  vars:
+    number_id: ${ settings_voip_gain_id or 'master_volume' }
+    control_label: VoIP TX gain
+    label_id: ui_voip_gain_value_label
+    slider_id: ui_voip_gain_slider
+    sync_id: settings_sync_voip_gain

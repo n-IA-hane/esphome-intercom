@@ -5,6 +5,7 @@
 
 let decoder = null;
 let decoderConfig = null;
+let decoderOperation = 0;
 let generation = 0;
 let workerRole = "";
 let jpegCanvas = null;
@@ -64,6 +65,7 @@ function jpegDimensions(payload) {
 }
 
 function closeDecoder() {
+  decoderOperation++;
   if (decoder && decoder.state !== "closed") {
     try { decoder.close(); } catch (_) {}
   }
@@ -376,14 +378,20 @@ self.onmessage = async (event) => {
   if (message.type === "configure_decoder") {
     const requestId = Number(message.requestId || 0);
     const nextGeneration = Number(message.generation || 0);
+    let operation;
     try {
       closeDecoder();
+      operation = decoderOperation;
       closeJpegEncoder();
       closeJpegDecoder();
       if (typeof VideoDecoder === "undefined") {
         throw new Error("WebCodecs VideoDecoder is unavailable in worker");
       }
       const support = await VideoDecoder.isConfigSupported(message.config || {});
+      if (operation !== decoderOperation) {
+        reply(requestId, false, { error: "decoder configuration superseded" });
+        return;
+      }
       if (!support?.supported) {
         throw new Error(`browser cannot decode ${message.config?.codec || "SIP video"}`);
       }
@@ -392,7 +400,7 @@ self.onmessage = async (event) => {
       workerRole = "decoder";
       reply(requestId, true, { config: support.config || message.config });
     } catch (error) {
-      closeDecoder();
+      if (operation === decoderOperation) closeDecoder();
       reply(requestId, false, { error: error?.message || String(error) });
     }
     return;

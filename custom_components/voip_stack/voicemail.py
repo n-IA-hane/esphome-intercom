@@ -142,7 +142,7 @@ async def async_send_to_voicemail(call: ServiceCall) -> None:
 
 async def start_voicemail_application(hass, session, invite, endpoint, local_ip, *,
                                       previous=None, local_source=None, skip_greeting=False,
-                                      mode="deposit", caller_endpoint_id="", display_name=""):
+                                      mode="deposit", caller_endpoint_id=""):
     """Acquire one current session and attach its mailbox deposit application."""
     registry = call_registry(hass)
     session.ensure_live()
@@ -157,7 +157,8 @@ async def start_voicemail_application(hass, session, invite, endpoint, local_ip,
     await get_archive(hass)
     if endpoint is not None and not mailbox_settings(hass, endpoint.endpoint_id).get("enabled"):
         raise ServiceValidationError("The selected mailbox was removed or disabled")
-    label = display_name or (endpoint.name if endpoint is not None else "Voicemail")
+    label = (mailbox_display_name(endpoint) if mode != "deposit"
+             else endpoint.name if endpoint is not None else "Voicemail")
     identity = endpoint.endpoint_id if endpoint is not None else ""
 
     recorded_caller = session.callee if previous is not None and previous.outgoing else session.caller
@@ -216,8 +217,7 @@ async def route_voicemail_call(runtime, invite, decision, registry, source_endpo
     registry.set_pending_invite(invite.call_id, invite)
     try:
         await start_voicemail_application(runtime.hass, session, invite, mailbox, runtime.local_ip,
-                                         mode=mode, caller_endpoint_id=invite.identified_source_endpoint_id,
-                                         display_name=label)
+                                         mode=mode, caller_endpoint_id=invite.identified_source_endpoint_id)
     except Exception:
         registry.request_termination(invite.call_id, TerminationIntent("voicemail_unavailable", response_status=503),
                                      generation=session.generation)

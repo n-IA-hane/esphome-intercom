@@ -277,3 +277,20 @@ class AudioSpliceTest(unittest.IsolatedAsyncioTestCase):
                     if escaped not in (first, second):
                         await escaped.stop()
                     await calls.shutdown()
+
+
+async def test_accepted_source_video_without_owner_still_blocks_audio_handoff(application):
+    """An accepted source video contract cannot disappear during pickup."""
+    app, registry, _caller, released = application
+    try:
+        await app.answer()
+        media = app.media
+        media.invite = replace(media.invite,
+            video_format=sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"), remote_video_rtp_port=42002)
+        transport = media.transport
+        with pytest.raises(ValueError, match="owned video update"):
+            await LocalMediaBridge.prepare(media, app.invite)
+        assert media.transport is transport and not media.closed.is_set()
+        assert not transport.is_closing() and not released
+    finally:
+        await registry.shutdown()

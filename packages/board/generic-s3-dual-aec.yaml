@@ -1,6 +1,6 @@
 # Generic reference hardware and connectivity; application gestures are composed separately.
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   name: ${name}
   friendly_name: ${friendly_name}
 esp32:

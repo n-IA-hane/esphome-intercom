@@ -19,6 +19,33 @@ sys.path.insert(0, str(ROOT))
 from qualification.registry import FIRMWARE_PROFILES  # noqa: E402
 
 
+REQUIRED_DISTRIBUTION_NOTICES = (
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses/ESPHOME-LICENSE.txt",
+    "licenses/MICRO-OPUS-LICENSE.txt",
+    "licenses/MICRO-OPUS-NOTICE.txt",
+    "licenses/OPUS-COPYING.txt",
+    "licenses/MICRO-OGG-DEMUXER-LICENSE.txt",
+)
+
+
+def stage_distribution_notices(bundle: Path) -> None:
+    """Keep repository notices with firmware, including externally indexed builds."""
+
+    sources = {ROOT / name for name in REQUIRED_DISTRIBUTION_NOTICES}
+    sources.update((ROOT / "licenses").glob("*.txt"))
+    for source in sorted(sources):
+        if not source.is_file():
+            raise RuntimeError(
+                f"firmware redistribution notice is missing: {source.relative_to(ROOT)}"
+            )
+    for source in sorted(sources):
+        target = bundle / source.relative_to(ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -71,13 +98,14 @@ def _section_sizes(description: dict[str, object], build_dir: Path) -> dict[str,
     return sections
 
 
-def build_records(root: Path) -> list[dict[str, object]]:
+def build_records(root: Path, build_directories: tuple[Path, ...] = ()) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     # ``**`` may discover the same nested ESPHome build through more than one
     # expansion.  A build artifact is evidence once, irrespective of how the
     # glob reached it.
     descriptions = sorted(
         set(root.glob("yamls/**/.esphome/**/build/*/build/project_description.json"))
+        | {directory / "project_description.json" for directory in build_directories}
     )
     for description_path in descriptions:
         build_dir = description_path.parent
@@ -85,6 +113,13 @@ def build_records(root: Path) -> list[dict[str, object]]:
         if not binaries:
             continue
         description = json.loads(description_path.read_text(encoding="utf-8"))
+        sdk_path = Path(str(description["idf_path"])) if description.get("idf_path") else None
+        sdk_commit = ""
+        if sdk_path is not None and (sdk_path / ".git").exists():
+            sdk_commit = subprocess.check_output(
+                ["git", "-C", str(sdk_path), "rev-parse", "HEAD"], text=True,
+            ).strip()
+        dependency_lock = build_dir.parent / "dependencies.lock"
         build_info_path = build_dir.parent / "build_info.json"
         build_info = (
             json.loads(build_info_path.read_text(encoding="utf-8"))
@@ -104,6 +139,8 @@ def build_records(root: Path) -> list[dict[str, object]]:
                     or ""
                 ),
                 "esp_idf_version": str(description.get("git_revision") or ""),
+                "esp_idf_commit": sdk_commit,
+                "dependency_lock_sha256": sha256(dependency_lock) if dependency_lock.is_file() else "",
                 "config_hash": build_info.get("config_hash"),
                 "memory": {
                     "dram_data_bytes": sections.get(".dram0.data", 0),
@@ -157,6 +194,7 @@ def bind_candidate(
     profiles = [profile for profile in FIRMWARE_PROFILES if profile.id in selected]
     if selected != {profile.id for profile in profiles}:
         raise RuntimeError("qualification plan contains an unknown firmware profile")
+    stage_distribution_notices(bundle)
     firmware: list[dict[str, object]] = []
     for profile in profiles:
         record = by_profile.get(profile.id)
@@ -212,10 +250,12 @@ def main() -> int:
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--index", type=Path)
+    parser.add_argument("--build-directory", type=Path, action="append", default=[],
+                        help="Actual IDF build directory for a private or externally located profile")
     args = parser.parse_args()
 
     root = args.root.resolve()
-    records = build_records(root)
+    records = build_records(root, tuple(path.resolve() for path in args.build_directory))
     evidence_root = root
     if args.index:
         index = json.loads(args.index.read_text(encoding="utf-8"))

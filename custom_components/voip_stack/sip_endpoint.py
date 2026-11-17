@@ -135,6 +135,7 @@ class SipEndpointManager:
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        invite_identity_resolver=None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -159,6 +160,7 @@ class SipEndpointManager:
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.invite_identity_resolver = invite_identity_resolver
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -229,6 +231,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    invite_identity_resolver=self.invite_identity_resolver,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -236,7 +239,6 @@ class SipEndpointManager:
                     on_refer=self.on_refer,
                     on_request=self.on_request,
                     request_router=self.request_router,
-                    notify_tcp_endpoint=lambda: getattr(self.tcp_server, "endpoint", None),
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
                     prefer_browser_video_send=self.prefer_browser_video_send,
@@ -256,6 +258,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    invite_identity_resolver=self.invite_identity_resolver,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -275,6 +278,8 @@ class SipEndpointManager:
                 return False
             self.udp_server = udp
             self.tcp_server = tcp
+            if udp is not None and udp.endpoint is not None and tcp is not None:
+                udp.endpoint.application_tcp_endpoint = tcp.endpoint
             published = True
             transports = "+".join(
                 name
@@ -427,14 +432,6 @@ class SipEndpointManager:
 
         self._attached_dialog_endpoints.add(endpoint)
 
-    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
-        """Use the listener/registered TCP flow and existing transaction owner."""
-        server = self.tcp_server if transport.upper() == "TCP" else self.udp_server
-        endpoint = getattr(server, "endpoint", None)
-        if endpoint is None:
-            return None
-        return await endpoint.async_options(uri, addr, timeout=timeout)
-
     def detach_dialog_endpoint(self, endpoint: Any) -> None:
         """Remove a transport endpoint after its flow is closed."""
 
@@ -511,6 +508,14 @@ class SipEndpointManager:
             request = getattr(endpoint, "request_video_keyframe", None)
             return bool(callable(request) and await request(call_id))
         return False
+
+    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
+        """Use the listener transport, including an already registered TCP flow."""
+        if transport.upper() not in {"UDP", "TCP"}:
+            return None
+        server = self.tcp_server if transport.upper() == "TCP" else self.udp_server
+        endpoint = getattr(server, "endpoint", None)
+        return await endpoint.async_options(uri, addr, timeout=timeout) if endpoint is not None else None
 
     async def async_send_dtmf_info(self, call_id: str, digit: str) -> bool:
         """Send DTMF INFO through the transport owning an inbound dialog."""

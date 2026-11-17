@@ -8,15 +8,179 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.voip_stack import call_transfer
+from custom_components.voip_stack.phone_directory import PhoneDirectory
+from custom_components.voip_stack.roster import parse_roster_json
 from custom_components.voip_stack.core import sdp, sip_transfer
 from custom_components.voip_stack.sip_client import (
     SipCallClient,
     SipDialog,
     SipTransferResult,
 )
+from .test_automation_originate_ha import lab as lab, dial, assert_call_resources_released
 
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("destination,policy_kind", [
+    ("Offline target", None), ("Offline target", "contact"), ("Offline target", "voicemail"),
+    ("700", None), ("park.701", None), ("810", None), ("park.811", None),
+], ids=["offline", "offline-forward", "offline-mailbox", "parking-access", "parking-slot",
+        "parking-custom-access", "parking-custom-slot"])
+async def test_public_transfer_service_defers_logical_offline_and_builtin_targets_to_pbx(
+    lab, monkeypatch, destination, policy_kind,
+):
+    from homeassistant.core import Context
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind, DEFAULT_ENDPOINT_ID
+    from custom_components.voip_stack.phone_policy import PhonePolicy, PhoneDestination
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import config_entry
+
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=DEFAULT_ENDPOINT_ID, name="Operator",
+        device_id="operator-device", kind=EndpointKind.BROWSER, availability="available"))
+    policy = PhonePolicy(unavailable=PhoneDestination(policy_kind,
+        "sip:offline" if policy_kind == "voicemail" else "bedroom1")) if policy_kind else PhonePolicy()
+    offline = PhoneEndpoint(endpoint_id="sip:offline", name="Offline target", username="offline_user",
+        device_id="offline-device", extension="450", kind=EndpointKind.SIP_ACCOUNT, policy=policy)
+    lab.runtime.endpoints.register(offline)
+    lab.runtime.directory.upsert(RosterEntry("offline_user", name=offline.name, extension="450",
+        metadata={"endpoint_id": offline.endpoint_id, "endpoint_kind": "sip_account", "call_policy": policy.as_data()}))
+    if destination in {"810", "park.811"}:
+        entry = config_entry(lab.hass)
+        lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+            "parking": {"access": "810", "slots": ["811"]}})
+    references = []
+    peer = lab.phones[0]
+    original = peer.datagram_received
+
+    def receive(raw, address):
+        request = sip.parse_message(raw)
+        if request.method == "REFER":
+            references.append(sip.parse_sip_uri(request.header("Refer-To")))
+            peer.respond(request, address, 486)
+        else:
+            original(raw, address)
+
+    monkeypatch.setattr(peer, "datagram_received", receive)
+    called = await dial(lab, Context())
+    call_id = called["call_id"]
+    try:
+        result = await lab.hass.services.async_call("voip_stack", "transfer",
+            {"call_id": call_id, "destination": destination}, blocking=True, return_response=True)
+        assert not result["success"] and result["status"] == 486
+        assert len(references) == 1
+        assert (references[0].host, references[0].port) == ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+        assert references[0].user == ("450" if destination == offline.name else destination)
+        assert lab.calls.get_session(call_id).live
+        assert lab.runtime.endpoints.get(offline.endpoint_id) == offline, "REFER must not execute or rewrite PhonePolicy"
+        assert lab.calls.component("parking") is None, "Target classification must not create a parking application"
+    finally:
+        await lab.calls.request_termination(call_id, TerminationIntent("test_done"))
+    assert_call_resources_released(lab)
+
+
+@pytest.mark.parametrize("invalid", ["disabled", "unavailable", "mislinked", "missing"])
+def test_offline_transfer_exception_never_overrides_invalid_or_disabled_identity(invalid):
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.roster import RosterEntry
+
+    endpoints = EndpointRegistry()
+    endpoint = PhoneEndpoint(endpoint_id="offline", name="Offline", username="offline_user",
+        extension="450", kind=EndpointKind.SIP_ACCOUNT,
+        availability="unavailable" if invalid == "unavailable" else "offline")
+    if invalid != "missing":
+        endpoints.register(endpoint)
+    entry = RosterEntry(endpoint.username, name=endpoint.name, extension="450", enabled=invalid != "disabled",
+        metadata={"endpoint_kind": "sip_account", "endpoint_id": "wrong-link" if invalid == "mislinked" else endpoint.endpoint_id})
+    runtime = SimpleNamespace(endpoints=endpoints, directory=PhoneDirectory([entry]))
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", endpoint.name)
+
+
+def test_offline_transfer_exception_preserves_ambiguous_and_explicit_uri_contracts():
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.roster import RosterEntry
+
+    runtime = SimpleNamespace(endpoints=EndpointRegistry(), directory=PhoneDirectory([
+        RosterEntry("first", extension="450"), RosterEntry("second", extension="450")]))
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", "450")
+    explicit = "sips:park.701@explicit.example:5061;transport=tls"
+    assert call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", explicit).uri == explicit
+    with pytest.raises(ValueError):
+        call_transfer._blind_target(runtime, "sip:remote@192.0.2.20:5080", "sip:bad@")
+
+
+@pytest.mark.parametrize("kind,identity,extension", [
+    ("queue", "queue:help-desk", ""),
+    ("queue", "queue:help-desk", "701"),
+    ("paging", "paging:all-rooms", ""),
+    ("paging", "paging:all-rooms", "702"),
+    ("ring", "Family Ring", ""),
+    ("ring", "Family Ring", "703"),
+], ids=["queue-id", "queue-extension", "paging-id", "paging-extension", "ring-id", "ring-extension"])
+async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_peer(
+    lab, monkeypatch, kind, identity, extension,
+):
+    from homeassistant.core import Context
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.roster import RosterEntry
+
+    metadata = {"group_type": "ring"} if kind == "ring" else {"virtual_endpoint": kind}
+    row = RosterEntry(identity, name="Local destination", extension=extension, ha_bridge=True, metadata=metadata)
+    lab.runtime.directory.upsert(row)
+    references = []
+    peer = lab.phones[0]
+    receive = peer.datagram_received
+
+    def reject_refer(raw, address):
+        message = sip.parse_message(raw)
+        if message.method == "REFER":
+            references.append(sip.parse_sip_uri(message.header("Refer-To")))
+            peer.respond(message, address, 486)
+        else:
+            receive(raw, address)
+
+    monkeypatch.setattr(peer, "datagram_received", reject_refer)
+    called = await dial(lab, Context())
+    call_id = called["call_id"]
+    try:
+        result = await call_transfer.async_transfer_call(
+            lab.runtime, call_transfer.CallTransferRequest(call_id, row.name), hass=lab.hass)
+        assert not result.accepted and result.status == 486
+        assert len(references) == 1
+        assert references[0].host == "127.0.0.1"
+        assert references[0].port == lab.runtime.transport_config["sip_port"]
+        assert references[0].user == (extension or identity)
+        assert lab.calls.get_session(call_id).live, "Rejected REFER must retain the original conversation"
+    finally:
+        await lab.calls.request_termination(call_id, TerminationIntent("test_done"))
+    assert_call_resources_released(lab)
+
+
+def test_blind_transfer_routes_from_directory_when_sensor_projection_is_absent():
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.roster import RosterEntry
+
+    class UnreadableProjection:
+        @property
+        def extra_state_attributes(self):
+            raise AssertionError("A display sensor cannot own routing")
+
+    runtime = SimpleNamespace(
+        endpoints=SimpleNamespace(resolve=lambda _: None),
+        directory=PhoneDirectory([
+            RosterEntry("room-speaker", name="Room speaker", address="192.0.2.30", port=5070,
+                        extension="321", metadata={"sip_transport": "udp"}),
+        ]),
+        phonebook_sensor=UnreadableProjection(),
+    )
+    target = call_transfer._blind_target(runtime, "sip:old@192.0.2.20:5060", "321")
+    assert target.uri == "sip:room-speaker@192.0.2.30:5070;transport=udp"
 
 
 @pytest.mark.parametrize("blocked", [False, True])
@@ -162,14 +326,15 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
     source = _established("source", "remote", "bedroom")
     source.refer = AsyncMock(return_value=SipTransferResult(True, 200, "completed"))
     runtime = SimpleNamespace(
-        sip=SimpleNamespace(sip_client_for={"source": source}.get),
+        sip=SimpleNamespace(sip_client_for={"source": source}.get, component=lambda _name: None),
         endpoints=SimpleNamespace(resolve=lambda _: None),
-        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+        directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "HA", "address": "192.0.2.1", "port": 5070,
              "metadata": {"local_ha": True, "sip_transport": "tcp"}},
             {"id": "Wakeup-Caller", "extension": "666", "metadata": {"virtual_endpoint": "automation"}},
-        ])}),
+        ]))),
     )
+    original_directory = runtime.directory.snapshot()
     result = await call_transfer.async_transfer_call(
         runtime, call_transfer.CallTransferRequest("source", destination)
     )
@@ -177,19 +342,23 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
     expected = sip_transfer.SipReferTarget("sip:666@192.0.2.1:5070;transport=tcp")
     source.refer.assert_awaited_once_with(expected)
     assert "127.0.0.2" not in expected.uri
+    assert runtime.directory.snapshot() == original_directory
 
 
 def test_automation_transfer_without_extension_uses_listener_fallback():
     import json
+    listener = SimpleNamespace(local_ip="192.0.2.1", local_sip_port=5060)
     runtime = SimpleNamespace(
         transport_config={"advertise_host": "ha.example.test", "sip_port": 5080},
-        sip=SimpleNamespace(component=lambda _: SimpleNamespace(local_ip="192.0.2.1", local_sip_port=5060)),
-        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+        sip=SimpleNamespace(component=lambda name: listener if name == "udp_listener" else None),
+        directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "Wakeup-Caller", "metadata": {"virtual_endpoint": "automation"}},
-        ])}),
+        ]))),
     )
+    original_directory = runtime.directory.snapshot()
     target = call_transfer._blind_target(runtime, "sip:bedroom@192.0.2.20", "Wakeup-Caller")
     assert target.uri == "sip:Wakeup-Caller@ha.example.test:5080"
+    assert runtime.directory.snapshot() == original_directory
 
 
 def test_automation_transfer_without_reachable_ha_address_fails_explicitly():
@@ -197,9 +366,9 @@ def test_automation_transfer_without_reachable_ha_address_fails_explicitly():
     from custom_components.voip_stack.core import sip
     runtime = SimpleNamespace(
         transport_config={}, sip=SimpleNamespace(component=lambda _: None),
-        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+        directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "Wakeup", "metadata": {"virtual_endpoint": "automation"}},
-        ])}),
+        ]))),
     )
     with pytest.raises(sip.SipError, match="Home Assistant SIP address is unavailable"):
         call_transfer._blind_target(runtime, "sip:bedroom@192.0.2.20", "Wakeup")
@@ -210,37 +379,13 @@ def test_transfer_uses_address_contact_route_not_current_peer(destination):
     import json
     runtime = SimpleNamespace(
         endpoints=SimpleNamespace(resolve=lambda _: None),
-        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+        directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "room-speaker", "name": "Room speaker", "address": "192.0.2.30",
              "port": 5070, "extension": "321", "metadata": {"sip_transport": "udp"}},
-        ])}),
+        ]))),
     )
     target = call_transfer._blind_target(runtime, "sip:old@192.0.2.20:5060", destination)
     assert target.uri == "sip:room-speaker@192.0.2.30:5070;transport=udp"
-
-
-@pytest.mark.parametrize("kind", ["browser", "sip_account", "esphome"])
-@pytest.mark.parametrize("destination", ["Workshop", "321"])
-def test_transfer_to_owned_phone_keeps_the_pbx_dialplan(kind, destination):
-    """An address in the roster must not bypass a logical phone's routing."""
-    import json
-    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
-
-    endpoint = PhoneEndpoint("workshop", "Workshop", kind, extension="321")
-    runtime = SimpleNamespace(
-        endpoints=SimpleNamespace(resolve=lambda value: endpoint),
-        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
-            {"id": "HA", "address": "192.0.2.1", "port": 5070,
-             "metadata": {"local_ha": True, "sip_transport": "tcp"}},
-            {"id": "workshop", "name": "Workshop", "extension": "321",
-             "address": "192.0.2.30", "port": 5060,
-             "metadata": {"sip_transport": "udp"}},
-        ])}),
-    )
-
-    target = call_transfer._blind_target(runtime, "sip:caller@provider.example", destination)
-
-    assert target.uri == "sip:321@192.0.2.1:5070;transport=tcp"
 
 
 def test_attended_transfer_addresses_the_known_gruu_instance():
@@ -249,3 +394,25 @@ def test_attended_transfer_addresses_the_known_gruu_instance():
     target = call_transfer._attended_target(consultation)
     assert target.uri == "sip:desk@pbx.example;gr=instance-a"
     assert target.replaces.call_id == "consult"
+
+
+@pytest.mark.parametrize("kind", ["esphome", "sip_account", "browser"])
+def test_named_phone_transfer_retains_local_dialplan_over_current_contact(kind):
+    import json
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    phones = EndpointRegistry()
+    phones.register(PhoneEndpoint(endpoint_id="logical-desk", device_id="managed-desk",
+        name="Logical desk", username="physical-user", extension="223", kind=EndpointKind(kind)))
+    runtime = SimpleNamespace(endpoints=phones,
+        sip=SimpleNamespace(component=lambda _: None),
+        transport_config={"advertise_host": "127.0.0.1", "sip_port": 5090},
+        directory=PhoneDirectory(parse_roster_json(json.dumps([
+            {"id": "physical-user", "name": "Logical desk", "extension": "223",
+             "sip_uri": "sip:physical-user@127.0.0.2:5080;transport=tcp",
+             "metadata": {"endpoint_id": "logical-desk", "endpoint_kind": kind, "registered": True}},
+        ]))))
+    target = call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070", "Logical desk")
+    assert target.uri == "sip:223@127.0.0.1:5090"
+    assert call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070",
+        "sip:explicit-contact@127.0.0.2:5080;transport=tcp").uri == "sip:explicit-contact@127.0.0.2:5080;transport=tcp"

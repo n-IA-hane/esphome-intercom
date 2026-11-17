@@ -3,86 +3,107 @@
 
 from pathlib import Path
 import argparse
+import json
+import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
 
 ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.coordinated_sources import CAMERA, source_url  # noqa: E402
-
-CAMERA_URL = source_url(CAMERA, 'dev').rsplit('@', 1)[0]
+CAMERA_URL = "github://Psix-anp/esphome-esp-video-camera"
 REPOS = {
     "ext_components_source": ("github://n-IA-hane/esphome-intercom", ROOT),
     "voip_stack_components_source": ("github://n-IA-hane/esphome-voip-stack", ROOT.parent / "esphome-voip-stack"),
     "audio_stack_components_source": ("github://n-IA-hane/esphome-audio-stack", ROOT.parent / "esphome-audio-stack"),
     "runtime_controller_components_source": ("github://n-IA-hane/esphome-runtime-controller", ROOT.parent / "esphome-runtime-controller"),
-    "esp_screenshot_components_source": ("github://n-IA-hane/esphome-screenshot", ROOT.parent / "esphome-screenshot"),
     "esp_video_renderer_components_source": ("github://n-IA-hane/esphome-video-renderer", ROOT.parent / "esphome-video-renderer"),
+    "esp_screenshot_components_source": ("github://n-IA-hane/esphome-screenshot", ROOT.parent / "esphome-screenshot"),
     "camera_components_source": (CAMERA_URL, ROOT.parent / "esphome-esp-video-camera"),
 }
 CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"
 P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
-OWNED_REMOTE = re.compile(
-    r'github://n-IA-hane/(?:esphome-intercom|esphome-voip-stack|esphome-audio-stack|'
-    r'esphome-runtime-controller|esphome-screenshot|esphome-video-renderer|esphome-esp-video-camera)'
-    r'(?:/[^\s\'"@(){}\[\]]+)?@([^\s\'"(){}\[\]]+)'
-)
-OWNED_ASSETS = re.compile(
-    r'https://(?:github\.com/n-IA-hane/esphome-intercom/raw|'
-    r'raw\.githubusercontent\.com/n-IA-hane/esphome-intercom)/([^/\s]+)/'
-)
+OWNED_CAMERA_URL = "github://n-IA-hane/esphome-esp-video-camera"
+CAMERA_URLS = (CAMERA_URL, OWNED_CAMERA_URL)
+URLS[OWNED_CAMERA_URL] = CAMERA_ROOT
+OWNED_URLS = tuple(url for url in URLS if url != CAMERA_URL)
+EXACT_SOURCES = {}
 
 
-def tracked_yaml_files(directory):
-    names = subprocess.check_output(
-        ["git", "ls-files", "-z", "--", directory], cwd=ROOT,
-    ).decode().split("\0")
-    return sorted(ROOT / name for name in names if name.endswith((".yaml", ".yml")))
+def load_manifest(path):
+    """Use the same immutable component set as coordinated CI and packaging."""
+    manifest = json.loads(Path(path).read_text())
+    resolver = runpy.run_path(str(Path(__file__).resolve().with_name("coordinated_sources.py")))
+    resolver["requested_repositories"](manifest, "dev")
+    backend = manifest.get("backend_sha", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", backend):
+        raise ValueError("Manifest must include the immutable backend SHA")
+    EXACT_SOURCES["esphome-intercom"] = ("github://n-IA-hane/esphome-intercom", backend)
+    for name, item in manifest["components"].items():
+        EXACT_SOURCES[name] = ("github://" + item["repository"], item["sha"])
 
 
-def tracked_package_files():
-    return tracked_yaml_files("packages")
+def remote_source(url, ref):
+    """Dev previews use our camera fork; main and stable retain upstream."""
+    if exact := EXACT_SOURCES.get(url.rsplit("/", 1)[-1]):
+        return exact
+    if url in CAMERA_URLS:
+        preview = ref == "dev" or ref.endswith("-dev") or "-dev." in ref
+        return (OWNED_CAMERA_URL, "dev") if preview else (CAMERA_URL, "main")
+    return url, ref
 
 
-def owned_remote_refs(path):
-    text = path.read_text()
-    return [match.group(1) for pattern in (OWNED_REMOTE, OWNED_ASSETS)
-            for match in pattern.finditer(text)]
+def managed_files(base):
+    """Public YAMLs, including new nonignored files before their first staging."""
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", base.relative_to(ROOT).as_posix()],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    paths = (ROOT / name for name in result.stdout.splitlines()) if result.returncode == 0 else base.rglob("*.yaml")
+    return sorted(path for path in paths if path.suffix == ".yaml" and path.is_file()
+                  and ".esphome" not in path.parts and path.name != "secrets.yaml"
+                  and not path.name.endswith(("-local.yaml", "_NOT_READY.yaml"))
+                  and not path.is_relative_to(ROOT / "yamls/debug"))
 
 
-def rewrite_remote_defaults(path, ref):
-    """Keep package-only installs on the explicitly selected owned source ref."""
-    text = path.read_text()
-    for pattern in (OWNED_REMOTE, OWNED_ASSETS):
-        text = pattern.sub(lambda match: match.group(0)[:match.start(1) - match.start()]
-                           + ref + match.group(0)[match.end(1) - match.start():], text)
-    text = re.sub(r'github://n-IA-hane/esphome-esp-video-camera@[^\s\'"(){}\[\]]+',
-                  source_url(CAMERA, ref), text)
-    camera_default = r'''(camera_components_source\s*\|\s*default\(["'])github://(?:n-IA-hane|Psix-anp)/esphome-esp-video-camera@[^"']+(["'])'''
-    text = re.sub(camera_default, lambda match: match[1] + source_url(CAMERA, ref) + match[2], text)
-    path.write_text(text)
+def package_files():
+    return managed_files(ROOT / "packages")
 
 
 def yaml_files():
-    files = []
-    for path in tracked_yaml_files("yamls"):
-        if ".esphome" in path.parts or path.name == "secrets.yaml":
-            continue
-        if path.is_relative_to(ROOT / "yamls/debug") or path.name.endswith("_NOT_READY.yaml"):
-            continue
-        files.append(path)
-    return sorted(files)
+    return managed_files(ROOT / "yamls")
+
+
+def standalone_examples():
+    """Keep the coordinated Native examples on the same source channel."""
+    repository = REPOS["voip_stack_components_source"][1]
+    if repository.parent.resolve() != ROOT.parent.resolve():
+        return []
+    base = repository / "examples"
+    if not base.is_dir():
+        return []
+    result = subprocess.run(
+        ["git", "ls-files", "--", "examples"], cwd=repository,
+        capture_output=True, text=True, check=False,
+    )
+    paths = (repository / name for name in result.stdout.splitlines()) if result.returncode == 0 else base.rglob("*.yaml")
+    return sorted(path for path in paths if path.suffix == ".yaml" and path.is_file()
+                  and path.name != "secrets.yaml" and not path.name.endswith("-local.yaml"))
+
+
+def public_yaml_files():
+    return yaml_files() + standalone_examples()
+
+
+def display_path(path):
+    return os.path.relpath(path, ROOT)
 
 
 def camera_files():
-    return sorted(
-        path for path in tracked_yaml_files("yamls") + tracked_package_files()
-        if ".esphome" not in path.parts
-        and re.search(r"(?m)^\s*components:\s*\[esp_video_camera\]\s*$", path.read_text())
-    )
+    return [path for path in yaml_files() + package_files()
+            if re.search(r"(?m)^\s*components:\s*\[esp_video_camera\]\s*$", path.read_text())]
 
 
 def selected(files, only):
@@ -92,16 +113,12 @@ def selected(files, only):
         return [path for path in files if not path.name.endswith("-local.yaml")]
     target = Path(only)
     target = (ROOT / target if not target.is_absolute() else target).resolve()
-    chosen = [path for path in files if path.resolve() == target]
-    if not chosen and target.is_file() and target.is_relative_to(ROOT.resolve()):
-        return [target]
-    return chosen
+    return [path for path in files if path.resolve() == target]
 
 
 def relative(source, target):
-    return subprocess.check_output(
-        ["realpath", "--relative-to", str(source), str(target)], text=True
-    ).strip()
+    # Source switching is valid even without optional sibling checkouts.
+    return os.path.relpath(target.resolve(), source.resolve())
 
 
 def repo_for_path(target):
@@ -131,13 +148,15 @@ def rewrite_package(line, path, ref):
         repo = repo_for_path(target)
         if repo:
             url, repo_root = repo
-            return f"{prefix}{url}/{target.relative_to(repo_root).as_posix()}@{ref}{suffix}"
+            url, remote_ref = remote_source(url, ref)
+            return f"{prefix}{url}/{target.relative_to(repo_root).as_posix()}@{remote_ref}{suffix}"
         return line
     for url in URLS:
         marker = f"{url}/"
         if value.startswith(marker) and "@" in value:
             inner = value[len(marker):].rsplit("@", 1)[0]
-            return f"{prefix}{url}/{inner}@{ref}{suffix}"
+            url, remote_ref = remote_source(url, ref)
+            return f"{prefix}{url}/{inner}@{remote_ref}{suffix}"
     return line
 
 
@@ -150,13 +169,13 @@ def rewrite_yaml(path, ref):
         if key == "camera_components_source" and not p4:
             continue
         component_dir = "components" if key == "camera_components_source" else "esphome/components"
-        remote = source_url(CAMERA, ref) if key == "camera_components_source" else f"{url}@{ref}"
-        overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else remote
+        url, remote_ref = remote_source(url, ref)
+        overrides[key] = relative(path.parent, repo_root / component_dir) if ref == "local" else f"{url}@{remote_ref}"
     if device_entrypoint:
-        overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" else ""
+        overrides["gmf_ai_audio_source"] = str(ROOT.parent / "esp-gmf/elements/gmf_ai_audio") if ref == "local" and (ROOT.parent / "esp-gmf/elements/gmf_ai_audio").is_dir() else ""
     if p4:
         overrides["intercom_idf_root"] = str(ROOT / "idf_components") if ref == "local" else ""
-        overrides["intercom_idf_ref"] = "main" if ref == "local" else ref
+        overrides["intercom_idf_ref"] = "main" if ref == "local" else remote_source(REPOS["ext_components_source"][0], ref)[1]
     output = []
     seen = set()
     for line in text.splitlines():
@@ -165,8 +184,8 @@ def rewrite_yaml(path, ref):
             indent, key = match.groups()
             seen.add(key)
             output.append(f'{indent}{key}: "{overrides[key]}"')
-        elif re.match(r'^\s*assets_base:\s*[^#\n]+$', line):
-            value = relative(path.parent, ROOT) + "/" if ref == "local" else f"https://github.com/n-IA-hane/esphome-intercom/raw/{ref}/"
+        elif re.match(r'^\s*assets_base:\s*"[^"]*"\s*$', line):
+            value = relative(path.parent, ROOT) + "/" if ref == "local" else f"https://github.com/n-IA-hane/esphome-intercom/raw/{remote_source(REPOS["ext_components_source"][0], ref)[1]}/"
             output.append(f'  assets_base: "{value}"')
         else:
             output.append(rewrite_package(line, path, ref))
@@ -194,7 +213,8 @@ def camera_source_root(path):
 def rewrite_camera(path, ref):
     lines = path.read_text().splitlines()
     source_root = camera_source_root(path)
-    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else source_url(CAMERA, ref)
+    url, remote_ref = remote_source(CAMERA_URL, ref)
+    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{url}@{remote_ref}"
     for index in range(1, len(lines)):
         if re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", lines[index]):
             if "${camera_components_source}" in lines[index - 1]:
@@ -205,6 +225,108 @@ def rewrite_camera(path, ref):
     path.write_text("\n".join(lines) + "\n")
 
 
+def rewrite_sources(path, ref):
+    """Update source literals and defaults without changing package includes."""
+    text = path.read_text()
+    lines = text.splitlines()
+    owned_git_indent = None
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue
+        if ref != "local":
+            camera_url, camera_ref = remote_source(CAMERA_URL, ref)
+            for original in CAMERA_URLS:
+                line = re.sub(re.escape(original) + r'((?:/[\w./-]+)?)@[\w./-]+',
+                              lambda match: camera_url + match[1] + "@" + camera_ref, line)
+                line = re.sub(re.escape("https://github.com/" + original.removeprefix("github://"))
+                              + r"(?=(?:\.git)?(?:[\s\"']|$))",
+                              lambda match: "https://github.com/" + camera_url.removeprefix("github://"), line)
+            for url, root in URLS.items():
+                component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
+                local_source = str(root / component_dir) if path.is_relative_to(ROOT / "packages") else relative(path.parent, root / component_dir)
+                remote_url, remote_ref = remote_source(url, ref)
+                line = re.sub(re.escape(local_source) + r"(?=['\" )}]|$)", lambda match: remote_url + "@" + remote_ref, line)
+            for url in OWNED_URLS:
+                if url in CAMERA_URLS:
+                    continue
+                line = re.sub(re.escape(url) + r'((?:/[\w./-]+)?)@[\w./-]+',
+                              lambda match: remote_source(url, ref)[0] + match[1] + "@" + remote_source(url, ref)[1], line)
+            line = re.sub(r'(https://(?:raw\.githubusercontent\.com/n-IA-hane/esphome-intercom/|github\.com/n-IA-hane/esphome-intercom/raw/))[\w.-]+/',
+                          lambda match: match[1] + remote_source(REPOS["ext_components_source"][0], ref)[1] + "/", line)
+            if re.match(r"\s*intercom_idf_ref:", line):
+                line = re.sub(r'default\(([\"\'])[^\"\']+\1\)', lambda match: 'default(' + match[1] + remote_source(REPOS["ext_components_source"][0], ref)[1] + match[1] + ')', line)
+            indent = len(line) - len(line.lstrip())
+            if owned_git_indent is not None and line.strip() and indent < owned_git_indent[0]:
+                owned_git_indent = None
+            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/", line):
+                if camera_url.removeprefix("github://") in line:
+                    owned_git_indent = (indent, camera_ref)
+                elif any(url.removeprefix("github://") in line for url in OWNED_URLS):
+                    owned_git_indent = (indent, remote_source(next(url for url in OWNED_URLS if url.removeprefix("github://") in line), ref)[1])
+            elif owned_git_indent is not None and re.match(r"\s*ref:\s*", line):
+                # Dynamic refs are set by their substitution/default above.
+                if "${" not in line:
+                    line = re.sub(r'(ref:\s*)[^#]+', lambda match: match[1] + owned_git_indent[1], line)
+                owned_git_indent = None
+        else:
+            # A package default is evaluated after expansion from the entrypoint.
+            # Absolute local checkout paths avoid a package-relative ambiguity.
+            for url, root in URLS.items():
+                component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
+                source = str(root / component_dir) if path.is_relative_to(ROOT / "packages") else relative(path.parent, root / component_dir)
+                line = re.sub(re.escape(url) + r'@[\w./-]+', lambda match: source, line)
+        lines[index] = line
+    path.write_text("\n".join(lines) + "\n")
+
+
+def source_errors(path, ref, remote):
+    """Check literal refs, nested git refs and source-specific local paths."""
+    lines = [line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")]
+    text = "\n".join(lines)
+    if ref:
+        for url in OWNED_URLS:
+            if url in CAMERA_URLS:
+                continue
+            _, expected_ref = remote_source(url, ref)
+            for actual in sorted(set(re.findall(re.escape(url) + r'(?:/[\w./-]+)?@([\w./-]+)', text)) - {expected_ref}):
+                yield f"source channel {actual}, expected {expected_ref}"
+        camera_url, camera_ref = remote_source(CAMERA_URL, ref)
+        for url in CAMERA_URLS:
+            for actual in sorted(set(re.findall(re.escape(url) + r'(?:/[\w./-]+)?@([\w./-]+)', text))):
+                if (url, actual) != (camera_url, camera_ref):
+                    yield f"camera source {url}@{actual}, expected {camera_url}@{camera_ref}"
+        pending = None
+        for line in lines:
+            indent = len(line) - len(line.lstrip())
+            if pending is not None and line.strip() and indent < pending[0]:
+                pending = None
+            if re.match(r"\s*(?:url|source):\s*['\"]?https://github\.com/", line):
+                camera = next((url for url in CAMERA_URLS if url.removeprefix("github://") in line), None)
+                if camera is not None:
+                    if camera != camera_url:
+                        yield f"camera repository {camera}, expected {camera_url}"
+                    pending = (indent, camera_ref, "camera")
+                else:
+                    source = next((url for url in OWNED_URLS if url.removeprefix("github://") in line), None)
+                    if source is not None:
+                        pending = (indent, remote_source(source, ref)[1], "git")
+            elif pending is not None and (match := re.match(r"\s*ref:\s*['\"]?([^'\"\s#]+)", line)):
+                if not match[1].startswith("${") and match[1] != pending[1]:
+                    yield f"{pending[2]} source channel {match[1]}, expected {pending[1]}"
+                pending = None
+        backend_ref = remote_source(REPOS["ext_components_source"][0], ref)[1]
+        for actual in re.findall(r"intercom_idf_ref:\s*['\"]?(?:\$\{\s*intercom_idf_ref\s*\|\s*default\(['\"])?([\w.-]+)", text):
+            if actual != backend_ref:
+                yield f"IDF source channel {actual}, expected {backend_ref}"
+        for actual in re.findall(r"https://(?:raw\.githubusercontent\.com/n-IA-hane/esphome-intercom/|github\.com/n-IA-hane/esphome-intercom/raw/)([\w.-]+)/", text):
+            if actual != backend_ref:
+                yield f"asset source channel {actual}, expected {backend_ref}"
+    if remote:
+        for line in lines:
+            if re.match(r"\s*(?:-\s*)?(?:[\w]*source|url|path|intercom_idf_root|assets_base):", line) and re.search(r"(?:['\"( ]|^)/(?:home|var/tmp|tmp|mnt|opt|root)/", line):
+                yield "absolute local source path in public YAML"
+
+
 def mode(path):
     text = path.read_text()
     remote = any(f'{key}: "{url}@' in text for key, (url, _) in REPOS.items())
@@ -213,6 +335,11 @@ def mode(path):
     local |= bool(re.search(r"^\s+[A-Za-z_][A-Za-z0-9_]*:\s*!include\s+", text, re.MULTILINE))
     local |= bool(re.search(r'^\s*intercom_idf_root:\s*"[^"\s][^"]*"', text, re.MULTILINE))
     local |= bool(re.search(r'^\s*gmf_ai_audio_source:\s*"[^"\s][^"]*"', text, re.MULTILINE))
+    for url, root in URLS.items():
+        remote |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(url) + r'@', text))
+        component_dir = "components" if url in (CAMERA_URL, OWNED_CAMERA_URL) else "esphome/components"
+        source = relative(path.parent, root / component_dir)
+        local |= bool(re.search(r'(?m)^\s*-\s*source:\s*[\'"]?' + re.escape(source) + r'(?:[\'"\s]|$)', text))
     if remote and local:
         return "mixed"
     if remote:
@@ -222,22 +349,22 @@ def mode(path):
     return "fragment" if not re.search(r"(?m)^esphome:\s*$", text) else "unknown"
 
 
-def check(expect, only):
+def check(expect, only, ref=None):
     failed = False
-    for path in selected(yaml_files(), only):
+    for path in selected(public_yaml_files(), only):
         current = mode(path)
         bad = current in {"mixed", "unknown"}
         bad |= bool(expect and current != "fragment" and current != expect)
         if bad:
             detail = f", expected {expect}" if expect else ""
-            print(f"FAIL: {path.relative_to(ROOT)} ({current}{detail})", file=sys.stderr)
+            print(f"FAIL: {display_path(path)} ({current}{detail})", file=sys.stderr)
             failed = True
         if re.search(r"(?m)^\s*-\s*!include\s+", path.read_text()):
-            print(f"FAIL: {path.relative_to(ROOT)} (nested list !include is not portable outside the repo)", file=sys.stderr)
+            print(f"FAIL: {display_path(path)} (nested list !include is not portable outside the repo)", file=sys.stderr)
             failed = True
     # Includes inside a public package must travel with that repository. Checking
     # only the top-level URL misses undeclared sibling-checkout dependencies.
-    for path in tracked_package_files():
+    for path in package_files():
         for include in package_include_files(path):
             target = (path.parent / include).resolve()
             outside = not target.is_relative_to(ROOT.resolve())
@@ -247,6 +374,10 @@ def check(expect, only):
                     file=sys.stderr,
                 )
                 failed = True
+    for path in selected(public_yaml_files(), only) + ([] if only else package_files()):
+        for error in source_errors(path, ref, expect == "remote"):
+            print(f"FAIL: {display_path(path)} ({error})", file=sys.stderr)
+            failed = True
     if not failed:
         print("OK: all YAMLs consistent.", file=sys.stderr)
     return int(failed)
@@ -298,28 +429,38 @@ def parse_args():
     parser.add_argument("command", help="local, a remote ref, status or check")
     parser.add_argument("--file")
     parser.add_argument("--expect", choices=("local", "remote"))
+    parser.add_argument("--ref", "--expect-ref", help="Require this coordinated remote source ref when checking")
+    parser.add_argument("--manifest", help="Use exact repository SHAs from coordinated-sources.json")
     return parser.parse_args(args)
 
 
 def main():
     args = parse_args()
+    if args.manifest:
+        if args.command == "local":
+            raise ValueError("A source manifest applies only to remote conversion or checking")
+        load_manifest(args.manifest)
     if args.command == "status":
-        for path in selected(yaml_files(), args.file):
-            print(f"{path.relative_to(ROOT)} {mode(path)}")
+        for path in selected(public_yaml_files(), args.file):
+            print(f"{display_path(path)} {mode(path)}")
         return 0
     if args.command == "check":
-        return check(args.expect, args.file)
+        return check(args.expect, args.file, args.ref)
     files = selected(yaml_files(), args.file)
-    if args.command != "local":
-        for path in selected(tracked_package_files(), args.file):
-            rewrite_remote_defaults(path, args.command)
     for path in files:
         rewrite_yaml(path, args.command)
-    cameras = selected(camera_files(), args.file)
+        rewrite_sources(path, args.command)
+    if not args.file:
+        for path in package_files():
+            rewrite_sources(path, args.command)
+    examples = selected(standalone_examples(), args.file)
+    for path in examples:
+        rewrite_sources(path, args.command)
+    cameras = selected(camera_files(), args.file) if args.file else camera_files()
     for path in cameras:
         rewrite_camera(path, args.command)
-    for path in files:
-        print(f"  {path.relative_to(ROOT)}", file=sys.stderr)
+    for path in files + examples:
+        print(f"  {display_path(path)}", file=sys.stderr)
     return 0
 
 

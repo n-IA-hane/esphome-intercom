@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
-from .phone_endpoint import EndpointKind, PhoneEndpoint
+from .phone_endpoint import PhoneEndpoint
 
 if TYPE_CHECKING:
     from .device_resolver import VoipDeviceResolver
@@ -73,16 +73,24 @@ class VoipStackRuntime:
     trunk_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     archive_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     preferred_phone_device_id: str = ""
+    ha_bindings: Any | None = None
+    # Keep the original Store instances through unload for permanent removal.
+    entry_stores: tuple[Any, ...] = ()
     debug_mode: bool = False
     media_capture: bool = False
     sip: SipEndpointRuntime | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    capability_probes: dict[tuple[str, str], asyncio.Task[Any]] = field(default_factory=dict)
     shutdown_task: asyncio.Task[Any] | None = None
     entity_managers: dict[str, Any] = field(default_factory=dict)
     entry_runtime_signature: dict[str, Any] | None = None
     entry_phone_signature: tuple[Any, ...] | None = None
     entry_phone_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_contacts_signature: tuple[dict[str, Any], ...] | None = None
+    entry_group_records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    entry_paging_records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    entry_membership_signature: tuple | None = None
+    group_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_generations: dict[str, int] = field(default_factory=dict)
     device_resolver: VoipDeviceResolver | None = None
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
@@ -94,15 +102,17 @@ class VoipStackRuntime:
     softphone_presence: dict[str, int] = field(default_factory=dict)
     sip_bridge_state: dict[str, Any] = field(default_factory=dict)
     phonebook_sensor: Any | None = None
-    phone_provisioning: Any | None = None
-    directory: Any | None = None
-    ldap_server: Any | None = None
-    imap_server: Any | None = None
-    capability_probes: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
     phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
+    phone_provisioning: Any | None = None
+    physical_phones: Any | None = None
+    directory: Any | None = None
+    ldap_server: Any | None = None
+    phone_services: Any | None = None
+    queues: Any | None = None
+    paging: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
@@ -115,6 +125,7 @@ class VoipStackRegistration:
     initialized: bool = False
     audio_view: bool = False
     video_view: bool = False
+    physical_phone_view: bool = False
     assist_intents: bool = False
     route_trigger_filters: dict[object, dict] = field(default_factory=dict)
     unanswered_trigger_filters: dict[object, dict] = field(default_factory=dict)
@@ -167,19 +178,31 @@ def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
     return require_runtime_data(hass).endpoints
 
 
-def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
-    """Return the explicitly preferred, or sole, browser phone."""
-
-    runtime = require_runtime_data(hass)
-    endpoint = runtime.endpoints.by_device_id(runtime.preferred_phone_device_id)
-    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+def select_preferred_phone(endpoints, configured_device_id="", *, ha_bound_endpoint_ids=()) -> PhoneEndpoint | None:
+    """Choose one configured HA phone, never an arbitrary unbound account."""
+    endpoint = endpoints.by_device_id(str(configured_device_id or "").strip())
+    if endpoint is not None and endpoint.supports_ha_client:
         return endpoint
+    from .phone_endpoint import DEFAULT_ENDPOINT_ID
+    initial = endpoints.get(DEFAULT_ENDPOINT_ID)
+    if initial is not None and initial.supports_ha_client and initial.device_id:
+        return initial
     candidates = tuple(
         item
-        for item in runtime.endpoints.endpoints
-        if item.kind is EndpointKind.BROWSER
+        for item in endpoints.endpoints
+        if item.supports_ha_client and item.device_id and item.endpoint_id in ha_bound_endpoint_ids
     )
     return candidates[0] if len(candidates) == 1 else None
+
+
+def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
+    """Read the entry's preference through the shared selection policy."""
+    runtime = require_runtime_data(hass)
+    bindings = runtime.ha_bindings
+    bound = {endpoint.endpoint_id for endpoint in runtime.endpoints.endpoints
+             if bindings is not None and bindings.has_binding(endpoint.endpoint_id)}
+    return select_preferred_phone(runtime.endpoints, runtime.preferred_phone_device_id,
+                                  ha_bound_endpoint_ids=bound)
 
 
 def browser_phone(hass: HomeAssistant, endpoint_id: str = "") -> PhoneEndpoint | None:
@@ -191,7 +214,7 @@ def browser_phone(hass: HomeAssistant, endpoint_id: str = "") -> PhoneEndpoint |
     endpoint = endpoint_directory(hass).get(selector)
     return (
         endpoint
-        if endpoint is not None and endpoint.kind.is_softphone
+        if endpoint is not None and endpoint.supports_ha_client
         else None
     )
 

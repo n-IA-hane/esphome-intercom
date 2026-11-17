@@ -3,30 +3,89 @@
 Regression tests cover reported compatibility failures. Include the relevant
 protocol and device scenarios when validating a change.
 
-This project has enough call paths that manual spot checks are not enough.
-Use this page as the standard regression checklist before release-level
-changes.
+Start from the failing step in [troubleshooting](troubleshooting.md), identify
+the affected layer and actual target, then use the relevant procedure here.
+The [test-suite guide](../tests/README.md) is canonical for suite selection and
+levels of proof; the [scenario matrix](voip_test_matrix.md) lists coverage
+obligations. A local source check, a browser fixture and a physical call prove
+different things.
 
-## Temporary qualification outputs
+## Before opening an issue
 
-Maintained call, browser and JTAG capture tools save their small reports,
-WAV files and screenshots under `/tmp/voip-tests/` by default, in a private
-subdirectory for each tool. Explicit `--out`/`--out-dir` paths and the matrix
-output environment overrides remain available. Choose a separate output path
-for concurrent runs, and remove disposable captures after reading the results.
-Existing fixtures and historical evidence keep their original locations.
+**Report the parts you actually use.** For HA, browser cards or SIP equipment
+without an ESP, provide the HA-side information and skip ESP requirements.
+ESP dumps apply only to ESP-related faults; Audio Diagnostics additionally
+requires Audio Stack on that device.
 
-Compiler output follows a separate policy: keep generated host builds under
-`/var/tmp/voip-builds/` and ESP SDK builds in their configured persistent disk
-paths. A compiler `TMPDIR` override does not change the capture defaults.
+Reproduce with the current maintained release/profile and report the exact
+versions actually running. An updated YAML does not update an ESP until it is
+rebuilt and uploaded.
 
-When diagnosing missing RTP, verify the peer's actual packet payload and
-sampling geometry against its SDP before attributing the failure to the ESP.
-For example, mono 16-bit PCM at 16 kHz occupies 320 bytes per 10 ms or
-640 bytes per 20 ms.
-A peer can advertise one interval while producing another. Use a peer with
-compatible packetization, or a PBX media route that performs the required
-standard conversion. Direct ESP calls remain supported with compatible peers.
+Include:
+
+- Reproduction steps, expected behavior, actual behavior and frequency.
+- HA and VoIP Stack versions; for ESP faults, ESPHome and component tags/commits.
+- Exact board, microphone/speaker and codec models, relevant YAML and wiring.
+- Who calls whom, directly or through HA, SIP UDP/TCP, PBX or peer software and
+  version, and negotiated codecs and `ptime` if known.
+- HA integration diagnostics and logs around the failure; the ESP boot log
+  when an ESP is involved.
+- For an updated ESP profile, complete **VoIP Diagnostics** output during the
+  fault and after hangup. Add **Audio Diagnostics** with Audio Stack. Open the
+  ESPHome logs first, use INFO or a more verbose logger level, and include whole
+  diagnostic blocks.
+- A [SIP capture](troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
+  for HA-handled signaling faults. It contains neither RTP media nor SIP sent
+  directly between ESP devices; those paths may require separate captures.
+
+To request an ESP dump from HA, open **Developer Tools > Actions**, select
+**Button: Press** (`button.press`) and choose the device's **VoIP Diagnostics**
+or **Audio Diagnostics** button. Open its ESPHome logs first: output is printed
+there, not returned by the HA action. For missing buttons in custom firmware,
+use the [YAML definitions](troubleshooting.md#collect-a-runtime-snapshot-from-an-esp)
+and rebuild/upload. `voip_stack.dump_diagnostics` and
+`esp_audio_stack.dump_diagnostics` are ESPHome actions, not HA services.
+
+For audio faults, state which direction is silent or distorted. For video
+faults, say whether video was present at answer or enabled later. For custom
+Audio Stack hardware, include the AEC/AFE setting and whether the bus is shared
+or split; report any comparison you actually performed with processing disabled.
+
+Use this report structure:
+
+```text
+Title: ESP receives audio but the browser caller hears silence
+Versions: [exact installed HA, integration, ESPHome and component versions]
+Hardware: [board, microphone, speaker, codec and relevant wiring]
+Call path: HA browser card -> Generic S3, through HA, SIP UDP
+Steps: call, answer, speak in both directions, hang up from HA
+Expected: bidirectional audio and both endpoints idle after hangup
+Actual: ESP plays audio; browser hears silence; hangup works
+Frequency and test time: [repetitions, timestamp and timezone]
+Attachments: sanitized YAML, HA diagnostics, HA/ESP logs, full diagnostic blocks,
+             and a SIP capture when relevant
+```
+
+Never publish passwords, authentication data, API keys or tokens. Review
+configuration files, logs and captures before attaching them. Reports without
+reproduction details or supporting evidence may be closed as incomplete.
+
+## Contributing
+
+Preserve standards-based SIP/SDP/RTP behavior and the single authoritative call
+lifecycle. Prefer a transaction, dialog, media or ownership invariant over
+endpoint-specific timing workarounds. Run the applicable
+[repository suites](../tests/README.md) before submitting a change and include
+the actual results and remaining verification limits.
+
+### AI-assisted contributions
+
+Vibe coding and thoughtful AI-assisted development are welcome. Asking an AI
+to add a feature or fix a bug and submitting the result is not enough: audio,
+video and call handling share limited resources, and a local fix can introduce
+regressions elsewhere. Understand the changes, review their wider effects and
+test the affected functionality. Explain what you tested and what remains
+unverified. Review and testing remain the contributor's responsibility.
 
 ## Automated local tests
 
@@ -51,104 +110,12 @@ find custom_components/voip_stack/frontend -name '*.js' -print0 \
   | xargs -0 -n1 node --check
 ```
 
-### Qualification gates and test seams
-
-The [qualification ledger and full functional matrix](voip_test_matrix.md#qualification-status-for-the-current-candidate)
-record the original failures, permanent regressions and PENDING runtime cases.
-Keep one candidate identity across each grouped test session. A changed shared
-protocol owner requires the affected broad suites to run again before live work.
-
-The local software baseline is three existing commands:
-
-```bash
-./scripts/test_suite.sh software-full --keep-going
-HA_PYTHON=/path/to/ha-test-venv/bin/python ./scripts/test_suite.sh ha --keep-going
-./scripts/test_suite.sh browser --keep-going
-```
-
-Select separate persistent pytest temporary directories and JUnit report paths
-through `PYTEST_ADDOPTS` when running these suites concurrently. Use the HA test
-interpreter only for modules importing Home Assistant. The HA suite's explicit
-module list and the software suite's exclusions must both include new HA tests;
-collecting or deselecting a test does not execute it.
-
-CI has separate software, Home Assistant, real-browser, documentation and Box
-firmware/LVGL jobs. Record the SHA and coordinated-source artifact for each run.
-`check_test_results.py` requires executed tests and rejects skipped, failed or
-error results. A green build or documentation job cannot compensate for a failed
-software job, and an older green commit cannot qualify a newer dirty candidate.
-
-A completed native host result can be retained during local requalification
-only when its C/C++ inputs, generated configuration, ABI/toolchain, dependencies
-and transitive Python/code-generation helpers remain identical. Record the
-input hashes, original successful JUnit cases and source lineage separately from
-the tests actually rerun. Changed inputs invalidate that reuse. Reexecute every
-affected HA, protocol and browser case; the standard CI commands still run their
-complete suites.
-
-Offer-construction unit tests stop before a real INVITE exchange. Node card
-fixtures substitute the engine and browser APIs. Native LDAP client tests cover
-directory interoperability. Real-browser fixture tests cover Chromium media and
-rendering with controlled peers. These are useful independent gates, but none is
-the normal-account physical ESP, actual NAT path, acoustic test or physical touch
-witness. Keep those outcomes in separate matrix rows.
-
-After the software gates, use the existing lab and maintained SIP/browser/PBX
-runners. Household deployment, calls, configuration changes and firmware work
-remain serialized operations authorized for the selected target. Require zero
-call-scoped owners and allocated ports before every live case. Ordinary UI clicks
-and authoritative backend state must agree through setup, media changes, Hangup
-and immediate reuse; changing DOM or engine state is not visual qualification.
-
-### Browser timing and media observers
-
-The maintained video browser probe drives ordinary visible controls. Its
-`--send-camera` flag sets the initial camera preference; use
-`--camera-toggle-cycle --outbound <destination>` for the distinct connected-audio,
-camera on/off/on, Hangup and redial scenario. The default
-`--camera-cycle-direction sendonly` covers a receiving peer without a camera;
-select `sendrecv` for a camera peer. That mode requires both RTP video directions
-and actual receive/decode/render progress, including when `--allow-dark-video`
-accepts a legitimately dark scene. A successful first video offer does
-not exercise replacement of an audio-only dialog's resource reservation.
-
-Use `--sample-interval 0.25` and `--audio-capture-dir <private-output>` when
-investigating playback discontinuities. The same probe observes CDP WebAudio
-context creation/state and native timing, wall/monotonic time, AudioContext
-sample rate/latency, worklet input/output/buffer statistics and WebSocket
-configuration plus actual PCM payload lengths. `BrowserAudioCapture` retains
-bounded wire WAV data without inserting audio nodes or changing media settings.
-An enabled diagnostic observer has measurement cost; keep it identical across
-comparisons and preserve browser responsiveness measurements.
-
-The final `audio_timeline` evaluates every observed in-call sample, grouped by SIP
-Call-ID and counter generation. A document or AudioContext recreation cannot
-erase an earlier loss. The report records counter deltas, the first loss,
-observation gaps and running render-clock deficits of at least 0.5 seconds
-against monotonic observer time. Any recorded loss or clock deficit fails the
-audio oracle even if the final counters are zero. Preserve the selected startup
-settling interval and navigation events; do not attribute a document reload to
-the remote device without independent evidence.
-
-`frames_drop` counts complete negotiated PCM frames discarded by the playback
-queue overflow guard. It is distinct from RTP drops, underruns, and the
-`removed_ms` time-scale statistic. Initial engine reset values are not fresh
-worklet reports. The [Web Audio clock contract](https://www.w3.org/TR/webaudio-1.1/#dom-baseaudiocontext-currenttime)
-uses rendering time, which must be correlated with wall time instead of assumed
-to share its clock. Record the first reported discard and the later steady
-interval. Changing both the interaction path and host workload confounds a load
-comparison; first freeze the same actual UI path and instrumentation.
-
-OpenLDAP's independent directory oracle requires the native `ldapsearch` client.
-It is discovered on PATH or through `LDAPSEARCH_BINARY`; a missing client is a
-PENDING oracle, not a passed directory test. CI installs the client separately
-from the Python LDAP implementation.
-
 ### Repeat a coordinated CI source set
 
 The software CI job uploads `coordinated-sources.json`, containing the actual
-backend commit and the six coordinated component commits checked out for that
-run, including Screenshot and Video Renderer.
+backend commit and the complete coordinated component set checked out for that
+run: Native, Audio, Runtime, Renderer, Screenshot and Camera. The accepted
+manifest schema is owned by [`coordinated_sources.py`](../scripts/coordinated_sources.py).
 Default runs continue following the coordinated `dev`/`main` branches. To repeat
 an exact run, select its backend revision and supply the complete artifact JSON
 as the manual workflow's `component_manifest` input.
@@ -163,7 +130,9 @@ python scripts/coordinated_sources.py --root /path/to/component-parent \
 The script rejects partial manifests, mutable commit references, mismatched
 backend revisions and existing component directories. It never resets a local
 checkout. This checkout manifest complements the local `candidate-lock.json`,
-which also records toolchain and dependency identities.
+which also records toolchain and dependency identities. Neither manifest is a
+physical qualification receipt. Replay a historical manifest with the matching
+runner/schema rather than treating it as a current partial manifest.
 
 The ESP component's `contract` job uploads `native.xml`. Its permanent REFER
 socket regressions exercise production response dispatch and retired-transaction
@@ -171,93 +140,14 @@ replay with real loopback UDP/TCP sockets. These tests substitute scheduling and
 hardware media, so their results do not qualify physical audio or video. A full
 board build and an explicitly authorized hardware session are separate gates.
 
-## Allocation failure diagnostics
-
-Match instrumentation to the target's ESP-IDF version and inspect its execution
-context first. The [ESP-IDF 5.5 heap-debug guide](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32p4/api-reference/system/heap_debug.html#heap-allocation-and-free-function-hooks)
-explains that heap hooks can execute from ISR context and recommends keeping
-blocking work and allocation/free outside those hooks. Use a stricter record-only
-policy for intrusive allocation-failure diagnostics: a fixed preallocated
-IRAM/DRAM record with lock-free writes, with no heap queries, allocation/free,
-formatting, logging or blocking locks inside the callback.
-
-Read free/total/largest-block statistics and format output later from the normal
-main loop. Record both event and snapshot times so later heap observations keep
-their temporal meaning. Start full serial boot capture before OTA, preserve the
-matching ELF/source identity and require official BootSuccess plus fresh device
-identity before trusting a diagnostic image. Keep an instrumentation boot failure
-separate from the original production failure until its own cause is demonstrated.
-
-## Screenshot admission on a FULL P4
-
-With on-demand screenshot allocation, one capture needs an immutable RGB565 raw
-image, a new JPEG writer and, for the LVGL backend, one coverage bit per pixel:
-
-```text
-raw = width * height * 2
-coverage = ceil(width * height / 8)  # LVGL backend
-additional image admission = raw + coverage + max_jpeg_size
-largest required block = max(raw, max_jpeg_size)
-```
-
-Published JPEGs and active readers already occupy heap space when these free
-memory measurements are taken. The persistent worker and encoder workspace are
-separate from the additional image admission.
-
-The measured FULL P4 configuration uses the MIPI backend at 1280x800 with a
-262144-byte JPEG limit (256 KiB), so its coverage allocation is zero. Its literal
-configuration and capture receipt give an additional requirement of
-`2048000 + 262144 = 2310144` bytes (2256 KiB), with one contiguous 2048000-byte
-raw allocation (2000 KiB). The native refusal recorded 2281852 free bytes and a
-1998848-byte largest block (1952 KiB) in the requested pool. The combined request
-is short by 28292 bytes, and the contiguous raw block by 49152 bytes (48 KiB).
-The persistent worker and encoder scratch are outside this transient image sum.
-
-The component reports the admission failure and preserves the previous capture
-ID, published JPEG and active readers. Check capture status and a new ID/ETag
-before treating an image as fresh. These figures describe that identified
-workload and heap snapshot; evaluate another capture against its own measured
-free and largest blocks. The [standalone memory guide](https://github.com/n-IA-hane/esphome-screenshot/blob/dev/README.md#resource-ownership)
-describes buffer ownership and placement.
-
-## Scope RTP evidence to one SIP session
-
-A multi-call capture can legitimately reuse payload types and RTP ports, with
-new sequence and timestamp origins. The RTP oracle currently groups by network
-flow, SSRC and payload type; a combined capture can therefore produce an
-ambiguous aggregate result. Preserve its FAIL report and original capture as
-an oracle limitation, then qualify each identified Call-ID and media generation
-with its matching SDP and packet interval.
-
-For sequential calls, set `CAPTURE`, `CALL_START_UTC` and `CALL_END_UTC` from the
-preserved session receipt. Use ISO timestamps accepted by `editcap`, including
-their UTC suffix, and choose a private `CALL_PCAP`, `CASE_OUTPUT` and `PCM_DIR`.
-The interval must include complete SIP setup/answers and the media through
-teardown. First verify that its INVITEs belong to the expected Call-ID:
-
-```bash
-editcap -A "$CALL_START_UTC" -B "$CALL_END_UTC" "$CAPTURE" "$CALL_PCAP"
-tshark -r "$CALL_PCAP" -Y 'sip.CSeq.method == "INVITE"' \
-  -T fields -e sip.Call-ID | sort -u
-./.venv/bin/python tools/rtp_pcap_evidence.py "$CALL_PCAP" \
-  --require-streams 4 --output "$CASE_OUTPUT" --pcm-dir "$PCM_DIR"
-```
-
-Four streams apply to bidirectional audio and video; select the expected count
-for the recorded case. Overlapping calls require an unambiguous association of
-Call-ID, SDP, SSRC, tuple and time interval. A time slice alone cannot establish
-that association. Keep undecidable cases unqualified and preserve the exact
-filters, tool revision and input/output hashes. Loss and cadence thresholds stay
-unchanged; a later successful session report does not erase the aggregate FAIL.
-
 ## Candidate qualification
 
 Live device qualification is a separate, explicitly started operation. CI runs
 software, HA-runtime and documentation checks on pushes and pull requests, but
 does not call your physical phones or flash devices. The local qualification
 tools resolve the current commits of `esphome-intercom`,
-`esphome-voip-stack`, `esphome-audio-stack`, `esphome-runtime-controller`,
-`esphome-screenshot` and `esphome-video-renderer`, record the selected identities, and use
+`esphome-voip-stack`, `esphome-audio-stack` and
+`esphome-runtime-controller`, record them in `candidate-lock.json`, and use
 local component checkouts for candidate firmware builds.
 
 The complete plan includes `software-full`, the real Home Assistant runtime,
@@ -283,9 +173,20 @@ Some tests deliberately lock down source-level routing contracts; they catch
 accidental branch removal but do not prove a real SIP transaction, browser
 codec or RTP path. Release evidence must include the real matrix below.
 
-The peer-live runner also changes and restores DND and auto-answer on one real
-HA browser phone. Select that phone explicitly, either as argument 2 or through
-the self-hosted runner variable:
+The peer-live runner combines isolated peer groups with a final Home/Wildix
+witness. It requires operational authorization for the actual targets: it
+changes and restores DND and auto-answer on the selected real HA browser phone,
+deploys this checkout's component and restarts Home Assistant, then places the
+real Wildix-to-ESP routing call. Verify idle endpoints and the intended targets
+before execution.
+
+Supply `HOME_HA_URL`, `HOME_HA_AUTH_FILE` (a private auth-file path),
+`WILDIX_CONFIG` (a private peer-config path) and `P4_ROUTE_NAME`, as well as the
+HA test interpreter and explicit policy phone. The deployment's `HA_HOST`
+selects its SSH target separately from `HOME_HA_URL`; it defaults to `hass`.
+Review `HA_COMPONENT_DIR`, `HA_SERVICE` and backup policy for that target.
+After supplying those prerequisites, choose the phone as argument 2 or through
+the runner variable:
 
 ```bash
 HA_PYTHON=/path/to/ha/.venv/bin/python \
@@ -296,8 +197,12 @@ HA_PYTHON=/path/to/ha/.venv/bin/python \
   ./scripts/run_peer_live_qualification.sh evidence/results
 ```
 
-The command fails before testing when the selection is absent. It never assumes
-the historical `default` endpoint.
+The command fails before testing when the phone selection is absent. It never
+assumes the historical `default` endpoint. Other required live variables are
+checked after the isolated groups, not before the whole script. For isolated
+peer tests use `./scripts/test_suite.sh peer`; for an isolated HA candidate use
+the existing [`with_ha_lab_candidate.sh`](../scripts/with_ha_lab_candidate.sh)
+wrapper and applicable lab runner. This combined script has no lab-only switch.
 
 The same peer-live command also executes the two explicit-extension precedence
 cases from `tools/inbound_routing_qualification.py`. Their separate JSON
@@ -319,13 +224,19 @@ For an explicitly authorized live deployment, use the repository helper
 instead of copying the component by hand:
 
 ```bash
-tools/deploy_ha_voip_stack.sh
+HA_CREATE_BACKUP=1 tools/deploy_ha_voip_stack.sh
 ```
 
-It stages the exact local component, creates a timestamped remote backup,
-installs through the configured SSH alias, restarts Home Assistant and waits
-for a terminal service state. Environment overrides are documented by
-`tools/deploy_ha_voip_stack.sh --help`.
+It stages the exact local component and installs it using `rsync --delete`.
+The example explicitly requests a timestamped backup of an existing component;
+`HA_CREATE_BACKUP` defaults to `0`. The default SSH target is `hass`, component
+directory `/var/lib/hass/custom_components/voip_stack`, backup root
+`/var/lib/hass/.cache/voip_stack_deploy_backups` and service
+`home-assistant.service`. It restarts HA and waits for initialization. Review
+the environment overrides with `tools/deploy_ha_voip_stack.sh --help` first.
+The backup covers component files only, not HA configuration, persistent data
+or firmware; restoration and a further restart are separate authorized actions,
+not automatic rollback on failure.
 
 ## HACS release archive
 
@@ -435,11 +346,11 @@ The Playwright probe records runtime evidence rather than relying on a source
 string check:
 
 ```bash
-mkdir -p /tmp/voip-tests
+mkdir -p test_captures
 export HA_URL="https://home-assistant.example/dashboard/voip"
 export PLAYWRIGHT_STORAGE_STATE="$HOME/.cache/ha-playwright-state.json"
 ./.venv/bin/python tools/sip_video_browser_probe.py \
-  --out /tmp/voip-tests/voip-video-result.json
+  --out test_captures/voip-video-result.json
 ```
 
 Wait for `READY_FOR_VIDEO_CALL`, then start a deterministic audio/video caller:
@@ -451,7 +362,7 @@ Wait for `READY_FOR_VIDEO_CALL`, then start a deterministic audio/video caller:
   --target HA \
   --codec vp8 \
   --direction sendrecv \
-  --out /tmp/voip-tests/voip-video-peer.json
+  --out test_captures/voip-video-peer.json
 ```
 
 See [SIP Video](SIP_VIDEO.md) for an outgoing probe,
@@ -464,10 +375,10 @@ audio-to-video re-INVITE, run the physical P4 against a real Wildix endpoint
 and collect the packet capture from the HA host:
 
 ```bash
-out="/tmp/voip-tests/p4-wildix-$(date -u +%Y%m%dT%H%M%SZ)"
+out="test_captures/p4-wildix-$(date -u +%Y%m%dT%H%M%SZ)"
 ./scripts/run_p4_wildix_pcap_gate.sh "$out" --audio-only
 
-out="/tmp/voip-tests/p4-wildix-video-$(date -u +%Y%m%dT%H%M%SZ)"
+out="test_captures/p4-wildix-video-$(date -u +%Y%m%dT%H%M%SZ)"
 ./scripts/run_p4_wildix_pcap_gate.sh "$out"
 ```
 
@@ -679,12 +590,15 @@ esphome config device.yaml > device-expanded.yaml
 ./.venv/bin/python tools/render_lvgl.py \
   --input device-expanded.yaml --page settings_continuous_page \
   --width 240 --height 240 \
-  --output /tmp/voip-tests/options-preview \
+  --output test_captures/options-preview \
   --build-parent /var/tmp/voip-builds/options-preview
 ```
 
 Use the complete config dump here, without `--no-defaults`, so native generated
 entities are available to the host fixtures. Do not use `--show-secrets`.
+Keep the build parent on persistent disk; small snapshots/captures may use a
+separate temporary directory. The example path must resolve to persistent
+storage on the machine running the renderer.
 Box V2 uses 360 by 360 pixels; P4 uses `settings_p4_page` and the selected
 orientation's dimensions. `--prepare-only` writes the host configuration
 without compiling or running it.
@@ -715,17 +629,6 @@ dragged slider is not overwritten by a concurrent state notification. Changes
 to playback metadata alone must not redraw an unchanged volume control.
 
 ### ESP32-S3 profiling without application probes
-
-When the firmware logs through USB Serial/JTAG, keep its serial console
-continuously drained throughout qualification. Opening the JTAG interface
-alone does not read the separate CDC console. Espressif documents a bounded
-50 ms wait when the console buffer fills without a reader; the driver used
-by ESPHome can therefore disturb the workload being measured. Preserve the
-console state in the workload record and compare packet timestamps, local
-jitter-buffer discards and speaker progress separately. A successful run
-with a console reader does not qualify operation without one, or explain
-unrelated network losses. See the official
-[USB Serial/JTAG buffering notes](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/api-guides/usb-serial-jtag-console.html#data-buffering).
 
 `tools/esp_profile.py` collects DEBUGPC samples and whole-core PMU counters
 through stock OpenOCD `irscan`/`drscan` commands, following the ESP32-S3 JTAG
@@ -761,9 +664,9 @@ Use a fresh output directory for each independent measurement:
 ```bash
 ./.venv/bin/python tools/esp_profile.py record --mode pc \
   --elf firmware.elf --manifest build-identity.json --scenario music-48k \
-  --seconds 60 --hz 100 --output /tmp/voip-tests/profile/music-48k/run-1
+  --seconds 60 --hz 100 --output test_captures/profile/music-48k/run-1
 ./.venv/bin/python tools/esp_profile.py analyze \
-  /tmp/voip-tests/profile/music-48k/run-1 --elf firmware.elf \
+  test_captures/profile/music-48k/run-1 --elf firmware.elf \
   --addr2line /path/to/xtensa-esp32s3-elf-addr2line
 ```
 
@@ -849,7 +752,7 @@ regression by itself.
 
 Complete source audits and local regression gates before uploading a profiling
 candidate. Collect dumps/PCM separately from the main measurement windows.
-Keep new captures private under `/tmp/voip-tests/`; profiling does not replace
+Keep captures private under `test_captures/`; profiling does not replace
 independent continuity, acoustic or wake-word hit-rate tests.
 
 On ESPHome 2026.7 and newer native ESP-IDF builds, custom partition tables use
@@ -868,8 +771,10 @@ When testing real devices, cover:
 - HA/card to registered SIP endpoint;
 - unknown, unregistered SIP endpoint to HA;
 - unknown, unregistered SIP endpoint to each ESP;
-- ESP in-dialog hold/re-INVITE receives `488` while the established call and
-  later BYE remain functional;
+- ESP incompatible audio updates receive `488` while the established call and
+  later BYE remain functional; compatible video add/remove and direction cases
+  use the existing owner, with rejected active retarget/format cases covered by
+  the [media compatibility table](ARCHITECTURE.md#in-dialog-media-compatibility);
 - HA-owned UPDATE/re-INVITE hold/resume and supported audio changes commit once;
   direct browser dialogs cover compatible video add/remove;
 - an audio-only SIP bridge can add video through a paired destination
@@ -890,10 +795,9 @@ uses pinned source revisions and only the required audio/signaling modules.
 With CMake, a C compiler, OpenSSL, zlib and libsndfile development files installed:
 
 ```sh
-peer_prefix=/var/tmp/voip-builds/sip-peer
-scripts/build_sip_test_peer.sh "$peer_prefix"
-PATH="$peer_prefix/bin:$PATH" \
-VOIP_TEST_BARESIP_MODULE_PATH="$peer_prefix/lib/baresip/modules" \
+scripts/build_sip_test_peer.sh "$PWD/test_captures/sip-peer"
+PATH="$PWD/test_captures/sip-peer/bin:$PATH" \
+VOIP_TEST_BARESIP_MODULE_PATH="$PWD/test_captures/sip-peer/lib/baresip/modules" \
 HA_PYTHON=/path/to/ha-test-venv/bin/python scripts/test_suite.sh ha --keep-going
 ```
 
@@ -931,10 +835,10 @@ A short repeated-call test runs by default. For a one-hour, 100-cycle run on the
 same backend and registered peers:
 
 ```bash
-mkdir -p /tmp/voip-tests
+mkdir -p test_captures
 VOIP_CONSOLIDATION_SOAK_CYCLES=100 \
 VOIP_CONSOLIDATION_SOAK_SECONDS=3600 \
-VOIP_CONSOLIDATION_SOAK_REPORT="/tmp/voip-tests/sip-soak.jsonl" \
+VOIP_CONSOLIDATION_SOAK_REPORT="$PWD/test_captures/sip-soak.jsonl" \
 "$HA_PYTHON" -m pytest -q tests/test_sip_phone_transfers_ha.py \
   -k long_lived_transfer_runtime --timeout=3720
 ```
@@ -953,7 +857,7 @@ FFmpeg, then run:
 
 ```bash
 .venv/bin/python scripts/run_asterisk_transfer_lab.py \
-  --output /tmp/voip-tests/asterisk-transfer
+  --output test_captures/asterisk-transfer
 ```
 
 The output directory must be new. The runner starts a private Asterisk process
@@ -980,5 +884,5 @@ For example:
 ```bash
 .venv/bin/python scripts/run_asterisk_transfer_lab.py \
   --mode attended --authenticate --transport tcp \
-  --output /tmp/voip-tests/asterisk-attended-tcp
+  --output test_captures/asterisk-attended-tcp
 ```

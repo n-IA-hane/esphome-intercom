@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
 from homeassistant.exceptions import Unauthorized
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 pytestmark = pytest.mark.ha
 
@@ -102,8 +102,15 @@ async def test_phone_entity_rename_preserves_identity(
     try:
         previous = original
         for new in [f"{domain}.renamed_once", f"{domain}.renamed_twice", original]:
+            additions_before = added.await_count
             er.async_get(hass).async_update_entity(previous, new_entity_id=new)
             await hass.async_block_till_done()
+            # Core's supported fallback re-adds subclasses which define their
+            # own lifecycle without a matching class-level rename hook.
+            assert added.await_count - additions_before == (
+                1 if kind in {"state", "event"} else 0
+            )
+            assert platform.entities == {new: entity}
             assert entity.entity_id == new
             assert entity.unique_id == stable_unique_id
             assert hass.states.get(previous) is None
@@ -127,7 +134,7 @@ async def test_phone_entity_rename_preserves_identity(
                 _require_endpoint_permission(hass, user, current, "control")
             previous = new
         assert added.await_count == (
-            0 if hasattr(Entity, "async_entity_id_changed") else 3
+            3 if kind in {"state", "event"} else 0
         )
     finally:
         unsubscribe()
@@ -312,7 +319,12 @@ async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monke
     monkeypatch.setattr(sensor, "_schedule_and_wait_recompute", AsyncMock())
     scheduled = []
     monkeypatch.setattr(sensor, "_schedule_recompute", lambda: scheduled.append(True))
-    await sensor.async_added_to_hass()
+    entry = MockConfigEntry(domain="voip_stack", data={})
+    entry.add_to_hass(hass)
+    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="sensor",
+        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
+    platform.config_entry = entry
+    await platform.async_add_entities([sensor])
     try:
         hass.states.async_set(entity.entity_id, "before")
         registry.async_update_entity(entity.entity_id, new_entity_id=f"{domain}.renamed_groups")
@@ -325,4 +337,4 @@ async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monke
         await hass.async_block_till_done()
         assert scheduled == [True]
     finally:
-        await sensor.async_will_remove_from_hass()
+        await platform.async_reset()

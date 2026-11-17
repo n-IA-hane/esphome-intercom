@@ -1,30 +1,17 @@
 -r requirements-test.txt
-pytest-homeassistant-custom-component==0.13.365
+# Use Python >=3.14.4 for CPython's official autospec/forward-reference fix.
+# Core's runtime minimum remains unchanged; CI selects the latest 3.14 patch.
+# Native fixtures from the same immutable official Core revision as the runtime.
+homeassistant==2026.11.1
+pytest-homeassistant[bluetooth] @ git+https://github.com/home-assistant/core.git@d8a0dc698c8946b44e455d904000db563cfbf1ba#subdirectory=packages/pytest-homeassistant
 
-# Native ESPHome provisioning fixtures load the real HA integration, without
-# installing the ESPHome firmware SDK. Match HA 2026.9.2's esphome manifest.
-aioesphomeapi==46.2.0
-esphome-dashboard-api==1.4.0
-bleak-esphome==4.0.0
-# Its bluetooth and usb integration manifests are imported transitively.
-bleak==3.0.2
-bleak-retry-connector==4.7.0
-bluetooth-adapters==2.4.0
-bluetooth-auto-recovery==1.6.4
-bluetooth-data-tools==1.29.24
-dbus-fast==5.0.22
-habluetooth==6.26.11
-aiousbwatcher==1.1.2
-serialx==1.10.0
+# Runtime requirements of the custom integration (manifest.json).
+dnspython==2.8.0
+pyasn1==0.6.5
 
 # Dependencies of the HA TTS modules exercised directly by the suite.
 mutagen==1.48.1
 ha-ffmpeg==3.2.2
-
-# Native protocol services shipped with the custom integration.
-ldap3==2.9.1
-pyasn1==0.6.5
-pymap==0.36.7
 
 # Assist pipeline modules imported directly by the speech tests.
 # Match Home Assistant's assist_pipeline manifest.
@@ -32,5 +19,14 @@ pymicro-vad==1.0.1
 pyspeex-noise==1.0.2
 # Transitive conversation dependencies loaded by assist_pipeline.
 gazetteer-matcher==1.1.0
-hassil==3.12.0
-home-assistant-intents==2026.8.28
+hassil==3.12.1
+home-assistant-intents==2026.10.27
+
+# ESPHome provider imports used during collection, from HA 2026.11.1.
+aioesphomeapi==46.25.0
+esphome-dashboard-api==1.4.0
+bleak-esphome==4.0.0
+
+# The ESPHome provider imports Bluetooth/USB during collection (same HA tag).
+aiousbwatcher==1.1.2
+serialx==1.15.1

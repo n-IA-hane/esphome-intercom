@@ -25,7 +25,7 @@ class Peer:
     conference_group: str = ""
     conference_ring: bool = False
     ring_group: str = ""
-    audio_mode: Literal["full_duplex", "mic_only", "speaker_only"] = "full_duplex"
+    audio_mode: Literal["full_duplex", "mic_only", "speaker_only"] | None = "full_duplex"
     tx_formats: list[str] | None = None
     rx_formats: list[str] | None = None
     sip_audio_tx_formats: tuple[str, ...] = ()
@@ -47,8 +47,6 @@ class Peer:
     def request_uri_user(self) -> str:
         """Return the stable SIP user used to address this peer."""
         if self.endpoint_kind == "esphome":
-            if (self.device or {}).get("managed"):
-                return self.sip_uri_user or self.name or self.extension
             return self.extension or self.sip_uri_user or self.name
         return self.sip_uri_user or self.extension or self.name
 

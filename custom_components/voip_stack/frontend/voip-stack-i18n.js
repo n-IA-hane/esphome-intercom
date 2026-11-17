@@ -1,4 +1,11 @@
 const PT_BR = {
+  "SIP account": "Conta SIP",
+  "SIP accounts": "Contas SIP",
+  "Missing phone": "Telefone ausente",
+  "Choose existing SIP accounts.": "Selecione contas SIP existentes.",
+  "Choose existing SIP accounts to display in this section.": "Selecione as contas SIP existentes para exibir nesta seção.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Uma conta SIP selecionada está indisponível. Edite esta seção para atualizar a seleção.",
+  "Unable to load SIP accounts.": "Não foi possível carregar as contas SIP.",
   "Transfer": "Transferir",
   "Transfer call": "Transferir chamada",
   "Cancel transfer": "Cancelar transferência",
@@ -51,6 +58,8 @@ const PT_BR = {
   "Answering": "Atendendo",
   "Authentication unsupported": "Autenticação não suportada",
   "Auto Answer": "Atendimento automático",
+  "Auto Answer is unavailable, the microphone could not be opened.": "Atendimento automático indisponível, não foi possível abrir o microfone.",
+  "Auto Answer will not send video, the camera is not available.": "O atendimento automático não enviará vídeo, a câmera não está disponível.",
   "Bridge error": "Erro na ponte",
   "Busy": "Ocupado",
   "Call": "Ligar",
@@ -147,6 +156,13 @@ const PT_BR = {
 };
 
 const DE = {
+  "SIP account": "SIP-Konto",
+  "SIP accounts": "SIP-Konten",
+  "Missing phone": "Fehlendes Telefon",
+  "Choose existing SIP accounts.": "Wählen Sie vorhandene SIP-Konten.",
+  "Choose existing SIP accounts to display in this section.": "Wählen Sie vorhandene SIP-Konten für diesen Abschnitt.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Ein ausgewähltes SIP-Konto ist nicht verfügbar. Bearbeiten Sie diesen Abschnitt, um die Auswahl zu aktualisieren.",
+  "Unable to load SIP accounts.": "SIP-Konten konnten nicht geladen werden.",
   "Transfer": "Übergeben",
   "Transfer call": "Anruf übergeben",
   "Cancel transfer": "Übergabe abbrechen",
@@ -199,6 +215,8 @@ const DE = {
   "Answering": "Wird angenommen",
   "Authentication unsupported": "Authentifizierung nicht unterstützt",
   "Auto Answer": "Automatisch annehmen",
+  "Auto Answer is unavailable, the microphone could not be opened.": "Automatisch annehmen ist nicht verfügbar, das Mikrofon konnte nicht geöffnet werden.",
+  "Auto Answer will not send video, the camera is not available.": "Automatisch annehmen sendet kein Video, die Kamera ist nicht verfügbar.",
   "Bridge error": "Bridge-Fehler",
   "Busy": "Besetzt",
   "Call": "Anrufen",
@@ -294,6 +312,45 @@ const DE = {
   "Title (optional)": "Titel (optional)",
 };
 
+const IT = {
+  "SIP accounts": "Account SIP",
+  "Missing phone": "Telefono non disponibile",
+  "Choose existing SIP accounts.": "Seleziona account SIP esistenti.",
+  "Choose existing SIP accounts to display in this section.": "Seleziona gli account SIP da mostrare in questa sezione.",
+  "A selected SIP account is unavailable. Edit this section to update the selection.": "Un account SIP selezionato non è disponibile. Modifica la sezione per aggiornare la selezione.",
+  "Unable to load SIP accounts.": "Impossibile caricare gli account SIP.",
+  "SIP account": "Account SIP",
+  "Preferred SIP account": "Account SIP preferito",
+  "Use any authorized SIP account. Leave unselected to use the preferred account.": "Usa un account SIP autorizzato. Senza selezione viene usato quello preferito.",
+  "No SIP accounts found.": "Nessun account SIP trovato.",
+  "The configured SIP account no longer exists. Select another account or use the preferred account.": "L'account SIP configurato non esiste più. Seleziona un altro account o usa quello preferito.",
+  "Leave unselected to use the preferred SIP account.": "Lascia vuoto per usare l'account SIP preferito.",
+  "Select an existing SIP account.": "Seleziona un account SIP esistente.",
+  "The selected SIP account is unavailable.": "L'account SIP selezionato non è disponibile.",
+  "End the current call before changing the browser account.": "Termina la chiamata prima di cambiare account nel browser.",
+  "Associates this browser with an existing SIP account. The association is saved in Home Assistant. X, Esc and Back minimize an active call. Audio still requires browser permission.": "Associa questo browser a un account SIP esistente. L'associazione viene salvata in Home Assistant. X, Esc e Indietro riducono la chiamata. L'audio richiede il permesso del browser.",
+  "Queues": "Code",
+  "Available": "Disponibile",
+  "Paused": "In pausa",
+  "Logged out": "Disconnesso dalle code",
+  "Call popups": "Popup chiamate",
+  "Home Assistant phone": "Telefono Home Assistant",
+  "Receive call popups on this device": "Ricevi popup chiamate su questo dispositivo",
+  "Uses an existing softphone without a card. This choice is saved in this app/browser. X, Esc and Back minimize an active call. Audio still requires browser permission.": "Usa un softphone esistente senza una card. La scelta viene salvata in questa app/browser. X, Esc e Indietro minimizzano la chiamata attiva. L'audio richiede comunque il permesso del browser.",
+  "Save": "Salva",
+  "Saved": "Salvato",
+  "-- Select phone --": "-- Seleziona telefono --",
+  "Minimize call": "Minimizza chiamata",
+  "Minimized call": "Chiamata minimizzata",
+  "Reopen call": "Riapri chiamata",
+  "Hang up call": "Riaggancia chiamata",
+  "Incoming call": "Chiamata in arrivo",
+  "The selected Home Assistant phone is unavailable.": "Il telefono Home Assistant selezionato non è disponibile.",
+  "End the current call before changing the browser phone.": "Termina la chiamata prima di cambiare il telefono del browser.",
+  "Select an existing Home Assistant phone.": "Seleziona un telefono Home Assistant esistente.",
+  "The HA frontend context provider is unavailable.": "Il contesto del frontend Home Assistant non è disponibile.",
+};
+
 export function voipStackLanguage(hass) {
   return String(hass?.language || hass?.locale?.language || "en").toLowerCase();
 }
@@ -301,13 +358,16 @@ export function voipStackLanguage(hass) {
 export function voipStackTranslate(hass, text) {
   const value = String(text ?? "");
   const language = voipStackLanguage(hass);
-  const dictionary = language === "de" || language.startsWith("de-")
+  const dictionary = language === "it" || language.startsWith("it-")
+    ? IT
+    : language === "de" || language.startsWith("de-")
     ? DE
     : language === "pt" || language === "pt-br"
       ? PT_BR
       : null;
   if (!dictionary) return value;
   if (dictionary[value]) return dictionary[value];
+  if (dictionary === IT) return value;
   const reason = value.match(/^Reason: (.+)$/);
   if (reason) {
     const label = language.startsWith("de") ? "Grund" : "Motivo";

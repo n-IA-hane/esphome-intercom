@@ -9,6 +9,7 @@ resolves that device and deliberately never adopts or mutates it.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -64,10 +65,8 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
     """
     if not is_managed_endpoint(endpoint):
         return None
-    model = BROWSER_PHONE_DEVICE_MODEL
-    if enum_value(endpoint.kind) == "sip_account":
-        model = SIP_ACCOUNT_DEVICE_MODEL
-    return DeviceInfo(
+    model = SIP_ACCOUNT_DEVICE_MODEL
+    info = DeviceInfo(
         identifiers={(DOMAIN, endpoint_device_identifier(endpoint.endpoint_id))},
         name=endpoint.name,
         manufacturer="VoIP Stack",
@@ -75,6 +74,12 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
         sw_version=INTEGRATION_VERSION,
         entry_type=DeviceEntryType.SERVICE,
     )
+    if endpoint.supports_ha_client:
+        info["configuration_url"] = (
+            "homeassistant://voip-stack-popup?endpoint_id="
+            f"{quote(endpoint.endpoint_id, safe='')}"
+        )
+    return info
 
 
 @callback

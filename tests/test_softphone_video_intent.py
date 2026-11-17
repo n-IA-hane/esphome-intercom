@@ -34,7 +34,14 @@ class _Socket:
 class _Registry:
     def __init__(self, client) -> None:
         self.client = client
-        self.session = SimpleNamespace(generation=7)
+        self.session = SimpleNamespace(generation=7, video_intent_lock=asyncio.Lock())
+        if client is not None and (
+            isinstance(client, SimpleNamespace)
+            or isinstance(client.async_prepare_video_reinvite, AsyncMock)
+        ):
+            client.prepared_reinvite_identity = lambda candidate: SimpleNamespace(
+                previous=client.dialog, candidate=candidate,
+            )
 
     def get_session(self, _call_id):
         return self.session
@@ -70,6 +77,10 @@ def intent(monkeypatch):
         },
     )
     monkeypatch.setattr(local_softphone_runtime, "local_softphone_bridge", lambda _hass: None)
+    # This controlled fixture has no HA pool. Public socket tests exercise the
+    # real unpooled-source adoption and queued-packet preservation separately.
+    monkeypatch.setattr(module.RtpPortReservation, "adopt_bound_source",
+        lambda _hass, _port, *, reservation, retained_port: reservation)
     monkeypatch.setattr(module, "require_runtime_data", lambda _hass: SimpleNamespace(
         media=SimpleNamespace(sessions_for=lambda _kind: {}),
     ))
@@ -98,6 +109,7 @@ async def test_enabling_video_commits_reserved_media_only_after_reinvite(
         async_prepare_video_reinvite=AsyncMock(return_value=candidate),
         commit_prepared_reinvite=Mock(return_value=True),
         media_reservation=None,
+        local_rtp_port=42000,
         video_rtp_socket=None,
         video_rtcp_socket=None,
     )
@@ -152,7 +164,10 @@ async def test_enabling_video_keeps_audio_reservation_owned_until_client_cleanup
     client.commit_prepared_reinvite = Mock(return_value=True)
     registry = _Registry(client)
     if outcome == "superseded":
-        registry.is_generation_current = lambda *_args: False
+        async def supersede(**_kwargs):
+            registry.is_generation_current = lambda *_args: False
+            return candidate
+        client.async_prepare_video_reinvite.side_effect = supersede
     monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
     monkeypatch.setattr(module, "reserve_sip_video_media", lambda _hass: (staged, new_rtp, new_rtcp))
 
@@ -300,6 +315,7 @@ async def test_successful_sdp_answer_rejecting_only_video_keeps_audio_dialog(
         async_prepare_video_reinvite=AsyncMock(return_value=candidate),
         commit_prepared_reinvite=Mock(return_value=True),
         media_reservation=None,
+        local_rtp_port=42000,
         video_rtp_socket=None,
         video_rtcp_socket=None,
     )
@@ -411,6 +427,7 @@ def _metadata_context(intent, monkeypatch, *, outgoing, previous):
                     client._prepared_reinvite = (
                         client.dialog, candidate, (candidate.video_format,),
                         candidate.local_video_direction,
+                        client.media_endpoints,
                     )
                 return candidate
             client.async_prepare_video_reinvite = prepare

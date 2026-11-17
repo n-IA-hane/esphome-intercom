@@ -92,7 +92,11 @@ async def test_snapshot_schema_and_subscription_are_passive(hass, monitor, monke
     assert set(kitchen) == {
         "schema_version", "endpoint_id", "device_id", "name", "extension", "kind",
         "availability", "dnd", "state", "calls", "mailbox",
+        "ring_group", "queues", "queue_states",
     }
+    assert kitchen["ring_group"] == ""
+    assert kitchen["queues"] == []
+    assert kitchen["queue_states"] == []
     assert kitchen["availability"] == "offline" and kitchen["state"] == "unavailable"
     assert kitchen["mailbox"] == {"enabled": False, "waiting": False, "new": 0, "old": 0}
     assert not monitor.calls.sessions and not monitor.runtime.softphone_presence
@@ -287,7 +291,7 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
 ):
     """Actual setup/unload and command authorization on one non-admin socket."""
     from unittest.mock import AsyncMock
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components import voip_stack
     from custom_components.voip_stack import phone_services
     from custom_components.voip_stack.endpoint_lifecycle import call_registry
@@ -328,7 +332,9 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         assert initial["kind"] == "snapshot" and initial["revision"] == 1
         assert len(initial["phones"]) == 1
         phone = initial["phones"][0]
-        assert phone["state"] == "idle" and phone["availability"] == "available"
+        # A newly bootstrapped account has neither SIP Contacts nor a saved HA
+        # card association. Snapshot readiness is independent of reachability.
+        assert phone["state"] == "unavailable" and phone["availability"] == "offline"
         assert not entry.runtime_data.softphone_presence
         assert await voip_stack.async_unload_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -344,7 +350,8 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         assert new_snapshot["revision"] == 1
         restored, = new_snapshot["phones"]
         assert (restored["endpoint_id"], restored["device_id"], restored["state"]) == (
-            phone["endpoint_id"], phone["device_id"], "idle")
+            phone["endpoint_id"], phone["device_id"], "unavailable")
+        assert restored["availability"] == "offline"
         assert not entry.runtime_data.softphone_presence
         observer = phone_state_observer(hass)
         assert len(observer.projection_listeners) == 1
@@ -423,6 +430,7 @@ async def test_real_HA_connection_close_owns_the_subscription_dictionary(hass, m
     connection.subscriptions[22] = lambda: remaining.append("other subscription")
     connection.logger = logging.getLogger(__name__)
     connection._connect_closed_error = lambda *_: None
+    connection._async_unsubscribe_all = ActiveConnection._async_unsubscribe_all.__get__(connection)
     ActiveConnection.async_handle_close(connection)
     assert not connection.subscriptions
     assert remaining == ["other subscription"]

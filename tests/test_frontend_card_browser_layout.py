@@ -1,7 +1,12 @@
 """Browser geometry checks for the production call controls."""
 
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
+import json
 import shutil
+from threading import Thread
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -12,80 +17,162 @@ pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-def test_dashboard_media_observer_selects_its_canvas_with_playwright_null_argument():
-    from tests.test_tool_output_storage import load_tool
-
-    tool = load_tool("qualify_voip_dashboard")
+@pytest.mark.parametrize("video", [False, True], ids=["compact", "video-toolbar"])
+def test_received_pcm_visibly_changes_hangup_without_moving_controls(video, tmp_path):
+    """Exercise RX PCM, native playback/analyser and visible geometry together."""
     playwright = pytest.importorskip("playwright.sync_api")
-    with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        try:
-            page = browser.new_page()
-            page.set_content("<voip-stack-dashboard-card></voip-stack-dashboard-card><voip-stack-card></voip-stack-card>")
-            page.evaluate("""()=>{
-              for(const [selector,w,h] of [['voip-stack-dashboard-card',80,40],['voip-stack-card',160,90]]){
-                const host=document.querySelector(selector),canvas=document.createElement('canvas');
-                canvas.className='video-canvas';canvas.width=w;canvas.height=h;
-                const c=canvas.getContext('2d');c.fillStyle='#ff0000';c.fillRect(0,0,w,h);
-                host.attachShadow({mode:'open'}).append(canvas);
-              }
-            }""")
-            # Python's omitted evaluate arg is serialized as JS null, not undefined.
-            observed = page.evaluate(tool.MEDIA_SAMPLE_SCRIPT)
-            assert observed["canvases"] == [{"width": 80, "height": 40, "non_black": True}]
-            page.evaluate("document.querySelector('voip-stack-dashboard-card').shadowRoot.querySelector('canvas').hidden=true")
-            # A real, non-black sibling phonecard cannot qualify the dashboard.
-            assert page.evaluate(tool.MEDIA_SAMPLE_SCRIPT)["canvases"] == []
-            assert page.evaluate(tool.MEDIA_SAMPLE_SCRIPT, "voip-stack-card")["canvases"] == [
-                {"width": 160, "height": 90, "non_black": True}]
-        finally:
-            browser.close()
+    source_bytes = {path.name: path.read_bytes() for path in FRONTEND.glob("*.js")}
 
+    class Assets(BaseHTTPRequestHandler):
+        def do_GET(self):
+            name = Path(urlsplit(self.path).path).name
+            if name in source_bytes:
+                body, content_type = source_bytes[name], "text/javascript"
+            elif self.path == "/":
+                body, content_type = b"<html><body></body></html>", "text/html"
+            else:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-@pytest.mark.parametrize("embedded", [None, False, True])
-def test_inline_dashboard_options_omit_native_chrome_only(embedded):
-    playwright = pytest.importorskip("playwright.sync_api")
-    with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        try:
-            page = browser.new_page(viewport={"width": 420, "height": 800})
+        def log_message(self, *_):
+            pass
 
-            def serve(route):
-                name = route.request.url.split("/")[-1].split("?")[0]
-                path = FRONTEND / name
-                route.fulfill(
-                    content_type="text/javascript" if name.endswith(".js") else "text/html",
-                    body=path.read_text() if name.endswith(".js") and path.is_file()
-                    else "<html><body></body></html>",
-                )
-
-            page.route("http://card.test/**", serve)
-            page.goto("http://card.test/")
-            page.evaluate("""async embedded=>{
-              await import('/voip-stack-card.js');
-              window.card=document.createElement('voip-stack-card');
-              card.config={mode:'ha_softphone',device_id:'desk-device',name:'Desk'};
-              card._activeDeviceInfo={device_id:'desk-device',endpoint_id:'desk',name:'Desk'};
-              card._softphoneSnapshot={state:'idle',enabled:true,device_id:'desk-device'};
-              card._hass={language:'en',user:{is_admin:true},config:{location_name:'Home'},states:{}};
-              if(embedded!==null)card.setDashboardMode(embedded);
-              document.body.append(card);
-              card.togglePhoneKeypad();card.togglePhoneOptions();
-            }""", embedded)
-            assert page.evaluate("card._settingsOpen") is True
-            assert page.locator(".settings-panel").is_visible()
-            for selector in (".header", ".runtime-controls"):
-                assert page.locator(selector).is_visible() == (not embedded)
-            # The hidden child toolbar still advertises its native actions to
-            # the Dashboard. Closing options must reveal the retained keypad.
-            assert page.evaluate("card._els.settingsBtn.hidden") is False
-            assert page.evaluate("card._els.keypadBtn.hidden") is False
-            page.evaluate("card.togglePhoneOptions()")
-            assert page.locator(".keypad-panel").is_visible()
-            assert page.evaluate("card._settingsOpen") is False
-        finally:
-            browser.close()
+    # Worklet module fetches use native Chromium networking, unlike the page
+    # route fixtures used by presentation-only tests. Bind only loopback.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Assets)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as runner:
+            browser = runner.chromium.launch(
+                executable_path=shutil.which("chromium"), headless=True,
+                args=["--autoplay-policy=no-user-gesture-required"],
+            )
+            try:
+                page = browser.new_page(viewport={"width": 420, "height": 700})
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.goto(f"http://127.0.0.1:{server.server_port}/")
+                page.evaluate("""async video => {
+                  // Only HA I/O and its icon boundary are controlled. No
+                  // microphone, call, websocket or injected audio-level event.
+                  Object.defineProperty(navigator, 'mediaDevices', {value: {
+                    enumerateDevices: async () => [], addEventListener() {},
+                    getUserMedia: async () => { throw Error('Unexpected microphone request'); }
+                  }});
+                  customElements.define('ha-icon', class extends HTMLElement {
+                    constructor() { super(); this.attachShadow({mode:'open'}).innerHTML =
+                      '<style>:host{display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)}</style><svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 14v-3c5-5 13-5 18 0v3h-5v-3c-3-1-5-1-8 0v3z"/></svg>'; }
+                  });
+                  await import('/voip-stack-card.js');
+                  const e = window.engine = __voipStackEngine;
+                  e._state = 'ACTIVE'; e._callId = 'pcm-call';
+                  e._endpointId = 'desk'; e._deviceId = 'desk-device';
+                  // Native graph runs silently, without opening a speaker.
+                  e._createAudioContext = () => new AudioContext({sinkId:{type:'none'}});
+                  await e._setupAudio({audio_mode:'full_duplex'}, {
+                    tx_format:'16000:s16le:1:10', rx_format:'16000:s16le:1:10', audio_direction:'recvonly'
+                  });
+                  if (video) e._video = {callId:'pcm-call', visible:true, active:false, setCanvas(){}};
+                  window.audioEvents = [];
+                  e.addEventListener('audio-level', event => audioEvents.push(event.detail));
+                  const c = window.card = document.createElement('voip-stack-card');
+                  c.style.cssText='width:360px;height:360px;display:block';
+                  c.config={mode:'ha_softphone',device_id:'desk-device',name:'Desk'};
+                  c._activeDeviceInfo={device_id:'desk-device',endpoint_id:'desk',name:'Desk'};
+                  c._softphoneStateLoaded=true;
+                  c._softphoneSnapshot={state:'in_call',enabled:true,available:true,
+                    endpoint_id:'desk',call_id:'pcm-call',device_id:'desk-device',media_owner:'other'};
+                  c._hass={language:'en',user:{is_admin:true},config:{location_name:'Home'},states:{}};
+                  document.body.append(c);
+                  window.geometry = () => {
+                    const button=c._els.hangupBtn;
+                    const visual=button.querySelector(video ? '.hangup-icon' : '.hangup-pulse');
+                    const samples=new Float32Array(e._playbackAnalyser.fftSize);
+                    e._playbackAnalyser.getFloatTimeDomainData(samples);
+                    return {button:button.getBoundingClientRect().toJSON(),
+                      visual:visual.getBoundingClientRect().toJSON(), transform:getComputedStyle(visual).transform,
+                      level:e.audioLevel,rms:Math.sqrt(samples.reduce((s,v)=>s+v*v,0)/samples.length),
+                      video:c._els.card.classList.contains('video-active'),
+                      reducedMotion:matchMedia('(prefers-reduced-motion:reduce)').matches};
+                  };
+                  window.feed = amplitude => {
+                    clearInterval(window.feeder); let phase=0;
+                    const write=()=>{
+                      const data=new ArrayBuffer(321), view=new DataView(data); view.setUint8(0,1);
+                      for(let i=0;i<160;i++)view.setInt16(1+2*i,
+                        Math.round(amplitude*32767*Math.sin(phase++*2*Math.PI*440/16000)),true);
+                      e._handleMessage({data});
+                    };
+                    for(let i=0;i<8;i++)write();
+                    window.feeder=setInterval(write,10);
+                  };
+                  feed(0);
+                }""", video)
+                page.wait_for_timeout(200)
+                quiet = page.evaluate("geometry()")
+                page.screenshot(path=str(tmp_path / "quiet.png"))
+                page.evaluate("feed(0.01)")  # Quiet PCM, about -43 dBFS RMS.
+                page.wait_for_function("engine.audioLevel > 0.17")
+                page.wait_for_timeout(160)
+                speech = page.evaluate("geometry()")
+                page.screenshot(path=str(tmp_path / "quiet-speech.png"))
+                page.evaluate("feed(0.5)")
+                page.wait_for_function("engine.audioLevel > 0.98")
+                page.wait_for_timeout(160)
+                loud = page.evaluate("geometry()")
+                page.emulate_media(reduced_motion="reduce")
+                # Emulation and style invalidation cross the browser process
+                # boundary. Observe the actual preference and final CSS state.
+                page.wait_for_function("geometry().reducedMotion && geometry().transform === 'none'")
+                reduced = page.evaluate("geometry()")
+                page.screenshot(path=str(tmp_path / "reduced-motion.png"))
+                page.emulate_media(reduced_motion="no-preference")
+                page.evaluate("feed(0)")
+                page.wait_for_function("engine.audioLevel === 0")
+                page.wait_for_timeout(160)
+                silent = page.evaluate("geometry()")
+                events = page.evaluate("audioEvents")
+                stats = page.evaluate("engine.stats")
+                page.evaluate("async()=>{clearInterval(feeder);card.remove();await engine._cleanupAudio('test-end');}")
+                assert page.evaluate("engine._audioLevelFrame === 0 && engine._playbackAnalyser === null")
+                receipt = {"browser": browser.version, "video": video, "quiet": quiet,
+                           "speech": speech, "loud": loud, "reduced": reduced,
+                           "silent": silent, "events": events, "stats": stats,
+                           "source_sha256": {name: hashlib.sha256(source_bytes[name]).hexdigest()
+                                             for name in ("voip-stack-engine.js", "voip-stack-card.js",
+                                                          "voip-stack-card-view.js", "voip-stack-playback-processor.js")}}
+                (tmp_path / "pcm-geometry.json").write_text(json.dumps(receipt, indent=2))
+                assert not errors
+                assert quiet["video"] is video
+                assert quiet["level"] == 0
+                assert .005 < speech["rms"] < .009
+                assert stats["received"] > 40
+                assert all(event["endpoint_id"] == "desk" and event["call_id"] == "pcm-call" for event in events)
+                # A real waveform must produce a useful visible change at low
+                # level, not merely a nonzero CSS value after a forged event.
+                assert speech["visual"]["width"] - quiet["visual"]["width"] >= (2 if video else 6)
+                for sample in (speech, loud, reduced, silent):
+                    for field in ("x", "y", "width", "height"):
+                        assert abs(sample["button"][field] - quiet["button"][field]) < .1
+                    assert sample["button"]["width"] >= 44 and sample["button"]["height"] >= 44
+                    for low, high in (("left", "right"), ("top", "bottom")):
+                        assert sample["visual"][low] >= sample["button"][low] - .5
+                        assert sample["visual"][high] <= sample["button"][high] + .5
+                assert reduced["transform"] == "none"
+                assert silent["level"] == 0
+                assert abs(silent["visual"]["width"] - quiet["visual"]["width"]) < .1
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
@@ -143,6 +230,116 @@ def test_contacts_keypad_navigation_leaves_options(mode, initial_keypad, tmp_pat
                     && element.getBoundingClientRect().height > 0;
             }""", initial_keypad)
             assert visible, "Selected contacts/keypad panel remains hidden by Options"
+            page.evaluate("card.remove()")
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.parametrize("width", [415, 420])
+def test_unavailable_mirror_settles_with_classic_scrollbar(width, tmp_path):
+    """A scrollbar must not resize the empty call area into a perpetual loop."""
+    playwright = pytest.importorskip("playwright.sync_api")
+    source = {path.name: path.read_bytes() for path in FRONTEND.glob("*.js")}
+    with playwright.sync_playwright() as runner:
+        # Playwright otherwise hides scrollbars in headless mode, which removes
+        # the gutter and conceals this real desktop-browser regression.
+        browser = runner.chromium.launch(
+            executable_path=shutil.which("chromium"), headless=True,
+            ignore_default_args=["--hide-scrollbars"],
+        )
+        try:
+            page = browser.new_page(viewport={"width": 800, "height": 800})
+
+            def serve(route):
+                name = Path(urlsplit(route.request.url).path).name
+                if name in source:
+                    route.fulfill(content_type="text/javascript", body=source[name])
+                elif route.request.url == "http://card.test/":
+                    route.fulfill(content_type="text/html", body="<html><body></body></html>")
+                else:
+                    route.abort()
+
+            page.route("**/*", serve)
+            page.goto("http://card.test/")
+            page.evaluate(r"""async width => {
+              document.body.style.cssText='margin:0;font:14px/20px Arial';
+              customElements.define('ha-icon',class extends HTMLElement{
+                constructor(){super();this.attachShadow({mode:'open'}).innerHTML=
+                  '<style>:host{display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)}</style>';
+                }
+              });
+              await import('/voip-stack-card.js');
+              const host=document.createElement('div');window.layoutHost=host;
+              host.style.cssText=`width:${width}px;height:504px`;
+              document.body.append(host);
+              const card=document.createElement('voip-stack-card');window.card=card;
+              card.config={mode:'esp_mirror',device_id:'fixture-device',name:'ESP mirror'};
+              card._activeDeviceInfo={device_id:'fixture-device',name:'ESP mirror'};
+              card._voipStateEntityId='sensor.fixture_state';
+              card._startCallService='fixture_start_call';
+              card._hass={language:'en',config:{location_name:'Fixture',components:['voip_stack']},
+                states:{'sensor.fixture_state':{state:'unavailable'}},
+                connection:{subscribeEvents:async()=>()=>{},sendMessagePromise:async()=>({devices:[]})}};
+              window.measureCalls=0;
+              const measure=card._measureLayout;
+              card._measureLayout=function(){measureCalls++;return measure.call(this)};
+              host.append(card);card._render();
+              const style=document.createElement('style');
+              style.textContent='ha-card::-webkit-scrollbar{width:15px;height:15px}';
+              card.shadowRoot.append(style);
+              window.sampleFrames=async count=>{
+                const samples=[];
+                for(let frame=0;frame<count;frame++){
+                  await new Promise(requestAnimationFrame);
+                  const c=card._els.card,s=getComputedStyle(c),b=c.getBoundingClientRect();
+                  samples.push({width:b.width,height:b.height,clientWidth:c.clientWidth,
+                    clientHeight:c.clientHeight,scrollHeight:c.scrollHeight,
+                    gutter:c.offsetWidth-c.clientWidth-parseFloat(s.borderLeftWidth)-parseFloat(s.borderRightWidth),
+                    button:s.getPropertyValue('--voip-button-size'),fluid:s.getPropertyValue('--voip-fluid-space'),
+                    scrollbarGutter:s.scrollbarGutter,narrow:c.classList.contains('layout-narrow'),
+                    compact:c.classList.contains('layout-compact'),short:c.classList.contains('layout-short'),
+                    measures:measureCalls});
+                }
+                return samples;
+              };
+            }""", width)
+            offline = page.evaluate("sampleFrames(180)")
+            receipt = {"browser": browser.version, "width": width, "offline": offline,
+                       "source_sha256": {name: hashlib.sha256(source[name]).hexdigest()
+                                         for name in ("voip-stack-card.js", "voip-stack-card-view.js")}}
+            receipt_path = tmp_path / "classic-scrollbar-layout.json"
+            receipt_path.write_text(json.dumps(receipt, indent=2))
+            page.screenshot(path=str(tmp_path / "unavailable-mirror.png"))
+
+            def assert_settled(samples, expected_width, expected_height, gutter=True):
+                tail = samples[-30:]
+                geometry = [{key: value for key, value in row.items() if key != "measures"}
+                            for row in tail]
+                assert all(row == geometry[0] for row in geometry), geometry
+                assert tail[-1]["measures"] - tail[0]["measures"] <= 1
+                assert abs(tail[-1]["width"] - expected_width) < .1
+                assert abs(tail[-1]["height"] - expected_height) < .1
+                assert tail[-1]["gutter"] == (15 if gutter else 0)
+
+            assert_settled(offline, width, 504)
+            page.evaluate("card._hass.states['sensor.fixture_state']={state:'idle'};card._render()")
+            online = page.evaluate("sampleFrames(60)")
+            assert_settled(online, width, 504)
+            assert page.evaluate("!card._els.callBtn.hidden")
+            page.evaluate("layoutHost.style.width='352px';layoutHost.style.height='280px'")
+            resized = page.evaluate("sampleFrames(60)")
+            assert_settled(resized, 352, 280)
+            assert resized[-1]["narrow"] and resized[-1]["short"]
+
+            # CSS video geometry only, without opening a camera or call. The
+            # ordinary card's reserved gutter must not shrink this full surface.
+            page.evaluate("card._els.card.classList.add('video-active');card._measureLayout()")
+            video = page.evaluate("sampleFrames(60)")
+            assert_settled(video, 352, 280, gutter=False)
+            assert video[-1]["scrollbarGutter"] == "auto"
+            receipt.update(online=online, resized=resized, video=video)
+            receipt_path.write_text(json.dumps(receipt, indent=2))
             page.evaluate("card.remove()")
         finally:
             browser.close()
@@ -478,137 +675,5 @@ def test_activity_lists_leave_call_buttons_unchanged(width, ringing, tmp_path):
             page.evaluate("renderActivity({parked:[],phones:[]})")
             assert page.evaluate("elements.parkingNotice.hidden && elements.phoneActivity.hidden")
             assert page.evaluate("controls()") == before
-        finally:
-            browser.close()
-
-
-@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-def test_probe_outbound_uses_visible_controls_and_trusted_input():
-    from tools.sip_video_browser_probe import start_outbound
-
-    playwright = pytest.importorskip("playwright.sync_api")
-    with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        try:
-            page = browser.new_page()
-            page.set_content("<voip-stack-card></voip-stack-card>")
-            page.evaluate("""() => {
-                const card=document.querySelector('voip-stack-card');
-                card.style.display='block';card.config={mode:'ha_softphone'};
-                const root=card.attachShadow({mode:'open'});
-                root.innerHTML=`<button aria-controls="voip-settings-panel" aria-expanded="false">Options</button>
-                    <button aria-controls="voip-keypad-panel">Keypad</button>
-                    <input class="keypad-input" hidden>
-                    <button class="voip-button call">Call</button>`;
-                window.probeEvents=[];
-                const input=root.querySelector('input');
-                root.querySelector('[aria-controls="voip-keypad-panel"]').onclick=event=>{
-                    probeEvents.push({type:'keypad',trusted:event.isTrusted});input.hidden=false;
-                };
-                input.oninput=event=>probeEvents.push({type:'input',trusted:event.isTrusted,value:input.value});
-                root.querySelector('.call').onclick=event=>probeEvents.push({type:'call',trusted:event.isTrusted,value:input.value});
-                for(const key of ['_softphoneKeypadOpen','_softphoneManualTarget'])
-                    Object.defineProperty(card,key,{set(){throw new Error('private state bypass');}});
-                card._startCall=()=>{throw new Error('private call bypass');};
-            }""")
-            assert start_outbound(page, "Registered receiver")
-            assert page.evaluate("probeEvents") == [
-                {"type": "keypad", "trusted": True},
-                {"type": "input", "trusted": True, "value": "Registered receiver"},
-                {"type": "call", "trusted": True, "value": "Registered receiver"},
-            ]
-        finally:
-            browser.close()
-
-
-@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-def test_probe_reads_native_audio_clock_without_resuming_or_replacing_context():
-    from tools.sip_video_browser_probe import AUDIO_CLOCK_SAMPLE
-
-    playwright = pytest.importorskip("playwright.sync_api")
-    with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
-            args=["--autoplay-policy=no-user-gesture-required", "--mute-audio"])
-        try:
-            page = browser.new_page()
-            cdp = page.context.new_cdp_session(page)
-            contexts = []
-            cdp.on("WebAudio.contextCreated", lambda event: contexts.append(event["context"]))
-            cdp.send("WebAudio.enable")
-            page.evaluate("""async()=>{
-                window.clockContext=new AudioContext({sampleRate:48000});
-                window.__voipStackEngine={_audioContext:clockContext};
-                await clockContext.resume();
-            }""")
-            page.wait_for_function("clockContext.currentTime>0")
-            running = page.evaluate(AUDIO_CLOCK_SAMPLE)
-            assert running["active"]["state"] == "running"
-            assert running["active"]["sample_rate"] == 48000
-            assert running["wall_epoch_ms"] > 0 and running["wall_monotonic_ms"] >= 0
-            assert contexts and contexts[0]["sampleRate"] == 48000
-            native = cdp.send("WebAudio.getRealtimeData", {"contextId": contexts[0]["contextId"]})
-            assert native["realtimeData"]["currentTime"] >= 0
-            page.evaluate("clockContext.suspend()")
-            before = page.evaluate("clockContext.currentTime")
-            suspended = page.evaluate(AUDIO_CLOCK_SAMPLE)
-            assert suspended["active"]["state"] == "suspended"
-            assert suspended["active"]["current_time"] == before
-            assert page.evaluate("clockContext===__voipStackEngine._audioContext")
-            assert page.evaluate("clockContext.state") == "suspended"
-            page.evaluate("clockContext.close()")
-        finally:
-            browser.close()
-
-
-@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-@pytest.mark.parametrize("direction", ["sendonly", "sendrecv"])
-def test_camera_cycle_sends_trusted_ui_intents_only_after_connection(direction):
-    from tools.sip_video_browser_probe import camera_toggle_cycle, set_camera_send
-
-    playwright = pytest.importorskip("playwright.sync_api")
-    with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
-        try:
-            page = browser.new_page()
-            page.set_content("<voip-stack-card></voip-stack-card>")
-            page.evaluate("""()=>{
-                const card=document.querySelector('voip-stack-card');
-                card.style.display='block';card.config={mode:'ha_softphone'};
-                const root=card.attachShadow({mode:'open'});
-                root.innerHTML=`<button aria-controls="voip-settings-panel" aria-expanded="false">Options</button>
-                    <div hidden><input id="ha-softphone-video-camera-cb" type="checkbox"></div>`;
-                const button=root.querySelector('button'),panel=root.querySelector('div');
-                button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));};
-                window.intentWire=[];window.dialog='calling';
-                root.querySelector('input').onchange=event=>intentWire.push({
-                    type:'set_send_video',enabled:event.target.checked,state:dialog,trusted:event.isTrusted,
-                });
-                card._toggleVideoCamera=()=>{throw new Error('private camera bypass');};
-            }""")
-            def wait_phase(label, enabled, previous):
-                if enabled is None:
-                    assert page.evaluate("intentWire") == []
-                    page.evaluate("dialog='in_call';intentWire.push({type:'connected'})")
-                else:
-                    assert previous["backend_state"]["state"] == "in_call"
-                    assert page.evaluate("intentWire.at(-1)") == {
-                        "type": "set_send_video", "enabled": enabled,
-                        "state": "in_call", "trusted": True,
-                    }
-                return {"backend_state": {"state": "in_call", "call_id": "dialog-one",
-                    "video_direction": ("recvonly" if direction == "sendrecv" else "inactive")
-                        if not enabled else direction}}
-            phases = camera_toggle_cycle(lambda enabled: set_camera_send(page, enabled), wait_phase,
-                expected_call_id="dialog-one", direction=direction)
-            assert len(phases) == 4
-            assert page.evaluate("intentWire.map(item=>item.type)") == [
-                "connected", "set_send_video", "set_send_video", "set_send_video",
-            ]
-            assert page.evaluate("intentWire.slice(1).map(item=>item.enabled)") == [True, False, True]
-            attempts = []
-            with pytest.raises(RuntimeError, match="established SIP dialog"):
-                camera_toggle_cycle(lambda enabled: attempts.append(enabled),
-                    lambda *_args: {"backend_state": {"state": "calling", "call_id": "not-connected"}})
-            assert not attempts
         finally:
             browser.close()

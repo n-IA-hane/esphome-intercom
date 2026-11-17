@@ -11,7 +11,7 @@ import wave
 
 import pytest
 
-from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, roster_from_peers
+from custom_components.voip_stack.endpoint_routing import roster_from_peers
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.trunk_runtime import async_stop_sip_trunk
@@ -76,6 +76,10 @@ module_app account.so
                     stream.write("video_source fakevideo,nil\nvideo_display fakevideo,nil\n"
                                  "video_size 160x120\nvideo_fps 5\nvideo_bitrate 128000\n"
                                  "avcodec_keyint 5\nmodule avcodec.so\nmodule fakevideo.so\n")
+            h264_profile = getattr(request, "param", {}).get("h264_profile_level_id", "")
+            if name in video_names and h264_profile:
+                with (config / "config").open("a") as stream:
+                    stream.write(f"avcodec_profile_level_id {h264_profile}\n")
             accounts = config / "accounts"
             manual = getattr(request, "param", {}).get("manual", ())
             manual = (manual,) if isinstance(manual, str) else manual
@@ -88,7 +92,8 @@ module_app account.so
                 accounts.write_text(accounts.read_text().replace(">;auth_user=", ";video_codecs=H264>;auth_user="))
             accounts.chmod(0o600)
             peers.append(await asyncio.to_thread(BareSip, config))
-        lab.roster[:] = assemble_directory_entries(lab.hass, [], registrar.registered_roster_entries())
+        lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+        lab.runtime.directory.replace(lab.roster)
         yield peers
     finally:
         for peer in peers:
@@ -705,7 +710,7 @@ async def test_replaces_accepts_the_media_commit_identity(registered_phones, tru
         result = await prepare_media(*args)
         async def commit():
             await result.commit()
-            client._prepared_reinvite = (before, candidate, (), "inactive")
+            client._prepared_reinvite = (before, candidate, (), "inactive", client.media_endpoints)
             assert client.commit_prepared_reinvite(before, candidate)
         return replace(result, commit=commit, dialog_identity=PreparedDialogIdentity(client, before, candidate))
     monkeypatch.setattr(media_renegotiation, "async_prepare_media_update", prepare)
@@ -740,7 +745,7 @@ async def test_outside_refer_target_dialog_with_baresip_and_duplex_audio(registe
     registrar.registrations["bedroom0"] = SipRegistration(username="bedroom0",
         contact_uri=f"sip:bedroom0@127.0.0.1:{source_port}", source_host="127.0.0.1", source_port=source_port,
         transport="UDP", expires_at=time.time() + 120)
-    lab.roster[:] = assemble_directory_entries(lab.hass, [], registrar.registered_roster_entries())
+    lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
     receive = source.datagram_received
     def incoming(raw, addr):
         message = sip.parse_message(raw)
@@ -1121,6 +1126,9 @@ async def test_replacement_waits_for_destination_remote_media_commit(registered_
     async def blocked_update(*args):
         entered.set()
         await release.wait()
+        # The barrier pauses the current owner without replacing its identity
+        # when the delegated preparation later validates its commit.
+        monkeypatch.setattr(client, "on_media_update", update)
         return await update(*args)
 
     monkeypatch.setattr(client, "on_media_update", blocked_update)
@@ -1236,9 +1244,12 @@ async def test_blind_transfer_service_retains_opposite_phone(
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones, trunks, monkeypatch):
     """A peer without REFER retains its original call and destination claim."""
+    from unittest.mock import AsyncMock
+
     from homeassistant.core import ServiceCall
     from custom_components.voip_stack import _handle_sip_transfer_service
     from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.device_resolver import get_resolver
     from custom_components.voip_stack.roster import RosterEntry
 
     lab = trunks
@@ -1246,10 +1257,19 @@ async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones,
     legacy = lab.phones[0]
     lab.runtime.endpoints.update("sip:bedroom0", kind=EndpointKind.ESPHOME, availability="available")
     port = legacy.transport.get_extra_info("sockname")[1]
-    lab.roster.append(RosterEntry(
+    endpoint = lab.runtime.endpoints.get("sip:bedroom0")
+    # Discovery must see the same real legacy peer during registration refreshes.
+    monkeypatch.setattr(get_resolver(lab.hass), "list_devices", AsyncMock(return_value=[{
+        "device_id": endpoint.device_id, "endpoint_id": endpoint.endpoint_id,
+        "name": endpoint.name, "host": "127.0.0.1", "sip_port": port,
+        "sip_transport": "udp", "sip_uri_user": endpoint.username, "managed": False,
+    }]))
+    legacy_index = next(index for index, row in enumerate(lab.roster)
+                        if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
+    lab.roster[legacy_index] = RosterEntry(
         "bedroom0", sip_uri=f"sip:bedroom0@127.0.0.1:{port}",
         metadata={"endpoint_id": "sip:bedroom0", "endpoint_kind": "esphome"},
-    ))
+    )
     original_dispatch = legacy.datagram_received
     refers = []
 

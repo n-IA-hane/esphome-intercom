@@ -15,8 +15,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-
-from ha_voip_lab.paths import CAPTURE_ROOT  # noqa: E402
+sys.path.insert(0, str(ROOT / "tools"))
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
 WILDIX_CONFIG = Path(os.environ.get("WILDIX_CONFIG", "/home/codex/.baresip-wildix-426"))
@@ -119,7 +118,7 @@ def _parse_args() -> argparse.Namespace:
         "--out",
         default=os.environ.get(
             "RING_GROUP_MATRIX_OUT",
-            str(CAPTURE_ROOT / "ring-group-live-matrix" / "result.json"),
+            str(ROOT / "test_captures" / "ring_group_live_matrix.json"),
         ),
     )
     parser.add_argument(
@@ -275,7 +274,7 @@ def main(*, output: Path | None = None) -> int:
     output = output or Path(
         os.environ.get(
             "RING_GROUP_MATRIX_OUT",
-            CAPTURE_ROOT / "ring-group-live-matrix" / "result.json",
+            ROOT / "test_captures" / "ring_group_live_matrix.json",
         )
     )
     results: list[dict[str, Any]] = []
@@ -750,7 +749,7 @@ def main(*, output: Path | None = None) -> int:
             "turn_on" if original_inbound_automation else "turn_off",
             {"entity_id": INBOUND_AUTOMATION},
         )
-    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2))
     return 1 if any(item["status"] != "pass" for item in results) else 0

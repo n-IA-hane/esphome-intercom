@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, asdict, field, replace
 from enum import StrEnum
 import hmac
 import logging
@@ -20,19 +20,6 @@ from .roster import RosterEntry
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class AuthenticatedOutboundFlow:
-    """An internal selection of one authenticated RFC 5626 UDP binding."""
-
-    registrar: SipRegistrar
-    username: str
-    flow_key: tuple[str, str, str, int, str]
-    instance_id: str
-    reg_id: int
-
-
 def _register_digest_uri_matches(auth_uri: str, request_uri: str) -> bool:
     """Allow an omitted default port without changing the signed Digest URI."""
     if auth_uri == request_uri:
@@ -61,6 +48,18 @@ MAX_NONCE_USE_RECORDS = 2048
 
 
 @dataclass(frozen=True, slots=True)
+class AuthenticatedOutboundFlow:
+    """One selected Contact lifetime, never an IP-based authorization."""
+
+    registrar: SipRegistrar
+    username: str
+    contact_uri: str
+    generation: str
+    flow_key: tuple
+    outbound: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class SipAccount:
     username: str
     display_name: str
@@ -70,7 +69,6 @@ class SipAccount:
     conference_group: str = ""
     conference_ring: bool = False
     ring_group: str = ""
-    endpoint_id: str = ""
 
     @property
     def roster_name(self) -> str:
@@ -97,11 +95,14 @@ class SipRegistration:
     public_gruu: str = ""
     temporary_gruu: str = ""
     capabilities: dict[str, Any] | None = None
+    capability_generation: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
-    def flow_key(self) -> tuple[str, str, str, int, str]:
-        """Scope optional wire capabilities to this authenticated Contact flow."""
-        return (self.call_id, self.contact_uri, self.source_host, self.source_port, self.transport.upper())
+    def flow_key(self) -> tuple:
+        """Authenticated routing identity, excluding refresh sequence/expiry."""
+        return (self.username.casefold(), self.call_id, self.contact_uri,
+            self.advertised_contact_uri, self.source_host, self.source_port,
+            self.transport.upper(), self.instance_id, self.reg_id)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -348,6 +349,8 @@ class SipRegistrar:
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
         self.accounts = {account.username.lower(): account for account in accounts}
+        self._authentication_generations = {username: uuid.uuid4().hex for username in self.accounts}
+        self._account_observers = set()
         self.registrations: dict[str, SipRegistration] = {}
         self.nonces: dict[str, float] = {}
         self.nonce_uses: dict[
@@ -376,6 +379,16 @@ class SipRegistrar:
     def update_accounts(self, accounts: list[SipAccount]) -> None:
         previous_accounts = self.accounts
         self.accounts = {account.username.lower(): account for account in accounts}
+        changed = {username for username in previous_accounts.keys() | self.accounts.keys()
+                   if username not in previous_accounts or username not in self.accounts
+                   or previous_accounts[username].enabled != self.accounts[username].enabled
+                   or not hmac.compare_digest(previous_accounts[username].password.encode(),
+                                              self.accounts[username].password.encode())}
+        for username in changed:
+            if username in self.accounts:
+                self._authentication_generations[username] = uuid.uuid4().hex
+            else:
+                self._authentication_generations.pop(username, None)
         retained: dict[str, list[SipRegistration]] = {}
         retained_usernames: set[str] = set()
         for registration in self.registrations.values():
@@ -386,7 +399,7 @@ class SipRegistrar:
                 account is None
                 or not account.enabled
                 or previous is None
-                or not hmac.compare_digest(previous.password, account.password)
+                or not hmac.compare_digest(previous.password.encode(), account.password.encode())
             ):
                 continue
             registration.username = account.username
@@ -406,6 +419,21 @@ class SipRegistrar:
         self.registrations = registrations
         for username in removed:
             self._notify_registration_change(username, False)
+        if changed:
+            for observer in tuple(self._account_observers):
+                try:
+                    observer(frozenset(changed))
+                except Exception as error:
+                    _LOGGER.warning("Account observer stopped (%s)", type(error).__name__)
+
+    def authentication_generation(self, username):
+        """One private account lifetime, independent of Contact reachability."""
+        account = self.accounts.get(str(username).casefold())
+        return self._authentication_generations.get(str(username).casefold()) if account and account.enabled else None
+
+    def subscribe_account_changes(self, observer):
+        self._account_observers.add(observer)
+        return lambda: self._account_observers.discard(observer)
 
     def _registration(self, username: str) -> SipRegistration | None:
         registrations = self._registrations(username)
@@ -430,32 +458,28 @@ class SipRegistrar:
             )
         )
 
-    def select_outbound_flow(self, username: str, uri: sip.SipUri) -> AuthenticatedOutboundFlow | None:
-        """Select by resolved account and exact Contact, never by source IP alone."""
+    def select_outbound_flow(self, username: str, uri: sip.SipUri, *, allow_ordinary=False) -> AuthenticatedOutboundFlow | None:
+        """Select only the resolved account's exact authenticated UDP Contact."""
         account = self.accounts.get(username.casefold())
         if account is None or not account.enabled:
             return None
         for binding in self.registered_contacts(account.username):
-            contact = sip.parse_sip_uri(binding.contact_uri)
-            if (binding.outbound and binding.transport.upper() == "UDP"
-                    and contact.user == uri.user
-                    and sip.sip_endpoints_equal(contact.host, contact.port, uri.host, uri.port)):
-                return AuthenticatedOutboundFlow(self, binding.username, binding.flow_key,
-                    binding.instance_id, binding.reg_id)
+            if (binding.outbound or allow_ordinary) and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
+                return AuthenticatedOutboundFlow(self, binding.username, binding.contact_uri,
+                    binding.capability_generation, binding.flow_key, binding.outbound)
         return None
 
     def resolve_outbound_flow(self, selected: AuthenticatedOutboundFlow) -> SipRegistration | None:
-        """Reject a stale selection before transferring a dialog lease."""
+        """Fence expiry, owner replacement, revocation and binding ABA."""
         if selected.registrar is not self:
             return None
         account = self.accounts.get(selected.username.casefold())
         if account is None or not account.enabled:
             return None
         return next((binding for binding in self.registered_contacts(selected.username)
-                     if binding.outbound and binding.transport.upper() == "UDP"
-                     and binding.flow_key == selected.flow_key
-                     and binding.instance_id == selected.instance_id
-                     and binding.reg_id == selected.reg_id), None)
+            if binding.outbound == selected.outbound and binding.transport.upper() == "UDP"
+            and binding.capability_generation == selected.generation
+            and binding.contact_uri == selected.contact_uri and binding.flow_key == selected.flow_key), None)
 
     def resolve_gruu(self, uri: sip.SipUri) -> tuple[SipRegistration, ...] | None:
         """Return only the addressed instance; None denotes an ordinary AoR."""
@@ -698,15 +722,18 @@ class SipRegistrar:
         self,
         addr: tuple[str, int],
         transport: str,
-        *, username: str | None = None,
+        *,
+        username: str | None = None,
     ) -> SipAccount | None:
-        """Select an identity only from authenticated bindings on this flow."""
+        """Resolve an unambiguous enabled identity registered on this flow."""
 
         self.expire()
-        candidates = [account for account in self.accounts.values()
-                      if account.enabled
-                      and (username is None or account.username.casefold() == username.casefold())
-                      and self.registration_matches_source(account.username, addr[0], addr[1], transport)]
+        candidates = [
+            account for account in self.accounts.values()
+            if account.enabled
+            and (username is None or account.username.casefold() == username.casefold())
+            and self.registration_matches_source(account.username, addr[0], addr[1], transport)
+        ]
         return candidates[0] if len(candidates) == 1 else None
 
     async def handle_register(self, request: sip.SipMessage, addr: tuple[str, int], transport: str) -> SipRegisterResult:
@@ -915,6 +942,7 @@ class SipRegistrar:
                 )
                 if previous_binding is not None and previous_binding.flow_key == updated_binding.flow_key:
                     updated_binding.capabilities = previous_binding.capabilities
+                    updated_binding.capability_generation = previous_binding.capability_generation
                 next_registrations[key] = updated_binding
 
         self.registrations = next_registrations
@@ -1037,8 +1065,6 @@ class SipRegistrar:
                     metadata={
                         **(registration.capabilities or {}),
                         "sip_capabilities_known": registration.capabilities is not None,
-                        **({"endpoint_id": account.endpoint_id, "endpoint_kind": "esphome"}
-                           if account.endpoint_id else {}),
                         "sip_transport": registration.transport.lower(),
                         "registered": True,
                         "user_agent": registration.user_agent,
@@ -1052,6 +1078,8 @@ class SipRegistrar:
                         "ring_group": account.ring_group,
                         "sip_contacts": [
                             {
+                                **(binding.capabilities or {}),
+                                "sip_capabilities_known": binding.capabilities is not None,
                                 "uri": binding.contact_uri,
                                 "transport": binding.transport.lower(),
                                 "q": binding.q,

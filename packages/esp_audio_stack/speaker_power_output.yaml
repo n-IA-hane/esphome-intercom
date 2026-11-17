@@ -23,7 +23,13 @@ esp_audio_stack:
         then:
           - output.turn_on: speaker_enable
   on_amplifier_idle:
-    - script.execute: audio_stack_speaker_idle_powerdown
+    - if:
+        condition:
+          switch.is_off: speaker_mute
+        then:
+          - script.execute: audio_stack_speaker_idle_powerdown
+        else:
+          - script.stop: audio_stack_speaker_idle_powerdown
 
 script:
   - id: audio_stack_speaker_idle_powerdown

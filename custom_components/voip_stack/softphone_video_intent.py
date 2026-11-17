@@ -64,11 +64,13 @@ def _publish_intent_result(
     _fire_call_event(hass, dict(store, endpoint_id=endpoint_id), "session")
 
 
-async def _prepare_client_reinvite(client, *, port: int, formats: tuple, direction: str):
+async def _prepare_client_reinvite(client, *, port: int, formats: tuple, direction: str, media_sockets=None):
+    options = {"media_sockets": media_sockets} if media_sockets and getattr(client, "media_endpoints", None) else {}
     candidate = await client.async_prepare_video_reinvite(
         local_video_rtp_port=port,
         video_formats=formats,
         video_direction=direction,
+        **options,
     )
     if candidate is not None or int(getattr(client, "last_sip_status_code", 0)) != 491:
         return candidate
@@ -77,6 +79,7 @@ async def _prepare_client_reinvite(client, *, port: int, formats: tuple, directi
         local_video_rtp_port=port,
         video_formats=formats,
         video_direction=direction,
+        **options,
     )
 
 
@@ -112,6 +115,32 @@ async def async_apply_send_video_intent(
     enabled: bool,
 ) -> bool:
     """Apply camera intent without creating a parallel call lifecycle."""
+
+    store = _ha_softphone_store(hass, endpoint_id)
+    call_id = str(store.get("call_id") or "").strip()
+    registry = call_registry(hass)
+    session = registry.get_session(call_id) if call_id else None
+    if session is None or str(store.get("state") or "") not in _ACTIVE_STATES:
+        return False
+    generation = session.generation
+    async with session.video_intent_lock:
+        current = _ha_softphone_store(hass, endpoint_id)
+        if (
+            registry.get_session(call_id) is not session
+            or not registry.is_generation_current(call_id, generation)
+            or str(current.get("call_id") or "") != call_id
+            or str(current.get("state") or "") not in _ACTIVE_STATES
+        ):
+            return False
+        return await _async_apply_send_video_intent(hass, endpoint_id, enabled)
+
+
+async def _async_apply_send_video_intent(
+    hass: HomeAssistant,
+    endpoint_id: str,
+    enabled: bool,
+) -> bool:
+    """Prepare and publish one camera choice while its call owner is locked."""
 
     store = _ha_softphone_store(hass, endpoint_id)
     call_id = str(store.get("call_id") or "").strip()
@@ -183,7 +212,13 @@ async def async_apply_send_video_intent(
                 port=port,
                 formats=formats,
                 direction=direction,
+                media_sockets={"video": rtp_socket, "video_rtcp": rtcp_socket} if rtp_socket is not None else None,
             )
+            if candidate is not None:
+                identity = client.prepared_reinvite_identity(candidate)
+                if identity is None:
+                    return False
+                previous = identity.previous
             current_store = _ha_softphone_store(hass, endpoint_id)
             if (
                 not registry.is_generation_current(call_id, generation)
@@ -232,6 +267,11 @@ async def async_apply_send_video_intent(
                     previous_reservation.detach()
                     reservation.detach()
                     reservation = retained
+                else:
+                    reservation = RtpPortReservation.adopt_bound_source(
+                        hass, client.local_rtp_port, reservation=reservation,
+                        retained_port=reservation.ports[1],
+                    )
                 for previous_socket in (client.video_rtp_socket, client.video_rtcp_socket):
                     if previous_socket is not None:
                         previous_socket.close()

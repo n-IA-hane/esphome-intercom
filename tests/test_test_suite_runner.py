@@ -119,79 +119,18 @@ def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> N
     assert playwright_files <= set(arguments)
 
 
-def test_optional_esphome_mailbox_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
-    path = "tests/test_esphome_provisioning_optional_ha.py"
-    ha_path = tmp_path / "ha"
-    software_path = tmp_path / "software"
-    ha_path.mkdir()
-    software_path.mkdir()
-    assert path in _record_suite_arguments(ha_path, "ha")
-    arguments = _record_suite_arguments(software_path, "software-full")
-    assert f"--ignore={path}" in arguments
+def test_logical_browser_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
+    target = "tests/test_browser_logical_availability_ha.py"
+    assert target in _record_suite_arguments(tmp_path, "ha")
+    for mode in ("fast", "software-full"):
+        assert f"--ignore={target}" in _record_suite_arguments(tmp_path, mode)
 
 
-def test_native_trunk_validation_stays_in_the_catalogued_ha_module(tmp_path: Path) -> None:
-    ha_path, software_path = tmp_path / "ha", tmp_path / "software"
-    ha_path.mkdir()
-    software_path.mkdir()
-    ha_arguments = _record_suite_arguments(ha_path, "ha")
-    software_arguments = _record_suite_arguments(software_path, "software-full")
-    assert "tests/test_trunk_config_flow.py" in ha_arguments
-    assert "--ignore=tests/test_trunk_config_flow.py" in software_arguments
-    assert "tests/test_qualification_tooling_boundaries.py" not in ha_arguments
-    assert "--ignore=tests/test_qualification_tooling_boundaries.py" not in software_arguments
-
-
-def test_catalog_guard_detects_uncatalogued_function_level_ha_markers(monkeypatch, tmp_path: Path) -> None:
-    project = tmp_path / "source"
-    tests = project / "tests"
-    tests.mkdir(parents=True)
-    (tests / "test_known.py").write_text("import pytest\npytestmark = pytest.mark.ha\n")
-    (tests / "test_uncatalogued.py").write_text(
-        "import pytest\n@pytest.mark.ha\nasync def test_real_flow(hass):\n    pass\n")
-    monkeypatch.setitem(globals(), "ROOT", project)
-    monkeypatch.setitem(globals(), "_record_suite_arguments", lambda _path, mode: (
-        ["tests/test_known.py"] if mode == "ha" else ["tests", "--ignore=tests/test_known.py"]))
-    gate = tmp_path / "gate"
-    gate.mkdir()
-    with pytest.raises(AssertionError, match="test_uncatalogued.py"):
-        test_all_ha_marked_modules_use_the_ha_interpreter(gate)
-
-
-def test_all_ha_marked_modules_use_the_ha_interpreter(tmp_path: Path) -> None:
-    ha_marked = set()
-    for path in (ROOT / "tests").glob("test_*.py"):
-        module = ast.parse(path.read_text())
-        assignments = list(module.body)
-        marker_expressions = []
-        for declaration in ast.walk(module):
-            if isinstance(declaration, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                marker_expressions.extend(declaration.decorator_list)
-            if isinstance(declaration, ast.ClassDef):
-                assignments.extend(declaration.body)
-        for assignment in assignments:
-            if not isinstance(assignment, ast.Assign) or not any(
-                isinstance(target, ast.Name) and target.id == "pytestmark"
-                for target in assignment.targets
-            ):
-                continue
-            marker_expressions.append(assignment.value)
-        if any(isinstance(node, ast.Attribute) and ast.unparse(node) == "pytest.mark.ha"
-               for expression in marker_expressions for node in ast.walk(expression)):
-            ha_marked.add(str(path.relative_to(ROOT)))
-
-    assert ha_marked
-    ha_path = tmp_path / "ha"
-    software_path = tmp_path / "software"
-    ha_path.mkdir()
-    software_path.mkdir()
-    ha_arguments = _record_suite_arguments(ha_path, "ha")
-    software_arguments = _record_suite_arguments(software_path, "software-full")
-    assert not (missing := ha_marked - set(ha_arguments)), f"HA suite omits: {sorted(missing)}"
-    software_ignores = {
-        argument.removeprefix("--ignore=")
-        for argument in software_arguments if argument.startswith("--ignore=")
-    }
-    assert not (missing := ha_marked - software_ignores), (
-        f"Regular interpreter collects HA modules: {sorted(missing)}"
-    )
+def test_ha_regressions_are_assigned_to_the_ha_interpreter(tmp_path: Path) -> None:
+    """A new HA witness must not disappear from CI or run against stub modules."""
+    targets = {str(path.relative_to(ROOT)) for path in (ROOT / "tests").glob("*_ha.py")}
+    ha_arguments = set(_record_suite_arguments(tmp_path, "ha"))
+    assert targets <= ha_arguments
+    for mode in ("fast", "software-full"):
+        arguments = set(_record_suite_arguments(tmp_path, mode))
+        assert {f"--ignore={target}" for target in targets} <= arguments

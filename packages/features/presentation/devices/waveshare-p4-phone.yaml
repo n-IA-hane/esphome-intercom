@@ -1,5 +1,21 @@
 # P4 telephone screen and optional video surface; frame-arrival gates remain unchanged.
+substitutions:
+  _settings_round: ${ _settings_round | default(false) }
+  _settings_page_id: ${ _settings_page_id | default('videophone_settings_page') }
+  _settings_video: ${ _settings_video | default(false) }
+  settings_home_page_id: ${ settings_home_page_id | default('videophone_page') }
+  settings_options_back_button: ${ settings_options_back_button | default(true) }
+  settings_row_width: ${ settings_row_width | default(1180) }
+  settings_narrow_width: ${ settings_narrow_width | default(1100) }
+  settings_slider_height: ${ settings_slider_height | default(28) }
+  settings_switch_width: ${ settings_switch_width | default(72) }
+  settings_switch_height: ${ settings_switch_height | default(40) }
+  settings_pad_row: ${ settings_pad_row | default(20) }
+  settings_label_font: ${ settings_label_font | default('videophone_small_font') }
+  _fw_playback: ${ _fw_playback | default(false) }
+  _fw_sendspin: ${ _fw_sendspin | default(false) }
 packages:
+  settings: !include ../settings/main.yaml
   phone_presentation: !include
     file: ../phone.yaml
     vars:
@@ -74,7 +90,7 @@ lvgl:
   log_level: WARN
   rotation: 270
   on_boot: ${ _p4_phone_video_boot if _p4_phone_has_video else [] }
-  pages: ${ _p4_phone_pages + (_p4_phone_video_pages if _p4_phone_has_video else []) }
+  pages: ${ _p4_phone_pages + _settings_page + (_p4_phone_video_pages if _p4_phone_has_video else []) }
 wifi:
   on_connect:
   - logger.log: WiFi connected
@@ -150,6 +166,7 @@ defaults:
         width: 1280
         height: 720
         bg_color: 0
+        bg_opa: TRANSP
         border_width: 0
         pad_all: 0
         scrollable: false
@@ -481,163 +498,6 @@ defaults:
             text: DELETE
             text_color: 16777215
             text_font: videophone_small_font
-  - id: videophone_settings_page
-    bg_color: 988970
-    widgets:
-    - label:
-        align: TOP_MID
-        y: 28
-        text: SETTINGS
-        text_color: 6333946
-        text_font: videophone_body_font
-    - label:
-        align: TOP_LEFT
-        x: 100
-        y: 115
-        text: Master volume
-        text_color: 16777215
-        text_font: videophone_small_font
-    - slider:
-        id: videophone_volume_slider
-        align: TOP_LEFT
-        x: 100
-        y: 165
-        width: 500
-        height: 28
-        min_value: 0
-        max_value: 100
-        value: !lambda |-
-          return id(master_volume).state;
-        on_release:
-        - number.set:
-            id: master_volume
-            value: !lambda |-
-              return x;
-    - label:
-        align: TOP_RIGHT
-        x: -100
-        y: 115
-        text: Microphone gain
-        text_color: 16777215
-        text_font: videophone_small_font
-    - slider:
-        id: videophone_mic_gain_slider
-        align: TOP_RIGHT
-        x: -100
-        y: 165
-        width: 500
-        height: 28
-        min_value: -20
-        max_value: 30
-        value: !lambda |-
-          return id(mic_gain).state;
-        on_release:
-        - number.set:
-            id: mic_gain
-            value: !lambda |-
-              return x;
-    - button:
-        align: TOP_LEFT
-        x: 100
-        y: 255
-        width: 500
-        height: 82
-        bg_color: 1976635
-        on_click:
-        - switch.toggle: speaker_mute
-        - script.execute: update_videophone_settings
-        widgets:
-        - label:
-            id: videophone_speaker_mute_label
-            align: CENTER
-            text: 'Speaker: active'
-            text_color: 16777215
-            text_font: videophone_small_font
-    - button:
-        align: TOP_RIGHT
-        x: -100
-        y: 255
-        width: 500
-        height: 82
-        bg_color: 1976635
-        on_click:
-        - switch.toggle: mute
-        - script.execute: update_videophone_settings
-        widgets:
-        - label:
-            id: videophone_mic_mute_label
-            align: CENTER
-            text: 'Microphone: active'
-            text_color: 16777215
-            text_font: videophone_small_font
-    - button:
-        align: TOP_LEFT
-        x: 100
-        y: 370
-        width: 500
-        height: 82
-        bg_color: 1976635
-        on_click:
-        - switch.toggle: aec_switch
-        - script.execute: update_videophone_settings
-        widgets:
-        - label:
-            id: videophone_aec_label
-            align: CENTER
-            text: 'AEC: on'
-            text_color: 16777215
-            text_font: videophone_small_font
-    - button:
-        align: TOP_RIGHT
-        x: -100
-        y: 370
-        width: 500
-        height: 82
-        bg_color: 1976635
-        on_click:
-        - switch.toggle: auto_answer_switch
-        - script.execute: update_videophone_settings
-        widgets:
-        - label:
-            id: videophone_auto_answer_label
-            align: CENTER
-            text: 'Auto answer: off'
-            text_color: 16777215
-            text_font: videophone_small_font
-    - button:
-        align: TOP_MID
-        y: 485
-        width: 500
-        height: 82
-        bg_color: 1976635
-        on_click:
-        - switch.toggle: dnd_switch
-        - script.execute: update_videophone_settings
-        widgets:
-        - label:
-            id: videophone_dnd_label
-            align: CENTER
-            text: 'Do not disturb: off'
-            text_color: 16777215
-            text_font: videophone_small_font
-    - button:
-        align: BOTTOM_MID
-        y: -42
-        width: 300
-        height: 82
-        bg_color: 2450411
-        radius: 12
-        on_click:
-        - lvgl.page.show:
-            id: videophone_page
-            animation: MOVE_RIGHT
-            time: 180ms
-        widgets:
-        - label:
-            align: CENTER
-            text: BACK
-            text_color: 16777215
-            text_font: videophone_small_font
   _p4_phone_video_boot:
   - lambda: !lambda |-
       id(p4_video).attach_video_container(id(videophone_video_surface));
@@ -715,31 +575,8 @@ defaults:
         ${ 'lv_label_set_text(id(videophone_video_peer_label), peer.c_str());' if _p4_phone_has_video else '' }
         ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
   - id: update_videophone_settings
-    mode: restart
     then:
-    - lambda: !lambda |-
-        char text[48];
-        snprintf(text, sizeof(text), "Speaker: %s",
-                 id(speaker_mute).state ? "muted" : "active");
-        lv_label_set_text(id(videophone_speaker_mute_label), text);
-        snprintf(text, sizeof(text), "Microphone: %s",
-                 id(mute).state ? "muted" : "active");
-        lv_label_set_text(id(videophone_mic_mute_label), text);
-        snprintf(text, sizeof(text), "AEC: %s",
-                 id(aec_switch).state ? "on" : "off");
-        lv_label_set_text(id(videophone_aec_label), text);
-        snprintf(text, sizeof(text), "Auto answer: %s",
-                 id(auto_answer_switch).state ? "on" : "off");
-        lv_label_set_text(id(videophone_auto_answer_label), text);
-        snprintf(text, sizeof(text), "Do not disturb: %s",
-                 id(dnd_switch).state ? "on" : "off");
-        lv_label_set_text(id(videophone_dnd_label), text);
-        lv_slider_set_value(id(videophone_volume_slider),
-                            static_cast<int32_t>(id(master_volume).state),
-                            LV_ANIM_OFF);
-        lv_slider_set_value(id(videophone_mic_gain_slider),
-                            static_cast<int32_t>(id(mic_gain).state),
-                            LV_ANIM_OFF);
+    - script.execute: settings_sync_widgets
   - id: show_phone_page
     mode: restart
     then:

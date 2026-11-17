@@ -2,18 +2,18 @@
 voip_stack:
   buffers_in_psram: true
   audio:
-    tx:
-      codec: opus
-      sample_rate: 16000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
-    rx:
-      codec: opus
-      sample_rate: 48000
-      pcm_format: s16le
-      channels: 1
-      frame_ms: 20
+    codecs:
+      - codec: opus
+        tx:
+          - sample_rate: 16000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
+        rx:
+          - sample_rate: 48000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 20
   microphone: mic_main
   speaker: voip_speaker_input
   dc_offset_removal: false

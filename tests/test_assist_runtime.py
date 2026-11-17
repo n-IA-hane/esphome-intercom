@@ -7,10 +7,10 @@ from contextlib import contextmanager
 from dataclasses import replace
 import importlib.util
 from pathlib import Path
+import socket
 import sys
 import types
 from unittest import mock
-import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,10 +70,19 @@ assist_runtime = _load("assist_runtime")
 
 
 class _Reservation:
-    def __init__(self) -> None:
+    """Own optional prebound sockets until the media transport takes them."""
+
+    def __init__(self, *sockets: socket.socket) -> None:
         self.released = False
+        self.sockets = {sock.getsockname()[1]: sock for sock in sockets}
+
+    def take_audio_socket(self, port: int) -> socket.socket | None:
+        return self.sockets.pop(port, None)
 
     def release(self) -> None:
+        for sock in self.sockets.values():
+            sock.close()
+        self.sockets.clear()
         self.released = True
 
 
@@ -448,6 +457,42 @@ def test_concurrent_start_creates_one_transport_and_task_pair() -> None:
     asyncio.run(run())
 
 
+def test_prebound_reservation_transfers_socket_once_and_closes_owned_fds() -> None:
+    async def run() -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as bound, socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM
+        ) as unused:
+            bound.bind(("127.0.0.1", 0))
+            unused.bind(("127.0.0.1", 0))
+            bound.setblocking(False)
+            port, fd = bound.getsockname()[1], bound.fileno()
+            session = _session()
+            session.local_rtp_port = port
+            session.reservation = _Reservation(bound, unused)
+
+            async def idle() -> None:
+                await session.closed.wait()
+
+            session._send_loop = idle
+            session.conversation._pipeline_loop = idle
+            try:
+                await session.start()
+                assert session.transport.get_extra_info("socket").fileno() == fd
+                assert session.reservation.take_audio_socket(port) is None
+                assert unused.fileno() != -1
+            finally:
+                await session.stop()
+                await asyncio.sleep(0)
+
+            assert session.reservation.released is True
+            assert bound.fileno() == -1
+            assert unused.fileno() == -1
+            assert session.transport is None
+            assert session._cleanup_done.is_set()
+
+    asyncio.run(run())
+
+
 def test_tts_stream_accepts_arbitrary_provider_chunk_boundaries() -> None:
     async def run() -> None:
         session = _session()
@@ -563,9 +608,14 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
         assert session.counters["speech_gate_opens"] == 1
         session.rx_queue.put_nowait(silence)
         assert await anext(stream) == silence
-        with pytest.raises(StopAsyncIteration):
-            await anext(stream)
+        # A pause after the first speech gate is not a local end-of-command.
+        # Forward the next syllable intact; only HA's event closes input.
+        session.rx_queue.put_nowait(speech)
+        assert await anext(stream) == speech
+        session.conversation._pipeline_event(types.SimpleNamespace(
+            type=types.SimpleNamespace(value="stt-vad-end"), data={}))
         assert session._accepting_input is False
+        await stream.aclose()
 
     asyncio.run(run())
 
@@ -664,6 +714,7 @@ def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
         async def pipeline_from_audio_stream(_hass, **kwargs) -> None:
             turns.append("audio")
             captured.update(kwargs)
+            captured["first_frame"] = await anext(kwargs["stt_stream"])
             session.closed.set()
 
         class AudioSettings:
@@ -711,12 +762,16 @@ def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
         helpers.chat_session = chat_session_module
         sys.modules["homeassistant.helpers.chat_session"] = chat_session_module
 
+        async def ready_speech_stream():
+            yield b"first-preroll-frame"
+        session.conversation._audio_stream = ready_speech_stream
         session.conversation._run_call_connected_turn = connected_turn
         await session.conversation._pipeline_loop()
 
         assert "conversation_extra_system_prompt" not in captured
         assert captured["conversation_id"] == "conversation-spoken"
-        assert captured["audio_settings"].is_vad_enabled is False
+        assert captured["audio_settings"].is_vad_enabled is True
+        assert captured["first_frame"] == b"first-preroll-frame"
         assert turns == (["call_details", "audio"] if enabled else ["audio"])
 
     for enabled in (False, True):

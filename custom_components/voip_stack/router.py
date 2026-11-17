@@ -21,13 +21,15 @@ class RouteAction(StrEnum):
     AUTOMATION = "automation"
     VOICEMAIL = "voicemail"
     PARKING = "parking"
+    QUEUE = "queue"
+    PAGING = "paging"
     REJECT = "reject"
     BUSY = "busy"
 
     @property
     def is_local_application(self) -> bool:
         """PBX applications are destinations regardless of the calling transport."""
-        return self in {self.ASSIST, self.AUTOMATION, self.VOICEMAIL, self.PARKING}
+        return self in {self.ASSIST, self.AUTOMATION, self.VOICEMAIL, self.PARKING, self.QUEUE, self.PAGING}
 
 
 class RouteReason(StrEnum):
@@ -208,6 +210,15 @@ def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> 
 
 def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: bool = False) -> RouteDecision:
     target = (target or "").strip()
+    directory_target = None
+    if re.fullmatch(r"contact\+[0-9a-f]{20}", target, re.I):
+        from .phone_directory import contact_dial_target, contact_key_reference
+        matches = [entry for entry in entries if contact_key_reference(entry) is not None
+                   and contact_dial_target(entry) == target.casefold()]
+        if len(matches) != 1:
+            return RouteDecision(RouteAction.REJECT, target=target, status=404 if not matches else 485,
+                                 reason=RouteReason.ROUTE_NOT_FOUND, source="phonebook")
+        directory_target = matches[0]
     target_class = classify_target(target)
     if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
@@ -224,11 +235,15 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
     if target.isdigit() and target in duplicate_numeric_extensions(entries):
         return RouteDecision(RouteAction.REJECT, target=target, status=485,
                              reason=RouteReason.AMBIGUOUS_EXTENSION, source="phonebook")
-    entry = find_entry(entries, target)
+    entry = directory_target if directory_target is not None else find_entry(entries, target)
     if entry is not None and not entry.enabled:
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
     if entry is not None:
         endpoint_kind = str(entry.metadata.get("endpoint_kind") or "")
+        service = entry.metadata.get("virtual_endpoint")
+        if service in {"queue", "paging"}:
+            action = RouteAction.QUEUE if service == "queue" else RouteAction.PAGING
+            return RouteDecision(action, target=entry.id, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("virtual_endpoint") == "automation":
             return RouteDecision(RouteAction.AUTOMATION, target=entry.id, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("virtual_endpoint") == "assist_pipeline":

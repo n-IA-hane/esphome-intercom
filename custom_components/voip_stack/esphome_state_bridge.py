@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .device_resolver import entity_role
 from .endpoint_lifecycle import create_runtime_task
@@ -132,7 +132,6 @@ async def async_emit_state_event(
                 "callee": destination,
                 "destination": destination,
                 "reason": reason,
-                "endpoint": device_entity_state(hass, device, "voip_endpoint"),
                 "caller_entity_id": entities.get("incoming_caller", ""),
                 "destination_entity_id": entities.get("destination", ""),
                 "last_reason_entity_id": entities.get("last_reason", ""),
@@ -173,9 +172,27 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
         return
     if runtime.esp_state_event_bridge_unsub is not None:
         return
+    state_entities = frozenset()
+    unsubscribe_state = None
+
+    @callback
+    def _refresh_state_entities():
+        nonlocal state_entities, unsubscribe_state
+        entities = frozenset(entity.entity_id for entity in er.async_get(hass).entities.values()
+                             if entity.platform == "esphome" and entity_role(entity) == "voip_state")
+        if entities == state_entities:
+            return
+        if unsubscribe_state is not None:
+            unsubscribe_state()
+            unsubscribe_state = None
+        state_entities = entities
+        if entities:
+            unsubscribe_state = async_track_state_change_event(hass, entities, _on_state_changed)
 
     @callback
     def _on_state_changed(event: Event) -> None:
+        if runtime_data(hass) is not runtime or runtime.esp_state_event_bridge_unsub is not unsubscribe:
+            return
         entity_id = str(event.data.get("entity_id") or "")
         entity = er.async_get(hass).async_get(entity_id)
         if entity is None or entity_role(entity) != "voip_state":
@@ -189,9 +206,6 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
         if old_value == new_value:
             return
         if new_value.lower() in ("unknown", "unavailable"):
-            return
-        runtime = runtime_data(hass)
-        if runtime is None:
             return
         generations = runtime.esp_state_event_generations
         generation = int(generations.get(entity_id, 0) or 0) + 1
@@ -217,8 +231,16 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
 
     @callback
     def _on_entity_registry_changed(event: Event) -> None:
+        if runtime_data(hass) is not runtime or runtime.esp_state_event_bridge_unsub is not unsubscribe:
+            return
         old_id = event.data.get("old_entity_id")
         new_id = event.data.get("entity_id")
+        entity = er.async_get(hass).async_get(new_id) if new_id else None
+        if (old_id in state_entities or new_id in state_entities
+                or (entity is not None and entity.platform == "esphome" and entity_role(entity) == "voip_state")):
+            _refresh_state_entities()
+            if event.data.get("action") == "remove":
+                runtime.esp_state_event_generations.pop(new_id, None)
         if event.data.get("action") != "update" or not old_id or not new_id:
             return
         endpoint = runtime.endpoints.by_entity_id(old_id)
@@ -234,14 +256,17 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
         runtime.esp_state_event_generations.pop(old_id, None)
         async_link_endpoint_entity(runtime.endpoints, endpoint.endpoint_id, new_id, old_id)
 
-    unsubscribe_state = hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
     unsubscribe_registry = hass.bus.async_listen(
         er.EVENT_ENTITY_REGISTRY_UPDATED, _on_entity_registry_changed
     )
 
     @callback
     def unsubscribe() -> None:
-        unsubscribe_state()
+        if runtime.esp_state_event_bridge_unsub is unsubscribe:
+            runtime.esp_state_event_bridge_unsub = None
+        if unsubscribe_state is not None:
+            unsubscribe_state()
         unsubscribe_registry()
 
     runtime.esp_state_event_bridge_unsub = unsubscribe
+    _refresh_state_entities()

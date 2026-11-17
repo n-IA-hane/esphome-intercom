@@ -408,7 +408,7 @@ async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_look
 
 @pytest.mark.parametrize("protocol", ["uac", "uas"])
 @pytest.mark.parametrize("preanswered", [False, True])
-@pytest.mark.parametrize("outcome", ["commit", "rollback", "stale_generation", "prepare_failure"])
+@pytest.mark.parametrize("outcome", ["commit", "rollback", "stale_generation", "stale_video_peer", "stale_media_revision", "prepare_failure"])
 async def test_parked_source_reoffer_keeps_child_inactive_and_updates_audio_atomically(
     monkeypatch, protocol, preanswered, outcome,
 ):
@@ -495,10 +495,22 @@ async def test_parked_source_reoffer_keeps_child_inactive_and_updates_audio_atom
                 current[0] = False
                 with pytest.raises(RuntimeError):
                     await prepared.commit()
+            elif outcome == "stale_video_peer":
+                replacement_left = replace(old_left, port=46000)
+                video.left = replacement_left
+                with pytest.raises(RuntimeError):
+                    await prepared.commit()
+            elif outcome == "stale_media_revision":
+                replacement_source = replace(source, remote_rtp_port=46002)
+                media.invite = replacement_source
+                with pytest.raises(RuntimeError):
+                    await prepared.commit()
             await prepared.rollback()
-            assert media.invite is source and media.can_send
+            assert media.invite is (replacement_source if outcome == "stale_media_revision" else source)
+            assert media.can_send
             assert application.video_source is old_source
-            assert video.left is old_left and video.right is old_right
+            assert video.left is (replacement_left if outcome == "stale_video_peer" else old_left)
+            assert video.right is old_right
         else:
             await prepared.commit()
             assert not media.can_send and media.can_receive

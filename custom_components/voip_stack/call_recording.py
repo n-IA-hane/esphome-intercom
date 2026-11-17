@@ -17,7 +17,7 @@ def _publish_recording_state(hass, session):
     runtime = require_runtime_data(hass)
     for identity in call_endpoint_ids(runtime.sip, session.call_id):
         endpoint = runtime.endpoints.get(identity)
-        if endpoint is not None and endpoint.kind.is_softphone:
+        if endpoint is not None and endpoint.supports_ha_client:
             _publish_ha_softphone_state(hass, endpoint_id=identity)
 
 
@@ -113,7 +113,7 @@ def _media_observer(runtime, session, endpoint_id):
     if audio is not None and audio.observe_audio is not None:
         return lambda recording: audio.observe_audio(recording.capture, recording.end)
     endpoint = runtime.endpoints.get(endpoint_id)
-    if (endpoint is not None and endpoint.kind.is_softphone
+    if (endpoint is not None and endpoint.supports_ha_client
             and session.owner == "ha_softphone" and session.route_kind != "conference"):
         # The connected event can precede the browser media attachment.
         # The existing adapter binds this session-owned tap when it starts.

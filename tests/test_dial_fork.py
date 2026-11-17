@@ -80,6 +80,33 @@ class FakeCandidate:
 
 
 class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_retain_all_keeps_both_answers_and_closes_only_failed_branches(self):
+        session = endpoint_session.EndpointCallSession("page", 1)
+        first = FakeCandidate("first", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200))
+        second = FakeCandidate("second", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200))
+        busy = FakeCandidate("busy", dial_fork.DialOutcome(dial_fork.DialDisposition.BUSY, 486))
+        result = await dial_fork.DialForkController(session, (first.candidate, second.candidate, busy.candidate)).run_all(lambda *_: True)
+        self.assertEqual(result.answered, (first.candidate, second.candidate))
+        self.assertFalse(first.closes)
+        self.assertFalse(second.closes)
+        self.assertEqual(busy.closes, [dial_fork.LegCloseMode.CANCEL_OR_BYE])
+
+    async def test_retain_all_cancellation_closes_accepted_and_pending_branches(self):
+        session = endpoint_session.EndpointCallSession("page", 1)
+        first = FakeCandidate("first", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200))
+        pending = FakeCandidate("pending", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200), dial_gate=asyncio.Event())
+        accepted = asyncio.Event()
+        def commit(*_args):
+            accepted.set()
+            return True
+        task = asyncio.create_task(dial_fork.DialForkController(session, (first.candidate, pending.candidate)).run_all(commit))
+        await asyncio.wait_for(accepted.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(first.closes, [dial_fork.LegCloseMode.CANCEL_OR_BYE])
+        self.assertEqual(pending.closes, [dial_fork.LegCloseMode.CANCEL_OR_BYE])
+
     async def test_failed_external_commit_keeps_original_branch_running(self):
         session = endpoint_session.EndpointCallSession("call", 1)
         ready = asyncio.Event()
@@ -603,6 +630,10 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_reducer_preserves_group_semantics(self) -> None:
         cases = (
+            ([], dial_fork.DialDisposition.UNAVAILABLE, 480),
+            ([dial_fork.DialDisposition.BUSY, dial_fork.DialDisposition.DND], dial_fork.DialDisposition.BUSY, 486),
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.BUSY], dial_fork.DialDisposition.BUSY, 486),
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.DECLINED], dial_fork.DialDisposition.UNAVAILABLE, 480),
             (
                 [dial_fork.DialDisposition.DECLINED] * 2,
                 dial_fork.DialDisposition.DECLINED,
@@ -626,7 +657,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         )
         for dispositions, expected, status in cases:
             with self.subTest(dispositions=dispositions):
-                outcome = dial_fork.DialForkController._reduce_failures(
+                outcome = dial_fork.reduce_dial_failures(
                     [dial_fork.DialOutcome(item) for item in dispositions]
                 )
                 self.assertEqual(outcome.disposition, expected)

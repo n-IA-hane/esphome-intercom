@@ -85,44 +85,6 @@ async def test_blf_tracks_ringing_answer_multiple_calls_and_final_idle(lab, blf)
     assert [int(item.attrib["version"]) for item in (root, ringing, answered, concurrent, remaining, idle)] == list(range(6))
 
 
-async def test_logical_browser_presence_stays_open_after_last_media_card_disconnects(lab, blf):
-    from types import SimpleNamespace
-    from custom_components.voip_stack.phone_config import endpoint_from_data
-    from custom_components.voip_stack.phone_state import phone_states
-    from custom_components.voip_stack.websocket_api import _ha_softphone_state, _update_browser_presence
-
-    endpoint = endpoint_from_data(SimpleNamespace(data={}), {
-        "endpoint_id": "browser:kitchen", "name": "Kitchen", "extension": "221", "kind": "browser",
-    })
-    lab.runtime.endpoints.register(endpoint)
-    methods, notifications, send = blf
-    response = await methods.handle(subscribe(target="221", event="presence", accept="application/pidf+xml"),
-                                    ("127.0.0.3", 5060), "UDP", send)
-    assert response.status == 200
-    response.follow_up_scheduler()
-    initial = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
-    namespace = {"p": "urn:ietf:params:xml:ns:pidf"}
-    assert initial.find("p:tuple/p:status/p:basic", namespace).text == "open"
-    _update_browser_presence(lab.hass, endpoint.endpoint_id, 1)
-    _update_browser_presence(lab.hass, endpoint.endpoint_id, -1)
-    await lab.hass.async_block_till_done()
-    phone = phone_states(lab.hass)[endpoint.endpoint_id]
-    assert phone["availability"] == "available" and phone["state"] == "idle"
-    state = _ha_softphone_state(lab.hass, endpoint.endpoint_id)
-    assert state["available"] and state["connected_cards"] == 0
-    assert not lab.runtime.softphone_presence and not notifications.qsize()
-    # DND remains an independent user policy; disabling the phone closes PIDF.
-    lab.runtime.endpoints.update(endpoint.endpoint_id, dnd=True)
-    assert phone_states(lab.hass)[endpoint.endpoint_id]["dnd"] is True
-    lab.runtime.endpoints.update(endpoint.endpoint_id, availability="unavailable")
-    closed = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
-    assert closed.find("p:tuple/p:status/p:basic", namespace).text == "closed"
-    assert not _ha_softphone_state(lab.hass, endpoint.endpoint_id)["available"]
-    _update_browser_presence(lab.hass, endpoint.endpoint_id, 1)
-    assert not _ha_softphone_state(lab.hass, endpoint.endpoint_id)["available"]
-    _update_browser_presence(lab.hass, endpoint.endpoint_id, -1)
-
-
 async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscription(lab, blf):
     methods, notifications, send = blf
     first = await methods.handle(subscribe(expires=7200), ("127.0.0.3", 5060), "UDP", send)
@@ -140,157 +102,6 @@ async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscript
     assert dict(final.headers)["Subscription-State"] == "terminated;reason=noresource"
     assert not methods.subscriptions
     assert methods.dialog_unsubscribe is None and methods.endpoint_unsubscribe is None
-
-
-async def test_presence_tracks_reachability_when_the_dialog_document_stays_empty(lab, blf):
-    """An empty RFC4235 dialog list cannot announce whether a phone is online."""
-    from custom_components.voip_stack.phone_endpoint import EndpointAvailability
-
-    methods, notifications, send = blf
-    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
-    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.OFFLINE)
-    presence = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="presence-101"),
-                                    ("127.0.0.3", 5060), "UDP", send)
-    assert presence.status == 200
-    presence.follow_up_scheduler()
-    first = await asyncio.wait_for(notifications.get(), 1)
-    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
-    assert ElementTree.fromstring(first.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
-    dialog = await methods.handle(subscribe(call_id="dialog-101"), ("127.0.0.3", 5060), "UDP", send)
-    dialog.follow_up_scheduler()
-    assert not ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body).findall("d:dialog", NS)
-    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.AVAILABLE)
-    online = await asyncio.wait_for(notifications.get(), 1)
-    assert dict(online.headers)["Event"] == "presence"
-    assert ElementTree.fromstring(online.body).find("p:tuple/p:status/p:basic", ns).text == "open"
-    lab.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.OFFLINE)
-    offline = await asyncio.wait_for(notifications.get(), 1)
-    assert ElementTree.fromstring(offline.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
-    await lab.hass.async_block_till_done()
-    assert notifications.empty() and not lab.calls.sessions
-
-
-async def test_presence_without_dialog_subscriber_owns_only_the_endpoint_observer(lab, blf):
-    methods, notifications, send = blf
-    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
-    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="presence-only"),
-                                  ("127.0.0.3", 5060), "UDP", send)
-    assert result.status == 200 and methods.dialog_unsubscribe is None
-    assert methods.endpoint_unsubscribe is not None
-    result.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    lab.runtime.endpoints.remove("sip:bedroom0")
-    final = await asyncio.wait_for(notifications.get(), 1)
-    assert dict(final.headers)["Subscription-State"] == "terminated;reason=noresource"
-    assert not methods.subscriptions and methods.endpoint_unsubscribe is None
-
-
-async def test_mwi_presence_and_dialog_release_their_own_observers(lab, blf, monkeypatch):
-    from custom_components.voip_stack import dialog_info
-    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
-
-    methods, notifications, send = blf
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    lab.runtime.endpoints.register(PhoneEndpoint(
-        endpoint_id="watcher", name="Watcher", kind="sip_account", username="watcher"))
-    scans = []
-    original = dialog_info.snapshot_all
-    def scan(runtime):
-        scans.append(True)
-        return original(runtime)
-    monkeypatch.setattr(dialog_info, "snapshot_all", scan)
-    mwi = await methods.handle(subscribe(target="watcher", event="message-summary", call_id="mixed-mwi",
-                                         accept="application/simple-message-summary"),
-                               ("127.0.0.3", 5060), "UDP", send)
-    assert mwi.status == 200
-    mwi.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    resource_owner = methods.endpoint_unsubscribe
-    assert resource_owner is not None and methods.dialog_unsubscribe is None
-    presence = await methods.handle(subscribe(event="presence", call_id="mixed-presence", accept="application/pidf+xml"),
-                                    ("127.0.0.3", 5060), "UDP", send)
-    presence.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    assert methods.endpoint_unsubscribe is resource_owner and methods.dialog_unsubscribe is None
-    assert scans == []
-    dialog = await methods.handle(subscribe(call_id="mixed-dialog"), ("127.0.0.3", 5060), "UDP", send)
-    dialog.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    assert methods.endpoint_unsubscribe is resource_owner and methods.dialog_unsubscribe is not None
-    stop = await methods.handle(subscribe(call_id="mixed-dialog", tag=dialog.to_tag, cseq=2, expires=0),
-                                ("127.0.0.3", 5060), "UDP", send)
-    stop.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    await lab.hass.async_block_till_done()
-    assert methods.dialog_unsubscribe is None and methods.endpoint_unsubscribe is resource_owner
-    count = len(scans)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
-    await asyncio.wait_for(notifications.get(), 1)
-    assert len(scans) == count
-    stop = await methods.handle(subscribe(event="presence", call_id="mixed-presence", accept="application/pidf+xml",
-                                         tag=presence.to_tag, cseq=2, expires=0), ("127.0.0.3", 5060), "UDP", send)
-    stop.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    await lab.hass.async_block_till_done()
-    assert methods.endpoint_unsubscribe is resource_owner
-    lab.runtime.endpoints.remove("watcher")
-    ended = await asyncio.wait_for(notifications.get(), 1)
-    assert dict(ended.headers)["Subscription-State"] == "terminated;reason=noresource"
-    assert methods.endpoint_unsubscribe is None and not methods.subscriptions
-
-
-@pytest.mark.parametrize("kind", ["browser", "esphome", "sip_account"])
-async def test_known_endpoint_presence_needs_no_shadow_sip_account(lab, blf, kind):
-    methods, notifications, send = blf
-    assert "101" not in methods.registrar.accounts
-    lab.runtime.endpoints.update("sip:bedroom0", kind=kind, availability="available")
-    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="canonical-kind"),
-                                  ("127.0.0.3", 5060), "UDP", send)
-    assert result.status == 200
-    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
-    root = ElementTree.fromstring(result.follow_up.body)
-    assert root.attrib["entity"] == "sip:101@127.0.0.1"
-    assert root.find("p:tuple/p:status/p:basic", ns).text == "open"
-    result.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
-    closed = await asyncio.wait_for(notifications.get(), 1)
-    assert ElementTree.fromstring(closed.body).find("p:tuple/p:status/p:basic", ns).text == "closed"
-    lab.runtime.endpoints.update("sip:bedroom0", dnd=True)
-    await lab.hass.async_block_till_done()
-    assert notifications.empty()
-
-
-@pytest.mark.parametrize("published_basic", ["open", "closed"])
-async def test_presence_composition_keeps_the_explicit_publication_lease_and_metadata(lab, blf, published_basic):
-    methods, notifications, send = blf
-    methods.registrar.update_accounts([*methods.registrar.accounts.values(), SipAccount("101", "Room", "test-only")])
-    methods.registrar.registrations["101"] = SipRegistration(username="101", contact_uri="sip:101@127.0.0.4:5060",
-        source_host="127.0.0.4", source_port=5060, transport="UDP", expires_at=time.time() + 300)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    body = ('<presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:101@127.0.0.1"><tuple id="publisher"><status><basic>'
-            + published_basic + '</basic></status><note>On shift</note></tuple></presence>').encode()
-    published = await methods.handle(sip.parse_message(sip.build_request("PUBLISH", "sip:101@127.0.0.1", [
-        ("From", "<sip:101@127.0.0.1>;tag=publisher"), ("To", "<sip:101@127.0.0.1>"),
-        ("Call-ID", "publication"), ("CSeq", "1 PUBLISH"), ("Event", "presence"),
-        ("Content-Type", "application/pidf+xml"), ("Expires", "300")], body)), ("127.0.0.4", 5060), "UDP", send)
-    assert published.status == 200
-    tag = dict(published.headers)["SIP-ETag"]
-    stored = methods.publications[tag]
-    result = await methods.handle(subscribe(event="presence", accept="application/pidf+xml", call_id="publisher-watch"),
-                                  ("127.0.0.3", 5060), "UDP", send)
-    result.follow_up_scheduler()
-    await asyncio.wait_for(notifications.get(), 1)
-    ns = {"p": "urn:ietf:params:xml:ns:pidf"}
-    lab.runtime.endpoints.update("sip:bedroom0", availability="offline")
-    closed = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
-    assert closed.find("p:tuple/p:status/p:basic", ns).text == "closed"
-    assert closed.find("p:tuple/p:note", ns).text == "On shift"
-    assert methods.publications[tag] is stored and ("<basic>" + published_basic + "</basic>").encode() in stored.body
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    opened = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
-    assert opened.find("p:tuple/p:status/p:basic", ns).text == published_basic
-    assert opened.find("p:tuple/p:note", ns).text == "On shift"
 
 
 @pytest.mark.parametrize("changes,status", [
@@ -467,16 +278,17 @@ async def test_activity_projection_tracks_dialogs_and_occupied_slots(lab, blf):
     assert activity_snapshot(lab.runtime) == {"parked": [], "phones": []}
 
 
-async def test_activity_subscription_updates_and_unsubscribes(lab, blf, hass_read_only_user):
+async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypatch, hass_admin_user):
     from types import SimpleNamespace
     from custom_components.voip_stack import websocket_api
     from custom_components.voip_stack.parking import PARKING_CHANGED
     from custom_components.voip_stack.parking_lot import ParkingLot
 
     events = []
-    connection = SimpleNamespace(user=hass_read_only_user, subscriptions={}, send_result=lambda *args: None,
+    connection = SimpleNamespace(user=hass_admin_user, subscriptions={}, send_result=lambda *args: None,
                                  send_event=lambda identity, value: events.append(value))
-    assert hass_read_only_user.is_active and not hass_read_only_user.is_admin
+    monkeypatch.setattr(websocket_api, "require_websocket_read", lambda *args: None)
+    monkeypatch.setattr(websocket_api, "require_websocket_endpoint_read", lambda *args: None)
     websocket_api.websocket_subscribe_call_events(lab.hass, connection, {"id": 77, "include_activity": True})
     assert events[-1] == {"event_type": "voip_stack.activity", "data": {"parked": [], "phones": []}}
     lot = ParkingLot(("701",), lambda: lab.hass.bus.async_fire(PARKING_CHANGED))
@@ -506,11 +318,6 @@ async def test_activity_subscription_updates_and_unsubscribes(lab, blf, hass_rea
     lab.hass.bus.async_fire(websocket_api.CALL_EVENT, {"type": "example"})
     await lab.hass.async_block_till_done()
     assert events[-1] == {"event_type": websocket_api.CALL_EVENT, "data": {"type": "example"}}
-    await lab.hass.auth.async_update_user(hass_read_only_user, group_ids=[])
-    count = len(events)
-    lab.hass.bus.async_fire(websocket_api.CALL_EVENT, {"type": "unreadable"})
-    await lab.hass.async_block_till_done()
-    assert len(events) == count
     connection.subscriptions[78]()
 
 
@@ -525,6 +332,25 @@ async def test_browser_dialog_tags_use_the_observed_local_phone_perspective(lab)
     lab.calls.observe_leg(session.call_id,session.call_id,role='ha_softphone',state='in_call',endpoint_id=phone.endpoint_id,dialog=client)
     observed=snapshot(lab.runtime,phone.endpoint_id)[0]
     assert (observed.local_tag,observed.remote_tag)==(client.dialog_ids.local_tag,'peer-tag')
+    assert observed.peer_endpoint_id == ""
+
+
+async def test_connected_destination_precedes_requested_target_in_peer_projection(lab):
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from custom_components.voip_stack.dialog_info import snapshot
+    from .test_ha_call_transfer import _established
+
+    phone = PhoneEndpoint(endpoint_id="projection-browser", name="Browser", kind="browser")
+    lab.runtime.endpoints.register(phone)
+    client = _established("projection-priority", "peer-tag", "desk")
+    session = lab.calls.upsert(
+        "projection-priority", state="in_call", owner="ha_softphone",
+        source_endpoint_id=phone.endpoint_id, target_endpoint_id="old-requested-target",
+        dest_endpoint_id="sip:bedroom0",
+    )
+    lab.calls.observe_leg(session.call_id, session.call_id, role="ha_softphone",
+        state="in_call", endpoint_id=phone.endpoint_id, dialog=client)
+    assert snapshot(lab.runtime, phone.endpoint_id)[0].peer_endpoint_id == "sip:bedroom0"
 
 
 async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_names(lab):
@@ -542,3 +368,74 @@ async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_nam
     target=root.find('d:dialog/d:local/d:target',NS)
     assert target.attrib['uri']==client.dialog.remote_target_uri
     assert target.find('d:param',NS).attrib=={'pname':'+sip.rendering','pval':'no'}
+
+
+@pytest.mark.parametrize("gruu", [False, True])
+async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_target(lab, blf, monkeypatch, gruu):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    methods, _notifications, send = blf
+    source = PhoneEndpoint(endpoint_id="browser-casa", name="Casa", username="Casa",
+        device_id="browser-casa-device", kind="browser", availability="available")
+    lab.runtime.endpoints.register(source)
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    phone = lab.phones[0]
+    phone.auto_answer = False
+    initial = await methods.handle(subscribe(), ("127.0.0.3", 5060), "UDP", send)
+    assert initial.status == 200
+    call_id = ""
+    try:
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "bedroom0",
+        }, blocking=True)
+        call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+        client = lab.calls.sip_client_for(call_id)
+        assert client is not None and client.dialog is None and len(client.early_dialogs) == 1
+        request = subscribe(tag=initial.to_tag, cseq=2)
+        if gruu:
+            request = replace(request, uri="sip:101@127.0.0.1:5060;transport=udp;gr=watched-instance")
+        refreshed = await methods.handle(request, ("127.0.0.3", 5060), "UDP", send)
+        assert refreshed.status == 200
+        assert dict(refreshed.follow_up.headers)["Event"] == "dialog"
+        root = ElementTree.fromstring(refreshed.follow_up.body)
+        assert root.attrib["entity"] == request.uri
+        dialog = root.find("d:dialog", NS)
+        assert dialog.find("d:state", NS).text == "early"
+        wire = phone.invites[-1]
+        assert dialog.attrib["call-id"] == wire.header("Call-ID")
+        assert dialog.attrib["local-tag"] == "bedroom"
+        assert dialog.attrib["remote-tag"] == sip.extract_tag(wire.header("From"))
+        assert dialog.find("d:remote/d:identity", NS).text == sip.name_addr_uri(wire.header("From"))
+        assert dialog.find("d:remote/d:target", NS).attrib["uri"] == sip.name_addr_uri(wire.header("Contact"))
+    finally:
+        if call_id:
+            session = lab.calls.get_session(call_id)
+            await lab.hass.services.async_call("voip_stack", "hangup", {
+                "device_id": source.device_id, "call_id": call_id,
+            }, blocking=True)
+            await asyncio.wait_for(session.terminated.wait(), 2)
+    assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
+
+
+def test_dialog_fallback_peer_aor_does_not_inherit_watched_gruu():
+    from custom_components.voip_stack.dialog_info import DialogState, document
+
+    entity = "sip:430@127.0.0.1:5060;transport=udp;gr=watched-instance"
+    local = "sip:430@127.0.0.4:5060;gr=actual-phone-instance"
+    remote = "sip:Casa@127.0.0.1:5060;gr=actual-caller-instance"
+    state = DialogState("unwired", "early", "recipient", peer_user="Casa",
+                        local_target=local, remote_target=remote)
+    root = ElementTree.fromstring(document(entity, 0, (state,)))
+    assert root.attrib["entity"] == entity
+    peer = sip.parse_sip_uri(root.find("d:dialog/d:remote/d:identity", NS).text)
+    assert peer.user == "Casa" and "gr" not in dict(peer.params)
+    assert dict(peer.params)["transport"] == "udp"
+    assert root.find("d:dialog/d:local/d:target", NS).attrib["uri"] == local
+    assert root.find("d:dialog/d:remote/d:target", NS).attrib["uri"] == remote

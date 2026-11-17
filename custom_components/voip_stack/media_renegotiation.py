@@ -33,12 +33,12 @@ from .media_session_updates import (
 )
 from .runtime_data import endpoint_directory, require_runtime_data
 from .core.sdp import (
+    RtpVideoFormat,
     build_answer_directional,
     constrained_media_direction,
     constrained_video_direction,
     first_offered_dtmf_format,
     offered_video_formats as sdp_video_formats,
-    video_framerate_limit,
     video_fmtp_parameters,
     remote_can_receive,
     remote_can_send,
@@ -55,22 +55,29 @@ from .websocket_api import _fire_call_event, _ha_softphone_store
 _LOGGER = logging.getLogger(__name__)
 
 
-def _constrain_bridge_video_framerate(invite: SipInvite, receiver) -> SipInvite:
-    """Retain the current downstream decoder budget in the staged RX answer."""
+def _project_passthrough_receiver_framerate(
+    invite: SipInvite, receiver: RtpVideoFormat
+) -> SipInvite:
+    """Advertise the downstream decoder budget only on this receive path."""
 
     answer = invite.answer_video_format
-    if answer is None:
-        return invite
-    frame_limit = video_framerate_limit(invite.video_format, answer, receiver)
-    if frame_limit is None:
-        return invite
     receive = invite.recv_video_format
-    if answer.max_framerate == frame_limit and receive.max_framerate == frame_limit:
+    if answer is None or receive is None:
+        return invite
+    limits = tuple(
+        fmt.max_framerate
+        for fmt in (answer, receive, receiver)
+        if fmt.max_framerate is not None
+    )
+    if not limits:
+        return invite
+    limit = min(limits)
+    if answer.max_framerate == receive.max_framerate == limit:
         return invite
     return replace(
         invite,
-        video_answer_format=replace(answer, max_framerate=frame_limit),
-        local_video_format=replace(receive, max_framerate=frame_limit),
+        video_answer_format=replace(answer, max_framerate=limit),
+        local_video_format=replace(receive, max_framerate=limit),
     )
 
 
@@ -206,6 +213,8 @@ async def _prepare_bridge_video_contract_change(
             local_video_rtp_port=destination_video_port,
             video_formats=offered_video_formats,
             video_direction=destination_video_direction,
+            **({"media_sockets": staged_video_relay.pending_media_sockets("right")}
+               if staged_video_relay is not None and getattr(client, "media_endpoints", None) else {}),
         )
         if candidate is None:
             return SipInviteResult(488, "Not Acceptable Here")
@@ -250,9 +259,10 @@ async def _prepare_bridge_video_contract_change(
             )
             if not video_offer.accepted:
                 return SipInviteResult(488, "Not Acceptable Here")
-            updated = _constrain_bridge_video_framerate(
-                updated, candidate_video_peer.send_format
-            )
+            if not current_video_relay.transcodes_from("left"):
+                updated = _project_passthrough_receiver_framerate(
+                    updated, candidate_video_peer.send_format
+                )
             answer_video_format = updated.answer_video_format
             answer_video_direction = constrained_video_direction(
                 updated.video_format.direction,
@@ -805,6 +815,7 @@ async def async_prepare_media_update(
         video = getattr(relay, "video_relay", None)
         video_update = source_peer = application = None
         try:
+            previous_media_invite = getattr(relay, "invite", None)
             commit_assist = relay.prepare_media_update(updated)
             if video is not None:
                 from .local_application import prepare_held_application_video_update
@@ -836,20 +847,27 @@ async def async_prepare_media_update(
             )
             return SipInviteResult(488, "Not Acceptable Here")
 
-        async def _commit_assist_update() -> None:
+        def _require_assist_current() -> None:
             if not registry.is_generation_current(call_id, call_generation):
                 raise RuntimeError(
                     "SIP local application media update belongs to a terminated call"
                 )
             if registry.resource_for(call_id, "relay") is not relay:
                 raise RuntimeError("SIP local application media owner changed before commit")
+            if getattr(relay, "invite", None) is not previous_media_invite:
+                raise RuntimeError("SIP local application media revision changed before commit")
             if getattr(relay, "video_relay", None) is not video:
                 raise RuntimeError("SIP held application video child changed before commit")
             if application is not None and registry.resource_for(call_id, "parking") is not application:
                 raise RuntimeError("SIP parked application owner changed before commit")
-            commit_assist()
+
+        async def _commit_assist_update() -> None:
+            _require_assist_current()
             if video_update is not None:
                 await video_update.commit()
+                _require_assist_current()
+            commit_assist()
+            if video_update is not None:
                 if application is not None:
                     application.video_source = source_peer
                     application.invite = updated
@@ -950,9 +968,10 @@ async def async_prepare_media_update(
                 video_offer.reason,
             )
             return SipInviteResult(488, "Not Acceptable Here")
-        updated = _constrain_bridge_video_framerate(
-            updated, getattr(video_relay, opposite).send_format
-        )
+        if not video_relay.transcodes_from(side):
+            updated = _project_passthrough_receiver_framerate(
+                updated, getattr(video_relay, opposite).send_format
+            )
         video_direction = constrained_video_direction(
             updated.video_format.direction,
             allow_send=(
@@ -997,7 +1016,8 @@ async def async_prepare_media_update(
             _commit_stage, undo_stage = video_relay.stage_peer_reconfiguration("right", next_video_peer)
             try:
                 commit_video_generation, rollback_video_generation = await prepare_owned_video_generation(
-                    registry, session, video_relay, left=video_relay.left, right=next_video_peer)
+                    registry, session, video_relay, left=video_relay.left, right=next_video_peer,
+                    compensate_committed=True)
             except BaseException:
                 undo_stage()
                 raise
@@ -1006,8 +1026,7 @@ async def async_prepare_media_update(
 
     audio_committed = video_committed = False
 
-    async def _commit_relay_update() -> None:
-        nonlocal audio_committed, video_committed
+    def _require_relay_current(*, video_committed=False) -> None:
         if not registry.is_generation_current(call_id, call_generation):
             raise RuntimeError(
                 "SIP relay media update belongs to a terminated call"
@@ -1015,17 +1034,23 @@ async def async_prepare_media_update(
         if registry.resource_for(call_id, "relay") is not relay or getattr(relay, side) is not previous_audio_peer or (
             video_relay is not None
             and previous_video_peer is not None
-            and getattr(video_relay, side) is not previous_video_peer
+            and (getattr(relay, "video_relay", None) is not video_relay
+                or getattr(video_relay, side) is not (next_video_peer if video_committed else previous_video_peer))
         ):
             raise RuntimeError("SIP relay media owner changed before commit")
-        commit_audio()
-        audio_committed = True
+
+    async def _commit_relay_update() -> None:
+        nonlocal audio_committed, video_committed
+        _require_relay_current()
         if commit_video_generation is not None:
             await commit_video_generation()
             video_committed = True
+            _require_relay_current(video_committed=True)
         elif commit_video is not None:
             commit_video()
             video_committed = True
+        commit_audio()
+        audio_committed = True
 
     async def _rollback_relay_update() -> None:
         nonlocal audio_committed, video_committed

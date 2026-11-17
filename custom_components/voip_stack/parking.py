@@ -411,6 +411,13 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
             trunk_id=str(session.metadata.get("inbound_trunk_id") or ""), allow_video=True)
     if source is None:
         raise ParkingError("The remote SIP dialog is no longer available")
+    if (client is None and descriptor.get("local_video_rtp_port") == 0
+            and video is None and video_owner is None):
+        # The UAS invite retains the remote offer. The committed answer can
+        # reject its video stream (RFC 3264 section 6); keep that decision
+        # in the application's contract without changing the received offer.
+        source = replace(source, video_format=None, local_video_format=None, video_answer_format=None,
+            remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
     local_ip = str(client.local_ip if client is not None else server.local_ip)
     lot = get_parking_lot(hass)
     settings = parking_settings(hass)
@@ -738,7 +745,11 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         async def prepare_media():
             video_update = (await application.prepare_video_pickup(invite)
                             if getattr(application.media, "video_relay", None) is not None else None)
-            return await LocalMediaBridge.prepare(application.media, invite,
+            media_invite = invite
+            if application.media.invite.video_format is None and application.media.video_relay is None:
+                media_invite = replace(invite, video_format=None, local_video_format=None, video_answer_format=None,
+                    remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
+            return await LocalMediaBridge.prepare(application.media, media_invite,
                 **({"video_update": video_update} if video_update is not None else {}))
         prepared = await session.create_task(prepare_media(), name="parking-pickup-media")
         session.add_resource(prepared_name, prepared, lambda _reason: prepared.rollback(), stage=CleanupStage.MEDIA)
@@ -810,7 +821,8 @@ async def pickup_phone_call(call, endpoint, slot):
     hass = call.hass
     registry = call_registry(hass)
     lot = get_parking_lot(hass)
-    claim = lot.claim(slot, f"browser:{call.context.id}:{endpoint.endpoint_id}")
+    claim = lot.claim(slot, f"browser:{call.context.id}:{endpoint.endpoint_id}",
+        browser_endpoint_id=endpoint.endpoint_id if endpoint.kind.is_softphone else "")
     session = claim.parked.session
     application = registry.resource_for(session.call_id, "parking")
     if application is None or endpoint.endpoint_id in session.endpoint_claims:
@@ -819,8 +831,13 @@ async def pickup_phone_call(call, endpoint, slot):
     try:
         if registry.forward_call is None:
             raise ParkingError("Call forwarding is unavailable")
-        await registry.forward_call(call_id=session.call_id, destination=endpoint.name, on_failure="resume")
-        task = registry.task_for(session.call_id, "forward")
+        resolved = {}
+        if endpoint.kind.is_softphone:
+            resolved["_resolved_decision"] = RouteDecision(RouteAction.ANSWER_HA,
+                target=endpoint.name, entry=RosterEntry(endpoint.name,
+                    metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
+        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.name,
+            on_failure="resume", **resolved)
         if task is not None:
             try:
                 async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):

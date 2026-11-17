@@ -74,6 +74,28 @@ class DialOutcome:
         return self.disposition is DialDisposition.ANSWERED
 
 
+def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
+    """Reduce terminal branch outcomes without owning calls or transport state."""
+    if not outcomes:
+        return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+    dispositions = [outcome.disposition for outcome in outcomes]
+    if all(item is DialDisposition.DECLINED for item in dispositions):
+        return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
+    if any(item is DialDisposition.BUSY for item in dispositions):
+        return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
+    if any(item is DialDisposition.DND for item in dispositions):
+        return DialOutcome(DialDisposition.DND, 486, "DND")
+    if all(item is DialDisposition.MEDIA_INCOMPATIBLE for item in dispositions):
+        return DialOutcome(
+            DialDisposition.MEDIA_INCOMPATIBLE,
+            488,
+            "Not Acceptable Here",
+        )
+    if all(item is DialDisposition.TIMEOUT for item in dispositions):
+        return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
+    return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+
+
 DialOperation = Callable[[], Awaitable[DialOutcome]]
 CloseOperation = Callable[[LegCloseMode], Awaitable[None]]
 WinnerCommit = Callable[["DialCandidate", DialOutcome], bool]
@@ -96,6 +118,17 @@ class ForkResult:
     outcome: DialOutcome
     winner: DialCandidate | None = None
     attempted: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ForkAllResult:
+    """All independently accepted branches, retained until their owner closes."""
+
+    outcomes: tuple[tuple[DialCandidate, DialOutcome], ...]
+
+    @property
+    def answered(self) -> tuple[DialCandidate, ...]:
+        return tuple(candidate for candidate, outcome in self.outcomes if outcome.answered)
 
 
 @dataclass(slots=True)
@@ -228,6 +261,69 @@ class DialForkController:
         cleanup = asyncio.create_task(_close(), name="voip-dial-fork-cleanup")
         await async_wait_for_cleanup(cleanup)
 
+    async def run_all(self, commit: WinnerCommit) -> ForkAllResult:
+        """Admit every ready paging branch without changing first-answer forking.
+
+        Each dial operation owns its answer deadline. The controller's overall
+        bound is a preparation/cleanup guard, not an alternative SIP timer.
+        """
+        self.session.ensure_live(self.token)
+        if any(candidate.control for candidate in self.candidates):
+            raise ValueError("Retain-all admission does not accept route-control branches")
+        deadline = asyncio.get_running_loop().time() + self.overall_timeout
+        outcomes = {}
+
+        async def admit(candidate):
+            try:
+                outcome = await candidate.dial()
+                if outcome.answered and candidate.confirm is not None:
+                    if not await self._confirm_candidate(candidate, deadline):
+                        outcome = DialOutcome(DialDisposition.CANCELLED, 487, "Answer preparation failed")
+                if outcome.answered and (not self.session.owns(self.token) or not commit(candidate, outcome)):
+                    outcome = DialOutcome(DialDisposition.CANCELLED, 487, "Request Terminated")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.debug("Paging branch failed candidate=%s", candidate.candidate_id, exc_info=True)
+                outcome = DialOutcome(DialDisposition.PROTOCOL_ERROR, 500)
+            if not outcome.answered:
+                await self._close_candidates((candidate,), LegCloseMode.CANCEL_OR_BYE)
+            outcomes[candidate.candidate_id] = (candidate, outcome)
+
+        tasks = [asyncio.create_task(admit(candidate), name=f"voip-page-{candidate.candidate_id}")
+                 for candidate in self.candidates]
+        terminated = asyncio.create_task(self.session.termination_started.wait())
+        try:
+            pending = set(tasks)
+            while pending:
+                done, _ = await asyncio.wait(
+                    {*pending, terminated},
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if terminated in done or not self.session.owns(self.token):
+                    raise asyncio.CancelledError
+                if not done:
+                    break
+                pending.difference_update(done)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for candidate in self.candidates:
+                if candidate.candidate_id not in outcomes:
+                    await self._close_candidates((candidate,), LegCloseMode.CANCEL_OR_BYE)
+                    outcomes[candidate.candidate_id] = (candidate, DialOutcome(DialDisposition.TIMEOUT, 408))
+            return ForkAllResult(tuple(outcomes[candidate.candidate_id] for candidate in self.candidates))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self._close_candidates(self.candidates, LegCloseMode.CANCEL_OR_BYE)
+            raise
+        finally:
+            terminated.cancel()
+            await asyncio.gather(terminated, return_exceptions=True)
+
     async def _wait_for_cleanup_or_termination(
         self,
         cleanup: asyncio.Task[None],
@@ -254,26 +350,6 @@ class DialForkController:
                 termination.cancel()
             await asyncio.gather(termination, return_exceptions=True)
 
-    @staticmethod
-    def _reduce_failures(outcomes: list[DialOutcome]) -> DialOutcome:
-        if not outcomes:
-            return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
-        dispositions = [outcome.disposition for outcome in outcomes]
-        if all(item is DialDisposition.DECLINED for item in dispositions):
-            return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
-        if any(item is DialDisposition.BUSY for item in dispositions):
-            return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
-        if any(item is DialDisposition.DND for item in dispositions):
-            return DialOutcome(DialDisposition.DND, 486, "DND")
-        if all(item is DialDisposition.MEDIA_INCOMPATIBLE for item in dispositions):
-            return DialOutcome(
-                DialDisposition.MEDIA_INCOMPATIBLE,
-                488,
-                "Not Acceptable Here",
-            )
-        if all(item is DialDisposition.TIMEOUT for item in dispositions):
-            return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
-        return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
 
     async def _dial_parallel_tier(
         self,
@@ -413,7 +489,7 @@ class DialForkController:
 
         self.session.ensure_live(self.token)
         if not self.candidates:
-            return ForkResult(self._reduce_failures([]))
+            return ForkResult(reduce_dial_failures([]))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.overall_timeout
         attempted: list[str] = []
@@ -458,7 +534,7 @@ class DialForkController:
             if winner is None or winner_outcome is None:
                 await self._close_candidates(all_candidates, LegCloseMode.CLOSE)
                 return ForkResult(
-                    self._reduce_failures(failures),
+                    reduce_dial_failures(failures),
                     attempted=tuple(attempted),
                 )
 
@@ -700,7 +776,7 @@ class DialForkController:
                     break
             result = branch_result or await branch_task
             if not branches:
-                result = ForkResult(self._reduce_failures(
+                result = ForkResult(reduce_dial_failures(
                     control_failures or [DialOutcome(DialDisposition.TIMEOUT, 408)]
                 ), attempted=attempted)
             control = _ready_priority_control()

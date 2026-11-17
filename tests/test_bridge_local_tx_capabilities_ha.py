@@ -1,0 +1,104 @@
+"""Bridge packet-time alternatives come from the actual listener TX policy."""
+
+from dataclasses import replace
+import struct
+from types import SimpleNamespace
+
+import pytest
+
+from custom_components.voip_stack.core import sdp, sip
+from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
+from custom_components.voip_stack.core.audio_format import AudioFormat
+from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
+from custom_components.voip_stack.sip_bridge import bridge_source_audio
+from custom_components.voip_stack.sip_client import RtpPayloadEncoder
+from custom_components.voip_stack.sip_listener import SipUdpEndpoint
+
+
+pytestmark = pytest.mark.ha
+
+
+OFFER = (
+    "v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Independent peer\r\n"
+    "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 96 97\r\n"
+    "a=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
+    "a=x-voip-stack-flow:96 sendrecv\r\na=x-voip-stack-flow:97 recv\r\n"
+    "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
+)
+
+
+def parse_with_send_formats(formats):
+    endpoint = SipUdpEndpoint(
+        local_ip="127.0.0.1", local_sip_port=5060, local_rtp_port=40000,
+        supported_formats=formats, supported_send_formats=formats,
+        supported_recv_formats=[AudioFormat(16000, frame_ms=20)], on_invite=None,
+    )
+    request = sip.parse_message(sip.build_request("INVITE", "sip:phone@127.0.0.1", [
+        ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bK-local-tx"),
+        ("From", "<sip:peer@127.0.0.2>;tag=source"), ("To", "<sip:phone@127.0.0.1>"),
+        ("Call-ID", "local-transmit-policy"), ("CSeq", "1 INVITE"),
+        ("Contact", "<sip:peer@127.0.0.2:5060>"), ("Content-Type", "application/sdp"),
+    ], OFFER.encode()))
+    return endpoint._parse_invite(request, ("127.0.0.2", 5060))
+
+
+@pytest.mark.parametrize("other", [None, AudioFormat(16000, "s24le", 1, 10),
+                                  AudioFormat(16000, "s16le", 2, 10)])
+def test_bridge_never_invents_16k_mono_s16_10ms_for_restricted_listener(other):
+    formats = [AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)]
+    if other is not None:
+        formats.append(other)
+    invite = parse_with_send_formats(formats)
+    assert invite is not None
+    assert invite.local_send_capabilities == tuple(formats)
+    destination = SimpleNamespace(
+        recv_format=sdp.RtpPcmFormat(100, "L16", 16000, 1, 20),
+        send_format=sdp.RtpPcmFormat(101, "L16", 48000, 1, 10),
+    )
+    selected = bridge_source_audio(invite, destination)
+    assert (selected.send_format.sample_rate, selected.send_format.frame_ms) == (48000, 10)
+    assert selected.local_send_capabilities is invite.local_send_capabilities
+    assert selected.local_recv_capabilities is invite.local_recv_capabilities
+
+
+def test_20ms_preference_uses_backend10ms_with_receiver_maxptime10():
+    preferred=AudioFormat(16000,frame_ms=20)
+    invite=parse_with_send_formats([preferred])
+    assert invite is not None
+    assert invite.local_send_capabilities==(preferred,)
+    assert invite.send_format.audio_format==AudioFormat(16000,frame_ms=10)
+    assert HA_AUDIO_CAPABILITIES.supports_rtp(invite.send_format)
+    assert invite.send_format.frame_ms<=sdp.parse_sdp(OFFER)['maxptime']==10
+    assert invite.recv_format.frame_ms==20
+    values=tuple(range(-80,80))
+    pcm=struct.pack('<160h',*values)
+    payload=RtpPayloadEncoder(invite.send_format).encode(pcm)
+    assert payload==struct.pack('!160h',*values)
+    assert RtpAudioReceiver(invite.send_format).decode(invite.send_format.payload_type,payload)==[pcm]
+
+
+def test_answered_source_retains_the_existing_media_contract():
+    invite = parse_with_send_formats([AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)])
+    invite = replace(invite, initial_response_sent=True)
+    destination = SimpleNamespace(
+        recv_format=sdp.RtpPcmFormat(100, "L16", 16000, 1, 20),
+        send_format=sdp.RtpPcmFormat(101, "L16", 48000, 1, 10),
+    )
+    assert bridge_source_audio(invite, destination) is invite
+
+
+def test_receive_geometry_comparison_does_not_construct_a_fractional_frame():
+    invite = parse_with_send_formats([AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)])
+    source_receive = AudioFormat(16000, frame_ms=16)
+    destination_send = AudioFormat(44100, frame_ms=20)
+    invite = replace(invite,
+        recv_format=sdp.RtpPcmFormat(96, "L16", source_receive.sample_rate, 1, source_receive.frame_ms),
+        local_recv_capabilities=(source_receive,),
+        remote_sdp=invite.remote_sdp.replace(b"a=ptime:10", b"a=ptime:16").replace(b"a=maxptime:10", b"a=maxptime:32"),
+    )
+    destination = SimpleNamespace(
+        recv_format=sdp.RtpPcmFormat(100, "L16", 48000, 1, 10),
+        send_format=sdp.RtpPcmFormat(101, "L16", destination_send.sample_rate, 1, destination_send.frame_ms),
+    )
+    selected = bridge_source_audio(invite, destination)
+    assert selected.recv_format.audio_format == source_receive

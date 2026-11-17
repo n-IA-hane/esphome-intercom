@@ -19,7 +19,7 @@ def palette_config(build, output, body, icon_font):
     """Replace SIP input only; keep the production row lambda and LVGL renderer."""
     config = list_config(240, build, output)
     header = build / "palette_inputs.h"
-    voip = ROOT.parent / "esphome-voip-stack/esphome/components/voip_stack"
+    voip = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack")) / "esphome/components/voip_stack"
     header.write_text(
         '#define USE_ESP32\n#define USE_ESPHOME_VOIP_BLF\n'
         f'#include "{voip / "phonebook.h"}"\n#include "{voip / "sip_blf.h"}"\n'

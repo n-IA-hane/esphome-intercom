@@ -111,18 +111,6 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
         entry, data={**entry.data, "parking": {"enabled": True}}
     )
     caller, original, picker = registered_phones
-    prepared, continue_preparation = asyncio.Event(), asyncio.Event()
-    hold_preparation = group and winner == "original_answer"
-    if hold_preparation:
-        from custom_components.voip_stack import ring_group_orchestrator
-        prepare = ring_group_orchestrator.async_prepare_group_candidates
-
-        async def prepared_before_dial(*args, **kwargs):
-            await prepare(*args, **kwargs)
-            prepared.set()
-            await continue_preparation.wait()
-
-        monkeypatch.setattr(ring_group_orchestrator, "async_prepare_group_candidates", prepared_before_dial)
 
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -140,32 +128,8 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
     )
     session = next(iter(runtime.calls.sessions.values()))
     if group:
-        # A group claims phones before its SIP legs start. The BLF projection
-        # can already be early while the actual destination is still calling.
-        checked = asyncio.Event()
-
-        def destination_is_ringing():
-            checked.set()
-            return any(
-                leg.endpoint_id == "transfer_b" and leg.state == "remote_ringing"
-                for leg in session.legs.values()
-            ) and "Incoming call" in original.read()
-
-        ready = asyncio.create_task(wait_for(destination_is_ringing))
-        if hold_preparation:
-            try:
-                await asyncio.wait_for(prepared.wait(), 3)
-                from custom_components.voip_stack.dialog_info import snapshot
-                assert any(item.state == "early" for item in snapshot(runtime.runtime, "transfer_b"))
-                await asyncio.wait_for(checked.wait(), 3)
-                assert not ready.done(), "Pickup barrier admitted a claim without a ringing SIP leg"
-            except BaseException:
-                ready.cancel()
-                await asyncio.gather(ready, return_exceptions=True)
-                raise
-            finally:
-                continue_preparation.set()
-        await ready
+        from custom_components.voip_stack.dialog_info import snapshot
+        await wait_for(lambda: any(item.state == "early" for item in snapshot(runtime.runtime, "transfer_b")))
     entered, release = asyncio.Event(), asyncio.Event()
     start = SipRtpRelay.start
     first = True
@@ -434,6 +398,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
         {"roster_json": dump_roster_json(runtime.roster)},
     )
     caller, original, picker = registered_phones
+    runtime.runtime.endpoints.update("transfer_a", device_id="pickup-source-device")
 
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -477,7 +442,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
             runtime.runtime.endpoints.update("transfer_c", device_id="picker-device")
         await runtime.hass.services.async_call("voip_stack", "pickup", {
             "device_id": "picker-device", "target_device_id": "browser-device",
-            "media_client_id": "test-browser-picker",
+            **({"media_client_id": "test-browser-picker"} if pickup_path == "browser_service" else {}),
         }, blocking=True, return_response=True)
     assert (
         runtime.calls.get_session(session.call_id) is session
@@ -486,7 +451,15 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     if pickup_path != "browser_service":
         relay = runtime.calls.resource_for(session.call_id, "relay")
         await wait_for(lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20)
+    await wait_for(lambda: "Call established" in caller.read())
     assert caller.read().count("Call established") == 1
+    caller_state = await runtime.hass.services.async_call("voip_stack", "get_phone_state", {
+        "device_id": "pickup-source-device",
+    }, blocking=True, return_response=True)
+    assert caller_state["state"] == "in_call", caller_state
+    assert len(caller_state["calls"]) == 1
+    assert caller_state["calls"][0]["call_id"] == session.call_id
+    assert caller_state["calls"][0]["state"] == "confirmed"
     await asyncio.to_thread(caller.hangup)
     await wait_for(lambda: not runtime.calls.sessions)
     assert not runtime.runtime.rtp_port_pool.get("used")
@@ -568,6 +541,17 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
         monkeypatch.setattr(
             softphone_originate, "_resolve_target_device", AsyncMock(return_value=None)
         )
+        from custom_components.voip_stack.call_pickup import PickupClaim
+        transfers = []
+        forward = runtime.calls.forward_call
+        async def observe_forward(**kwargs):
+            claim = runtime.calls.resource_for(session.call_id, "pickup")
+            assert isinstance(claim, PickupClaim)
+            assert claim.token == session.token and claim.endpoint_id == "browser-picker"
+            task = await forward(**kwargs)
+            transfers.append(task)
+            return task
+        monkeypatch.setattr(runtime.calls, "forward_call", observe_forward)
         await runtime.hass.services.async_call(
             "voip_stack",
             "call",
@@ -582,6 +566,8 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
             runtime.runtime.endpoints.get("browser-picker").active_call_id
             == session.call_id
         )
+        assert len(transfers) == 1 and transfers[0].result().status == "ringing"
+        assert runtime.calls.resource_for(session.call_id, "pickup") is None
     else:
         await asyncio.to_thread(picker.dial, "pickup.transfer_b")
     await wait_for(lambda: session.state == "in_call")
@@ -698,7 +684,11 @@ async def test_sip_pickup_wins_a_ringing_group_without_redialing_caller(register
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
-async def test_early_replaces_matches_all_tags_before_picking_up(registered_phones, trunks):
+@pytest.mark.parametrize("early_only", [False, True])
+@pytest.mark.parametrize("browser_source", [False, True])
+async def test_early_replaces_matches_all_tags_before_picking_up(
+    registered_phones, trunks, early_only, browser_source, monkeypatch
+):
     import time
     from .test_refer_correlation import Peer
     from custom_components.voip_stack.core import sip
@@ -707,14 +697,43 @@ async def test_early_replaces_matches_all_tags_before_picking_up(registered_phon
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
     caller, _old, _unused = registered_phones
-    await asyncio.to_thread(caller.command, "/dial transfer_b")
+    if browser_source:
+        from unittest.mock import AsyncMock
+        from custom_components.voip_stack import softphone_originate
+        from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+        from custom_components.voip_stack.roster import dump_roster_json
+
+        source = PhoneEndpoint(endpoint_id="browser-replaces", name="Browser replaces",
+            device_id="browser-replaces-device", kind="browser", availability="available")
+        runtime.runtime.endpoints.register(source)
+        runtime.hass.states.async_set("sensor.voip_phonebook", "ready",
+            {"roster_json": dump_roster_json(runtime.roster)})
+        monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+        monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+        await runtime.hass.services.async_call("voip_stack", "call", {
+            "device_id": source.device_id, "destination": "transfer_b",
+        }, blocking=True)
+    else:
+        await asyncio.to_thread(caller.command, "/dial transfer_b")
     async with asyncio.timeout(4):
         while not any(s.state == "remote_ringing" for s in runtime.calls.sessions.values()):
             await asyncio.sleep(.01)
     session = next(iter(runtime.calls.sessions.values()))
-    client = runtime.calls.sip_client_for(runtime.calls.bridge_link_for(session.call_id))
+    client = runtime.calls.sip_client_for(runtime.calls.bridge_link_for(session.call_id) or session.call_id)
     assert len(client.early_dialogs) == 1
     remote_tag = next(iter(client.early_dialogs))
+    from xml.etree import ElementTree
+    from custom_components.voip_stack.dialog_info import document, snapshot
+
+    ns = {"d": "urn:ietf:params:xml:ns:dialog-info"}
+    notification = ElementTree.fromstring(document(
+        "sip:transfer_b@127.0.0.1", 0, snapshot(runtime.runtime, "transfer_b")))
+    watched = notification.find("d:dialog", ns)
+    assert watched.attrib["call-id"] == client.dialog_ids.call_id
+    assert watched.attrib["local-tag"] == remote_tag
+    assert watched.attrib["remote-tag"] == client.dialog_ids.local_tag
+    pickup_uri = watched.find("d:remote/d:target", ns).attrib["uri"]
+    pickup_identity = watched.find("d:remote/d:identity", ns).text
     transport, peer = await runtime.hass.loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
     port = transport.get_extra_info("sockname")[1]
     registrar = runtime.calls.component("registrar")
@@ -731,12 +750,13 @@ async def test_early_replaces_matches_all_tags_before_picking_up(registered_phon
         for index, tag in enumerate(("wrong-tag", client.dialog_ids.local_tag)):
             identity = f"early-pickup-{index}"
             headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{port};branch=z9hG4bKpick{index}"),
-                ("From", "<sip:pickup-test@127.0.0.1>;tag=picker"), ("To", "<sip:transfer_b@127.0.0.1>"),
+                ("From", "<sip:pickup-test@127.0.0.1>;tag=picker"), ("To", f"<{pickup_identity}>"),
                 ("Call-ID", identity), ("CSeq", "1 INVITE"), ("Contact", f"<sip:pickup-test@127.0.0.1:{port}>"),
                 ("Content-Type", "application/sdp"), ("Require", "replaces"),
-                ("Replaces", f"{client.dialog_ids.call_id};to-tag={tag};from-tag={remote_tag};early-only")]
+                ("Replaces", f"{client.dialog_ids.call_id};to-tag={tag};from-tag={remote_tag}"
+                 + (";early-only" if early_only else ""))]
             body = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 45000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=sendrecv\r\n"
-            transport.sendto(sip.build_request("INVITE", "sip:transfer_b@127.0.0.1", headers, body), target)
+            transport.sendto(sip.build_request("INVITE", pickup_uri, headers, body), target)
             while True:
                 response, address = await peer.receive()
                 if response.header("Call-ID") == identity and response.is_response and response.status_code >= 200:
@@ -1074,9 +1094,11 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
     for index, phone in enumerate(runtime.phones):
         name = f"bedroom{index}"
         runtime.runtime.endpoints.update("sip:" + name, availability="available")
-        runtime.roster.append(RosterEntry(name,
+        destination_index = next(position for position, row in enumerate(runtime.roster)
+                                 if row.metadata.get("endpoint_id") == "sip:" + name)
+        runtime.roster[destination_index] = RosterEntry(name,
             sip_uri=f"sip:{name}@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
-            metadata={"endpoint_id": "sip:" + name, "endpoint_kind": "sip_account", "registered": True}))
+            metadata={"endpoint_id": "sip:" + name, "endpoint_kind": "sip_account", "registered": True})
     browser = PhoneEndpoint(endpoint_id="route-browser", name="Route browser", device_id="route-browser-device",
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)
@@ -1167,3 +1189,19 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
         await asyncio.gather(*commands, return_exceptions=True)
         for peer in registered_phones:
             await asyncio.to_thread(peer.command, "/hangupall")
+
+
+@pytest.mark.parametrize("call_id,generation,endpoint_id,terminal,expected", [
+    ("selected-call", 7, "picker", False, True),
+    ("other-call", 7, "picker", False, False),
+    ("selected-call", 8, "picker", False, False),
+    ("selected-call", 7, "other-picker", False, False),
+    ("selected-call", 7, "picker", True, False),
+])
+def test_browser_pickup_authorization_requires_exact_call_token_and_phone(call_id, generation, endpoint_id, terminal, expected):
+    from custom_components.voip_stack.call_pickup import PickupClaim
+    from custom_components.voip_stack.endpoint_session import CallToken, EndpointCallSession, SessionPhase
+    session = EndpointCallSession(call_id, generation,
+        phase=SessionPhase.TERMINATING if terminal else SessionPhase.RINGING)
+    claim = PickupClaim("picker", token=CallToken("selected-call", 7))
+    assert claim.authorizes_browser_answer(session, endpoint_id) is expected

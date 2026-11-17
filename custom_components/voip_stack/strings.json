@@ -24,14 +24,14 @@
           "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
           "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs without recording call audio.",
           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
-          "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
+          "experimental_sip_video": "Allow optional video for compatible endpoints and routes. Browser H.264, VP8 and JPEG require a secure context and a compatible browser. ESP support follows the configured device and codec profile: supported S3 display profiles receive JPEG; P4 profiles can use JPEG or H.264. Audio-only and camera-only profiles retain their respective limits.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
           "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
         }
       },
       "video": {
         "title": "SIP video",
-        "description": "Video is optional. The Home Assistant softphone and standard SIP endpoints support it, and qualified ESP32-P4 profiles can negotiate JPEG or H.264. Other ESP endpoints remain audio-only.",
+        "description": "Video is optional and depends on the endpoint, route and configured codec. Supported S3 display profiles receive JPEG; P4 profiles can use JPEG or H.264. Browser and standard SIP video still require compatible peers, and a camera-only profile does not add video reception.",
         "data": {
           "video_transcoding_enabled": "Enable video transcoding",
           "video_camera_send_enabled": "Allow browser camera transmission"
@@ -76,7 +76,13 @@
           "trunk_allowed_ips": "Allowed incoming IP addresses",
           "trunk_audio_codecs": "Allowed audio codecs",
           "trunk_video_codecs": "Allowed video codecs",
-          "trunk_outbound_media_address": "Outbound media IPv4 address"
+          "trunk_outbound_media_address": "Outbound media IPv4 address",
+          "trunk_media_nat": "Media NAT traversal",
+          "trunk_did_source": "Called number source",
+          "trunk_did_header": "Custom called-number header",
+          "trunk_did_fixed": "Fixed called number",
+          "trunk_did_fallbacks": "Alternative sources in priority order",
+          "trunk_did_prefix_rules": "Ordered prefix replacements"
         },
         "data_description": {
           "trunk_transport": "SIP transport used from HA to the provider.",
@@ -96,7 +102,8 @@
           "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
           "trunk_audio_codecs": "Audio codecs permitted for incoming and outgoing calls on this trunk. Keep the defaults unless your PBX/provider specifies a list. Select at least one codec. A call needs a common codec; DTMF is negotiated separately. This list does not change other trunks or local phones.",
           "trunk_video_codecs": "Video codecs permitted on this trunk. Clear the list for audio-only calls. Selecting a codec does not enable video or transcoding: the phone and media path must support it. H.264 profiles are negotiated automatically. Keep the defaults if unsure.",
-          "trunk_outbound_media_address": "Optional. Home Assistant address reachable by this PBX for audio and video on outgoing calls. Behind NAT, use your public IPv4 address and keep RTP/RTCP reachable with unchanged port numbers. Do not enter the provider address. Empty uses the existing HA address. Does not change LAN calls or SIP registration."
+          "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
         }
       },
       "trunk_mode": {
@@ -145,21 +152,109 @@
           "user": "General settings",
           "parking": "Call parking",
           "voicemail": "Voicemail voice",
-          "phone_services": "Phone directory and mailboxes"
+          "phone_services": "LDAP directory",
+          "phone_provisioning": "Physical phone provisioning"
         }
       },
       "phone_services": {
-        "title": "Standard phone services",
-        "description": "LDAP is the shared phone directory. IMAP exposes the existing voicemail archive. Managed ESPHome phones receive their configuration through the native API. SIP, LDAP and IMAP use the same phone account. Optional TLS uses your certificate and private key files.",
+        "title": "LDAP directory",
+        "description": "The standard directory accepts enabled phone accounts even while offline. Simple bind without TLS sends credentials over the network. For StartTLS on the normal listener, provide a certificate and key; TLS selects implicit LDAPS instead. Temporary listener failure preserves the directory on phones.",
         "data": {
+          "enabled": "Enable LDAP directory",
           "listen_host": "Listen address",
           "ldap_port": "LDAP port",
-          "base_dn": "Directory base DN",
-          "allow_anonymous": "Allow anonymous directory searches",
-          "imap_port": "IMAP port",
-          "tls": "Use TLS for LDAP and IMAP",
-          "certificate": "Certificate file",
-          "private_key": "Private key file"
+          "base_dn": "Base DN",
+          "allow_anonymous": "Allow anonymous searches",
+          "tls": "Implicit TLS (LDAPS)",
+          "certificate": "PEM certificate path",
+          "private_key": "PEM private key path"
+        }
+      },
+      "phone_provisioning": {
+        "title": "Physical phone provisioning",
+        "description": "Enable the optional profile catalog and physical phone setup. Existing SIP accounts remain the owners of credentials and calls. The public URL must be reachable by your phones.",
+        "data": {
+          "enabled": "Enable physical phone provisioning",
+          "base_url": "Home Assistant URL for phones",
+          "allow_insecure_http": "Allow HTTP on a trusted local network"
+        },
+        "data_description": {
+          "base_url": "Optional. Leave blank to use the configured Home Assistant URL. Use HTTPS unless the phones require local HTTP."
+        }
+      },
+      "phone_discovered": {
+        "title": "Discovered phone: {name}",
+        "description": "A phone announced MAC {mac} at {host}. Configure it to choose a verified profile and bind existing SIP accounts, or use Ignore to leave it unconfigured."
+      },
+      "phone_user": {
+        "title": "Physical phone",
+        "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Source: {profile_source}. Pinned revision: {profile_pin}. Status: {profile_status}. Downloaded does not mean applied.",
+        "data": {
+          "name": "Name",
+          "mac": "MAC address",
+          "profile_id": "Phone model profile",
+          "update_profile": "Update the pinned profile",
+          "account_id": "First SIP account (optional)"
+        },
+        "data_description": {
+          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Administration and preferences",
+            "data": {
+              "host": "Host or IP hint (optional)",
+              "area_id": "Area",
+              "person": "Person",
+              "follow_ha_language": "Follow Home Assistant language",
+              "enabled": "Enabled",
+              "admin_username": "Phone administrator (optional)",
+              "admin_password": "Phone administrator password"
+            },
+            "data_description": {
+              "host": "Leave blank for discovery or DHCP. This is a network hint, not proof of registration or availability.",
+              "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+              "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+              "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+            }
+          }
+        }
+      },
+      "phone_language": {
+        "title": "Phone language override",
+        "description": "Choose a language supported by the selected profile. This explicit override stops following the Home Assistant language.",
+        "data": {
+          "language": "Supported language"
+        }
+      },
+      "phone_bindings": {
+        "title": "Lines and programmable keys",
+        "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+        "data": {
+          "lines": "SIP lines",
+          "keys": "Programmable keys"
+        }
+      },
+      "phone_account": {
+        "title": "Create SIP account for this line",
+        "description": "Use the existing PBX account editor. The new account stays in this draft until the complete physical phone configuration is confirmed.",
+        "data": {
+          "name": "Name",
+          "extension": "Extension",
+          "username": "SIP username",
+          "password": "SIP password",
+          "enabled": "Enabled",
+          "dnd": "Do not disturb",
+          "ring_group": "Ring group",
+          "conference_group": "Conference group",
+          "conference_ring": "Ring for conference calls",
+          "video_enabled": "Allow video negotiation",
+          "offline_policy": "When not registered",
+          "offline_forward_target": "Forward destination",
+          "voicemail_enabled": "Enable mailbox"
+        },
+        "data_description": {
+          "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
         }
       }
     },
@@ -181,24 +276,75 @@
       "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
       "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty.",
       "parking_slots_in_use": "Retrieve or end calls in the removed slots before changing the parking slot list.",
-      "phone_service_ports_conflict": "LDAP and IMAP require different ports.",
-      "phone_service_certificate_required": "TLS requires both a certificate and a private key file."
+      "phone_service_configuration": "Invalid LDAP configuration.",
+      "phone_service_base_dn_invalid": "Enter a valid LDAP base DN.",
+      "phone_service_certificate_required": "Provide both the certificate and private key for TLS.",
+      "trunk_media_nat_invalid": "Choose auto, direct or manual.",
+      "trunk_did_invalid": "Invalid called-number source or prefix rules.",
+      "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
+      "phone_provisioning_url_invalid": "Use an HTTP or HTTPS URL without embedded credentials, query or fragment. HTTP requires the explicit local-network option.",
+      "phone_name_required": "A phone name is required.",
+      "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+      "phone_password_required": "A SIP password is required.",
+      "phone_forward_target_required": "A forward destination is required for the Forward policy.",
+      "phone_alias_conflict": "The name, extension or username is already used by another phone.",
+      "mailbox_removal_failed": "The mailbox could not be deleted. Restore access to the media directory and try again.",
+      "invalid_phone_mac": "Enter twelve hexadecimal MAC digits, with optional colons or hyphens.",
+      "invalid_phone_profile": "Choose a supported phone profile and enter a name.",
+      "invalid_phone_host": "Enter only a hostname or IP address.",
+      "invalid_phone_person": "Select a person entity.",
+      "invalid_phone_bindings": "Check the line and key positions and their references.",
+      "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
+      "invalid_phone_key": "Each key needs a unique position and an included line.",
+      "invalid_phone_transport": "Choose UDP, TCP or TLS.",
+      "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
+      "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
+      "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
+      "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
+      "phone_sip_account_required": "Bind each line to an existing SIP account.",
+      "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
+      "phone_queue_membership_required": "The selected line must belong to that queue.",
+      "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
+      "invalid_parking_target": "Enter a valid parking destination.",
+      "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
+      "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
+      "invalid_phone_configuration": "Check the phone configuration and selected references.",
+      "phone_clear_keys_unsupported": "This profile has no verified command to remove managed keys. The change was not saved. Update the profile when support is available.",
+      "phone_disable_lines_unsupported": "This profile has no verified command to retire managed lines. The change was not saved. Update the profile when support is available.",
+      "phone_owned_mac_change_unsupported": "This phone already has managed positions. Add a separate physical phone for a different MAC address.",
+      "phone_retired_slot_unsupported": "The selected profile cannot preserve all previously managed positions. Keep the current profile until those positions can be handled.",
+      "phone_not_found": "The physical phone no longer exists.",
+      "phone_line_occupied": "That physical line is already assigned to another account.",
+      "phone_line_has_keys": "Reassign or remove keys using this line before removing the association.",
+      "phone_ldap_mode_unsupported": "This phone profile does not support the configured LDAP connection mode.",
+      "invalid_phone_key_order": "Choose each existing key exactly once.",
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
-      "already_configured": "VoIP Stack is already configured."
+      "already_configured": "VoIP Stack is already configured.",
+      "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
+      "phone_discovery_expired": "This discovery is no longer current. Wait for a new announcement or add the phone manually.",
+      "invalid_phone_discovery": "The phone announcement is invalid.",
+      "continue_phone_setup": "Continue in the physical phone editor.",
+      "phone_provisioning_disabled": "Physical phone provisioning is disabled.",
+      "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
+      "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
+      "single_instance_allowed": "Only one VoIP Stack PBX can be configured.",
+      "phone_configured": "Physical phone configured."
     }
   },
   "config_subentries": {
     "phone": {
-      "entry_type": "Phone",
+      "entry_type": "SIP account configuration",
       "initiate_flow": {
-        "user": "Add phone"
+        "user": "Add SIP account",
+        "reconfigure": "Edit SIP account"
       },
-      "title": "Phone endpoint",
+      "title": "SIP account",
       "step": {
         "user": {
-          "title": "Add phone",
+          "title": "Add SIP account",
           "description": "Create another Home Assistant browser softphone or a standard SIP account. Every phone shares the same SIP listener and RTP pool.",
           "data": {
             "kind": "Phone type"
@@ -244,10 +390,16 @@
             "video_enabled": "Allow video negotiation",
             "offline_policy": "When not registered",
             "offline_forward_target": "Forward destination",
-            "voicemail_enabled": "Enable mailbox"
+            "voicemail_enabled": "Enable mailbox",
+            "physical_bindings": "Associated physical phones",
+            "auto_answer": "Auto answer in the browser",
+            "send_video": "Send video from the browser",
+            "migration_bindings": "Inherited HA associations"
           },
           "data_description": {
-            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
+            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
+            "auto_answer": "Automatically answer when an attached browser has microphone permission.",
+            "send_video": "Send an attached browser camera by default when video is negotiated and permission is available."
           }
         },
         "reconfigure": {
@@ -260,11 +412,16 @@
         "phone_password_required": "A SIP password is required.",
         "phone_forward_target_required": "A forward destination is required for the Forward policy.",
         "phone_alias_conflict": "The name, extension or username is already used by another phone.",
-        "mailbox_removal_failed": "The mailbox could not be deleted. Restore access to the media directory and try again."
+        "mailbox_removal_failed": "The mailbox could not be deleted. Restore access to the media directory and try again.",
+        "phone_not_found": "The physical phone no longer exists.",
+        "phone_line_occupied": "That physical line is already assigned to another account.",
+        "phone_line_has_keys": "Reassign or remove keys using this line before removing the association.",
+        "invalid_phone_configuration": "Check the phone configuration and selected references."
       },
       "abort": {
         "reconfigure_successful": "Phone reconfigured successfully.",
-        "already_configured": "This phone already exists."
+        "already_configured": "This phone already exists.",
+        "phone_configured": "SIP account configured."
       }
     },
     "contact": {
@@ -309,9 +466,10 @@
       }
     },
     "trunk": {
-      "entry_type": "SIP trunk",
+      "entry_type": "SIP trunk configuration",
       "initiate_flow": {
-        "user": "Add SIP trunk"
+        "user": "Add SIP trunk",
+        "reconfigure": "Edit SIP trunk"
       },
       "title": "SIP trunk",
       "step": {
@@ -349,7 +507,13 @@
             "trunk_allowed_ips": "Allowed incoming IP addresses",
             "trunk_audio_codecs": "Allowed audio codecs",
             "trunk_video_codecs": "Allowed video codecs",
-            "trunk_outbound_media_address": "Outbound media IPv4 address"
+            "trunk_outbound_media_address": "Outbound media IPv4 address",
+            "trunk_media_nat": "Media NAT traversal",
+            "trunk_did_source": "Called number source",
+            "trunk_did_header": "Custom called-number header",
+            "trunk_did_fixed": "Fixed called number",
+            "trunk_did_fallbacks": "Alternative sources in priority order",
+            "trunk_did_prefix_rules": "Ordered prefix replacements"
           },
           "data_description": {
             "trunk_transport": "SIP transport used from HA to the provider.",
@@ -369,7 +533,8 @@
             "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
             "trunk_audio_codecs": "Audio codecs permitted for incoming and outgoing calls on this trunk. Keep the defaults unless your PBX/provider specifies a list. Select at least one codec. A call needs a common codec; DTMF is negotiated separately. This list does not change other trunks or local phones.",
             "trunk_video_codecs": "Video codecs permitted on this trunk. Clear the list for audio-only calls. Selecting a codec does not enable video or transcoding: the phone and media path must support it. H.264 profiles are negotiated automatically. Keep the defaults if unsure.",
-            "trunk_outbound_media_address": "Optional. Home Assistant address reachable by this PBX for audio and video on outgoing calls. Behind NAT, use your public IPv4 address and keep RTP/RTCP reachable with unchanged port numbers. Do not enter the provider address. Empty uses the existing HA address. Does not change LAN calls or SIP registration."
+            "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
           }
         }
       },
@@ -386,10 +551,232 @@
         "trunk_validation_failed": "Check the connection settings and incoming networks. Static trunks on the same transport cannot have overlapping source networks.",
         "trunk_codecs_invalid": "Select supported codecs and keep at least one audio codec.",
         "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
-        "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty."
+        "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty.",
+        "trunk_media_nat_invalid": "Choose auto, direct or manual.",
+        "trunk_did_invalid": "Invalid called-number source or prefix rules."
       },
       "abort": {
         "reconfigure_successful": "Trunk configuration updated."
+      }
+    },
+    "group": {
+      "entry_type": "Ring group or queue configuration",
+      "initiate_flow": {
+        "user": "Add ring group or queue",
+        "reconfigure": "Edit ring group or queue"
+      },
+      "title": "Ring group or queue",
+      "step": {
+        "user": {
+          "title": "Group type",
+          "data": {
+            "kind": "Type"
+          }
+        },
+        "group": {
+          "title": "Configure group",
+          "description": "Membership is shared with each phone settings.",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "members": "Phones",
+            "enabled": "Enabled",
+            "keep_empty": "Keep this group when empty",
+            "max_waiting": "Maximum waiting callers",
+            "max_wait": "Maximum wait (seconds)",
+            "ring_timeout": "Ring time per attempt (seconds)",
+            "no_agent_wait": "Wait without agents (seconds)",
+            "retry_delay": "Retry delay (seconds)",
+            "wrap_up": "Pause after a call (seconds)",
+            "fallback": "Fallback destination",
+            "hold_media": "Hold audio URI",
+            "strategy": "Distribution strategy",
+            "agent_order": "Preferred phone order (selection order)",
+            "auto_pause_after": "Pause after unanswered rings (0 disables)",
+            "fallback_full": "Fallback when full",
+            "fallback_timeout": "Fallback after maximum wait",
+            "fallback_no_agents": "Fallback without operators",
+            "fallback_disabled": "Fallback when disabled",
+            "fallback_removed": "Fallback when removed"
+          },
+          "data_description": {
+            "agent_order": "Select preferred phones in the order they should ring. Remaining members follow. This does not change membership.",
+            "auto_pause_after": "Disabled at 0. Set 3 to pause after three unanswered ringing attempts; busy, offline and cancellations do not count.",
+            "fallback": "Used when a specific exit destination is empty."
+          }
+        }
+      },
+      "error": {
+        "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
+      },
+      "abort": {
+        "reconfigure_successful": "Group updated"
+      }
+    },
+    "paging": {
+      "entry_type": "Paging group configuration",
+      "initiate_flow": {
+        "user": "Add paging group",
+        "reconfigure": "Edit paging group"
+      },
+      "title": "Paging group",
+      "step": {
+        "user": {
+          "title": "Paging group",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "members": "Phones",
+            "answer_timeout": "Answer window (seconds)",
+            "timeout": "Maximum duration (seconds)"
+          }
+        }
+      },
+      "error": {
+        "invalid_paging_group": "Invalid paging group or conflicting destination."
+      }
+    },
+    "physical_phone": {
+      "entry_type": "Physical phone configuration",
+      "initiate_flow": {
+        "user": "Add physical phone",
+        "reconfigure": "Configure physical phone"
+      },
+      "title": "Physical SIP phone",
+      "step": {
+        "user": {
+          "title": "Physical phone",
+          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
+          "data": {
+            "name": "Name",
+            "mac": "MAC address",
+            "profile_id": "Phone model profile",
+            "update_profile": "Update model profile",
+            "account_id": "First SIP account (optional)"
+          },
+          "data_description": {
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Administration and preferences",
+              "data": {
+                "host": "Host or IP hint (optional)",
+                "area_id": "Area",
+                "person": "Person",
+                "follow_ha_language": "Follow Home Assistant language",
+                "enabled": "Enabled",
+                "admin_username": "Phone administrator (optional)",
+                "admin_password": "Phone administrator password"
+              },
+              "data_description": {
+                "host": "Leave blank for discovery or DHCP. This is a network hint, not proof of registration or availability.",
+                "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
+                "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
+                "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+              }
+            }
+          }
+        },
+        "language": {
+          "title": "Phone language override",
+          "description": "Choose a language supported by the selected profile. This explicit override stops following the Home Assistant language.",
+          "data": {
+            "language": "Supported language"
+          }
+        },
+        "bindings": {
+          "title": "Lines and programmable keys",
+          "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+          "data": {
+            "lines": "SIP lines",
+            "keys": "Programmable keys"
+          }
+        },
+        "account": {
+          "title": "Create SIP account for this line",
+          "description": "Use the existing PBX account editor. The new account stays in this draft until the complete physical phone configuration is confirmed.",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "username": "SIP username",
+            "password": "SIP password",
+            "enabled": "Enabled",
+            "dnd": "Do not disturb",
+            "ring_group": "Ring group",
+            "conference_group": "Conference group",
+            "conference_ring": "Ring for conference calls",
+            "video_enabled": "Allow video negotiation",
+            "offline_policy": "When not registered",
+            "offline_forward_target": "Forward destination",
+            "voicemail_enabled": "Enable mailbox"
+          },
+          "data_description": {
+            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
+          }
+        },
+        "reconfigure": {
+          "title": "Configure physical phone",
+          "menu_options": {
+            "user": "Properties and profile",
+            "bindings": "Lines and key properties",
+            "key_order": "Reorder keys"
+          }
+        },
+        "key_order": {
+          "title": "Reorder keys",
+          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
+        }
+      },
+      "error": {
+        "phone_name_required": "A phone name is required.",
+        "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+        "phone_password_required": "A SIP password is required.",
+        "phone_forward_target_required": "A forward destination is required for the Forward policy.",
+        "phone_alias_conflict": "The name, extension or username is already used by another phone.",
+        "mailbox_removal_failed": "The mailbox could not be deleted. Restore access to the media directory and try again.",
+        "invalid_phone_mac": "Enter twelve hexadecimal MAC digits, with optional colons or hyphens.",
+        "invalid_phone_profile": "Choose a supported phone profile and enter a name.",
+        "invalid_phone_host": "Enter only a hostname or IP address.",
+        "invalid_phone_person": "Select a person entity.",
+        "invalid_phone_bindings": "Check the line and key positions and their references.",
+        "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
+        "invalid_phone_key": "Each key needs a unique position and an included line.",
+        "invalid_phone_transport": "Choose UDP, TCP or TLS.",
+        "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
+        "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
+        "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
+        "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
+        "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
+        "phone_sip_account_required": "Bind each line to an existing SIP account.",
+        "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
+        "phone_queue_membership_required": "The selected line must belong to that queue.",
+        "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
+        "invalid_parking_target": "Enter a valid parking destination.",
+        "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
+        "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "phone_clear_keys_unsupported": "This profile has no verified command to remove managed keys. The change was not saved. Update the profile when support is available.",
+        "phone_disable_lines_unsupported": "This profile has no verified command to retire managed lines. The change was not saved. Update the profile when support is available.",
+        "phone_owned_mac_change_unsupported": "This phone already has managed positions. Add a separate physical phone for a different MAC address.",
+        "phone_retired_slot_unsupported": "The selected profile cannot preserve all previously managed positions. Keep the current profile until those positions can be handled.",
+        "phone_not_found": "The physical phone no longer exists.",
+        "phone_line_occupied": "That physical line is already assigned to another account.",
+        "phone_line_has_keys": "Reassign or remove keys using this line before removing the association.",
+        "phone_ldap_mode_unsupported": "This phone profile does not support the configured LDAP connection mode.",
+        "invalid_phone_key_order": "Choose each existing key exactly once.",
+        "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
+      },
+      "abort": {
+        "configure_pbx_first": "Configure the PBX and enable physical phone provisioning first.",
+        "phone_discovery_expired": "This discovery is no longer current. Wait for a new announcement or add the phone manually.",
+        "invalid_phone_discovery": "The phone announcement is invalid.",
+        "continue_phone_setup": "Continue in the physical phone editor.",
+        "phone_provisioning_disabled": "Physical phone provisioning is disabled.",
+        "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
+        "phone_language_unsupported": "The requested language is unsupported. Choose a supported override.",
+        "reconfigure_successful": "Physical phone updated.",
+        "phone_configured": "Physical phone configured."
       }
     }
   },
@@ -475,6 +862,93 @@
         "in_call": "In a call",
         "held": "On hold"
       }
+    },
+    "trunk_media_nat": {
+      "options": {
+        "auto": "Automatic",
+        "direct": "Direct",
+        "manual": "Manual"
+      }
+    },
+    "group_kind": {
+      "options": {
+        "ring": "Ring group",
+        "queue": "Call queue"
+      }
+    },
+    "trunk_did_source": {
+      "options": {
+        "request_uri": "Request-URI",
+        "to": "To",
+        "p_called_party_id": "P-Called-Party-ID",
+        "custom_header": "Custom header",
+        "fixed": "Fixed number"
+      }
+    },
+    "queue_strategy": {
+      "options": {
+        "ring_all": "Ring all",
+        "round_robin": "Round robin with memory",
+        "longest_idle": "Longest idle",
+        "ordered": "Configured order with escalation"
+      }
+    },
+    "physical_phone_lines": {
+      "fields": {
+        "slot": {
+          "name": "Line position",
+          "overview_label": "Line {value}"
+        },
+        "endpoint_id": {
+          "name": "SIP account"
+        },
+        "transport": {
+          "name": "SIP transport"
+        }
+      }
+    },
+    "physical_phone_keys": {
+      "fields": {
+        "slot": {
+          "name": "Key position",
+          "overview_label": "Key {value}"
+        },
+        "function": {
+          "name": "Function"
+        },
+        "line": {
+          "name": "Line position"
+        },
+        "target": {
+          "name": "Phone, queue or dial target"
+        },
+        "label": {
+          "name": "Label (blank uses the resolved name)"
+        }
+      }
+    },
+    "physical_phone_accounts": {
+      "options": {
+        "__create_account__": "Create a SIP account"
+      }
+    },
+    "physical_phone_key_function": {
+      "options": {
+        "line": "Line",
+        "speed_dial": "Speed dial",
+        "blf": "Phone status (BLF)",
+        "queue_login": "Queue login/logout",
+        "queue_pause": "Queue pause/resume",
+        "park": "Monitor/retrieve parking",
+        "directory": "Directory",
+        "park_call": "Park current call"
+      }
+    },
+    "account_physical_bindings": {
+      "fields": {
+        "transport": "Transport",
+        "binding": "Physical phone and line"
+      }
     }
   },
   "system_health": {
@@ -494,6 +968,10 @@
     }
   },
   "issues": {
+    "phone_identity_conflict": {
+      "title": "Phone identity needs recovery",
+      "description": "The saved identity for {phone} disagrees with its legacy copy (native: {canonical}, legacy: {legacy}). No identity was changed. Restore a consistent configuration from a known backup or ask the integration maintainer to recover these references. Do not delete and recreate the phone to bypass this check, because existing devices, bindings and mailboxes use its original identity."
+    },
     "esphome_actions_incomplete": {
       "title": "ESPHome phone control is incomplete",
       "description": "{phone} is missing the ESPHome call-control actions: {actions}. Update its VoIP phone package and firmware."
@@ -519,8 +997,12 @@
       "description": "A phone, contact or group uses a voicemail feature address. Rename the conflicting destination; existing routes remain unchanged."
     },
     "phone_service_unavailable": {
-      "title": "{service} phone service unavailable",
-      "description": "VoIP Stack could not start {service} on port {port}. Check the configured listen address, port availability and optional certificate files. Calls continue using the existing SIP service. Reconfigure Phone directory and mailboxes, then reload VoIP Stack."
+      "title": "LDAP directory unavailable",
+      "description": "The {service} listener on port {port} could not start. Check the address, port and certificate paths in LDAP directory settings, then save to retry. SIP continues to run and phones retain their previous directory."
+    },
+    "esphome_endpoint_collision": {
+      "title": "ESPHome phone identity conflict",
+      "description": "The ESPHome phone {phone} could not be restored because its {field} ({value}) is already owned by another phone. Other phones remain available. Open the device page to review its name or routing identity. No identifiers or credentials were changed."
     }
   },
   "exceptions": {
@@ -623,12 +1105,6 @@
     "sip_answer_failed": {
       "message": "The SIP answer transaction failed for call {call_id}."
     },
-    "video_not_supported": {
-      "message": "This parked call requires a phone with video enabled."
-    },
-    "video_renegotiation_failed": {
-      "message": "The remote party did not accept the video update."
-    },
     "sip_call_start_failed": {
       "message": "The SIP call to {destination} could not be started."
     },
@@ -707,6 +1183,18 @@
           "held": "Held",
           "terminating": "Terminating"
         }
+      },
+      "physical_phone_provisioning": {
+        "name": "Provisioning",
+        "state": {
+          "pending": "Pending",
+          "waiting_idle": "Waiting for the call to end",
+          "ready": "Configuration ready for download",
+          "downloaded": "File downloaded",
+          "error": "Error",
+          "disabled": "Disabled",
+          "unassigned": "Unassigned"
+        }
       }
     },
     "switch": {
@@ -732,6 +1220,9 @@
       },
       "phone_endpoint_conference_group": {
         "name": "Conference groups"
+      },
+      "phone_endpoint_queues": {
+        "name": "Queues"
       }
     },
     "binary_sensor": {
@@ -740,6 +1231,24 @@
       },
       "trunk_ready": {
         "name": "Ready"
+      }
+    },
+    "select": {
+      "queue_agent_state": {
+        "name": "{phone} queue state",
+        "state": {
+          "available": "Available",
+          "paused": "Paused",
+          "logged_out": "Logged out of queue"
+        }
+      }
+    },
+    "button": {
+      "physical_phone_provision": {
+        "name": "Prepare configuration"
+      },
+      "physical_phone_rotate": {
+        "name": "Rotate provisioning credential"
       }
     }
   },
@@ -759,6 +1268,14 @@
         "ingress": {
           "name": "Call origin",
           "description": "Optional filter."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -777,6 +1294,14 @@
         "ingress": {
           "name": "Call origin",
           "description": "Optional filter."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -795,6 +1320,14 @@
         "ingress": {
           "name": "Call origin",
           "description": "Optional filter."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -813,6 +1346,14 @@
         "ingress": {
           "name": "Call origin",
           "description": "Optional filter."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -839,6 +1380,14 @@
         "outcome": {
           "name": "Call outcome",
           "description": "Ended normally, missed, or failed. Leave empty for every outcome."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -865,6 +1414,14 @@
         "source_leg": {
           "name": "Who pressed the key",
           "description": "Optional filter."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -887,6 +1444,14 @@
         "for": {
           "name": "Time without an answer",
           "description": "Omit to use the phone's configured ringing timeout. Set a duration for an independent automation wait."
+        },
+        "trunk": {
+          "name": "SIP trunk",
+          "description": "Match this stable line even after it is renamed."
+        },
+        "called_number": {
+          "name": "Called number",
+          "description": "The called number extracted and normalized at ingress."
         }
       }
     },
@@ -1039,6 +1604,54 @@
           "name": "Call leg"
         }
       }
+    },
+    "provision_phone": {
+      "name": "Prepare phone provisioning",
+      "description": "Prepare the current configuration for download. A served file does not confirm that the phone applied it.",
+      "fields": {
+        "device_id": {
+          "name": "Physical phone"
+        },
+        "phone_id": {
+          "name": "Physical phone ID"
+        }
+      }
+    },
+    "get_phone_provisioning_state": {
+      "name": "Get phone provisioning state",
+      "description": "Read prepared and downloaded revisions. Only an administrator can explicitly request the private provisioning URL.",
+      "fields": {
+        "device_id": {
+          "name": "Physical phone"
+        },
+        "phone_id": {
+          "name": "Physical phone ID"
+        },
+        "include_url": {
+          "name": "Include private provisioning URL",
+          "description": "The URL contains a device credential. Keep it private."
+        }
+      }
+    },
+    "refresh_phone_profiles": {
+      "name": "Refresh phone profile catalog",
+      "description": "Refresh the optional catalog. Existing phones keep their pinned revision until explicitly updated."
+    },
+    "rotate_phone_provisioning_token": {
+      "name": "Rotate phone provisioning credential",
+      "description": "Invalidate the old private download URL. Configure the new URL before the next phone download.",
+      "fields": {
+        "device_id": {
+          "name": "Physical phone"
+        },
+        "phone_id": {
+          "name": "Physical phone ID"
+        }
+      }
+    },
+    "reload_card_associations": {
+      "name": "Reload card associations",
+      "description": "Reread saved storage and YAML dashboard configurations to update account associations. Does not reload the PBX or start polling. Administrators only."
     }
   }
 }

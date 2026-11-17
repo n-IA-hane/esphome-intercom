@@ -58,8 +58,9 @@
 # =============================================================================
 
 substitutions:
-  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
+  audio_mic_channel: right  # Match the microphone L/R wiring: GND=left, 3V3=right.
   esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
+  esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voip, directory, blf, mwi, status_led, diagnostics]

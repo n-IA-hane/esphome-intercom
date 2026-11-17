@@ -1,4 +1,20 @@
-# Optional announcement mixer port and resampler.
+# TTS, ringtone, timer and file announcements share this mixer input.
+substitutions:
+  announcement_input_attenuation_db: "0"
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - if:
+            condition:
+              lambda: 'return ${ announcement_input_attenuation_db | default(0) } > 0;'
+            then:
+              - mixer_speaker.apply_ducking:
+                  id: tts_mixer_input
+                  decibel_reduction: ${ announcement_input_attenuation_db | default(0) }
+                  duration: 0ms
+
 speaker:
   - id: !extend audio_mixer
     source_speakers:

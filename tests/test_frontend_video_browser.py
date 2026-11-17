@@ -43,6 +43,7 @@ async def exercise(output):
     )
     packet = bytes([1, 1]) + bytes(4) + frame
     sockets = []
+    camera_packets = []
     hello = {
         "can_receive": True,
         "can_send": False,
@@ -60,8 +61,9 @@ async def exercise(output):
         await socket.prepare(request)
         sockets.append(socket)
         await socket.send_json(hello)
-        async for _ in socket:
-            pass
+        async for message in socket:
+            if isinstance(message.data, bytes):
+                camera_packets.append(message.data)
         return socket
 
     async def static(request):
@@ -153,6 +155,47 @@ async def exercise(output):
                 }
             )
             await page.evaluate("v.close()")
+            # Exercise the missing-processor branch with actual DOM playback,
+            # VideoFrames, JPEG worker and WebSocket bytes. The test supplies a
+            # canvas camera, so no real microphone or camera is requested.
+            await page.evaluate("""async()=>{
+              window.originalProcessor=globalThis.MediaStreamTrackProcessor;
+              globalThis.MediaStreamTrackProcessor=undefined;
+              window.cameraCanvas=document.createElement('canvas');cameraCanvas.width=160;cameraCanvas.height=120;
+              const paint=()=>{const ctx=cameraCanvas.getContext('2d');ctx.fillStyle='#00ff00';ctx.fillRect(0,0,160,120);};
+              paint();window.cameraPaint=setInterval(paint,50);
+              window.cameraStream=cameraCanvas.captureStream(15);
+              navigator.mediaDevices.getUserMedia=async()=>cameraStream;
+              const {VoipStackVideo}=await import('/voip-stack-video.js');
+              window.fallbackSender=new VoipStackVideo();
+              fallbackSender._generation=3;fallbackSender._cameraAllowed=true;fallbackSender._cameraEnabled=true;
+              fallbackSender._negotiated={can_send:true,can_receive:false,
+                send:{codec:'jpeg',encoding:'JPEG',clock_rate:90000,payload_type:26}};
+              const socket=new WebSocket(location.origin.replace('http','ws')+'/video');
+              await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
+              fallbackSender._ws=socket;
+              await fallbackSender._replaceSender('jpeg',3,'',false);
+            }""")
+            await page.wait_for_function("fallbackSender.stats.sent>=2", timeout=10000)
+            async with asyncio.timeout(3):
+                while len(camera_packets) < 2:
+                    await asyncio.sleep(0.01)
+            jpeg = camera_packets[-1]
+            assert jpeg[:2] == bytes([1, 1]) and jpeg[6:8] == b"\xff\xd8"
+            decoded = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-i", "pipe:0", "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
+                input=jpeg[6:], capture_output=True, check=True).stdout
+            assert len(decoded) == 160 * 120 * 3
+            pixel = list(decoded[(60 * 160 + 80) * 3:(60 * 160 + 80) * 3 + 3])
+            assert pixel[1] > 200 and pixel[0] < 30 and pixel[2] < 30
+            await page.evaluate("""async()=>{
+              clearInterval(cameraPaint);await fallbackSender.close();
+              globalThis.MediaStreamTrackProcessor=originalProcessor;
+            }""")
+            assert await page.evaluate("cameraStream.getTracks().every(track=>track.readyState==='ended')")
+            assert await page.evaluate("document.querySelectorAll('video').length") == 0
+            results.append({"case": "real fallback DOM camera/JPEG worker/WebSocket", "pixel": pixel,
+                            "packets": len(camera_packets), "tracks_ended": True})
             await browser.close()
     finally:
         await runner.cleanup()

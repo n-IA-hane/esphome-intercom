@@ -26,6 +26,8 @@ from .runtime_data import (
 # they are not authentication secrets. Keep public diagnostics useful through
 # allowlisted runtime summaries and redact all configured identity fields.
 TO_REDACT = {
+    "admin_username",
+    "admin_password",
     "address",
     "assist_pipeline",
     "auth_username",
@@ -49,13 +51,7 @@ TO_REDACT = {
     "offline_forward_target",
     "outbound_proxy",
     "password",
-    "managed_esphome_phones",
-    "origin_entry_id",
-    "mac",
-    "api_host",
-    "route_id",
-    "private_key",
-    "certificate",
+    "provisioning_token",
     "pin",
     "pin_hash",
     "peer",
@@ -64,6 +60,8 @@ TO_REDACT = {
     "ring_group",
     "conference_group",
     "sip_accounts",
+    "managed_esphome_phones",
+    "phone_services",
     "sip_uri",
     "subentry_id",
     "title",

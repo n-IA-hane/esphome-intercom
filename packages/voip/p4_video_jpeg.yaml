@@ -4,8 +4,8 @@
 # source, decoder and voip_stack codec are emitted into the firmware.
 
 packages:
+  camera_quality: !include '../camera/p4_jpeg_quality.yaml'
   video_entities: !include video_entities.yaml
-  csi_contract: !include p4_video_csi.yaml
 
 substitutions:
   p4_video_width: "800"
@@ -20,7 +20,9 @@ external_components:
   - source: ${camera_components_source}
     components: [esp_video_camera]
   - source: ${voip_stack_components_source}
-    components: [esp_jpeg_video_source, p4_video_renderer]
+    components: [esp_jpeg_video_source]
+  - source: ${esp_video_renderer_components_source}
+    components: [video_renderer, p4_video_renderer]
 
 esp_video_camera:
   id: p4_camera
@@ -48,7 +50,6 @@ p4_video_renderer:
   max_decode_width: ${p4_video_max_decode_width}
   max_decode_height: ${p4_video_max_decode_height}
   display_id: main_display
-  display_rotation: 270
   on_first_frame:
     - script.execute: show_video_page
   on_video_ended:
@@ -68,4 +69,5 @@ voip_stack:
     max_rtp_payload: 1400
 
 defaults:
+  esp_video_renderer_components_source: '${ esp_video_renderer_components_source | default("github://n-IA-hane/esphome-video-renderer@dev") }'
   camera_components_source: '${ camera_components_source | default("github://n-IA-hane/esphome-esp-video-camera@dev") }'

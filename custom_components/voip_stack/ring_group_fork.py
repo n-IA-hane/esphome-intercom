@@ -20,7 +20,6 @@ from .outbound_attempts import (
 from .group_candidates import PreflightFailure
 from .core.sip import sip_default_port
 
-RING_GROUP_TIMEOUT_S = 30.0
 ForkPayload = OutboundLeg | BrowserLeg | dict[str, Any]
 
 
@@ -41,6 +40,16 @@ def _outcome(result: str) -> DialOutcome:
     return DialOutcome(disposition, reason=result)
 
 
+def account_offer_outcome(results: list[str], *, pending: bool) -> str:
+    """Reduce a completed account offer, rather than one physical Contact."""
+    from .dial_fork import reduce_dial_failures, terminal_reason
+
+    if pending or "timeout" in results:
+        return "timeout"
+    outcome = reduce_dial_failures([_outcome(result) for result in results])
+    return terminal_reason(outcome.disposition, "transport_unreachable")
+
+
 def build_ring_group_fork(
     *,
     sip_port: int,
@@ -50,6 +59,7 @@ def build_ring_group_fork(
     preflight_failures: list[PreflightFailure],
     on_ringing: Callable[[], None] | None = None,
     on_leg_state: Callable[[OutboundLeg, str], None] | None = None,
+    ring_timeout: float | None = None,
 ) -> tuple[
     list[DialCandidate],
     dict[str, ForkPayload],
@@ -64,8 +74,8 @@ def build_ring_group_fork(
     async def _wait_browser() -> tuple[str, BrowserLeg | dict]:
         try:
             decision = await asyncio.wait_for(
-                route_future,
-                timeout=RING_GROUP_TIMEOUT_S,
+                asyncio.shield(route_future),
+                timeout=ring_timeout,
             )
         except asyncio.TimeoutError:
             return "timeout", {"member": "__browser__", "browser": True}
@@ -148,7 +158,7 @@ def build_ring_group_fork(
                 remote_host=uri.host,
                 remote_sip_port=sip_default_port(uri),
                 request_uri=str(uri),
-                timeout=8.0,
+                timeout=8.0 if ring_timeout is None else min(8.0, ring_timeout),
             )
             if result == "ringing":
                 if on_leg_state is not None:
@@ -157,7 +167,7 @@ def build_ring_group_fork(
                     ringing_published = True
                     on_ringing()
                 result = await client.wait_for_final(
-                    timeout=RING_GROUP_TIMEOUT_S
+                    timeout=ring_timeout
                 )
             if result == "in_call" and client.dialog is None:
                 return DialOutcome(
@@ -215,7 +225,10 @@ def build_ring_group_fork(
         return _outcome(result)
 
     async def _close_control(_mode: LegCloseMode) -> None:
-        return None
+        # A cancelled child waiter cannot cancel its owner's decision. Once
+        # the fork itself closes this offer, no late answer may reuse it.
+        if not route_future.done():
+            route_future.cancel()
 
     fork_candidates.append(
         DialCandidate(

@@ -3,7 +3,7 @@ substitutions:
   # Override with the voltage reported by this board at a known full charge.
   box_v2_battery_full_voltage: 4.20
 esphome:
-  min_version: 2026.10.0
+  min_version: 2026.12.0
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: false
@@ -23,6 +23,7 @@ esp32:
       CONFIG_LWIP_L2_TO_L3_COPY: y
       CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
       CONFIG_SPIRAM_RODATA: n
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "512"
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
       CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA: y
       CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT: y

@@ -1,0 +1,20 @@
+# Development preview: three views of an existing Home Assistant phone.
+# Replace the device ID with your existing logical phone, or choose it in
+# the visual editor. These cards control the same phone in this browser.
+# The optional global call popup is enabled separately for that phone.
+title: Home phone
+type: sections
+max_columns: 2
+sections:
+  - type: grid
+    cards:
+      - type: custom:voip-stack-card
+        mode: ha_softphone
+        device_id: <ha_phone_device_id>
+      - type: custom:voip-stack-card
+        mode: phonebook
+        entity: sensor.voip_phonebook
+  - type: grid
+    cards:
+      - type: custom:voip-stack-dashboard-card
+        device_id: <ha_phone_device_id>

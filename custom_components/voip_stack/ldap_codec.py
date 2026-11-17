@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import re
 
 from ldap3.protocol import rfc4511 as schema
+from ldap3.protocol.rfc2696 import RealSearchControlValue
 from pyasn1.codec.ber.decoder import Decoder
 from pyasn1.codec.ber.encoder import Encoder
 from pyasn1.error import PyAsn1Error
@@ -17,6 +18,8 @@ MAX_FILTER_DEPTH = 16
 MAX_FILTER_NODES = 64
 MAX_ATTRIBUTES = 32
 MAX_VALUE_BYTES = 4096
+PAGED_RESULTS = "1.2.840.113556.1.4.319"
+START_TLS = "1.3.6.1.4.1.1466.20037"
 _ATTRIBUTE = re.compile(r"(?:[a-zA-Z][a-zA-Z0-9-]*|[0-9]+(?:\.[0-9]+)+)(?:;[a-zA-Z0-9-]+)*\Z")
 
 
@@ -45,14 +48,18 @@ class Request:
     authentication: str = "simple"
     base_dn: str = ""
     scope: int = 0
+    deref_aliases: int = 0
     size_limit: int = 0
     time_limit: int = 0
     types_only: bool = False
     filter: Filter | None = None
     attributes: tuple[str, ...] = ()
     critical_control: bool = False
+    page_size: int | None = None
+    page_cookie: bytes = field(default=b"", repr=False)
     abandon_id: int = 0
     extended_name: str = ""
+    extended_value_present: bool = False
 
 
 def _replace_type(container, name, replacement):
@@ -237,9 +244,25 @@ def decode_request(data: bytes) -> Request:
         if operation not in {"bindRequest", "searchRequest", "abandonRequest", "unbindRequest", "extendedReq",
                              "modifyRequest", "addRequest", "delRequest", "modDNRequest", "compareRequest"}:
             raise LdapProtocolError("Expected an LDAP request")
-        common = {"message_id": int(message["messageID"]), "operation": operation,
-                  "critical_control": any(bool(control["criticality"]) for control in message["controls"])
-                  if message["controls"].hasValue() else False}
+        common = {"message_id": int(message["messageID"]), "operation": operation, "critical_control": False}
+        if message["controls"].hasValue():
+            if len(message["controls"]) > 8:
+                raise LdapProtocolError("Too many LDAP controls")
+            for control in message["controls"]:
+                if str(control["controlType"]) == PAGED_RESULTS and operation == "searchRequest":
+                    if "page_size" in common or not control["controlValue"].hasValue():
+                        raise LdapProtocolError("Invalid paging control")
+                    raw_control = control["controlValue"].asOctets()
+                    if len(raw_control) > 128:
+                        raise LdapProtocolError("Paging control exceeds its budget")
+                    _ber_nodes(raw_control)
+                    paging, rest = _DECODER(raw_control, asn1Spec=RealSearchControlValue())
+                    cookie = paging["cookie"].asOctets()
+                    if rest or len(cookie) > 64:
+                        raise LdapProtocolError("Invalid paging cookie")
+                    common.update(page_size=int(paging["size"]), page_cookie=cookie)
+                elif bool(control["criticality"]):
+                    common["critical_control"] = True
         if operation == "bindRequest":
             method = body["authentication"].getName()
             if method == "simple" and raw[3][1][3][2][0] & 32:
@@ -258,13 +281,15 @@ def decode_request(data: bytes) -> Request:
                 raise LdapProtocolError("Invalid attribute selection")
             wire_filter = raw[3][1][3][6]
             return Request(**common, base_dn=_text(body["baseObject"]), scope=int(body["scope"]),
+                           deref_aliases=int(body["derefAliases"]),
                            size_limit=int(body["sizeLimit"]), time_limit=int(body["timeLimit"]),
                            types_only=bool(body["typesOnly"]), attributes=attributes,
                            filter=_filter(data[wire_filter[4]:wire_filter[2]]))
         if operation == "abandonRequest":
             return Request(**common, abandon_id=int(body))
         if operation == "extendedReq":
-            return Request(**common, extended_name=_text(body["requestName"]))
+            return Request(**common, extended_name=_text(body["requestName"]),
+                           extended_value_present=body["requestValue"].hasValue())
         return Request(**common)
     except (PyAsn1Error, IndexError, KeyError, ValueError, TypeError) as error:
         if isinstance(error, LdapProtocolError):
@@ -279,13 +304,21 @@ def _message(identity, operation):
     return result, result["protocolOp"][operation]
 
 
-def encode_result(identity: int, operation: str, code: int = 0, *, diagnostic: str = "", notice: bool = False) -> bytes:
+def encode_result(identity: int, operation: str, code: int = 0, *, diagnostic: str = "", notice: bool = False,
+                  page_cookie: bytes | None = None) -> bytes:
     response, body = _message(identity, operation)
     body["resultCode"] = code
     body["matchedDN"] = ""
     body["diagnosticMessage"] = diagnostic
     if notice:
         body["responseName"] = "1.3.6.1.4.1.1466.20036"
+    if page_cookie is not None:
+        paging = RealSearchControlValue()
+        paging["size"] = 0  # No estimate of a mutable directory is promised.
+        paging["cookie"] = page_cookie
+        control = response["controls"][0]
+        control["controlType"] = PAGED_RESULTS
+        control["controlValue"] = _ENCODER(paging, defMode=True, maxChunkSize=0)
     return _ENCODER(response, defMode=True, maxChunkSize=0)
 
 

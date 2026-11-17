@@ -4,6 +4,39 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
+## 2026.11.1-dev: optional browser call popups
+
+Reload the HA frontend or reset the Companion frontend cache after updating.
+To receive call popups over other HA views, opt in on each receiving browser
+or Companion app through the HA phone Device's **Visit** link or the phone
+card's **Options > Call popups**. Select an existing HA browser phone and save.
+There is no new phone type, Lovelace popup card or HA user mapping to migrate.
+
+X, Esc and Back minimize a call. Use Decline or Hang up to terminate it. The
+popup shares the phone's existing call and media; the receiving frontend must
+remain running with media permissions. Companion uses its existing WebView.
+See the [popup guide](USER_GUIDE.md#receive-calls-over-other-home-assistant-views).
+
+Copied actionable-notification automations must pass the triggering `call_id`
+to Decline alongside `device_id`, and retain `voip_answer=1`, `voip_endpoint`
+and `voip_call_id` in the Answer URI. The
+[updated recipe](AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+prevents an old notification from acting on a later call.
+
+## Development browser: media identity and view changes
+
+Finish active browser calls before installing this frontend update. Existing
+media identities migrate once to a new identity belonging to that browser
+window. Calls started with the previous identity cannot reclaim their media
+after that migration.
+
+After migration, a normal page reload recovers the same window's call. A new
+window or duplicated tab receives its own identity, even when the browser copies
+session storage. Switching dashboards or removing the call card keeps the
+page-owned call running, including when the remote phone answers afterward.
+An enabled browser phone also remains logically available without an open card;
+its ringing, automation and no-answer rules continue to apply.
+
 > **ESP firmware migration: start from the current YAML for your exact board.**
 > Device packages, feature composition and display/runtime bindings have changed
 > substantially. Bring your device settings into the new profile instead of
@@ -12,72 +45,38 @@ For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 > Follow the [device-package migration](#development-firmware-new-device-packages)
 > below.
 
-## 2026.11.1 preview: browser media identity
+## Development adoption: managed accounts, directory and S3 JPEG
 
-**End active browser calls before the first dashboard refresh after updating.**
-That refresh replaces the legacy shared media identity with an identity owned
-by the browser window. This one-time change prevents a cloned window from
-taking over another window's call audio. Subsequent page reloads reuse the
-updated identity and can recover that window's active session.
+Choose the upgrade path for the parts you use:
 
-## 2026.11.1 preview: 4 MB Lite flash layout
+- **HA/HACS only:** update the integration, restart HA and reload the frontend
+  as required above. Existing ESP firmware stays on its installed contract;
+  an HA update alone does not install account, LDAP or video support on it.
+- **Adopting current ESP profiles:** start from the maintained YAML for the
+  exact board, preserve identity, secrets, wiring and wanted features, then
+  validate, rebuild and upload that firmware. Compatible managed profiles can
+  receive a named HA SIP account and directory configuration through their
+  native API. Keep manual PBX accounts and the selected default line explicit;
+  neither all-device registration nor automatic line migration is required.
+  See [ESP accounts](ESP_REGISTRATION.md) and the
+  [entity/provisioning surface](ESP_ENTITY_SURFACE.md).
+- **Shared contacts:** compatible managed ESPs use the
+  [LDAP directory](PHONEBOOK_PROTOCOL.md#standard-ldap-directory), with an
+  actual successful refresh replacing the shared snapshot and preserving
+  manual entries. Check listener/account settings and matching preview
+  firmware. Legacy/custom JSON roster providers remain supported; sending
+  their roster action is not a managed LDAP migration or refresh.
+- **S3 displays:** a maintained LCD profile may include the optional
+  [JPEG receiver](../packages/voip/s3_video_jpeg.yaml), defaulting to
+  320x240 at 2 FPS. It needs the profile's LVGL surface and a compatible video
+  offer. Display-less S3 Audio and camera-only TX profiles have different
+  contracts; this adds neither universal S3 H.264 RX nor a new physical-board
+  qualification. See [video components](reference.md#esp-video-components).
 
-**Only the Generic Full Lite 4 MB profile changes its partition table.** Download
-[`partitions_4mb_lite_dual_ota.csv`](../yamls/full-experience/single-bus/partitions_4mb_lite_dual_ota.csv)
-and keep that filename beside your main YAML. The profile uses ESPHome's standard
-`esp32.partitions` setting.
-
-Each OTA application slot is now `0x1e0000` bytes. NVS retains `0x30000` bytes
-(192 KiB); OTA metadata and PHY partitions remain present. This redistributes
-the former NVS reserve while retaining the profile's voice, wake word, AEC,
-VoIP, music, timers and diagnostics.
-
-Migrating a device with the previous stock table requires a **full flash erase
-and serial factory upload**. An ordinary OTA update keeps the old table and
-cannot perform this migration. Save your YAML, wiring and calibrated control
-values first, then restore the desired settings after flashing: the new NVS
-offset resets stored preferences. Other device profiles retain their existing
-partition layouts.
-
-## 2026.11.1 preview: standard ESP phone services
-
-Development package installs now keep their owned component sources and media
-assets on `dev`, including when a device package is included directly without
-top-level source overrides. Explicit component pins remain available for custom
-configurations. The maintained source resolver applies a selected remote ref to
-both entrypoints and tracked package defaults; automatic operations preserve
-private overlays. The separately maintained camera source keeps its upstream
-`main` reference. Existing stable `main` packages retain their stable references.
-
-Maintained telephone packages now enable automatic HA registration. Home
-Assistant creates the account/password and delivers them through the existing
-ESPHome API. Preserve `api.custom_services: true` and use coordinated `dev`
-components when trying this preview. Generic standalone VoIP Stack keeps its
-direct SIP default and explicit account configuration.
-
-The LDAP directory replaces JSON pushes for managed phones. Standard SIP MWI
-replaces the earlier native `set_message_waiting` API. Remove custom
-`ha_integration.message_waiting` declarations; use `registration.message_waiting`
-for standard SIP accounts. The lengthy Endpoint sensor is disabled by default;
-legacy integrations can explicitly select `ha_integration.endpoint: true`.
-
-Updated display packages replace the contact carousel with a scrolling BLF
-list and reusable row pools. The idle mailbox envelope calls the PBX menu;
-the in-call keypad sends DTMF. Select `directory`, `blf` and `mwi` independently
-in `firmware_features`. Automatic HA registration alone does not enable MWI.
-Start from the current board YAML when migrating a custom UI.
-
-Custom call displays should read `get_active_peer_name()` for the current
-dialog and use the optional `on_peer_changed` callback to refresh connected
-names after pickup or other PBX identity updates. Keep connection setup in
-`on_in_call`. Clear the editable dialer on idle and retain any call-ended
-notice separately. Maintained packages already include these bindings.
-See [connected names after pickup](ESP_PHONE_SERVICES.md#connected-names-after-pickup).
-
-Deleting an originating ESPHome
-device/integration now permanently removes its managed credentials and mailbox;
-ordinary offline/reload cycles retain them. Read the
-[phone-service migration](ESP_PHONE_SERVICES.md#updating-an-existing-installation).
+Direct/manual SIP configurations remain valid choices. The release-specific
+migrations below retain their historical context; older HA package or NoReg
+instructions describe those releases and are superseded for current firmware
+by the current device, registration and entity guides.
 
 ## Development firmware: native audio providers
 
@@ -629,8 +628,8 @@ Consequently:
 - do not assume that the aggregate `event.voip_stack_call` identifies one
   particular room phone;
 - do not use browser-card presence as the definition of whether a logical
-  phone exists. An enabled browser phone remains available without an attached
-  card and can ring logically so that timeout and forwarding automations run.
+  phone exists. An offline browser phone may still ring logically so that
+  timeout and forwarding automations can run.
 
 Every phone receives its Device-owned entity IDs from Home Assistant. Select
 entities from the Device instead of constructing an ID from the phone name.

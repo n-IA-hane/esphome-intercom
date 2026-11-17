@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 import secrets
 import struct
@@ -86,8 +88,8 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         encoding = str(fmt.encoding).strip().upper()
         sample_rate = int(fmt.sample_rate)
         channels = int(fmt.channels)
-        frame_ms = int(fmt.frame_ms)
-        max_frame_ms = int(getattr(fmt, "max_frame_ms", 0) or 0)
+        frame_ms = float(fmt.frame_ms)
+        max_frame_ms = float(getattr(fmt, "max_frame_ms", 0) or 0)
     except (AttributeError, TypeError, ValueError) as err:
         raise RtpError("invalid RTP audio format") from err
     if sample_rate <= 0 or channels <= 0 or frame_ms <= 0:
@@ -118,10 +120,10 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         if bytes_per_sample is None:
             raise RtpError(f"unsupported RTP audio encoding {encoding or '<empty>'}")
         sample_numerator = sample_rate * frame_ms
-        if sample_numerator % 1000:
+        if not math.isclose(sample_numerator / 1000, round(sample_numerator / 1000), abs_tol=1e-8):
             raise RtpError("RTP audio ptime does not produce whole samples")
-        codec_limit = (sample_numerator // 1000) * channels * bytes_per_sample
-    return min(codec_limit, MAX_AUDIO_RTP_PAYLOAD_BYTES)
+        codec_limit = round(sample_numerator / 1000) * channels * bytes_per_sample
+    return int(min(codec_limit, MAX_AUDIO_RTP_PAYLOAD_BYTES))
 
 
 def validate_audio_payload_size(payload: bytes, fmt: _AudioRtpFormat) -> None:

@@ -20,6 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp, sdp
+from .core.sip_stun import is_stun_message
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING
 from .media_debug import merge_media_debug
@@ -340,6 +341,8 @@ class _RtpVideoProtocol(asyncio.DatagramProtocol):
         return counts
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if is_stun_message(data):
+            return
         if not self.min_datagram_bytes <= len(data) <= self.max_datagram_bytes:
             self._record_drop("size")
             return
@@ -503,7 +506,8 @@ class VoipVideoWebSocketView(HomeAssistantView):
                 local_call, session = prepared.resolve_current()
                 if local_call is not None:
                     lease = prepared.acquire_local_lease(media_owner)
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     await _run_local_video_session(
                         hass,
                         ws,
@@ -514,12 +518,23 @@ class VoipVideoWebSocketView(HomeAssistantView):
                     assert session is not None
                     call = prepared.registry.get_session(session.call_id)
                     generation = call.generation if call is not None else None
-                    await ws.prepare(request)
+                    if not await claimed.prepare(request):
+                        return ws
                     if (call is None or not call.live
+                            or call_projection(hass) is not prepared.registry
                             or prepared.registry.get_session(session.call_id) is not call
-                            or call.generation != generation):
+                            or call.generation != generation
+                            or media_owner.owners.get(media_owner.owner_key) is not claimed.owner
+                            or claimed.owner.handoff_requested.is_set()
+                            or media_owner.media.shutdown.is_set()):
                         await ws.close(code=1008, message=b"video call changed before attachment")
                         return ws
+                    try:
+                        _, session = prepared.resolve_current()
+                    except web.HTTPException:
+                        await ws.close(code=1008, message=b"video media changed before attachment")
+                        return ws
+                    assert session is not None
                     _detach_video_socket(hass, session)
                     await _run_video_session(
                         hass,
