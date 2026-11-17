@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -25,6 +27,135 @@ VIDEO_ENGINE = (
 VIDEO_MODEL = VIDEO_ENGINE.with_name("voip-stack-video-model.js")
 VIDEO_WORKER = VIDEO_ENGINE.with_name("voip-stack-video-worker.js")
 BROWSER_PROBE = ROOT / "tools" / "sip_video_browser_probe.py"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_codec_worker_recovers_closed_decoder_on_current_keyframe_only() -> None:
+    script = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const messages = [], decoders = [];
+let closedWorker = false, peak = 0;
+class Decoder {
+  static async isConfigSupported(config) { return {supported:true, config}; }
+  constructor(callbacks) {
+    this.callbacks=callbacks;this.state='unconfigured';this.decodeQueueSize=0;
+    this.inputs=[];decoders.push(this);
+    peak=Math.max(peak,decoders.filter(item=>item.state!=='closed').length);
+  }
+  configure(config) { this.config=config;this.state='configured'; }
+  addEventListener() {}
+  close() { this.state='closed'; }
+  decode(chunk) { assert.equal(this.state,'configured');this.inputs.push(chunk); }
+  fail() {
+    // WebCodecs Close VideoDecoder precedes its asynchronous error callback.
+    this.state='closed';this.callbacks.error(new Error('Decoding error.'));
+  }
+}
+const context=vm.createContext({VideoDecoder:Decoder,Uint8Array,Number,String,Math,
+  EncodedVideoChunk:class {constructor(value){Object.assign(this,value);}},
+  self:{postMessage(message){messages.push(message);},close(){closedWorker=true;}}});
+vm.runInContext(SOURCE,context);
+const send=(data)=>context.self.onmessage({data});
+const frame=(generation,keyFrame)=>({type:'decode',generation,keyFrame,timestamp:0,
+  buffer:new ArrayBuffer(4),offset:0,length:4});
+(async()=>{
+  const config={codec:'avc1.42801f',optimizeForLatency:true};
+  await send({type:'configure_decoder',requestId:1,generation:7,config});
+  const old=decoders[0];
+  await send(frame(7,true));old.fail();
+  assert.equal(messages.at(-1).type,'decoder_error');
+  await send(frame(7,false));await send(frame(6,true));
+  assert.equal(decoders.length,1,'delta/stale key must not allocate a decoder');
+  await send(frame(7,true));
+  assert.equal(decoders.length,2,'current key must recover the closed decoder');
+  const recovered=decoders[1];
+  assert.equal(recovered.config,config);
+  assert.equal(recovered.inputs.length,1);
+  assert.equal(peak,1,'never overlap live codec resources');
+  const count=messages.length;
+  old.callbacks.error(new Error('late failure'));
+  let staleClosed=0;old.callbacks.output({close(){staleClosed++;}});
+  assert.equal(messages.length,count);
+  assert.equal(staleClosed,1);
+  assert.equal(recovered.state,'configured');
+  await send(frame(7,false));assert.equal(recovered.inputs.length,2);
+  await send({type:'close'});
+  assert.equal(recovered.state,'closed');assert.equal(closedWorker,true);
+  recovered.callbacks.error(new Error('late teardown failure'));
+  await send(frame(7,true));
+  assert.equal(decoders.length,2,'teardown cannot resurrect decoder');
+  assert.equal(messages.length,count+1); // One dequeue update for the delta.
+})().catch(error=>{console.error(error);process.exit(1);});
+""".replace("SOURCE", json.dumps(VIDEO_WORKER.read_text()))
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.browser_real
+@pytest.mark.skipif(not shutil.which("chromium") or not shutil.which("ffmpeg"),
+                    reason="Chromium and FFmpeg are required")
+def test_real_chromium_worker_recovers_after_h264_decode_error():
+    """One bad bootstrap must not make later independently valid IDRs unusable."""
+    playwright = pytest.importorskip("playwright.sync_api")
+    encoded = subprocess.run([
+        "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=red:size=32x32:rate=1",
+        "-frames:v", "1", "-c:v", "libx264", "-profile:v", "baseline", "-threads", "1",
+        "-x264-params", "repeat-headers=1:bframes=0:slices=1", "-f", "h264", "pipe:1",
+    ], capture_output=True, timeout=15)
+    assert encoded.returncode == 0, encoded.stderr.decode(errors="replace")
+    nals = [nal for nal in re.split(b"\x00\x00(?:\x00)?\x01", encoded.stdout) if nal]
+    idr = next(nal for nal in nals if nal[0] & 31 == 5)
+    assert {nal[0] & 31 for nal in nals}.issuperset({7, 8, 5})
+    source = {path.name: path.read_bytes() for path in (VIDEO_ENGINE, VIDEO_MODEL, VIDEO_WORKER)}
+
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
+        try:
+            page = browser.new_page()
+
+            def route(request):
+                url = urlsplit(request.request.url)
+                if url.hostname != "voip-codec.test":
+                    request.abort()
+                elif url.path == "/":
+                    request.fulfill(content_type="text/html", body="<!doctype html><canvas></canvas>")
+                elif url.path.removeprefix("/") in source:
+                    request.fulfill(content_type="text/javascript", body=source[url.path.removeprefix("/")])
+                else:
+                    request.abort()
+
+            page.context.route("**/*", route)
+            page.goto("https://voip-codec.test/")
+            page.evaluate("""async()=>{
+              const {VoipStackVideo}=await import('/voip-stack-video.js');
+              const video=window.video=new VoipStackVideo();
+              video._generation=2;video._canvas=document.querySelector('canvas');
+              video._negotiated={receive:{encoding:'H264',codec:'avc1.42801f',clock_rate:90000}};
+              await video._setupDecoder('avc1.42801f',2);
+              window.codecErrors=[];
+              video._decoderWorker.addEventListener('message',({data:m})=>{
+                if(m.type==='decoder_error')codecErrors.push(m.error);
+              });
+              window.submit=(data,timestamp)=>{
+                const bytes=new Uint8Array(data.length+6);bytes[0]=1;bytes[1]=1;
+                new DataView(bytes.buffer).setUint32(2,timestamp,false);bytes.set(data,6);
+                video._decodeMessage(bytes.buffer);
+              };
+            }""")
+            page.evaluate("data=>submit(data,0)", list(b"\x00\x00\x00\x01" + idr))
+            page.wait_for_function("video.stats.decode_errors===1", timeout=5000)
+            assert page.evaluate("video.stats.rendered") == 0
+            assert page.evaluate("codecErrors.length") == 1
+            assert page.evaluate("video._decoder.decodeQueueSize") == 0
+            page.evaluate("data=>submit(data,90000)", list(encoded.stdout))
+            page.wait_for_function("video.stats.rendered===1", timeout=5000)
+            assert page.evaluate("video.stats.decode_errors") == 1
+            assert page.evaluate("[video._canvas.width,video._canvas.height]") == [32, 32]
+            page.evaluate("video.close()")
+            assert page.evaluate("video._decoder===null && video._decoderWorker===null")
+        finally:
+            browser.close()
 
 
 def test_browser_probe_keeps_waits_light_and_bounded() -> None:
@@ -796,8 +927,23 @@ new DataView(workerFrame).setUint32(2, 9000, false);
 workerDecoder._decodeMessage(workerFrame);
 assert.equal(workerMessages.at(-1)[0].type, "decode");
 assert.equal(workerMessages.at(-1)[1][0], workerFrame);
+workerDecoder._decoder.decodeQueueSize = 7;
+workerDecoder._handleDecoderWorkerMessage(decoderWorker, 21, {{
+  type: "decoder_error", generation: 21, error: "Decoding error.",
+}});
+assert.equal(workerDecoder._decoder.decodeQueueSize, 0);
+assert.equal(workerDecoder._dropUntilKeyFrame, true);
+const currentErrors = workerDecoder.stats.decode_errors;
+workerDecoder._handleDecoderWorkerMessage(decoderWorker, 20, {{
+  type: "decoder_error", generation: 20,
+}});
+assert.equal(workerDecoder.stats.decode_errors, currentErrors);
 workerDecoder._cleanupReceiver();
 assert.equal(decoderWorker.terminated, true);
+workerDecoder._handleDecoderWorkerMessage(decoderWorker, 21, {{
+  type: "decoder_error", generation: 21,
+}});
+assert.equal(workerDecoder.stats.decode_errors, currentErrors);
 
 // Rendering is demand-driven by decoded frames and coalesces a burst to the
 // newest frame. No timer wakes up merely to ask whether a frame exists.

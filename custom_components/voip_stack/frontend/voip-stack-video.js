@@ -405,6 +405,9 @@ export class VoipStackVideo extends EventTarget {
     }
     if (message.type === "decoder_error") {
       this._stats.decode_errors++;
+      // Closing a native decoder aborts every queued chunk. The worker waits
+      // for a key frame before recreating it, under the same generation.
+      if (this._decoder) this._decoder.decodeQueueSize = 0;
       this._dropUntilKeyFrame = true;
       this._requestKeyFrame();
       this._emit();

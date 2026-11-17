@@ -74,11 +74,11 @@ See the [video guide](docs/SIP_VIDEO.md) for S3 and P4 profiles and the
 [earlier real MOBOTIX call](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/2968f029b1cc5806e1512d749c5791385274f446/docs/images/pbx-mobotix-video-green.png)
 for the published door-station video example.
 
-![The current VoIP Dashboard receiving video during a real lab call](docs/images/voip-dashboard-video-lab.png)
+![A real MOBOTIX video door-station call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real browser-to-browser video call in the current VoIP Dashboard. The camera
-source is a synthetic Starfleet test feed; the MOBOTIX link above shows the
-earlier door-station call._
+_An earlier real MOBOTIX SIP video call in the compact phone card, with the
+browser camera disabled. The visitor's camera supplies the picture. The VoIP
+Dashboard is shown separately above._
 
 Maintained ESP firmware profiles require **ESPHome 2026.10.0 or newer**.
 See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
