@@ -16,7 +16,7 @@ def test_passive_snapshot_uses_actual_store_without_capability_or_render_side_ef
     model = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/frontend/voip-stack-dashboard-model.js"
     program = tmp_path / "snapshot.mjs"
     program.write_text('''import assert from 'node:assert/strict';
-const {DashboardPhoneStore}=await import('data:text/javascript;base64,'+Buffer.from(MODEL).toString('base64'));
+import {DashboardPhoneStore} from MODEL;
 const store=new DashboardPhoneStore();store.apply({kind:'snapshot',revision:4,phones:[{endpoint_id:'desk',device_id:'owner',state:'idle'}]});
 let effects=0;const card={_store:store,_config:{device_id:'owner'},_pending:'',shadowRoot:{querySelectorAll(){return[];}}};
 Object.defineProperty(card,'capabilities',{get(){effects++;throw new Error('capability discovery side effect');}});
@@ -24,7 +24,7 @@ card._render=()=>{effects++;throw new Error('render mutation');};card._owner=()=
 const before=JSON.stringify([...store.phones]);const sample=(SAMPLE)(card);
 assert.equal(effects,0);assert.equal(sample.ready,true);assert.equal(sample.revision,4);assert.equal(sample.phones[0].endpoint_id,'desk');
 assert.equal(JSON.stringify([...store.phones]),before);
-'''.replace("MODEL", json.dumps(model.read_text())).replace("SAMPLE", DASHBOARD_SAMPLE))
+'''.replace("MODEL", json.dumps(model.as_uri())).replace("SAMPLE", DASHBOARD_SAMPLE))
     subprocess.run(["node", program], check=True, capture_output=True, text=True)
 
 

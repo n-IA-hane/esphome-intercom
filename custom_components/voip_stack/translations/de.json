@@ -199,7 +199,7 @@
         },
         "data_description": {
           "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "account_id": "Lass „Kein SIP-Konto“ ausgewählt, um das Telefon ohne zugeordnetes Konto hinzuzufügen. Du kannst den Leitungen später Konten zuordnen."
+          "account_id": "Lass \"Kein SIP-Konto\" ausgewählt, um das Telefon ohne zugeordnetes Konto hinzuzufügen. Du kannst den Leitungen später Konten zuordnen."
         },
         "sections": {
           "advanced": {
@@ -660,7 +660,7 @@
           },
           "data_description": {
             "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
-            "account_id": "Lass „Kein SIP-Konto“ ausgewählt, um das Telefon ohne zugeordnetes Konto hinzuzufügen. Du kannst den Leitungen später Konten zuordnen."
+            "account_id": "Lass \"Kein SIP-Konto\" ausgewählt, um das Telefon ohne zugeordnetes Konto hinzuzufügen. Du kannst den Leitungen später Konten zuordnen."
           },
           "sections": {
             "advanced": {

@@ -8,6 +8,7 @@ import struct
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.core import callback
 
 from custom_components.voip_stack.call_queues import QueueDefinition, QueueManager, QueuePolicy
 from custom_components.voip_stack.core import rtp
@@ -61,7 +62,12 @@ async def queue_lab(trunks, monkeypatch):
 
     from custom_components.voip_stack.const import QUEUE_EVENT
     events = []
-    unsubscribe = lab.hass.bus.async_listen(QUEUE_EVENT, lambda event: events.append(dict(event.data)))
+
+    @callback
+    def record_event(event):
+        events.append(dict(event.data))
+
+    unsubscribe = lab.hass.bus.async_listen(QUEUE_EVENT, record_event)
     yield SimpleNamespace(**vars(lab), manager=manager, identity=identity, contact=contact, caller=caller, queue_events=events)
     unsubscribe()
     for client in clients:
@@ -1170,6 +1176,10 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         browser.ready()
         assert (await asyncio.wait_for(asyncio.shield(forwarding), 2)).status == "connected"
         ended = [event for event in lab.queue_events if event["event_type"] == "offer_ended"]
+        started = [event for event in lab.queue_events if event["event_type"] == "offer_started"]
+        assert {event["endpoint_id"] for event in ended} == {endpoint.endpoint_id, "sip:bedroom0"}
+        assert sorted((e["attempt_id"], e["endpoint_id"]) for e in started) == sorted(
+            (e["attempt_id"], e["endpoint_id"]) for e in ended)
         winning = [event for event in ended if event["endpoint_id"] == endpoint.endpoint_id]
         assert len(winning) == 1 and winning[0]["outcome"] == "in_call"
         assert all(event["outcome"] == "cancelled" for event in ended if event["endpoint_id"] != endpoint.endpoint_id)

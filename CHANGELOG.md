@@ -23,6 +23,9 @@
   and automatic answer follow the offer for the selected account.
 - Allow an administrator to choose existing paging groups in the phone card's
   options. Both editors update the same group records, including empty groups.
+- Run the dashboard snapshot check against the shipped JavaScript modules.
+  Verify that each queue offer ends on the same attempt that started it,
+  including when a browser and a SIP handset share an account.
 - Fix conference shutdown when the last participants hang up together and the
   mixer is finishing its last tick. The hangup actions complete and free the
   accounts for the next call. Reported in [#166](https://github.com/n-IA-hane/esphome-intercom/issues/166).

@@ -351,7 +351,7 @@ const IT = {
   "Provisioning URL": "URL di provisioning",
   "Copy provisioning URL": "Copia URL di provisioning",
   "URL copied": "URL copiato",
-  "Copy the selected address.": "Copia l’indirizzo selezionato.",
+  "Copy the selected address.": "Copia l'indirizzo selezionato.",
   "Provisioning URL unavailable": "URL di provisioning non disponibile",
   "DHCP provisioning URL": "URL per il provisioning tramite DHCP",
   "Paging groups": "Gruppi annunci",

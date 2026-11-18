@@ -199,7 +199,7 @@
         },
         "data_description": {
           "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "account_id": "Ponechte vybranou možnost „Žádný účet SIP“, pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
+          "account_id": "Ponechte vybranou možnost \"Žádný účet SIP\", pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
         },
         "sections": {
           "advanced": {
@@ -660,7 +660,7 @@
           },
           "data_description": {
             "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
-            "account_id": "Ponechte vybranou možnost „Žádný účet SIP“, pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
+            "account_id": "Ponechte vybranou možnost \"Žádný účet SIP\", pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
           },
           "sections": {
             "advanced": {
