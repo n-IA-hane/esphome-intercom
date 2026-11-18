@@ -1,6 +1,6 @@
 # VoIP Stack for Home Assistant and ESPHome
 
-**An independent, open-source SIP PBX running inside Home Assistant, installable through HACS.**
+**An independent, open-source SIP PBX running inside Home Assistant, installable through the Home Assistant Marketplace (formerly HACS).**
 
 ![VoIP Dashboard with incoming, active and held calls](docs/images/voip-dashboard-desktop.png)
 
@@ -419,8 +419,8 @@ for codecs and endpoint limits.
 
 ## Installation
 
-This development tree requires **Home Assistant 2026.11.1 or newer**, as declared
-in its HACS metadata. Its coordinated ESP recipes require **ESPHome 2026.12.0**;
+This development tree requires **Home Assistant 2026.11.1 or newer**.
+Its coordinated ESP recipes require **ESPHome 2026.12.0**;
 use the exact official preview documented in [stabilization](docs/STABILIZATION.md)
 while that stable ESPHome release is unavailable. Stable **2026.11.0** retains
 its Home Assistant 2026.7 and ESPHome 2026.10 requirements. Choose one channel:
@@ -430,15 +430,12 @@ its Home Assistant 2026.7 and ESPHome 2026.10 requirements. Choose one channel:
 | [Stable](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0) | **2026.11.0** | Stable PBX and phone cards, with matching firmware from `main`. |
 | [Preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.12.0-dev) | **2026.12.0-dev** | Shared SIP accounts, Dashboard, popups, queues, paging, phone provisioning and current ESP/directory features. |
 
-The preview is updated under the same version. If HACS already shows
-**2026.12.0-dev**, use **Redownload** to receive its current archive, then
-restart HA and reload the frontend. A changed archive under the same version
-does not produce a new-version update notification.
+To test a fix on the development channel, follow the [illustrated prerelease guide](#install-a-prerelease).
 
 ### Fastest start
 
-1. Find **VoIP Stack** in HACS, choose **Download** and your version, then restart
-   HA. For an existing installation, use **Redownload** to select the version.
+1. Open **Settings > Marketplace**, search for **VoIP Stack** and select
+   **Install** on its repository page. Restart Home Assistant if prompted.
 2. Add **VoIP Stack** under **Settings > Devices & services > Add integration**.
 
 Keep the phone or account created during setup, then use your release's controls
@@ -454,8 +451,6 @@ card on a separate device or browser session, allow microphone access and call
 the other phone from the shared phonebook. Answer, speak in both directions,
 hang up and call again.
 
-![Select the VoIP Stack version in HACS](docs/images/hacs-download-voip-stack.png)
-
 The cards register automatically. Keep the default network settings unless
 another service conflicts; see the [deployment guide](docs/DEPLOYMENT_GUIDE.md)
 for containers, advertised addresses and manual installation. To receive calls
@@ -463,8 +458,8 @@ over other HA views, enable [call popups](docs/USER_GUIDE.md#receive-calls-over-
 for an existing SIP account in each receiving browser or Companion app.
 
 An ESP joins through the normal ESPHome integration with its matching firmware.
-HACS updates HA and the frontend; rebuilding and uploading ESP firmware is a
-separate operation. Follow [migration notes](docs/BREAKING_CHANGES.md) when
+The Marketplace updates the integration and its bundled cards. ESP firmware
+is updated separately. Follow [migration notes](docs/BREAKING_CHANGES.md) when
 updating a copied configuration.
 
 ## Supported hardware
@@ -517,3 +512,87 @@ Developed and maintained by n-IA-hane, with community contributions.
 [Development guidance](docs/TESTING_AND_DEBUG.md), [sponsorship](https://github.com/sponsors/n-IA-hane)
 and useful bug reports help the project. Project code is [MIT licensed](LICENSE);
 external components retain their own licenses.
+
+## Install a prerelease
+
+Home Assistant 2026.11 moved HACS into **Settings > Marketplace**. The
+Marketplace offers stable releases by default. To try a fix from the
+development branch, enable prereleases for **VoIP Stack**. The preview
+shown here, **v2026.12.0-dev**, requires Home Assistant **2026.11.1 or newer**.
+
+1. Sign in as an administrator and open **Settings > Marketplace**. On your
+   first visit, read the notice, check **I understand the risks and agree** if
+   you accept it and select **Continue**.
+
+   ![Marketplace in Home Assistant Settings](docs/images/marketplace/settings.png)
+
+   <details>
+   <summary>First visit to the Marketplace</summary>
+
+   ![First-visit community content notice with Continue](docs/images/marketplace/first-visit.png)
+
+   </details>
+
+2. Choose **Browse**, search for **VoIP Stack** and open the result by **n-IA-hane**.
+
+   ![Marketplace search result for VoIP Stack by n-IA-hane](docs/images/marketplace/browse.png)
+
+3. Open the three-dot menu in the upper-right corner of the **VoIP Stack**
+   page and select **Include pre-releases**.
+
+   ![VoIP Stack repository menu with Include pre-releases](docs/images/marketplace/include-menu.png)
+
+4. Select **Include** to confirm. The repository page now shows
+   **Pre-releases included**.
+
+   ![Confirmation dialog with the Include button](docs/images/marketplace/include-confirm.png)
+
+5. If you already have the stable release, select **Update**. Check that
+   **Latest version** is the preview you want, then select **Update** in
+   the dialog. For a first installation, choose **Install** instead.
+
+   ![VoIP Stack with v2026.11.0 installed and v2026.12.0-dev available](docs/images/marketplace/update.png)
+
+   ![Update dialog showing the installed stable version and the development version](docs/images/marketplace/update-confirm.png)
+
+6. After an update, select **Restart Home Assistant** on the repository page.
+   Choose **Restart Home Assistant** in the restart menu, then **Restart** to
+   confirm. When HA is back, check the installed version on the VoIP Stack page
+   and reload any open dashboard that uses its cards.
+
+   ![VoIP Stack page asking for a Home Assistant restart](docs/images/marketplace/restart-required.png)
+
+   ![Restart menu with Restart Home Assistant selected](docs/images/marketplace/restart-options.png)
+
+   ![Final restart confirmation](docs/images/marketplace/restart-confirm.png)
+
+   ![Marketplace showing the installed VoIP Stack prerelease](docs/images/marketplace/installed.png)
+
+<details>
+<summary>Choose a specific prerelease</summary>
+
+On the **VoIP Stack** page, open the three-dot menu and select **Install
+another version**. Open **Version**, choose the entry marked **Pre-release**,
+then select **Install**. Restart Home Assistant if prompted.
+
+![Repository menu with Install another version](docs/images/marketplace/version-menu.png)
+
+![Version list showing the development release marked Pre-release](docs/images/marketplace/version-list.png)
+
+![Install dialog with the chosen VoIP Stack prerelease](docs/images/marketplace/install.png)
+
+</details>
+
+<details>
+<summary>Already on the dev version and testing a newer fix?</summary>
+
+The project publishes new builds under the same dev tag, so the installed
+version can still say **v2026.12.0-dev** after a fix is published. On the
+**VoIP Stack** page, open the three-dot menu, select **Reinstall** and confirm
+with **Reinstall**. Restart Home Assistant as in step 6.
+
+![Installed VoIP Stack repository menu with Reinstall](docs/images/marketplace/reinstall-menu.png)
+
+![Reinstall confirmation for the currently installed development version](docs/images/marketplace/reinstall.png)
+
+</details>
