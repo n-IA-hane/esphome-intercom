@@ -550,6 +550,33 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             vol.Required("allow_insecure_http", default=bool(values.get("allow_insecure_http", False))): BooleanSelector(),
         }))
 
+    async def async_step_dhcp(self, discovery_info):
+        """Admit a native DHCP hint into the same physical-phone proposal."""
+        from .physical_phone import discovery_enabled, physical_phone_records
+        from .physical_phone_discovery import dhcp_identity
+        from .runtime_data import runtime_data
+
+        try:
+            mac, _host, _vendor, _model = dhcp_identity(discovery_info)
+        except ValueError:
+            return self.async_abort(reason="invalid_phone_discovery")
+        entry = self._current_entry()
+        if entry is None:
+            return self.async_abort(reason="configure_pbx_first")
+        if any(phone["mac"] == mac for phone in physical_phone_records(entry).values()):
+            return self.async_abort(reason="already_configured")
+        runtime = runtime_data(self.hass)
+        discovery = getattr(runtime, "phone_discovery", None)
+        if not discovery_enabled(entry) or discovery is None or not discovery.owned():
+            return self.async_abort(reason="phone_discovery_expired")
+        candidate = discovery.observe_dhcp(discovery_info, start_flow=False)
+        if candidate is None:
+            return self.async_abort(reason="invalid_phone_discovery")
+        result = await self.async_step_integration_discovery({"discovery_candidate": candidate.public()})
+        if result["type"] == "form":
+            candidate.flow_id, candidate._flow_context = self.flow_id, self.context
+        return result
+
     async def async_step_integration_discovery(self, discovery_info):
         """Native discovery card chains into the existing PBX's child editor."""
         candidate = discovery_info.get("discovery_candidate", {}) if isinstance(discovery_info, Mapping) else {}

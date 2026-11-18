@@ -30,3 +30,8 @@ bleak-esphome==4.0.0
 # The ESPHome provider imports Bluetooth/USB during collection (same HA tag).
 aiousbwatcher==1.1.2
 serialx==1.15.1
+
+# Public DHCP cache/discovery APIs exercised on the same HA 2026.11.1 tag.
+aiodhcpwatcher==1.2.7
+aiodiscover==3.3.2
+cached-ipaddress==1.1.2

@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import ipaddress
+import logging
 import re
 import secrets
 import socket
 import time
+
+from homeassistant.exceptions import HomeAssistantError
 
 from .core import sip
 from .physical_phone import (
@@ -19,6 +22,7 @@ from .runtime_data import runtime_data
 
 PNP_ADDRESS = "224.0.1.75"
 PNP_PORT = 5060
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -32,6 +36,7 @@ class PhoneCandidate:
     seen: float = field(default_factory=time.monotonic)
     flow_id: str = ""
     native_subentry: object | None = field(default=None, repr=False)
+    pnp_host: str = field(default="", repr=False)
     _flow_task: asyncio.Task | None = field(default=None, repr=False)
     _flow_context: dict | None = field(default=None, repr=False)
 
@@ -77,6 +82,20 @@ def pnp_identity(request, addr):
     return identities.pop(), str(params.get("vendor") or "").strip('"')[:64], str(params.get("model") or "").strip('"')[:80]
 
 
+def dhcp_identity(info):
+    """Recognize only the declared Snom360 DHCP shape, without contacting it."""
+    if not all(isinstance(getattr(info, key, None), str) for key in ("macaddress", "ip", "hostname")):
+        raise ValueError("invalid_phone_discovery")
+    mac = re.sub(r"[:-]", "", str(info.macaddress)).lower()
+    host = ipaddress.ip_address(info.ip)
+    if (not re.fullmatch(r"000413[0-9a-f]{6}", mac)
+            or not re.fullmatch(r"snom360(?:-[a-z0-9][a-z0-9._-]*)?", info.hostname.casefold())
+            or host.version != 4 or not host.is_private or host.is_loopback
+            or host.is_link_local or host.is_unspecified or host.is_multicast):
+        raise ValueError("invalid_phone_discovery")
+    return mac, host.compressed, "snom", "snom360"
+
+
 class PhoneDiscovery:
     def __init__(self, hass, entry):
         self.hass, self.entry, self.runtime = hass, entry, entry.runtime_data
@@ -86,6 +105,7 @@ class PhoneDiscovery:
         self._tasks = set()
         self._closed = False
         self._start_lock = asyncio.Lock()
+        self._dhcp_backfilled = False
 
     def owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -93,7 +113,56 @@ class PhoneDiscovery:
 
     async def async_start(self):
         async with self._start_lock:
-            await self._async_start_owned()
+            dhcp_available = "dhcp" in self.hass.config.components
+            if self.owned() and dhcp_available and not self._dhcp_backfilled:
+                from homeassistant.components.dhcp import async_discovered_service_info
+
+                known = async_discovered_service_info(self.hass)
+                self._dhcp_backfilled = True
+                for info in known:
+                    self.observe_dhcp(info)
+            try:
+                await self._async_start_owned()
+            except (OSError, HomeAssistantError) as error:
+                self._close_transport()
+                if not dhcp_available:
+                    raise
+                _LOGGER.warning("SIP phone discovery unavailable; native DHCP remains active (%s)", type(error).__name__)
+
+    def _prune_candidates(self):
+        for key, expired in tuple(self.candidates.items()):
+            if time.monotonic() - expired.seen >= 86400:
+                self._abort_candidate_flow(expired)
+                if expired._flow_task is not None:
+                    expired._flow_task.cancel()
+                del self.candidates[key]
+
+    def _schedule_flow(self, candidate):
+        if candidate._flow_task is None or candidate._flow_task.done():
+            task = candidate._flow_task = self.hass.async_create_task(self._start_flow(candidate), "voip-phone-discovery")
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    def observe_dhcp(self, info, *, start_flow=True):
+        """Cache a native discovery hint, never a PnP delivery authorization."""
+        if not self.owned():
+            return None
+        try:
+            mac, host, vendor, model = dhcp_identity(info)
+        except ValueError:
+            return None
+        if any(phone["mac"] == mac for phone in physical_phone_records(self.entry).values()):
+            return None
+        self._prune_candidates()
+        candidate = self.candidates.get(mac)
+        if candidate is None:
+            if len(self.candidates) >= 64:
+                return None
+            candidate = self.candidates[mac] = PhoneCandidate("", mac, host, vendor, model)
+        candidate.host, candidate.seen = host, time.monotonic()
+        if start_flow:
+            self._schedule_flow(candidate)
+        return candidate
 
     async def _async_start_owned(self):
         if not self.owned():
@@ -202,15 +271,10 @@ class PhoneDiscovery:
             mac, vendor, model = pnp_identity(request, addr)
         except (ValueError, sip.SipError):
             return SipRequestResult(400, "Bad Request")
-        for key, expired in tuple(self.candidates.items()):
-            if time.monotonic() - expired.seen >= 86400:
-                self._abort_candidate_flow(expired)
-                if expired._flow_task is not None:
-                    expired._flow_task.cancel()
-                del self.candidates[key]
+        self._prune_candidates()
         phone = next((item for item in physical_phone_records(self.entry).values() if item["mac"] == mac), None)
         candidate = self.candidates.get(mac)
-        if phone is not None and (candidate is None or candidate.host != addr[0]
+        if phone is not None and (candidate is None or candidate.pnp_host != addr[0] or candidate.host != addr[0]
                 or candidate.phone_id != phone["phone_id"]
                 or not secrets.compare_digest(candidate.token, phone["provisioning_token"])):
             # A MAC is an inventory hint, never a credential. Existing URLs
@@ -225,10 +289,14 @@ class PhoneDiscovery:
             candidate = self.candidates[mac] = PhoneCandidate("", mac, addr[0], vendor, model)
         candidate.seen, candidate.host = time.monotonic(), addr[0]
         if phone is None:
-            if candidate._flow_task is None or candidate._flow_task.done():
-                task = candidate._flow_task = self.hass.async_create_task(self._start_flow(candidate), "voip-phone-discovery")
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
+            # Only an actual PnP request before adoption can bind delivery.
+            # DHCP can update the inventory hint without granting this right.
+            candidate.pnp_host = addr[0]
+            if vendor:
+                candidate.vendor = vendor
+            if model:
+                candidate.model = model
+            self._schedule_flow(candidate)
             # Admission is not adoption. Neither an enabled provisioner nor a
             # guessed MAC authorizes sending this private URL to an unknown UA.
             return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))

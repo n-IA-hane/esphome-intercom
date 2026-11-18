@@ -2,6 +2,10 @@
 
 ## 2026.12.0-dev
 
+- Offer Snom 360 handsets already known to Home Assistant's DHCP discovery,
+  including on networks where the phone's SIP multicast is not delivered.
+  DHCP and SIP use one discovery card and require explicit adoption.
+
 - Keep the caller's card and dashboard in outgoing progress while a local
   application or remote destination rings. Incoming answer controls, popups
   and automatic answer follow the offer for the selected account.

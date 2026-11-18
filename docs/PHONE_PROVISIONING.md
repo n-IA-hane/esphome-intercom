@@ -219,10 +219,17 @@ on multicast `224.0.1.75:5060`. They appear in Home Assistant's **Discovered** l
 with Configure and Ignore. A discovery announcement is an untrusted inventory
 candidate. It does not create accounts, grant permissions, adopt a logical phone
 or expose its configuration before an administrator confirms the binding.
-The Snom 360 reports itself as `snom360` and uses a percent-encoded
-`MAC:` prefix in the SIP address. A PBX on another subnet must receive the
-phone's multicast announcement to detect it. Reloading the integration starts
-the listener but does not make an already-running handset announce itself.
+A Snom 360 can also appear from Home Assistant's native DHCP discovery. When
+HA knows the Snom MAC prefix and a matching hostname such as
+`snom360-123456`, VoIP Stack offers the phone even if its SIP multicast never
+reaches the PBX. It also checks HA's existing DHCP discoveries when detection
+starts. A later SIP announcement joins the same proposal by MAC.
+
+The handset's SIP announcement identifies itself as `snom360` and uses a
+percent-encoded `MAC:` prefix. A DHCP sighting only identifies a candidate.
+It never authorizes delivery of a provisioning address. If HA has neither a
+matching DHCP record nor an incoming SIP announcement, there is no candidate
+to display yet.
 
 An existing private URL is not recovered from a MAC-only announcement after a
 service restart or credential rotation. Its administrator can retrieve it through

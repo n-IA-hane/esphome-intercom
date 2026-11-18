@@ -3,6 +3,7 @@
   "name": "VoIP Stack",
   "after_dependencies": [
     "conversation",
+    "dhcp",
     "esphome",
     "stream",
     "stt",
@@ -21,6 +22,12 @@
     "media_source",
     "network",
     "web_rtc"
+  ],
+  "dhcp": [
+    {
+      "macaddress": "000413*",
+      "hostname": "snom360*"
+    }
   ],
   "documentation": "https://github.com/n-IA-hane/esphome-intercom",
   "integration_type": "hub",
