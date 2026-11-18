@@ -10,7 +10,9 @@ import socket
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
+from uuid import uuid4
 
 import voluptuous as vol
 
@@ -25,6 +27,12 @@ class _FakeUnauthorized(Exception):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args)
         self.details = kwargs
+
+
+class _FakeContext:
+    def __init__(self, id=None, user_id=None, parent_id=None):
+        self.id = id or uuid4().hex
+        self.user_id, self.parent_id = user_id, parent_id
 
 
 def _install_ha_fakes() -> None:
@@ -52,6 +60,7 @@ def _install_ha_fakes() -> None:
     sys.modules.setdefault("voluptuous", vol)
 
     core.HomeAssistant = getattr(core, "HomeAssistant", type("HomeAssistant", (), {}))
+    core.Context = getattr(core, "Context", _FakeContext)
     core.ServiceCall = getattr(core, "ServiceCall", type("ServiceCall", (), {}))
     core.callback = getattr(core, "callback", lambda fn: fn)
     exceptions.Unauthorized = getattr(
@@ -140,9 +149,11 @@ const = _load_module("const")
 class _FakeBus:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
+        self.contexts: list[object | None] = []
 
-    def async_fire(self, event_type: str, event: dict) -> None:
+    def async_fire(self, event_type: str, event: dict, *, context=None) -> None:
         self.events.append((event_type, dict(event)))
+        self.contexts.append(context)
 
 
 class _FakeHass:
@@ -281,6 +292,12 @@ class ConferenceMixerTest(unittest.TestCase):
 
 
 class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        registry = sys.modules["homeassistant.helpers.entity_registry"]
+        self.enterContext(patch.object(registry, "async_get", return_value=types.SimpleNamespace(
+            async_get_entity_id=lambda *_args: None)))
+        self.enterContext(patch.object(sys.modules["homeassistant.helpers"], "entity_registry", registry, create=True))
+
     @staticmethod
     def _invite(*, call_id: str = "source-call"):
         fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)

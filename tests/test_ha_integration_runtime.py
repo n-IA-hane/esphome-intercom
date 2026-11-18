@@ -236,7 +236,7 @@ async def test_transfer_service_returns_the_refer_subscription_result(
     registry = SipEndpointRuntime(allow_dark_sessions=True)
     registry.upsert("active-call", state="in_call", owner="bridge", endpoint_id="phone-endpoint")
     phones = SimpleNamespace(resolve_source=AsyncMock(
-        return_value=SimpleNamespace(endpoint_id="phone-endpoint")))
+        return_value=SimpleNamespace(endpoint_id="phone-endpoint", name="Office phone")))
     terminate = AsyncMock()
     monkeypatch.setattr(endpoint_termination, "EndpointTerminationHandler",
                         lambda _hass: SimpleNamespace(terminate_reason=terminate))

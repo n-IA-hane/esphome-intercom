@@ -218,6 +218,14 @@ call_projection.require_runtime_data = _test_runtime
 
 
 class GroupCallMatrixTest(unittest.TestCase):
+    def setUp(self):
+        # Other legacy adapters may already have installed a different stub.
+        # Own this model's empty registry for one test and restore it afterwards.
+        registry = sys.modules["homeassistant.helpers.entity_registry"]
+        self.enterContext(patch.object(registry, "async_get", return_value=types.SimpleNamespace(
+            async_get_entity_id=lambda *_args: None)))
+        self.enterContext(patch.object(sys.modules["homeassistant.helpers"], "entity_registry", registry, create=True))
+
     def test_default_route_continues_without_claiming_a_browser_phone(self) -> None:
         hass = _FakeHass()
         registry = websocket_api.call_registry(hass)

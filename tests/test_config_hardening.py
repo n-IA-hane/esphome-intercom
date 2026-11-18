@@ -278,9 +278,11 @@ def test_debug_and_media_capture_options_disclose_separate_behaviors(path: Path)
     capture_title = user_step["data"]["media_capture"].lower()
     capture_description = user_step["data_description"]["media_capture"].lower()
 
-    assert "debug" in debug_title
-    assert "without recording" in debug_description or "senza registrare" in debug_description
+    assert "diagnostic" in debug_title and "sip" in debug_title and "media" in debug_title
+    assert "debug" in debug_description
+    assert "does not record" in debug_description or "non registra" in debug_description
     assert "audio" in capture_title
+    assert "priv" in capture_title
     assert "15" in capture_description
     assert "8" in capture_description
     assert "~/.cache/voip_stack_debug" in capture_description
