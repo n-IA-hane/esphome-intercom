@@ -381,13 +381,17 @@ class ConferenceRoom:
         *,
         _origin: asyncio.Task[Any] | None = None,
     ) -> None:
+        origin = _origin or asyncio.current_task()
         if self._close_task is None:
             self._close_task = asyncio.create_task(
-                self._close(reason=reason, origin=_origin or asyncio.current_task()),
+                self._close(reason=reason, origin=origin),
                 name=f"voip-conference-close-{self.name}",
             )
-        cleanup = self._close_task
-        await async_wait_for_cleanup(cleanup)
+        elif origin is self._task:
+            # An existing closer joins the mixer. Its final tick (including
+            # a leave triggered by media timeout) must be free to return.
+            return
+        await async_wait_for_cleanup(self._close_task)
 
     async def _close(
         self,
@@ -401,10 +405,10 @@ class ConferenceRoom:
         if legs:
             await asyncio.gather(*(self._dispose_leg(leg, reason=reason) for leg in legs))
         task = self._task
-        self._task = None
         if task is not None and task is not origin and task is not asyncio.current_task():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        self._task = None
         self._set_softphone_idle(reason)
         self._fire("conference_ended", "", count=0, reason=reason)
         manager = conference_component(self.hass)

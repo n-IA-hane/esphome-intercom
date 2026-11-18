@@ -701,6 +701,39 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(manager._closed)
         self.assertFalse(manager.rooms)
 
+    async def test_empty_mixer_exits_while_last_leave_owns_close(self) -> None:
+        hass = _FakeHass()
+        room = conference.ConferenceRoom(hass, name="Conference", local_ip="127.0.0.1")
+        scheduled = asyncio.Event()
+        finish_close = asyncio.Event()
+        close = room._close
+
+        async def delayed_close(**kwargs):
+            # The last leave scheduled the closer but its body has not run.
+            scheduled.set()
+            await finish_close.wait()
+            await close(**kwargs)
+
+        async def final_mix_tick():
+            await scheduled.wait()
+            await room._mix_loop()
+
+        with patch.object(room, "_close", delayed_close):
+            mixer = room._task = asyncio.create_task(final_mix_tick())
+            leave = asyncio.create_task(room.close(reason="local_hangup"))
+            try:
+                done, _ = await asyncio.wait({mixer}, timeout=1)
+                self.assertIn(mixer, done, "Mixer waited for the closer that must join it")
+                mixer.result()
+            finally:
+                # On regression, unwind the barrier without hanging the test runner.
+                if not mixer.done() and room._close_task:
+                    room._close_task.cancel()
+                finish_close.set()
+                await asyncio.gather(leave, mixer, return_exceptions=True)
+            self.assertTrue(room._closed)
+            self.assertIsNone(room._task)
+
     async def test_room_that_closes_itself_is_removed_from_manager(self) -> None:
         hass = _FakeHass()
         manager = conference.conference_manager(hass, local_ip="127.0.0.1")
