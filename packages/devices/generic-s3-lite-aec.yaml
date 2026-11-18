@@ -1,6 +1,7 @@
 # Device wiring and consumer parameters. Shared feature modules own lifecycle and controls.
 substitutions:
   firmware_audio_backend: audio_stack
+  firmware_timer_stop_word: false
   firmware_led_package: ../../led/status_ws2812_single.yaml
   firmware_voice_binding:
     voice_assistant:

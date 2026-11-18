@@ -104,6 +104,20 @@ These are first-class SIP endpoint shapes. They are not compatibility modes.
 An endpoint must provide at least one real audio direction; a signaling-only
 device is not a VoIP phone and is rejected.
 
+### Stop a ringing timer by voice
+
+On profiles with both `wake_word` and `timers`, say **Stop** in English while
+the device's timer alarm is ringing. This silences the alarm and keeps any
+call or Assist session active. The usual wake word still starts Assist.
+Micro Wake Word must be enabled and the microphone unmuted.
+
+The internal Stop model adds 45,744 bytes of model data to the firmware. Its
+manifest requests a 21,000-byte inference buffer. ESPHome determines the actual
+allocation for the target when it loads the model. Generic S3 Full Lite omits it
+by default. Set `firmware_timer_stop_word: false` under `substitutions:` to
+omit it on other boards, or set it to `true` to include it on a Lite build
+with sufficient OTA space. [Stop model and training details](https://github.com/OHF-Voice/micro-wake-word/releases/tag/stop)
+
 ### Generic S3 Full and Full Lite
 
 Both single-bus profiles combine software AEC, Voice Assistant, wake word, VoIP,

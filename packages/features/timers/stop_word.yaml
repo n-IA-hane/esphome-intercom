@@ -1,0 +1,26 @@
+# Loaded after the device wake-word model. ESPHome enables the first model at boot.
+micro_wake_word:
+  models:
+    - id: timer_stop_word
+      model: https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.json
+      internal: true
+  on_wake_word_detected:
+    - lambda: |-
+        if (wake_word == id(timer_stop_word).get_wake_word()) {
+          if (id(runtime).is_activity_active("timer_ringing"))
+            id(runtime).event("timer_stopped");
+          return;
+        }
+        id(g_last_wake_word) = wake_word;
+        id(runtime).observe_event("wake_word");
+
+runtime_controller:
+  policies:
+    timer_alarm:
+      values:
+        play:
+          then:
+            - micro_wake_word.enable_model: timer_stop_word
+        stop:
+          then:
+            - micro_wake_word.disable_model: timer_stop_word

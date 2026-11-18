@@ -51,8 +51,11 @@
 
 ### Official component alignment and independent rendering
 
-- Offer an optional [adaptive speaker volume switch](docs/ESP_ENTITY_SURFACE.md#optional-adaptive-volume) on devices using the shared Audio Stack controls.
-
+- Offer an optional [adaptive speaker volume switch](docs/ESP_ENTITY_SURFACE.md#optional-adaptive-volume)
+  on devices using the shared Audio Stack controls.
+- Say **Stop** to silence a ringing timer on ESP profiles with local wake-word
+  detection and timers. The existing call and Assist state are preserved.
+  Generic S3 Full Lite keeps the additional model optional.
 - Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,
   using the shared platform owners. Retain the exact official Core 373 preview
   for qualification without raising unrelated standalone-component minimums.

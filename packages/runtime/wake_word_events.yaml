@@ -3,20 +3,24 @@ external_components:
 - source: ${ext_components_source}
   components: [micro_wake_word]
 
+defaults:
+  _ordinary_wake_word:
+    runtime_controller:
+      observe:
+        micro_wake_word: mww
+    micro_wake_word:
+      on_wake_word_detected:
+        - globals.set:
+            id: g_last_wake_word
+            value: !lambda 'return wake_word;'
+
 packages:
   mww_start: !include mww_safe_start.yaml
-
-runtime_controller:
-  observe:
-    micro_wake_word: mww
+  detection: ${ {} if _fw_timer_stop_word | default(false) else _ordinary_wake_word }
 
 micro_wake_word:
   id: mww
   stop_after_detection: false
-  on_wake_word_detected:
-    - globals.set:
-        id: g_last_wake_word
-        value: !lambda 'return wake_word;'
 
 voice_assistant:
   id: va

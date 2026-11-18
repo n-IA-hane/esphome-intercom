@@ -18,13 +18,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FULL = ['voice', 'wake_word', 'voip', 'music', 'sendspin', 'timers', 'status_led', 'diagnostics']
 
-# Pinned real UI/schema-test dependency, identical to the official Alexa model
-# on 2026-11-10. Public YAML model selection and production caches stay intact.
-_UI_MODEL_BASE = "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/"
-_UI_MODEL_FILES = (
-    ("manifest.json", "alexa.json", "1d999798b35b1fe2606465b75ab840be51c1811d2909d5e620cefb6e96f8abd0"),
-    ("alexa.tflite", "alexa.tflite", "9011a8155b04de858c48038529235cbc0e42e9fca05a55bf588cb80a653a723b"),
-)
+# Verify real schema dependencies once per process, including models fetched from release assets.
+_MODEL_SOURCES = {
+    "alexa": (
+        "https://github.com/esphome/micro-wake-word-models/raw/main/models/v2/alexa.json",
+        "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/",
+        "1d999798b35b1fe2606465b75ab840be51c1811d2909d5e620cefb6e96f8abd0",
+        "9011a8155b04de858c48038529235cbc0e42e9fca05a55bf588cb80a653a723b",
+    ),
+    "stop": (
+        "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.json",
+        "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/",
+        "bd13aeb1b83852649dc4fb6135cb160ff68716d14612b06f6a405342c57447aa",
+        "b5a18c4ad681a89950dfade31011e1631bdcb333e93c84519a1a63ff4f071146",
+    ),
+}
 
 
 def _verify_model_bytes(data: bytes, expected_sha256: str) -> bytes:
@@ -33,21 +41,27 @@ def _verify_model_bytes(data: bytes, expected_sha256: str) -> bytes:
     return data
 
 
-@lru_cache(maxsize=1)
-def _ui_model_files() -> tuple[tuple[str, bytes], ...]:
+@lru_cache(maxsize=None)
+def _ui_model_files(model: str) -> tuple[tuple[str, bytes], ...]:
+    _, base, manifest_hash, data_hash = _MODEL_SOURCES[model]
     files = []
-    for cache_name, filename, digest in _UI_MODEL_FILES:
-        with urlopen(_UI_MODEL_BASE + filename, timeout=30) as response:
+    for cache_name, filename, digest in (
+        ("manifest.json", model + ".json", manifest_hash),
+        (model + ".tflite", model + ".tflite", data_hash),
+    ):
+        with urlopen(base + filename, timeout=30) as response:
             files.append((cache_name, _verify_model_bytes(response.read(128 * 1024), digest)))
     return tuple(files)
 
 
-def seed_ui_schema_model_cache(data_directory: Path) -> None:
+def seed_ui_schema_model_cache(data_directory: Path, *, with_timer_stop: bool = True) -> None:
     # ESPHome keys the cache by the original public manifest URL, unchanged.
-    target = data_directory / "micro_wake_word" / "a5f625a9"
-    target.mkdir(parents=True, exist_ok=True)
-    for filename, data in _ui_model_files():
-        (target / filename).write_bytes(data)
+    for model in ("alexa", "stop") if with_timer_stop else ("alexa",):
+        url = _MODEL_SOURCES[model][0]
+        target = data_directory / "micro_wake_word" / hashlib.sha256(url.encode()).hexdigest()[:8]
+        target.mkdir(parents=True, exist_ok=True)
+        for filename, data in _ui_model_files(model):
+            (target / filename).write_bytes(data)
 
 
 def test_full_lite_shipped_defaults_keep_sendspin_optional() -> None:
@@ -58,10 +72,38 @@ def test_full_lite_shipped_defaults_keep_sendspin_optional() -> None:
     assert document['esp32']['flash_size'] == '4MB'
     assert 'voice_assistant' in document
     assert 'micro_wake_word' in document
+    assert all(model.get('id') != 'timer_stop_word' for model in document['micro_wake_word']['models'])
     assert 'voip_stack' in document
     player = document['media_player'][0]
     assert 'media_pipeline' in player
     assert 'announcement_pipeline' in player
+
+
+@pytest.mark.parametrize('device,enabled', [
+    ('waveshare-s3-full-afe', False),
+    ('generic-s3-full-lite-aec', True),
+])
+def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device, enabled):
+    config = device_config(tmp_path, ['voice', 'wake_word', 'timers'],
+                           f'yamls/full-experience/single-bus/{device}.yaml')
+    document = yaml_util.load_yaml(config)
+    document['substitutions']['firmware_timer_stop_word'] = enabled
+    document['esphome'] = {'build_path': str(tmp_path / 'build')}
+    config.write_text(yaml_util.dump(document))
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    cpp = (tmp_path / 'build/src/main.cpp').read_text()
+    models = [line for line in cpp.splitlines() if ' micro_wake_word::WakeWordModel(' in line]
+    assert len(models) == 1 + enabled
+    assert re.search(r'"Alexa", \d+, true, false\);$', models[0])
+    assert cpp.count('mww->get_wake_word_detected_trigger()') == 1
+    if enabled:
+        assert re.search(r'"Stop", \d+, false, true\);$', models[1])
+    else:
+        assert 'timer_stop_word->' not in cpp
 
 
 def device_config(directory: Path, features: list[str], profile_path: str = 'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml') -> Path:
@@ -85,7 +127,7 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         substitutions[key] = str(repository / component_path)
     directory.mkdir(parents=True, exist_ok=True)
     if 'wake_word' in features:
-        seed_ui_schema_model_cache(directory / '.esphome')
+        seed_ui_schema_model_cache(directory / '.esphome', with_timer_stop='timers' in features)
     for companion in (ROOT / profile_path).parent.glob('*.csv'):
         shutil.copy2(companion, directory / companion.name)
     (directory / 'secrets.yaml').write_text('wifi_ssid: fixture-network\nwifi_password: fixture-password\n')
@@ -246,6 +288,10 @@ def test_ws3_native_feature_composition(tmp_path: Path, features: list[str]) -> 
     assert ('voip_stack' in document) is ('voip' in features)
     assert ('voice_assistant' in document) is has_voice
     assert ('micro_wake_word' in document) is (has_voice and 'wake_word' in features)
+    words = document.get('micro_wake_word', {}).get('models', [])
+    assert any(word.get('id') == 'timer_stop_word' for word in words) is (
+        has_voice and 'wake_word' in features and 'timers' in features
+    )
     assert ('sendspin' in document) is (has_music and 'sendspin' in features)
     pairing_sensor = any(item.get('id') == 'sendspin_pairing_code'
                          for item in document.get('text_sensor', []))

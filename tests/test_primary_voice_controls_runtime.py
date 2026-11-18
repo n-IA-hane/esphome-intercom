@@ -61,14 +61,7 @@ def test_manual_button_cancels_assist_before_telephone(device, button, tmp_path,
             assert clicks == [actions]
     else:
         actions = by_id(configuration["binary_sensor"], button)["on_multi_click"][0]["then"]
-    monkeypatch.syspath_prepend(str(RUNTIME / "tests"))
-    spec = importlib.util.spec_from_file_location("button_runtime_profile", RUNTIME / "tests/test_runtime_profile_runtime.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    source = module._profile_cpp().replace("r.setup();", '''
-        r.add_activity("voip_in_call",700,false);
-        r.add_activity_policy("voip_in_call","display_status","voip_in_call");
-        r.setup();''') + r'''
+    source = _runtime_profile_with_call(monkeypatch) + r'''
 #include <cassert>
 #include <cstring>
 #define id(x) (x)
@@ -109,9 +102,24 @@ int main(){
  assert(runtime.is_activity_active("voip_in_call")&&!runtime.is_activity_active("va_stopping"));
 }
 '''.replace("BUTTON", _actions(actions)).replace("VOICE_ONLY", str(voice_only).lower())
-    cpp = tmp_path / "button.cpp"
+    _compile_and_run(source, tmp_path)
+
+
+def _runtime_profile_with_call(monkeypatch, *, setup=True):
+    monkeypatch.syspath_prepend(str(RUNTIME / "tests"))
+    spec = importlib.util.spec_from_file_location("controls_runtime_profile", RUNTIME / "tests/test_runtime_profile_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._profile_cpp().replace("r.setup();", '''
+        r.add_activity("voip_in_call",700,false);
+        r.add_activity_policy("voip_in_call","display_status","voip_in_call");
+        ''' + ('r.setup();' if setup else ''))
+
+
+def _compile_and_run(source, tmp_path):
+    cpp = tmp_path / "controls.cpp"
     cpp.write_text(source)
-    binary = tmp_path / "button"
+    binary = tmp_path / "controls"
     component = RUNTIME / "esphome/components/runtime_controller"
     run = subprocess.run(["g++", "-std=c++17", "-I", str(RUNTIME / "tests/fixtures/core/stubs"), "-I", str(component),
                           str(cpp), str(component / "runtime_controller.cpp"), str(component / "runtime_controller_state.cpp"),
@@ -119,3 +127,83 @@ int main(){
     assert run.returncode == 0, run.stderr
     run = subprocess.run([str(binary)], capture_output=True, text=True)
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_contextual_stop_routes_only_a_ringing_timer(tmp_path, monkeypatch):
+    config = profile("full-experience/single-bus/waveshare-s3-full-afe.yaml")
+    mww = config["micro_wake_word"]
+    assert mww["models"][0]["model"] == "alexa"
+    model = mww["models"][1]
+    assert model["id"] == "timer_stop_word" and model["internal"] is True
+    assert model["model"].endswith("/releases/download/stop/stop.json")
+    assert "micro_wake_word" not in config["runtime_controller"]["observe"]
+    [action] = mww["on_wake_word_detected"]
+    policies = config["runtime_controller"]["policies"]["timer_alarm"]["values"]
+    for state, operation in (("play", "enable"), ("stop", "disable")):
+        assert {f"micro_wake_word.{operation}_model": model["id"]} in policies[state]["then"]
+    source = _runtime_profile_with_call(monkeypatch, setup=False) + r'''
+#include <cassert>
+#include <string>
+#define id(x) (x)
+int main() {
+  struct { std::string get_wake_word() const { return "Stop"; } } timer_stop_word;
+  for (bool call : {false, true}) {
+    for (bool assist : {false, true}) {
+      RuntimeController runtime;
+      load_profile(runtime);
+      unsigned stops = 0, starts = 0, barges = 0;
+      bool enabled = true;  // Even a previously enabled model follows the initial alarm policy.
+      esphome::Trigger<> stopped, start, barge, enable, disable;
+      stopped.fn = [&]() { ++stops; };
+      start.fn = [&]() { ++starts; };
+      barge.fn = [&]() { ++barges; };
+      enable.fn = [&]() { enabled = true; };
+      disable.fn = [&]() { enabled = false; };
+      runtime.add_event_trigger("timer_stopped", &stopped);
+      runtime.add_action_trigger("voice_start", &start);
+      runtime.add_action_trigger("voice_cancel_pipeline", &barge);
+      runtime.add_policy_value_trigger("timer_alarm", "play", &enable);
+      runtime.add_policy_value_trigger("timer_alarm", "stop", &disable);
+      runtime.setup();
+      assert(!enabled);
+      runtime.event("boot_ready");
+      runtime.event("wifi_connected");
+      runtime.event("ha_connected");
+      runtime.event("va_client_connected");
+      runtime.set_activity("voip_in_call", call);
+      if (assist) runtime.event("va_listening");
+      std::string g_last_wake_word = "Previous";
+      auto detect = [&](const std::string &wake_word) { DETECTION };
+      runtime.event("timer_started");
+      detect("Stop");
+      runtime.loop();
+      assert(!enabled && stops == 0 && runtime.is_activity_active("timer"));
+      runtime.event("timer_finished");
+      assert(enabled && runtime.is_activity_active("timer_ringing"));
+      detect("Stop");
+      detect("Stop");
+      runtime.loop();
+      assert(!enabled && !runtime.is_activity_active("timer_ringing") && stops == 1);
+      assert(starts == 0 && barges == 0 && g_last_wake_word == "Previous");
+      assert(runtime.is_activity_active("voip_in_call") == call);
+      assert(runtime.is_activity_active("va_listening") == assist);
+
+      runtime.event("timer_finished");
+      assert(enabled);
+      detect("Alexa");
+      runtime.loop();
+      assert(runtime.is_activity_active(assist ? "va_barging" : "va_start_requested"));
+      assert(starts == 0 && barges == 0);
+      runtime.loop();  // The observed wake event schedules the Assist action for the next turn.
+      assert(g_last_wake_word == "Alexa" && starts == !assist && barges == assist);
+      assert(runtime.is_activity_active("timer_ringing"));
+      assert(runtime.is_activity_active("voip_in_call") == call);
+      runtime.event("timer_stopped");  // Same event as the button or timeout.
+      detect("Stop");                 // A detection queued before dismissal.
+      runtime.loop();
+      assert(!enabled && stops == 2 && starts == !assist && barges == assist);
+    }
+  }
+}
+'''.replace("DETECTION", action["lambda"])
+    _compile_and_run(source, tmp_path)

@@ -12,6 +12,7 @@ substitutions:
   firmware_music_binding: {}
   firmware_announcement_binding: {}
   firmware_timer_binding: {}
+  firmware_timer_stop_word: true
   firmware_display_package: ../features/shared/absent.yaml
   _fw_voice: ${ 'voice' in firmware_features }
   _fw_wake_word: ${ _fw_voice and 'wake_word' in firmware_features }
@@ -22,6 +23,7 @@ substitutions:
   _fw_music: ${ 'music' in firmware_features }
   _fw_sendspin: ${ _fw_music and 'sendspin' in firmware_features }
   _fw_timers: ${ _fw_voice and 'timers' in firmware_features }
+  _fw_timer_stop_word: ${ _fw_timers and _fw_wake_word and firmware_timer_stop_word }
   _fw_display: ${ 'display' in firmware_features }
   _fw_lvgl: ${ _fw_display and firmware_lvgl }
   _fw_led: ${ 'status_led' in firmware_features and (not firmware_status_led_requires_display or _fw_display) }
@@ -40,6 +42,7 @@ substitutions:
   _fw_music_package: !include ../features/music/main.yaml
   _fw_sendspin_package: !include ../features/sendspin/main.yaml
   _fw_timers_package: !include ../features/timers/main.yaml
+  _fw_timer_stop_package: !include ../features/timers/stop_word.yaml
   _fw_ringtone_package: !include ../features/voip/ringtone.yaml
   _fw_led_package: !include ../features/presentation/led.yaml
   _fw_display_package: !include ../features/presentation/display.yaml
@@ -62,6 +65,7 @@ packages:
   sendspin: ${ _fw_sendspin_package if _fw_sendspin else {} }
   timers: ${ _fw_timers_package if _fw_timers else {} }
   timer_binding: ${ firmware_timer_binding if _fw_timers else {} }
+  timer_stop_word: ${ _fw_timer_stop_package if _fw_timer_stop_word else {} }
   ringtone: ${ _fw_ringtone_package if _fw_ringtone else {} }
   led: ${ _fw_led_package if _fw_led else {} }
   display: ${ _fw_display_package if _fw_display else {} }
