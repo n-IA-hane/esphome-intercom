@@ -106,6 +106,31 @@ def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device,
         assert 'timer_stop_word->' not in cpp
 
 
+@pytest.mark.parametrize(('device', 'enabled'), [
+    ('spotpear-ball-v2-full-afe', True),
+    ('waveshare-s3-touch-lcd-1.85c-box-v2-full-afe', False),
+])
+def test_shared_audio_controls_offer_optional_adaptive_volume(tmp_path, device, enabled):
+    config = device_config(tmp_path, ['voice', 'wake_word', 'timers'],
+                           f'yamls/full-experience/single-bus/{device}.yaml')
+    document = yaml_util.load_yaml(config)
+    if enabled:
+        document['substitutions']['audio_adaptive_volume'] = True
+    document['esphome'] = {'build_path': str(tmp_path / 'build')}
+    config.write_text(yaml_util.dump(document))
+    result = subprocess.run(
+        [sys.executable, '-m', 'esphome', 'compile', '--only-generate', str(config)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    sources = tmp_path / 'build/src'
+    assert ('#define USE_ESP_AUDIO_STACK_ADAPTIVE_VOLUME' in
+            (sources / 'esphome/core/defines.h').read_text()) == enabled
+    cpp = (sources / 'main.cpp').read_text()
+    assert 'Master Volume' in cpp
+    assert ('configure_adaptive_volume(' in cpp) == enabled
+
+
 def device_config(directory: Path, features: list[str], profile_path: str = 'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml') -> Path:
     profile = yaml_util.load_yaml(ROOT / profile_path)
     substitutions = dict(profile['substitutions'])
