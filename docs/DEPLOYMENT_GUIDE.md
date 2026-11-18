@@ -163,6 +163,11 @@ a new device package that already owns the runtime bindings.
 
 ### Install through HACS
 
+On Home Assistant 2026.11 and later, open **Settings > Marketplace** and
+select **Install** on the VoIP Stack page. To try the development release,
+follow the [illustrated prerelease guide](../README.md#install-a-prerelease).
+The HACS steps below apply to earlier Home Assistant versions.
+
 1. Search for **VoIP Stack** in HACS and select **Download**.
 2. Restart Home Assistant.
 3. Open **Settings → Devices & services → Add integration**.
