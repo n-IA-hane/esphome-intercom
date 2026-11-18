@@ -106,17 +106,23 @@ device is not a VoIP phone and is rejected.
 
 ### Stop a ringing timer by voice
 
-On profiles with both `wake_word` and `timers`, say **Stop** in English while
-the device's timer alarm is ringing. This silences the alarm and keeps any
-call or Assist session active. The usual wake word still starts Assist.
-Micro Wake Word must be enabled and the microphone unmuted.
+On profiles with both `wake_word` and `timers`, set
+`firmware_timer_stop_word: true` under `substitutions:` and rebuild to enable
+this optional control. Say **Stop** in English while the device's timer alarm
+is ringing. Micro Wake Word must be enabled and the microphone unmuted. The
+usual wake word still starts Assist, and stopping a timer preserves active calls.
 
-The internal Stop model adds 45,744 bytes of model data to the firmware. Its
-manifest requests a 21,000-byte inference buffer. ESPHome determines the actual
-allocation for the target when it loads the model. Generic S3 Full Lite omits it
-by default. Set `firmware_timer_stop_word: false` under `substitutions:` to
-omit it on other boards, or set it to `true` to include it on a Lite build
-with sufficient OTA space. [Stop model and training details](https://github.com/OHF-Voice/micro-wake-word/releases/tag/stop)
+All profiles leave this control off by default. On a held-out set of recordings
+from 116 speakers in Speech Commands v0.02, the shipped Stop settings detected
+44 of 50 Stop recordings and triggered on 1 of 225 other words. You may need
+to repeat Stop or use the device's timer control.
+Recognition while an actual alarm is playing still requires a device test.
+[Speech Commands dataset](https://www.tensorflow.org/datasets/catalog/speech_commands)
+
+Enabling Stop adds 45,744 bytes of model data to the firmware. Its manifest
+requests a 21,000-byte inference buffer. ESPHome determines the actual allocation
+when it loads the model. Check the image against your OTA slot, especially on
+the 4 MB Generic S3 Full Lite. [Stop model and training details](https://github.com/OHF-Voice/micro-wake-word/releases/tag/stop)
 
 ### Generic S3 Full and Full Lite
 

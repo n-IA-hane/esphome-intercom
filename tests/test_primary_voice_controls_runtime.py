@@ -130,7 +130,7 @@ def _compile_and_run(source, tmp_path):
 
 
 def test_contextual_stop_routes_only_a_ringing_timer(tmp_path, monkeypatch):
-    config = profile("full-experience/single-bus/waveshare-s3-full-afe.yaml")
+    config = profile("full-experience/single-bus/waveshare-s3-full-afe.yaml", firmware_timer_stop_word=True)
     mww = config["micro_wake_word"]
     assert mww["models"][0]["model"] == "alexa"
     model = mww["models"][1]

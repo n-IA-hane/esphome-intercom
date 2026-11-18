@@ -4,6 +4,8 @@ micro_wake_word:
     - id: timer_stop_word
       model: https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.json
       internal: true
+      probability_cutoff: 98%
+      sliding_window_size: 12
   on_wake_word_detected:
     - lambda: |-
         if (wake_word == id(timer_stop_word).get_wake_word()) {

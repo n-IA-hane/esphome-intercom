@@ -29,7 +29,7 @@ def test_ui_model_fixture_reuses_verified_bytes_without_another_download(tmp_pat
 
     monkeypatch.setattr(composition, "urlopen", unexpected_download)
     for directory in (tmp_path / "one/.esphome", tmp_path / "two/data"):
-        composition.seed_ui_schema_model_cache(directory)
+        composition.seed_ui_schema_model_cache(directory, with_timer_stop=True)
         for word, key in (("alexa", "a5f625a9"), ("stop", "23a3a6c4")):
             cache = directory / "micro_wake_word" / key
             assert {path.name: path.read_bytes() for path in cache.iterdir()} == verified[word]

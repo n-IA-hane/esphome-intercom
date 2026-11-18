@@ -54,7 +54,7 @@ def _ui_model_files(model: str) -> tuple[tuple[str, bytes], ...]:
     return tuple(files)
 
 
-def seed_ui_schema_model_cache(data_directory: Path, *, with_timer_stop: bool = True) -> None:
+def seed_ui_schema_model_cache(data_directory: Path, *, with_timer_stop: bool = False) -> None:
     # ESPHome keys the cache by the original public manifest URL, unchanged.
     for model in ("alexa", "stop") if with_timer_stop else ("alexa",):
         url = _MODEL_SOURCES[model][0]
@@ -79,17 +79,18 @@ def test_full_lite_shipped_defaults_keep_sendspin_optional() -> None:
     assert 'announcement_pipeline' in player
 
 
-@pytest.mark.parametrize('device,value,cli_value,expected', [
-    ('waveshare-s3-full-afe', False, None, False),
-    ('waveshare-s3-full-afe', 'false', None, False),
-    ('waveshare-s3-full-afe', True, 'false', False),
-    ('generic-s3-full-lite-aec', True, None, True),
+@pytest.mark.parametrize('device,value,cli_value,timers,expected', [
+    ('waveshare-s3-full-afe', False, None, True, False),
+    ('waveshare-s3-full-afe', 'false', None, True, False),
+    ('waveshare-s3-full-afe', True, 'false', True, False),
+    ('waveshare-s3-full-afe', True, None, False, False),
+    ('generic-s3-full-lite-aec', True, None, True, True),
 ])
-def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device, value, cli_value, expected):
-    config = device_config(tmp_path, ['voice', 'wake_word', 'timers'],
-                           f'yamls/full-experience/single-bus/{device}.yaml')
+def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device, value, cli_value, timers, expected):
+    features = ['voice', 'wake_word'] + (['timers'] if timers else [])
+    config = device_config(tmp_path, features, f'yamls/full-experience/single-bus/{device}.yaml',
+                           overrides={'firmware_timer_stop_word': value})
     document = yaml_util.load_yaml(config)
-    document['substitutions']['firmware_timer_stop_word'] = value
     document['esphome'] = {'build_path': str(tmp_path / 'build')}
     config.write_text(yaml_util.dump(document))
     cli = ['-s', 'firmware_timer_stop_word', cli_value] if cli_value is not None else []
@@ -101,10 +102,10 @@ def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device,
     cpp = (tmp_path / 'build/src/main.cpp').read_text()
     models = [line for line in cpp.splitlines() if ' micro_wake_word::WakeWordModel(' in line]
     assert len(models) == 1 + expected
-    assert re.search(r'"Alexa", \d+, true, false\);$', models[0])
+    assert re.search(r', 229, 5, "Alexa", \d+, true, false\);$', models[0])
     assert cpp.count('mww->get_wake_word_detected_trigger()') == 1
     if expected:
-        assert re.search(r'"Stop", \d+, false, true\);$', models[1])
+        assert re.search(r', 249, 12, "Stop", \d+, false, true\);$', models[1])
     else:
         assert 'timer_stop_word->' not in cpp
 
@@ -115,10 +116,9 @@ def test_timer_stop_word_override_preserves_the_ordinary_model(tmp_path, device,
 ])
 def test_shared_audio_controls_offer_optional_adaptive_volume(tmp_path, device, enabled):
     config = device_config(tmp_path, ['voice', 'wake_word', 'timers'],
-                           f'yamls/full-experience/single-bus/{device}.yaml')
+                           f'yamls/full-experience/single-bus/{device}.yaml',
+                           overrides={'audio_adaptive_volume': True, 'firmware_timer_stop_word': True} if enabled else {})
     document = yaml_util.load_yaml(config)
-    if enabled:
-        document['substitutions']['audio_adaptive_volume'] = True
     document['esphome'] = {'build_path': str(tmp_path / 'build')}
     config.write_text(yaml_util.dump(document))
     result = subprocess.run(
@@ -134,7 +134,19 @@ def test_shared_audio_controls_offer_optional_adaptive_volume(tmp_path, device, 
     assert ('configure_adaptive_volume(' in cpp) == enabled
 
 
-def device_config(directory: Path, features: list[str], profile_path: str = 'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml') -> Path:
+def test_timer_stop_opt_in_requires_local_wake_word(tmp_path):
+    config = device_config(tmp_path, ['voice', 'timers'], overrides={'firmware_timer_stop_word': True})
+    result = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(config)],
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expanded = tmp_path / 'expanded.yaml'
+    expanded.write_text(result.stdout)
+    document = yaml_util.load_yaml(expanded)
+    assert 'micro_wake_word' not in document
+    assert any(script['id'] == 'timer_alarm_loop' for script in document['script'])
+
+
+def device_config(directory: Path, features: list[str], profile_path: str = 'yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml', *, overrides: dict | None = None) -> Path:
     profile = yaml_util.load_yaml(ROOT / profile_path)
     substitutions = dict(profile['substitutions'])
     substitutions['firmware_features'] = features
@@ -154,8 +166,10 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         component_path = 'components' if key == 'camera_components_source' else 'esphome/components'
         substitutions[key] = str(repository / component_path)
     directory.mkdir(parents=True, exist_ok=True)
+    substitutions.update(overrides or {})
     if 'wake_word' in features:
-        seed_ui_schema_model_cache(directory / '.esphome', with_timer_stop='timers' in features)
+        with_stop = str(substitutions.get('firmware_timer_stop_word', False)).lower() == 'true'
+        seed_ui_schema_model_cache(directory / '.esphome', with_timer_stop='timers' in features and with_stop)
     for companion in (ROOT / profile_path).parent.glob('*.csv'):
         shutil.copy2(companion, directory / companion.name)
     (directory / 'secrets.yaml').write_text('wifi_ssid: fixture-network\nwifi_password: fixture-password\n')
@@ -317,9 +331,7 @@ def test_ws3_native_feature_composition(tmp_path: Path, features: list[str]) -> 
     assert ('voice_assistant' in document) is has_voice
     assert ('micro_wake_word' in document) is (has_voice and 'wake_word' in features)
     words = document.get('micro_wake_word', {}).get('models', [])
-    assert any(word.get('id') == 'timer_stop_word' for word in words) is (
-        has_voice and 'wake_word' in features and 'timers' in features
-    )
+    assert not any(word.get('id') == 'timer_stop_word' for word in words)
     assert ('sendspin' in document) is (has_music and 'sendspin' in features)
     pairing_sensor = any(item.get('id') == 'sendspin_pairing_code'
                          for item in document.get('text_sensor', []))

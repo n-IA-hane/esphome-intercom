@@ -29,7 +29,7 @@ PackageLoader.add_multi_constructor('!', _tagged)
 
 
 @lru_cache(maxsize=None)
-def profile(path: str | Path) -> dict:
+def profile(path: str | Path, **substitutions) -> dict:
     path = Path(path)
     if path.is_absolute():
         path = path.relative_to(ROOT)
@@ -37,7 +37,8 @@ def profile(path: str | Path) -> dict:
         path = Path('yamls') / path
     original = yaml_util.load_yaml(ROOT / path)
     with tempfile.TemporaryDirectory(prefix='voip-native-contract-') as directory:
-        config = device_config(Path(directory), original['substitutions']['firmware_features'], str(path))
+        config = device_config(Path(directory), original['substitutions']['firmware_features'], str(path),
+                               overrides=substitutions)
         data = yaml_util.load_yaml(config)
         data.update({k: v for k, v in original.items() if k not in ('substitutions', 'packages')})
         config.write_text(yaml_util.dump(data))
