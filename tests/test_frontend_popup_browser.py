@@ -417,13 +417,13 @@ def setup_mailbox(page, outcome='success'):
     }""", outcome)
     page.wait_for_function("mailboxCard._softphoneSnapshot?.voicemail?.total===1")
     page.get_by_role('button', name='Voicemail', exact=True).click()
-    page.get_by_role('button', name='Delete', exact=True).wait_for(state='visible')
+    page.get_by_role('button', name='Delete: Fixture,').wait_for(state='visible')
 
 
 def test_mailbox_last_delete_hides_message_indicator_from_authoritative_zero(popup_page):
     page = popup_page
     setup_mailbox(page)
-    page.get_by_role('button', name='Delete', exact=True).click()
+    page.get_by_role('button', name='Delete: Fixture,').click()
     page.wait_for_function("!mailboxCard._mailboxBusy&&mailboxCard._softphoneSnapshot.state==='idle'")
     assert page.evaluate('digits.join("")') == '01#2'
     assert page.evaluate('mailboxCard._softphoneSnapshot.voicemail.total') == 0
@@ -434,7 +434,7 @@ def test_mailbox_last_delete_hides_message_indicator_from_authoritative_zero(pop
 def test_mailbox_dtmf_call_never_requests_camera_with_global_send_camera_enabled(popup_page):
     page = popup_page
     setup_mailbox(page)
-    page.get_by_role('button', name='Delete', exact=True).click()
+    page.get_by_role('button', name='Delete: Fixture,').click()
     page.wait_for_function("!mailboxCard._mailboxBusy&&mailboxCard._softphoneSnapshot.state==='idle'")
     assert page.evaluate('cameraRequests') == 0
     assert page.evaluate('originations[0].send_video') is False
@@ -455,7 +455,7 @@ def test_mailbox_failed_delete_keeps_authoritative_message_count(popup_page):
     page = popup_page
     page.clock.install()
     setup_mailbox(page, 'failed')
-    page.get_by_role('button', name='Delete', exact=True).click()
+    page.get_by_role('button', name='Delete: Fixture,').click()
     page.wait_for_function("digits.join('')==='01#2'")
     page.clock.fast_forward(10001)
     page.wait_for_function('!mailboxCard._mailboxBusy')
