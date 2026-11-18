@@ -282,7 +282,8 @@
       "trunk_media_nat_invalid": "Choose auto, direct or manual.",
       "trunk_did_invalid": "Invalid called-number source or prefix rules.",
       "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
-      "phone_provisioning_url_invalid": "Use an HTTP or HTTPS URL without embedded credentials, query or fragment. HTTP requires the explicit local-network option.",
+      "phone_provisioning_url_invalid": "Insira uma URL HTTP ou HTTPS válida, sem credenciais incorporadas, parâmetros de consulta ou fragmento. HTTP exige consentimento explícito para uso na rede local.",
+      "phone_provisioning_url_unavailable": "Nenhuma URL automática de provisionamento está disponível. Configure uma URL HTTPS do Home Assistant, insira uma URL HTTPS acessível pelo telefone ou permita explicitamente HTTP na rede local.",
       "phone_name_required": "A phone name is required.",
       "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
       "phone_password_required": "A SIP password is required.",
@@ -1194,6 +1195,15 @@
           "error": "Error",
           "disabled": "Disabled",
           "unassigned": "Não associado"
+        },
+        "state_attributes": {
+          "error": {
+            "name": "Erro",
+            "state": {
+              "phone_provisioning_url_invalid": "Insira uma URL HTTP ou HTTPS válida, sem credenciais incorporadas, parâmetros de consulta ou fragmento. HTTP exige consentimento explícito para uso na rede local.",
+              "phone_provisioning_url_unavailable": "Nenhuma URL automática de provisionamento está disponível. Configure uma URL HTTPS do Home Assistant, insira uma URL HTTPS acessível pelo telefone ou permita explicitamente HTTP na rede local."
+            }
+          }
         }
       }
     },

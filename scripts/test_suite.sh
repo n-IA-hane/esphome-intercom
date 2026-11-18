@@ -275,6 +275,7 @@ if missing:
 PY
     pytest_args=(
       tests/test_frontend_card_browser_layout.py
+      tests/test_frontend_card_ux_browser.py
       tests/test_frontend_video_browser.py
       tests/test_frontend_video_runtime.py
       tests/test_frontend_popup_browser.py

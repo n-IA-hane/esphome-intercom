@@ -97,6 +97,7 @@ def physical_flow(phone_lab, monkeypatch):
     sync_registry_from_entry(lab.hass, lab.entry)
     catalog = AssetCatalog()
     monkeypatch.setattr(physical_phone_flow, "PhoneProfileCatalog", lambda _hass: catalog)
+    monkeypatch.setattr("custom_components.voip_stack.phone_profile_catalog.PhoneProfileCatalog", lambda _hass: catalog)
     reload_entry = AsyncMock()
     monkeypatch.setattr(lab.hass.config_entries, "async_reload", reload_entry)
     return SimpleNamespace(lab=lab, catalog=catalog, reload=reload_entry)
@@ -536,6 +537,55 @@ async def test_main_enable_reports_catalog_failure_without_persisting(physical_f
         "enabled": True, "base_url": "https://ha.example.test", "allow_insecure_http": False})
     assert result["type"] == "form" and result["errors"]["base"] == "phone_catalog_unavailable"
     assert dict(state.lab.entry.data) == before
+
+
+@pytest.mark.parametrize(("base_url", "allow_http"), [
+    ("", True), ("https://phone-access.example.test", False),
+])
+async def test_main_enable_resolves_provisional_url_before_catalog_and_accepts_correction(
+    physical_flow, base_url, allow_http
+):
+    """The actual HA URL owner, rather than saved settings, validates the draft."""
+    state = physical_flow
+    state.lab.hass.config.internal_url = "http://ha.example.test:8123"
+    state.lab.hass.config.external_url = None
+    state.lab.hass.config.api = None
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": False, "base_url": "https://previous.example.test"}})
+    before = deepcopy(dict(state.lab.entry.data))
+    form = await state.lab.hass.config_entries.flow.async_init("voip_stack",
+        context={"source": "reconfigure", "entry_id": state.lab.entry.entry_id})
+    form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
+        {"next_step_id": "phone_provisioning"})
+    rejected = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], {
+        "enabled": True, "base_url": "", "allow_insecure_http": False})
+    assert rejected["type"] == "form"
+    assert rejected["errors"] == {"base": "phone_provisioning_url_unavailable"}
+    assert dict(state.lab.entry.data) == before and not state.catalog.calls
+    corrected = await state.lab.hass.config_entries.flow.async_configure(rejected["flow_id"], {
+        "enabled": True, "base_url": base_url, "allow_insecure_http": allow_http})
+    assert corrected["type"] == "abort" and corrected["reason"] == "reconfigure_successful"
+    assert state.lab.entry.data["phone_provisioning"] == {
+        "enabled": True, "base_url": base_url, "allow_insecure_http": allow_http}
+    assert state.catalog.calls == [("manifest", "", False)]
+    state.reload.assert_not_awaited()
+
+
+@pytest.mark.parametrize("url", [
+    "https://ha.example.test:invalid", "https://[broken", "https://ha.example.test:0",
+    "https://private-user:private-password@ha.example.test", "https://ha.example.test/?private=query",
+])
+async def test_main_enable_rejects_malformed_url_without_disclosing_it_or_loading_catalog(physical_flow, url):
+    state = physical_flow
+    before = deepcopy(dict(state.lab.entry.data))
+    form = await state.lab.hass.config_entries.flow.async_init("voip_stack",
+        context={"source": "reconfigure", "entry_id": state.lab.entry.entry_id})
+    form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
+        {"next_step_id": "phone_provisioning"})
+    result = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], {
+        "enabled": True, "base_url": url, "allow_insecure_http": True})
+    assert result["errors"] == {"base": "phone_provisioning_url_invalid"}
+    assert not state.catalog.calls and dict(state.lab.entry.data) == before
 
 
 async def test_main_discovery_requires_the_current_cached_candidate(physical_flow):

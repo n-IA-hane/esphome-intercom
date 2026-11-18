@@ -282,7 +282,8 @@
       "trunk_media_nat_invalid": "Choose auto, direct or manual.",
       "trunk_did_invalid": "Invalid called-number source or prefix rules.",
       "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
-      "phone_provisioning_url_invalid": "Use an HTTP or HTTPS URL without embedded credentials, query or fragment. HTTP requires the explicit local-network option.",
+      "phone_provisioning_url_invalid": "Zadejte platnou adresu URL HTTP nebo HTTPS bez vložených přihlašovacích údajů, parametrů dotazu a fragmentu. HTTP vyžaduje výslovný souhlas s použitím v místní síti.",
+      "phone_provisioning_url_unavailable": "Automatická adresa URL pro konfiguraci telefonu není k dispozici. Nastavte adresu URL HTTPS v Home Assistant, zadejte adresu URL HTTPS dostupnou z telefonu nebo výslovně povolte HTTP v místní síti.",
       "phone_name_required": "A phone name is required.",
       "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
       "phone_password_required": "A SIP password is required.",
@@ -1194,6 +1195,15 @@
           "error": "Error",
           "disabled": "Disabled",
           "unassigned": "Nepřiřazeno"
+        },
+        "state_attributes": {
+          "error": {
+            "name": "Chyba",
+            "state": {
+              "phone_provisioning_url_invalid": "Zadejte platnou adresu URL HTTP nebo HTTPS bez vložených přihlašovacích údajů, parametrů dotazu a fragmentu. HTTP vyžaduje výslovný souhlas s použitím v místní síti.",
+              "phone_provisioning_url_unavailable": "Automatická adresa URL pro konfiguraci telefonu není k dispozici. Nastavte adresu URL HTTPS v Home Assistant, zadejte adresu URL HTTPS dostupnou z telefonu nebo výslovně povolte HTTP v místní síti."
+            }
+          }
         }
       }
     },

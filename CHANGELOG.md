@@ -2,6 +2,15 @@
 
 ## 2026.12.0-dev
 
+- Validate the desk-phone provisioning address when enabling provisioning.
+  When the automatic address is unavailable, the form and phone status explain
+  how to configure HTTPS or allow HTTP on a trusted LAN.
+- Use consistent Italian call controls in the compact card, popup and
+  dashboard. Keypad buttons retain keyboard focus, and voicemail actions
+  identify the caller and date for screen readers.
+- Document the HA upgrade and backup restore paths, the matching ESPHome
+  preview builder, and optional G.722 on compatible ESP phones.
+
 ### Official component alignment and independent rendering
 
 - Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,

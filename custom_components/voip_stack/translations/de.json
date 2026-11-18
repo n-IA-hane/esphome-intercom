@@ -282,7 +282,7 @@
       "trunk_media_nat_invalid": "Choose auto, direct or manual.",
       "trunk_did_invalid": "Invalid called-number source or prefix rules.",
       "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
-      "phone_provisioning_url_invalid": "Use an HTTP or HTTPS URL without embedded credentials, query or fragment. HTTP requires the explicit local-network option.",
+      "phone_provisioning_url_invalid": "Gib eine gültige HTTP- oder HTTPS-URL ohne eingebettete Zugangsdaten, Abfrageparameter oder Fragment ein. HTTP muss ausdrücklich für die Verwendung im lokalen Netzwerk erlaubt werden.",
       "phone_name_required": "A phone name is required.",
       "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
       "phone_password_required": "A SIP password is required.",
@@ -318,7 +318,8 @@
       "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen.",
       "phone_ldap_mode_unsupported": "Dieses Telefonprofil unterstützt den konfigurierten LDAP-Verbindungsmodus nicht.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
-      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
+      "phone_provisioning_url_unavailable": "Es ist keine automatische URL für die Telefonkonfiguration verfügbar. Konfiguriere eine HTTPS-URL für Home Assistant, gib eine vom Telefon erreichbare HTTPS-URL ein oder erlaube HTTP ausdrücklich im lokalen Netzwerk."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -1194,6 +1195,15 @@
           "error": "Error",
           "disabled": "Disabled",
           "unassigned": "Nicht zugeordnet"
+        },
+        "state_attributes": {
+          "error": {
+            "name": "Fehler",
+            "state": {
+              "phone_provisioning_url_invalid": "Gib eine gültige HTTP- oder HTTPS-URL ohne eingebettete Zugangsdaten, Abfrageparameter oder Fragment ein. HTTP muss ausdrücklich für die Verwendung im lokalen Netzwerk erlaubt werden.",
+              "phone_provisioning_url_unavailable": "Es ist keine automatische URL für die Telefonkonfiguration verfügbar. Konfiguriere eine HTTPS-URL für Home Assistant, gib eine vom Telefon erreichbare HTTPS-URL ein oder erlaube HTTP ausdrücklich im lokalen Netzwerk."
+            }
+          }
         }
       }
     },

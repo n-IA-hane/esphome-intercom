@@ -514,8 +514,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_phone_provisioning(self, user_input=None):
         """Download an optional index only after explicit opt-in."""
-        from urllib.parse import urlsplit
         from .physical_phone import CONF_PHONE_PROVISIONING
+        from .physical_phone_provisioning import provisioning_base_url
         from .phone_profile_catalog import PhoneProfileCatalog
         entry = self._current_entry()
         if entry is None:
@@ -525,12 +525,10 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             values.update(user_input)
             if values.get("enabled"):
-                url = str(values.get("base_url") or "")
-                parsed = urlsplit(url)
-                if url and (parsed.scheme not in {"http", "https"} or not parsed.hostname
-                            or parsed.username or parsed.password or parsed.query or parsed.fragment
-                            or (parsed.scheme == "http" and not values.get("allow_insecure_http"))):
-                    errors["base"] = "phone_provisioning_url_invalid"
+                try:
+                    provisioning_base_url(self.hass, entry, config=values)
+                except ValueError as error:
+                    errors["base"] = str(error)
                 if not errors:
                     try:
                         await PhoneProfileCatalog(self.hass).async_manifest()

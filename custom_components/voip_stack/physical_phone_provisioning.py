@@ -31,16 +31,28 @@ from .physical_phone_apply import is_safe_phone_error, safe_phone_error
 from .runtime_data import runtime_data
 
 
-def provisioning_base_url(hass, entry):
-    config = entry.data.get(CONF_PHONE_PROVISIONING, {})
-    value = str(config.get("base_url") or "").rstrip("/")
+def provisioning_base_url(hass, entry, *, config=None):
+    """Resolve the same validated URL for saved and provisional configuration."""
+    if config is None:
+        config = entry.data.get(CONF_PHONE_PROVISIONING, {})
+    value = str(config.get("base_url") or "").strip().rstrip("/")
     if not value:
-        from homeassistant.helpers.network import get_url
-        value = get_url(hass, allow_cloud=False, require_ssl=not config.get("allow_insecure_http", False)).rstrip("/")
-    parsed = urlsplit(value)
-    if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username
-            or parsed.password or parsed.query or parsed.fragment
-            or (parsed.scheme == "http" and not config.get("allow_insecure_http", False))):
+        from homeassistant.helpers.network import NoURLAvailableError, get_url
+        try:
+            value = get_url(hass, allow_cloud=False,
+                require_ssl=not config.get("allow_insecure_http", False)).rstrip("/")
+        except NoURLAvailableError:
+            raise ValueError("phone_provisioning_url_unavailable") from None
+    try:
+        parsed = urlsplit(value)
+        valid = (parsed.scheme in {"http", "https"} and parsed.hostname
+                 and parsed.username is None and parsed.password is None
+                 and not parsed.query and not parsed.fragment
+                 and (parsed.port is None or 1 <= parsed.port <= 65535)
+                 and (parsed.scheme == "https" or config.get("allow_insecure_http", False)))
+    except ValueError:
+        valid = False
+    if not valid:
         raise ValueError("phone_provisioning_url_invalid")
     return value
 

@@ -16,6 +16,21 @@ records both package versions and the installer receipt containing the ESPHome
 commit. Firmware manifests also retain the resolved SDK/dependency identities,
 configuration and binary hashes. A version string alone is insufficient.
 
+## Build the preview recipes
+
+From a checkout of the preview revision, install its builder in a separate
+Python environment. Run these commands from the repository root:
+
+```sh
+uv venv .venv-preview
+uv pip install --python .venv-preview/bin/python -r requirements-firmware-test.txt
+.venv-preview/bin/esphome config path/to/your-board.yaml
+```
+
+Replace the last argument with your board YAML, then use the same ESPHome
+executable for `compile` and `upload`. The requirements file pins the official
+ESPHome commit used to qualify these recipes.
+
 ## Work and exit conditions
 
 The table lists exit conditions, not a claim that every item is complete.

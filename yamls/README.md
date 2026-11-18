@@ -43,6 +43,10 @@ words and media playback. Choose the profile for the job you need.
 
 ## How to use
 
+Choose your builder before downloading the YAML. Stable 2026.11.0 uses the
+matching stable profiles and ESPHome 2026.10. For 2026.12 preview profiles,
+follow the [preview builder instructions](../docs/STABILIZATION.md#build-the-preview-recipes).
+
 1. Download the YAML for your device and any companion files explicitly required
    by it, such as a custom partition CSV. Keep companion files beside the YAML.
 2. Set `name` and `friendly_name` in its existing substitutions. Keep `name` when

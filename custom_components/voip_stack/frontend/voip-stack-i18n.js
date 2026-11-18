@@ -313,6 +313,16 @@ const DE = {
 };
 
 const IT = {
+  "Call": "Chiama",
+  "Answer": "Rispondi",
+  "Decline": "Rifiuta",
+  "Hangup": "Riaggancia",
+  "Hang up": "Riaggancia",
+  "Options": "Opzioni",
+  "Keypad": "Tastierino",
+  "Contacts": "Contatti",
+  "Listen": "Ascolta",
+  "Delete": "Elimina",
   "SIP accounts": "Account SIP",
   "Missing phone": "Telefono non disponibile",
   "Choose existing SIP accounts.": "Seleziona account SIP esistenti.",

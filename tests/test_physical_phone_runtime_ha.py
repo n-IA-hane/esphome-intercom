@@ -395,6 +395,50 @@ async def dependency_config(cached_physical_config):
     return state
 
 
+async def test_automatic_provisioning_url_error_reaches_sensor_and_recovers_without_exposing_secrets(cached_physical_config):
+    from custom_components.voip_stack.physical_phone_entity import PhysicalPhoneProvisioningSensor
+    from homeassistant.helpers.translation import async_get_translations
+
+    state = cached_physical_config
+    hass, manager = state.lab.hass, state.manager
+    hass.config.internal_url = "https://ha.example.test"
+    hass.config.external_url = None
+    hass.config.api = None
+    hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": True, "base_url": "", "allow_insecure_http": False}})
+    profile, templates = cached_profile()
+    profile["capabilities"]["functions"].append("provision")
+    templates["templates/config.jinja2"] += "provision={{ provisioning.url }}\n"
+    manager.catalog.async_profile.return_value = profile, templates
+    state.data = {**state.data, "catalog_commit": "b" * 40}
+    hass.config_entries.async_update_subentry(state.lab.entry, state.subentry, data=state.data)
+    await manager.async_reconcile()
+    await hass.async_block_till_done()
+    assert not manager.public_state(state.data["phone_id"]).get("error")
+
+    # HA's automatic URL can disappear after the integration was configured.
+    hass.config.internal_url = "http://ha.example.test:8123"
+    await manager.async_reconcile()
+    await hass.async_block_till_done()
+    sensor = PhysicalPhoneProvisioningSensor(hass, state.lab.entry, state.data["phone_id"])
+    assert sensor.native_value == "error"
+    attributes = sensor.extra_state_attributes
+    assert attributes["error"] == "phone_provisioning_url_unavailable"
+    assert not any(secret in str(attributes) for secret in (
+        "fixture-only-password", state.data["provisioning_token"], "ha.example.test"))
+    assert await manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename) is None
+    translations = await async_get_translations(hass, "it", "entity", {"voip_stack"})
+    key = "component.voip_stack.entity.sensor.physical_phone_provisioning.state_attributes.error.state.phone_provisioning_url_unavailable"
+    assert "HTTPS" in translations[key] and "rete locale" in translations[key]
+
+    hass.config.internal_url = "https://corrected.example.test"
+    await manager.async_reconcile()
+    await hass.async_block_till_done()
+    assert sensor.native_value == "ready" and "error" not in sensor.extra_state_attributes
+    output = await manager.async_file(state.data["phone_id"], state.data["provisioning_token"], state.filename)
+    assert b"https://corrected.example.test/api/voip_stack/phone_provisioning/" in output
+
+
 async def test_implicit_tls_directory_is_not_rendered_as_plain_ldap(dependency_config):
     state = dependency_config
     state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,

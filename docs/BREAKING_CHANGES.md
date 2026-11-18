@@ -4,6 +4,26 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
+## Updating from 2026.11.0 to the 2026.12 preview
+
+1. **Home Assistant only.** On HA 2026.11.1 or newer, make a Home Assistant
+   backup while the previous integration is installed. Finish active calls,
+   download the preview from HACS, restart HA and reload the dashboard. The
+   integration converts existing browser phones to SIP accounts on their
+   original devices. Your cards, extensions and automations keep their
+   references. Registering a handset is optional.
+2. **ESP firmware.** Rebuild only the devices for which you want the new
+   firmware. Choose the preview recipe for your exact board and the
+   [matching ESPHome builder](STABILIZATION.md#build-the-preview-recipes).
+   Transfer your device name, credentials, wiring and options into that recipe.
+   HACS updates the integration and cards independently of firmware.
+3. **Returning to the previous version.** Restore the pre-upgrade backup,
+   including the integration files and HA configuration. Selecting an older
+   download in HACS alone leaves the migrated configuration in place.
+
+The older firmware migration sections below describe earlier transitions.
+For the current preview's component choices, use the maintained board recipe.
+
 ## 2026.11.1-dev: optional browser call popups
 
 Reload the HA frontend or reset the Companion frontend cache after updating.
@@ -80,6 +100,10 @@ by the current device, registration and entity guides.
 
 ## Development firmware: native audio providers
 
+Historical ESPHome 2026.10 instructions follow. For the 2026.12 preview use
+the provider selections in the maintained recipe and the current instructions
+[at the top of this page](#updating-from-2026110-to-the-202612-preview).
+
 **Start from the updated YAML for your exact board when rebuilding this
 preview.** Keep your device identity, credentials, wiring and wanted features.
 The maintained device packages now use official ESPHome 2026.10 audio, mixer,
@@ -139,9 +163,8 @@ and the [Box V2 calibration](WAVESHARE_V2_PROCESSING.md#one-physical-calibration
 
 ## Development firmware: ESPHome 2026.10 and music pairing
 
-Upgrade the builder to **ESPHome 2026.10.0 or newer** before compiling the current
-device packages or Audio Stack. Support for the 2026.9 core is retired; do not
-combine old and new copies of audio, mixer or speaker-source providers.
+The 2026.10 firmware transition raised the builder minimum from ESPHome
+2026.9 to 2026.10. Current preview recipes use the builder specified above.
 
 Sendspin now uses the protocol library selected by ESPHome 2026.10 (0.9.3).
 Update Music Assistant to **2.10.7 or newer** first. After the firmware upgrade,

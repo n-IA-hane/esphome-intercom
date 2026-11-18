@@ -14,6 +14,7 @@ from yarl import URL
 MAX_PAGE_BYTES = 256 * 1024
 SAFE_PHONE_ERROR_CODES = frozenset({
     "phone_provisioning_error", "phone_ldap_mode_unsupported", "phone_configuration_changed",
+    "phone_provisioning_url_invalid", "phone_provisioning_url_unavailable",
     "phone_apply_target_unverified", "phone_apply_unsupported", "phone_apply_credentials_required",
     "phone_apply_authentication_failed", "phone_apply_http_error", "phone_apply_response_invalid",
     "phone_apply_identity_mismatch", "phone_apply_provisioning_not_configured",

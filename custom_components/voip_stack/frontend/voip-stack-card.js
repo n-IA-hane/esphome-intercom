@@ -2576,7 +2576,6 @@ class VoipStackCard extends HTMLElement {
     }
     if (this._els?.keypadInput) {
       this._els.keypadInput.value = this._manualTarget();
-      this._els.keypadInput.focus();
     }
   }
 
@@ -2751,18 +2750,21 @@ class VoipStackCard extends HTMLElement {
     for (const message of this._mailboxMessages) {
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 0";
+      const createdAt = new Date(message.created_at * 1000).toLocaleString(this._hass?.language);
+      const messageLabel = `${message.caller}, ${createdAt}`;
       const play = document.createElement("button");
       play.type = "button";
       play.className = "settings-btn";
       play.style.cssText = "flex:1;min-width:0;white-space:normal;text-align:left";
-      play.textContent = `${message.read ? "" : "● "}${message.caller} · ${new Date(message.created_at * 1000).toLocaleString(this._hass?.language)}`;
-      play.setAttribute("aria-label", `${this._t("Listen")}: ${message.caller}`);
+      play.textContent = `${message.read ? "" : "● "}${message.caller} · ${createdAt}`;
+      play.setAttribute("aria-label", `${this._t("Listen")}: ${messageLabel}`);
       play.disabled = this._mailboxBusy;
       play.onclick = () => this._mailboxMessage(message.id, false);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "settings-btn";
       remove.textContent = this._t("Delete");
+      remove.setAttribute("aria-label", `${this._t("Delete")}: ${messageLabel}`);
       remove.disabled = this._mailboxBusy;
       remove.onclick = () => this._mailboxMessage(message.id, true);
       row.append(play, remove);

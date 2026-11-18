@@ -5,9 +5,10 @@ change its `firmware_features` list to choose what is compiled. You do not need 
 find and remove a microphone callback, mixer input, button and timer in separate
 files to remove a feature.
 
-The package syntax requires ESPHome 2026.10.0 or newer. The current composition and
-firmware checks use ESPHome 2026.10.0 with ESP-IDF 5.5.6. Validation, compilation and
-physical testing are different checks; experimental boards remain experimental.
+Use ESPHome 2026.10 for the stable 2026.11.0 recipes. The coordinated
+2026.12 preview recipes require the ESPHome 2026.12 builder. The
+[preview build instructions](../docs/STABILIZATION.md#build-the-preview-recipes)
+identify the official ESPHome revision used in CI.
 
 The package layout exists in stable 2026.11.0; this guide also describes current
 preview services, including optional directory, BLF, MWI and S3 JPEG reception.
@@ -446,7 +447,7 @@ and review all applicable substitutions after switching sources.
 
 ## Pair Sendspin with Music Assistant
 
-Use ESPHome **2026.10.0 or newer** and Music Assistant **2.10.7 or newer**. Select
+Use the ESPHome builder for your recipe channel and Music Assistant **2.10.7 or newer**. Select
 both `music` and `sendspin` in `firmware_features`, compile, and upload. The native
 ESPHome client handles discovery, encryption and pairing; no separate custom
 player or Sendspin clock is installed.

@@ -282,7 +282,8 @@
       "trunk_media_nat_invalid": "Scegli auto, direct o manual.",
       "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide.",
       "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
-      "phone_provisioning_url_invalid": "Usa un URL HTTP o HTTPS senza credenziali incorporate, query o frammenti. HTTP richiede l'opzione esplicita per la rete locale.",
+      "phone_provisioning_url_invalid": "Inserisci un URL HTTP o HTTPS valido, senza credenziali incorporate, parametri di query o un frammento. Per usare HTTP devi consentirlo esplicitamente per la rete locale.",
+      "phone_provisioning_url_unavailable": "Non è disponibile un URL automatico per la configurazione del telefono. Configura un URL HTTPS di Home Assistant, inserisci un URL HTTPS raggiungibile dal telefono oppure consenti esplicitamente HTTP sulla rete locale.",
       "phone_name_required": "Il nome del telefono è obbligatorio.",
       "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
       "phone_password_required": "La password SIP è obbligatoria.",
@@ -1194,6 +1195,15 @@
           "error": "Errore",
           "disabled": "Disabilitato",
           "unassigned": "Da associare"
+        },
+        "state_attributes": {
+          "error": {
+            "name": "Errore",
+            "state": {
+              "phone_provisioning_url_invalid": "Inserisci un URL HTTP o HTTPS valido, senza credenziali incorporate, parametri di query o un frammento. Per usare HTTP devi consentirlo esplicitamente per la rete locale.",
+              "phone_provisioning_url_unavailable": "Non è disponibile un URL automatico per la configurazione del telefono. Configura un URL HTTPS di Home Assistant, inserisci un URL HTTPS raggiungibile dal telefono oppure consenti esplicitamente HTTP sulla rete locale."
+            }
+          }
         }
       }
     },
