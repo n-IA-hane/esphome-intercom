@@ -241,6 +241,27 @@ downloaded** means HA has served it. **Lines registered on this phone**
 requires an authenticated registration attributed to this physical handset
 for each assigned line. Other clients on the same account can register independently.
 
+### Phone discovered but still waiting for its file after boot
+
+On a managed switch, the link light can come on before Spanning Tree starts
+forwarding traffic. This startup delay can occur even on a loop-free network.
+A phone that sends its only SIP Plug and Play request during that interval can
+miss provisioning for the rest of that boot. HA may already show the phone from DHCP.
+
+Check the switch port **during boot**. Compare the time of the phone's SIP
+`SUBSCRIBE` with the port's transition from *Discarding* to *Forwarding*.
+In a test with a Snom 360 (firmware 8.7.3.25.9), the request came about
+2.4 seconds before the first *Forwarding* reading. Switching that port from
+*Auto* to **Edge Port** let the phone download its XML and register its SIP
+line on the next boot, using the existing DHCP configuration.
+
+Keep Spanning Tree enabled. Use **Admin Edge Port** (called **PortFast** on
+Cisco switches) only on an access port connected directly to a single endpoint.
+Switch-to-switch uplinks need their normal Spanning Tree behavior.
+[Ubiquiti EdgeSwitch guide](https://dl.ubnt.com/guides/edgemax/EdgeSwitch_AdminGuide.pdf) · [Cisco PortFast guide](https://www.cisco.com/c/en/us/support/docs/lan-switching/spanning-tree-protocol/10586-65.html)
+
+### DHCP and manual provisioning
+
 If multicast does not reach HA, use the handset's supported provisioning
 option on the existing DHCP server. Limit a device-specific URL to the
 corresponding phone. HA does not change the router. For manual setup, open the

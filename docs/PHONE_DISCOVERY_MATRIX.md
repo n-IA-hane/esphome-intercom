@@ -45,7 +45,7 @@ delivery method and firmware where known.
 
 | Model | Vendor-documented delivery | Project evidence |
 | --- | --- | --- |
-| Snom 360 | Multicast SIP subscription and a settings-file URL in the notification. 3CX also documents option 66 on firmware 8.7.3.19. | A handset on 8.7.3.25.9 recorded sending its startup announcement. Native HA and UDP tests exercise proposals and adoption. Download and settings readback on the office phone require a separate receipt. [Snom SIP trace](https://service.snom.com/plugins/viewsource/viewpagesrc.action?pageId=234336488) · [3CX Snom 360 guide](https://www.3cx.com/blog/docs/snom-provisioning/) |
+| Snom 360 | Multicast SIP subscription and a settings-file URL in the notification. 3CX also documents option 66 on firmware 8.7.3.19. | A physical 360 on firmware 8.7.3.25.9 received the SIP notification at boot, downloaded its XML, registered its line and completed an internal call. The switch port was forwarding when the phone sent its request. [Boot-time troubleshooting](PHONE_PROVISIONING.md#phone-discovered-but-still-waiting-for-its-file-after-boot) · [Snom SIP trace](https://service.snom.com/plugins/viewsource/viewpagesrc.action?pageId=234336488) · [3CX Snom 360 guide](https://www.3cx.com/blog/docs/snom-provisioning/) |
 | Yealink T46U | SIP PnP or DHCP option 66, 43 or a configured custom option supplies the provisioning server. A phone can try boot and common configuration files before the MAC-specific CFG. | The bundle renders `{mac}.cfg`. HA DHCP matching is covered in software. Hardware download and settings readback remain open. [Yealink provisioning guide](https://support.yealink.com/docs/sip-t46u/yealink-sip-ip-phones-auto-provisioning-guide-v1-5-pdf/2fc6c7bd89fb4fe692f3867ea363ff4a) |
 | Fanvil X3U Pro | The manual describes SIP PnP, DHCP, a static server, and TR-069. The directory can serve the device-specific CFG file. | On firmware 2.12.20 the project observed a native apply request, matching download and changed settings. Automatic application is qualified only for this model and firmware. [Fanvil manual](https://www.fanvil.com/upload/files/20220518/134146j8vz.pdf) · [Catalog qualification](https://github.com/n-IA-hane/voip-stack-phone-profiles/blob/04fee24de3d92fc75c4474a51cda07cc2a5e893a/README.md#directory-modes-and-application-capabilities) |
 | Grandstream GRP2614 | Multicast SIP provisioning is configurable. The vendor PBX sends an XML file URL by SIP and a directory by DHCP option 66. The GRP tries `cfg{mac}.xml` when looking in a directory. | Catalog revision 04fee24 declares `{mac}.xml`. A directory fetch on that revision has a filename mismatch. Hardware confirmation must record the requested path and the applied revision. [GRP manual](https://documentation.grandstream.com/knowledge-base/grp261x-grp262x-grp263x-series-administration-guide/) · [Grandstream Zero Config](https://documentation.grandstream.com/knowledge-base/zero-config-guide/) |
@@ -73,7 +73,7 @@ as uncertain. The ordinary provisioning pull remains available in either case.
 On-device settings and uptime require physical
 verification. [Asterisk commands](https://github.com/asterisk/asterisk/blob/22/configs/samples/pjsip_notify.conf.sample) · [Snom 360 test and parameter handling](https://lists.digium.com/pipermail/asterisk-dev/2007-March/026665.html)
 
-## SSDP, Zeroconf and remote phones
+## SSDP, zeroconf and remote phones
 
 UPnP discovery uses SSDP on `239.255.255.250:1900`. SIP PnP uses
 `224.0.1.75:5060` in the supported PBX listener. Zeroconf discovery uses

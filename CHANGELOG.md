@@ -7,7 +7,9 @@
   configuration link lets administrators copy the complete provisioning URL.
 - Deliver the model's correct file or directory through SIP PnP or DHCP.
   A confirmed DHCP discovery can now reach its first file download after HA
-  restarts. Add DHCP detection for 26 documented Yealink models.
+  restarts. Add DHCP detection for 26 documented Yealink models. Document
+  [how switch port timing can affect provisioning at boot](docs/PHONE_PROVISIONING.md#phone-discovered-but-still-waiting-for-its-file-after-boot)
+  using a verified Snom 360 case.
 - Distinguish a file waiting on the PBX, a download and a registration from
   the physical phone. The updated Snom 360 profile supports configuration
   refresh, alongside the existing Fanvil X3U Pro application method.
