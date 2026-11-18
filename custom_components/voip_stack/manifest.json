@@ -27,6 +27,94 @@
     {
       "macaddress": "000413*",
       "hostname": "snom360*"
+    },
+    {
+      "macaddress": "001565*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "001565*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "249AD8*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "249AD8*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "3497D7*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "3497D7*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "44DBD2*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "44DBD2*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "644F56*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "644F56*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "805E0C*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "805E0C*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "805EC0*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "805EC0*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "B061A9*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "B061A9*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "C4FC22*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "C4FC22*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "EC1DA9*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "EC1DA9*",
+      "hostname": "w70b"
+    },
+    {
+      "macaddress": "F01653*",
+      "hostname": "sip-t*"
+    },
+    {
+      "macaddress": "F01653*",
+      "hostname": "w70b"
     }
   ],
   "documentation": "https://github.com/n-IA-hane/esphome-intercom",

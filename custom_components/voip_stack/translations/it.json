@@ -189,7 +189,7 @@
       },
       "phone_user": {
         "title": "Telefono fisico",
-        "description": "Identifica il telefono fisico e scegli un profilo verificato. Le linee si associano ad account SIP logici; l'inventario non crea un secondo endpoint di chiamata. Fonte: {profile_source}. Revisione fissata: {profile_pin}. Stato: {profile_status}. Scaricato non significa applicato.",
+        "description": "Scegli il modello del telefono. Puoi associare il primo account SIP ora o in seguito.",
         "data": {
           "name": "Nome",
           "mac": "Indirizzo MAC",
@@ -198,25 +198,26 @@
           "account_id": "Primo account SIP (facoltativo)"
         },
         "data_description": {
-          "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo."
+          "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
+          "account_id": "Lascia selezionata l'opzione \"Nessun account SIP\" per aggiungere il telefono senza associare un account. Potrai assegnare gli account alle sue linee in seguito."
         },
         "sections": {
           "advanced": {
             "name": "Amministrazione e preferenze",
             "data": {
-              "host": "Host o IP indicativo (facoltativo)",
+              "host": "Nome host o indirizzo IP fisso (facoltativo)",
               "area_id": "Area",
               "person": "Persona",
               "follow_ha_language": "Segui la lingua di Home Assistant",
               "enabled": "Abilitato",
-              "admin_username": "Amministratore del telefono (facoltativo)",
-              "admin_password": "Password amministratore del telefono"
+              "admin_username": "Nome utente dell'interfaccia web del produttore (facoltativo)",
+              "admin_password": "Password dell'interfaccia web del produttore"
             },
             "data_description": {
-              "host": "Lascia vuoto per discovery o DHCP. È un suggerimento di rete, non una prova di registrazione o disponibilità.",
+              "host": "Nome host o indirizzo IP fisso del telefono, facoltativo. Lascia vuoto se l'indirizzo viene assegnato tramite DHCP.",
               "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate.",
-              "admin_username": "Usato solo da un metodo di applicazione automatica qualificato. Svuota il nome utente per rimuovere le credenziali salvate.",
-              "admin_password": "Lascia vuoto per conservare la password salvata. Le credenziali amministrative non entrano nel file di configurazione del telefono."
+              "admin_username": "Nome utente dell'interfaccia web del produttore, usato solo per inviare aggiornamenti della configurazione sui modelli supportati. Il rilevamento non richiede credenziali. Svuota il nome utente per rimuovere le credenziali salvate.",
+              "admin_password": "Password dell'interfaccia web del produttore, usata solo per inviare aggiornamenti della configurazione sui modelli supportati. Lascia vuoto per conservare la password salvata. Queste credenziali non servono per il rilevamento e non vengono mai incluse nel file di configurazione del telefono."
             }
           }
         }
@@ -649,7 +650,7 @@
       "step": {
         "user": {
           "title": "Telefono fisico",
-          "description": "Scegli un modello di telefono compatibile e assegna gli Account SIP alle sue linee. Una configurazione scaricata non conferma che il telefono l'abbia applicata.",
+          "description": "Scegli il modello del telefono. Puoi associare il primo account SIP ora o in seguito.",
           "data": {
             "name": "Nome",
             "mac": "Indirizzo MAC",
@@ -658,25 +659,26 @@
             "account_id": "Primo account SIP (facoltativo)"
           },
           "data_description": {
-            "update_profile": "I telefoni esistenti mantengono il profilo attuale finché non lo aggiorni o scegli un altro modello."
+            "update_profile": "I telefoni esistenti mantengono il profilo attuale finché non lo aggiorni o scegli un altro modello.",
+            "account_id": "Lascia selezionata l'opzione \"Nessun account SIP\" per aggiungere il telefono senza associare un account. Potrai assegnare gli account alle sue linee in seguito."
           },
           "sections": {
             "advanced": {
               "name": "Amministrazione e preferenze",
               "data": {
-                "host": "Host o IP indicativo (facoltativo)",
+                "host": "Nome host o indirizzo IP fisso (facoltativo)",
                 "area_id": "Area",
                 "person": "Persona",
                 "follow_ha_language": "Segui la lingua di Home Assistant",
                 "enabled": "Abilitato",
-                "admin_username": "Amministratore del telefono (facoltativo)",
-                "admin_password": "Password amministratore del telefono"
+                "admin_username": "Nome utente dell'interfaccia web del produttore (facoltativo)",
+                "admin_password": "Password dell'interfaccia web del produttore"
               },
               "data_description": {
-                "host": "Lascia vuoto per discovery o DHCP. È un suggerimento di rete, non una prova di registrazione o disponibilità.",
+                "host": "Nome host o indirizzo IP fisso del telefono, facoltativo. Lascia vuoto se l'indirizzo viene assegnato tramite DHCP.",
                 "follow_ha_language": "Vengono generati soltanto valori di lingua supportati dal profilo. Le impostazioni del telefono non gestite vengono preservate.",
-                "admin_username": "Usato solo da un metodo di applicazione automatica qualificato. Svuota il nome utente per rimuovere le credenziali salvate.",
-                "admin_password": "Lascia vuoto per conservare la password salvata. Le credenziali amministrative non entrano nel file di configurazione del telefono."
+                "admin_username": "Nome utente dell'interfaccia web del produttore, usato solo per inviare aggiornamenti della configurazione sui modelli supportati. Il rilevamento non richiede credenziali. Svuota il nome utente per rimuovere le credenziali salvate.",
+                "admin_password": "Password dell'interfaccia web del produttore, usata solo per inviare aggiornamenti della configurazione sui modelli supportati. Lascia vuoto per conservare la password salvata. Queste credenziali non servono per il rilevamento e non vengono mai incluse nel file di configurazione del telefono."
               }
             }
           }
@@ -952,6 +954,11 @@
         "transport": "Trasporto",
         "binding": "Telefono fisico e linea"
       }
+    },
+    "first_phone_account": {
+      "options": {
+        "no_account": "Nessun account SIP"
+      }
     }
   },
   "system_health": {
@@ -1192,11 +1199,12 @@
         "state": {
           "pending": "In attesa",
           "waiting_idle": "In attesa della fine della chiamata",
-          "ready": "Configurazione pronta per il download",
+          "ready": "File pronto, in attesa del telefono",
           "downloaded": "File scaricato",
           "error": "Errore",
           "disabled": "Disabilitato",
-          "unassigned": "Da associare"
+          "unassigned": "Da associare",
+          "registered": "Linee registrate su questo telefono"
         },
         "state_attributes": {
           "error": {
@@ -1257,7 +1265,7 @@
     },
     "button": {
       "physical_phone_provision": {
-        "name": "Prepara configurazione"
+        "name": "Configura telefono"
       },
       "physical_phone_rotate": {
         "name": "Ruota credenziale di provisioning"

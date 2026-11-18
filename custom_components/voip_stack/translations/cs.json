@@ -189,34 +189,35 @@
       },
       "phone_user": {
         "title": "Physical phone",
-        "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Zdroj: {profile_source}. Pevná revize: {profile_pin}. Stav: {profile_status}. Stažení nepotvrzuje použití.",
+        "description": "Vyberte model telefonu. První účet SIP můžete přiřadit nyní nebo později.",
         "data": {
           "name": "Name",
           "mac": "MAC address",
           "profile_id": "Phone model profile",
           "update_profile": "Update the pinned profile",
-          "account_id": "First SIP account (optional)"
+          "account_id": "První účet SIP (volitelné)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
+          "account_id": "Ponechte vybranou možnost „Žádný účet SIP“, pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
         },
         "sections": {
           "advanced": {
             "name": "Administration and preferences",
             "data": {
-              "host": "Hostitel nebo orientační IP (volitelné)",
+              "host": "Pevný název hostitele nebo IP adresa (volitelné)",
               "area_id": "Area",
               "person": "Person",
               "follow_ha_language": "Follow Home Assistant language",
               "enabled": "Enabled",
-              "admin_username": "Phone administrator (optional)",
-              "admin_password": "Phone administrator password"
+              "admin_username": "Uživatelské jméno webového rozhraní výrobce (volitelné)",
+              "admin_password": "Heslo webového rozhraní výrobce"
             },
             "data_description": {
-              "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti.",
+              "host": "Volitelný pevný název hostitele nebo IP adresa tohoto telefonu. Pokud je adresa přidělována přes DHCP, ponechte pole prázdné.",
               "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
-              "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
-              "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+              "admin_username": "Uživatelské jméno webového rozhraní výrobce, které se používá pouze k odesílání aktualizací konfigurace u podporovaných modelů. Zjišťování telefonů nevyžaduje přihlašovací údaje. Vymazáním uživatelského jména odstraníte uložené přihlašovací údaje.",
+              "admin_password": "Heslo webového rozhraní výrobce, které se používá pouze k odesílání aktualizací konfigurace u podporovaných modelů. Ponechte pole prázdné, chcete-li zachovat uložené heslo. Tyto přihlašovací údaje nejsou pro zjišťování telefonů potřeba a nikdy se nezahrnují do konfiguračního souboru telefonu."
             }
           }
         }
@@ -649,34 +650,35 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
+          "description": "Vyberte model telefonu. První účet SIP můžete přiřadit nyní nebo později.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
             "profile_id": "Phone model profile",
             "update_profile": "Update model profile",
-            "account_id": "First SIP account (optional)"
+            "account_id": "První účet SIP (volitelné)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
+            "account_id": "Ponechte vybranou možnost „Žádný účet SIP“, pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
           },
           "sections": {
             "advanced": {
               "name": "Administration and preferences",
               "data": {
-                "host": "Hostitel nebo orientační IP (volitelné)",
+                "host": "Pevný název hostitele nebo IP adresa (volitelné)",
                 "area_id": "Area",
                 "person": "Person",
                 "follow_ha_language": "Follow Home Assistant language",
                 "enabled": "Enabled",
-                "admin_username": "Phone administrator (optional)",
-                "admin_password": "Phone administrator password"
+                "admin_username": "Uživatelské jméno webového rozhraní výrobce (volitelné)",
+                "admin_password": "Heslo webového rozhraní výrobce"
               },
               "data_description": {
-                "host": "Pro zjišťování nebo DHCP ponechte prázdné. Jde o síťovou nápovědu, nikoli důkaz registrace nebo dostupnosti.",
+                "host": "Volitelný pevný název hostitele nebo IP adresa tohoto telefonu. Pokud je adresa přidělována přes DHCP, ponechte pole prázdné.",
                 "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
-                "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
-                "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+                "admin_username": "Uživatelské jméno webového rozhraní výrobce, které se používá pouze k odesílání aktualizací konfigurace u podporovaných modelů. Zjišťování telefonů nevyžaduje přihlašovací údaje. Vymazáním uživatelského jména odstraníte uložené přihlašovací údaje.",
+                "admin_password": "Heslo webového rozhraní výrobce, které se používá pouze k odesílání aktualizací konfigurace u podporovaných modelů. Ponechte pole prázdné, chcete-li zachovat uložené heslo. Tyto přihlašovací údaje nejsou pro zjišťování telefonů potřeba a nikdy se nezahrnují do konfiguračního souboru telefonu."
               }
             }
           }
@@ -952,6 +954,11 @@
         "transport": "Přenos",
         "binding": "Physical phone and line"
       }
+    },
+    "first_phone_account": {
+      "options": {
+        "no_account": "Žádný účet SIP"
+      }
     }
   },
   "system_health": {
@@ -1192,11 +1199,12 @@
         "state": {
           "pending": "Pending",
           "waiting_idle": "Waiting for the call to end",
-          "ready": "Configuration ready for download",
-          "downloaded": "File downloaded",
+          "ready": "Soubor je připraven, čeká se na telefon",
+          "downloaded": "Soubor stažen",
           "error": "Error",
           "disabled": "Disabled",
-          "unassigned": "Nepřiřazeno"
+          "unassigned": "Nepřiřazeno",
+          "registered": "Linky zaregistrované na tomto telefonu"
         },
         "state_attributes": {
           "error": {
@@ -1257,7 +1265,7 @@
     },
     "button": {
       "physical_phone_provision": {
-        "name": "Prepare configuration"
+        "name": "Nastavit telefon"
       },
       "physical_phone_rotate": {
         "name": "Rotate provisioning credential"

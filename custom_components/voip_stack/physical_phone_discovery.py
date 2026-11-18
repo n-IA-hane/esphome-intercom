@@ -47,13 +47,14 @@ class PhoneCandidate:
     def setup_data(self):
         """Allocate the native draft only when the user chooses management."""
         if self.native_subentry is None:
-            data = {"mac": self.mac, "host": self.host}
+            data = {"mac": self.mac}
             if self.token:
                 data["provisioning_token"] = self.token
             self.native_subentry = draft_physical_subentry(data, title=phone_candidate_name(self.vendor, self.model))
             self.phone_id = physical_phone_id(self.native_subentry)
             self.token = self.native_subentry.data["provisioning_token"]
-        return {**self.public(), "provisioning_token": self.token}
+        return {"mac": self.mac, "vendor": self.vendor, "model": self.model,
+                "phone_id": self.phone_id, "provisioning_token": self.token}
 
 
 def pnp_identity(request, addr):
@@ -83,17 +84,34 @@ def pnp_identity(request, addr):
 
 
 def dhcp_identity(info):
-    """Recognize only the declared Snom360 DHCP shape, without contacting it."""
+    """Identify an inventory candidate from a vendor OUI and a known model hostname."""
     if not all(isinstance(getattr(info, key, None), str) for key in ("macaddress", "ip", "hostname")):
         raise ValueError("invalid_phone_discovery")
-    mac = re.sub(r"[:-]", "", str(info.macaddress)).lower()
+    raw_mac = info.macaddress.lower()
+    if not re.fullmatch(r"[0-9a-f]{12}|(?:[0-9a-f]{2}:){5}[0-9a-f]{2}|(?:[0-9a-f]{2}-){5}[0-9a-f]{2}", raw_mac):
+        raise ValueError("invalid_phone_discovery")
+    mac = re.sub(r"[:-]", "", raw_mac)
     host = ipaddress.ip_address(info.ip)
-    if (not re.fullmatch(r"000413[0-9a-f]{6}", mac)
-            or not re.fullmatch(r"snom360(?:-[a-z0-9][a-z0-9._-]*)?", info.hostname.casefold())
-            or host.version != 4 or not host.is_private or host.is_loopback
+    if (host.version != 4 or not host.is_private or host.is_loopback
             or host.is_link_local or host.is_unspecified or host.is_multicast):
         raise ValueError("invalid_phone_discovery")
-    return mac, host.compressed, "snom", "snom360"
+    hostname = info.hostname.lower()
+    if mac.startswith("000413") and re.fullmatch(r"snom360(?:-[a-z0-9][a-z0-9._-]*)?", hostname):
+        return mac, host.compressed, "snom", "snom360"
+    # DHCP option 12 factory values and IEEE assignments are cited in the capability matrix.
+    # Backfilled HA cache records pass through this same check as native manifest matches.
+    if mac[:6] in {"001565", "249ad8", "3497d7", "44dbd2", "644f56", "805e0c",
+                   "805ec0", "b061a9", "c4fc22", "ec1da9", "f01653"}:
+        if hostname == "w70b":
+            return mac, host.compressed, "yealink", "W70B"
+        prefix, _, model = hostname.partition("-")
+        if prefix == "sip" and model in {
+            "t23g", "t23p", "t27g", "t27p", "t29g", "t31g", "t33g", "t40g", "t40p",
+            "t41p", "t41s", "t42g", "t42s", "t42u", "t43u", "t46g", "t46s", "t46u",
+            "t48g", "t48s", "t52s", "t53", "t53w", "t54s", "t57w",
+        }:
+            return mac, host.compressed, "yealink", model.upper()
+    raise ValueError("invalid_phone_discovery")
 
 
 class PhoneDiscovery:
@@ -264,6 +282,7 @@ class PhoneDiscovery:
         candidate.flow_id = ""
 
     async def handle(self, request, addr, transport):
+        from .physical_phone_enrollment import async_same_phone_lan, direct_pnp_contact, enrollment_matches
         from .sip_listener import SipFollowUpRequest, SipRequestResult
         if not self.owned():
             return SipRequestResult(489, "Bad Event")
@@ -274,23 +293,15 @@ class PhoneDiscovery:
         self._prune_candidates()
         phone = next((item for item in physical_phone_records(self.entry).values() if item["mac"] == mac), None)
         candidate = self.candidates.get(mac)
-        if phone is not None and (candidate is None or candidate.pnp_host != addr[0] or candidate.host != addr[0]
-                or candidate.phone_id != phone["phone_id"]
-                or not secrets.compare_digest(candidate.token, phone["provisioning_token"])):
-            # A MAC is an inventory hint, never a credential. Existing URLs
-            # cannot be recovered by an unauthenticated announcement after a
-            # restart, token rotation, or from another source.
-            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
-        if candidate is not None and candidate.host != addr[0]:
-            return SipRequestResult(403, "Forbidden")
-        if candidate is None:
-            if len(self.candidates) >= 64:
-                return SipRequestResult(503, "Service Unavailable")
-            candidate = self.candidates[mac] = PhoneCandidate("", mac, addr[0], vendor, model)
-        candidate.seen, candidate.host = time.monotonic(), addr[0]
+        accepted = SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
         if phone is None:
-            # Only an actual PnP request before adoption can bind delivery.
-            # DHCP can update the inventory hint without granting this right.
+            if candidate is not None and candidate.host != addr[0]:
+                return SipRequestResult(403, "Forbidden")
+            if candidate is None:
+                if len(self.candidates) >= 64:
+                    return SipRequestResult(503, "Service Unavailable")
+                candidate = self.candidates[mac] = PhoneCandidate("", mac, addr[0], vendor, model)
+            candidate.seen, candidate.host = time.monotonic(), addr[0]
             candidate.pnp_host = addr[0]
             if vendor:
                 candidate.vendor = vendor
@@ -299,23 +310,43 @@ class PhoneDiscovery:
             self._schedule_flow(candidate)
             # Admission is not adoption. Neither an enabled provisioner nor a
             # guessed MAC authorizes sending this private URL to an unknown UA.
-            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
+            return accepted
         manager = self.runtime.physical_phones
-        if (not provisioning_enabled(self.entry) or manager is None or not manager.owned()
-                or not phone.get("enabled", True)):
-            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
-        manager.schedule({phone["phone_id"]})
-        from .physical_phone_provisioning import phone_provisioning_url
+        if (manager is None or not manager.owned() or not provisioning_enabled(self.entry)
+                or not phone.get("enabled", True) or not direct_pnp_contact(request, addr, transport)):
+            return accepted
 
+        def authorized():
+            if (not self.owned() or not manager.owned()
+                    or physical_phone_records(self.entry).get(phone["phone_id"]) != phone):
+                return False
+            if "pnp_enrollment" in phone:
+                return enrollment_matches(self.hass, phone, addr[0], vendor, model)
+            return (candidate is not None and self.candidates.get(mac) is candidate
+                    and time.monotonic() - candidate.seen < 86400 and candidate.pnp_host == addr[0]
+                    and candidate.phone_id == phone["phone_id"]
+                    and secrets.compare_digest(candidate.token, phone["provisioning_token"]))
+
+        if not authorized():
+            return accepted
+        if "pnp_enrollment" in phone:
+            try:
+                if not await async_same_phone_lan(self.hass, phone["pnp_enrollment"]["host"], addr[0]):
+                    return accepted
+            except (ValueError, HomeAssistantError, OSError):
+                return accepted
+        manager.schedule({phone["phone_id"]})
         try:
-            url = phone_provisioning_url(self.hass, self.entry, phone)
+            url = await manager.async_provisioning_url(phone, method="pnp")
         except Exception:
             # Discovery is still useful while the administrator supplies an
             # HTTPS provisioning origin. No credentials are sent as a fallback.
-            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
+            return accepted
+        if not authorized():
+            return accepted
         notify = SipFollowUpRequest("NOTIFY", headers=(("Event", request.header("Event")),
             ("Subscription-State", "terminated;reason=timeout")), body=url.encode(), content_type="application/url")
-        return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8), follow_up=notify)
+        return SipRequestResult(200, headers=accepted.headers, to_tag=accepted.to_tag, follow_up=notify)
 
     def _close_transport(self):
         """Release only discovery I/O, preserving candidate adoption bindings."""

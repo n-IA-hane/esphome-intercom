@@ -39,6 +39,48 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
         return sip.build_response(status, "OK" if status == 200 else "Authentication required",
             [(name, request.header(name)) for name in ("Via", "From", "To", "Call-ID", "CSeq")] + list(extra))
 
+    async def test_targeted_snom_sync_uses_exact_event_and_registered_udp_or_tcp_flow(self):
+        manager, udp, queue, port, _, _, _ = await self.setup_peer()
+        for protocol in ("UDP", "TCP"):
+            with self.subTest(protocol=protocol):
+                reader = writer = None
+                address = ("127.0.0.1", port)
+                if protocol == "TCP":
+                    bound = manager.tcp_server.server.sockets[0].getsockname()
+                    reader, writer = await asyncio.open_connection(*bound)
+                    self.addCleanup(writer.close)
+                    address = writer.get_extra_info("sockname")
+                    writer.write(b"\r\n\r\n")
+                    await writer.drain()
+                    await asyncio.wait_for(reader.readexactly(2), 1)
+                sent = []
+                uri = f"sip:office@{address[0]}:{address[1]};transport={protocol.lower()}"
+                task = asyncio.create_task(manager.async_snom_check_sync(uri, address, protocol,
+                    active=lambda: True, on_sent=lambda: sent.append(True), timeout=1))
+                try:
+                    if reader:
+                        raw = await asyncio.wait_for(sip_listener._read_sip_stream_message(reader), 1)
+                        request = sip.parse_message(raw)
+                    else:
+                        request, target, _raw = await asyncio.wait_for(queue.get(), 1)
+                    self.assertEqual((request.method, request.uri, request.header("Event"), request.body),
+                        ("NOTIFY", uri, "check-sync;reboot=false", b""))
+                    self.assertEqual(request.header("Subscription-State"), "terminated")
+                    self.assertEqual(request.header("CSeq"), "1 NOTIFY")
+                    if writer:
+                        writer.write(self.answer(request))
+                        await writer.drain()
+                    else:
+                        udp.sendto(self.answer(request), target)
+                    self.assertEqual((await task).status_code, 200)
+                    self.assertEqual(sent, [True])
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    if writer:
+                        writer.close()
+                        await writer.wait_closed()
+
     async def test_authorization_crossing_threshold_keeps_ids_and_uses_tcp(self):
         for status in (401, 407):
             with self.subTest(status=status):

@@ -1381,15 +1381,20 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
     async def async_options(self, uri: str, addr: tuple[str, int], *, timeout: float = 3.0):
         """Query one peer on the existing listener, without a call or RTP owner."""
-        ids = sip.SipDialogIds(call_id=sip.make_call_id("options"), local_tag=sip.make_tag(),
+        return await self.async_contact_request("OPTIONS", uri, addr,
+            headers=(("Accept", "application/sdp"),), timeout=timeout)
+
+    async def async_contact_request(self, method, uri, addr, *, headers, timeout, active=lambda: True, on_sent=None):
+        """Run an out-of-dialog request on a specific contact's existing flow."""
+        ids = sip.SipDialogIds(call_id=sip.make_call_id(method.lower()), local_tag=sip.make_tag(),
             remote_tag="", cseq=1, branch=sip.make_branch())
         local_uri = str(sip.SipUri("voip-stack", self.local_ip, self.local_sip_port))
-        headers = sip.dialog_headers(request_uri=uri, local_uri=local_uri, remote_uri=uri,
-            dialog=ids, method="OPTIONS", contact_uri=local_uri, transport=self.signaling_transport)
-        headers.append(("Accept", "application/sdp"))
-        return await self._run_client_transaction(raw=sip.build_request("OPTIONS", uri, headers),
-            addr=addr, ids=ids, method="OPTIONS", transport=self.signaling_transport,
-            timeout=timeout, creating_dialog=True, response_addr=addr)
+        request_headers = sip.dialog_headers(request_uri=uri, local_uri=local_uri, remote_uri=uri,
+            dialog=ids, method=method, contact_uri=local_uri, transport=self.signaling_transport)
+        request_headers.extend(headers)
+        return await self._run_client_transaction(raw=sip.build_request(method, uri, request_headers),
+            addr=addr, ids=ids, method=method, transport=self.signaling_transport,
+            timeout=timeout, creating_dialog=True, response_addr=addr, active=active, on_sent=on_sent)
 
     async def _run_client_transaction(
         self,
@@ -1403,6 +1408,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         timeout: float = _INVITE_2XX_TIMEOUT,
         creating_dialog: bool = False,
         response_addr: tuple[str, int] | None = None,
+        on_sent: Callable[[], None] | None = None,
     ) -> sip.SipMessage | None:
         """Run the shared non-INVITE transaction for this listener transport."""
 
@@ -1417,6 +1423,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if sent is False and self.signaling_transport == "TCP":
                 raise ConnectionError("SIP TCP flow is unavailable before send")
             return sent
+
+        def sent():
+            sip.mark_sip_event(self, method)
+            if on_sent is not None:
+                on_sent()
 
         async def read_response(timeout):
             # Advisory metadata belongs to the queried flow. A matching branch
@@ -1440,7 +1451,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 active=active,
                 transport=transport,
                 timeout=timeout,
-                on_sent=lambda: sip.mark_sip_event(self, method),
+                on_sent=sent,
             )
         finally:
             self._client_transaction_responses.pop(ids.branch, None)

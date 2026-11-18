@@ -908,3 +908,98 @@ async def test_worker_and_service_redact_unexpected_exception_messages(apply_own
     assert public["apply_status"] == "error" and public["apply_error"] == "RuntimeError"
     assert not any(word in str(public) for word in ("secret-password", "private.invalid", "https://"))
     assert state.manager._idle_retry_cancel is None
+
+
+@pytest.mark.parametrize("outcome", [200, 403, 489, None])
+async def test_snom_resync_targets_downloaded_handset_once_after_idle(cached_physical_config, monkeypatch, outcome):
+    from custom_components.voip_stack import physical_phone_enrollment
+    from custom_components.voip_stack.sip_registrar import SipRegistration
+    from .test_physical_phone_dhcp_ha import native_cache
+    from .test_physical_phone_runtime_ha import add, phone
+
+    fixture = cached_physical_config
+    manager, lab = fixture.manager, fixture.lab
+    host = "192.168.10.67"
+    data = phone(profile_id="snom/360", mac="000413000001")
+    record = add(lab, data)
+    profile, _ = manager.catalog.async_profile.return_value
+    profile = {**profile, "id": "snom/360", "vendor": "snom",
+               "capabilities": {**profile["capabilities"], "resync": {"method": "snom_check_sync",
+                   "qualification": "documented_request", "firmwares": ["8.7.3.25.9"]}}}
+    manager.catalog.async_profile.return_value = (profile, {"templates/config.jinja2": "name={{ physical.name }}\n"})
+    watcher = native_cache(lab)
+    watcher.async_process_client(host, "snom360-000001", data["mac"])
+    monkeypatch.setattr(physical_phone_enrollment, "async_same_phone_lan", AsyncMock(return_value=True))
+    def registration(ip, agent):
+        return SipRegistration("first", f"sip:first@{ip}:5060", ip, 5060, "UDP", float("inf"), user_agent=agent)
+    other = registration("192.168.10.71", "Other Phone")
+    contact = registration(host, "snom360/8.7.3.25.9")
+    contacts = [other]
+    monkeypatch.setattr(lab.registrar, "registered_contacts", lambda username: contacts if username == "first" else [])
+
+    async def send(uri, address, transport, *, active, on_sent):
+        assert uri == contact.contact_uri and address == (host, 5060) and transport == "UDP"
+        assert active()
+        on_sent()
+        return SimpleNamespace(status_code=outcome) if outcome else None
+
+    sender = SimpleNamespace(async_snom_check_sync=AsyncMock(side_effect=send))
+    lab.runtime.sip.adopt_component("udp_listener", sender)
+    await manager.async_prepare(data)
+    identity = data["phone_id"]
+    state = manager.states[identity]
+    async def read(peer):
+        return await manager.async_file(identity, data["provisioning_token"], data["mac"] + ".cfg", peer_host=peer)
+
+    # A manual preview on another host cannot enroll the phone for periodic pushes.
+    assert await read("192.168.10.71")
+    await manager._async_apply_if_needed(data)
+    assert state["apply_status"] == "manual" and not state.get("device_download_revision")
+    assert await read(host)
+    downloaded = state["device_download_revision"]
+    await manager._async_apply_if_needed(data)
+    sender.async_snom_check_sync.assert_not_awaited()
+    data = {**data, "name": "New display name"}
+    lab.hass.config_entries.async_update_subentry(lab.entry, record, data=data)
+    lab.runtime.endpoints.claim_call("sip:first", "old-revision-busy")
+    await manager.async_prepare(data)
+    await manager._async_apply_if_needed(data)
+    assert state["state"] == state["apply_status"] == "waiting_idle"
+    assert manager._idle_retry_cancel is not None
+    lab.runtime.endpoints.release_call("sip:first", "old-revision-busy")
+    await manager.async_prepare(data)
+    assert state["desired_revision"] != downloaded
+    await manager._async_apply_if_needed(data)
+    assert state["apply_status"] == "pending"
+    contacts.append(contact)
+    contact.user_agent = "snom360/8.7.3.25.90"
+    await manager._async_apply_if_needed(data)
+    sender.async_snom_check_sync.assert_not_awaited()
+    contact.user_agent = "snom360/8.7.3.25.9"
+    lab.runtime.endpoints.claim_call("sip:first", "busy")
+    await manager._async_apply_if_needed(data)
+    assert state["apply_status"] == "waiting_idle"
+    sender.async_snom_check_sync.assert_not_awaited()
+    lab.runtime.endpoints.release_call("sip:first", "busy")
+    await manager._async_apply_if_needed(data)
+    await manager._async_apply_if_needed(data)
+    sender.async_snom_check_sync.assert_awaited_once()
+    assert state["apply_status"] == ("requested" if outcome == 200 else "error" if outcome else "uncertain")
+    assert state["apply_attempted_revision"] == state["desired_revision"]
+    assert state["device_download_revision"] == downloaded
+    reservation = manager.store.async_save.await_args.args[0][identity]
+    assert reservation["apply_status"] == "requesting" and reservation["apply_attempted_revision"] == state["desired_revision"]
+    if outcome == 200:
+        assert state["apply_method"] == "snom_check_sync"
+        assert await read(host) and state["device_download_revision"] == state["desired_revision"]
+        data = {**data, "provisioning_token": "rotated-fixture-token", "name": "New credential"}
+        lab.hass.config_entries.async_update_subentry(lab.entry, record, data=data)
+        await manager.async_prepare(data)
+        await manager._async_apply_if_needed(data)
+        assert state["apply_status"] == "manual"
+    elif outcome is None:
+        # Process recovery can only see the pre-send reservation after power loss.
+        state.update(reservation)
+        await manager._async_apply_if_needed(data)
+        assert state["apply_status"] == "uncertain"
+    sender.async_snom_check_sync.assert_awaited_once()

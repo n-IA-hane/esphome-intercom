@@ -189,7 +189,7 @@
       },
       "phone_user": {
         "title": "Physical phone",
-        "description": "Identify the physical phone and choose a verified model profile. Its lines bind logical SIP accounts; adding this inventory does not create a second call endpoint. Source: {profile_source}. Pinned revision: {profile_pin}. Status: {profile_status}. Downloaded does not mean applied.",
+        "description": "Choose the phone model. You can assign the first SIP account now or later.",
         "data": {
           "name": "Name",
           "mac": "MAC address",
@@ -198,25 +198,26 @@
           "account_id": "First SIP account (optional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile."
+          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
+          "account_id": "Leave \"No SIP account\" selected to add the phone without linking an account. You can assign accounts to its lines later."
         },
         "sections": {
           "advanced": {
             "name": "Administration and preferences",
             "data": {
-              "host": "Host or IP hint (optional)",
+              "host": "Fixed hostname or IP address (optional)",
               "area_id": "Area",
               "person": "Person",
               "follow_ha_language": "Follow Home Assistant language",
               "enabled": "Enabled",
-              "admin_username": "Phone administrator (optional)",
-              "admin_password": "Phone administrator password"
+              "admin_username": "Manufacturer web interface username (optional)",
+              "admin_password": "Manufacturer web interface password"
             },
             "data_description": {
-              "host": "Leave blank for discovery or DHCP. This is a network hint, not proof of registration or availability.",
+              "host": "Optional fixed hostname or IP address for this phone. Leave blank when its address is assigned by DHCP.",
               "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
-              "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
-              "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+              "admin_username": "Username for the manufacturer's web interface, used only to send configuration updates on supported models. Discovery does not require credentials. Clear the username to remove saved credentials.",
+              "admin_password": "Password for the manufacturer's web interface, used only to send configuration updates on supported models. Leave blank to keep the saved password. Discovery does not require these credentials, and they are never included in the phone's configuration file."
             }
           }
         }
@@ -649,7 +650,7 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Choose a compatible phone model and assign SIP accounts to its lines. Downloading a configuration does not confirm that the phone applied it.",
+          "description": "Choose the phone model. You can assign the first SIP account now or later.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
@@ -658,25 +659,26 @@
             "account_id": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their current profile until you update it or choose another model."
+            "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
+            "account_id": "Leave \"No SIP account\" selected to add the phone without linking an account. You can assign accounts to its lines later."
           },
           "sections": {
             "advanced": {
               "name": "Administration and preferences",
               "data": {
-                "host": "Host or IP hint (optional)",
+                "host": "Fixed hostname or IP address (optional)",
                 "area_id": "Area",
                 "person": "Person",
                 "follow_ha_language": "Follow Home Assistant language",
                 "enabled": "Enabled",
-                "admin_username": "Phone administrator (optional)",
-                "admin_password": "Phone administrator password"
+                "admin_username": "Manufacturer web interface username (optional)",
+                "admin_password": "Manufacturer web interface password"
               },
               "data_description": {
-                "host": "Leave blank for discovery or DHCP. This is a network hint, not proof of registration or availability.",
+                "host": "Optional fixed hostname or IP address for this phone. Leave blank when its address is assigned by DHCP.",
                 "follow_ha_language": "Only language values supported by this profile are generated. Unmanaged phone settings are preserved.",
-                "admin_username": "Used only for a qualified automatic application method. Clear the username to remove stored credentials.",
-                "admin_password": "Leave blank to keep the stored password. Administrative credentials never enter the phone configuration file."
+                "admin_username": "Username for the manufacturer's web interface, used only to send configuration updates on supported models. Discovery does not require credentials. Clear the username to remove saved credentials.",
+                "admin_password": "Password for the manufacturer's web interface, used only to send configuration updates on supported models. Leave blank to keep the saved password. Discovery does not require these credentials, and they are never included in the phone's configuration file."
               }
             }
           }
@@ -952,6 +954,11 @@
         "transport": "Transport",
         "binding": "Physical phone and line"
       }
+    },
+    "first_phone_account": {
+      "options": {
+        "no_account": "No SIP account"
+      }
     }
   },
   "system_health": {
@@ -1192,11 +1199,12 @@
         "state": {
           "pending": "Pending",
           "waiting_idle": "Waiting for the call to end",
-          "ready": "Configuration ready for download",
+          "ready": "File ready, waiting for the phone",
           "downloaded": "File downloaded",
           "error": "Error",
           "disabled": "Disabled",
-          "unassigned": "Unassigned"
+          "unassigned": "Unassigned",
+          "registered": "Lines registered on this phone"
         },
         "state_attributes": {
           "error": {
@@ -1257,7 +1265,7 @@
     },
     "button": {
       "physical_phone_provision": {
-        "name": "Prepare configuration"
+        "name": "Configure phone"
       },
       "physical_phone_rotate": {
         "name": "Rotate provisioning credential"

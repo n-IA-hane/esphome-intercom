@@ -219,38 +219,39 @@ on multicast `224.0.1.75:5060`. They appear in Home Assistant's **Discovered** l
 with Configure and Ignore. A discovery announcement is an untrusted inventory
 candidate. It does not create accounts, grant permissions, adopt a logical phone
 or expose its configuration before an administrator confirms the binding.
-A Snom 360 can also appear from Home Assistant's native DHCP discovery. When
-HA knows the Snom MAC prefix and a matching hostname such as
-`snom360-123456`, VoIP Stack offers the phone even if its SIP multicast never
-reaches the PBX. It also checks HA's existing DHCP discoveries when detection
-starts. A later SIP announcement joins the same proposal by MAC.
+Home Assistant can also discover a Snom 360 or one of 26 Yealink models from
+its DHCP records. VoIP Stack checks both the manufacturer's MAC prefix and the
+model hostname, such as `snom360-123456`, `SIP-T46U` or `W70B`. It checks
+existing DHCP records when discovery starts and new records as HA sees them.
+A later SIP announcement joins the same proposal by MAC. See the model list
+and the delivery methods available for each family in the
+[phone discovery matrix](PHONE_DISCOVERY_MATRIX.md).
 
-The handset's SIP announcement identifies itself as `snom360` and uses a
-percent-encoded `MAC:` prefix. A DHCP sighting only identifies a candidate.
-It never authorizes delivery of a provisioning address. If HA has neither a
-matching DHCP record nor an incoming SIP announcement, there is no candidate
-to display yet.
+Accept the proposal, choose the model and optionally assign the first SIP account.
+On a directly connected, trusted phone LAN, confirmation of a matching native
+DHCP discovery opens a one-hour window for that handset's SIP PnP request.
+HA verifies its current DHCP address, MAC and model. The next eligible request
+receives an address for a configuration that is already available for download.
+The window survives an HA restart and closes on the first file download.
+On an existing physical device, **Configure phone** can open a new window.
+Phones that announce only at boot may need an ordinary restart after adoption.
 
-An existing private URL is not recovered from a MAC-only announcement after a
-service restart or credential rotation. Its administrator can retrieve it through
-the authenticated state action below.
+**File ready, waiting for the phone** means HA has prepared the file. **File
+downloaded** means HA has served it. **Lines registered on this phone**
+requires an authenticated registration attributed to this physical handset
+for each assigned line. Other clients on the same account can register independently.
 
-An unknown phone receives no provisioning URL. After you enable provisioning
-and explicitly finish adding the phone, its next eligible PnP request can
-receive its private URL. Phones that announce only at boot may need an ordinary
-restart at that point. A factory reset is unnecessary. Before adoption you
-can simply leave the discovery card in place or choose **Ignore**.
+If multicast does not reach HA, use the handset's supported provisioning
+option on the existing DHCP server. Limit a device-specific URL to the
+corresponding phone. HA does not change the router. For manual setup, open the
+physical device in HA, select **Visit** (the configuration link), then
+**Copy provisioning URL**. Paste it directly into the phone's provisioning
+server field. For Snom 360 the link already includes the XML filename.
+When the model needs a different URL for DHCP, the same page also shows that
+address. Neither link appears in the device registry or entity history.
 
-Provisioning can also use a manually configured URL or a DHCP provisioning URL
-provided by your existing DHCP server. VoIP Stack does not change the router or
-DHCP server. Manufacturer RPS delivery is not implemented.
-
-To obtain a manual URL, call `voip_stack.get_phone_provisioning_state` as an
-administrator with the physical `device_id` and `include_url: true`. Copy the
-returned private `provisioning_url` into the phone's provisioning server field.
-This field is deliberately absent from entity attributes and ordinary state
-responses. Configure a directory-style URL including its trailing slash. The
-phone requests the model's expected filename from that directory.
+Automations with administrative access can read the same addresses through
+`voip_stack.get_phone_provisioning_state` with `include_url: true`.
 
 `voip_stack.provision_phone` queues preparation and can explicitly retry an
 eligible application request. Preparation and application wait while current or

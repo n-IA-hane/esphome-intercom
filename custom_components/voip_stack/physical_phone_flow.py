@@ -26,11 +26,12 @@ from homeassistant.data_entry_flow import Optional as visible_optional
 from .physical_phone import (
     KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, physical_phone_records,
     provisioning_enabled, discovery_enabled, draft_physical_subentry, physical_phone_data, physical_phone_id, physical_phone_model,
-    phone_candidate_name, reorder_physical_keys,
+    matches_announced_model, phone_candidate_name, reorder_physical_keys,
 )
 from .physical_phone_validation import physical_slot, physical_validation_runtime, validate_physical_inventory
 
 CREATE_ACCOUNT = "__create_account__"
+NO_ACCOUNT = "no_account"
 _IDENTITY_FIELDS = frozenset({
     "name", "mac", "profile_id", "host", "area_id", "person",
     "follow_ha_language", "enabled",
@@ -98,17 +99,17 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         candidate = getattr(discovery, "candidates", {}).get(mac)
         if (candidate is not None and discovery_enabled(self._get_entry())
                 and not getattr(discovery, "_closed", False) and time.monotonic() - candidate.seen < 86400):
-            previous_host = self._seed.get("host")
             self._seed.update(candidate.setup_data())
             self._inventory_draft = candidate.native_subentry
-            if not self._draft.get("host") or self._draft.get("host") == previous_host:
-                self._draft["host"] = candidate.host
         if self._inventory_draft is None:
             self._inventory_draft = draft_physical_subentry({key: value for key, value in self._seed.items() if key != "phone_id"})
         self._inventory_mac = mac
         self._seed = {**self._seed, **physical_phone_data(self._inventory_draft)}
 
     def _store_inventory(self, data):
+        if (self._current is not None and "pnp_enrollment" in data
+                and any(data[key] != self._current.data[key] for key in ("mac", "profile_id"))):
+            data["pnp_enrollment"] = {}
         record = draft_physical_subentry(data, previous=self._current or self._inventory_draft, title=data["name"])
         if self._current is not None:
             self.hass.config_entries.async_update_subentry(self._get_entry(), self._current,
@@ -135,8 +136,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             if not isinstance(candidate, dict):
                 return self.async_abort(reason="invalid_phone_discovery")
             self._seed = {key: candidate[key] for key in
-                          ("phone_id", "mac", "host", "provisioning_token") if candidate.get(key)}
-            self._draft = {key: candidate[key] for key in ("mac", "host") if candidate.get(key)}
+                          ("phone_id", "mac", "provisioning_token") if candidate.get(key)}
+            self._draft = {"mac": candidate["mac"]} if candidate.get("mac") else {}
             self._draft["name"] = phone_candidate_name(candidate.get("vendor"), candidate.get("model"))
             self._discovery_initial_name = self._draft["name"]
             self._discovery_model = (str(candidate.get("vendor") or "").lower(),
@@ -158,7 +159,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         if user_input is not None:
             self._draft.update({key: value for key, value in user_input.items() if key in _IDENTITY_FIELDS})
             if self._current is None:
-                self._draft["account_id"] = user_input.get("account_id", "")
+                selected = user_input.get("account_id", "")
+                self._draft["account_id"] = "" if selected == NO_ACCOUNT else selected
             if "advanced" in user_input:
                 advanced = user_input["advanced"]
                 if not isinstance(advanced, dict):
@@ -223,7 +225,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         default_profile = values.get("profile_id", "")
         if not default_profile and hasattr(self, "_discovery_model"):
             vendor, model = self._discovery_model
-            matches = [item for item in profiles if self._matches_announced_model(item, vendor, model)]
+            matches = [item for item in profiles if matches_announced_model(item["vendor"], item["model"], vendor, model)]
             if len(matches) == 1:
                 default_profile = matches[0]["id"]
                 if values.get("name") == self._discovery_initial_name:
@@ -248,23 +250,16 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         if self._current is not None:
             fields[vol.Optional("update_profile", default=False)] = BooleanSelector()
         else:
-            fields[vol.Optional("account_id")] = SelectSelector({"options": [
-                {"value": identity, "label": data["name"]} for identity, data in self._phone_accounts().items()]})
+            accounts = self._phone_accounts()
+            fields[vol.Optional("account_id", default=values.get("account_id") or NO_ACCOUNT)] = SelectSelector({
+                "mode": "dropdown",
+                "translation_key": "first_phone_account",
+                "options": [
+                    {"value": NO_ACCOUNT, "label": "No SIP account"},
+                    *({"value": identity, "label": data["name"]} for identity, data in accounts.items()),
+                ],
+            })
         return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema(fields))
-
-    @staticmethod
-    def _matches_announced_model(profile, vendor, model):
-        """Only strip a prefix after the catalog confirms the same vendor."""
-        def normalized(value):
-            return re.sub(r"[^a-z0-9]", "", str(value).lower())
-
-        declared_vendor = normalized(profile["vendor"])
-        if not declared_vendor or normalized(vendor) != declared_vendor:
-            return False
-        def model_name(value):
-            value = normalized(value)
-            return value[len(declared_vendor):] if value.startswith(declared_vendor) else value
-        return bool(model_name(model)) and model_name(model) == model_name(profile["model"])
 
     async def async_step_language(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
@@ -506,6 +501,9 @@ class DiscoveredPhoneEditor(PhysicalPhoneSubentryFlowHandler):
     def _store_inventory(self, data):
         if error := self._candidate_error(data.get("mac")):
             return self.async_abort(reason=error)
+        from .physical_phone_enrollment import arm_dhcp_enrollment
+
+        arm_dhcp_enrollment(self.hass, data)
         return super()._store_inventory(data)
 
     def async_show_form(self, *, step_id, **kwargs):

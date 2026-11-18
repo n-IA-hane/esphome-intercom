@@ -351,6 +351,7 @@ class SipRegistrar:
         self.accounts = {account.username.lower(): account for account in accounts}
         self._authentication_generations = {username: uuid.uuid4().hex for username in self.accounts}
         self._account_observers = set()
+        self._contact_observers = set()
         self.registrations: dict[str, SipRegistration] = {}
         self.nonces: dict[str, float] = {}
         self.nonce_uses: dict[
@@ -434,6 +435,18 @@ class SipRegistrar:
     def subscribe_account_changes(self, observer):
         self._account_observers.add(observer)
         return lambda: self._account_observers.discard(observer)
+
+    def subscribe_contact_changes(self, observer):
+        """Observe individual clients, including on an already registered account."""
+        self._contact_observers.add(observer)
+        return lambda: self._contact_observers.discard(observer)
+
+    def _contacts_changed(self, usernames):
+        for observer in tuple(self._contact_observers):
+            try:
+                observer(usernames)
+            except Exception as error:  # Keep registrar transactions independent of HA observers.
+                _LOGGER.warning("Contact observer failed (%s)", type(error).__name__)
 
     def _registration(self, username: str) -> SipRegistration | None:
         registrations = self._registrations(username)
@@ -531,6 +544,7 @@ class SipRegistrar:
                 removed_username = registration.username
         if removed_username:
             self._notify_registration_change(removed_username, False)
+            self._contacts_changed({removed_username})
 
     def remove_flow(self, host: str, port: int, transport: str) -> bool:
         """Remove Contact bindings whose authenticated signaling flow closed."""
@@ -567,6 +581,7 @@ class SipRegistrar:
                     username,
                 )
                 self._notify_registration_change(username, False)
+        self._contacts_changed(affected.values())
         return True
 
     def registration_matches_source(
@@ -946,6 +961,7 @@ class SipRegistrar:
                 next_registrations[key] = updated_binding
 
         self.registrations = next_registrations
+        self._contacts_changed({account.username})
         is_registered = bool(self._registrations(account.username))
         if was_registered != is_registered:
             self._notify_registration_change(account.username, is_registered)
@@ -1016,9 +1032,11 @@ class SipRegistrar:
             registration.username.lower(): registration.username
             for registration in self.registrations.values()
         }
-        old = set(self.registrations)
+        old = self.registrations
         self.registrations = {key: reg for key, reg in self.registrations.items() if reg.expires_at > now}
-        expired = old - set(self.registrations)
+        expired = old.keys() - self.registrations.keys()
+        if expired:
+            self._contacts_changed({old[key].username for key in expired})
         still_registered = {
             registration.username.lower() for registration in self.registrations.values()
         }

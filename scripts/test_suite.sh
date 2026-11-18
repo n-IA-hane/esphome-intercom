@@ -97,6 +97,8 @@ ha_tests=(
   tests/test_physical_phone_entity_ha.py
   tests/test_physical_phone_pnp_ha.py
   tests/test_physical_phone_dhcp_ha.py
+  tests/test_physical_phone_enrollment_ha.py
+  tests/test_physical_phone_delivery_url_ha.py
   tests/test_paging_authorization_ha.py
   tests/test_owned_cleanup_ha.py
   tests/test_queue_activity_ha.py
@@ -283,6 +285,7 @@ PY
       tests/test_frontend_video_browser.py
       tests/test_frontend_video_runtime.py
       tests/test_frontend_popup_browser.py
+      tests/test_provisioning_panel_browser.py
       tests/test_frontend_cold_start.py
       tests/test_video_decoder_recovery_browser.py
       tests/test_browser_audio_startup.py

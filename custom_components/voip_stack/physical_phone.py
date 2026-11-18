@@ -8,6 +8,7 @@ import json
 import re
 import secrets
 from types import MappingProxyType
+from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigSubentry
 
@@ -34,6 +35,18 @@ def phone_candidate_name(vendor, model):
 def physical_phone_model(profile_id):
     """Display verified model labels without guessing other model names."""
     return _MODEL_LABELS.get(profile_id, profile_id.partition("/")[2])
+
+
+def matches_announced_model(declared_vendor, declared_model, vendor, model):
+    """Strip the manufacturer's own prefix only after confirming the vendor."""
+    def normalized(value):
+        return re.sub(r"[^a-z0-9]", "", str(value).casefold())
+
+    brand = normalized(declared_vendor)
+    if not brand or normalized(vendor) != brand:
+        return False
+    announced = normalized(model).removeprefix(brand)
+    return bool(announced) and announced == normalized(declared_model).removeprefix(brand)
 
 
 def discovery_enabled(entry) -> bool:
@@ -153,7 +166,7 @@ def normalize_physical_phone(data, *, previous=None):
         "schema_version": 1,
         "phone_id": str(old.get("phone_id") or data.get("phone_id") or physical_phone_id(draft_physical_subentry())),
         "mac": mac, "name": name, "profile_id": profile,
-        "host": str(data.get("host") or old.get("host") or ""),
+        "host": str(data.get("host", old.get("host", "")) or ""),
         "area_id": data.get("area_id") or None, "person": person,
         "lines": lines, "keys": canonical_physical_keys(keys),
         "follow_ha_language": bool(data.get("follow_ha_language", True)),
@@ -180,6 +193,7 @@ def sync_physical_phone_devices(hass, entry):
         devices.async_get_or_create(
             config_entry_id=entry.entry_id, config_subentry_id=subentry.subentry_id,
             identifiers={(DOMAIN, "physical_phone:" + data["phone_id"])},
+            configuration_url="homeassistant://voip-stack-provisioning/" + quote(data["phone_id"], safe=""),
             connections={(dr.CONNECTION_NETWORK_MAC, mac)}, name=data["name"],
             manufacturer=vendor.title(), model=physical_phone_model(data["profile_id"]),
             suggested_area=area.name if (area := areas.async_get_area(data.get("area_id"))) else None,
@@ -346,4 +360,6 @@ async def async_prepare_account_bindings(hass, entry, endpoint_id, rows, account
 def apply_account_bindings(hass, entry, prepared):
     """Publish prevalidated physical drafts without an intervening await."""
     for subentry, data in prepared:
+        # A catalog await while validating another phone may span a first download or token rotation.
+        data = {**data, **{key: subentry.data[key] for key in ("pnp_enrollment", "provisioning_token") if key in subentry.data}}
         hass.config_entries.async_update_subentry(entry, subentry, data=data, title=data["name"])

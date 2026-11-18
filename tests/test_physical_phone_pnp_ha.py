@@ -4,6 +4,7 @@ import asyncio
 import socket
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
+from xml.etree import ElementTree
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
@@ -14,6 +15,10 @@ from homeassistant.data_entry_flow import UnknownFlow
 from custom_components.voip_stack.core import sip
 
 from .test_queue_agent_wire_ha import Peer
+from .test_physical_phone_delivery_url_ha import snom_profile
+from .test_physical_phone_runtime_ha import (
+    disable_http_server as disable_http_server, hass_config_dir as hass_config_dir, hass_storage as hass_storage,
+)
 from .test_managed_phones_ha import phone_lab as phone_lab, custom_integration_path as custom_integration_path
 
 pytestmark = pytest.mark.ha
@@ -24,6 +29,21 @@ async def pnp_listener(phone_lab, monkeypatch, socket_enabled, unused_tcp_port_f
     """Use the real PBX listener without unrelated registered trunk clients."""
     from custom_components.voip_stack import endpoint_runtime, peer_snapshot, sensor
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+    from custom_components.voip_stack.phone_profile_catalog import PhoneProfileCatalog
+
+    async def local_profile(_self, identity, *, commit=""):
+        if identity == "snom/360":
+            return snom_profile()
+        filenames = {"grandstream/grp2614": "cfg{mac}.xml", "fanvil/x3u-pro": "{mac}.cfg"}
+        filename = filenames[identity]
+        caps = {"max_lines": 1, "languages": {}, "functions": [], "key_slots": []}
+        if identity == "grandstream/grp2614":
+            caps["delivery"] = {"pnp": filename}
+        return ({"id": identity, "vendor": identity.split("/")[0], "capabilities": caps, "outputs": [{"path": filename,
+                 "format": "xml", "template": "templates/device.jinja2"}]},
+                {"templates/device.jinja2": "<gs_provision/>" if identity == "grandstream/grp2614" else "<sysConf/>"})
+
+    monkeypatch.setattr(PhoneProfileCatalog, "async_profile", local_profile)
 
     lab = phone_lab
     await lab.runtime.sip.shutdown()
@@ -58,17 +78,20 @@ async def pnp_listener(phone_lab, monkeypatch, socket_enabled, unused_tcp_port_f
 
 def pnp_request(peer, call_id, vendor="Fanvil"):
     """The documented wire shapes, with synthetic MACs and loopback sources."""
-    event = ('ua-profile;profile-type="device";vendor="snom";model="snom360";version="8.7.3.25.9"'
-             if vendor == "snom" else 'ua-profile;vendor="Fanvil";model="X3U Pro"')
+    models = {"snom": "snom360", "Grandstream": "GRP2614", "Fanvil": "X3U Pro"}
+    event = f'ua-profile;profile-type="device";vendor="{vendor}";model="{models[vendor]}"'
+    if vendor == "snom":
+        event += ';version="8.7.3.25.9"'
     raw = peer.request("SUBSCRIBE", "provision", call_id, extra=(("Event", event), ("Expires", "0")))
-    if vendor != "snom":
+    if vendor == "Fanvil":
         return raw
     message = sip.parse_message(raw)
     uri = f"sip:MAC%3a{peer.username.upper()}@localhost"
     host, port = peer.address
     headers = [(key, value) for key, value in message.headers if key not in {"From", "To", "Contact"}]
     headers.extend((("From", f"<{uri}>;tag={call_id}"), ("To", f"<{uri}>"),
-                    ("Contact", f"<sip:{host}:{port}>"), ("User-Agent", "snom360/8.7.3.25.9")))
+                    ("Contact", f"<sip:{host}:{port}>"),
+                    ("User-Agent", "snom360/8.7.3.25.9" if vendor == "snom" else "Grandstream GRP2614")))
     return sip.build_request("SUBSCRIBE", uri, headers)
 
 
@@ -82,7 +105,8 @@ def adopt_candidate(hass, entry, candidate, vendor):
 
     seed = candidate.setup_data()
     data = normalize_physical_phone({**seed, "name": "Adopted phone",
-        "profile_id": "snom/360" if vendor == "snom" else "fanvil/x3u-pro", "lines": [], "keys": []},
+        "profile_id": {"snom": "snom/360", "Fanvil": "fanvil/x3u-pro", "Grandstream": "grandstream/grp2614"}[vendor],
+        "lines": [], "keys": []},
         previous=seed)
     record = draft_physical_subentry(data, previous=candidate.native_subentry, title=data["name"])
     hass.config_entries.async_add_subentry(entry, record)
@@ -151,8 +175,11 @@ async def test_missing_ipv4_discovery_is_nonfatal_and_releases_partial_resources
 
 
 @pytest.mark.parametrize("path", ["pbx", "discovery"])
-@pytest.mark.parametrize("vendor", ["Fanvil", "snom"])
-async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transport(pnp_listener, monkeypatch, path, vendor):
+@pytest.mark.parametrize("vendor", ["Fanvil", "snom", "Grandstream"])
+@pytest.mark.parametrize("disable_http_server", [True], indirect=True)
+async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transport(
+        pnp_listener, monkeypatch, path, vendor, unused_tcp_port, disable_http_server):
+    from aiohttp import ClientSession
     from custom_components.voip_stack.physical_phone_runtime import async_reconcile_physical_phone_runtime
     from custom_components.voip_stack import physical_phone_discovery as module
     from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
@@ -163,7 +190,10 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
     endpoint = original.component("udp_listener")
     udp = endpoint.udp_server.transport
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
-    assert await async_setup_component(lab.hass, "http", {})
+    assert await async_setup_component(lab.hass, "http", {
+        "http": {"server_host": ["127.0.0.1"], "server_port": unused_tcp_port}})
+    await lab.hass.http.start()
+    provision = {"allow_insecure_http": True, "base_url": f"http://127.0.0.1:{unused_tcp_port}"}
     monkeypatch.setattr(network, "async_get_source_ip", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(PhoneDiscovery, "_start_flow", AsyncMock())
     if path == "pbx":
@@ -179,7 +209,7 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
         assert (await peer.response("off-before", method="SUBSCRIBE")).status_code == 403
         assert peer.notifies.empty()
         lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "phone_provisioning": {
-            "enabled": False, "discovery_enabled": True, "base_url": "https://ha.example.test"}})
+            "enabled": False, "discovery_enabled": True, **provision}})
         await async_reconcile_physical_phone_runtime(lab.hass, entry)
         discovery = lab.runtime.phone_discovery
         assert discovery is not None
@@ -193,7 +223,7 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
         assert candidate.token == "" and candidate.native_subentry is None
         assert not lab.calls.sessions
         lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "phone_provisioning": {
-            "enabled": True, "discovery_enabled": True, "base_url": "https://ha.example.test"}})
+            "enabled": True, "discovery_enabled": True, **provision}})
         await async_reconcile_physical_phone_runtime(lab.hass, entry)
         assert lab.runtime.phone_discovery is discovery
         manager = lab.runtime.physical_phones
@@ -213,6 +243,13 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
             sip.name_addr_uri(accepted.header("To")))
         assert sip.extract_tag(notify.header("From")) == sip.extract_tag(accepted.header("To"))
         assert candidate.token.encode() in notify.body and candidate.phone_id.encode() in notify.body
+        suffix = {"snom": mac + ".xml", "Grandstream": "cfg" + mac + ".xml", "Fanvil": ""}[vendor].encode()
+        assert notify.body.endswith(candidate.token.encode() + b"/" + suffix)
+        fetch = notify.body.decode() if suffix else notify.body.decode() + mac + ".cfg"
+        async with ClientSession() as client, client.get(fetch) as response:
+            assert response.status == 200 and response.content_type == "application/xml"
+            assert ElementTree.fromstring(await response.read()).tag == {
+                "snom": "settings", "Grandstream": "gs_provision", "Fanvil": "sysConf"}[vendor]
         manager.schedule.assert_called_once_with({candidate.phone_id})
         assert record.subentry_id == candidate.native_subentry.subentry_id
         lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "phone_provisioning": {
@@ -241,6 +278,7 @@ async def test_real_pnp_wire_follows_feature_toggle_without_reloading_sip_transp
         if lab.runtime.physical_phones is not None:
             await lab.runtime.physical_phones.async_close()
             lab.runtime.physical_phones = None
+        await lab.hass.http.stop()
 
 
 async def test_snom_wire_adoption_keeps_source_token_and_native_identity_binding(pnp_listener, monkeypatch):

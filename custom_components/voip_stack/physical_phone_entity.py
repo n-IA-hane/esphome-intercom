@@ -84,7 +84,7 @@ class PhysicalPhoneProvisioningSensor(PhysicalPhoneEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = "physical_phone_provisioning"
     _attr_icon = "mdi:phone-settings"
-    _attr_options = ["pending", "unassigned", "waiting_idle", "ready", "downloaded", "error", "disabled"]
+    _attr_options = ["pending", "unassigned", "waiting_idle", "ready", "downloaded", "registered", "error", "disabled"]
 
     def __init__(self, hass, entry, phone_id):
         super().__init__(hass, entry, phone_id, "provisioning")
@@ -93,7 +93,11 @@ class PhysicalPhoneProvisioningSensor(PhysicalPhoneEntity, SensorEntity):
     def native_value(self):
         if not self.available:
             return None
-        state = self.entry.runtime_data.physical_phones.public_state(self.phone_id).get("state", "pending")
+        details = self.entry.runtime_data.physical_phones.public_state(self.phone_id)
+        state = details.get("state", "pending")
+        lines = details.get("lines", ())
+        if state == "downloaded" and lines and all(line.get("device_registration_verified") for line in lines):
+            return "registered"
         return state if state in self._attr_options else None
 
     @property

@@ -2,6 +2,16 @@
 
 ## 2026.12.0-dev
 
+- Configure a discovered desk phone with an optional first SIP account. A
+  DHCP change leaves the manual address field empty. The physical device's
+  configuration link lets administrators copy the complete provisioning URL.
+- Deliver the model's correct file or directory through SIP PnP or DHCP.
+  A confirmed DHCP discovery can now reach its first file download after HA
+  restarts. Add DHCP detection for 26 documented Yealink models.
+- Distinguish a file waiting on the PBX, a download and a registration from
+  the physical phone. The updated Snom 360 profile supports configuration
+  refresh, alongside the existing Fanvil X3U Pro application method.
+
 - Offer Snom 360 handsets already known to Home Assistant's DHCP discovery,
   including on networks where the phone's SIP multicast is not delivered.
   DHCP and SIP use one discovery card and require explicit adoption.

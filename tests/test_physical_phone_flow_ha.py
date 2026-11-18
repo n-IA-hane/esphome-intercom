@@ -285,7 +285,7 @@ async def test_discovery_source_user_data_is_initialization_and_token_stays_priv
     assert saved["phone_id"] == physical_record(state).subentry_id
     assert saved["phone_id"] != "discovered-id"
     assert saved["provisioning_token"] == "private-discovery-token"
-    assert saved["host"] == "192.0.2.10"
+    assert saved["host"] == ""
     assert not any(call[0] == "manifest" and call[2] for call in state.catalog.calls)
 
 
@@ -483,6 +483,12 @@ async def test_main_native_discovery_reuses_editor_without_child_flow_or_second_
     assert not state.catalog.calls and candidate.native_subentry is None and not candidate.token
     result = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] == "form" and result["step_id"] == "phone_user"
+    from homeassistant.helpers.translation import async_get_translations
+
+    for language in ("en", "it", "cs", "de", "pt-BR"):
+        translations = await async_get_translations(state.lab.hass, language, "config", {"voip_stack"})
+        description = translations["component.voip_stack.config.step.phone_user.description"]
+        assert description.format_map(result.get("description_placeholders") or {})
     assert candidate.token not in repr(result)
     assert not state.lab.hass.config_entries.subentries.async_progress()
     created = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], result["data_schema"]({}))
@@ -490,8 +496,39 @@ async def test_main_native_discovery_reuses_editor_without_child_flow_or_second_
     physical = next(item for item in state.lab.entry.subentries.values() if item.subentry_type == "physical_phone")
     assert physical_phone_data(physical)["phone_id"] == candidate.phone_id
     assert physical.data["provisioning_token"] == candidate.token
+    assert physical.data["lines"] == []
     assert len([entry for entry in state.lab.hass.config_entries.async_entries("voip_stack")
                 if entry.source != SOURCE_IGNORE]) == 1
+
+
+async def test_confirming_native_dhcp_card_arms_bounded_enrollment_for_that_phone(physical_flow):
+    from homeassistant.config_entries import SOURCE_DHCP
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from .test_physical_phone_dhcp_ha import HOST, MAC, info, native_cache
+
+    state = physical_flow
+    profile = {**deepcopy(state.catalog.profiles[PROFILE][0]), "id": "snom/360", "vendor": "snom", "model": "360"}
+    state.catalog.profiles[profile["id"]] = (profile, {})
+    state.catalog.manifest["profiles"].append(profile)
+    lab = state.lab
+    lab.runtime.phone_discovery = PhoneDiscovery(lab.hass, lab.entry)
+    watcher = native_cache(lab)
+    watcher.async_process_client(HOST, "snom360", MAC)
+    flow = lab.hass.config_entries.flow
+    try:
+        preview = await flow.async_init("voip_stack", context={"source": SOURCE_DHCP}, data=info())
+        assert preview["step_id"] == "phone_discovered"
+        editor = await flow.async_configure(preview["flow_id"], {})
+        assert editor["step_id"] == "phone_user"
+        assert all(s.subentry_type != "physical_phone" for s in lab.entry.subentries.values())
+        created = await flow.async_configure(editor["flow_id"], editor["data_schema"]({}))
+        assert created["reason"] == "phone_configured"
+        saved = physical_record(state)
+        assert saved.data["pnp_enrollment"]["host"] == HOST
+        assert saved.data["host"] == "" and saved.data["profile_id"] == "snom/360"
+    finally:
+        await lab.runtime.phone_discovery.async_close()
+        lab.runtime.phone_discovery = None
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -600,16 +637,17 @@ async def test_discovery_candidate_removed_during_catalog_await_is_not_committed
     assert set(state.lab.entry.subentries) == before
 
 
-async def test_manual_matching_mac_keeps_observed_native_identity_and_host(physical_flow):
+@pytest.mark.parametrize("override", ["", "desk-admin.local"])
+async def test_manual_matching_mac_keeps_native_identity_and_only_stores_explicit_host(physical_flow, override):
     state = physical_flow
     candidate = cache_candidate(state)
     form = await start(state)
     assert candidate.native_subentry is None and not candidate.phone_id and not candidate.token
-    result = await submit(state, form, identity())
+    result = await submit(state, form, identity(advanced={"host": override}))
     assert result["type"] == "abort" and result["reason"] == "phone_configured"
     saved = physical_record(state)
     assert candidate.native_subentry is not None and saved.subentry_id == candidate.phone_id
-    assert saved.data["provisioning_token"] == candidate.token and saved.data["host"] == candidate.host
+    assert saved.data["provisioning_token"] == candidate.token and saved.data["host"] == override
 
 
 @pytest.mark.parametrize(("vendor", "model", "matches"), [

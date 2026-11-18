@@ -18,7 +18,7 @@ SAFE_PHONE_ERROR_CODES = frozenset({
     "phone_apply_target_unverified", "phone_apply_unsupported", "phone_apply_credentials_required",
     "phone_apply_authentication_failed", "phone_apply_http_error", "phone_apply_response_invalid",
     "phone_apply_identity_mismatch", "phone_apply_provisioning_not_configured",
-    "phone_apply_waiting_idle", "phone_apply_result_uncertain",
+    "phone_apply_waiting_idle", "phone_apply_result_uncertain", "phone_apply_sip_rejected",
 })
 
 

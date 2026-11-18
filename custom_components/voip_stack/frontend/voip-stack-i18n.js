@@ -1,4 +1,21 @@
+const CS = {
+  "Phone provisioning": "Nastavení telefonu",
+  "Provisioning URL": "Adresa pro nastavení",
+  "Copy provisioning URL": "Kopírovat adresu pro nastavení",
+  "URL copied": "Adresa zkopírována",
+  "Copy the selected address.": "Zkopírujte označenou adresu.",
+  "Provisioning URL unavailable": "Adresa pro nastavení není k dispozici",
+  "DHCP provisioning URL": "Adresa pro nastavení prostřednictvím DHCP",
+};
+
 const PT_BR = {
+  "Phone provisioning": "Provisionamento do telefone",
+  "Provisioning URL": "URL de provisionamento",
+  "Copy provisioning URL": "Copiar URL de provisionamento",
+  "URL copied": "URL copiada",
+  "Copy the selected address.": "Copie o endereço selecionado.",
+  "Provisioning URL unavailable": "URL de provisionamento indisponível",
+  "DHCP provisioning URL": "URL de provisionamento via DHCP",
   "Paging groups": "Grupos de anúncios",
   "Remove from all paging groups": "Remover de todos os grupos de anúncios",
   "Choose the existing groups whose announcements this phone should receive.": "Selecione os grupos existentes cujos anúncios este telefone deve receber.",
@@ -161,6 +178,13 @@ const PT_BR = {
 };
 
 const DE = {
+  "Phone provisioning": "Telefonprovisionierung",
+  "Provisioning URL": "Provisionierungs-URL",
+  "Copy provisioning URL": "Provisionierungs-URL kopieren",
+  "URL copied": "URL kopiert",
+  "Copy the selected address.": "Kopiere die markierte Adresse.",
+  "Provisioning URL unavailable": "Provisionierungs-URL nicht verfügbar",
+  "DHCP provisioning URL": "DHCP-Provisionierungs-URL",
   "Paging groups": "Durchsagegruppen",
   "Remove from all paging groups": "Aus allen Durchsagegruppen entfernen",
   "Choose the existing groups whose announcements this phone should receive.": "Wählen Sie vorhandene Gruppen, deren Durchsagen dieses Telefon empfangen soll.",
@@ -323,6 +347,13 @@ const DE = {
 };
 
 const IT = {
+  "Phone provisioning": "Provisioning del telefono",
+  "Provisioning URL": "URL di provisioning",
+  "Copy provisioning URL": "Copia URL di provisioning",
+  "URL copied": "URL copiato",
+  "Copy the selected address.": "Copia l’indirizzo selezionato.",
+  "Provisioning URL unavailable": "URL di provisioning non disponibile",
+  "DHCP provisioning URL": "URL per il provisioning tramite DHCP",
   "Paging groups": "Gruppi annunci",
   "Remove from all paging groups": "Rimuovi da tutti i gruppi annunci",
   "Choose the existing groups whose announcements this phone should receive.": "Seleziona i gruppi esistenti di cui questo telefono deve ricevere gli annunci.",
@@ -390,6 +421,7 @@ export function voipStackTranslate(hass, text) {
     : language === "pt" || language === "pt-br"
       ? PT_BR
       : null;
+  if (language === "cs" || language.startsWith("cs-")) return CS[value] || value;
   if (!dictionary) return value;
   if (dictionary[value]) return dictionary[value];
   if (dictionary === IT) return value;

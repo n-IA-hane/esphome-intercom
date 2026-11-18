@@ -63,6 +63,104 @@ def register_cached_account(lab):
     lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password")])
 
 
+async def test_discovered_address_is_only_a_hint_and_manual_management_override_can_be_cleared():
+    from custom_components.voip_stack.physical_phone import normalize_physical_phone
+    from custom_components.voip_stack.physical_phone_discovery import PhoneCandidate
+
+    candidate = PhoneCandidate("", "000413000001", "192.168.10.67", "snom", "snom360")
+    seed = candidate.setup_data()
+    assert candidate.public()["host"] == candidate.host and "host" not in seed
+    assert "host" not in candidate.native_subentry.data
+    data = normalize_physical_phone({**seed, "name": "Snom", "profile_id": "snom/360", "lines": [], "keys": []},
+        previous=seed)
+    assert data["host"] == ""
+    manual = normalize_physical_phone({**data, "host": "phone-admin.local"}, previous=data)
+    assert manual["host"] == "phone-admin.local"
+    assert normalize_physical_phone({**manual, "host": ""}, previous=manual)["host"] == ""
+    assert normalize_physical_phone({key: value for key, value in manual.items() if key != "host"},
+        previous=manual)["host"] == "phone-admin.local"
+
+
+async def test_snom_pnp_adoption_delivery_survives_dhcp_hint_change_without_authorizing_new_source(phone_lab, monkeypatch):
+    from dataclasses import replace
+    from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.physical_phone import draft_physical_subentry, normalize_physical_phone
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from custom_components.voip_stack.physical_phone_enrollment import phone_dhcp_host
+    from .test_physical_phone_dhcp_ha import native_cache
+
+    lab = phone_lab
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_provisioning": {"enabled": True, "base_url": "https://ha.example.test"}})
+    discovery = lab.runtime.phone_discovery = PhoneDiscovery(lab.hass, lab.entry)
+    monkeypatch.setattr(discovery, "_start_flow", AsyncMock())
+    original, changed, mac = "192.168.10.67", "192.168.10.68", "000413000001"
+    uri = f"sip:MAC%3a{mac}@localhost"
+    request = sip.SipMessage(method="SUBSCRIBE", uri=uri, headers=(
+        ("From", f"<{uri}>;tag=one"), ("Contact", f"<sip:{original}:5060>"),
+        ("Event", 'ua-profile;vendor="snom";model="snom360"')))
+    try:
+        assert (await discovery.handle(request, (original, 5060), "UDP")).follow_up is None
+        candidate = discovery.candidates[mac]
+        # DHCP refreshes an address hint after the actual PnP announcement.
+        watcher = native_cache(lab)
+        watcher.async_process_client(changed, "snom360-000001", mac)
+        discovery.observe_dhcp(DhcpServiceInfo(ip=changed, hostname="snom360-000001", macaddress=mac))
+        assert candidate.host == changed and candidate.pnp_host == original
+        seed = candidate.setup_data()
+        data = normalize_physical_phone({**seed, "name": "Snom", "profile_id": "snom/360", "lines": [], "keys": []},
+            previous=seed)
+        assert data["host"] == ""
+        record = draft_physical_subentry(data, previous=candidate.native_subentry, title=data["name"])
+        lab.hass.config_entries.async_add_subentry(lab.entry, record)
+        manager = lab.runtime.physical_phones = SimpleNamespace(owned=lambda: True, schedule=Mock(),
+            async_provisioning_url=AsyncMock(return_value=f"https://ha.example.test/{candidate.token}/{mac}.xml"))
+        accepted = await discovery.handle(request, (original, 5060), "UDP")
+        assert accepted.status == 200 and accepted.follow_up is not None
+        assert candidate.token.encode() in accepted.follow_up.body
+        indirect = replace(request, headers=(*request.headers, ("Record-Route", "<sip:router.example.test;lr>")))
+        assert (await discovery.handle(indirect, (original, 5060), "UDP")).follow_up is None
+        assert phone_dhcp_host(lab.hass, data) == changed
+        assert candidate.pnp_host == original
+        manager.schedule.reset_mock()
+        rejected = await discovery.handle(request, (changed, 5060), "UDP")
+        assert rejected.status == 200 and rejected.follow_up is None
+        manager.schedule.assert_not_called()
+    finally:
+        await discovery.async_close()
+        lab.runtime.phone_discovery = None
+        lab.runtime.physical_phones = None
+
+
+async def test_dhcp_address_hint_does_not_choose_management_target_or_receive_admin_credentials(phone_lab, monkeypatch):
+    from custom_components.voip_stack.physical_phone_enrollment import phone_dhcp_host
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    from custom_components.voip_stack.sip_registrar import SipRegistration
+    from .test_physical_phone_dhcp_ha import native_cache
+
+    lab = phone_lab
+    register_cached_account(lab)
+    data = phone(mac="000413000001", profile_id="snom/360", host="", admin_username="phone-admin", admin_password="fixture-admin-secret")
+    watcher = native_cache(lab)
+    watcher.async_process_client("192.168.10.67", "snom360-000001", data["mac"])
+    assert phone_dhcp_host(lab.hass, data) == "192.168.10.67"
+    manager = PhysicalPhoneProvisioner(lab.hass, lab.entry)
+    try:
+        with pytest.raises(ValueError, match="phone_apply_target_unverified"):
+            await manager._apply_target(data, {"port": 80})
+        # Management follows a current authenticated registrar binding, never
+        # the stale unauthenticated DHCP hint or a persisted discovery IP.
+        contacts = [SipRegistration("first", "sip:first@192.168.10.68", "192.168.10.68", 5060,
+            "UDP", float("inf"), instance_id="urn:uuid:phone")]
+        monkeypatch.setattr(lab.registrar, "registered_contacts", lambda _username: contacts)
+        origin, instance = await manager._apply_target(data, {"port": 80})
+        assert origin == "http://192.168.10.68" and instance == "urn:uuid:phone"
+        assert data["host"] == "" and not lab.sent and not lab.events
+    finally:
+        await manager.async_close()
+
+
 async def test_provisioning_off_keeps_discovery_without_importing_catalog_worker_or_http(phone_lab, monkeypatch):
     import builtins
     from custom_components.voip_stack import physical_phone_runtime as module
@@ -170,10 +268,11 @@ async def test_http_uses_ha_app_key_and_never_serves_bundle_sources(phone_lab):
     from custom_components.voip_stack.physical_phone_http import PhysicalPhoneView
     manager = SimpleNamespace(async_file=AsyncMock(return_value=b"ok"), states={})
     phone_lab.runtime.physical_phones = manager
-    request = SimpleNamespace(app={KEY_HASS: phone_lab.hass})
+    request = SimpleNamespace(app={KEY_HASS: phone_lab.hass},
+        transport=SimpleNamespace(get_extra_info=lambda key: ("192.0.2.10", 1234) if key == "peername" else None))
     assert (await PhysicalPhoneView().get(request, "phone", "token", "../source/file")).status == 404
     assert (await PhysicalPhoneView().get(request, "phone", "token", "phone.cfg")).body == b"ok"
-    manager.async_file.assert_awaited_once_with("phone", "token", "phone.cfg")
+    manager.async_file.assert_awaited_once_with("phone", "token", "phone.cfg", peer_host="192.0.2.10")
 
 
 def subscribe():

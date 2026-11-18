@@ -12,7 +12,7 @@ from pathlib import Path
 import secrets
 import socket
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
@@ -25,9 +25,15 @@ from .physical_phone import (
     provisioning_enabled,
     sync_physical_phone_devices,
 )
-from .phone_profile import render_phone_bundle, resolve_phone_keys, resolve_phone_language
+from .phone_profile import render_phone_bundle, resolve_phone_keys, resolve_phone_language, safe_profile_path
 from .physical_phone_apply import is_safe_phone_error, safe_phone_error
+from .physical_phone_enrollment import phone_enrollment_identity
 from .runtime_data import runtime_data
+
+# Existing v1 deskphone projections predate per-method delivery metadata.
+_LEGACY_SNOM_SETTINGS = frozenset({
+    "snom/300", "snom/320", "snom/360", "snom/3xx", "snom/720", "snom/7xx", "snom/820", "snom/8xx",
+})
 
 
 def provisioning_base_url(hass, entry, *, config=None):
@@ -57,8 +63,47 @@ def provisioning_base_url(hass, entry, *, config=None):
 
 
 def phone_provisioning_url(hass, entry, phone):
+    """The credential-scoped directory used by directory-based provisioning."""
     return (provisioning_base_url(hass, entry) + "/api/voip_stack/phone_provisioning/"
             + phone["phone_id"] + "/" + phone["provisioning_token"] + "/")
+
+
+def _legacy_grandstream_xml(profile):
+    """Older hardware bundles used FusionPBX's template name as an HTTP filename."""
+    vendor, _, model = profile.get("id", "").partition("/")
+    outputs = profile.get("outputs", ())
+    return (vendor == profile.get("vendor") == "grandstream"
+            and model.startswith(("grp26", "gxp", "gxv", "wp8"))
+            and "delivery" not in profile["capabilities"]
+            and len(outputs) == 1 and outputs[0]["format"] == "xml" and outputs[0]["path"] == "{mac}.xml")
+
+
+def _delivery_url(hass, entry, phone, profile, method):
+    directory = phone_provisioning_url(hass, entry, phone)
+    delivery = profile.get("capabilities", {}).get("delivery")
+    outputs = profile.get("outputs", ())
+    if delivery is not None:
+        if not isinstance(delivery, dict):
+            raise ValueError("phone_profile_not_ready")
+        target = delivery.get(method)
+    elif profile.get("id") in _LEGACY_SNOM_SETTINGS and profile.get("vendor") == "snom":
+        if len(outputs) != 1 or outputs[0]["format"] != "xml" or "{mac}" not in outputs[0]["path"]:
+            raise ValueError("phone_profile_not_ready")
+        target = outputs[0]["path"]
+    elif (method == "pnp" and profile.get("id", "").startswith("grandstream/grp26")
+          and _legacy_grandstream_xml(profile)):
+        target = "{mac}.xml"
+    else:
+        target = None
+    if target is None:
+        return directory
+    if (not isinstance(target, str) or not target
+            or sum(output["path"] == target for output in outputs) != 1):
+        raise ValueError("phone_profile_not_ready")
+    path = safe_profile_path(target.replace("{mac}", phone["mac"]))
+    if "{" in path or "}" in path:
+        raise ValueError("phone_profile_not_ready")
+    return directory + quote(path)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -84,7 +129,7 @@ def _freeze(value):
 
 def _render_inventory(phone):
     """Administrative credentials never enter renderer input or dependencies."""
-    return {key: value for key, value in phone.items() if key not in {"admin_username", "admin_password"}}
+    return {key: value for key, value in phone.items() if key not in {"admin_username", "admin_password", "pnp_enrollment"}}
 
 
 def _declared_slots(phone):
@@ -144,6 +189,42 @@ class PhysicalPhoneProvisioner:
         self._records = {}
         self._idle_retry_cancel = None
         self._active_apply = None
+        self._prepare_lock = asyncio.Lock()
+
+    async def _async_delivery_profile(self, phone):
+        prepared = self.files.get(phone["phone_id"])
+        if prepared is not None and prepared.dependencies.phone == _freeze(_render_inventory(phone)):
+            return prepared.profile
+        if phone["profile_id"] == "fanvil/x3u-pro" and not phone.get("catalog_commit"):
+            # Pre-pinning X3U Pro records already use the native directory.
+            return {}
+        profile, _ = await self.catalog.async_profile(phone["profile_id"], commit=phone.get("catalog_commit", ""))
+        return profile
+
+    async def async_setup_urls(self, phone):
+        """Resolve both administrative setup methods against one profile revision."""
+        profile = await self._async_delivery_profile(phone)
+        manual = _delivery_url(self.hass, self.entry, phone, profile, "manual")
+        dhcp = _delivery_url(self.hass, self.entry, phone, profile, "dhcp")
+        result = {"provisioning_url": manual}
+        if dhcp != manual:
+            result["dhcp_provisioning_url"] = dhcp
+        return result
+
+    async def async_provisioning_url(self, phone, *, method="manual"):
+        """Resolve the entry URL using this phone's selected, pinned profile."""
+        identity = phone["phone_id"]
+        if method == "pnp":
+            # A phone can issue its GET as soon as it receives the NOTIFY.
+            await self.async_prepare(phone)
+            prepared = self.files.get(identity)
+            if (prepared is None or prepared.dependencies.phone != _freeze(_render_inventory(phone))
+                    or self.states.get(identity, {}).get("state") not in {"unassigned", "ready", "downloaded"}):
+                raise ValueError("phone_profile_not_ready")
+            profile = prepared.profile
+        else:
+            profile = await self._async_delivery_profile(phone)
+        return _delivery_url(self.hass, self.entry, phone, profile, method)
 
     def owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -172,14 +253,20 @@ class PhysicalPhoneProvisioner:
         registrar = self.runtime.sip.component("registrar") if self.runtime.sip else None
         if registrar is not None:
             self._unsubscribers.append(registrar.subscribe_account_changes(self._account_changed))
+            self._unsubscribers.append(registrar.subscribe_contact_changes(self._account_changed))
         await self.async_reconcile()
 
     @callback
     def _account_changed(self, usernames):
-        self.schedule({identity for identity, phone in physical_phone_records(self.entry).items()
-                       if any(endpoint is not None and endpoint.username.casefold() in {str(name).casefold() for name in usernames}
+        affected = {str(name).casefold() for name in usernames}
+        phones = {identity for identity, phone in physical_phone_records(self.entry).items()
+                       if any(endpoint is not None and endpoint.username.casefold() in affected
                               for line in phone["lines"]
-                              if (endpoint := self.runtime.endpoints.get(line["endpoint_id"])) is not None)})
+                              if (endpoint := self.runtime.endpoints.get(line["endpoint_id"])) is not None)}
+        for identity in phones:
+            self._changed(identity)
+        if phones:
+            self.schedule(phones)
 
     @callback
     def _language_changed(self, event):
@@ -197,7 +284,9 @@ class PhysicalPhoneProvisioner:
         records = physical_phone_records(self.entry)
         return {identity for identity, state in self.states.items()
                 if (phone := records.get(identity)) is not None and phone.get("enabled", True)
-                and phone.get("admin_username") and phone.get("admin_password") and not state.get("error")
+                and ((phone.get("admin_username") and phone.get("admin_password"))
+                     or (phone["profile_id"] == "snom/360" and state.get("device_download_revision")))
+                and not state.get("error")
                 and state.get("apply_status") not in {"requesting", "uncertain", "error", "manual", "not_qualified"}
                 # Preparation can be pending behind an older requested revision.
                 # Waking its worker cannot replay that revision's attempted POST.
@@ -282,6 +371,22 @@ class PhysicalPhoneProvisioner:
         return str(URL.build(scheme=capability.get("scheme", "http"), host=host,
                              port=int(capability.get("port", 80)))), instance
 
+    def _snom_resync_contact(self, phone, firmware):
+        """Use a verified physical contact from one of the phone's assigned lines."""
+        registrar = self.runtime.sip.component("registrar") if self.runtime.sip is not None else None
+        if registrar is None:
+            return None
+        for line in phone["lines"]:
+            endpoint = self.runtime.endpoints.get(line["endpoint_id"])
+            if endpoint is None:
+                continue
+            contacts = self._device_contacts(phone, registrar.registered_contacts(endpoint.username))
+            if len(contacts) == 1:
+                contact = contacts[0]
+                if contact.user_agent.casefold() == f"snom360/{firmware}" and contact.transport.upper() in {"UDP", "TCP"}:
+                    return contact
+        return None
+
     async def _async_apply_if_needed(self, phone):
         """Apply only the latest qualified revision through the existing worker."""
         from aiohttp import ClientError, ClientTimeout, CookieJar
@@ -305,14 +410,34 @@ class PhysicalPhoneProvisioner:
                          apply_error="phone_apply_result_uncertain" if attempted else "")
             self.store.async_delay_save(lambda: self.states, 1)
             self._changed(identity)
-        capability = prepared.profile["capabilities"].get("apply", {})
-        if not isinstance(capability, dict) or capability.get("qualified") is not True or capability.get("method") != "fanvil_native_http":
+        caps = prepared.profile["capabilities"]
+        capability = caps.get("apply", {})
+        snom_firmware = "8.7.3.25.9"
+        resync = caps.get("resync", {})
+        snom = (phone["profile_id"] == prepared.profile.get("id") == "snom/360"
+                and isinstance(resync, dict) and resync.get("method") == "snom_check_sync"
+                and resync.get("qualification") == "documented_request"
+                and isinstance(resync.get("firmwares"), list) and snom_firmware in resync["firmwares"])
+        if not snom and (not isinstance(capability, dict) or capability.get("qualified") is not True
+                         or capability.get("method") != "fanvil_native_http"):
             status("not_qualified")
             return
-        if not phone.get("admin_username") or not phone.get("admin_password"):
+        if ((snom and (not state.get("device_download_revision")
+                       or state.get("device_download_identity") != phone_enrollment_identity(phone)))
+                or (not snom and (not phone.get("admin_username") or not phone.get("admin_password")))):
             status("manual")
             return
         revision = state.get("desired_revision", "")
+        if snom and state.get("state") == "waiting_idle" and self.busy(phone):
+            # A save can be waiting for preparation behind an older downloaded revision.
+            if state.get("apply_attempted_revision") != revision:
+                status("waiting_idle")
+            return
+        if snom and state.get("device_download_revision") == revision:
+            if state.get("apply_status") in {"waiting_idle", "manual", "pending"}:
+                state.pop("apply_status", None)
+                self._changed(identity)
+            return
         if not revision or state.get("apply_attempted_revision") == revision:
             return
         if self.busy(phone):
@@ -355,21 +480,63 @@ class PhysicalPhoneProvisioner:
         attempt = (identity, asyncio.current_task())
         self._active_apply = attempt
         try:
-            origin, instance = await self._apply_target(phone, capability)
+            if snom:
+                contact = self._snom_resync_contact(phone, snom_firmware)
+                sender = self.runtime.sip.component("udp_listener") if self.runtime.sip else None
+                if contact is None or sender is None:
+                    status("pending")
+                    return
+                flow, generation = contact.flow_key, contact.capability_generation
+            else:
+                origin, instance = await self._apply_target(phone, capability)
             if not await current():
                 return
             state.update(apply_status="requesting", apply_error="")
             self._changed(identity)
             self.store.async_delay_save(lambda: self.states, 1)
-            session = async_create_clientsession(self.hass, auto_cleanup=False,
-                cookie_jar=CookieJar(unsafe=True), timeout=ClientTimeout(total=15), trust_env=False)
-            try:
-                async with asyncio.timeout(25), session:
-                    result = await async_apply_fanvil(session, origin, phone, prepared.profile,
-                        phone_provisioning_url(self.hass, self.entry, phone), still_current=current,
-                        on_dispatch=dispatch)
-            finally:
-                session.detach()
+            if snom:
+                def contact_current():
+                    candidate = self._snom_resync_contact(phone, snom_firmware)
+                    return (same_candidate() and not self.busy(phone) and candidate is not None
+                            and candidate.capability_generation == generation and candidate.flow_key == flow
+                            and self.runtime.sip.component("udp_listener") is sender)
+
+                # Durable reservation before dispatch: a restart cannot repeat an
+                # unacknowledged command. A fresh registration can retry a pre-send deferral.
+                state["apply_attempted_revision"] = revision
+                await self.store.async_save(deepcopy(self.states))
+                if not await current() or not contact_current() or state.get("device_download_revision") == revision:
+                    raise PhoneApplyDeferred("phone_apply_waiting_idle" if self.busy(phone) else "phone_configuration_changed")
+                try:
+                    response = await sender.async_snom_check_sync(contact.contact_uri,
+                        (contact.source_host, contact.source_port), contact.transport,
+                        active=contact_current, on_sent=dispatch)
+                except OSError:
+                    if dispatched:
+                        uncertain()
+                        return
+                    raise PhoneApplyDeferred("phone_apply_target_unverified") from None
+                if response is None:
+                    if not dispatched:
+                        raise PhoneApplyDeferred("phone_apply_target_unverified")
+                    uncertain()
+                    return
+                if not 200 <= response.status_code < 300:
+                    if same_candidate():
+                        state.update(apply_status="error", apply_error="phone_apply_authentication_failed"
+                            if response.status_code in {401, 407} else "phone_apply_sip_rejected")
+                    return
+                result, instance = {"method": "snom_check_sync"}, ""
+            else:
+                session = async_create_clientsession(self.hass, auto_cleanup=False,
+                    cookie_jar=CookieJar(unsafe=True), timeout=ClientTimeout(total=15), trust_env=False)
+                try:
+                    async with asyncio.timeout(25), session:
+                        result = await async_apply_fanvil(session, origin, phone, prepared.profile,
+                            phone_provisioning_url(self.hass, self.entry, phone), still_current=current,
+                            on_dispatch=dispatch)
+                finally:
+                    session.detach()
             if same_candidate():
                 state.update(apply_status="requested", apply_attempted_revision=revision,
                              apply_request_time=time.time(), apply_error="",
@@ -378,6 +545,8 @@ class PhysicalPhoneProvisioner:
             if dispatched:
                 uncertain(closing=True)
             elif same_candidate(closing=True):
+                if snom and state.get("apply_attempted_revision") == revision:
+                    state.pop("apply_attempted_revision", None)
                 state.update(apply_status="pending", apply_error="")
             raise
         except PhoneApplyDeferred as error:
@@ -604,10 +773,16 @@ class PhysicalPhoneProvisioner:
                              "language": language, "language_code": language_code,
                              "time_zone": time_zone},
                 "lines": lines, "keys": resolve_phone_keys(self.runtime, phone, profile),
-                "directory": directory, "provisioning": {"url": phone_provisioning_url(self.hass, self.entry, phone)
+                "directory": directory, "provisioning": {"url": _delivery_url(self.hass, self.entry, phone, profile, "manual")
                     if "provision" in caps.get("functions", ()) else ""}}
 
     async def async_prepare(self, phone):
+        # SUBSCRIBE and the reconciliation worker share one rendering and storage owner.
+        async with self._prepare_lock:
+            if self.owned() and physical_phone_records(self.entry).get(phone["phone_id"]) == phone:
+                await self._prepare(phone)
+
+    async def _prepare(self, phone):
         identity = phone["phone_id"]
         state = self.states.setdefault(identity, {})
         if not phone.get("enabled", True):
@@ -670,12 +845,16 @@ class PhysicalPhoneProvisioner:
                 state.update(state="waiting_idle")
                 self._changed(identity)
                 return
+            formats = {output["path"].replace("{mac}", phone["mac"]): output["format"] for output in profile["outputs"]}
+            if _legacy_grandstream_xml(profile):
+                filename = phone["mac"] + ".xml"
+                files["cfg" + filename] = files[filename]
+                formats["cfg" + filename] = formats[filename]
             self.files[identity] = PreparedPhoneFiles(dependencies, deepcopy(profile), files)
             state.update(state="unassigned" if not phone["lines"] else "downloaded" if state.get("downloaded_revision") == revision else "ready",
                          desired_revision=revision, error="", profile_id=phone["profile_id"],
                          language_code=context["physical"]["language_code"],
-                         file_formats={output["path"].replace("{mac}", phone["mac"]): output["format"]
-                                       for output in profile["outputs"]})
+                         file_formats=formats)
             published = True
             self._changed(identity)
         finally:
@@ -688,7 +867,7 @@ class PhysicalPhoneProvisioner:
                     state["managed_slots"] = previous_footprint
                 await self._persist_footprint(identity)
 
-    async def async_file(self, identity, token, filename):
+    async def async_file(self, identity, token, filename, *, peer_host=""):
         if not self.owned():
             return None
         phone = physical_phone_records(self.entry).get(identity)
@@ -700,6 +879,15 @@ class PhysicalPhoneProvisioner:
         prepared = self.files.get(identity)
         if prepared is None:
             return None
+        from .physical_phone_enrollment import async_same_phone_lan, phone_dhcp_host
+
+        device_download = False
+        if peer_host and peer_host == phone_dhcp_host(self.hass, phone):
+            try:
+                device_download = await async_same_phone_lan(self.hass, peer_host, peer_host)
+            except (HomeAssistantError, OSError, ValueError):
+                # Attribution is optional; an authenticated file download still works.
+                pass
         try:
             current, _context = await self._capture(phone, prepared.profile,
                                                    profile_digest=prepared.dependencies.profile)
@@ -713,26 +901,57 @@ class PhysicalPhoneProvisioner:
         data = prepared.files.get(filename)
         if data is None:
             return None
+        if phone.get("pnp_enrollment"):
+            from .physical_phone import physical_phone_id, physical_phone_subentries
+
+            record = next(item for item in physical_phone_subentries(self.entry) if physical_phone_id(item) == identity)
+            # An empty marker also prevents falling back to the old volatile PnP binding.
+            self.hass.config_entries.async_update_subentry(self.entry, record,
+                data={**record.data, "pnp_enrollment": {}})
         state = self.states.setdefault(identity, {})
+        if device_download:
+            state.update(device_download_host=peer_host, device_download_revision=state.get("desired_revision"),
+                         device_download_identity=phone_enrollment_identity(phone))
         state.update(state="error" if state.get("error") else "unassigned" if not phone["lines"] else "downloaded",
                      downloaded_revision=state.get("desired_revision"), last_download=time.time())
         self.store.async_delay_save(lambda: self.states, 1)
         self._changed(identity)
         return data
 
+    def _device_contacts(self, phone, contacts):
+        """Correlate an authenticated registration with this physical handset."""
+        from .physical_phone_enrollment import phone_dhcp_host
+
+        state = self.states.get(phone["phone_id"], {})
+        paired = state.get("apply_target_instance")
+        if paired:
+            matches = [contact for contact in contacts if contact.instance_id == paired]
+            if matches:
+                return matches
+        source = state.get("device_download_host")
+        if not source or not contacts or source != phone_dhcp_host(self.hass, phone):
+            return []
+        matches = [contact for contact in contacts if contact.source_host == source]
+        return matches if len(matches) == 1 else []
+
     def public_state(self, identity):
         phone = physical_phone_records(self.entry).get(identity)
         value = dict(self.states.get(identity, {}))
         value.pop("managed_slots", None)
+        value.pop("device_download_host", None)
+        value.pop("device_download_identity", None)
         for key in ("error", "apply_error"):
             if key in value and not is_safe_phone_error(value[key]):
                 value.pop(key)
         if phone is not None:
             registrar = self.runtime.sip.component("registrar") if self.runtime.sip else None
-            value["lines"] = [{"slot": line["slot"], "endpoint_id": line["endpoint_id"],
-                "account_registered": bool(registrar and (endpoint := self.runtime.endpoints.get(line["endpoint_id"]))
-                                           and registrar.registered_contacts(endpoint.username)),
-                "device_registration_verified": False} for line in phone["lines"]]
+            value["lines"] = []
+            for line in phone["lines"]:
+                endpoint = self.runtime.endpoints.get(line["endpoint_id"])
+                contacts = registrar.registered_contacts(endpoint.username) if registrar and endpoint else ()
+                value["lines"].append({"slot": line["slot"], "endpoint_id": line["endpoint_id"],
+                    "account_registered": bool(contacts),
+                    "device_registration_verified": bool(self._device_contacts(phone, contacts))})
         return value
 
     @callback
@@ -753,8 +972,10 @@ class PhysicalPhoneProvisioner:
         if self._task is not None and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
-        if (store := getattr(self, "store", None)) is not None:
-            await store.async_save(self.states)
+        # An in-flight PnP preparation can still be unwinding a Store write.
+        async with self._prepare_lock:
+            if (store := getattr(self, "store", None)) is not None:
+                await store.async_save(self.states)
         self.files.clear()
         from .physical_phone_services import unregister_physical_phone_services
         unregister_physical_phone_services(self.hass)

@@ -21,7 +21,10 @@ class PhysicalPhoneView(HomeAssistantView):
             safe_profile_path(filename)
         except ValueError:
             return web.Response(status=404)
-        value = await manager.async_file(phone_id, token, filename)
+        # Only a direct connection can tie a download to a handset on its LAN.
+        transport = getattr(request, "transport", None)
+        peer = transport.get_extra_info("peername") if transport else None
+        value = await manager.async_file(phone_id, token, filename, peer_host=peer[0] if peer else "")
         if value is None:
             return web.Response(status=404, headers={"Cache-Control": "no-store"})
         format = manager.states.get(phone_id, {}).get("file_formats", {}).get(filename)

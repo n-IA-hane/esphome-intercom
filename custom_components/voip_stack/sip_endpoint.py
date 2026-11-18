@@ -509,13 +509,25 @@ class SipEndpointManager:
             return bool(callable(request) and await request(call_id))
         return False
 
-    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
-        """Use the listener transport, including an already registered TCP flow."""
+    def _contact_endpoint(self, transport):
         if transport.upper() not in {"UDP", "TCP"}:
             return None
         server = self.tcp_server if transport.upper() == "TCP" else self.udp_server
-        endpoint = getattr(server, "endpoint", None)
+        return getattr(server, "endpoint", None)
+
+    async def async_options(self, uri: str, addr: tuple[str, int], transport: str, *, timeout: float = 3.0):
+        """Use the listener transport, including an already registered TCP flow."""
+        endpoint = self._contact_endpoint(transport)
         return await endpoint.async_options(uri, addr, timeout=timeout) if endpoint is not None else None
+
+    async def async_snom_check_sync(self, uri, addr, transport, *, active, on_sent, timeout=3.0):
+        """Ask one registered flow to re-read its settings, without requesting a reboot."""
+        endpoint = self._contact_endpoint(transport)
+        if endpoint is None:
+            return None
+        return await endpoint.async_contact_request("NOTIFY", uri, addr,
+            headers=(("Event", "check-sync;reboot=false"), ("Subscription-State", "terminated")),
+            timeout=timeout, active=active, on_sent=on_sent)
 
     async def async_send_dtmf_info(self, call_id: str, digit: str) -> bool:
         """Send DTMF INFO through the transport owning an inbound dialog."""

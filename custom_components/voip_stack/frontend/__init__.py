@@ -67,6 +67,13 @@ class JSModuleRegistration:
             module_url=f"{popup_url}?v={INTEGRATION_VERSION}-{asset_stamp}",
             embed_iframe=False,
         )
+        if not async_panel_exists(self.hass, "voip-stack-provisioning"):
+            await async_register_panel(
+                self.hass, frontend_url_path="voip-stack-provisioning",
+                webcomponent_name="voip-stack-provisioning",
+                module_url=f"{URL_BASE}/voip-stack-provisioning.js?v={INTEGRATION_VERSION}-{asset_stamp}",
+                require_admin=True, embed_iframe=False,
+            )
 
         if self.lovelace is None:
             _LOGGER.warning("Lovelace data not available, skipping resource registration")

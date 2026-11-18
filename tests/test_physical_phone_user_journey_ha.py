@@ -19,6 +19,10 @@ async def test_one_form_adoption_uses_native_identity_and_optional_account(physi
     state = physical_flow
     before = set(state.lab.entry.subentries)
     form = await start(state)
+    optional_account = next(value for key, value in form["data_schema"].schema.items() if key.schema == "account_id")
+    assert optional_account.config["mode"] == "dropdown"
+    assert optional_account.config["options"][0]["value"] == "no_account"
+    assert form["data_schema"]({"profile_id": "fanvil/x3u-pro"})["account_id"] == "no_account"
     result = await submit(state, form, identity(**({"account_id": "sip:front"} if assigned else {})))
     assert result["type"] == "abort" and result["reason"] == "phone_configured"
     (record,) = [value for key, value in state.lab.entry.subentries.items() if key not in before]

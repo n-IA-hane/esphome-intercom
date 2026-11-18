@@ -33,8 +33,19 @@ def _phone(manager, data):
 
 
 async def async_provision_phone(call):
+    from .physical_phone import discovery_enabled
+    from .physical_phone_enrollment import arm_dhcp_enrollment
+
     manager = await _manager(call)
     phone = _phone(manager, call.data)
+    if discovery_enabled(manager.entry):
+        arm_dhcp_enrollment(manager.hass, phone)
+        for subentry in physical_phone_subentries(manager.entry):
+            if (physical_phone_id(subentry) == phone["phone_id"]
+                    and phone.get("pnp_enrollment") != subentry.data.get("pnp_enrollment")):
+                manager.hass.config_entries.async_update_subentry(manager.entry, subentry,
+                    data={**subentry.data, "pnp_enrollment": phone["pnp_enrollment"]})
+                break
     state = manager.states.setdefault(phone["phone_id"], {})
     active = manager._active_apply
     if not (active is not None and active[0] == phone["phone_id"] and not active[1].done()):
@@ -50,8 +61,10 @@ async def async_provisioning_state(call):
     phone = _phone(manager, call.data)
     result = {"phone_id": phone["phone_id"], **manager.public_state(phone["phone_id"])}
     if call.data.get("include_url", False):
-        from .physical_phone_provisioning import phone_provisioning_url
-        result["provisioning_url"] = phone_provisioning_url(manager.hass, manager.entry, phone)
+        urls = await manager.async_setup_urls(phone)
+        if not manager.owned() or physical_phone_records(manager.entry).get(phone["phone_id"]) != phone:
+            raise ServiceValidationError("Phone provisioning configuration changed")
+        result.update(urls)
     return result
 
 

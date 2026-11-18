@@ -73,6 +73,61 @@ def test_dhcp_identity_rejects_nonmatching_or_unsafe_hints(updates):
         dhcp_identity(info(**updates))
 
 
+@pytest.mark.parametrize(("other", "expected"), [
+    (None, HOST), (info(), HOST), (info(ip="192.168.10.68"), ""),
+    (info(macaddress="001122334455"), ""), (SimpleNamespace(ip=HOST), ""),
+    (SimpleNamespace(macaddress=MAC), ""), (info(hostname="unknown"), ""),
+])
+def test_native_address_requires_an_unambiguous_model_mac_and_ip(monkeypatch, other, expected):
+    from custom_components.voip_stack.physical_phone_enrollment import phone_dhcp_host
+
+    hass = SimpleNamespace(config=SimpleNamespace(components={"dhcp"}))
+    monkeypatch.setattr(dhcp, "async_discovered_service_info", lambda _hass: [info(), other])
+    assert phone_dhcp_host(hass, {"mac": MAC, "profile_id": "snom/360"}) == expected
+
+
+@pytest.mark.parametrize("model", (
+    "T23G T23P T27G T27P T29G T31G T33G T40G T40P T41P T41S T42G T42S T42U T43U "
+    "T46G T46S T46U T48G T48S T52S T53 T53W T54S T57W W70B"
+).split())
+def test_yealink_dhcp_option_12_uses_documented_model(model):
+    hostname = model if model == "W70B" else f"SIP-{model}"
+    assert dhcp_identity(info(macaddress="805e0c000001", hostname=hostname)) == (
+        "805e0c000001", HOST, "yealink", model)
+
+
+@pytest.mark.parametrize(("mac", "hostname"), [
+    ("000413000001", "SIP-T46U"), ("805e0c000001", "snom360-000001"),
+    ("805e0c000001", "SIP-T46U-spare"), ("805e0c000001", "SIP-T46"),
+    ("805e0c000001", "SIP-T21P_E2"), ("805e0c000001", "SIP-W70B"),
+    ("805e0c000001", "W52P"), ("805e0c000001", "W80B"),
+    ("80:5e-0c:00:00:01", "SIP-T46U"), ("000b82000001", "GRP2614"),
+    ("0c383e000001", "Fanvil"), ("805e0c000001", "meeting-room"),
+])
+def test_dhcp_requires_an_unambiguous_known_vendor_and_model(mac, hostname):
+    with pytest.raises(ValueError, match="invalid_phone_discovery"):
+        dhcp_identity(SimpleNamespace(macaddress=mac, hostname=hostname, ip=HOST))
+
+
+async def test_native_yealink_dhcp_dispatches_known_models_without_granting_delivery(discovery_lab):
+    lab = discovery_lab
+    watcher = native_cache(lab, matched=True)
+    if not lab.hass.is_running:
+        await lab.hass.async_start()
+    watcher.async_process_client("192.168.10.61", "SIP-T46U", "805e0c000001")
+    watcher.async_process_client("192.168.10.62", "W70B", "001565000002")
+    watcher.async_process_client("192.168.10.63", "SIP-T46U-spare", "805e0c000003")
+    watcher.async_process_client("192.168.10.64", "SIP-T46U", "000413000004")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    flows = proposals(lab)
+    assert {flow["context"]["title_placeholders"]["name"] for flow in flows} == {"Yealink T46U", "Yealink W70B"}
+    assert all(flow["context"]["source"] == SOURCE_DHCP for flow in flows)
+    assert set(lab.collector.candidates) == {"805e0c000001", "001565000002"}
+    assert all(not candidate.token and not candidate.pnp_host for candidate in lab.collector.candidates.values())
+    assert not physical_phone_records(lab.entry) and not lab.sent
+    lab.catalog_guard.assert_not_called()
+
+
 async def test_native_dhcp_matcher_creates_lazy_proposal_without_taking_existing_device(discovery_lab):
     lab = discovery_lab
     registry = dr.async_get(lab.hass)
@@ -147,7 +202,8 @@ async def test_dhcp_never_grants_pnp_delivery_without_an_actual_pre_adoption_req
         assert len(proposals(lab)) == 1
     assert candidate.pnp_host == (HOST if pnp_before_adoption else "")
     adopt_candidate(lab.hass, lab.entry, candidate, "snom")
-    manager = lab.runtime.physical_phones = SimpleNamespace(owned=lambda: True, schedule=Mock())
+    manager = lab.runtime.physical_phones = SimpleNamespace(owned=lambda: True, schedule=Mock(),
+        async_provisioning_url=AsyncMock(return_value=f"https://ha.example.test/{candidate.token}/{MAC}.xml"))
     response = await lab.collector.handle(request, (HOST, 5060), "UDP")
     assert response.status == 200
     assert (response.follow_up is not None) is pnp_before_adoption
@@ -160,6 +216,61 @@ async def test_dhcp_never_grants_pnp_delivery_without_an_actual_pre_adoption_req
     # Later DHCP changes never authorize or redirect an adopted phone's URL.
     assert lab.collector.observe_dhcp(info(ip="192.168.10.69")) is None
     assert candidate.host == HOST and candidate.pnp_host == (HOST if pnp_before_adoption else "")
+
+
+async def test_admin_enrollment_follows_unique_dhcp_within_same_lan_and_rechecks_after_render(
+        discovery_lab, monkeypatch):
+    from homeassistant.components import network
+    from custom_components.voip_stack.physical_phone_enrollment import arm_dhcp_enrollment
+    from .test_physical_phone_runtime_ha import add, phone
+
+    lab = discovery_lab
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_provisioning": {"enabled": True, "base_url": "https://ha.example.test"}})
+    watcher = native_cache(lab)
+    watcher.async_process_client(HOST, "snom360", MAC)
+    data = phone(profile_id="snom/360", mac=MAC)
+    arm_dhcp_enrollment(lab.hass, data)
+    record = add(lab, data)
+    issued = data["pnp_enrollment"]["issued"]
+    monkeypatch.setattr(network, "async_get_adapters", AsyncMock(return_value=[{"enabled": True,
+        "ipv4": [{"address": "192.168.10.1", "network_prefix": 24}]}]))
+    manager = lab.runtime.physical_phones = SimpleNamespace(owned=lambda: True, schedule=Mock(),
+        async_provisioning_url=AsyncMock(return_value="https://ha.example.test/config.xml"))
+
+    async def deliver(source, *, extra=(), model="snom360", contact=None):
+        uri = f"sip:MAC%3a{MAC}@localhost"
+        request = sip.SipMessage(method="SUBSCRIBE", uri=uri, headers=(("From", f"<{uri}>;tag=one"),
+            ("Event", f'ua-profile;vendor="snom";model="{model}"'),
+            ("Contact", f"<sip:{contact or source}:5060>"), *extra))
+        return (await lab.collector.handle(request, (source, 5060), "UDP")).follow_up
+
+    assert not lab.collector.candidates and await deliver(HOST)
+    changed = "192.168.10.68"
+    assert not await deliver(changed)
+    watcher.async_process_client(changed, "snom360", MAC)
+    assert not await deliver(HOST) and await deliver(changed)
+    assert not await deliver(changed, contact=HOST)
+    assert not await deliver(changed, extra=(("Record-Route", "<sip:router.example.test;lr>"),))
+    assert not await deliver(changed, model="D785")
+    watcher.async_process_client(changed, "computer", "001122000099")
+    assert not await deliver(changed)
+    watcher.async_process_client("192.168.10.99", "computer", "001122000099")
+    off_link = "192.168.11.68"
+    watcher.async_process_client(off_link, "snom360", MAC)
+    assert not await deliver(off_link)
+    watcher.async_process_client(changed, "snom360", MAC)
+    lab.hass.config_entries.async_update_subentry(lab.entry, record, data={**record.data,
+        "pnp_enrollment": {**data["pnp_enrollment"], "issued": issued - 3601}})
+    assert not await deliver(changed)
+    lab.hass.config_entries.async_update_subentry(lab.entry, record, data=data)
+
+    async def rotate_during_render(*_args, **_kwargs):
+        lab.hass.config_entries.async_update_subentry(lab.entry, record,
+            data={**record.data, "provisioning_token": "new-test-credential"})
+        return "https://ha.example.test/config.xml"
+    manager.async_provisioning_url.side_effect = rotate_during_render
+    assert not await deliver(changed) and not await deliver(changed)
 
 
 async def test_pnp_socket_failure_preserves_dhcp_collector_and_its_owned_flow(discovery_lab, monkeypatch, caplog):

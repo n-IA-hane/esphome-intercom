@@ -5,6 +5,7 @@ import asyncio
 from datetime import timedelta
 import logging
 from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.core import Context
@@ -235,6 +236,30 @@ async def test_physical_buttons_use_real_admin_service_and_context_without_bypas
     await rotate.async_press()
     assert lab.entry.subentries[lab.subentry.subentry_id].data["provisioning_token"] != previous
     assert "provisioning_token" not in (rotate.extra_state_attributes or {})
+
+
+async def test_registered_state_belongs_to_the_downloading_handset(physical_entities, monkeypatch):
+    from custom_components.voip_stack.physical_phone import physical_phone_id
+    from custom_components.voip_stack.physical_phone_entity import PhysicalPhoneProvisioningSensor
+    from .test_physical_phone_runtime_ha import register_cached_account
+
+    lab = physical_entities
+    register_cached_account(lab)
+    identity = physical_phone_id(lab.subentry)
+    sensor = PhysicalPhoneProvisioningSensor(lab.hass, lab.entry, identity)
+    state = lab.manager.states[identity] = {"state": "downloaded", "device_download_host": "192.0.2.18"}
+    contacts = [SimpleNamespace(source_host="192.0.2.19", instance_id="other")]
+    monkeypatch.setattr(lab.registrar, "registered_contacts", lambda _name: contacts)
+    monkeypatch.setattr("custom_components.voip_stack.physical_phone_enrollment.phone_dhcp_host",
+                        lambda *_: "192.0.2.18")
+    assert sensor.native_value == "downloaded"
+    contacts.append(SimpleNamespace(source_host="192.0.2.18", instance_id="handset"))
+    assert sensor.native_value == "registered"
+    state["state"] = "ready"
+    assert sensor.native_value == "ready"
+    state["state"] = "downloaded"
+    contacts.pop()
+    assert sensor.native_value == "downloaded"
 
 
 async def test_full_sensor_setup_with_ha11_device_info_keeps_phonebook_loaded(physical_entities, monkeypatch, ha11_device_info):
