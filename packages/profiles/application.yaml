@@ -23,7 +23,7 @@ substitutions:
   _fw_music: ${ 'music' in firmware_features }
   _fw_sendspin: ${ _fw_music and 'sendspin' in firmware_features }
   _fw_timers: ${ _fw_voice and 'timers' in firmware_features }
-  _fw_timer_stop_word: ${ _fw_timers and _fw_wake_word and firmware_timer_stop_word }
+  _fw_timer_stop_word: ${ _fw_timers and _fw_wake_word and (firmware_timer_stop_word | string | lower) == 'true' }
   _fw_display: ${ 'display' in firmware_features }
   _fw_lvgl: ${ _fw_display and firmware_lvgl }
   _fw_led: ${ 'status_led' in firmware_features and (not firmware_status_led_requires_display or _fw_display) }
