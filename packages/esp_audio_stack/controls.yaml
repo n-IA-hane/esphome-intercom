@@ -31,6 +31,11 @@ button:
 
 # FULL microphone consumers use unity gain after their processor.
 defaults:
+  _adaptive_volume_controls:
+    switch:
+      - platform: esp_audio_stack
+        adaptive_volume:
+          name: Adaptive volume
   _stack_phone_mic_control:
     substitutions:
       settings_microphone_gain_id: mic_gain
@@ -45,4 +50,5 @@ defaults:
           max_value: ${mic_gain_max}
           initial_value: ${ mic_gain_initial | default(0) }
 packages:
+  adaptive_volume_control: ${ _adaptive_volume_controls if (audio_adaptive_volume | default(false) | string | lower) == 'true' else {} }
   phone_mic_gain: ${ _stack_phone_mic_control if "voice" not in firmware_features else {} }

@@ -24,6 +24,22 @@ and speaker-only phones are supported: omit the direction you do not have.
 This works with native ESPHome audio or Audio Stack. Voice Assistant, a display
 and the runtime controller are not prerequisites.
 
+## Optional adaptive volume
+
+On profiles that include the shared Audio Stack controls (including Spotpear,
+WS3 BOX V2 and P4 FULL), add this to the device YAML and install the firmware:
+
+```yaml
+substitutions:
+  audio_adaptive_volume: true
+```
+
+The device gains an **Adaptive volume** switch in Home Assistant. Turn it on
+to play more quietly at night. Sustained room noise raises playback towards
+your chosen Master level. Master at 0% stays muted. The switch starts off on
+first use. [Audio Stack settings](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/esphome/components/esp_audio_stack/README.md#adaptive-playback-volume)
+describe threshold tuning for custom boards.
+
 ## One stack per ESP
 
 An ESP firmware currently supports one `voip_stack` instance. Its entity

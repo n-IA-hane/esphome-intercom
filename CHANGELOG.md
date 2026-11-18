@@ -48,6 +48,8 @@
 
 ### Official component alignment and independent rendering
 
+- Offer an optional [adaptive speaker volume switch](docs/ESP_ENTITY_SURFACE.md#optional-adaptive-volume) on devices using the shared Audio Stack controls.
+
 - Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,
   using the shared platform owners. Retain the exact official Core 373 preview
   for qualification without raising unrelated standalone-component minimums.
