@@ -2,6 +2,10 @@
 
 ## 2026.12.0-dev
 
+- Discover SIP phones independently of provisioning. An unadopted handset
+  appears in Home Assistant without receiving a configuration URL. Recognize
+  the percent-encoded MAC announced by Snom 360 firmware.
+
 - Show the parties in completed call activity for the PBX and its SIP accounts.
   Enable Home Assistant debug logging to follow number normalization, routing
   decisions, phone policies, queue offers and fallbacks by Call-ID.

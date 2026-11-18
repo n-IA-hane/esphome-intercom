@@ -26,7 +26,6 @@ from .physical_phone import (
     sync_physical_phone_devices,
 )
 from .phone_profile import render_phone_bundle, resolve_phone_keys, resolve_phone_language
-from .phone_profile_catalog import PhoneProfileCatalog
 from .physical_phone_apply import is_safe_phone_error, safe_phone_error
 from .runtime_data import runtime_data
 
@@ -132,6 +131,8 @@ class PhysicalPhoneProvisioner:
     """Resolve one inventory revision using the existing directory and registrar."""
 
     def __init__(self, hass, entry):
+        from .phone_profile_catalog import PhoneProfileCatalog
+
         self.hass, self.entry, self.runtime = hass, entry, entry.runtime_data
         self.catalog = PhoneProfileCatalog(hass)
         self.states = {}
@@ -140,9 +141,7 @@ class PhysicalPhoneProvisioner:
         self._task = None
         self._closed = False
         self._unsubscribers = []
-        self.discovery = None
         self._records = {}
-        self.discovery_error = ""
         self._idle_retry_cancel = None
         self._active_apply = None
 
@@ -170,19 +169,6 @@ class PhysicalPhoneProvisioner:
         self._unsubscribers.append(self.runtime.endpoints.subscribe(lambda _event: self.schedule()))
         if self.runtime.directory is not None:
             self._unsubscribers.append(self.runtime.directory.subscribe(lambda: self.schedule()))
-        from .physical_phone_discovery import PhoneDiscovery
-        discovery = self.discovery = PhoneDiscovery(self)
-        try:
-            await discovery.async_start()
-        except (OSError, HomeAssistantError):
-            self.discovery_error = "phone_discovery_unavailable"
-            await discovery.async_close()
-            self.discovery = None
-        if not self.owned():
-            await discovery.async_close()
-            if self.discovery is discovery:
-                self.discovery = None
-            return
         registrar = self.runtime.sip.component("registrar") if self.runtime.sip else None
         if registrar is not None:
             self._unsubscribers.append(registrar.subscribe_account_changes(self._account_changed))
@@ -764,8 +750,6 @@ class PhysicalPhoneProvisioner:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        if self.discovery is not None:
-            await self.discovery.async_close()
         if self._task is not None and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)

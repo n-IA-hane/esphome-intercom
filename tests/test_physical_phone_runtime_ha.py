@@ -63,14 +63,26 @@ def register_cached_account(lab):
     lab.registrar.update_accounts([SipAccount("first", "First", "fixture-only-password")])
 
 
-async def test_default_off_does_not_create_catalog_or_services_or_discovery(phone_lab, monkeypatch):
-    from custom_components.voip_stack import physical_phone_provisioning as module
-    construct = Mock(side_effect=AssertionError("Opt-out performed IO"))
-    monkeypatch.setattr(module, "PhoneProfileCatalog", construct)
-    await module.async_reconcile_physical_phones(phone_lab.hass, phone_lab.entry)
+async def test_provisioning_off_keeps_discovery_without_importing_catalog_worker_or_http(phone_lab, monkeypatch):
+    import builtins
+    from custom_components.voip_stack import physical_phone_runtime as module
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+
+    start = AsyncMock()
+    monkeypatch.setattr(PhoneDiscovery, "async_start", start)
+    original_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        assert name.rsplit(".", 1)[-1] not in {"physical_phone_provisioning", "phone_profile_catalog", "physical_phone_http"}
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    discovery = phone_lab.runtime.phone_discovery
+    assert discovery is not None and discovery.owned()
     assert phone_lab.runtime.physical_phones is None
     assert not phone_lab.hass.services.has_service("voip_stack", "provision_phone")
-    construct.assert_not_called()
+    start.assert_awaited_once()
+    await discovery.async_close()
+    phone_lab.runtime.phone_discovery = None
 
 
 async def test_disabled_provisioning_account_edit_keeps_bindings_without_catalog(phone_lab, monkeypatch):
@@ -181,15 +193,15 @@ async def test_pnp_is_only_candidate_and_never_claims_an_authenticated_endpoint(
         pnp_identity(request, ("8.8.8.8", 5060))
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
         "phone_provisioning": {"enabled": True, "base_url": "http://192.168.1.200:8123", "allow_insecure_http": True}})
-    owner = SimpleNamespace(hass=phone_lab.hass, entry=phone_lab.entry, owned=lambda: True)
-    discovery = PhoneDiscovery(owner)
+    discovery = PhoneDiscovery(phone_lab.hass, phone_lab.entry)
+    phone_lab.runtime.phone_discovery = discovery
     discovery._start_flow = AsyncMock()
     result = await discovery.handle(request, ("192.168.1.12", 5060), "UDP")
     await phone_lab.hass.async_block_till_done()
-    assert result.status == 200 and result.follow_up.method == "NOTIFY"
-    assert result.follow_up.content_type == "application/url"
+    assert result.status == 200 and result.follow_up is None
     candidate = discovery.candidates["001122334455"]
-    assert candidate.token.encode() in result.follow_up.body and "token" not in candidate.public()
+    assert candidate.token == "" and candidate.native_subentry is None
+    assert "provisioning_token" not in candidate.public() and "phone_id" not in candidate.public()
     assert not list(phone_lab.runtime.endpoints.endpoints)
     assert not phone_lab.runtime.sip.calls
     await discovery.async_close()
@@ -235,20 +247,18 @@ async def test_context_supports_profiles_without_language_and_preserves_supporte
 
 async def test_start_reconcile_and_disable_cancel_one_worker_and_keep_ordinary_sip_owner(phone_lab, monkeypatch, socket_enabled):
     from custom_components.voip_stack import physical_phone_provisioning as module
-    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
     from homeassistant.setup import async_setup_component
     assert await async_setup_component(phone_lab.hass, "http", {})
     data = phone()
     sub = add(phone_lab, data)
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
         "phone_provisioning": {"enabled": True}})
-    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("no multicast")))
     prepare = AsyncMock()
     monkeypatch.setattr(module.PhysicalPhoneProvisioner, "async_prepare", prepare)
     await module.async_reconcile_physical_phones(phone_lab.hass, phone_lab.entry)
     await phone_lab.hass.async_block_till_done()
     manager = phone_lab.runtime.physical_phones
-    assert manager.discovery is None and manager.discovery_error == "phone_discovery_unavailable"
+    assert not hasattr(manager, "discovery")
     assert prepare.await_count == 1
     await manager.async_reconcile()
     await phone_lab.hass.async_block_till_done()
@@ -263,6 +273,99 @@ async def test_start_reconcile_and_disable_cancel_one_worker_and_keep_ordinary_s
     await module.async_reconcile_physical_phones(phone_lab.hass, phone_lab.entry)
     assert phone_lab.runtime.sip is original and phone_lab.runtime.physical_phones is None
     assert not phone_lab.hass.services.has_service("voip_stack", "provision_phone")
+
+
+async def test_discovery_flags_reconcile_without_replacing_sip_or_creating_a_worker(phone_lab, monkeypatch):
+    import asyncio
+    from custom_components.voip_stack import physical_phone_runtime as module
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+
+    start = AsyncMock()
+    monkeypatch.setattr(PhoneDiscovery, "async_start", start)
+    engine = phone_lab.runtime.sip
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    first = phone_lab.runtime.phone_discovery
+    pending = asyncio.create_task(asyncio.Event().wait())
+    first._tasks.add(pending)
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    assert phone_lab.runtime.phone_discovery is first
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
+        "phone_provisioning": {"enabled": False, "discovery_enabled": False}})
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    assert phone_lab.runtime.phone_discovery is None and first._closed and pending.cancelled()
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
+        "phone_provisioning": {"enabled": False, "discovery_enabled": True}})
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    second = phone_lab.runtime.phone_discovery
+    assert second is not first and second.owned() and not first.owned()
+    assert phone_lab.runtime.sip is engine and phone_lab.runtime.physical_phones is None
+    await second.async_close()
+    phone_lab.runtime.phone_discovery = None
+
+
+async def test_discovery_start_failure_is_independent_of_provisioning_worker(phone_lab, monkeypatch, caplog):
+    from homeassistant.setup import async_setup_component
+    from custom_components.voip_stack import physical_phone_runtime as module
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+    from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+
+    assert await async_setup_component(phone_lab.hass, "http", {})
+    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock(side_effect=OSError("no multicast")))
+    monkeypatch.setattr(PhysicalPhoneProvisioner, "async_prepare", AsyncMock())
+    engine = phone_lab.runtime.sip
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
+        "phone_provisioning": {"enabled": True}})
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    manager = phone_lab.runtime.physical_phones
+    assert manager is not None and manager.owned() and phone_lab.runtime.phone_discovery is None
+    assert phone_lab.hass.services.has_service("voip_stack", "provision_phone")
+    assert phone_lab.runtime.sip is engine and "Phone discovery unavailable" in caplog.text
+    manager.catalog.async_clear = AsyncMock()
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
+        "phone_provisioning": {"enabled": False, "discovery_enabled": False}})
+    await module.async_reconcile_physical_phone_runtime(phone_lab.hass, phone_lab.entry)
+    assert phone_lab.runtime.physical_phones is None and manager._closed
+    assert not phone_lab.hass.services.has_service("voip_stack", "provision_phone")
+
+
+async def test_disabling_provisioning_preserves_the_independent_discovery(cached_physical_config, monkeypatch):
+    from custom_components.voip_stack import physical_phone_runtime as module
+    from custom_components.voip_stack.physical_phone_discovery import PhoneDiscovery
+
+    state = cached_physical_config
+    lab = state.lab
+    monkeypatch.setattr(PhoneDiscovery, "async_start", AsyncMock())
+    state.manager.catalog.async_clear = AsyncMock()
+    engine = lab.runtime.sip
+    await module.async_reconcile_physical_phone_runtime(lab.hass, lab.entry)
+    discovery = lab.runtime.phone_discovery
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "phone_provisioning": {"enabled": False}})
+    await module.async_reconcile_physical_phone_runtime(lab.hass, lab.entry)
+    assert lab.runtime.phone_discovery is discovery and discovery.owned() and not discovery._closed
+    assert lab.runtime.physical_phones is None and state.manager._closed and not state.manager.files
+    assert lab.runtime.sip is engine and not lab.hass.services.has_service("voip_stack", "provision_phone")
+    await discovery.async_close()
+    lab.runtime.phone_discovery = None
+
+
+async def test_setup_retry_closes_old_discovery_before_the_entry_is_visible(phone_lab, monkeypatch):
+    from custom_components import voip_stack
+    from custom_components.voip_stack import phone_config
+    from custom_components.voip_stack.const import CONF_INITIAL_PHONE_CREATED
+
+    class StopBeforeNewRuntime(Exception):
+        pass
+
+    discovery = phone_lab.runtime.phone_discovery = SimpleNamespace(async_close=AsyncMock())
+    phone_lab.hass.config_entries.async_update_entry(phone_lab.entry,
+        data={**phone_lab.entry.data, CONF_INITIAL_PHONE_CREATED: True})
+    monkeypatch.setattr(voip_stack, "_runtime_data", lambda _: None)
+    monkeypatch.setattr(phone_config, "migrate_browser_accounts", Mock(side_effect=StopBeforeNewRuntime))
+    with pytest.raises(StopBeforeNewRuntime):
+        await voip_stack.async_setup_entry(phone_lab.hass, phone_lab.entry)
+    discovery.async_close.assert_awaited_once()
+    assert phone_lab.runtime.phone_discovery is None
 
 
 @pytest.mark.parametrize("disable_http_server", [True], indirect=True)
@@ -315,17 +418,16 @@ async def test_existing_sip_application_admits_only_opted_in_discovery_before_ac
     from custom_components.voip_stack.sip_application import SipApplicationMethods
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
         "phone_provisioning": {"enabled": True, "base_url": "https://ha.example.test"}})
-    owner = SimpleNamespace(hass=phone_lab.hass, entry=phone_lab.entry, owned=lambda: True)
-    owner.discovery = PhoneDiscovery(owner)
-    owner.discovery._start_flow = AsyncMock()
-    phone_lab.runtime.physical_phones = owner
+    discovery = PhoneDiscovery(phone_lab.hass, phone_lab.entry)
+    discovery._start_flow = AsyncMock()
+    phone_lab.runtime.phone_discovery = discovery
     application = SipApplicationMethods(phone_lab.hass, phone_lab.registrar)
     request = subscribe()
     accepted = await application.handle(request, ("192.168.1.12", 5060), "UDP")
-    assert accepted.status == 200 and accepted.follow_up.method == "NOTIFY"
-    phone_lab.runtime.physical_phones = None
+    assert accepted.status == 200 and accepted.follow_up is None
+    phone_lab.runtime.phone_discovery = None
     assert (await application.handle(request, ("192.168.1.12", 5060), "UDP")).status == 403
-    await owner.discovery.async_close()
+    await discovery.async_close()
     application.account_unsubscribe()
 
 
@@ -335,8 +437,8 @@ async def test_untrusted_mac_announcement_cannot_redisclose_existing_download_cr
     add(phone_lab, data)
     phone_lab.hass.config_entries.async_update_entry(phone_lab.entry, data={**phone_lab.entry.data,
         "phone_provisioning": {"enabled": True, "base_url": "https://ha.example.test"}})
-    owner = SimpleNamespace(hass=phone_lab.hass, entry=phone_lab.entry, owned=lambda: True, schedule=Mock())
-    discovery = PhoneDiscovery(owner)
+    discovery = PhoneDiscovery(phone_lab.hass, phone_lab.entry)
+    phone_lab.runtime.phone_discovery = discovery
     result = await discovery.handle(subscribe(), ("192.168.1.99", 5060), "UDP")
     assert result.status == 200 and result.follow_up is None
     await discovery.async_close()
@@ -1108,6 +1210,7 @@ async def test_entry_store_lifetime_reuses_owners_and_cancels_delayed_writes(
     queue_store = Store(lab.hass, 1, f"voip_stack.queues.{lab.entry.entry_id}")
     queues = lab.runtime.queues = QueueManager(lab.hass, lab.entry, store=queue_store)
     originals = (bindings._store, state.manager.store, queue_store)
+    discovery = lab.runtime.phone_discovery = SimpleNamespace(async_close=AsyncMock())
     # Real Store timers must not resurrect the deleted files after removal.
     for store in originals:
         store.async_delay_save(lambda: {"pending_fixture": True}, 60)
@@ -1115,10 +1218,15 @@ async def test_entry_store_lifetime_reuses_owners_and_cancels_delayed_writes(
     monkeypatch.setattr(lab.hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True))
     monkeypatch.setattr(voip_stack, "_async_apply_assist_intents", AsyncMock())
     monkeypatch.setattr("custom_components.voip_stack.websocket_api._async_shutdown_all", AsyncMock())
-    monkeypatch.setattr(voip_stack, "_async_stop_sip_endpoint", AsyncMock())
+    async def stop_sip(_hass):
+        assert lab.runtime.phone_discovery is None
+        discovery.async_close.assert_awaited_once()
+    monkeypatch.setattr(voip_stack, "_async_stop_sip_endpoint", stop_sip)
     assert await voip_stack.async_unload_entry(lab.hass, lab.entry)
     assert lab.runtime.entry_stores == originals
     assert bindings._closed and state.manager._closed and queues.closed
+    discovery.async_close.assert_awaited_once()
+    assert lab.runtime.phone_discovery is None
     assert all(Path(store.path).is_file() for store in originals)
     assert dict(lab.entry.data) == before
     if permanent:

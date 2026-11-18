@@ -153,7 +153,7 @@
           "parking": "Anruf parken",
           "voicemail": "Mailbox-Stimme",
           "phone_services": "LDAP-Verzeichnis",
-          "phone_provisioning": "Physical phone provisioning"
+          "phone_provisioning": "Telefonerkennung und Provisionierung"
         }
       },
       "phone_services": {
@@ -171,9 +171,10 @@
         "title": "LDAP-Verzeichnis"
       },
       "phone_provisioning": {
-        "title": "Physical phone provisioning",
-        "description": "Enable the optional profile catalog and physical phone setup. Existing SIP accounts remain the owners of credentials and calls. The public URL must be reachable by your phones.",
+        "title": "Telefonerkennung und Provisionierung",
+        "description": "Die Erkennung zeigt Telefone in Home Assistant an. Aktiviere die Provisionierung separat, um Profile herunterzuladen und ausgewählte Telefone einzurichten.",
         "data": {
+          "discovery_enabled": "SIP-Telefone im lokalen Netzwerk entdecken",
           "enabled": "Enable physical phone provisioning",
           "base_url": "Home Assistant URL for phones",
           "allow_insecure_http": "Allow HTTP on a trusted local network"
@@ -184,7 +185,7 @@
       },
       "phone_discovered": {
         "title": "Discovered phone: {name}",
-        "description": "A phone announced MAC {mac} at {host}. Configure it to choose a verified profile and bind existing SIP accounts, or use Ignore to leave it unconfigured."
+        "description": "Ein Telefon hat sich unter {host} (MAC {mac}) gemeldet. Du kannst es als entdeckt belassen oder ignorieren. Aktiviere zur Verwaltung die Provisionierung und schließe die Einrichtung ab."
       },
       "phone_user": {
         "title": "Physical phone",
@@ -319,7 +320,8 @@
       "phone_ldap_mode_unsupported": "Dieses Telefonprofil unterstützt den konfigurierten LDAP-Verbindungsmodus nicht.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
       "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
-      "phone_provisioning_url_unavailable": "Es ist keine automatische URL für die Telefonkonfiguration verfügbar. Konfiguriere eine HTTPS-URL für Home Assistant, gib eine vom Telefon erreichbare HTTPS-URL ein oder erlaube HTTP ausdrücklich im lokalen Netzwerk."
+      "phone_provisioning_url_unavailable": "Es ist keine automatische URL für die Telefonkonfiguration verfügbar. Konfiguriere eine HTTPS-URL für Home Assistant, gib eine vom Telefon erreichbare HTTPS-URL ein oder erlaube HTTP ausdrücklich im lokalen Netzwerk.",
+      "phone_provisioning_disabled": "Die Provisionierung ist ausgeschaltet. Aktiviere sie unter VoIP Stack > Neu konfigurieren > Telefonerkennung und Provisionierung und kehre hierher zurück."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",

@@ -153,7 +153,7 @@
           "parking": "Parcheggio chiamate",
           "voicemail": "Voce della segreteria",
           "phone_services": "Rubrica LDAP",
-          "phone_provisioning": "Provisioning telefoni fisici"
+          "phone_provisioning": "Rilevamento e provisioning telefoni"
         }
       },
       "phone_services": {
@@ -171,9 +171,10 @@
         }
       },
       "phone_provisioning": {
-        "title": "Provisioning telefoni fisici",
-        "description": "Abilita il catalogo facoltativo e la configurazione dei telefoni fisici. Gli account SIP esistenti restano proprietari delle credenziali e delle chiamate. L'URL pubblico deve essere raggiungibile dai telefoni.",
+        "title": "Rilevamento e provisioning telefoni",
+        "description": "Il rilevamento mostra i telefoni in Home Assistant. Abilita separatamente il provisioning per scaricare i profili e configurare i telefoni che scegli di gestire.",
         "data": {
+          "discovery_enabled": "Scopri i telefoni SIP sulla rete locale",
           "enabled": "Abilita provisioning telefoni fisici",
           "base_url": "URL di Home Assistant per i telefoni",
           "allow_insecure_http": "Consenti HTTP su una rete locale fidata"
@@ -184,7 +185,7 @@
       },
       "phone_discovered": {
         "title": "Telefono rilevato: {name}",
-        "description": "Un telefono ha annunciato il MAC {mac} su {host}. Configuralo per scegliere un profilo verificato e associare account SIP esistenti, oppure usa Ignora per lasciarlo non configurato."
+        "description": "Il telefono ha annunciato la sua presenza da {host} (MAC {mac}). Puoi lasciarlo tra i dispositivi rilevati o scegliere Ignora. Per gestirlo, abilita il provisioning e completa la configurazione."
       },
       "phone_user": {
         "title": "Telefono fisico",
@@ -319,7 +320,8 @@
       "phone_line_has_keys": "Riassegna o rimuovi i tasti che usano questa linea prima di eliminare l'associazione.",
       "phone_ldap_mode_unsupported": "Questo profilo del telefono non supporta la modalità di connessione LDAP configurata.",
       "invalid_phone_key_order": "Seleziona ogni tasto esistente esattamente una volta.",
-      "invalid_phone_admin_credentials": "Inserisci credenziali amministrative valide per questo telefono."
+      "invalid_phone_admin_credentials": "Inserisci credenziali amministrative valide per questo telefono.",
+      "phone_provisioning_disabled": "Il provisioning è disattivato. Per gestire questo telefono, abilitalo da VoIP Stack > Riconfigura > Rilevamento e provisioning telefoni, poi torna qui."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",

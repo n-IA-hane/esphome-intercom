@@ -254,8 +254,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         await async_refresh_and_push_phonebook(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)
-    from .physical_phone_provisioning import async_reconcile_physical_phones
-    await async_reconcile_physical_phones(hass, entry)
+    from .physical_phone_runtime import async_reconcile_physical_phone_runtime
+    await async_reconcile_physical_phone_runtime(hass, entry)
 
 
 def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:

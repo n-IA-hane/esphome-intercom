@@ -2,11 +2,12 @@
 
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from homeassistant.config_entries import ConfigSubentry, SOURCE_IGNORE, SOURCE_INTEGRATION_DISCOVERY, SOURCE_USER
 from homeassistant.data_entry_flow import InvalidData
 import pytest
+import voluptuous as vol
 
 from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,
@@ -460,23 +461,27 @@ async def test_verified_catalog_statuses_remain_selectable(physical_flow, status
     assert physical_phone_data(physical_record(state))["profile_id"] == PROFILE
 
 
-def cache_candidate(state):
+def cache_candidate(state, *, vendor="Fanvil", model="X3U Pro"):
     from custom_components.voip_stack.physical_phone_discovery import PhoneCandidate
-    from custom_components.voip_stack.physical_phone import draft_physical_subentry, physical_phone_id
-    draft = draft_physical_subentry({"mac": "001122334455", "provisioning_token": "private-candidate-credential"})
-    candidate = PhoneCandidate(physical_phone_id(draft), "001122334455", "192.0.2.10",
-                               "Fanvil", "X3U Pro", token="private-candidate-credential", native_subentry=draft)
-    state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog,
-        discovery=SimpleNamespace(candidates={candidate.mac: candidate}))
+    candidate = PhoneCandidate("", "001122334455", "192.0.2.10", vendor, model)
+    state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
+    state.lab.runtime.phone_discovery = SimpleNamespace(candidates={candidate.mac: candidate}, _closed=False)
     return candidate
+
+
+async def discover(state, candidate):
+    return await state.lab.hass.config_entries.flow.async_init("voip_stack",
+        context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
 
 
 async def test_main_native_discovery_reuses_editor_without_child_flow_or_second_pbx(physical_flow):
     state = physical_flow
     candidate = cache_candidate(state)
     assert "provisioning_token" not in candidate.public() and "token" not in candidate.public()
-    result = await state.lab.hass.config_entries.flow.async_init("voip_stack",
-        context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
+    result = await discover(state, candidate)
+    assert result["type"] == "form" and result["step_id"] == "phone_discovered"
+    assert not state.catalog.calls and candidate.native_subentry is None and not candidate.token
+    result = await state.lab.hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] == "form" and result["step_id"] == "phone_user"
     assert candidate.token not in repr(result)
     assert not state.lab.hass.config_entries.subentries.async_progress()
@@ -487,6 +492,149 @@ async def test_main_native_discovery_reuses_editor_without_child_flow_or_second_
     assert physical.data["provisioning_token"] == candidate.token
     assert len([entry for entry in state.lab.hass.config_entries.async_entries("voip_stack")
                 if entry.source != SOURCE_IGNORE]) == 1
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_discovery_preview_is_informative_without_catalog_or_credentials(physical_flow, enabled):
+    state = physical_flow
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": enabled}})
+    candidate = cache_candidate(state, vendor="snom", model="snom360")
+    before = set(state.lab.entry.subentries)
+    preview = await discover(state, candidate)
+    assert preview["type"] == "form" and preview["step_id"] == "phone_discovered"
+    assert preview["data_schema"]({}) == {} and not preview["errors"]
+    assert preview["description_placeholders"] == {
+        "name": "Snom 360", "mac": "00:11:22:33:44:55", "host": "192.0.2.10",
+        "vendor": "snom", "model": "snom360"}
+    pending = state.lab.hass.config_entries.flow.async_get(preview["flow_id"])
+    assert pending["context"]["title_placeholders"] == {"name": "Snom 360"}
+    assert candidate.native_subentry is None and not candidate.phone_id and not candidate.token
+    assert not state.catalog.calls and set(state.lab.entry.subentries) == before
+    assert state.lab.entry.data["phone_provisioning"]["enabled"] is enabled
+    assert not state.lab.hass.config_entries.subentries.async_progress()
+
+
+async def test_disabled_preview_can_continue_after_separate_provisioning_opt_in(physical_flow):
+    state = physical_flow
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": False}})
+    candidate = cache_candidate(state)
+    preview = await discover(state, candidate)
+    blocked = await state.lab.hass.config_entries.flow.async_configure(preview["flow_id"], {})
+    assert blocked["type"] == "form" and blocked["step_id"] == "phone_discovered"
+    assert blocked["errors"] == {"base": "phone_provisioning_disabled"}
+    assert not state.lab.entry.data["phone_provisioning"]["enabled"]
+    assert candidate.native_subentry is None and not state.catalog.calls
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": {"enabled": True}})
+    editor = await state.lab.hass.config_entries.flow.async_configure(blocked["flow_id"], {})
+    assert editor["type"] == "form" and editor["step_id"] == "phone_user"
+    assert candidate.native_subentry is not None and candidate.token
+    assert state.catalog.calls == [("manifest", "", False)]
+    assert candidate.token not in repr(editor)
+
+
+@pytest.mark.parametrize("change", ["disabled", "removed", "expired", "replaced"])
+async def test_discovery_rechecks_live_candidate_before_entering_editor(physical_flow, change):
+    state = physical_flow
+    candidate = cache_candidate(state)
+    before = set(state.lab.entry.subentries)
+    preview = await discover(state, candidate)
+    if change == "disabled":
+        state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+            "phone_provisioning": {"enabled": True, "discovery_enabled": False}})
+    elif change == "removed":
+        state.lab.runtime.phone_discovery.candidates.clear()
+    elif change == "expired":
+        candidate.seen -= 86400
+    else:
+        state.lab.runtime.phone_discovery = None
+    result = await state.lab.hass.config_entries.flow.async_configure(preview["flow_id"], {})
+    assert result["type"] == "abort" and result["reason"] == "phone_discovery_expired"
+    assert candidate.native_subentry is None and not state.catalog.calls
+    assert set(state.lab.entry.subentries) == before
+
+
+@pytest.mark.parametrize("change", ["disabled", "removed", "provisioning_disabled", "changed_mac"])
+async def test_discovery_editor_rechecks_candidate_before_saving(physical_flow, change):
+    state = physical_flow
+    candidate = cache_candidate(state)
+    before = set(state.lab.entry.subentries)
+    preview = await discover(state, candidate)
+    editor = await state.lab.hass.config_entries.flow.async_configure(preview["flow_id"], {})
+    values = editor["data_schema"]({})
+    reason = "phone_discovery_expired"
+    if change == "disabled":
+        state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+            "phone_provisioning": {"enabled": True, "discovery_enabled": False}})
+    elif change == "removed":
+        state.lab.runtime.phone_discovery.candidates.clear()
+    elif change == "provisioning_disabled":
+        state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+            "phone_provisioning": {"enabled": False}})
+        reason = "phone_provisioning_disabled"
+    else:
+        values["mac"] = "00:11:22:33:44:66"
+        reason = "invalid_phone_discovery"
+    result = await state.lab.hass.config_entries.flow.async_configure(editor["flow_id"], values)
+    assert result["type"] == "abort" and result["reason"] == reason
+    assert set(state.lab.entry.subentries) == before
+    assert not any(call[0] == "profile" for call in state.catalog.calls)
+
+
+async def test_discovery_candidate_removed_during_catalog_await_is_not_committed(physical_flow, monkeypatch):
+    state = physical_flow
+    candidate = cache_candidate(state)
+    before = set(state.lab.entry.subentries)
+    preview = await discover(state, candidate)
+    editor = await state.lab.hass.config_entries.flow.async_configure(preview["flow_id"], {})
+    original = state.catalog.async_profile
+    async def load_then_expire(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        state.lab.runtime.phone_discovery.candidates.clear()
+        return result
+    monkeypatch.setattr(state.catalog, "async_profile", load_then_expire)
+    result = await state.lab.hass.config_entries.flow.async_configure(editor["flow_id"], editor["data_schema"]({}))
+    assert result["type"] == "abort" and result["reason"] == "phone_discovery_expired"
+    assert set(state.lab.entry.subentries) == before
+
+
+async def test_manual_matching_mac_keeps_observed_native_identity_and_host(physical_flow):
+    state = physical_flow
+    candidate = cache_candidate(state)
+    form = await start(state)
+    assert candidate.native_subentry is None and not candidate.phone_id and not candidate.token
+    result = await submit(state, form, identity())
+    assert result["type"] == "abort" and result["reason"] == "phone_configured"
+    saved = physical_record(state)
+    assert candidate.native_subentry is not None and saved.subentry_id == candidate.phone_id
+    assert saved.data["provisioning_token"] == candidate.token and saved.data["host"] == candidate.host
+
+
+@pytest.mark.parametrize(("vendor", "model", "matches"), [
+    ("snom", "snom360", True), ("Snom", "360", True),
+    ("snom", "snom3600", False), ("snom", "snomD360", False), ("other", "360", False),
+])
+async def test_discovery_model_preselection_requires_exact_verified_vendor_and_model(
+    physical_flow, vendor, model, matches
+):
+    state = physical_flow
+    profile = {**deepcopy(state.catalog.profiles[PROFILE][0]), "id": "snom/360", "vendor": "snom", "model": "360"}
+    state.catalog.profiles[profile["id"]] = (profile, {})
+    state.catalog.manifest["profiles"].append(profile)
+    candidate = cache_candidate(state, vendor=vendor, model=model)
+    preview = await discover(state, candidate)
+    editor = await state.lab.hass.config_entries.flow.async_configure(preview["flow_id"], {})
+    profile_field = next(key for key in editor["data_schema"].schema if key.schema == "profile_id")
+    selector = editor["data_schema"].schema[profile_field]
+    assert {"value": "snom/360", "label": "Snom 360"} in selector.config["options"]
+    if matches:
+        assert editor["data_schema"]({})["profile_id"] == "snom/360"
+        assert editor["data_schema"]({})["name"] == "Snom 360"
+    else:
+        assert profile_field.default is vol.UNDEFINED
+    assert state.catalog.calls == [("manifest", "", False)]
 
 
 async def test_native_ignore_keeps_inventory_and_accounts_unmodified(physical_flow):
@@ -503,6 +651,7 @@ async def test_native_ignore_keeps_inventory_and_accounts_unmodified(physical_fl
         context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
     assert result["type"] == "abort" and result["reason"] == "already_configured"
     assert set(state.lab.entry.subentries) == before
+    assert not state.catalog.calls and candidate.native_subentry is None and not candidate.token
 
 
 async def test_main_opt_out_and_provisioning_error_have_no_catalog_io_or_reload(physical_flow):
@@ -524,6 +673,28 @@ async def test_main_opt_out_and_provisioning_error_have_no_catalog_io_or_reload(
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
     assert not state.catalog.calls
     state.reload.assert_not_awaited()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_discovery_preference_only_does_not_validate_url_or_load_catalog(physical_flow, monkeypatch, enabled):
+    state = physical_flow
+    config = {"enabled": enabled, "base_url": "", "allow_insecure_http": False}
+    state.lab.hass.config_entries.async_update_entry(state.lab.entry, data={**state.lab.entry.data,
+        "phone_provisioning": config})
+    validate_url = Mock(side_effect=AssertionError("discovery must not validate a provisioning URL"))
+    monkeypatch.setattr("custom_components.voip_stack.physical_phone_provisioning.provisioning_base_url", validate_url)
+    form = await state.lab.hass.config_entries.flow.async_init("voip_stack",
+        context={"source": "reconfigure", "entry_id": state.lab.entry.entry_id})
+    form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
+        {"next_step_id": "phone_provisioning"})
+    values = form["data_schema"]({})
+    assert values["discovery_enabled"] is True
+    result = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
+        {**values, "discovery_enabled": False})
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert state.lab.entry.data["phone_provisioning"] == {**config, "discovery_enabled": False}
+    assert not state.catalog.calls
+    validate_url.assert_not_called()
 
 
 async def test_main_enable_reports_catalog_failure_without_persisting(physical_flow, monkeypatch):
@@ -566,7 +737,7 @@ async def test_main_enable_resolves_provisional_url_before_catalog_and_accepts_c
         "enabled": True, "base_url": base_url, "allow_insecure_http": allow_http})
     assert corrected["type"] == "abort" and corrected["reason"] == "reconfigure_successful"
     assert state.lab.entry.data["phone_provisioning"] == {
-        "enabled": True, "base_url": base_url, "allow_insecure_http": allow_http}
+        "enabled": True, "discovery_enabled": True, "base_url": base_url, "allow_insecure_http": allow_http}
     assert state.catalog.calls == [("manifest", "", False)]
     state.reload.assert_not_awaited()
 
@@ -591,7 +762,7 @@ async def test_main_enable_rejects_malformed_url_without_disclosing_it_or_loadin
 async def test_main_discovery_requires_the_current_cached_candidate(physical_flow):
     state = physical_flow
     candidate = cache_candidate(state)
-    state.lab.runtime.physical_phones.discovery.candidates.clear()
+    state.lab.runtime.phone_discovery.candidates.clear()
     result = await state.lab.hass.config_entries.flow.async_init("voip_stack",
         context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
     assert result["type"] == "abort" and result["reason"] == "phone_discovery_expired"
@@ -628,6 +799,8 @@ async def test_main_adapter_language_and_account_keep_one_editor_draft(physical_
     candidate = cache_candidate(state)
     form = await state.lab.hass.config_entries.flow.async_init("voip_stack",
         context={"source": SOURCE_INTEGRATION_DISCOVERY}, data={"discovery_candidate": candidate.public()})
+    assert form["step_id"] == "phone_discovered"
+    form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"], {})
     assert form["step_id"] == "phone_user"
     form = await state.lab.hass.config_entries.flow.async_configure(form["flow_id"],
         form["data_schema"]({"advanced": {"follow_ha_language": False}}))

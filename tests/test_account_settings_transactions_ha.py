@@ -35,13 +35,13 @@ async def account(lab, identity, username, extension, **settings):
 def isolate_listener_integrations(monkeypatch):
     """Keep this configuration test away from network/provisioning work."""
     from custom_components.voip_stack import (
-        config_entry_runtime, mailbox, phone_services, physical_phone_provisioning,
+        config_entry_runtime, mailbox, phone_services, physical_phone_runtime,
     )
 
     monkeypatch.setattr(config_entry_runtime, "async_refresh_and_push_phonebook", AsyncMock())
     monkeypatch.setattr(mailbox, "async_refresh_mailbox_state", AsyncMock())
     monkeypatch.setattr(phone_services, "async_reconcile_phone_services", AsyncMock())
-    monkeypatch.setattr(physical_phone_provisioning, "async_reconcile_physical_phones", AsyncMock())
+    monkeypatch.setattr(physical_phone_runtime, "async_reconcile_physical_phone_runtime", AsyncMock())
 
 
 def capture_applied_signatures(lab):

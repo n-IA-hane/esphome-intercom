@@ -83,9 +83,9 @@ class SipApplicationMethods:
                 and request.header("Event").partition(";")[0].strip().casefold() == "ua-profile"):
             from .runtime_data import runtime_data
             runtime = runtime_data(self.hass)
-            manager = runtime.physical_phones if runtime is not None else None
-            if manager is not None and manager.owned() and manager.discovery is not None:
-                return await manager.discovery.handle(request, addr, transport)
+            discovery = runtime.phone_discovery if runtime is not None else None
+            if discovery is not None and discovery.owned():
+                return await discovery.handle(request, addr, transport)
         try:
             subscriber = sip.parse_sip_uri(_uri_from_header(request.header("From"))).user
         except (ValueError, sip.SipError):

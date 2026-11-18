@@ -142,8 +142,8 @@ backend TTS or media announcement, use the existing
 
 ## Adopt a phone before assigning an account
 
-With optional provisioning/discovery enabled, HA proposes supported discovered
-phones for adoption. Account assignment is optional during adoption: an
+With phone discovery enabled, HA shows announced phones for review, even
+when provisioning is off. Enable provisioning before adopting one. Account assignment is optional during adoption: an
 unassigned handset remains available for later association. DHCP addresses are
 not the phone's stable identity. Its MAC/model and private provisioning
 credential identify it; an optional network hint does not determine online

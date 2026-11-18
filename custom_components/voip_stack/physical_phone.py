@@ -20,9 +20,25 @@ KEY_FUNCTIONS = frozenset({"line", "speed_dial", "blf", "queue_login", "queue_pa
 _MODEL_LABELS = {"fanvil/x3u-pro": "X3U Pro"}
 
 
+def phone_candidate_name(vendor, model):
+    """Format an advertised model for HA without changing the identity on the wire."""
+    brand = str(vendor or "").strip()
+    brand = {"snom": "Snom", "fanvil": "Fanvil", "yealink": "Yealink",
+             "grandstream": "Grandstream"}.get(brand.casefold(), brand)
+    model = str(model or "").strip()
+    if brand and model.casefold().startswith(brand.casefold()):
+        model = model[len(brand):].lstrip(" -_")
+    return " ".join(part for part in (brand, model) if part)
+
+
 def physical_phone_model(profile_id):
     """Display verified model labels without guessing other model names."""
     return _MODEL_LABELS.get(profile_id, profile_id.partition("/")[2])
+
+
+def discovery_enabled(entry) -> bool:
+    """Listen for phone announcements independently of file provisioning."""
+    return bool(entry and entry.data.get(CONF_PHONE_PROVISIONING, {}).get("discovery_enabled", True))
 
 
 def provisioning_enabled(entry) -> bool:

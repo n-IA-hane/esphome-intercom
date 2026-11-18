@@ -153,7 +153,7 @@
           "parking": "Call parking",
           "voicemail": "Voicemail voice",
           "phone_services": "LDAP directory",
-          "phone_provisioning": "Physical phone provisioning"
+          "phone_provisioning": "Phone discovery and provisioning"
         }
       },
       "phone_services": {
@@ -171,9 +171,10 @@
         }
       },
       "phone_provisioning": {
-        "title": "Physical phone provisioning",
-        "description": "Enable the optional profile catalog and physical phone setup. Existing SIP accounts remain the owners of credentials and calls. The public URL must be reachable by your phones.",
+        "title": "Phone discovery and provisioning",
+        "description": "Discovery shows phones in Home Assistant. Enable provisioning separately to download profiles and configure phones you adopt.",
         "data": {
+          "discovery_enabled": "Discover SIP phones on the local network",
           "enabled": "Enable physical phone provisioning",
           "base_url": "Home Assistant URL for phones",
           "allow_insecure_http": "Allow HTTP on a trusted local network"
@@ -184,7 +185,7 @@
       },
       "phone_discovered": {
         "title": "Discovered phone: {name}",
-        "description": "A phone announced MAC {mac} at {host}. Configure it to choose a verified profile and bind existing SIP accounts, or use Ignore to leave it unconfigured."
+        "description": "A phone announced itself at {host} (MAC {mac}). It can remain in Discovered or be ignored. To manage it, enable provisioning and complete the phone setup."
       },
       "phone_user": {
         "title": "Physical phone",
@@ -319,7 +320,8 @@
       "phone_line_has_keys": "Reassign or remove keys using this line before removing the association.",
       "phone_ldap_mode_unsupported": "This phone profile does not support the configured LDAP connection mode.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
-      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
+      "phone_provisioning_disabled": "Provisioning is off. To manage this phone, enable provisioning under VoIP Stack > Reconfigure > Phone discovery and provisioning, then return here."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",

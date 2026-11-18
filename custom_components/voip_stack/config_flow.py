@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 import re
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -514,17 +515,22 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_phone_provisioning(self, user_input=None):
         """Download an optional index only after explicit opt-in."""
-        from .physical_phone import CONF_PHONE_PROVISIONING
-        from .physical_phone_provisioning import provisioning_base_url
-        from .phone_profile_catalog import PhoneProfileCatalog
+        from .physical_phone import CONF_PHONE_PROVISIONING, discovery_enabled
         entry = self._current_entry()
         if entry is None:
             return self.async_abort(reason="configure_pbx_first")
         values = dict(entry.data.get(CONF_PHONE_PROVISIONING, {}))
+        values.setdefault("discovery_enabled", discovery_enabled(entry))
         errors = {}
         if user_input is not None:
+            previous = dict(values)
             values.update(user_input)
-            if values.get("enabled"):
+            provisioning_changed = not previous.get("enabled", False) or any(
+                values.get(key, default) != previous.get(key, default)
+                for key, default in (("base_url", ""), ("allow_insecure_http", False)))
+            if values.get("enabled") and provisioning_changed:
+                from .physical_phone_provisioning import provisioning_base_url
+                from .phone_profile_catalog import PhoneProfileCatalog
                 try:
                     provisioning_base_url(self.hass, entry, config=values)
                 except ValueError as error:
@@ -538,6 +544,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_update_and_abort(entry,
                     data_updates={CONF_PHONE_PROVISIONING: values}, reason="reconfigure_successful")
         return self.async_show_form(step_id="phone_provisioning", errors=errors, data_schema=vol.Schema({
+            vol.Required("discovery_enabled", default=values["discovery_enabled"]): BooleanSelector(),
             vol.Required("enabled", default=bool(values.get("enabled", False))): BooleanSelector(),
             vol.Optional("base_url", default=values.get("base_url", "")): TextSelector(),
             vol.Required("allow_insecure_http", default=bool(values.get("allow_insecure_http", False))): BooleanSelector(),
@@ -545,34 +552,56 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_integration_discovery(self, discovery_info):
         """Native discovery card chains into the existing PBX's child editor."""
-        from .physical_phone import physical_phone_records, provisioning_enabled
-        from .runtime_data import runtime_data
-        candidate = discovery_info.get("discovery_candidate", {})
+        candidate = discovery_info.get("discovery_candidate", {}) if isinstance(discovery_info, Mapping) else {}
+        if not isinstance(candidate, Mapping):
+            return self.async_abort(reason="invalid_phone_discovery")
         mac = str(candidate.get("mac") or "")
         if not re.fullmatch(r"[0-9a-f]{12}", mac):
             return self.async_abort(reason="invalid_phone_discovery")
         await self.async_set_unique_id("physical_phone:" + mac)
         self._abort_if_unique_id_configured()
+        self._physical_candidate_mac = mac
         entry = self._current_entry()
-        if entry is None or not provisioning_enabled(entry):
+        if entry is None:
             return self.async_abort(reason="configure_pbx_first")
-        if any(phone["mac"] == mac for phone in physical_phone_records(entry).values()):
-            return self.async_abort(reason="already_configured")
-        runtime = runtime_data(self.hass)
-        manager = runtime.physical_phones if runtime is not None else None
-        observed = manager.discovery.candidates.get(mac) if manager and manager.discovery else None
-        if observed is None:
-            return self.async_abort(reason="phone_discovery_expired")
-        self._physical_candidate = observed.setup_data()
-        self.context["title_placeholders"] = {"name": (observed.vendor + " " + observed.model).strip() or mac}
+        self._physical_entry_id = entry.entry_id
         return await self.async_step_phone_discovered()
 
+    def _observed_phone_candidate(self):
+        """Read the current owner and announcement without allocating a draft."""
+        from .physical_phone import discovery_enabled, physical_phone_records
+        from .runtime_data import runtime_data
+        entry = self._current_entry()
+        if entry is None:
+            return None, None, "configure_pbx_first"
+        if entry.entry_id != getattr(self, "_physical_entry_id", None) or not discovery_enabled(entry):
+            return entry, None, "phone_discovery_expired"
+        mac = getattr(self, "_physical_candidate_mac", "")
+        if any(phone["mac"] == mac for phone in physical_phone_records(entry).values()):
+            return entry, None, "already_configured"
+        runtime = runtime_data(self.hass)
+        discovery = getattr(runtime, "phone_discovery", None)
+        observed = discovery.candidates.get(mac) if discovery and not getattr(discovery, "_closed", False) else None
+        if observed is None or time.monotonic() - observed.seen >= 86400:
+            return entry, None, "phone_discovery_expired"
+        return entry, observed, None
+
     async def async_step_phone_discovered(self, user_input=None):
+        from .physical_phone import phone_candidate_name, provisioning_enabled
+        entry, observed, error = self._observed_phone_candidate()
+        if error:
+            return self.async_abort(reason=error)
+        name = phone_candidate_name(observed.vendor, observed.model) or observed.mac
+        self.context["title_placeholders"] = {"name": name}
+        if user_input is None or not provisioning_enabled(entry):
+            return self.async_show_form(step_id="phone_discovered", data_schema=vol.Schema({}),
+                errors={"base": "phone_provisioning_disabled"} if user_input is not None else {},
+                description_placeholders={"name": name, "mac": ":".join(observed.mac[i:i + 2] for i in range(0, 12, 2)),
+                    "host": observed.host, "vendor": observed.vendor or "-", "model": observed.model or "-"})
         if not hasattr(self, "_phone_editor"):
             from .physical_phone_flow import DiscoveredPhoneEditor
-            entry = self._current_entry()
-            self._phone_editor = DiscoveredPhoneEditor(self, entry)
-            return await self._phone_editor.async_step_user({"discovery_candidate": self._physical_candidate})
+            self._phone_editor = DiscoveredPhoneEditor(self, entry, observed)
+            return await self._phone_editor.async_step_user({"discovery_candidate": observed.setup_data()})
         return await self._phone_editor.async_step_user(user_input)
 
     async def async_step_phone_user(self, user_input=None):

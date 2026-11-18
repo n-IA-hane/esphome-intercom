@@ -11,7 +11,11 @@ import socket
 import time
 
 from .core import sip
-from .physical_phone import draft_physical_subentry, physical_phone_id, physical_phone_records
+from .physical_phone import (
+    discovery_enabled, draft_physical_subentry, phone_candidate_name, physical_phone_id,
+    physical_phone_records, provisioning_enabled,
+)
+from .runtime_data import runtime_data
 
 PNP_ADDRESS = "224.0.1.75"
 PNP_PORT = 5060
@@ -24,16 +28,26 @@ class PhoneCandidate:
     host: str
     vendor: str = ""
     model: str = ""
-    token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
+    token: str = field(default="", repr=False)
     seen: float = field(default_factory=time.monotonic)
     flow_id: str = ""
     native_subentry: object | None = field(default=None, repr=False)
+    _flow_task: asyncio.Task | None = field(default=None, repr=False)
+    _flow_context: dict | None = field(default=None, repr=False)
 
     def public(self):
-        return {"phone_id": self.phone_id, "mac": self.mac, "host": self.host,
-                "vendor": self.vendor, "model": self.model}
+        return {"mac": self.mac, "host": self.host, "vendor": self.vendor, "model": self.model,
+                **({"phone_id": self.phone_id} if self.phone_id else {})}
 
     def setup_data(self):
+        """Allocate the native draft only when the user chooses management."""
+        if self.native_subentry is None:
+            data = {"mac": self.mac, "host": self.host}
+            if self.token:
+                data["provisioning_token"] = self.token
+            self.native_subentry = draft_physical_subentry(data, title=phone_candidate_name(self.vendor, self.model))
+            self.phone_id = physical_phone_id(self.native_subentry)
+            self.token = self.native_subentry.data["provisioning_token"]
         return {**self.public(), "provisioning_token": self.token}
 
 
@@ -44,40 +58,73 @@ def pnp_identity(request, addr):
         raise ValueError("invalid_phone_discovery")
     _package, pairs = sip._split_semicolon_params(request.header("Event"))
     params = dict(pairs)
-    strings = [request.uri, request.header("From"), request.header("Contact"),
-               params.get("mac", ""), params.get("macaddress", "")]
-    mac = ""
-    for value in strings:
-        match = re.search(r"(?i)(?:^|[^0-9a-f])([0-9a-f]{12}|(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2})(?:[^0-9a-f]|$)", value)
-        if match:
-            mac = re.sub(r"[:-]", "", match[1]).lower()
-            break
-    if not mac:
+    # The shared SIP parser decodes URI user escapes once. Snom's documented
+    # MAC%3a<address> therefore becomes MAC:<address>. Inspect only the whole
+    # user or an explicit MAC parameter, never display names, hosts or tags.
+    users = [sip.parse_sip_uri(sip.name_addr_uri(value)).user
+             for value in (request.uri, request.header("From"), request.header("Contact")) if value]
+    identities = set()
+    for value in [*users, params.get("mac"), params.get("macaddress")]:
+        value = str(value or "").strip().strip('"')
+        if value[:4].casefold() == "mac:":
+            value = value[4:]
+        if re.fullmatch(r"(?i)([0-9a-f]{12}|(?:[0-9a-f]{2}:){5}[0-9a-f]{2}|(?:[0-9a-f]{2}-){5}[0-9a-f]{2})", value):
+            identities.add(re.sub(r"[:-]", "", value).lower())
+    if not identities:
         raise ValueError("phone_discovery_mac_missing")
-    return mac, str(params.get("vendor", "")).strip('"')[:64], str(params.get("model", "")).strip('"')[:80]
+    if len(identities) != 1:
+        raise ValueError("phone_discovery_mac_conflict")
+    return identities.pop(), str(params.get("vendor") or "").strip('"')[:64], str(params.get("model") or "").strip('"')[:80]
 
 
 class PhoneDiscovery:
-    def __init__(self, owner):
-        self.owner = owner
+    def __init__(self, hass, entry):
+        self.hass, self.entry, self.runtime = hass, entry, entry.runtime_data
         self.candidates = {}
         self._membership = None
         self._transport = None
         self._tasks = set()
         self._closed = False
+        self._start_lock = asyncio.Lock()
+
+    def owned(self):
+        return (not self._closed and runtime_data(self.hass) is self.runtime
+                and self.runtime.phone_discovery is self and discovery_enabled(self.entry))
 
     async def async_start(self):
-        if self._closed:
+        async with self._start_lock:
+            await self._async_start_owned()
+
+    async def _async_start_owned(self):
+        if not self.owned():
             return
         from homeassistant.components import network
-        manager = self.owner.runtime.sip.component("udp_listener") if self.owner.runtime.sip else None
+        manager = self.runtime.sip.component("udp_listener") if self.runtime.sip else None
         udp = getattr(manager, "udp_server", None)
         transport = getattr(udp, "transport", None)
-        interface = await network.async_get_source_ip(self.owner.hass, target_ip=PNP_ADDRESS)
-        if self._closed:
+        # Reconcile again when the existing SIP engine is ready. In particular,
+        # never occupy its standard port before its own listener starts.
+        if manager is None or transport is None:
+            self._close_transport()
             return
+        listener_transport, listener_port = transport, manager.port
+        current_socket = transport.get_extra_info("socket")
+        if current_socket is None:
+            self._close_transport()
+            return
+        if listener_port == PNP_PORT and self._membership is not None and self._membership[0] is current_socket:
+            return
+        if listener_port != PNP_PORT and self._transport is not None and not self._transport.is_closing():
+            return
+        interface = await network.async_get_source_ip(self.hass, target_ip=PNP_ADDRESS)
+        current_manager = self.runtime.sip.component("udp_listener") if self.runtime.sip else None
+        if (not self.owned() or current_manager is not manager
+                or current_manager.port != listener_port
+                or getattr(getattr(current_manager, "udp_server", None), "transport", None) is not listener_transport):
+            return
+        self._close_transport()
         membership = socket.inet_aton(PNP_ADDRESS) + socket.inet_aton(interface)
-        if manager is not None and manager.port == PNP_PORT and transport is not None:
+        if listener_port == PNP_PORT:
             sock = transport.get_extra_info("socket")
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
             self._membership = (sock, membership)
@@ -92,7 +139,10 @@ class PhoneDiscovery:
             sock.setblocking(False)
             transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
                 lambda: _PnpTransport(self, interface), sock=sock)
-            if self._closed:
+            current_manager = self.runtime.sip.component("udp_listener") if self.runtime.sip else None
+            if (not self.owned() or current_manager is not manager
+                    or current_manager.port != listener_port
+                    or getattr(getattr(current_manager, "udp_server", None), "transport", None) is not listener_transport):
                 transport.close()
                 return
             self._transport = transport
@@ -102,36 +152,66 @@ class PhoneDiscovery:
 
     async def _start_flow(self, candidate):
         from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+        from homeassistant.data_entry_flow import UnknownFlow
         from .const import DOMAIN
-        if self._closed:
+        if not self.owned() or self.candidates.get(candidate.mac) is not candidate:
             return
         try:
             if candidate.flow_id:
-                self.owner.hass.config_entries.flow.async_get(candidate.flow_id)
+                self.hass.config_entries.flow.async_get(candidate.flow_id)
                 return
-        except Exception:
+        except UnknownFlow:
             candidate.flow_id = ""
-        result = await self.owner.hass.config_entries.flow.async_init(DOMAIN,
-            context={"source": SOURCE_INTEGRATION_DISCOVERY,
-                     "title_placeholders": {"name": (candidate.vendor + " " + candidate.model).strip() or candidate.mac}},
-            data={"discovery_candidate": candidate.public()})
-        if result.get("type") != "abort":
+        context = candidate._flow_context = {"source": SOURCE_INTEGRATION_DISCOVERY,
+            "title_placeholders": {"name": phone_candidate_name(candidate.vendor, candidate.model) or candidate.mac}}
+        try:
+            result = await self.hass.config_entries.flow.async_init(DOMAIN, context=context,
+                data={"discovery_candidate": candidate.public()})
+        except BaseException:
+            self._abort_candidate_flow(candidate)
+            raise
+        if result.get("type") not in {"abort", "create_entry"}:
             candidate.flow_id = result["flow_id"]
+        if not self.owned() or self.candidates.get(candidate.mac) is not candidate:
+            self._abort_candidate_flow(candidate)
+
+    def _abort_candidate_flow(self, candidate):
+        """Abort only this collector's pending flow, including an init race."""
+        if not candidate.flow_id and candidate._flow_context is None:
+            return
+        from homeassistant.data_entry_flow import UnknownFlow
+        from .const import DOMAIN
+
+        manager = self.hass.config_entries.flow
+        flow_ids = {candidate.flow_id} if candidate.flow_id else set()
+        if candidate._flow_context is not None:
+            flow_ids.update(item["flow_id"] for item in manager.async_progress_by_handler(
+                DOMAIN, include_uninitialized=True) if item.get("context") is candidate._flow_context)
+        for flow_id in flow_ids:
+            try:
+                manager.async_abort(flow_id)
+            except UnknownFlow:
+                pass
+        candidate.flow_id = ""
 
     async def handle(self, request, addr, transport):
         from .sip_listener import SipFollowUpRequest, SipRequestResult
-        from .physical_phone_provisioning import phone_provisioning_url
-        if self._closed or not self.owner.owned():
+        if not self.owned():
             return SipRequestResult(489, "Bad Event")
         try:
             mac, vendor, model = pnp_identity(request, addr)
         except (ValueError, sip.SipError):
             return SipRequestResult(400, "Bad Request")
-        self.candidates = {key: value for key, value in self.candidates.items()
-                           if time.monotonic() - value.seen < 86400}
-        phone = next((item for item in physical_phone_records(self.owner.entry).values() if item["mac"] == mac), None)
+        for key, expired in tuple(self.candidates.items()):
+            if time.monotonic() - expired.seen >= 86400:
+                self._abort_candidate_flow(expired)
+                if expired._flow_task is not None:
+                    expired._flow_task.cancel()
+                del self.candidates[key]
+        phone = next((item for item in physical_phone_records(self.entry).values() if item["mac"] == mac), None)
         candidate = self.candidates.get(mac)
         if phone is not None and (candidate is None or candidate.host != addr[0]
+                or candidate.phone_id != phone["phone_id"]
                 or not secrets.compare_digest(candidate.token, phone["provisioning_token"])):
             # A MAC is an inventory hint, never a credential. Existing URLs
             # cannot be recovered by an unauthenticated announcement after a
@@ -142,19 +222,25 @@ class PhoneDiscovery:
         if candidate is None:
             if len(self.candidates) >= 64:
                 return SipRequestResult(503, "Service Unavailable")
-            record = draft_physical_subentry(title=(vendor + " " + model).strip())
-            candidate = self.candidates[mac] = PhoneCandidate(physical_phone_id(record), mac, addr[0], vendor, model,
-                token=record.data["provisioning_token"], native_subentry=record)
+            candidate = self.candidates[mac] = PhoneCandidate("", mac, addr[0], vendor, model)
         candidate.seen, candidate.host = time.monotonic(), addr[0]
         if phone is None:
-            task = self.owner.hass.async_create_task(self._start_flow(candidate), "voip-phone-discovery")
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
-            phone = {"phone_id": candidate.phone_id, "provisioning_token": candidate.token}
-        else:
-            self.owner.schedule({phone["phone_id"]})
+            if candidate._flow_task is None or candidate._flow_task.done():
+                task = candidate._flow_task = self.hass.async_create_task(self._start_flow(candidate), "voip-phone-discovery")
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+            # Admission is not adoption. Neither an enabled provisioner nor a
+            # guessed MAC authorizes sending this private URL to an unknown UA.
+            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
+        manager = self.runtime.physical_phones
+        if (not provisioning_enabled(self.entry) or manager is None or not manager.owned()
+                or not phone.get("enabled", True)):
+            return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8))
+        manager.schedule({phone["phone_id"]})
+        from .physical_phone_provisioning import phone_provisioning_url
+
         try:
-            url = phone_provisioning_url(self.owner.hass, self.owner.entry, phone)
+            url = phone_provisioning_url(self.hass, self.entry, phone)
         except Exception:
             # Discovery is still useful while the administrator supplies an
             # HTTPS provisioning origin. No credentials are sent as a fallback.
@@ -163,8 +249,8 @@ class PhoneDiscovery:
             ("Subscription-State", "terminated;reason=timeout")), body=url.encode(), content_type="application/url")
         return SipRequestResult(200, headers=(("Expires", "0"),), to_tag=secrets.token_hex(8), follow_up=notify)
 
-    async def async_close(self):
-        self._closed = True
+    def _close_transport(self):
+        """Release only discovery I/O, preserving candidate adoption bindings."""
         if self._membership is not None:
             sock, membership = self._membership
             try:
@@ -175,11 +261,19 @@ class PhoneDiscovery:
         if self._transport is not None:
             self._transport.close()
             self._transport = None
+
+    async def async_close(self):
+        self._closed = True
+        self._close_transport()
+        for candidate in self.candidates.values():
+            self._abort_candidate_flow(candidate)
         for task in self._tasks:
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        for candidate in self.candidates.values():
+            self._abort_candidate_flow(candidate)
         self.candidates.clear()
 
 
@@ -198,7 +292,7 @@ class _PnpTransport(asyncio.DatagramProtocol):
             return
         if request.is_response or request.method != "SUBSCRIBE":
             return
-        task = self.owner.owner.hass.async_create_task(self._respond(request, addr), "voip-pnp-response")
+        task = self.owner.hass.async_create_task(self._respond(request, addr), "voip-pnp-response")
         self.owner._tasks.add(task)
         task.add_done_callback(self.owner._tasks.discard)
 

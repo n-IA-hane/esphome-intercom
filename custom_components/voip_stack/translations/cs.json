@@ -153,7 +153,7 @@
           "parking": "Parkování hovorů",
           "voicemail": "Hlas hlasové schránky",
           "phone_services": "Adresář LDAP",
-          "phone_provisioning": "Physical phone provisioning"
+          "phone_provisioning": "Vyhledávání a zřizování telefonů"
         }
       },
       "phone_services": {
@@ -171,9 +171,10 @@
         "title": "Adresář LDAP"
       },
       "phone_provisioning": {
-        "title": "Physical phone provisioning",
-        "description": "Enable the optional profile catalog and physical phone setup. Existing SIP accounts remain the owners of credentials and calls. The public URL must be reachable by your phones.",
+        "title": "Vyhledávání a zřizování telefonů",
+        "description": "Vyhledávání zobrazí telefony v Home Assistant. Pro stažení profilů a nastavení vybraných telefonů zapněte zřizování zvlášť.",
         "data": {
+          "discovery_enabled": "Vyhledávat SIP telefony v místní síti",
           "enabled": "Enable physical phone provisioning",
           "base_url": "Home Assistant URL for phones",
           "allow_insecure_http": "Allow HTTP on a trusted local network"
@@ -184,7 +185,7 @@
       },
       "phone_discovered": {
         "title": "Discovered phone: {name}",
-        "description": "A phone announced MAC {mac} at {host}. Configure it to choose a verified profile and bind existing SIP accounts, or use Ignore to leave it unconfigured."
+        "description": "Telefon se ohlásil na adrese {host} (MAC {mac}). Můžete jej ponechat mezi objevenými zařízeními nebo ignorovat. Pro správu zapněte zřizování a dokončete nastavení telefonu."
       },
       "phone_user": {
         "title": "Physical phone",
@@ -319,7 +320,8 @@
       "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku.",
       "phone_ldap_mode_unsupported": "Tento profil telefonu nepodporuje nastavený režim připojení LDAP.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
-      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone."
+      "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
+      "phone_provisioning_disabled": "Zřizování je vypnuté. Zapněte je v nastavení integrace VoIP Stack a poté se vraťte sem."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",

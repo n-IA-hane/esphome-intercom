@@ -707,6 +707,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
     previous_runtime = _runtime_data(hass)
+    previous_entry_runtime = getattr(entry, "runtime_data", None)
+    previous_discovery = getattr(previous_entry_runtime, "phone_discovery", None)
+    if previous_discovery is not None:
+        previous_entry_runtime.phone_discovery = None
+        await previous_discovery.async_close()
     if CONF_INITIAL_PHONE_CREATED not in entry.data:
         async_bootstrap_browser_phone(hass, entry)
         data = dict(entry.data)
@@ -852,8 +857,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     setup_provisioning(hass, entry)
     from .phone_services import async_setup_phone_services
     await async_setup_phone_services(hass, entry)
-    from .physical_phone_provisioning import async_reconcile_physical_phones
-    await async_reconcile_physical_phones(hass, entry)
+    from .physical_phone_runtime import async_reconcile_physical_phone_runtime
+    await async_reconcile_physical_phone_runtime(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -880,6 +885,9 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
+    if runtime is not None and runtime.phone_discovery is not None:
+        discovery, runtime.phone_discovery = runtime.phone_discovery, None
+        await discovery.async_close()
     if runtime is not None:
         stores = tuple(store for owner in (runtime.ha_bindings, runtime.physical_phones, runtime.queues)
                        if owner is not None

@@ -4,10 +4,14 @@ VoIP Stack can keep an inventory of physical SIP phones and generate their
 configuration from an optional, separately distributed profile catalog.
 ESPHome provisioning remains independent and does not require this feature.
 
-## Enable only when needed
+## Choose discovery and provisioning separately
 
-Open **Settings > Devices & services > VoIP Stack > Reconfigure > Phone provisioning**.
-The feature is off by default. Enabling it downloads the catalog index from
+Open **Settings > Devices & services > VoIP Stack > Reconfigure > Phone discovery and provisioning**.
+Discovery listens for SIP PnP announcements by default and offers each new
+phone in Home Assistant. It needs no profile catalog. To hide these suggestions,
+turn off phone discovery. You can still manage an adopted phone manually.
+
+Provisioning is off by default. Enabling provisioning downloads the catalog index from
 [`voip-stack-phone-profiles`](https://github.com/n-IA-hane/voip-stack-phone-profiles/tree/dev).
 A model bundle is downloaded only when that model is selected. Each phone keeps
 an immutable catalog commit, with schema and SHA256 checks. Editing an existing
@@ -18,8 +22,9 @@ While the feature is off, ordinary account edits do not construct a catalog or
 download model assets. Existing physical associations can be preserved without
 enabling provisioning; changing those associations requires enabling it first.
 
-Disabling provisioning stops discovery and reconciliation, releases generated
-files and removes the downloaded catalog assets. It preserves phone inventory,
+Disabling provisioning stops configuration updates, releases generated files
+and removes downloaded catalog assets. The discovery setting controls whether
+new phones appear in the Discovered list. It preserves phone inventory,
 line associations and ordinary SIP operation. The integration distribution
 contains no imported template archive.
 
@@ -209,17 +214,25 @@ independent of hardware auto-answer and the per-call announcement request.
 
 ## Discovery and delivery
 
-With the feature enabled, compatible SIP PnP phones announce `Event: ua-profile`
+With discovery enabled, compatible SIP PnP phones announce `Event: ua-profile`
 on multicast `224.0.1.75:5060`. They appear in Home Assistant's **Discovered** list
 with Configure and Ignore. A discovery announcement is an untrusted inventory
 candidate. It does not create accounts, grant permissions, adopt a logical phone
 or expose its configuration before an administrator confirms the binding.
+The Snom 360 reports itself as `snom360` and uses a percent-encoded
+`MAC:` prefix in the SIP address. A PBX on another subnet must receive the
+phone's multicast announcement to detect it. Reloading the integration starts
+the listener but does not make an already-running handset announce itself.
+
 An existing private URL is not recovered from a MAC-only announcement after a
 service restart or credential rotation. Its administrator can retrieve it through
 the authenticated state action below.
 
-PnP supplies an address in response to the phone's announcement. It is separate
-from requesting application of a newly prepared configuration.
+An unknown phone receives no provisioning URL. After you enable provisioning
+and explicitly finish adding the phone, its next eligible PnP request can
+receive its private URL. Phones that announce only at boot may need an ordinary
+restart at that point. A factory reset is unnecessary. Before adoption you
+can simply leave the discovery card in place or choose **Ignore**.
 
 Provisioning can also use a manually configured URL or a DHCP provisioning URL
 provided by your existing DHCP server. VoIP Stack does not change the router or
