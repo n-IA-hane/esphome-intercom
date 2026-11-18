@@ -192,7 +192,7 @@ another phone or require another microphone.
 
 <img src="docs/images/voip-dashboard-companion-portrait.png" width="360" alt="VoIP Dashboard in the Companion app in portrait, with illustrative incoming, active, held and offline states"/>
 
-_Companion app portrait view with demonstration data and illustrative call states._
+_Companion app in portrait with the Frosted Glass Dark theme. The extensions, call states and contact are illustrative._
 
 The Dashboard brings the calling phone, extension activity and shared contacts
 into one view. See who is ringing, busy, available or offline; inspect calls
@@ -356,7 +356,7 @@ outside that recording scope. See [recording controls](docs/CALL_RECORDING.md).
 
 ## Let Home Assistant handle reception
 
-![Unanswered doorbell, Assist receptionist and notification, in the original dark comic](docs/images/assist-unanswered-doorbell.png)
+![Four-panel comic showing an unanswered doorbell, the Assist receptionist and a queued notification](docs/images/assist-unanswered-doorbell.png)
 
 Route a call by presence, office hours or caller. Play a greeting, ask for a
 keypad choice, ring a group, forward an unanswered call or send it to voicemail.

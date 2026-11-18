@@ -572,16 +572,23 @@
       }
     }
   },
+  "assist_doorbell_comic": {
+    "file": "docs/images/assist-unanswered-doorbell.png",
+    "source": "ImageGen edit of the original four-panel README illustration.",
+    "editing": "Reduced the mottled print texture for clarity. The layout, caption text and notification sequence follow the original.",
+    "sha256": "92638011154c8970bfd2a98e8925643c299efc670babeb7966c9337c46184295"
+  },
   "companion_portrait_dashboard": {
-    "captured_on": "2026-11-15",
+    "captured_on": "2026-11-18",
     "source": "Official Home Assistant Companion 2026.11.1-full on Android 14; real Dashboard frontend, demonstration data injected in this page only.",
-    "presentation": "Illustrative incoming, active, held and offline call states; no real calls or household contacts.",
+    "presentation": "Illustrative incoming, active, held, available and offline call states with a demonstration contact.",
     "file": "docs/images/voip-dashboard-companion-portrait.png",
     "dimensions": [
       1080,
       2400
     ],
-    "sha256": "e2ba142b76c74dcd8081bf0932411b21a77ebf78ae7918a4cd64cc66eb9a1ef7"
+    "sha256": "b39f1f039b1c577fe913b46385bc69a1d055597acc9561817c8d4e039e31832c",
+    "theme": "Frosted Glass Dark"
   },
   "current_native_editors": {
     "captured_on": "2026-11-15",
