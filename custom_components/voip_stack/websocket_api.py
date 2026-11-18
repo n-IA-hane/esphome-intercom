@@ -141,6 +141,12 @@ def _direction_for_local(local_name: str, caller: str, callee: str) -> str:
     return ""
 
 
+def _phone_projection_state(state: str, direction: str) -> str:
+    """Project the same early SIP state from the selected phone's side."""
+    state = _sip_public_state(state)
+    return CallState.REMOTE_RINGING.value if state == CallState.RINGING.value and direction == "outgoing" else state
+
+
 def _canonical_session_fields(
     *,
     state: str,
@@ -168,7 +174,7 @@ def _canonical_session_fields(
         if direction == "incoming"
         else ""
     )
-    sip_state = _sip_public_state(state)
+    sip_state = _phone_projection_state(state, direction)
     return {
         "call_id": call_id or (f"{caller}<->{callee}" if caller and callee else ""),
         "caller": caller,
@@ -932,7 +938,12 @@ def _account_shared_projection(hass, endpoint):
 
 
 def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
+    from .paging_config import paging_group_memberships
+    from .store import config_entry
+
+    entry = config_entry(hass)
     endpoint_id = _endpoint_store_id(endpoint_id)
+    paging_groups = paging_group_memberships(entry).get(endpoint_id, []) if entry is not None else None
     store = dict(_ha_softphone_store(hass, endpoint_id))
     endpoint = _endpoint_registry(hass).get(endpoint_id)
     projection = _account_shared_projection(hass, endpoint)
@@ -1049,8 +1060,13 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
             if video_requested
             else "inactive"
         )
+    view_state = _phone_projection_state(store.get("state", CallState.IDLE.value), direction)
+    from .call_scope import application_owns_browser_answer
+    can_answer = bool(session is not None and session.live
+        and view_state in {CallState.RINGING.value, "incoming"} and direction == "incoming"
+        and (paging or not application_owns_browser_answer(session)))
     phone = sip_phone_state(
-        state=store.get("state", CallState.IDLE.value),
+        state=view_state,
         call_id=call_id,
         direction=direction,
         caller=caller,
@@ -1090,6 +1106,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "connected_cards": connected_cards,
         "ha_client_supported": bool(endpoint is not None and endpoint.supports_ha_client),
         "can_attach_media": can_attach_media,
+        "can_answer": can_answer,
         "media_is_local": can_attach_media,
         "owns_media": False,
         "media_owner": "available" if can_attach_media else "other",
@@ -1108,12 +1125,13 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
                       "owned": recording_active and recording.endpoint.endpoint_id == endpoint_id},
         "extension": _ha_softphone_extension(hass, endpoint_id),
         "queues": list(endpoint.queues) if endpoint is not None else [],
+        **({"paging_groups": list(paging_groups)} if paging_groups is not None else {}),
         "queue_states": (entry_runtime.queues.phone_summary(endpoint_id)
                          if entry_runtime is not None and getattr(entry_runtime, "queues", None) is not None else []),
         "groups": _ha_softphone_groups(hass, endpoint_id),
         "busy": bool(store.get("session_device_id") and active_softphone),
-        "state": store.get("state", CallState.IDLE.value),
-        "sip_state": store.get("sip_state", store.get("state", CallState.IDLE.value)),
+        "state": view_state,
+        "sip_state": _phone_projection_state(store.get("sip_state", view_state), direction),
         "caller": caller,
         "callee": callee,
         "local_name": store.get(
@@ -1254,6 +1272,7 @@ def _set_ha_softphone_call_state(
         direction=direction or str(store.get("direction", "")),
         call_id=call_id or str(store.get("call_id", "")),
     )
+    state = canonical["state"]
     previous_call_id = str(store.get("call_id") or "")
     next_call_id = str(canonical.get("call_id") or "")
     previous_state = str(store.get("state") or "").strip().lower()

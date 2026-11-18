@@ -9,6 +9,11 @@ from homeassistant.core import HomeAssistant
 from .endpoint_lifecycle import call_registry
 
 
+def application_owns_browser_answer(session) -> bool:
+    """A local application has already claimed this session's inbound answer."""
+    return session is not None and session.owner in {"automation", "assist", "voicemail"}
+
+
 def has_ringing_destination(session, endpoint_id: str = "") -> bool:
     """A retained answered caller can have a different leg still ringing."""
     if session.state in {"ringing", "remote_ringing"}:

@@ -1,7 +1,7 @@
 """Native HA action and config persistence for per-phone routing defaults."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.exceptions import ServiceValidationError
@@ -14,6 +14,7 @@ from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
 from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.runtime_data import VoipStackRuntime
+from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships_service
 
 
 pytestmark = pytest.mark.ha
@@ -21,6 +22,8 @@ pytestmark = pytest.mark.ha
 
 @pytest.fixture
 async def phones(hass, monkeypatch):
+    from homeassistant.helpers import entity_registry as er
+
     entry = MockConfigEntry(domain="voip_stack", data={})
     entry.add_to_hass(hass)
     registry = EndpointRegistry()
@@ -33,15 +36,19 @@ async def phones(hass, monkeypatch):
             "endpoint_id": name.lower(), "kind": "browser", "name": name,
         }, title=name)
     phone_config.sync_registry_from_entry(hass, entry)
+    er.async_get(hass).async_get_or_create("event", "voip_stack", "voip_stack_call_event")
     for name in ("Kitchen", "Bedroom"):
-        registry.update(name.lower(), device_id="device-" + name.lower())
+        registry.update(name.lower(), device_id="device-" + name.lower(),
+            entity_ids={"sensor." + name.lower() + "_state"})
     registry.register(PhoneEndpoint(
         endpoint_id="esphome:stable", name="ESP", kind="esphome", device_id="device-esp",
+        entity_ids={"sensor.esp_state"},
     ))
     push = AsyncMock()
     monkeypatch.setattr(voip_stack, "_refresh_and_push_phonebook", push)
     await services.async_register_services(hass, {
         "set_phone_settings": voip_stack._handle_set_phone_settings_service,
+        "set_phone_memberships": async_set_phone_memberships_service,
     })
     return SimpleNamespace(entry=entry, registry=registry, push=push)
 
@@ -187,3 +194,164 @@ async def test_no_answer_requires_explicit_outcome_and_can_be_disabled(hass, pho
 async def test_no_answer_can_explicitly_terminate_without_a_destination(hass, phones):
     await settings(hass, ringing_timeout=25, no_answer_action="hangup")
     assert phones.registry.require("kitchen").policy.no_answer.kind.value == "hangup"
+
+
+def add_paging(hass, phones, identity, members, **extra):
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.paging_config import normalize_paging_group
+
+    data = {**normalize_paging_group({"name": identity, "extension": "402",
+        "members": members, "answer_timeout": 7, "timeout": 41}, identity=identity), **extra}
+    record = ConfigSubentry(subentry_type="paging", title=identity,
+        unique_id="paging:" + identity, data=data)
+    hass.config_entries.async_add_subentry(phones.entry, record)
+    return record
+
+
+async def paging_memberships(hass, selected, *, phone="device-kitchen", context=None):
+    await hass.services.async_call("voip_stack", "set_phone_memberships", {
+        "phone": phone, "field": "paging_groups", "value": selected,
+    }, blocking=True, context=context)
+
+
+async def test_paging_membership_updates_canonical_groups_and_one_projection(hass, phones, hass_admin_user):
+    from homeassistant.core import Context
+    from custom_components.voip_stack.paging_config import paging_group_entries
+
+    first = add_paging(hass, phones, "first", ["bedroom", "kitchen"], retained="setting")
+    second = add_paging(hass, phones, "second", ["bedroom"])
+    solo = add_paging(hass, phones, "solo", ["kitchen"])
+    originals = {record.subentry_id: dict(record.data) for record in (first, second, solo)}
+    observer = SimpleNamespace(refresh=Mock())
+    phones.entry.runtime_data.sip = SimpleNamespace(component=lambda name: observer if name == "phone_state" else None)
+    admin = Context(user_id=hass_admin_user.id)
+
+    await paging_memberships(hass, ["first", "second"], context=admin)
+    assert first.data["members"] == ["bedroom", "kitchen"]
+    assert second.data["members"] == ["bedroom", "kitchen"]
+    assert solo.data["members"] == []
+    for record in (first, second, solo):
+        assert {key: value for key, value in record.data.items() if key != "members"} == {
+            key: value for key, value in originals[record.subentry_id].items() if key != "members"}
+    assert not next(row for row in paging_group_entries(phones.entry) if row.id == "paging:solo").enabled
+    observer.refresh.assert_called_once_with()
+    phones.push.assert_not_awaited()  # Native entry listener owns the phonebook refresh.
+    assert "paging_groups" not in phone_config.phone_subentry_by_endpoint_id(phones.entry, "kitchen").data
+
+    await paging_memberships(hass, ["first", "second"], context=admin)
+    observer.refresh.assert_called_once_with()  # Idempotent selection.
+    await paging_memberships(hass, [], context=admin)
+    assert first.data["members"] == second.data["members"] == ["bedroom"]
+    assert observer.refresh.call_count == 2
+    # An offline ESP uses the same server membership owner, without another phone record.
+    previous = set(phones.entry.subentries)
+    await paging_memberships(hass, ["solo"], phone="device-esp", context=admin)
+    assert solo.data["members"] == ["esphome:stable"]
+    assert set(phones.entry.subentries) == previous
+
+
+async def test_paging_membership_rejects_whole_batch_before_mutation(hass, phones):
+    first = add_paging(hass, phones, "first", ["kitchen"])
+    full = add_paging(hass, phones, "full", [f"phone:{index}" for index in range(16)])
+    with pytest.raises(ServiceValidationError, match="existing paging groups"):
+        await paging_memberships(hass, ["missing"])
+    with pytest.raises(ServiceValidationError, match="sixteen"):
+        await paging_memberships(hass, ["full"])
+    assert first.data["members"] == ["kitchen"]
+    assert len(full.data["members"]) == 16
+    phones.push.assert_not_awaited()
+
+
+async def test_paging_membership_requires_admin_even_for_own_phone(hass, phones, hass_admin_user, hass_read_only_user):
+    from homeassistant.auth.const import GROUP_ID_USER
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+
+    hass_user = await hass.auth.async_create_user("Phone user", group_ids=[GROUP_ID_USER])
+    assert not hass_user.is_admin
+    record = add_paging(hass, phones, "group", ["bedroom"])
+    await hass.services.async_call("voip_stack", "set_phone_memberships", {
+        "phone": "device-kitchen", "field": "ring_group", "value": "Existing control",
+    }, blocking=True, context=Context(user_id=hass_user.id))
+    for user in (hass_user, hass_read_only_user):
+        with pytest.raises(Unauthorized):
+            await paging_memberships(hass, ["group"], context=Context(user_id=user.id))
+    assert record.data["members"] == ["bedroom"]
+    # Existing internal HA automations retain the native administrative service contract.
+    await paging_memberships(hass, ["group"])
+    assert record.data["members"] == ["bedroom", "kitchen"]
+
+
+async def test_paging_memberships_are_projected_from_canonical_groups(hass, phones):
+    from custom_components.voip_stack.phone_state import phone_states, phone_state_dto
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state
+
+    first = add_paging(hass, phones, "first", ["kitchen", "esphome:stable"])
+    add_paging(hass, phones, "second", ["kitchen"])
+    states = phone_states(hass, dialogs={})
+    assert states["kitchen"]["paging_groups"] == ["first", "second"]
+    assert states["esphome:stable"]["paging_groups"] == ["first"]
+    assert states["bedroom"]["paging_groups"] == []
+    dto = phone_state_dto(states["esphome:stable"], peer_readable=lambda _: True)
+    assert dto["paging_groups"] == ["first"]
+    dto["paging_groups"].clear()
+    assert first.data["members"] == ["kitchen", "esphome:stable"]
+    assert _ha_softphone_state(hass, "kitchen")["paging_groups"] == ["first", "second"]
+    await paging_memberships(hass, [])
+    assert _ha_softphone_state(hass, "kitchen")["paging_groups"] == []
+
+
+async def test_paging_batch_uses_one_native_directory_refresh(hass, phones, monkeypatch):
+    from custom_components.voip_stack import config_entry_runtime as updates
+    from custom_components.voip_stack import trunk_runtime, phone_services, mailbox, physical_phone_runtime
+    from custom_components.voip_stack.group_config import group_records, membership_signature
+    from custom_components.voip_stack.paging_config import paging_group_configs
+
+    add_paging(hass, phones, "first", ["kitchen"])
+    add_paging(hass, phones, "second", ["bedroom"])
+    runtime = phones.entry.runtime_data
+    runtime.entry_runtime_signature = updates.entry_runtime_signature(phones.entry)
+    runtime.entry_phone_signature = updates.entry_phone_signature(phones.entry)
+    runtime.entry_contacts_signature = ()
+    runtime.entry_group_records = group_records(phones.entry)
+    runtime.entry_paging_records = paging_group_configs(phones.entry)
+    runtime.entry_membership_signature = membership_signature(hass, phones.entry)
+    refresh = AsyncMock()
+    monkeypatch.setattr(updates, "async_refresh_and_push_phonebook", refresh)
+    for module, name in ((trunk_runtime, "async_reconcile_trunks"),
+                         (phone_services, "async_reconcile_phone_services"),
+                         (mailbox, "async_refresh_mailbox_state"),
+                         (physical_phone_runtime, "async_reconcile_physical_phone_runtime")):
+        monkeypatch.setattr(module, name, AsyncMock())
+    remove = phones.entry.add_update_listener(updates.async_config_entry_updated)
+    try:
+        await paging_memberships(hass, ["second"])
+        await hass.async_block_till_done()
+        refresh.assert_awaited_once_with(hass)
+        assert runtime.entry_paging_records == paging_group_configs(phones.entry)
+    finally:
+        remove()
+
+
+async def test_existing_phone_observer_emits_one_paging_delta_for_mirror(hass, phones):
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+    from custom_components.voip_stack.phone_state import phone_state_observer
+
+    add_paging(hass, phones, "first", ["bedroom"])
+    calls = SipEndpointRuntime(allow_dark_sessions=True)
+    calls.activate()
+    calls.bind_endpoint_registry(phones.registry)
+    phones.entry.runtime_data.sip = calls
+    seen = []
+    observer = phone_state_observer(hass)
+    unsubscribe = observer.subscribe(seen.append, kind="projection")
+    try:
+        await paging_memberships(hass, ["first"], phone="device-esp")
+        assert len(seen) == 1
+        assert set(seen[0].phones) == {"esphome:stable"}
+        assert seen[0].phones["esphome:stable"]["paging_groups"] == ["first"]
+        await paging_memberships(hass, ["first"], phone="device-esp")
+        assert len(seen) == 1
+    finally:
+        unsubscribe()
+        await calls.shutdown()

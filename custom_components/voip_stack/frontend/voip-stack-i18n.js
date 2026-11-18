@@ -1,4 +1,9 @@
 const PT_BR = {
+  "Paging groups": "Grupos de anúncios",
+  "Remove from all paging groups": "Remover de todos os grupos de anúncios",
+  "Choose the existing groups whose announcements this phone should receive.": "Selecione os grupos existentes cujos anúncios este telefone deve receber.",
+  "No paging groups configured.": "Nenhum grupo de anúncios configurado.",
+  "Unavailable": "Indisponível",
   "SIP account": "Conta SIP",
   "SIP accounts": "Contas SIP",
   "Missing phone": "Telefone ausente",
@@ -156,6 +161,11 @@ const PT_BR = {
 };
 
 const DE = {
+  "Paging groups": "Durchsagegruppen",
+  "Remove from all paging groups": "Aus allen Durchsagegruppen entfernen",
+  "Choose the existing groups whose announcements this phone should receive.": "Wählen Sie vorhandene Gruppen, deren Durchsagen dieses Telefon empfangen soll.",
+  "No paging groups configured.": "Keine Durchsagegruppen konfiguriert.",
+  "Unavailable": "Nicht verfügbar",
   "SIP account": "SIP-Konto",
   "SIP accounts": "SIP-Konten",
   "Missing phone": "Fehlendes Telefon",
@@ -313,6 +323,11 @@ const DE = {
 };
 
 const IT = {
+  "Paging groups": "Gruppi annunci",
+  "Remove from all paging groups": "Rimuovi da tutti i gruppi annunci",
+  "Choose the existing groups whose announcements this phone should receive.": "Seleziona i gruppi esistenti di cui questo telefono deve ricevere gli annunci.",
+  "No paging groups configured.": "Nessun gruppo annunci configurato.",
+  "Unavailable": "Non disponibile",
   "Call": "Chiama",
   "Answer": "Rispondi",
   "Decline": "Rifiuta",

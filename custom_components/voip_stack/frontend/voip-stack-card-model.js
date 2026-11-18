@@ -54,8 +54,21 @@ export function availableQueueNames(entries = []) {
     .map(entry => String(entry.name || entry.metadata?.name || "").trim()).filter(Boolean))].sort();
 }
 
+/** A shared application's ringing state is not an offer to its caller. */
+export function phoneCallPresentation(snapshot = {}) {
+  snapshot ||= {};
+  const state = String(snapshot.state || snapshot.sip_state || "idle").trim().toLowerCase();
+  const direction = String(snapshot.direction || "").trim().toLowerCase();
+  const role = String(snapshot.role || "").trim().toLowerCase();
+  const outgoing = direction === "outgoing" || (!direction && role === "caller");
+  const offered = ["ringing", "incoming", "early"].includes(state);
+  const incoming = offered && !outgoing && snapshot.can_answer !== false;
+  return { incoming, outgoing,
+    state: offered && !incoming ? outgoing ? "remote_ringing" : "connecting" : state };
+}
+
 export function isPagingAutoAnswer(snapshot = {}) {
-  return !!String(snapshot.announcement_id || "").trim() && snapshot.answer_mode === "auto" &&
+  return phoneCallPresentation(snapshot).incoming && !!String(snapshot.announcement_id || "").trim() && snapshot.answer_mode === "auto" &&
     snapshot.audio_direction === "recvonly";
 }
 

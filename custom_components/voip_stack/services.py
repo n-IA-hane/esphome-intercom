@@ -384,7 +384,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
                            vol.Required("queues"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT])}, extra=vol.PREVENT_EXTRA))
     hass.services.async_register(DOMAIN, "set_phone_memberships", handler_for("set_phone_memberships"),
         schema=vol.Schema({vol.Required("phone"): IDENTIFIER_TEXT,
-            vol.Required("field"): vol.In(["queues", "ring_group"]),
+            vol.Required("field"): vol.In(["queues", "ring_group", "paging_groups"]),
             vol.Required("value"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT])}, extra=vol.PREVENT_EXTRA))
     hass.services.async_register(DOMAIN, "set_queue_agent_state", handler_for("set_queue_agent_state"),
         schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT, vol.Required("phone"): IDENTIFIER_TEXT,

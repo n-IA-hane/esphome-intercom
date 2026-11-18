@@ -56,6 +56,7 @@ def phone_state_dto(phone, *, peer_readable):
         "calls": calls,
         "queues": list(phone.get("queues", ())),
         "ring_group": str(phone.get("ring_group") or ""),
+        **({"paging_groups": list(phone["paging_groups"])} if "paging_groups" in phone else {}),
         "queue_states": deepcopy(phone.get("queue_states", [])),
         "mailbox": {key: mailbox[key] for key in ("enabled", "waiting", "new", "old")},
     }
@@ -87,6 +88,11 @@ def mailbox_state(hass, endpoint_id, archive=None):
 def phone_states(hass, *, dialogs=None):
     """Build one detached projection, without changing call ownership."""
     runtime = require_runtime_data(hass)
+    from .paging_config import paging_group_memberships
+    from .store import config_entry
+
+    entry = config_entry(hass)
+    paging = paging_group_memberships(entry) if entry is not None else None
     dialogs = snapshot_all(runtime) if dialogs is None else dialogs
     result = {}
     for endpoint in runtime.endpoints.endpoints:
@@ -132,6 +138,7 @@ def phone_states(hass, *, dialogs=None):
             "dnd": endpoint.dnd,
             "queues": list(endpoint.queues),
             "ring_group": endpoint.ring_group,
+            **({"paging_groups": list(paging.get(endpoint.endpoint_id, ()))} if paging is not None else {}),
             "queue_states": (runtime.queues.phone_summary(endpoint.endpoint_id)
                              if getattr(runtime, "queues", None) is not None else []),
             "state": state,

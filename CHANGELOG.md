@@ -2,6 +2,15 @@
 
 ## 2026.12.0-dev
 
+- Keep the caller's card and dashboard in outgoing progress while a local
+  application or remote destination rings. Incoming answer controls, popups
+  and automatic answer follow the offer for the selected account.
+- Allow an administrator to choose existing paging groups in the phone card's
+  options. Both editors update the same group records, including empty groups.
+- Fix conference shutdown when the last participants hang up together and the
+  mixer is finishing its last tick. The hangup actions complete and free the
+  accounts for the next call. Reported in [#166](https://github.com/n-IA-hane/esphome-intercom/issues/166).
+
 - Discover SIP phones independently of provisioning. An unadopted handset
   appears in Home Assistant without receiving a configuration URL. Recognize
   the percent-encoded MAC announced by Snom 360 firmware.

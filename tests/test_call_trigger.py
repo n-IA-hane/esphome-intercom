@@ -97,6 +97,31 @@ async def test_delayed_action_does_not_select_replacement_call(hass, registry):
         automation_context.current_execution.reset(binding)
 
 
+async def test_received_trigger_ignores_outgoing_ringing_but_keeps_local_application_ingress(hass, registry):
+    session = registry.upsert("local-application", state="ringing", owner="automation")
+    seen = []
+
+    async def action(payload):
+        seen.append(payload["call"])
+        return object()
+
+    subject = trigger.VoipCallTrigger(hass, TriggerConfig("voip_stack.call_received"))
+    detach = await subject.async_attach_runner(lambda payload, *_args: hass.async_create_task(action(payload)))
+    try:
+        common = {"call_id": session.call_id, "generation": session.generation,
+            "sequence": session.event_context.sequence, "callee": "Announcements"}
+        hass.bus.async_fire(trigger.CALL_EVENT, {**common, "event_type": "ringing", "direction": "outgoing"})
+        await hass.async_block_till_done()
+        assert seen == []
+        hass.bus.async_fire(trigger.CALL_EVENT, {**common, "event_type": "automation_requested",
+            "direction": "incoming", "scope": "sip_bridge", "route_kind": "automation"})
+        await hass.async_block_till_done()
+        assert len(seen) == 1 and seen[0]["event_type"] == "automation_requested"
+        assert registry.get_session(session.call_id) is session and session.live
+    finally:
+        detach()
+
+
 def test_filters_use_snapshot_and_allow_optional_destination():
     snapshot = {
         "caller": "Alice",

@@ -478,7 +478,7 @@ class FrontendCardContractTest(unittest.TestCase):
         maybe_answer = _method_body(self.source, "_maybeAnswerFromUrl")
         self.assertNotIn("if (this._isHaSoftphoneMode() ||", maybe_answer)
         self.assertIn("if (!this._isHaSoftphoneMode()) return", maybe_answer)
-        self.assertIn("snap.direction", maybe_answer)
+        self.assertIn("phoneCallPresentation", maybe_answer)
         self.assertIn("snap.call_id", maybe_answer)
         self.assertIn("callId: String(snap.call_id)", maybe_answer)
         self.assertIn("requirePersistentPermission: false", maybe_answer)

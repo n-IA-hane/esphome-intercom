@@ -7,6 +7,7 @@ import contextlib
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 import errno
+import ipaddress
 import logging
 import re
 import secrets
@@ -1103,6 +1104,46 @@ class SipCallClient:
         if self.signaling_transport in {"TCP", "TLS"}:
             return self.writer is not None
         return self.transport is not None
+
+    def matches_local_invite_source(self, invite, *, listener_hosts, listener_port: int) -> bool:
+        """Correlate an initial local INVITE with this owned signaling flow."""
+        if (self._closing or self._closed or not self._invite_transaction_active
+                or self._reused_flow_send is not None
+                or invite.call_id != self.dialog_ids.call_id
+                or invite.signaling_transport.upper() != self.signaling_transport):
+            return False
+        try:
+            sequence = sip.parse_cseq(invite.cseq)
+            if (sequence.method != "INVITE" or sequence.number != self._invite_cseq
+                    or invite.request_uri != sip.parse_sip_uri(self._pending_request_uri)):
+                return False
+            hosts = {ipaddress.ip_address(host) for host in listener_hosts}
+            source_host = ipaddress.ip_address(invite.source_host)
+            target_host, target_port = self._signaling_target(
+                self._pending_remote_host, self._pending_remote_sip_port)
+            destination = (ipaddress.ip_address(target_host), int(target_port))
+            if (source_host not in hosts or destination[0] not in hosts
+                    or destination[1] != int(listener_port)
+                    or ipaddress.ip_address(invite.request_uri.host) not in hosts
+                    or sip.sip_default_port(invite.request_uri) != int(listener_port)):
+                return False
+            if self.signaling_transport in {"TCP", "TLS"}:
+                flow = self.writer
+                if flow is None or flow.is_closing():
+                    return False
+                peer = flow.get_extra_info("peername")
+                if (not peer or (ipaddress.ip_address(peer[0]), int(peer[1])) != destination):
+                    return False
+            else:
+                flow = self.transport
+                if flow is None or flow.is_closing():
+                    return False
+            bound = flow.get_extra_info("sockname")
+            return bool(bound and int(bound[1]) == int(invite.source_port)
+                and (ipaddress.ip_address(bound[0]) == source_host
+                    or (self.signaling_transport == "UDP" and ipaddress.ip_address(bound[0]).is_unspecified)))
+        except (ValueError, TypeError, sip.SipError):
+            return False
 
     def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
         try:

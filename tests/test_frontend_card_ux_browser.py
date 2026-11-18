@@ -129,3 +129,71 @@ def test_mailbox_actions_identify_caller_and_localized_date(card_page):
         for action in ["Ascolta", "Elimina"]:
             name = re.compile(rf"^{action}: Portone, {date}$")
             expect(page.get_by_role("button", name=name)).to_be_visible()
+
+
+def test_paging_options_save_existing_groups_once_and_clear_memberships(card_page):
+    from playwright.sync_api import expect
+
+    page = card_page
+    page.evaluate("""() => {
+      window.saves=[]; window.loads=0;
+      card._softphoneSnapshot={...card._softphoneSnapshot,endpoint_id:'desk',paging_groups:['office']};
+      card._rosterEntries=[
+        {id:'paging:office',name:'Ufficio',enabled:true,metadata:{virtual_endpoint:'paging',paging_group_id:'office'}},
+        {id:'paging:empty',name:'Ingresso',enabled:false,metadata:{virtual_endpoint:'paging',paging_group_id:'empty'}},
+        {id:'queue:support',name:'Supporto',metadata:{group_type:'queue'}}];
+      card._hass.services={voip_stack:{set_phone_memberships:{}}};
+      card._hass.callService=async(domain,service,data)=>{
+        saves.push({domain,service,data});
+        card._softphoneSnapshot={...card._softphoneSnapshot,paging_groups:[...data.value]};
+      };
+      card._loadSoftphoneState=async()=>{loads++;};
+      card._render();
+    }""")
+    page.get_by_role("button", name="Opzioni", exact=True).click()
+    groups = page.get_by_role("listbox", name="Gruppi annunci", exact=True)
+    expect(groups).to_be_visible()
+    assert groups.locator("option").all_text_contents() == ["Ingresso (Non disponibile)", "Ufficio"]
+    assert groups.evaluate("el=>Array.from(el.selectedOptions,o=>o.value)") == ["office"]
+    groups.select_option(["office", "empty"])
+    expect(groups).to_be_enabled()
+    assert page.evaluate("saves") == [{"domain": "voip_stack", "service": "set_phone_memberships",
+        "data": {"phone": "desk", "field": "paging_groups", "value": ["empty", "office"]}}]
+    assert page.evaluate("loads") == 1
+    page.get_by_role("button", name="Rimuovi da tutti i gruppi annunci", exact=True).click()
+    expect(page.get_by_role("button", name="Rimuovi da tutti i gruppi annunci", exact=True)).to_be_disabled()
+    assert page.evaluate("saves[1].data.value") == []
+    assert page.evaluate("loads") == 2
+    assert groups.evaluate("el=>el.selectedOptions.length") == 0
+
+
+def test_paging_options_require_admin_and_supported_server_in_esp_mirror(card_page):
+    from playwright.sync_api import expect
+
+    page = card_page
+    page.evaluate("""async () => {
+      const {voipStackEngine}=await import('/voip-stack-engine.js');
+      window.engine=voipStackEngine;
+      card.config.mode='esp_mirror';
+      card._hass.services={voip_stack:{set_phone_memberships:{}}};
+      card._settingsOpen=true;
+      card._render();
+    }""")
+    groups = page.get_by_role("listbox", name="Gruppi annunci", exact=True)
+    expect(groups).to_be_hidden()
+    page.evaluate("""() => {
+      engine._phoneStates.set('esp:desk',{endpoint_id:'esp:desk',device_id:'desk-device',paging_groups:[]});
+      engine._phoneStateRevision=1;engine._phoneStateFailed=false;
+      card._rosterEntries=[{id:'paging:office',name:'Ufficio',metadata:{virtual_endpoint:'paging',paging_group_id:'office'}}];
+      window.saves=[];
+      card._hass.callService=async(domain,service,data)=>{saves.push(data);};
+      card._render();
+    }""")
+    expect(groups).to_be_visible()
+    groups.select_option(["office"])
+    assert page.evaluate("saves") == [{"phone": "desk-device", "field": "paging_groups", "value": ["office"]}]
+    page.evaluate("""() => {card._hass.user.is_admin=false;card._render();}""")
+    expect(groups).to_be_hidden()
+    page.evaluate("""async () => {await card._setGroupSetting('paging_groups',['office']);}""")
+    assert page.evaluate("saves.length") == 1
+    page.evaluate("""() => {engine._phoneStates.clear();}""")

@@ -37,6 +37,57 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    def test_local_invite_correlation_requires_the_owned_flow_and_actual_listener(self):
+        client = sip_client.SipCallClient(local_ip="127.0.0.1", local_name="Caller",
+            local_sip_port=0, local_rtp_port=41000, supported_formats=[audio_format.AudioFormat(16000)])
+        client._invite_transaction_active = True
+        client._pending_request_uri = "sip:paging%3Alocal@127.0.0.1:15060"
+        client._pending_remote_host, client._pending_remote_sip_port = "127.0.0.1", 15060
+        client._signaling_nominal = ("127.0.0.1", 15060)
+        client._resolved_signaling_target = ("127.0.0.1", 15060)
+        invite = types.SimpleNamespace(call_id=client.dialog_ids.call_id, cseq="1 INVITE",
+            request_uri=sip.parse_sip_uri(client._pending_request_uri),
+            source_host="127.0.0.1", source_port=15100, signaling_transport="TCP")
+        metadata = {"sockname": ("127.0.0.1", 15100), "peername": ("127.0.0.1", 15060)}
+        flow = types.SimpleNamespace(is_closing=lambda: False, get_extra_info=metadata.get)
+        client.writer = flow
+        options = {"listener_hosts": {"127.0.0.1", "::1"}, "listener_port": 15060}
+        for transport in ("TCP", "TLS"):
+            client.signaling_transport = invite.signaling_transport = transport
+            self.assertTrue(client.matches_local_invite_source(invite, **options))
+        client.signaling_transport = invite.signaling_transport = "TCP"
+        for field, forged in (("call_id", "another-call"), ("cseq", "2 INVITE"),
+                ("source_port", 15101), ("source_host", "127.0.0.2"),
+                ("signaling_transport", "UDP"),
+                ("request_uri", sip.parse_sip_uri("sip:another@127.0.0.1:15060"))):
+            with self.subTest(forged=field):
+                original = getattr(invite, field)
+                setattr(invite, field, forged)
+                self.assertFalse(client.matches_local_invite_source(invite, **options))
+                setattr(invite, field, original)
+        for field, forged in (("sockname", ("127.0.0.2", 15100)),
+                ("peername", ("192.0.2.10", 15060)), ("peername", ("127.0.0.1", 15061))):
+            with self.subTest(socket_metadata=field, value=forged):
+                original = metadata[field]
+                metadata[field] = forged
+                self.assertFalse(client.matches_local_invite_source(invite, **options))
+                metadata[field] = original
+        client.writer = types.SimpleNamespace(is_closing=lambda: True, get_extra_info=metadata.get)
+        self.assertFalse(client.matches_local_invite_source(invite, **options))
+        client.writer = flow
+        client._closed = True
+        self.assertFalse(client.matches_local_invite_source(invite, **options))
+        client._closed = False
+        client._invite_transaction_active = False
+        self.assertFalse(client.matches_local_invite_source(invite, **options))
+        client._invite_transaction_active = True
+        client.signaling_transport = invite.signaling_transport = "UDP"
+        client.transport = flow
+        metadata["sockname"] = ("0.0.0.0", 15100)
+        self.assertTrue(client.matches_local_invite_source(invite, **options))
+        client._resolved_signaling_target = ("192.0.2.10", 15060)
+        self.assertFalse(client.matches_local_invite_source(invite, **options))
+
     def test_browser_audio_message_budget_reserves_renegotiable_encoder_pcm(self):
         view = _load_audio_ws_runtime_module()
         self.assertEqual(view._browser_audio_message_limit(None), 4096)

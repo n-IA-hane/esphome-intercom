@@ -81,11 +81,14 @@ async def _answer(lab, phone, session):
 
 
 async def test_browser_waits_for_answer_and_ready_then_receives_exact_pcm_without_rtp_or_capture(browser_lab):
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state
+
     lab, phone, job = browser_lab
     task, session = await _ringing(lab, phone, job)
     browser, worker = Browser(), None
     try:
         assert not task.done() and session.state == "ringing"
+        assert _ha_softphone_state(lab.hass, phone.endpoint_id)["can_answer"] is True
         assert lab.runtime.endpoints.get(phone.endpoint_id).active_call_id == session.call_id
         assert session.metadata["announcement_id"] == job.identity
         application = await _answer(lab, phone, session)

@@ -1,4 +1,6 @@
 /** Pure projections for the operator dashboard. Call state stays in HA. */
+const VERSION = new URL(import.meta.url).searchParams.get("v") || "dev";
+const { phoneCallPresentation } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
 
 const ACTIVE_STATES = new Set(["ringing", "calling", "connecting", "answering", "in_call", "held", "terminating"]);
 const INTERNAL_KINDS = new Set(["browser", "ha_softphone", "esphome", "sip_account"]);
@@ -140,15 +142,16 @@ export function distinctCalls(phone) {
 
 export function primaryDashboardCall(phone) {
   const calls = distinctCalls(phone);
-  return calls.find((call) => call.pickup_available || (call.direction === "incoming" && call.state === "early")) ||
+  return calls.find((call) => call.pickup_available || phoneCallPresentation(call).incoming) ||
     calls.find((call) => call.state === "confirmed" && !call.held) || calls[0] || null;
 }
 
 export function phonePresentation(phone) {
-  const state = String(phone?.state || "unknown").toLowerCase();
+  let state = String(phone?.state || "unknown").toLowerCase();
   const unknownLabel = SERVICE_TYPES.has(dashboardTypeFor(phone)) ? "" : "Unknown";
   const calls = distinctCalls(phone);
   const primary = primaryDashboardCall(phone);
+  if (state === "ringing" && primary && phoneCallPresentation(primary).outgoing) state = "calling";
   const unavailable = ["offline", "unavailable"].includes(String(phone?.availability || "")) && !ACTIVE_STATES.has(state);
   const visual = state === "ringing" ? "ringing" : ACTIVE_STATES.has(state) ? "busy" : unavailable || state === "unavailable" ? "offline" : "idle";
   let label = "Available";
@@ -164,7 +167,7 @@ export function phonePresentation(phone) {
     visual, state, label, summaryLabel: label || unknownLabel, primary, calls,
     peer: String(primary?.peer_name || ""),
     held: calls.filter((call) => call.held),
-    incoming: calls.filter((call) => call.pickup_available || (call.direction === "incoming" && call.state === "early")),
+    incoming: calls.filter((call) => call.pickup_available || phoneCallPresentation(call).incoming),
     // Transfer intent must be explicit; two calls alone do not imply it.
     attended: phone?.attended_transfer === true || calls.some((call) => call.attended_transfer === true),
   };

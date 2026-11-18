@@ -29,6 +29,35 @@ MEDIA_DEVICES = ENGINE.with_name("voip-stack-media-devices.js")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_phone_call_presentation_distinguishes_caller_application_and_incoming_offer():
+    script = f"""
+import assert from 'node:assert/strict';
+import {{phoneCallPresentation,isPagingAutoAnswer}} from {json.dumps(CARD_MODEL.as_uri())};
+for(const snapshot of [
+  {{state:'ringing',direction:'outgoing',role:'caller',owner:'automation',can_answer:false}},
+  {{state:'ringing',direction:'outgoing',can_answer:true}},
+  {{state:'ringing',role:'caller'}},
+  {{state:'early',direction:'outgoing'}},
+]) {{
+  assert.deepEqual(phoneCallPresentation(snapshot),{{incoming:false,outgoing:true,state:'remote_ringing'}});
+  assert.equal(isPagingAutoAnswer({{...snapshot,announcement_id:'page',answer_mode:'auto',audio_direction:'recvonly'}}),false);
+}}
+assert.deepEqual(phoneCallPresentation({{state:'ringing',direction:'incoming',can_answer:false}}),
+  {{incoming:false,outgoing:false,state:'connecting'}});
+for(const snapshot of [{{state:'ringing',direction:'incoming',role:'callee',can_answer:true}},
+  {{state:'early',direction:'incoming'}},{{state:'ringing'}}]) {{
+  assert.equal(phoneCallPresentation(snapshot).incoming,true);
+}}
+assert.equal(phoneCallPresentation({{state:'in_call',direction:'incoming'}}).incoming,false);
+assert.equal(phoneCallPresentation(null).state,'idle');
+assert.equal(isPagingAutoAnswer({{state:'ringing',direction:'incoming',can_answer:true,
+  announcement_id:'page',answer_mode:'auto',audio_direction:'recvonly'}}),true);
+"""
+    result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_card_config_persists_only_device_selection() -> None:
     script = rf"""
 import assert from "assert/strict";
@@ -72,6 +101,7 @@ import {{ pathToFileURL }} from "url";
 
 const mediaModel = await import(pathToFileURL({json.dumps(str(MEDIA_MODEL))}));
 const sessionModel = await import(pathToFileURL({json.dumps(str(SESSION_MODEL))}));
+const cardModel = await import(pathToFileURL({json.dumps(str(CARD_MODEL))}));
 
 let source = fs.readFileSync({json.dumps(str(ENGINE))}, "utf8");
 source = source.replace(
@@ -86,6 +116,9 @@ source = source.replace(
 ).replace(
   /import\(`\.\/voip-stack-media-devices\.js[^`]+`\)/,
   "Promise.resolve(globalThis.__deviceModel)",
+).replace(
+  /import\(`\.\/voip-stack-card-model\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__cardModel)",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();
@@ -93,6 +126,7 @@ const session = new Map();
 const context = vm.createContext({{
   __mediaModel: mediaModel,
   __sessionModel: sessionModel,
+  __cardModel: cardModel,
   __deviceModel: {{
     exactDeviceConstraint(base, deviceId) {{
       return deviceId ? {{ ...base, deviceId: {{ exact: deviceId }} }} : base;
@@ -1717,6 +1751,18 @@ assert.equal(guardedCommands,0);
 assert.equal(guarded.softphoneCallIdFor("desk"),"");
 assert.equal(guarded._dashboardOperations.size,0);
 assert.equal(guarded._mediaIntent,null);
+
+// A pending application and an outbound provisional response are not offers
+// the calling browser can answer, even if their shared session says ringing.
+for (const patch of [{{direction:"outgoing",role:"caller"}},{{direction:"incoming",can_answer:false}}]) {{
+  guardedState={{endpoint_id:"desk",call_id:"incoming-A",state:"ringing",...patch}};
+  let prepares=0;
+  guarded.prepareAudioCall=async()=>{{prepares++;}};
+  await assert.rejects(guarded.dashboardAnswer(guardedOwner,{{call_id:"incoming-A"}}),/no longer ringing/);
+  await assert.rejects(guarded.dashboardTerminate("decline",guardedOwner,{{call_id:"incoming-A"}}),/no longer ringing/);
+  assert.equal(prepares,0);
+  assert.equal(guardedCommands,0);
+}}
 
 // A callee can answer before the originate service returns to the browser.
 const immediate = new Engine();

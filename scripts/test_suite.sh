@@ -110,6 +110,7 @@ ha_tests=(
   tests/test_inbound_did_bridge_ha.py
   tests/test_paging_ha.py
   tests/test_browser_paging_ha.py
+  tests/test_browser_paging_source_ha.py
   tests/test_queue_call_ha.py
   tests/test_queue_baresip_ha.py
   tests/test_phone_routing_ha.py
@@ -176,6 +177,8 @@ ha_tests=(
   tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
+  tests/test_browser_automation_contact_ha.py
+  tests/test_conference_service_ha.py
   tests/test_browser_answer_noanswer_race_ha.py
   tests/test_browser_logical_availability_ha.py
   tests/test_account_consolidation_ha.py

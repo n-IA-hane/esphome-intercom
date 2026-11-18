@@ -3,7 +3,7 @@ const VERSION = (() => { try { return new URL(import.meta.url).searchParams.get(
 const { voipStackEngine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(VERSION)}`);
 const { VoipEntityIds } = await import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VERSION)}`);
 const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VERSION)}`);
-const { softphoneSnapshotSupersedes } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
+const { softphoneSnapshotSupersedes, phoneCallPresentation } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
 const {
   DashboardPhoneStore, normaliseDashboardConfig, parseDashboardRoster, ownerDeviceInfo,
   dashboardSections, phonePresentation, dashboardCanCall,
@@ -335,7 +335,7 @@ class VoipStackDashboardCard extends HTMLElement {
     const e = this._els; const value = owner ? phonePresentation(owner) : null; const call = value?.primary;
     e.ownerCall.hidden = !call;
     if (!call) return;
-    const incoming = call.direction === "incoming" && call.state === "early";
+    const incoming = phoneCallPresentation(this._callSnapshot(owner, call)).incoming;
     e.ownerCall.className = `owner-call ${incoming ? "ringing" : "busy"}`;
     e.callIcon.setAttribute("icon", incoming ? "mdi:phone-incoming" : call.held ? "mdi:phone-paused" : "mdi:phone-in-talk");
     e.callLabel.textContent = this._t(incoming ? "Incoming call" : call.held ? "On hold" : value.label);
@@ -417,7 +417,8 @@ class VoipStackDashboardCard extends HTMLElement {
   _callSnapshot(owner, call) {
     const sameCall = this._ownerSnapshot?.call_id === call.id;
     return { ...(sameCall ? this._ownerSnapshot : {}), endpoint_id: owner.endpoint_id, device_id: owner.device_id,
-      call_id: call.id, generation: call.generation, state: call.state === "early" ? "ringing" : owner.state,
+      call_id: call.id, generation: call.generation,
+      state: call.state === "early" ? "ringing" : call.state === "confirmed" ? "in_call" : owner.state,
       peer_name: call.peer_name, direction: call.direction };
   }
 
@@ -477,7 +478,7 @@ class VoipStackDashboardCard extends HTMLElement {
         button.append(dashboardIcon(icon), dashboardElement("span", "", this._t(label))); button.onclick = handler; actions.append(button);
       };
       if (phone.owner) {
-        if (call.direction === "incoming" && call.state === "early") {
+        if (phoneCallPresentation(this._callSnapshot(owner, call)).incoming) {
           const offeredVideo = owner?.softphone && this._ownerSnapshot?.call_id === call.id && this._ownerSnapshot?.video_offered;
           if (offeredVideo) addAction("Answer with video", "mdi:video", () => this._ownerCommand("answer_video", call));
           addAction(offeredVideo ? "Answer audio only" : "Answer", "mdi:phone", () => this._ownerCommand("answer", call));

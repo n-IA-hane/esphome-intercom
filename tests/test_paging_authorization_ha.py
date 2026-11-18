@@ -118,3 +118,33 @@ async def test_forwarded_live_paging_cannot_promote_nominal_source(queue_lab):
             None, "127.0.0.1")
     await lab.calls.terminate_call_wait(session.call_id, reason="test_done")
     assert not any(phone.invites for phone in lab.phones)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_empty_saved_paging_group_uses_unavailable_policy_without_invites(queue_lab):
+    from custom_components.voip_stack.paging_config import normalize_paging_group, paging_group_entries
+
+    lab = queue_lab
+    owner = await prepare_paging(lab)
+    record = next(iter(owner.entry.subentries.values()))
+    record.data = normalize_paging_group({**record.data, "members": []}, identity=record.subentry_id)
+    lab.roster[:] = [row for row in lab.roster if row.id != "paging:" + record.subentry_id]
+    rows = paging_group_entries(owner.entry)
+    lab.roster.extend(rows)
+    lab.runtime.directory.replace(lab.roster)
+    assert rows[0].extension == "402" and not rows[0].enabled
+    client, _audio = await lab.caller()
+    try:
+        result = await client.invite(target="402", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3, audio_direction="sendonly")
+        if result == "ringing":
+            await client.wait_for_final(timeout=3)
+        # Saved empty groups follow the existing disabled-target admission policy.
+        assert client.last_sip_status_code == 403
+        assert not owner.jobs
+        assert not any(phone.invites for phone in lab.phones)
+        assert record.data["members"] == [] and record.data["extension"] == "402"
+    finally:
+        await client.terminate()
+    await wait_until(lambda: not lab.calls.sessions)
+    assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)

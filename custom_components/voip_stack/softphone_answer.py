@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .call_projection import publish_phone_projection
-from .call_scope import endpoint_call_ids, pending_routes
+from .call_scope import application_owns_browser_answer, endpoint_call_ids, pending_routes
 from .config import transport_config
 from .const import CONF_VIDEO_CAMERA_SEND
 from .fsm import CallState, TerminalReason
@@ -59,7 +59,7 @@ async def async_answer_browser_call(
         return
     if call_id and registry.resolve_session_id(call_id) in registry.sessions:
         session = registry.sessions[registry.resolve_session_id(call_id)]
-        if getattr(session, "owner", "") in {"automation", "assist", "voicemail"}:
+        if application_owns_browser_answer(session):
             raise ServiceValidationError("The call is already handled by an application")
         bind_service_call_controller(
             registry,

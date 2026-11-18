@@ -1,6 +1,6 @@
 set_phone_memberships:
   name: Set phone group membership
-  description: Change a phone's ring groups or queues, including a configured ESP that is offline.
+  description: Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership requires an administrator.
   fields:
     phone:
       name: Phone
@@ -20,9 +20,11 @@ set_phone_memberships:
               value: ring_group
             - label: Queues
               value: queues
+            - label: Paging groups
+              value: paging_groups
     value:
       name: Group names
-      description: Comma-separated names. An empty value removes the phone from this type of group.
+      description: Ring groups and queues use names. Paging groups use existing group IDs, as a list or comma-separated. Empty removes memberships without deleting groups.
       required: true
       selector:
         text:

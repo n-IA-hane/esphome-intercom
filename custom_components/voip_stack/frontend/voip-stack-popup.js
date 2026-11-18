@@ -2,7 +2,7 @@
 const VERSION = new URL(import.meta.url).searchParams.get("v") || "dev";
 const [
   { voipStackEngine: engine },
-  { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration, supportsHaClient },
+  { softphoneSnapshotSupersedes, terminalPeerLabel, formatCallDuration, supportsHaClient, phoneCallPresentation },
   { voipStackTranslate: translate },
 ] = await Promise.all([
   import(`./voip-stack-engine.js?v=${encodeURIComponent(VERSION)}`),
@@ -140,7 +140,7 @@ export class VoipStackPopup extends HTMLElement {
       if (["1", "true", "yes"].includes((params.get("voip_answer") || "").toLowerCase()) &&
           params.get("voip_endpoint") === this.binding?.endpoint_id &&
           params.get("voip_call_id") === this.state?.call_id &&
-          this.state?.direction === "incoming" && ["ringing", "incoming"].includes(this.state.state)) this.open();
+          phoneCallPresentation(this.state).incoming) this.open();
     };
     this._pageShown = () => { this.syncPreference(true); this._answerLink(); };
     this._storageChanged = event => {
@@ -290,8 +290,7 @@ export class VoipStackPopup extends HTMLElement {
     if (state.endpoint_id !== this.phone?.endpoint_id || state.device_id !== this.phone?.device_id) return;
     if (state.kind !== "closed" && this.state && !softphoneSnapshotSupersedes(this.state, state)) return;
     this.state = state;
-    const incoming = activeCall(state) && state.available !== false &&
-      ["ringing", "incoming"].includes(state.state) && state.direction === "incoming";
+    const incoming = activeCall(state) && state.available !== false && phoneCallPresentation(state).incoming;
     engine.setRingtoneRequest("voip-stack-global-popup", incoming, true);
     if (state.kind !== "closed") void engine.syncOwnedSoftphoneState(this.phone, state).catch(error => { this.error = error?.message || String(error); });
     if (!activeCall(state)) { this.dialog?.closeDialog(false); this.minimized = false; }
@@ -312,7 +311,7 @@ export class VoipStackPopup extends HTMLElement {
     const state = this.state;
     if (!activeCall(state) || this._pending) return;
     this._pending = this._hangup.disabled = true;
-    try { await engine.dashboardTerminate(["ringing", "incoming"].includes(state.state) ? "decline" : "hangup", this.phone, state); }
+    try { await engine.dashboardTerminate(phoneCallPresentation(state).incoming ? "decline" : "hangup", this.phone, state); }
     catch (error) { this.error = error?.message || String(error); this._mini.title = translate(this._hass, this.error); }
     finally { this._pending = this._hangup.disabled = false; }
   }

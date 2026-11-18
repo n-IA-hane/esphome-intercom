@@ -248,6 +248,28 @@ async def _async_membership_service(call, field, value):
 
     endpoint = resolve_phone(call.hass, str(call.data["phone"]))
     await async_require_phone_service_control(call.hass, call, endpoint=endpoint)
+    if field == "paging_groups":
+        from .authorization import async_require_service_admin
+        from .paging_config import update_phone_paging_groups
+        from .runtime_data import require_runtime_data
+
+        # Receiving announcements is an administrative assignment, never self-enrollment.
+        await async_require_service_admin(call.hass, call)
+        entry = config_entry(call.hass)
+        if entry is None:
+            raise ServiceValidationError("VoIP Stack configuration is unavailable")
+        runtime = require_runtime_data(call.hass)
+        try:
+            # HA starts update listeners eagerly. Reuse their reconciliation lock
+            # so they see every canonical group in this one membership change.
+            async with runtime.group_update_lock:
+                changed = update_phone_paging_groups(call.hass, entry, endpoint.endpoint_id, value)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+        observer = runtime.sip.component("phone_state") if runtime.sip is not None else None
+        if changed and observer is not None:
+            observer.refresh()
+        return
     try:
         desired = membership_value(field, value)
     except ValueError as err:

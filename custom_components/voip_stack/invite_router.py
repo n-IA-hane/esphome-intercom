@@ -29,6 +29,7 @@ from .const import (
     TRUNK_INBOUND_MODE_DTMF,
 )
 from .endpoint_lifecycle import call_registry as _call_registry
+from .endpoint_session import LegPhase
 from .endpoint_routing import (
     peer_for_target as _peer_for_target,
     roster_from_peers as _roster_from_peers,
@@ -222,11 +223,24 @@ async def route_invite(
             trunk_direct_preprocessed = True
     local_client = registry.sip_client_for(invite.call_id)
     local_session = registry.get_session(invite.call_id)
-    if local_client is not None and local_session is not None and invite.source_host in {local_ip, "127.0.0.1", "::1"}:
-        transport = getattr(local_client, "transport", None)
-        address = transport.get_extra_info("sockname") if transport is not None else None
-        if address and int(address[1]) == invite.source_port:
-            identified_source = str(local_session.metadata.get("source_endpoint_id") or "")
+    if (not trunk_invite and local_client is not None and local_session is not None
+            and local_session.live and not local_session.metadata.get("inbound_trunk_id")
+            and (decision.action.is_local_application
+                 or decision.action in {RouteAction.ANSWER_HA, RouteAction.GROUP})):
+        source_id = str(local_session.metadata.get("source_endpoint_id") or "")
+        endpoint = endpoint_registry.get(source_id) if source_id else None
+        leg = local_session.legs.get(invite.call_id)
+        # The client leg and phone claim belong to the current session
+        # generation. A matching Call-ID or From name grants no authority.
+        if (endpoint is not None and endpoint.supports_ha_client
+                and endpoint.active_call_id == local_session.call_id
+                and local_session.endpoint_claims.get(source_id) == "source"
+                and leg is not None and leg.dialog is local_client and leg.role == "ha_softphone"
+                and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                and registry.get_session(local_session.call_id, generation=local_session.generation) is local_session
+                and local_client.matches_local_invite_source(invite,
+                    listener_hosts={local_ip, "127.0.0.1", "::1"}, listener_port=int(runtime.config["sip_port"]))):
+            identified_source = source_id
     source_endpoint_id = identified_source
     source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
     if invite.identified_source_endpoint_id != identified_source:

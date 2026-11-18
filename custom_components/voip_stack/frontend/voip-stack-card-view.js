@@ -635,6 +635,8 @@ export function buildMainCardSkeleton(cardVersion) {
         color: var(--secondary-text-color);
       }
       .softphone-group-row label { min-width: 0; text-align: left; }
+      .paging-group-row[hidden] { display: none; }
+      .paging-group-hint { grid-column: 1 / -1; font-size: 0.9em; }
       .softphone-group-row input,
       .softphone-group-row select {
         width: 100%;
@@ -1103,6 +1105,27 @@ export function buildMainCardSkeleton(cardVersion) {
     const queueStates = document.createElement("div");
     softphoneGroupsPanel.appendChild(queueStates);
 
+    const pagingGroupRow = document.createElement("div");
+    pagingGroupRow.className = "softphone-group-row paging-group-row";
+    pagingGroupRow.hidden = true;
+    const pagingGroupLabel = document.createElement("label");
+    pagingGroupLabel.htmlFor = "phone-paging-groups";
+    pagingGroupLabel.textContent = translate("Paging groups");
+    const pagingGroupControls = document.createElement("div");
+    const pagingGroupSelect = document.createElement("select");
+    pagingGroupSelect.id = "phone-paging-groups";
+    pagingGroupSelect.multiple = true;
+    pagingGroupSelect.size = 3;
+    const pagingGroupClear = document.createElement("button");
+    pagingGroupClear.type = "button";
+    pagingGroupClear.textContent = translate("Remove from all paging groups");
+    pagingGroupControls.append(pagingGroupSelect, pagingGroupClear);
+    const pagingGroupHint = document.createElement("div");
+    pagingGroupHint.className = "paging-group-hint";
+    pagingGroupHint.textContent = translate("Choose the existing groups whose announcements this phone should receive.");
+    pagingGroupRow.append(pagingGroupLabel, pagingGroupControls, pagingGroupHint);
+    softphoneGroupsPanel.appendChild(pagingGroupRow);
+
     const conferenceGroupRow = document.createElement("div");
     conferenceGroupRow.className = "softphone-group-row";
     const conferenceGroupLabel = document.createElement("label");
@@ -1238,7 +1261,9 @@ export function buildMainCardSkeleton(cardVersion) {
       microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
       videoCameraRow, videoCameraCheckbox,
       mediaDeviceViews: [idleMediaDevices],
-      softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, queuesInput, queuesOptions, queueStates, conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
+      softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, queuesInput, queuesOptions, queueStates,
+      pagingGroupRow, pagingGroupSelect, pagingGroupClear,
+      conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
       stats, err,
     };
 

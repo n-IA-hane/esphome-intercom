@@ -20,11 +20,13 @@ const [
   },
   { normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches },
   { BrowserMediaDevices, exactDeviceConstraint },
+  { phoneCallPresentation },
 ] = await Promise.all([
   import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`),
   import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
   import(`./voip-stack-session-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
   import(`./voip-stack-media-devices.js?v=${encodeURIComponent(MODULE_VERSION)}`),
+  import(`./voip-stack-card-model.js?v=${encodeURIComponent(MODULE_VERSION)}`),
 ]);
 const CONTROL_ACK_TIMEOUT_MS = 3000;
 const AUDIO_NEGOTIATION_TIMEOUT_MS = 3000;
@@ -1668,7 +1670,8 @@ class VoipStackEngine extends EventTarget {
     const phone = this._phoneStates.get(owner.endpoint_id) || {};
     const selected = (phone.calls || []).find((call) => call.direction === "incoming" && call.state === "early")
       || phone.calls?.[0];
-    return { ...phone, call_id: selected?.id || "" };
+    return { ...phone, ...selected, call_id: selected?.id || "",
+      state: selected?.state === "early" ? "ringing" : phone.state };
   }
 
   async _dashboardOperation(owner, operation) {
@@ -1739,7 +1742,7 @@ class VoipStackEngine extends EventTarget {
     await this._dashboardOperation(owner, async (browser) => {
       let current = await this._dashboardSnapshot(owner);
       const ringing = (state) => String(state.call_id || "") === callId &&
-        ["ringing", "incoming"].includes(String(state.state || ""));
+        phoneCallPresentation(state).incoming;
       if (!callId || !ringing(current)) throw new Error("This incoming call is no longer ringing.");
       if (browser) {
         const direction = current.audio_direction || "sendrecv";
@@ -1770,6 +1773,12 @@ class VoipStackEngine extends EventTarget {
     if (!["decline", "hangup"].includes(action)) throw new Error("Unknown phone command.");
     const callId = String(snapshot?.call_id || snapshot?.id || "");
     if (!callId) throw new Error("The call has already ended.");
+    if (action === "decline") {
+      const current = await this._dashboardSnapshot(owner);
+      if (String(current.call_id || "") !== callId || !phoneCallPresentation(current).incoming) {
+        throw new Error("This incoming call is no longer ringing.");
+      }
+    }
     const generation = action === "hangup" && Number.isSafeInteger(snapshot.generation) && snapshot.generation > 0
       ? { expected_generation: snapshot.generation } : {};
     if (this._dashboardIsBrowser(owner)) {

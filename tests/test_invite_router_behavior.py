@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -13,6 +14,7 @@ from custom_components.voip_stack.core.sdp import RtpPcmFormat
 from custom_components.voip_stack.core.sip import parse_sip_uri
 from custom_components.voip_stack.router import RouteAction, RouteDecision
 from custom_components.voip_stack.sip_listener import SipInvite
+from custom_components.voip_stack.endpoint_session import LegPhase
 
 
 pytestmark = pytest.mark.ha
@@ -105,6 +107,38 @@ def _patch_route_prefix(
         "_pending_routes",
         lambda _hass: pending_routes or {},
     )
+
+
+@pytest.mark.parametrize("invalid", [None, "trunk", "ended", "generation", "claim", "account", "leg", "flow"])
+async def test_local_browser_source_requires_current_account_generation_and_owned_client(monkeypatch, invalid):
+    from custom_components.voip_stack import call_replaces
+    from custom_components.voip_stack.sip_listener import SipInviteResult
+
+    _patch_route_prefix(monkeypatch)
+    runtime = _runtime()
+    runtime.config["sip_port"] = 5060
+    runtime.inbound_route_decision.return_value = RouteDecision(RouteAction.PAGING, target="Paging")
+    runtime.is_trunk_invite.return_value = invalid == "trunk"
+    client = SimpleNamespace(matches_local_invite_source=Mock(return_value=invalid != "flow"))
+    endpoint = SimpleNamespace(supports_ha_client=True, active_call_id="another" if invalid == "account" else "call-1")
+    session = SimpleNamespace(call_id="call-1", live=invalid != "ended", generation=7,
+        metadata={"source_endpoint_id": "source"},
+        endpoint_claims={"source": "destination" if invalid == "claim" else "source"},
+        legs={"call-1": SimpleNamespace(dialog=client, role="ha_softphone",
+            phase=LegPhase.CLOSING if invalid == "leg" else LegPhase.INVITING)})
+    registry = SimpleNamespace(component=lambda _name: None, sip_client_for=lambda _id: client,
+        get_session=lambda _id, generation=None: None if generation is not None and invalid == "generation" else session)
+    monkeypatch.setattr(invite_router, "_call_registry", lambda _hass: registry)
+    monkeypatch.setattr(invite_router, "endpoint_directory", lambda _hass: SimpleNamespace(get=lambda _id: endpoint))
+    boundary = AsyncMock(return_value=SipInviteResult(481, "Call/Transaction Does Not Exist"))
+    monkeypatch.setattr(call_replaces, "prepare_replacement", boundary)
+    invite = replace(_invite(), replaces=SimpleNamespace())
+    await invite_router.route_invite(runtime, invite)
+    correlated = boundary.await_args.args[1]
+    assert correlated.identified_source_endpoint_id == ("source" if invalid is None else "")
+    if invalid is None:
+        client.matches_local_invite_source.assert_called_once_with(invite,
+            listener_hosts={runtime.local_ip, "127.0.0.1", "::1"}, listener_port=5060)
 
 
 @pytest.mark.asyncio

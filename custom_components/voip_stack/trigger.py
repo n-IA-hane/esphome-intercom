@@ -173,6 +173,11 @@ class VoipCallTrigger(Trigger):
         @callback
         def receive(event):
             payload = deepcopy(dict(event.data))
+            if self._kind == "call_received" and payload.get("direction") == "outgoing":
+                # A caller observing the remote party ring has received no
+                # offer. The application's own incoming projection remains
+                # available for a local automation destination on this call.
+                return
             kind = (
                 "dtmf"
                 if event.event_type == SIP_DTMF_EVENT

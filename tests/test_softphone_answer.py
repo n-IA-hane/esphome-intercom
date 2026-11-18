@@ -46,6 +46,7 @@ def softphone_answer(monkeypatch):
     dependencies = {
         "call_projection": {},
         "call_scope": {
+            "application_owns_browser_answer": lambda session: session.owner in {"automation", "assist", "voicemail"},
             "endpoint_call_ids": Mock(return_value=[]),
             "pending_routes": Mock(return_value={}),
         },

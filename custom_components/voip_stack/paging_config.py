@@ -15,8 +15,8 @@ def normalize_paging_group(data, *, identity=""):
     members = tuple(dict.fromkeys(str(value).strip() for value in data.get("members", ()) if str(value).strip()))
     if not name or len(name) > 128 or (extension and (not extension.isdecimal() or len(extension) > 32)):
         raise ValueError("A paging group needs a name and an optional numeric extension")
-    if not members or len(members) > MAX_PAGING_TARGETS:
-        raise ValueError("Select between one and sixteen paging phones")
+    if len(members) > MAX_PAGING_TARGETS:
+        raise ValueError("Select at most sixteen paging phones")
     answer_timeout = float(data.get("answer_timeout", 5))
     timeout = float(data.get("timeout", 120))
     if not 1 <= answer_timeout <= 120 or not 1 <= timeout <= 600:
@@ -35,7 +35,45 @@ def paging_group_configs(entry):
 def paging_group_entries(entry):
     return [RosterEntry(id=f"paging:{identity}", name=data["name"],
                         extension=str(data.get("extension") or ""), ha_bridge=True,
-                        enabled=bool(data.get("enabled", True)),
+                        enabled=bool(data.get("enabled", True) and data.get("members")),
                         metadata={"virtual_endpoint": "paging", "paging_group_id": identity,
                                   "endpoint_id": f"service:paging:{identity}", "endpoint_kind": "service"})
             for identity, data in paging_group_configs(entry).items()]
+
+
+def paging_group_memberships(entry):
+    """Derive phone memberships from the saved paging groups, never a shadow field."""
+    members = {}
+    for identity, data in paging_group_configs(entry).items():
+        for phone in data.get("members", ()):
+            members.setdefault(phone, []).append(identity)
+    return members
+
+
+def update_phone_paging_groups(hass, entry, endpoint_id, selected):
+    """Validate the complete membership change before updating canonical groups."""
+    if isinstance(selected, str):
+        selected = [value.strip() for value in selected.split(",") if value.strip()]
+    if not isinstance(selected, (list, tuple)) or any(not isinstance(value, str) for value in selected):
+        raise ValueError("Select existing paging groups")
+    selected = {value.strip() for value in selected if value.strip()}
+    groups = paging_group_configs(entry)
+    if selected - groups.keys():
+        raise ValueError("Select existing paging groups")
+    updates = []
+    for record in entry.subentries.values():
+        if record.subentry_type != "paging":
+            continue
+        identity = str(record.data.get("paging_group_id") or record.subentry_id)
+        previous = list(record.data.get("members", ()))
+        members = [member for member in previous if member != endpoint_id]
+        if identity in selected:
+            members = previous if endpoint_id in previous else [*previous, endpoint_id]
+        if members != previous:
+            proposal = {**record.data, "members": members}
+            validated = normalize_paging_group(proposal, identity=identity)
+            updates.append((record, {**record.data, "members": validated["members"]}))
+    # The service holds the existing group reconciliation lock across this batch.
+    for record, data in updates:
+        hass.config_entries.async_update_subentry(entry, record, data=data)
+    return bool(updates)

@@ -106,6 +106,157 @@ def incoming(page, call_id="incoming-A"):
     page.wait_for_function("!!__voipStackPopup.dialog?._phone?._softphoneSnapshot?.call_id")
 
 
+@pytest.mark.parametrize("audio_direction", ["sendrecv", "recvonly"])
+def test_application_caller_cannot_answer_or_ring_and_next_incoming_remains_answerable(popup_page, audio_direction):
+    """The local automation's incoming bridge event is not an offer to its caller."""
+    from playwright.sync_api import expect
+
+    page = popup_page
+    page.evaluate("""() => {
+      phone={...phone,kind:'sip_account',endpoint_id:'sip:tecnodata',name:'Tecnodata'};
+      current={...current,endpoint_id:phone.endpoint_id,kind:phone.kind,can_answer:false};
+      hass.states['sensor.voip_phonebook']={state:'ready',attributes:{roster_json:JSON.stringify([
+        {id:'office_announcements',name:'Annunci ufficio',ha_bridge:true,
+          metadata:{virtual_endpoint:'automation'}}])}};
+      localStorage.setItem('voip_ringtone_'+phone.device_id,'true');
+    }""")
+    enable(page)
+    page.evaluate("""async () => {
+      await import('/voip-stack-card.js');
+      window.card=document.createElement('voip-stack-card');
+      card.setConfig({mode:'ha_softphone',device_id:phone.device_id});
+      document.body.append(card);root.provideHass(card);
+    }""")
+    page.wait_for_function("card._softphoneSnapshot?.endpoint_id==='sip:tecnodata'")
+    page.evaluate("""() => {
+      push({state:'ringing',call_id:'application-source',direction:'outgoing',role:'caller',
+        owner:'automation',caller:'Tecnodata',callee:'Annunci ufficio',peer_name:'Annunci ufficio',
+        can_answer:false,auto_answer:true});
+      history.pushState({},'','/?voip_answer=1&voip_endpoint=sip%3Atecnodata&voip_call_id=application-source');
+      window.dispatchEvent(new CustomEvent('location-changed'));
+    }""")
+    expect(page.get_by_role("button", name="Hang up call", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Options", exact=True).click()
+    expect(page.get_by_role("button", name="Answer", exact=True)).to_be_hidden()
+    expect(page.get_by_role("button", name="Decline", exact=True)).to_be_hidden()
+    # Options deliberately covers the standalone call plane. Its underlying
+    # action remains Hang up when the user returns to the call.
+    assert page.evaluate("card._els.hangupBtn.hidden") is False
+    assert page.evaluate("card._els.statusText.textContent") == "Annunci ufficio is ringing..."
+    page.evaluate("""async () => {
+      await card._answer();await card._decline();await card._tryAutoAnswer();card.consumePhoneAnswerLink();
+      for(const action of ['answer','decline']) {
+        try {
+          if(action==='answer')await __voipStackEngine.dashboardAnswer(phone,current);
+          else await __voipStackEngine.dashboardTerminate('decline',phone,current);
+          throw Error('Blocked action unexpectedly succeeded');
+        } catch(error) {if(!error.message.includes('no longer ringing'))throw error;}
+      }
+    }""")
+    assert page.evaluate("services") == []
+    assert page.evaluate("mics") == 0
+    assert page.evaluate("__voipStackEngine._ringtoneRequests.size") == 0
+    assert page.evaluate("!!__voipStackPopup.dialog?._dialog.open") is False
+    assert page.evaluate("card._deepLinkAnswerConsumed") is False
+    page.get_by_role("button", name="Options", exact=True).click()
+    page.get_by_role("button", name="Hang up call", exact=True).click()
+    page.wait_for_function("services.some(s=>s.service==='hangup')")
+    assert page.evaluate("services.map(s=>[s.service,s.data.call_id])") == [["hangup", "application-source"]]
+
+    # An application-owned incoming projection is also not user-answerable.
+    page.evaluate("""() => {
+      push({state:'ringing',call_id:'application-source',direction:'incoming',role:'callee',
+        can_answer:false,auto_answer:true});
+    }""")
+    expect(page.get_by_role("button", name="Answer", exact=True)).to_be_hidden()
+    assert page.evaluate("__voipStackEngine._ringtoneRequests.size") == 0
+    assert page.evaluate("services.filter(s=>s.service==='answer'||s.service==='decline')") == []
+
+    page.evaluate("""direction => {
+      push({state:'idle',call_id:'application-source',auto_answer:false});
+      history.replaceState({},'','/');
+      window.prepares=[];
+      __voipStackEngine.prepareAudioCall=async options=>{prepares.push(options.needsMicrophone);};
+      push({state:'ringing',call_id:'genuine-incoming',direction:'incoming',role:'callee',
+        owner:'ha_softphone',caller:'Front door',callee:'Tecnodata',peer_name:'Front door',
+        can_answer:true,auto_answer:false,audio_direction:direction});
+    }""", audio_direction)
+    page.wait_for_function("!!__voipStackPopup.dialog?._dialog.open")
+    answer = page.locator("voip-stack-phone-dialog").get_by_role("button", name="Answer", exact=True)
+    expect(answer).to_be_visible()
+    answer.click(force=True)
+    page.wait_for_function("services.some(s=>s.service==='answer')")
+    assert page.evaluate("services.filter(s=>s.service==='answer').map(s=>s.data.call_id)") == ["genuine-incoming"]
+    assert page.evaluate("prepares") == [audio_direction == "sendrecv"]
+    assert page.evaluate("mics") == 0
+
+
+def test_dashboard_real_embedded_phone_keeps_application_caller_outgoing(popup_page):
+    """Use the real Dashboard, embedded card and engine, controlling only HA I/O."""
+    from playwright.sync_api import expect
+
+    page = popup_page
+    page.evaluate("""async () => {
+      phone={...phone,kind:'sip_account',endpoint_id:'sip:tecnodata',name:'Tecnodata'};
+      current={...current,endpoint_id:phone.endpoint_id,kind:phone.kind,can_answer:false};
+      window.phoneRevision=1;
+      window.ownerPhone={...phone,state:'idle',availability:'available',calls:[]};
+      const subscribe=hass.connection.subscribeMessage;
+      hass.connection.subscribeMessage=async(callback,request)=>{
+        if(request.type!=='voip_stack/subscribe_phone_states')return subscribe(callback,request);
+        const record={callback,request,active:true};streams.push(record);
+        queueMicrotask(()=>callback({kind:'snapshot',revision:phoneRevision,phones:[ownerPhone]}));
+        return()=>{record.active=false;};
+      };
+      window.pushOwner=patch=>{
+        ownerPhone={...ownerPhone,...patch};phoneRevision++;
+        for(const item of streams)if(item.active&&item.request.type==='voip_stack/subscribe_phone_states')
+          item.callback({kind:'delta',revision:phoneRevision,phones:[ownerPhone]});
+      };
+      hass.states['sensor.voip_phonebook']={state:'ready',attributes:{roster_json:JSON.stringify([
+        {id:'office_announcements',name:'Annunci ufficio',ha_bridge:true,
+          metadata:{virtual_endpoint:'automation'}}])}};
+      await import('/voip-stack-card.js');await import('/voip-stack-dashboard-card.js');
+      window.dashboard=document.createElement('voip-stack-dashboard-card');
+      dashboard.setConfig({device_id:phone.device_id});document.body.append(dashboard);root.provideHass(dashboard);
+    }""")
+    page.wait_for_function("dashboard._phoneView?._softphoneSnapshot?.endpoint_id==='sip:tecnodata'&&dashboard._store.ready")
+    page.evaluate("""() => {
+      push({state:'ringing',call_id:'application-source',direction:'outgoing',role:'caller',owner:'automation',
+        caller:'Tecnodata',callee:'Annunci ufficio',peer_name:'Annunci ufficio',can_answer:false,auto_answer:true});
+      pushOwner({state:'calling',calls:[{id:'application-source',state:'early',direction:'outgoing',
+        peer_name:'Annunci ufficio',generation:1}]});
+    }""")
+    dashboard = page.locator("voip-stack-dashboard-card")
+    expect(dashboard.get_by_role("button", name="Answer", exact=True)).to_be_hidden()
+    expect(dashboard.get_by_role("button", name="Decline", exact=True)).to_be_hidden()
+    expect(dashboard.get_by_role("button", name="Hang up", exact=True)).to_be_visible()
+    dashboard.get_by_role("button", name="Options", exact=True).click()
+    page.wait_for_function("dashboard._phoneView._settingsOpen&&!dashboard._els.phoneHost.hidden")
+    embedded = dashboard.locator("voip-stack-card")
+    expect(embedded.get_by_role("button", name="Answer", exact=True)).to_be_hidden()
+    expect(embedded.get_by_role("button", name="Decline", exact=True)).to_be_hidden()
+    assert page.evaluate("dashboard._phoneView._els.hangupBtn.hidden") is False
+    expect(dashboard.get_by_role("button", name="Hang up", exact=True)).to_be_visible()
+    assert page.evaluate("dashboard._phoneView._els.statusText.textContent") == "Annunci ufficio is ringing..."
+    assert page.evaluate("mics") == 0
+    assert page.evaluate("services") == []
+    assert page.evaluate("__voipStackEngine._ringtoneRequests.size") == 0
+    page.evaluate("""() => {
+      push({state:'ringing',call_id:'genuine-incoming',direction:'incoming',role:'callee',owner:'ha_softphone',
+        caller:'Customer',callee:'Tecnodata',peer_name:'Customer',can_answer:true,auto_answer:false});
+      pushOwner({state:'ringing',calls:[{id:'genuine-incoming',state:'early',direction:'incoming',
+        peer_name:'Customer',generation:2}]});
+    }""")
+    expect(dashboard.get_by_role("button", name="Answer", exact=True)).to_be_visible()
+    expect(dashboard.get_by_role("button", name="Decline", exact=True)).to_be_visible()
+    page.evaluate("() => {window.prepares=[];__voipStackEngine.prepareAudioCall=async options=>{prepares.push(options.needsMicrophone);};}")
+    dashboard.get_by_role("button", name="Answer", exact=True).click(force=True)
+    page.wait_for_function("services.some(s=>s.service==='answer')")
+    assert page.evaluate("services.map(s=>[s.service,s.data.call_id])") == [["answer", "genuine-incoming"]]
+    assert page.evaluate("prepares") == [True]
+
+
 @pytest.mark.parametrize("cleanup", ["unmount", "phonebook"])
 def test_standalone_esp_mirror_observes_queue_states_without_another_card(popup_page, cleanup):
     page = popup_page

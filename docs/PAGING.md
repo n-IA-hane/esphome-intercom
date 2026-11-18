@@ -59,6 +59,17 @@ Add a **Paging group** on the VoIP Stack integration, select its phones and
 optionally give it an extension. Automations can target the group's name or
 stable ID. Repeated targets are deduplicated.
 
+An administrator can also open the phone card's **Options > Paging groups**
+and select the existing local groups that should announce on that phone.
+The same memberships appear in the integration's paging group editor. Removing
+the last phone keeps the group's extension and settings for future use.
+
+When the paging service lives on another PBX, dial that PBX's paging extension
+through its trunk. An **Automation contact** used as the source of an outgoing
+announcement is a different dialplan destination. Calling that contact starts
+its incoming automation and waits for a routing decision. The originating
+card shows outgoing progress and offers **Hang up**.
+
 Call that extension from a SIP phone to make a live one-way announcement.
 The originating phone supplies the audio; recipients do not send microphone
 audio back to it.
