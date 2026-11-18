@@ -1,6 +1,7 @@
 """Incoming DID wire reaches independent destinations through native HA routing."""
 
 import asyncio
+import logging
 import re
 import socket
 import struct
@@ -26,7 +27,8 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.timeout(60)
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex_rtp(trunks, monkeypatch):
+async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex_rtp(trunks, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.invite_router")
     lab = trunks
     hass, registry = lab.hass, lab.calls
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
@@ -140,6 +142,16 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
             assert snapshots[-1]["called_number"] == snapshots[-1]["called_number_raw"] == did
             assert snapshots[-1]["caller_number"] == caller
             assert snapshots[-1]["inbound_trunk_id"] == "did-provider"
+            decisions = [record.getMessage() for record in caplog.records
+                         if record.name == "custom_components.voip_stack.invite_router"
+                         and record.getMessage().endswith(f"[call_id={call_id}]")]
+            identity_logs = [message for message in decisions if "received number" in message]
+            assert len(identity_logs) == 1
+            assert f"received number {did}, normalized to {did} from to; routing mode=direct" in identity_logs[0]
+            selections = [message for message in decisions if message.startswith("PBX | Target ")]
+            assert len(selections) == 1
+            assert f"Target {expected} selects " in selections[0]
+            assert "via routing action" in selections[0]
             # ACK is independently built from the UAS response and initial transaction.
             ack_headers = [("Via", f"SIP/2.0/UDP 127.0.0.2:{signal_port};branch={branch if not answered else branch + '-ack'};rport"),
                            ("From", from_header), ("To", final.header("To")),

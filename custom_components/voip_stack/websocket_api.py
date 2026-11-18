@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Any, Dict
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.exceptions import Unauthorized
 
+from .pbx_trace import trace_call
 from .config import debug_mode as current_debug_mode
 from .config import transport_config as current_transport_config
 from .authorization import (
@@ -309,7 +310,12 @@ def _fire_call_event(
     )
     event["ingress"] = call_origin
     event["origin"] = call_origin
+    terminal_summary = is_logbook_call_summary(event)
     context = registry.ha_context(call_id)
+    if context is None and terminal_summary:
+        # Cleanup may already have retired the session. Keep all event types
+        # emitted for this terminal occurrence on one native Activity context.
+        context = Context()
     _async_fire_with_context(hass, CALL_EVENT, event, context)
     _async_fire_with_context(hass, SIP_CALL_STATE_EVENT, event, context)
     if event.get("route_request") or event["state"] == "route_requested":
@@ -324,8 +330,21 @@ def _fire_call_event(
         )
     ):
         _async_fire_with_context(hass, SIP_INCOMING_CALL_EVENT, event, context)
-    if is_logbook_call_summary(event) and registry.claim_terminal_summary(call_id):
-        _async_fire_with_context(hass, SIP_CALL_ENDED_EVENT, event, context)
+    if terminal_summary and registry.claim_terminal_summary(call_id):
+        trace_call(_LOGGER, call_id, "Call %s: %s to %s (%s)",
+                   event["type"], event.get("caller"), event.get("connected_party")
+                   or event.get("answered_by") or event.get("callee") or event.get("dialed_target"),
+                   event.get("terminal_reason") or event.get("reason") or event["state"],
+                   level=logging.INFO)
+        from .entity_identity import shared_entity_ids
+
+        # Recorder filters raw identity before its Logbook describer runs.
+        # Associate this one terminal summary with the real PBX Call entity;
+        # adding the entity only inside the describer is too late for Activity.
+        summary = dict(event)
+        if entity_id := shared_entity_ids(hass)["call_event"]:
+            summary["entity_id"] = entity_id
+        _async_fire_with_context(hass, SIP_CALL_ENDED_EVENT, summary, context)
     return event
 
 

@@ -2,6 +2,8 @@
 
 import asyncio
 from datetime import timedelta
+import logging
+from unittest.mock import Mock
 
 import pytest
 from homeassistant.core import Context, ServiceCall
@@ -118,6 +120,35 @@ def test_legacy_explicit_action_is_unchanged_without_context(hass):
         context=Context(),
     )
     assert automation_context.bind_call_action(call) is call
+
+
+@pytest.mark.parametrize("guard", ["debug_disabled", "different_call", "inactive", "stale_generation", "missing_trace"])
+def test_action_actor_never_looks_up_an_unconfirmed_automation(hass, registry, monkeypatch, guard):
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import trace
+
+    session = registry.upsert("current", state="ringing", owner="automation")
+    execution = automation_context.CallExecution(session.token, {})
+    execution.active = guard != "inactive"
+    binding = automation_context.current_execution.set(execution)
+    logger = logging.getLogger("voip-action-actor-guard")
+    logger.setLevel(logging.INFO if guard == "debug_disabled" else logging.DEBUG)
+    lookup = Mock(side_effect=AssertionError("Unconfirmed execution must not query automation names"))
+    monkeypatch.setattr(er, "async_get", lookup)
+    trace_read = Mock(return_value=None if guard == "missing_trace" else ("automation.unrelated", "trace-run"))
+    monkeypatch.setattr(trace, "trace_id_get", trace_read)
+    if guard == "stale_generation":
+        monkeypatch.setattr(registry, "is_generation_current", lambda *_: False)
+    try:
+        assert automation_context.call_action_actor(
+            hass, "other" if guard == "different_call" else "current", logger=logger,
+        ) == "Home Assistant action"
+        lookup.assert_not_called()
+        if guard in {"debug_disabled", "different_call", "inactive"}:
+            trace_read.assert_not_called()
+    finally:
+        automation_context.current_execution.reset(binding)
+        logger.setLevel(logging.NOTSET)
 
 
 async def test_connection_projections_start_one_automation(hass, registry):

@@ -16,7 +16,6 @@ from .const import (
     CONF_TRUNK_DTMF_ENABLED,
     CONF_TRUNK_DTMF_TERMINATOR,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
-    CONF_TRUNK_INBOUND_DEFAULT_TARGET,
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
 )
@@ -72,6 +71,7 @@ from .sip_runtime import (
 from .trunk_dtmf import collect_trunk_dtmf
 from .trunk_routing import async_request_inbound_destination, trunk_default_target
 from .automation_routing import has_native_route_window
+from .pbx_trace import trace_call
 
 if TYPE_CHECKING:
     from .call_forwarder import TransferResult
@@ -163,10 +163,7 @@ async def async_route_trunk_invite(
     # opened. Otherwise a cancelled pre-answer call can emit one stale
     # route_requested occurrence when its DTMF timer expires.
     if artifacts.trunk_closed:
-        _LOGGER.info(
-            "SIP trunk inbound call_id=%s closed during DTMF collection",
-            invite.call_id,
-        )
+        trace_call(_LOGGER, invite.call_id, "Caller ended during DTMF collection; no destination selected")
         return
 
     # Explicit digits always select the canonical phonebook route. Only
@@ -185,9 +182,7 @@ async def async_route_trunk_invite(
     artifacts.trunk_info_queue = None
 
     if artifacts.trunk_closed:
-        _LOGGER.info(
-            "SIP trunk inbound call_id=%s closed before routing", invite.call_id
-        )
+        trace_call(_LOGGER, invite.call_id, "Caller ended before trunk routing; no destination selected")
         return
 
     automation_action = str(automation_decision.get("action") or "").strip().lower()
@@ -195,15 +190,6 @@ async def async_route_trunk_invite(
         automation_destination = str(
             automation_decision.get("destination") or ""
         ).strip()
-        _LOGGER.info(
-            "Inbound route selected call_id=%s source=automation destination=%s fallback=%s",
-            invite.call_id,
-            automation_destination or "-",
-            str(
-                configured_trunk.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA"
-            ).strip()
-            or "HA",
-        )
         # The caller is still in the initial, pre-answered routing phase. Feed
         # the selected destination into the canonical dispatcher below rather
         # than invoking the in-call forwarding primitive, which requires an
@@ -211,6 +197,7 @@ async def async_route_trunk_invite(
         destination = automation_destination
         automation_route = runtime.route_resolver.route(destination, roster_entries)
         if automation_route.action is RouteAction.GROUP:
+            trace_call(_LOGGER, invite.call_id, "Routing action selects group %s", destination)
             await runtime.forward_existing_call(
                 call_id=invite.call_id,
                 destination=destination,
@@ -234,13 +221,6 @@ async def async_route_trunk_invite(
 
     default_target = trunk_default_target(configured_trunk)
     route_hint = destination or digits
-    _LOGGER.info(
-        "Inbound route selected call_id=%s source=%s destination=%s fallback=%s",
-        invite.call_id,
-        "dtmf" if digits else "fallback",
-        route_hint or default_target,
-        default_target,
-    )
     decision = route_inbound_trunk(
         CallContext(
             call_id=invite.call_id,
@@ -260,25 +240,20 @@ async def async_route_trunk_invite(
     elif decision.action is RouteAction.REJECT:
         preanswered = registry.resource_for(invite.call_id, "preanswered")
         terminal_reason = RouteReason.ROUTE_NOT_FOUND.value
-        _LOGGER.info(
-            "SIP trunk route not found call_id=%s digits=%s hint=%s",
-            invite.call_id,
-            digits or "-",
-            route_hint or "-",
-        )
+        trace_call(_LOGGER, invite.call_id, "No trunk route matches digits %s or target %s", digits or "none", route_hint or "none")
         answered = bool((preanswered or {}).get("final_response_sent", True))
         await terminate_source(terminal_reason, status=404, answered=answered)
         return
     else:
         destination = decision.target or route_hint or default_target
-    _LOGGER.info(
-        "SIP trunk inbound route call_id=%s caller=%s digits=%s destination=%s tx=%s rx=%s",
-        invite.call_id,
-        invite.caller or invite.source_host,
-        digits or "-",
-        destination,
-        invite.send_format.wire_token(),
-        invite.recv_format.wire_token(),
+    trace_call(
+        _LOGGER, invite.call_id,
+        "Trunk %s selects %s via %s; action=%s, reason=%s",
+        configured_trunk.get("name") or invite.trunk_id or "default",
+        decision.entry.display_name if decision.entry is not None else destination,
+        "routing action" if automation_action in {"forward", "bridge"}
+        else "DTMF digits " + digits if digits else "configured fallback",
+        decision.action.value, decision.reason,
     )
 
     if decision.action is RouteAction.AUTOMATION:
@@ -412,19 +387,13 @@ async def async_route_trunk_invite(
         elif decision.sip_uri:
             bridge_uri = parse_sip_uri(decision.sip_uri)
     except Exception as err:
-        _LOGGER.info(
-            "SIP trunk route parse failed destination=%s: %s", destination, err
-        )
+        trace_call(_LOGGER, invite.call_id, "Trunk destination %s is invalid (%s)", destination, type(err).__name__)
 
     if (
         bridge_uri is None
         or runtime.route_resolver.is_local_listener_uri(bridge_uri)
     ):
-        _LOGGER.info(
-            "SIP trunk destination unresolved destination=%s route=%s",
-            destination,
-            decision.action.value,
-        )
+        trace_call(_LOGGER, invite.call_id, "Trunk destination %s is unresolved; route=%s", destination, decision.action.value)
         release_video_media_reservation(preanswered)
         bridge_ports.release()
         await terminate_source(

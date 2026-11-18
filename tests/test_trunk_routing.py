@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import logging
 from pathlib import Path
 import sys
 import types
@@ -83,9 +84,11 @@ def _registry_and_session():
     return registry, session
 
 
+@pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
 def test_explicit_automation_decision_wins_and_future_is_removed(
-    trunk_routing,
+    trunk_routing, caplog, log_level,
 ) -> None:
+    caplog.set_level(log_level, logger=trunk_routing._LOGGER.name)
     def answer_route(*_args, **_kwargs):
         trunk_routing.test_routes["call-1"]["future"].set_result(
             {"action": "forward", "destination": "RG Casa"}
@@ -100,7 +103,7 @@ def test_explicit_automation_decision_wins_and_future_is_removed(
             _invite(),
             registry=registry,
             session=session,
-            trunk_config={"fallback": "Casa"},
+            trunk_config={"fallback": "Casa", "name": "Office"},
             timeout=1.0,
         )
     )
@@ -111,9 +114,19 @@ def test_explicit_automation_decision_wins_and_future_is_removed(
     assert state.args[1] is session
     assert state.kwargs["fallback_destination"] == "Casa"
     assert state.kwargs["ingress"] == "trunk"
+    records = [record for record in caplog.records if record.name == trunk_routing._LOGGER.name]
+    if log_level == logging.DEBUG:
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert "Trunk Office waits for a routing action" in records[0].getMessage()
+        assert "fallback is Casa" in records[0].getMessage()
+        assert records[0].getMessage().endswith("[call_id=call-1]")
+    else:
+        assert not records
 
 
-def test_default_or_timeout_preserves_configured_fallback(trunk_routing) -> None:
+def test_default_or_timeout_preserves_configured_fallback(trunk_routing, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger=trunk_routing._LOGGER.name)
     def select_default(*_args, **_kwargs):
         trunk_routing.test_routes["call-1"]["future"].set_result(
             {"action": "default", "destination": "ignored"}
@@ -135,9 +148,12 @@ def test_default_or_timeout_preserves_configured_fallback(trunk_routing) -> None
     assert trunk_routing.trunk_default_target({"fallback": "  Test  "}) == "Test"
     assert trunk_routing.trunk_default_target({}) == "HA"
     assert trunk_routing.test_routes == {}
+    assert "Routing action keeps trunk fallback Test" in caplog.text
+    assert "No routing action before the deadline" not in caplog.text
 
 
-def test_timeout_always_removes_pending_route(trunk_routing) -> None:
+def test_timeout_always_removes_pending_route(trunk_routing, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger=trunk_routing._LOGGER.name)
     registry, session = _registry_and_session()
     result = asyncio.run(
         trunk_routing.async_request_inbound_destination(
@@ -152,3 +168,5 @@ def test_timeout_always_removes_pending_route(trunk_routing) -> None:
 
     assert result == {}
     assert trunk_routing.test_routes == {}
+    assert "No routing action before the deadline; using trunk fallback HA" in caplog.text
+    assert "Routing action keeps trunk fallback" not in caplog.text

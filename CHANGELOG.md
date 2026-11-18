@@ -2,6 +2,12 @@
 
 ## 2026.12.0-dev
 
+- Show the parties in completed call activity for the PBX and its SIP accounts.
+  Enable Home Assistant debug logging to follow number normalization, routing
+  decisions, phone policies, queue offers and fallbacks by Call-ID.
+- Refresh the portrait Companion screenshot using Frosted Glass Dark and
+  clean up the print texture of the illustrated doorbell call flow.
+
 - Validate the desk-phone provisioning address when enabling provisioning.
   When the automatic address is unavailable, the form and phone status explain
   how to configure HTTPS or allow HTTP on a trusted LAN.

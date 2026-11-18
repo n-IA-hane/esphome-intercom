@@ -14,6 +14,7 @@ from ..call_projection import publish_bridge_projection
 from ..call_scope import set_pending_route, take_pending_route
 from ..endpoint_lifecycle import call_registry
 from ..fsm import CallState, TerminalReason
+from ..pbx_trace import trace_call
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -74,12 +75,12 @@ async def request_route_override(
         or not caller_is_trusted_endpoint
         or not automation_routing_enabled
     ):
-        _LOGGER.debug(
-            "SIP caller uses central dialplan without automation window caller=%s target=%s route=%s uri=%s",
-            invite.caller or invite.source_host,
-            invite.target,
-            decision.action.value,
-            decision.sip_uri or "-",
+        trace_call(
+            _LOGGER, invite.call_id,
+            "Using the central dialplan without a routing-action window: %s",
+            "registered caller" if registered_source and not native_override
+            else "caller is not trusted for routing actions" if not caller_is_trusted_endpoint
+            else "routing actions are disabled",
         )
         return AutomationRoute()
 
@@ -106,6 +107,11 @@ async def request_route_override(
         "decision_deadline": expires_at,
         "fallback_destination": decision.target,
     })
+    trace_call(
+        _LOGGER, invite.call_id,
+        "Waiting for a routing action for %ss; dialplan destination is %s",
+        SIP_ROUTE_DECISION_TIMEOUT, decision.target or invite.target,
+    )
     publish_bridge_projection(
         hass,
         session,
@@ -144,22 +150,21 @@ async def request_route_override(
             f"{invite.selected_format.channels}"
         ),
     )
-    _LOGGER.info(
-        "SIP route requested: caller=%s target=%s route=%s uri=%s media=%s/%s",
-        invite.caller or invite.source_host,
-        invite.target,
-        decision.action.value,
-        decision.sip_uri or "-",
-        invite.selected_format.encoding,
-        invite.selected_format.sample_rate,
-    )
     try:
         payload = await asyncio.wait_for(
             future,
             timeout=SIP_ROUTE_DECISION_TIMEOUT,
         )
     except asyncio.TimeoutError:
+        trace_call(
+            _LOGGER, invite.call_id,
+            "No routing action before the deadline; keeping dialplan destination %s",
+            decision.target or invite.target,
+        )
         payload = {}
+    else:
+        if str((payload or {}).get("action") or "default").strip().lower() == "default":
+            trace_call(_LOGGER, invite.call_id, "Routing action keeps dialplan destination %s", decision.target or invite.target)
     finally:
         take_pending_route(hass, invite.call_id)
     return AutomationRoute.from_payload(payload)

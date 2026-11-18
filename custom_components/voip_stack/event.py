@@ -12,6 +12,7 @@ from .automation_routing import (
     AUTOMATION_EVENT_TYPES,
     CALL_EVENT_SCHEMA_VERSION,
     automation_event_type,
+    is_logbook_call_summary,
 )
 from .const import DOMAIN
 from .phone_entity import PhoneEndpointEntity
@@ -88,6 +89,10 @@ class VoipStackCallEvent(EventEntity):
         payload = dict(event.data)
         event_type = automation_event_type(payload)
         payload["event"] = event_type
+        if is_logbook_call_summary(payload):
+            from .logbook import _describe_call
+
+            payload["call_summary"] = _describe_call(payload)["message"]
         self.async_set_context(event.context)
         self._trigger_event(event_type, payload)
         self.async_write_ha_state()
@@ -129,6 +134,17 @@ class PhoneEndpointCallEvent(PhoneEndpointEntity, EventEntity):
             return
         event_type = automation_event_type(payload)
         payload["event"] = event_type
+        from .logbook import account_call_details
+
+        direction, peer = account_call_details(payload, self.endpoint.endpoint_id)
+        if direction:
+            payload["account_direction"] = direction
+        if peer:
+            payload["peer_name"] = peer
+        if is_logbook_call_summary(payload):
+            from .logbook import _account_terminal_message
+
+            payload["call_summary"] = _account_terminal_message(payload, self.endpoint.endpoint_id)
         payload["endpoint_id"] = self.endpoint.endpoint_id
         self.async_set_context(event.context)
         self._trigger_event(event_type, payload)

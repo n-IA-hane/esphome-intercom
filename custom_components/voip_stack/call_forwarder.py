@@ -76,6 +76,7 @@ from .ring_group import (
 )
 from .ring_group_fork import account_offer_outcome, build_ring_group_fork, group_leg_observer, run_owned_ring_group_fork
 from .router import RouteAction
+from .pbx_trace import trace_call
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied
 from .route_abort import (
     RouteAbortContext,
@@ -1745,12 +1746,6 @@ async def _prepare_forward_existing_call(
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
             reason = str(err or TerminalReason.TRANSPORT_UNREACHABLE.value)
-            _LOGGER.info(
-                "SIP automation forward failed call_id=%s destination=%s reason=%s",
-                call_id,
-                destination,
-                reason,
-            )
             await _cleanup_failed_route(reason)
             resumed = await async_abort_route(
                 forward_abort,
@@ -1758,6 +1753,13 @@ async def _prepare_forward_existing_call(
                     reason,
                     "terminate" if local_source is not None and local_source.committed and application is None else on_failure,
                 ),
+            )
+            trace_call(
+                _LOGGER, call_id,
+                "Forward to %s failed (%s); failure policy=%s, original call resumed=%s",
+                destination,
+                reason if reason in {value.value for value in TerminalReason} else type(err).__name__,
+                on_failure, resumed,
             )
             return TransferResult("failed_resumed" if resumed else "ended", destination, reason)
         finally:

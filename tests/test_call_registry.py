@@ -76,6 +76,17 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_debug_call_trace_names_parties_once_and_keeps_one_line(self) -> None:
+        registry = _registry()
+        with self.assertLogs(pbx_runtime._LOGGER, level="DEBUG") as events:
+            for state in ("calling", "calling", "in_call"):
+                registry.upsert("call123", state=state, caller="Test",
+                                callee="sip:430:private@pbx.invalid")
+        self.assertEqual([item.getMessage() for item in events.records], [
+            "PBX | Test to 430: calling [call_id=call123]",
+            "PBX | Test to 430: in call [call_id=call123]",
+        ])
+
     def test_physical_observation_is_adopted_by_materialised_call(self) -> None:
         registry = _registry()
         _observed_event_fields(registry, "physical:esp", "calling")

@@ -10,6 +10,7 @@ import types
 import unittest
 from unittest.mock import patch, Mock
 from pathlib import Path
+from uuid import uuid4
 
 from tests.support.voip_matrix import (
     BUSY,
@@ -45,6 +46,11 @@ class _FakeServiceValidationError(ValueError):
         self.details = kwargs
 
 
+class _FakeContext:
+    def __init__(self) -> None:
+        self.id = uuid4().hex
+
+
 def _install_ha_fakes() -> None:
     if "homeassistant" not in sys.modules:
         ha_pkg = types.ModuleType("homeassistant")
@@ -56,6 +62,19 @@ def _install_ha_fakes() -> None:
         core.ServiceCall = object
         core.callback = lambda fn: fn
         sys.modules["homeassistant.core"] = core
+    core = sys.modules["homeassistant.core"]
+    core.Context = getattr(core, "Context", _FakeContext)
+    if "homeassistant.helpers" not in sys.modules:
+        helpers = types.ModuleType("homeassistant.helpers")
+        helpers.__path__ = []
+        sys.modules["homeassistant.helpers"] = helpers
+    if "homeassistant.helpers.entity_registry" not in sys.modules:
+        entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+        # This model has no registered PBX entity. Exercise the real lookup's
+        # empty result rather than bypassing terminal publication in production.
+        entity_registry.async_get = lambda _hass: types.SimpleNamespace(
+            async_get_entity_id=lambda *_args: None)
+        sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
     if "homeassistant.config_entries" not in sys.modules:
         config_entries = types.ModuleType("homeassistant.config_entries")
         config_entries.ConfigEntry = object

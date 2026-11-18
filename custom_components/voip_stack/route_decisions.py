@@ -18,6 +18,7 @@ from .call_projection import (
 from .endpoint_lifecycle import call_registry
 from .call_state import validate_call_snapshot
 from .fsm import CallState, TerminalReason
+from .pbx_trace import trace_call
 from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
 
@@ -241,9 +242,12 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             event_type="forwarding",
             last_sip_event="SIP_RESPONSE",
             )
-    _LOGGER.info(
-        "SIP route decision call_id=%s action=%s destination=%s",
-        call_id,
-        action,
-        destination or "-",
-    )
+    if action != "default" and _LOGGER.isEnabledFor(logging.DEBUG):
+        from .automation_context import call_action_actor
+
+        trace_call(
+            _LOGGER, call_id,
+            "Routing action accepted from %s: %s, destination=%s, phone=%s",
+            call_action_actor(hass, call_id, logger=_LOGGER), action, destination or "unchanged",
+            selected_endpoint.name if endpoint_id and selected_endpoint is not None else endpoint_id or "not specified",
+        )

@@ -87,6 +87,34 @@ Use the [report template](TESTING_AND_DEBUG.md#before-opening-an-issue) when ope
 issue. A diagnostic snapshot is a starting point; a packet or audio recording
 may still be needed to establish why a fault occurs.
 
+## Follow one call in Home Assistant
+
+Open the account device's **Activity** to see who called and how the call
+ended. For a PBX-wide view, open the **VoIP Stack** device (model **PBX**).
+
+At the logger's INFO level, search the Home Assistant log for `PBX | Call`
+to find the outcome and the parties. To see what made the routing decision:
+
+1. Open **Settings > Devices & services > VoIP Stack**, then **Enable debug logging**.
+2. Reproduce the call once. Disable debug logging to download the log.
+3. Search for the called number or phone name. Copy the `call_id` at the end
+   of a matching line and search for it to follow that call across components.
+
+For an incoming number block, the trunk line shows the original number, the
+number after normalization, and the SIP field that supplied it. Subsequent
+lines show whether HA accepted a routing action or used the trunk fallback,
+which phone policy applied, and which destination the PBX tried. Queue offer
+results explain which operator rang and whether the offer was answered.
+For a decision made by a traced HA automation, the log includes its name when
+Core can identify the current run. Open that automation's native **Traces** to
+inspect its conditions. A manual service call can appear as a Home Assistant
+action. Transfers and parking records use the same call reference.
+
+These decision messages use the standard integration logger
+`custom_components.voip_stack`. The **SIP/RTP** diagnostic option provides
+additional media details. Audio recording and SIP packet capture have their
+own controls.
+
 ## Capture SIP signaling from Home Assistant (including HA OS)
 
 Use the **VoIP Stack: Capture SIP signaling** action as an administrator. No

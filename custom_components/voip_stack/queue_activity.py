@@ -17,6 +17,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, QUEUE_EVENT
+from .pbx_trace import trace_call
+from .runtime_data import runtime_data
 
 QUEUE_EVENT_VERSION = 1
 QUEUE_EVENT_TYPES = ("entered", "offer_started", "offer_ended", "answered", "exited",
@@ -49,6 +51,13 @@ def emit_queue_event(hass, payload):
         value = payload.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
             event[key] = float(value)
+    if kind in {"offer_started", "offer_ended"} and event.get("call_id") and _LOGGER.isEnabledFor(logging.DEBUG):
+        registry = runtime_data(hass)
+        agent_id = event.get("endpoint_id")
+        agent = registry.endpoints.get(agent_id) if registry and registry.endpoints and agent_id else None
+        trace_call(_LOGGER, event["call_id"], "Queue %s: offer to %s (%s)",
+                   event.get("queue_name") or queue_id, agent.name if agent else agent_id,
+                   "ringing" if kind == "offer_started" else event.get("outcome"))
     hass.bus.async_fire(QUEUE_EVENT, event)
     return event
 

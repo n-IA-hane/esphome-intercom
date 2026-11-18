@@ -1,5 +1,7 @@
 """Use the real phone registry and dial plan to resolve persisted defaults."""
 
+import logging
+
 import pytest
 
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
@@ -44,12 +46,16 @@ def resolve(data, *, kind="browser", availability="available", dnd=False,
     )
 
 
-def test_unconditional_forward_follows_stable_identity_after_rename():
+def test_unconditional_forward_follows_stable_identity_after_rename(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.inbound_routing.targets")
     result = resolve({"always": {"target": "second"}})
     assert result.failure is None
     assert result.endpoint.endpoint_id == "second"
     assert result.decision.target == "Renamed bedroom"
     assert result.forwarded_endpoint_ids == ("first",)
+    assert "Phone Kitchen redirects to Renamed bedroom: unconditional forwarding policy" in caplog.text
+    assert "[call_id=new-call]" in caplog.text
+    assert "Automation " not in caplog.text
 
 
 def test_forwarded_identity_still_limits_later_trunk_legs():
@@ -74,9 +80,12 @@ def test_forwarding_can_select_existing_automation_application():
 
 
 @pytest.mark.parametrize("changes", [{"dnd": True}, {"active_call_id": "other-call"}])
-def test_busy_fallback_before_transport(changes):
+def test_busy_fallback_before_transport(changes, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.inbound_routing.targets")
     result = resolve({"busy": {"target": "second"}}, **changes)
     assert result.endpoint.endpoint_id == "second"
+    cause = "do not disturb" if changes.get("dnd") else "busy"
+    assert f"Phone Kitchen redirects to Renamed bedroom: {cause} policy" in caplog.text
 
 
 def test_same_call_does_not_trigger_own_busy_fallback():
@@ -112,9 +121,11 @@ def test_cycle_terminates_without_creating_transport():
     assert result.failure.decline_reason == "forward_loop"
 
 
-def test_hangup_fallback_is_explicit_and_does_not_dial_contact_named_hangup():
+def test_hangup_fallback_is_explicit_and_does_not_dial_contact_named_hangup(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.inbound_routing.targets")
     result = resolve({"busy": {"kind": "hangup"}}, dnd=True)
     assert result.failure.decline_reason == "phone_policy"
+    assert "Phone Kitchen policy rejects the call: do not disturb" in caplog.text
 
 
 def test_missing_mailbox_application_never_rings_ordinary_phone():

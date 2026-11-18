@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +13,10 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CallToken
+from .pbx_trace import trace_call
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -27,6 +32,31 @@ class CallExecution:
 current_execution: ContextVar[CallExecution | None] = ContextVar(
     "voip_call_execution", default=None
 )
+
+
+def call_action_actor(hass, call_id: str, *, logger: logging.Logger) -> str:
+    """Name only the current automation of this still-current triggering call."""
+    fallback = "Home Assistant action"
+    if not logger.isEnabledFor(logging.DEBUG):
+        return fallback
+    execution = current_execution.get()
+    if execution is None or not execution.active or execution.token.call_id != call_id:
+        return fallback
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers.trace import trace_id_get
+
+    trace = trace_id_get()
+    if trace is None:
+        return fallback
+    domain, separator, unique_id = trace[0].partition(".")
+    if domain != "automation" or not separator or unique_id in {"", "None"}:
+        return fallback
+    if not call_registry(hass).is_generation_current(call_id, execution.token.generation):
+        return fallback
+    entity_id = er.async_get(hass).async_get_entity_id("automation", "automation", unique_id)
+    state = hass.states.get(entity_id) if entity_id is not None else None
+    return f'Automation "{state.name}"' if state is not None else fallback
+
 
 CALL_ACTIONS = frozenset(
     {
@@ -163,6 +193,14 @@ def bind_call_action(call: ServiceCall) -> ServiceCall:
                 "The selected call generation is no longer current"
             )
         data["expected_generation"] = execution.token.generation
+    if (call.service == "forward" and _LOGGER.isEnabledFor(logging.DEBUG)
+            and registry.artifact_for(execution.token.call_id, "pending_route") is None):
+        trace_call(
+            _LOGGER, execution.token.call_id,
+            "%s requests forwarding to %s; context=%s",
+            call_action_actor(call.hass, execution.token.call_id, logger=_LOGGER),
+            data.get("destination") or "not specified", call.context.id,
+        )
     return ServiceCall(
         call.hass,
         call.domain,

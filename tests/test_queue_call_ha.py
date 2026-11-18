@@ -1,6 +1,7 @@
 """Queue admission reaches the existing SIP ring-all bridge and teardown."""
 
 import asyncio
+import logging
 from dataclasses import replace
 import socket
 import struct
@@ -382,7 +383,8 @@ async def test_two_real_waiting_callers_reach_the_same_agent_in_fifo_order(queue
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("change", ["removed", "disabled", "timeout", "no_agents"])
-async def test_queue_changes_while_waiting_use_original_fallback_and_cleanup(queue_lab, change):
+async def test_queue_changes_while_waiting_use_original_fallback_and_cleanup(queue_lab, change, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.queue_call")
     lab = queue_lab
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], fallback="bedroom1",
         max_wait=1 if change == "timeout" else 5, no_agent_wait=0.1 if change == "no_agents" else 5)
@@ -405,6 +407,12 @@ async def test_queue_changes_while_waiting_use_original_fallback_and_cleanup(que
     assert exited[0]["outcome"] == change
     assert exited[0]["disposition"] == "forwarded"
     assert exited[0]["destination"] == "bedroom1"
+    decisions = [record for record in caplog.records
+                 if record.name == "custom_components.voip_stack.queue_call" and "selects fallback" in record.getMessage()]
+    assert len(decisions) == 1
+    assert "Queue Reception selects fallback bedroom1:" in decisions[0].getMessage()
+    assert f"(reason=queue_{change})" in decisions[0].getMessage()
+    assert decisions[0].getMessage().endswith(f"[call_id={client.dialog_ids.call_id}]")
     await client.terminate()
     await wait_until(lambda: lab.calls.get_session(client.dialog_ids.call_id) is None)
 

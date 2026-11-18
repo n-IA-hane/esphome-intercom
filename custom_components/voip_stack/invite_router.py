@@ -52,6 +52,7 @@ from .inbound_routing.trunk import prepare_trunk_preanswer
 from .pbx_routing import roster_entry_for_target as _roster_entry_for_target
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteAction
+from .pbx_trace import trace_call
 from .sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -143,6 +144,7 @@ async def route_invite(
     )
     trunk_invite = _is_trunk_invite(invite)
     trunk_direct_preprocessed = False
+    direct_fallback_target = ""
     local_ha_origin = bool(
         _is_ha_target(caller_identity)
         and invite.source_host in {local_ip, "127.0.0.1", "::1"}
@@ -205,11 +207,6 @@ async def route_invite(
             and dtmf_timeout_ms > 0
         )
         if not dtmf_preanswer:
-            _LOGGER.info(
-                "SIP trunk inbound skips DTMF pre-answer call_id=%s caller=%s",
-                invite.call_id,
-                invite.caller or invite.source_host,
-            )
             default_target = (
                 str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA").strip()
                 or "HA"
@@ -217,6 +214,7 @@ async def route_invite(
             # Keep the original called address for routing automations. Only an
             # unmatched destination uses the configured inbound fallback.
             if decision.entry is None and not _is_ha_target(invite.routing_target):
+                direct_fallback_target = default_target
                 fallback_invite = replace(
                     invite, target=default_target, target_route=default_target
                 )
@@ -261,6 +259,31 @@ async def route_invite(
             "Service Unavailable",
             to_tag="",
             decline_reason="capacity_exhausted",
+        )
+    if trunk_invite:
+        trace_call(
+            _LOGGER, invite.call_id,
+            "Trunk %s received number %s, normalized to %s from %s; routing mode=%s",
+            trunk_cfg.get("name") or invite.trunk_id or "default",
+            getattr(invite, "called_number_raw", "") or "not available",
+            getattr(invite, "called_number", "") or "not available",
+            getattr(invite, "called_number_source", "") or "none",
+            "direct" if trunk_direct_preprocessed else "DTMF collection",
+        )
+        if direct_fallback_target:
+            trace_call(
+                _LOGGER, invite.call_id,
+                "Trunk destination %s has no phonebook match; configured fallback is %s",
+                invite.routing_target, direct_fallback_target,
+            )
+    if not trunk_direct_preprocessed and (
+        decision.action.is_local_application or decision.action is RouteAction.GROUP
+    ):
+        trace_call(
+            _LOGGER, invite.call_id,
+            "Dialplan selects %s for target %s; action=%s, reason=%s",
+            decision.entry.display_name if decision.entry is not None else decision.target,
+            invite.routing_target, decision.action.value, decision.reason,
         )
     if not trunk_direct_preprocessed and decision.action is RouteAction.PARKING:
         from .parking import route_parking_call
@@ -338,17 +361,8 @@ async def route_invite(
     route_action = automation_route.action
     route_destination = automation_route.destination
 
-    fallback_destination = decision.target or invite.routing_target
     if route_action in {"forward", "bridge"} and route_destination:
         decision = _ha_router_decision(route_destination, roster_entries)
-        _LOGGER.info(
-            "SIP route override call_id=%s action=%s destination=%s route=%s uri=%s",
-            invite.call_id,
-            route_action,
-            route_destination,
-            decision.action.value,
-            decision.sip_uri or "-",
-        )
 
     if route_action != "answer_ha":
         target_resolution = resolve_inbound_target(
@@ -362,6 +376,15 @@ async def route_invite(
         if target_resolution.failure is not None:
             return target_resolution.failure
         decision = target_resolution.decision
+        trace_call(
+            _LOGGER, invite.call_id,
+            "Target %s selects %s via %s; action=%s, reason=%s",
+            route_destination or invite.routing_target,
+            decision.entry.display_name if decision.entry is not None else decision.target,
+            "routing action" if route_action in {"forward", "bridge"} and route_destination
+            else "phone policy" if getattr(target_resolution, "forwarded_endpoint_ids", ()) else "central dialplan",
+            decision.action.value, decision.reason,
+        )
         forwarded_ids = getattr(target_resolution, "forwarded_endpoint_ids", ())
         if forwarded_ids:
             policy_session = registry.ensure_session(invite.call_id, event_only=True)
@@ -417,18 +440,6 @@ async def route_invite(
                 registry=registry,
             )
 
-    _LOGGER.info(
-        "Inbound route selected call_id=%s source=%s destination=%s fallback=%s",
-        invite.call_id,
-        "automation"
-        if route_action in {"forward", "bridge"} and route_destination
-        else "fallback",
-        route_destination
-        if route_action in {"forward", "bridge"} and route_destination
-        else decision.target or invite.target,
-        fallback_destination,
-    )
-
     force_ha_softphone = route_action == "answer_ha"
     if force_ha_softphone:
         target_endpoint = (
@@ -439,6 +450,7 @@ async def route_invite(
         if target_endpoint is None:
             return SipInviteResult(480, "Temporarily Unavailable", to_tag="")
         resolved_callee = target_endpoint.name
+        trace_call(_LOGGER, invite.call_id, "Routing action selects browser phone %s", resolved_callee)
     else:
         target_endpoint = target_resolution.endpoint
         resolved_callee = str(

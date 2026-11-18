@@ -14,6 +14,7 @@ logbook_component = sys.modules.setdefault(
     types.ModuleType("homeassistant.components.logbook"),
 )
 logbook_component.LOGBOOK_ENTRY_ENTITY_ID = "entity_id"
+logbook_component.LOGBOOK_ENTRY_CONTEXT_ID = "context_id"
 logbook_component.LOGBOOK_ENTRY_ICON = "icon"
 logbook_component.LOGBOOK_ENTRY_MESSAGE = "message"
 logbook_component.LOGBOOK_ENTRY_NAME = "name"
@@ -91,7 +92,7 @@ def test_account_activity_logs_one_calling_phase_for_multiple_contacts():
              "call": {"call_id": "call-one", "generation": 1, "dialed_target": "3511234567"}}
     entries = logbook._account_activity(event)
     assert len(entries) == 1 and entries[0]["name"] == "Desk"
-    assert entries[0]["message"] == "Calling 3511234567"
+    assert entries[0]["message"] == "Calling Mobile"
     event["previous"] = {"name": "Desk", "calls": [phone_call()]}
     assert logbook._account_activity(event) == []
 
@@ -100,7 +101,7 @@ def test_account_answer_has_the_committed_winner_not_the_first_contact():
     event = {"endpoint_id": "sip:desk", "previous": {"name": "Desk", "calls": [phone_call()]},
              "phone": {"name": "Desk", "calls": [phone_call("confirmed", leg="winner")]},
              "call": {"call_id": "call-one", "generation": 1, "answered_by": "Living room phone"}}
-    assert logbook._account_activity(event)[0]["message"] == "Answered by Living room phone"
+    assert logbook._account_activity(event)[0]["message"] == "Outgoing call to Living room phone answered"
 
 
 def test_account_incoming_activity_identifies_the_caller_not_its_own_account():
@@ -115,7 +116,7 @@ def test_account_failure_uses_only_the_same_call_status_and_reason():
              "phone": {"name": "Desk", "calls": []}, "call": {
                  "call_id": "call-one", "generation": 1, "type": "failed", "state": "failed",
                  "reason": "busy", "sip_status_code": 486, "pbx_phase": "terminated"}}
-    assert logbook._account_activity(event)[0]["message"] == "Call failed · busy · SIP 486"
+    assert logbook._account_activity(event)[0]["message"] == "Outgoing call to Mobile failed · busy · SIP 486"
     event["call"]["call_id"] = "another-call"
     assert logbook._account_activity(event) == []
     event["call"].update(call_id="call-one", generation=2)
@@ -128,6 +129,36 @@ def test_account_noncall_changes_and_handoff_do_not_create_terminal_failures():
              "phone": {"name": "Desk", "calls": []},
              "call": {"call_id": "call-one", "generation": 1, "state": "in_call", "reason": "forwarded"}}
     assert logbook._account_activity(event) == []
+
+
+def test_account_terminal_names_the_peer_and_direction_without_inventing_a_hangup_actor():
+    occurrence = {"call_id": "test-to-p4", "generation": 5, "type": "ended", "state": "idle",
+        "source_endpoint_id": "sip:test", "dest_endpoint_id": "esp:p4", "direction": "outgoing",
+        "caller": "Test", "callee": "430", "connected_party": "Waveshare P4 Touch"}
+    assert logbook._account_terminal_message(occurrence, "sip:test") == "Outgoing call to Waveshare P4 Touch ended"
+    assert logbook._account_terminal_message(occurrence, "esp:p4") == "Incoming call from Test ended"
+    occurrence["terminal_reason"] = "remote_hangup"
+    message = logbook._account_terminal_message(occurrence, "sip:test")
+    assert message == "Outgoing call to Waveshare P4 Touch ended · remote hangup"
+    assert "ended by" not in message and "hung up" not in message
+
+
+def test_account_terminal_uses_connected_party_after_queue_or_transfer():
+    occurrence = {"type": "ended", "state": "idle", "direction": "outgoing",
+        "source_endpoint_id": "sip:test", "dest_endpoint_id": "sip:desk",
+        "caller": "Test", "callee": "Support queue", "dialed_target": "Support queue",
+        "connected_party": "Desk", "reason": "local_hangup"}
+    assert logbook._account_terminal_message(occurrence, "sip:test") == "Outgoing call to Desk ended · local hangup"
+    assert logbook._account_terminal_message(occurrence, "sip:desk") == "Incoming call from Test ended · local hangup"
+
+
+def test_global_terminal_prefers_committed_peer_over_later_unsuccessful_route():
+    entry = logbook._describe_call({"type": "ended", "direction": "incoming", "state": "idle",
+        "caller": "Courier", "callee": "Support queue", "connected_party": "Desk",
+        "duration_seconds": 12, "reason": "remote_hangup", "call_id": "routed-call", "generation": 4,
+        "route_history": [{"action": "forward", "destination": "Unanswered transfer target"}]})
+    assert entry["message"] == "Courier called Desk · 12 s · remote hangup"
+    assert (entry["call_id"], entry["generation"]) == ("routed-call", 4)
 
 
 def test_missed_call_prefers_the_answered_endpoint_name() -> None:
@@ -155,7 +186,7 @@ def test_incoming_caller_cancel_is_presented_as_missed() -> None:
         }
     )
 
-    assert entry["message"] == "Missed call from Courier to Door"
+    assert entry["message"] == "Missed call from Courier to Door · cancelled"
 
 
 def test_incoming_busy_without_answer_is_presented_as_missed() -> None:
@@ -170,7 +201,7 @@ def test_incoming_busy_without_answer_is_presented_as_missed() -> None:
         }
     )
 
-    assert entry["message"] == "Missed call from Courier to Door"
+    assert entry["message"] == "Missed call from Courier to Door · busy"
 
 
 def test_explicit_incoming_decline_is_not_presented_as_missed() -> None:
@@ -201,7 +232,7 @@ def test_zero_second_connected_incoming_call_is_not_presented_as_missed() -> Non
         }
     )
 
-    assert entry["message"] == "Courier called Door · 0 s"
+    assert entry["message"] == "Courier called Door · 0 s · remote hangup"
 
 
 def test_failure_is_readable_and_sip_uri_is_compact() -> None:

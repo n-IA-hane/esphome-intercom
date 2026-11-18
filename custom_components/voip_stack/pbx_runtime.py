@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from .call_registry import CallRuntimeApi, committed_operation
 from .call_state import CallStateSnapshot
+from .pbx_trace import trace_call
 from .endpoint_session import (
     CallArtifacts,
     CallEventContext,
@@ -247,8 +248,13 @@ class SipEndpointRuntime(CallRuntimeApi):
         if session.phase is SessionPhase.TERMINATING:
             return
         snapshot = self._state_snapshot(session)
-        if snapshot == session.committed_state:
+        previous = session.committed_state
+        if snapshot == previous:
             return
+        if (snapshot.state in {"calling", "ringing", "remote_ringing", "in_call"}
+                and (previous is None or snapshot.state != previous.state)):
+            trace_call(_LOGGER, session.call_id, "%s to %s: %s", snapshot.caller,
+                       snapshot.callee, snapshot.state.replace("_", " "))
         context = session.event_context
         if context.state != session.state:
             self._advance_event_context(context, session.state)

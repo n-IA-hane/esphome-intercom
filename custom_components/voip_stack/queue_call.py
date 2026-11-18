@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import ClassVar
@@ -14,6 +15,17 @@ from .endpoint_session import CleanupStage, TerminationIntent, SessionHandoff
 from .local_application import LocalCallApplication, ApplicationRef, attach_local_application
 from .roster import RosterEntry
 from .router import RouteAction, RouteDecision
+from .pbx_trace import trace_call
+
+
+_LOGGER = logging.getLogger(__name__)
+_QUEUE_CAUSE_TEXT = {
+    "queue_removed": "queue was removed",
+    "queue_disabled": "queue is disabled",
+    "queue_timeout": "maximum waiting time expired",
+    "queue_no_agents": "no agents are available",
+    "queue_full": "queue capacity reached",
+}
 
 
 @dataclass(slots=True)
@@ -92,12 +104,16 @@ class QueueCall(LocalCallApplication):
     async def _fallback(self, policy, reason):
         fallback = policy.fallback_for(reason)
         if fallback and self.session.live:
+            trace_call(_LOGGER, self.session.call_id, "Queue %s selects fallback %s: %s (reason=%s)",
+                       self.session.callee, fallback, _QUEUE_CAUSE_TEXT.get(reason, reason), reason)
             self.ticket.exit = QueueExit(reason, destination=fallback)
             task = await call_registry(self.hass).forward_call(call_id=self.session.call_id,
                 destination=fallback, on_failure="terminate")
             if task is not None:
                 await asyncio.shield(task)
         elif self.session.live:
+            trace_call(_LOGGER, self.session.call_id, "Queue %s has no fallback: %s (reason=%s); ending the call",
+                       self.session.callee, _QUEUE_CAUSE_TEXT.get(reason, reason), reason)
             await call_registry(self.hass).terminate_call_wait(self.session.call_id, reason=reason)
 
     async def run(self):
@@ -193,6 +209,12 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
         reason = rejection.cause
         manager.record_rejection(queue.queue_id, session.call_id, session.generation, reason)
         fallback = rejection.destination
+        trace_call(
+            _LOGGER, session.call_id,
+            "Queue %s rejects admission: %s (reason=%s); %s",
+            queue.name, _QUEUE_CAUSE_TEXT.get(reason, reason), reason,
+            "fallback=" + fallback if fallback else "no fallback configured",
+        )
         if fallback:
             registry.transition(session.call_id, owner="router", state="ringing")
             registry.set_pending_invite(session.call_id, invite)

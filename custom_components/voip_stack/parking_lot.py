@@ -1,10 +1,15 @@
 """Parking slots are reservations owned by existing call sessions."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 
 from .endpoint_session import CleanupStage, EndpointCallSession, TerminationIntent
+from .pbx_trace import trace_call
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ParkingError(ValueError):
@@ -81,6 +86,8 @@ class ParkingLot:
             self.release(parked)
         session.add_resource(f"parking_slot:{selected}", parked, cleanup, stage=CleanupStage.RESERVATION)
         self.calls[selected] = parked
+        trace_call(_LOGGER, session.call_id, "Parking slot %s reserved (return to %s)",
+                   selected, return_destination or parker or "not configured")
         self.changed()
         return parked
 
@@ -104,6 +111,7 @@ class ParkingLot:
         if self.calls.get(parked.slot) is not parked:
             return
         self.calls.pop(parked.slot)
+        trace_call(_LOGGER, parked.session.call_id, "Parking slot %s released", parked.slot)
         parked.changed.set()
         if parked.session.live:
             parked.session.release_resource(f"parking_slot:{parked.slot}", value=parked)
@@ -130,6 +138,8 @@ class ParkingLot:
             else:
                 return
             claim = self.claim(parked.slot, f"timeout:{parked.session.call_id}:{parked.session.generation}")
+            trace_call(_LOGGER, parked.session.call_id, "Parking slot %s timed out; returning to %s",
+                       parked.slot, parked.return_destination or parked.parker)
             try:
                 await callback(claim)
             except asyncio.CancelledError:

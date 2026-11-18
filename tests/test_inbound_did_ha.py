@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import replace
+import logging
 import socket
 from types import SimpleNamespace
 
@@ -211,3 +212,80 @@ async def test_original_missing_did_and_caller_name_are_not_invented_by_forwardi
     assert fields["called_number"] == fields["called_number_raw"] == fields["caller_name"] == ""
     await lab.calls.request_termination("missing", TerminationIntent("test_done"))
     assert lab.calls.event_fields("missing", "idle")["called_number"] == ""
+
+
+@pytest.mark.parametrize("action", ["route", "select_inbound_destination", "forward"])
+async def test_named_core_automation_is_attributed_to_its_public_routing_action(
+    lab, action, caplog, enable_custom_integrations,
+):
+    from homeassistant.setup import async_setup_component
+
+    hass = lab.hass
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.route_decisions")
+    await services.async_register_services(hass, {
+        "route": voip_stack._handle_sip_route_service,
+        "select_inbound_destination": voip_stack._handle_select_inbound_destination_service,
+        "forward": voip_stack._handle_sip_forward_service,
+    })
+    data = {"destination": "Reception"}
+    if action == "route":
+        data["action"] = "forward"
+    assert await async_setup_component(hass, "automation", {"automation": [{
+        "id": "office_did_routing", "alias": "Office incoming DID",
+        "triggers": [{"trigger": "voip_stack.route_requested", "options": {"trunk": "provider-a"}}],
+        "actions": [{"action": "voip_stack." + action, "data": data}],
+    }]})
+    await hass.async_start()
+    await hass.async_block_till_done()
+    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+        "trunk_server": "127.0.0.1", "trunk_allowed_ips": ["127.0.0.1/32"], "trunk_did_source": "to"})
+    provider = SipTrunkClient(config=trunk_client_config(config), local_ip="127.0.0.1",
+        local_sip_port=5090, trunk_id="provider-a")
+    selected_routes = asyncio.Queue()
+
+    def identify(request, initial):
+        classified = _classify_trunk_invite(initial, enabled=True, trunk=None, trunks={"provider-a": provider})
+        return apply_inbound_identity(classified, config, request)
+
+    async def incoming(invite):
+        lab.calls.upsert(invite.call_id, state="connecting", owner="router")
+        selected = await request_route_override(
+            runtime=SimpleNamespace(hass=hass, ha_peer_name=lambda _: "PBX"), invite=invite,
+            decision=RouteDecision(RouteAction.BRIDGE, target="Default"), registered_source=False,
+            caller_is_trusted_endpoint=True, automation_routing_enabled=True, trunk_invite=True,
+        )
+        await selected_routes.put(selected)
+        return SipInviteResult(486, "Busy Here")
+
+    owner = SipUdpEndpoint(local_ip="127.0.0.1", local_rtp_port=44000,
+        supported_formats=[AudioFormat(8000, frame_ms=20)], on_invite=incoming, invite_identity_resolver=identify)
+    transport, _ = await hass.loop.create_datagram_endpoint(lambda: owner, local_addr=("127.0.0.1", 0))
+    source = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    source.bind(("127.0.0.1", 0))
+    source.setblocking(False)
+    try:
+        await hass.loop.sock_sendto(source, _wire("001234", "named-routing"), transport.get_extra_info("sockname"))
+        selected = await asyncio.wait_for(selected_routes.get(), 3)
+        assert selected.action == "forward" and selected.destination == "Reception"
+        while True:
+            raw, _ = await asyncio.wait_for(hass.loop.sock_recvfrom(source, 8192), 3)
+            response = sip.parse_message(raw)
+            if response.status_code == 486:
+                break
+        headers = [(key, response.header(key)) for key in ("Via", "From", "To", "Call-ID")]
+        await hass.loop.sock_sendto(source, sip.build_request("ACK", "sip:account-contact@127.0.0.1",
+            [*headers, ("CSeq", "1 ACK")]), transport.get_extra_info("sockname"))
+        await hass.async_block_till_done()
+        choices = [record.getMessage() for record in caplog.records
+                   if record.name == "custom_components.voip_stack.route_decisions"
+                   and "Routing action accepted" in record.getMessage()]
+        assert len(choices) == 1
+        assert 'Routing action accepted from Automation "Office incoming DID"' in choices[0]
+        assert "destination=Reception" in choices[0]
+        assert choices[0].endswith("[call_id=named-routing]")
+        assert "Fixture caller" not in choices[0]
+    finally:
+        source.close()
+        transport.close()
+        await owner.wait_closed()
+        await lab.calls.request_termination("named-routing", TerminationIntent("test_done"))

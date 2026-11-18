@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -11,9 +12,13 @@ from homeassistant.core import HomeAssistant
 from .call_scope import set_pending_route, take_pending_route
 from .const import CONF_TRUNK_INBOUND_DEFAULT_TARGET
 from .fsm import CallState
+from .pbx_trace import trace_call
 
 if TYPE_CHECKING:
     from .endpoint_session import EndpointCallSession
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def trunk_default_target(trunk_config: dict) -> str:
@@ -61,6 +66,12 @@ async def async_request_inbound_destination(
             "fallback_destination": fallback,
         },
     )
+    trace_call(
+        _LOGGER, invite.call_id,
+        "Trunk %s waits for a routing action for %ss; fallback is %s",
+        trunk_config.get("name") or getattr(invite, "trunk_id", "") or "default",
+        float(timeout), fallback,
+    )
     publish_bridge_projection(
         hass,
         session,
@@ -82,8 +93,11 @@ async def async_request_inbound_destination(
     try:
         decision = await asyncio.wait_for(future, timeout=float(timeout))
         action = str((decision or {}).get("action") or "default").strip().lower()
+        if action == "default":
+            trace_call(_LOGGER, invite.call_id, "Routing action keeps trunk fallback %s", fallback)
         return dict(decision or {}) if action != "default" else {}
     except TimeoutError:
+        trace_call(_LOGGER, invite.call_id, "No routing action before the deadline; using trunk fallback %s", fallback)
         return {}
     finally:
         take_pending_route(hass, invite.call_id)

@@ -1,6 +1,7 @@
 """Outgoing browser calls keep their session while a SIP destination is replaced."""
 
 import asyncio
+import logging
 import re
 import socket
 import struct
@@ -338,7 +339,8 @@ async def test_native_unanswered_action_can_speak_to_outgoing_browser_caller(bro
         automation_context.current_execution.reset(binding)
 
 
-async def test_failed_browser_forward_can_resume_original_destination_with_same_call(browser_lab, monkeypatch):
+async def test_failed_browser_forward_can_resume_original_destination_with_same_call(browser_lab, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.call_forwarder")
     lab = browser_lab
     first, second = lab.phones
     first.auto_answer = False
@@ -354,12 +356,50 @@ async def test_failed_browser_forward_can_resume_original_destination_with_same_
     monkeypatch.setattr(first, "datagram_received", observe_retry)
     session = await originate(lab)
     token = session.token
-    await lab.calls.forward_call(call_id=session.call_id, destination="bedroom1", on_failure="resume")
+    forward = await lab.calls.forward_call(call_id=session.call_id, destination="bedroom1", on_failure="resume")
+    if forward is not None:
+        await forward
     async with asyncio.timeout(3):
         await retried.wait()
     assert session.live and session.token == token
     assert len(second.invites) == 1
     assert first.invites[0].header("Call-ID") != first.invites[1].header("Call-ID")
     assert lab.runtime.endpoints.require("browser").active_call_id == session.call_id
+    decisions = [record for record in caplog.records
+                 if record.name == "custom_components.voip_stack.call_forwarder" and "Forward to bedroom1 failed" in record.getMessage()]
+    assert len(decisions) == 1
+    assert "failure policy=resume, original call resumed=True" in decisions[0].getMessage()
+    assert decisions[0].getMessage().endswith(f"[call_id={session.call_id}]")
+    await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
+    assert not lab.calls.sessions
+
+
+async def test_named_core_automation_attributes_an_ordinary_unanswered_forward(
+    browser_lab, caplog, enable_custom_integrations,
+):
+    from homeassistant.setup import async_setup_component
+
+    lab = browser_lab
+    caplog.set_level(logging.DEBUG, logger="custom_components.voip_stack.automation_context")
+    assert await async_setup_component(lab.hass, "automation", {"automation": [{
+        "id": "office_unanswered_forward", "alias": "Office unanswered forwarding",
+        "triggers": [{"trigger": "voip_stack.call_unanswered",
+                      "options": {"destination": "bedroom0", "for": {"seconds": 1}}}],
+        "actions": [{"action": "voip_stack.forward", "data": {"destination": "bedroom1"}}],
+    }]})
+    await lab.hass.async_start()
+    await lab.hass.async_block_till_done()
+    lab.phones[0].auto_answer = False
+    session = await originate(lab)
+    async with asyncio.timeout(4):
+        while session.state != "in_call" or session.callee != "bedroom1":
+            await asyncio.sleep(.01)
+    assert len(lab.phones[1].invites) == 1
+    choices = [record.getMessage() for record in caplog.records
+               if record.name == "custom_components.voip_stack.automation_context"
+               and "requests forwarding" in record.getMessage()]
+    assert len(choices) == 1
+    assert 'Automation "Office unanswered forwarding" requests forwarding to bedroom1' in choices[0]
+    assert choices[0].endswith(f"[call_id={session.call_id}]")
     await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
     assert not lab.calls.sessions

@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 from homeassistant.components.logbook import (
+    LOGBOOK_ENTRY_CONTEXT_ID,
     LOGBOOK_ENTRY_ENTITY_ID,
     LOGBOOK_ENTRY_ICON,
     LOGBOOK_ENTRY_MESSAGE,
@@ -96,6 +97,46 @@ def _logical_calls(phone):
     return result
 
 
+def account_call_details(data, endpoint_id="", row=None):
+    """Read this occurrence's counterpart relative to one account.
+
+    The direction and the connected peer describe participation, never which
+    person requested termination. Dialog rows are scoped by the caller to the
+    same Call-ID and generation.
+    """
+    row = row or {}
+    source = str(data.get("source_endpoint_id") or "")
+    destinations = {str(data.get(key) or "") for key in ("dest_endpoint_id", "target_endpoint_id")}
+    if endpoint_id and endpoint_id == source:
+        direction = "outgoing"
+    elif endpoint_id and endpoint_id in destinations:
+        direction = "incoming"
+    elif row.get("direction") in {"initiator", "recipient"}:
+        direction = "outgoing" if row["direction"] == "initiator" else "incoming"
+    elif not endpoint_id or endpoint_id == data.get("endpoint_id"):
+        direction = str(data.get("direction") or "")
+    else:
+        direction = ""
+    if direction == "outgoing":
+        peer = _party(data, "connected_party", "answered_by") or _party(row, "peer_name", "peer_user")
+        peer = peer or _party(data, "callee", "dialed_target", "called_number", "peer_name")
+    elif direction == "incoming":
+        peer = _party(data, "caller") or _party(row, "peer_name", "peer_user")
+    else:
+        peer = _party(row, "peer_name", "peer_user") or _party(
+            data, "connected_party", "peer_name", "callee", "dialed_target", "called_number", "caller")
+    return direction, peer
+
+
+def _account_call_label(data, endpoint_id="", row=None):
+    direction, peer = account_call_details(data, endpoint_id, row)
+    if direction == "outgoing":
+        return "Outgoing call" + (" to " + peer if peer else "")
+    if direction == "incoming":
+        return "Incoming call" + (" from " + peer if peer else "")
+    return "Call" + (" with " + peer if peer else "")
+
+
 def _account_activity(data):
     """Derive one logical phase per account without remembering Contact events."""
     before, after = _logical_calls(data.get("previous")), _logical_calls(data.get("phone"))
@@ -110,28 +151,29 @@ def _account_activity(data):
         details = occurrence if key == occurrence_key else {}
         if phase == "answered":
             winner = _party(details, "answered_by", "connected_party")
-            message = f"Answered by {winner}" if winner else "Call answered"
+            message = _account_call_label(details, data.get("endpoint_id", ""), row) + " answered"
+            if winner and winner != account_call_details(details, data.get("endpoint_id", ""), row)[1]:
+                message += " by " + winner
         else:
-            target = (_party(details, "dialed_target", "called_number", "callee") if phase == "calling"
-                      else _party(details, "caller")) or _party(row, "peer_user", "peer_name")
+            target = account_call_details(details, data.get("endpoint_id", ""), row)[1]
             message = ("Calling " if phase == "calling" else "Incoming call from ") + (target or "unknown party")
         entries.append({LOGBOOK_ENTRY_NAME: name, LOGBOOK_ENTRY_MESSAGE: message, "phase": phase})
     terminal = (str(occurrence.get("type") or "") in {"ended", "failed", "missed"}
                 or str(occurrence.get("pbx_phase") or "") in {"terminating", "terminated"})
     if terminal and occurrence_key in before and occurrence_key not in after:
-        entries.append({LOGBOOK_ENTRY_NAME: name, LOGBOOK_ENTRY_MESSAGE: _account_terminal_message(occurrence), "phase": "terminal"})
+        entries.append({LOGBOOK_ENTRY_NAME: name, LOGBOOK_ENTRY_MESSAGE: _account_terminal_message(
+            occurrence, data.get("endpoint_id", ""), before[occurrence_key][1]), "phase": "terminal"})
     return entries
 
 
-def _account_terminal_message(occurrence):
+def _account_terminal_message(occurrence, endpoint_id="", row=None):
     failed = occurrence.get("type") in {"failed", "missed"} or occurrence.get("state") in {"failed", "error", "declined"}
-    message = "Call failed" if failed else "Call ended"
+    message = _account_call_label(occurrence, endpoint_id, row) + (" failed" if failed else " ended")
     reason = str(occurrence.get("terminal_reason") or occurrence.get("reason") or "").strip()
     if reason:
         message += " · " + reason.replace("_", " ")
     message += _sip_code(occurrence)
-    winner = _party(occurrence, "answered_by", "connected_party")
-    return message + (" · Answered by " + winner if winner else "")
+    return message
 
 
 @callback
@@ -172,12 +214,12 @@ def async_setup_account_activity(hass, entry):
         for identity in participants:
             endpoint = owner.endpoints.get(identity)
             if endpoint is not None and endpoint.supports_ha_client:
-                publish(endpoint, _account_terminal_message(event.data), event.context)
+                publish(endpoint, _account_terminal_message(event.data, identity), event.context)
     entry.async_on_unload(hass.bus.async_listen(PHONE_STATE_CHANGED, changed))
     entry.async_on_unload(hass.bus.async_listen(SIP_CALL_ENDED_EVENT, ended))
 
 
-def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dict[str, str]:
+def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dict[str, Any]:
     """Build one durable summary from the terminal event payload."""
 
     caller = _party(data, "caller", "peer_name") or "Unknown caller"
@@ -192,7 +234,7 @@ def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dic
         if direction == "incoming"
         else ""
     )
-    destination = route_destination or _party(data, *destination_keys)
+    destination = _party(data, "answered_by", "connected_party") or route_destination or _party(data, *destination_keys)
     destination = destination or "unknown destination"
     event_type = str(data.get("type") or "ended").strip().lower()
     duration = _format_duration(data.get("duration_seconds"))
@@ -227,6 +269,10 @@ def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dic
         message = f"{caller} called {destination}"
         if duration:
             message += f" · {duration}"
+    if event_type != "failed" and terminal_reason and not declined:
+        # A reason describes the accepted terminal result. It does not identify
+        # the person who hung up, even when a connected peer is known.
+        message += " · " + terminal_reason.replace("_", " ")
     message += _sip_code(data)
     winner = _party(data, "answered_by")
     if winner and winner != destination:
@@ -237,6 +283,7 @@ def _describe_call(data: Mapping[str, Any], entity_id: str | None = None) -> dic
         LOGBOOK_ENTRY_MESSAGE: message,
         **({LOGBOOK_ENTRY_ENTITY_ID: entity_id} if entity_id else {}),
         LOGBOOK_ENTRY_ICON: "mdi:phone-log",
+        **{key: data[key] for key in ("call_id", "generation", "sequence") if key in data},
     }
 
 
@@ -262,8 +309,12 @@ def async_describe_events(
     @callback
     def async_describe_call_event(
         event: Event[dict[str, Any]],
-    ) -> dict[str, str]:
-        return _describe_call(event.data, shared_entity_ids(hass)["call_event"])
+    ) -> dict[str, Any]:
+        description = _describe_call(event.data, shared_entity_ids(hass)["call_event"])
+        context_id = getattr(event, "context_id", None) or getattr(getattr(event, "context", None), "id", None)
+        if context_id:
+            description[LOGBOOK_ENTRY_CONTEXT_ID] = context_id
+        return description
 
     async_describe_event(DOMAIN, SIP_CALL_ENDED_EVENT, async_describe_call_event)
     async_describe_event(DOMAIN, QUEUE_EVENT, describe_queue_event)

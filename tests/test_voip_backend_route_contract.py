@@ -516,10 +516,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("not caller_is_trusted_endpoint", pre_route)
         self.assertIn("and decision.action is RouteAction.TRUNK", pre_route)
         self.assertIn('decline_reason="unauthenticated_trunk"', pre_route)
-        self.assertIn(
-            "SIP caller uses central dialplan without automation window",
-            registered_branch,
-        )
+        function = next(node for node in ast.parse(registered_branch).body
+                        if isinstance(node, ast.AsyncFunctionDef) and node.name == "request_route_override")
+        guard = next(node for node in function.body if isinstance(node, ast.If))
+        registered_condition = ast.parse("registered_source and not native_override", mode="eval").body
+        self.assertTrue(any(ast.dump(node) == ast.dump(registered_condition) for node in ast.walk(guard.test)))
+        self.assertTrue(any(isinstance(node, ast.Return) and isinstance(node.value, ast.Call)
+                            and isinstance(node.value.func, ast.Name) and node.value.func.id == "AutomationRoute"
+                            for node in guard.body))
         route_requested_branch = registered_branch[
             registered_branch.index("hass = runtime.hass") :
         ]
@@ -571,10 +575,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertGreaterEqual(routing_sources.count("fallback_destination="), 2)
         self.assertGreaterEqual(routing_sources.count("decision_deadline="), 2)
-        self.assertIn(
-            '"Inbound route selected call_id=%s source=%s destination=%s fallback=%s"',
-            self.invite_router,
-        )
+        for source in (self.inbound_automation, self.trunk_routing):
+            requests = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                        and any(keyword.arg == "route_request" and isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value is True for keyword in node.keywords)]
+            self.assertTrue(requests)
+            for request in requests:
+                self.assertLessEqual({"fallback_destination", "decision_deadline"},
+                                     {keyword.arg for keyword in request.keywords})
 
     def test_inbound_config_describes_one_priority_order(self) -> None:
         strings = json.loads(STRINGS_JSON.read_text())
@@ -1540,12 +1548,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_automation_group_destination_reenters_canonical_dispatch(self) -> None:
         on_invite = self.invite_router
-        override = on_invite[on_invite.index("fallback_destination =") :]
-        group_dispatch = override[
-            override.index("if decision.action is RouteAction.GROUP:") : override.index(
-                '    _LOGGER.info(\n        "Inbound route selected'
-            )
-        ]
+        tree = ast.parse(on_invite)
+        override = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
+                        and ast.unparse(node.test) == "route_action != 'answer_ha'")
+        group = next(node for node in ast.walk(override) if isinstance(node, ast.If)
+                     and ast.unparse(node.test) == "decision.action is RouteAction.GROUP")
+        group_dispatch = ast.get_source_segment(on_invite, group)
         self.assertIn("return await route_local_group(", group_dispatch)
         self.assertIn("runtime.run_ring_group_call(", self.inbound_local)
         self.assertIn("conference_manager(", self.inbound_local)

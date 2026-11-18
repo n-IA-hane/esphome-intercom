@@ -16,6 +16,7 @@ from ..phone_endpoint import (
 )
 from ..router import RouteAction, RouteReason
 from ..phone_policy import DestinationKind
+from ..pbx_trace import trace_call
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -74,7 +75,14 @@ def resolve_phone_target(
         )
         forward_target = ""
         if fallback is not None:
+            policy_reason = (
+                "unconditional forwarding" if candidate.policy.always is not None
+                else "do not disturb" if candidate.dnd
+                else "busy" if candidate.active_call_id and candidate.active_call_id != call_id
+                else "unavailable"
+            )
             if fallback.kind is DestinationKind.HANGUP:
+                trace_call(_LOGGER, call_id, "Phone %s policy rejects the call: %s", candidate.name, policy_reason)
                 return TargetResolution(decision, candidate, SipInviteResult(
                     486, "Busy Here", to_tag="", decline_reason="phone_policy",
                 ))
@@ -106,12 +114,12 @@ def resolve_phone_target(
         if target_endpoint is not None:
             forward_target = target_endpoint.name
         decision = route_resolver(forward_target, roster_entries)
-        _LOGGER.info(
-            "Phone forward call_id=%s endpoint=%s destination=%s route=%s",
-            call_id,
-            candidate.endpoint_id,
-            forward_target,
-            decision.action.value,
+        trace_call(
+            _LOGGER, call_id,
+            "Phone %s redirects to %s: %s policy, route=%s",
+            candidate.name,
+            decision.entry.display_name if decision.entry is not None else forward_target,
+            policy_reason, decision.action.value,
         )
 
 
@@ -130,11 +138,7 @@ def validate_target_endpoint(
     if endpoint is None:
         return None
     if endpoint.dnd:
-        _LOGGER.info(
-            "SIP INVITE rejected by endpoint DND call_id=%s endpoint=%s",
-            invite.call_id,
-            endpoint.endpoint_id,
-        )
+        trace_call(_LOGGER, invite.call_id, "Phone %s rejects the call: do not disturb enabled", endpoint.name)
         return SipInviteResult(
             486,
             "Busy Here",
@@ -142,6 +146,7 @@ def validate_target_endpoint(
             decline_reason="dnd",
         )
     if endpoint.active_call_id and endpoint.active_call_id != invite.call_id:
+        trace_call(_LOGGER, invite.call_id, "Phone %s rejects the call: already busy", endpoint.name)
         return SipInviteResult(
             486,
             "Busy Here",
@@ -149,6 +154,7 @@ def validate_target_endpoint(
             decline_reason=TerminalReason.BUSY.value,
         )
     if endpoint.availability is EndpointAvailability.UNAVAILABLE:
+        trace_call(_LOGGER, invite.call_id, "Phone %s rejects the call: disabled or unavailable", endpoint.name)
         return SipInviteResult(
             480,
             "Temporarily Unavailable",
@@ -159,6 +165,7 @@ def validate_target_endpoint(
         endpoint.availability is EndpointAvailability.OFFLINE
         and not endpoint.kind.is_softphone
     ):
+        trace_call(_LOGGER, invite.call_id, "Phone %s rejects the call: offline with no registered contact", endpoint.name)
         # Registrar devices persist while offline, but a missing Contact
         # cannot receive a standards-based SIP dialog.
         return SipInviteResult(

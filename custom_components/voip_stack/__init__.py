@@ -475,6 +475,7 @@ async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
     """Transfer one established call through its owned SIP dialog."""
 
     from .call_transfer import CallTransferRequest, async_transfer_call
+    from .pbx_trace import trace_call
 
     runtime = _runtime_data(call.hass)
     if runtime is None:
@@ -504,13 +505,19 @@ async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
             raise ServiceValidationError("The selected phone does not own this call")
         if source_session is None or not source_session.live or source_session.state != "in_call":
             raise ServiceValidationError("Transfer requires an established call")
+    destination = request.destination or request.replaces_call_id
+    trace_call(_LOGGER, request.call_id, "%s requested a %s transfer to %s", phone.name,
+               "consultation" if request.replaces_call_id else "blind", destination)
     try:
         result = await async_transfer_call(runtime, request, hass=call.hass)
     except (ValueError, RuntimeError) as err:
+        trace_call(_LOGGER, request.call_id, "Transfer to %s rejected: invalid target", destination)
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="transfer_target_invalid",
         ) from err
+    trace_call(_LOGGER, request.call_id, "Transfer to %s: %s (status %s)",
+               destination, result.state, result.status)
     if (
         result.accepted
         and not result.retained_call

@@ -17,6 +17,19 @@ to a handset and an explicit line slot. The physical phone's **Lines** editor
 shows the same association. Both edit the physical phone's canonical line list;
 there is no second list of associations to reconcile.
 
+## Reading the integration page
+
+Under **Hubs**, **VoIP Stack** is the PBX configuration. Home Assistant puts
+the PBX device and its system-wide **Call** event in the expandable group
+**Devices that don't belong to a sub-entry**. The devices in this group are
+managed directly by the integration. Accounts, physical phones and trunks
+appear under their own configurations.
+
+Home Assistant translates menus with your profile language. Automatic entity
+names such as **Call state** use the system language under **Settings > System
+> General**. Different choices can produce a device page with English menus
+and Italian entity names. A custom entity name takes precedence.
+
 ## Upgrade existing HA phones
 
 Version 7 of the integration configuration converts existing HA/browser phone

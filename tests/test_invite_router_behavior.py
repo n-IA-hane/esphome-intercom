@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -108,14 +109,16 @@ def _patch_route_prefix(
 
 @pytest.mark.asyncio
 async def test_route_retransmit_keeps_pending_decision(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog,
 ) -> None:
+    caplog.set_level(logging.DEBUG, logger=invite_router._LOGGER.name)
     _patch_route_prefix(monkeypatch, pending_routes={"call-1": object()})
 
     result = await invite_router.route_invite(_runtime(), _invite())
 
     assert result.status == 100
     assert result.reason == "Trying"
+    assert not any(record.getMessage().startswith("PBX |") for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -140,14 +143,16 @@ async def test_discovery_does_not_reselect_listener_authoritative_audio(monkeypa
 
 @pytest.mark.asyncio
 async def test_route_retransmit_keeps_existing_ringing_invite(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog,
 ) -> None:
+    caplog.set_level(logging.DEBUG, logger=invite_router._LOGGER.name)
     _patch_route_prefix(monkeypatch, pending_invites={"call-1": object()})
 
     result = await invite_router.route_invite(_runtime(), _invite())
 
     assert result.status == 180
     assert result.defer_final is True
+    assert not any(record.getMessage().startswith("PBX |") for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -166,7 +171,8 @@ async def test_route_capacity_rejects_before_allocating_more_state(
 
 @pytest.mark.parametrize("known", [True, False])
 @pytest.mark.asyncio
-async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_unknown(monkeypatch, known):
+async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_unknown(monkeypatch, known, caplog):
+    caplog.set_level(logging.DEBUG, logger=invite_router._LOGGER.name)
     from dataclasses import replace
     from custom_components.voip_stack.inbound_routing.automation import AutomationRoute
     from custom_components.voip_stack.sip_listener import SipInviteResult
@@ -181,7 +187,7 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     runtime = _runtime()
     runtime.is_trunk_invite = Mock(return_value=True)
     runtime.is_ha_target = Mock(return_value=False)
-    runtime.get_trunk_config = Mock(return_value={"trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
+    runtime.get_trunk_config = Mock(return_value={"name": "Office", "trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
     runtime.inbound_route_decision = Mock(side_effect=lambda invite, *_: initial if invite.routing_target == "601" else selected_fallback)
     runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     request = AsyncMock(return_value=AutomationRoute(action="decline"))
@@ -198,6 +204,9 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     assert request.await_args.kwargs["invite"].routing_target == "601"
     assert request.await_args.kwargs["decision"] == (initial if known else selected_fallback)
     assist.assert_not_awaited()
+    assert "Trunk Office received number not available, normalized to not available" in caplog.text
+    assert "routing mode=direct" in caplog.text
+    assert ("configured fallback is Assistant" in caplog.text) is not known
 
 
 @pytest.mark.parametrize("override", [False, True])
