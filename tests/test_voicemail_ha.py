@@ -1277,13 +1277,16 @@ async def test_removing_integration_deletes_its_mailboxes_after_shutdown(mailbox
 
 async def test_permanent_esphome_device_removal_purges_mailbox(mailbox_lab):
     from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack.mailbox import async_setup_mailboxes, EVENT_VOICEMAIL_CHANGED
     from custom_components.voip_stack.core.audio_format import AudioFormat
 
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     devices = dr.async_get(lab.hass)
-    device = devices.async_get_or_create(config_entry_id=entry.entry_id, identifiers={("esphome", "test-esp")})
+    native = MockConfigEntry(domain="esphome")
+    native.add_to_hass(lab.hass)
+    device = devices.async_get_or_create(config_entry_id=native.entry_id, identifiers={("esphome", "test-esp")})
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="esp-test", name="ESP", kind=EndpointKind.ESPHOME,
                                                device_id=device.id, availability="offline"))
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
