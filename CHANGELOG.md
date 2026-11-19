@@ -2,6 +2,13 @@
 
 ## 2026.12.0-dev
 
+- Choose a device by its Home Assistant name and icon when assigning a desk
+  phone line or BLF key. Single-position profiles such as the Snom 360 show
+  both selections directly in the form. An automatically generated key label
+  fits the phone's display, even when the device name is longer.
+- New automatically generated SIP logins start with `ha_phone_`. Existing
+  accounts continue to use their saved credentials.
+
 - Configure a discovered desk phone with an optional first SIP account. A
   DHCP change leaves the manual address field empty. The physical device's
   configuration link lets administrators copy the complete provisioning URL.
