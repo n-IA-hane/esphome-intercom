@@ -191,6 +191,40 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
     state.reload.assert_not_awaited()
 
 
+@pytest.mark.parametrize("stored_label", [None, "Waveshare S3 Audio"])
+async def test_blf_editor_saves_auto_labels_and_keeps_custom_labels_on_reopen(physical_flow, stored_label):
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+
+    state = physical_flow
+    peer = PhoneEndpoint(endpoint_id="direct:ws3", name="Waveshare S3 Audio",
+                         kind=EndpointKind.ESPHOME, extension="426")
+    state.lab.runtime.endpoints.register(peer)
+    form = await binding_editor(state)
+    key = {"slot": "1", "line": "1", "function": "blf", "target": peer.endpoint_id}
+    saved = await submit(state, form, bindings(keys=[key]))
+    assert saved["type"] == "abort" and saved["reason"] == "reconfigure_successful"
+    record = physical_record(state)
+    assert record.data["keys"] == [{**key, "label": ""}]
+
+    # Reopen both an older key without a label and a stored explicit label over today's limit.
+    stored = key if stored_label is None else {**key, "label": stored_label}
+    state.lab.hass.config_entries.async_update_subentry(state.lab.entry, record,
+        data={**record.data, "keys": [stored]})
+    form = await reconfigure(state, "bindings")
+    values = form["data_schema"]({})
+    assert values["keys"][0].get("label", "") == (stored_label or "")
+    values["keys"][0]["label"] = "Waveshare S3 Audio"
+    invalid = await submit(state, form, values)
+    assert invalid["type"] == "form" and invalid["errors"]["base"] == "phone_key_label_too_long"
+    assert physical_record(state).data["keys"] == [stored]
+
+    values["keys"][0]["label"] = "Telefono ufficio"
+    saved = await submit(state, invalid, values)
+    assert saved["type"] == "abort" and saved["reason"] == "reconfigure_successful"
+    form = await reconfigure(state, "bindings")
+    assert form["data_schema"]({})["keys"] == [{**key, "label": "Telefono ufficio"}]
+
+
 async def test_editor_selects_external_contact_created_through_the_contact_flow(physical_flow):
     state = physical_flow
     created = await state.lab.hass.config_entries.subentries.async_init(

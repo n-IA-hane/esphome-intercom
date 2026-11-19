@@ -118,8 +118,10 @@ External contacts are available for speed dial, not BLF. Their keys follow the
 contact's canonical directory route after renaming or changing its number,
 without copying another address book into the phone configuration. A contact
 with a SIP destination keeps that same routing priority. Free dial numbers
-remain available. Targets and labels must fit the profile's byte limits; they
-are never silently truncated.
+remain available. Leave the key label empty to use the destination name. HA
+shortens this display text to fit the selected key's UTF-8 byte limit. Editing
+the destination name updates its automatic label. A custom label or a dial
+target that exceeds the profile limit is rejected.
 
 ### Parking monitor and action
 

@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 import zipfile
 
 import pytest
@@ -171,6 +172,39 @@ def test_real_fanvil_xml_escapes_user_values_and_preserves_directory_filters(rea
     body = next(iter(actual.values()))
     assert b"&lt;Casa" in body and b"&amp;" in body
     assert b"(&(objectClass" not in body
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("Waveshare S3 Audio", "Waveshare S3 Aud"),
+    ("123456789012345é", "123456789012345"),
+    ("12345678901234é", "12345678901234é"),
+    ("12345678901234📞", "12345678901234"),
+])
+def test_snom_blf_renders_automatic_label_within_slot_byte_limit(real_assets, name, expected):
+    _, profile, templates = decoded(real_assets, "snom/360")
+    assert profile["capabilities"]["key_slots"][0]["max_label_bytes"] == 16
+    endpoint = SimpleNamespace(name=name, extension="426", sip_uri_user="waveshare")
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(resolve={"direct:ws3": endpoint}.get))
+    binding = {"slot": "1", "function": "blf", "line": "1", "target": "direct:ws3"}
+    phone = {"lines": [{"slot": "1", "endpoint_id": "sip:desk"}], "keys": [binding]}
+    context = context_for(real_assets, profile)
+
+    def render():
+        context["keys"] = phone_profile.resolve_phone_keys(runtime, phone, profile)
+        data, _ = phone_profile.render_phone_bundle(profile, templates, context)
+        xml, = data.values()
+        key = ElementTree.fromstring(xml).find(".//fkey[@idx='0']")
+        return key.attrib["label"], key.text.strip()
+
+    assert render() == (expected, "blf 426")
+    assert "label" not in binding
+    endpoint.name = "Nuovo nome"
+    assert render() == ("Nuovo nome", "blf 426")
+    binding["label"] = "12345678901234é"
+    assert render() == ("12345678901234é", "blf 426")
+    binding["label"] = "123456789012345é"
+    with pytest.raises(ValueError, match="phone_key_label_too_long"):
+        render()
 
 
 @pytest.mark.parametrize("function,target", [("line", ""), ("speed_dial", "*123"), ("park_call", "700")])

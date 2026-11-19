@@ -92,8 +92,13 @@ def resolve_phone_keys(runtime, phone, profile):
                    if directory is not None and str(key.get("target", "")).casefold().startswith("contact:") else None)
         label = (key.get("label") or getattr(queue, "name", "") or getattr(endpoint, "name", "")
                  or (contact.display_name if contact is not None else "") or key["function"])
-        if len(label.encode()) > int(cap.get("max_label_bytes", 31)):
-            raise ValueError("phone_key_label_too_long")
+        label_limit = int(cap.get("max_label_bytes", 31))
+        encoded_label = label.encode("utf-8")
+        if len(encoded_label) > label_limit:
+            if key.get("label"):
+                raise ValueError("phone_key_label_too_long")
+            # Only the generated display text is shortened. Drop a partial final character.
+            label = encoded_label[:label_limit].decode("utf-8", errors="ignore").rstrip()
         event = key_event_package(key["function"])
         result.append({**key, "line": int(key["line"]), "label": label, "dial_target": target,
                        "subscription_target": target if event else "", "event_package": event,
