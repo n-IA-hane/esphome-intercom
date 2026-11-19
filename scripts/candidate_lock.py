@@ -112,7 +112,10 @@ def build_lock(
             "Install the complete official ESPHome revision from "
             "requirements-firmware-test.txt before qualifying this candidate"
         )
-    for name, source in config["repositories"].items():
+    sources = dict(config["repositories"])
+    if catalog := config.get("phone_profiles"):
+        sources[catalog["repository"].rsplit("/", 1)[1]] = catalog
+    for name, source in sources.items():
         path = (ROOT / source["path"]).resolve()
         resolved = _repository(path)
         if resolved["dirty"] and not allow_dirty:

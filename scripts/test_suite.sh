@@ -265,6 +265,7 @@ case "$MODE" in
     ;;
   software-full)
     pytest_args+=("${ha_ignores[@]}")
+    pytest_args+=(-o tmp_path_retention_policy=failed)
     pytest_args+=(-m "not live and not mutation and not browser_real and not diagnostic_reference")
     ;;
   browser)

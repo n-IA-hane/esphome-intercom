@@ -33,6 +33,24 @@ def test_partial_manifest_is_rejected():
         module.requested_refs({'version': 1, 'components': {}}, 'dev')
 
 
+def test_phone_profile_catalog_is_recorded_and_replayed(tmp_path, monkeypatch):
+    requests = []
+    def fake_git(path, *args):
+        if args[0] == 'fetch' and path.name == module.PHONE_CATALOG:
+            requests.append(args[-1])
+        return 'a' * 40 if args == ('rev-parse', 'HEAD') else ''
+    monkeypatch.setattr(module, 'git', fake_git)
+    first = module.checkout_sources(tmp_path / 'first', None, 'dev', 'b' * 40)
+    assert first['phone_profiles'] == {'repository': module.PHONE_REPOSITORY, 'sha': 'a' * 40}
+    assert module.checkout_sources(tmp_path / 'second', first, 'main', 'b' * 40) == first
+    assert requests == ['dev', 'a' * 40]
+    for invalid in (None, {'repository': module.PHONE_REPOSITORY, 'sha': 'dev'},
+                    {'repository': 'other/catalog', 'sha': 'a' * 40}):
+        with pytest.raises(ValueError, match='phone_profiles'):
+            module.checkout_sources(tmp_path / 'unused', {**first, 'phone_profiles': invalid}, 'dev', 'b' * 40)
+    assert not (tmp_path / 'unused').exists()
+
+
 def test_existing_checkout_is_preserved(tmp_path):
     existing = tmp_path / 'esphome-voip-stack'
     existing.mkdir()

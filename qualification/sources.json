@@ -30,6 +30,10 @@
       "repository": "n-IA-hane/esphome-screenshot"
     }
   },
+  "phone_profiles": {
+    "path": "../voip-stack-phone-profiles",
+    "repository": "n-IA-hane/voip-stack-phone-profiles"
+  },
   "official_sources": {
     "esphome": {
       "repository": "esphome/esphome",

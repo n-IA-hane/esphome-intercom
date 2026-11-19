@@ -114,7 +114,9 @@ find custom_components/voip_stack/frontend -name '*.js' -print0 \
 
 The software CI job uploads `coordinated-sources.json`, containing the actual
 backend commit and the complete coordinated component set checked out for that
-run: Native, Audio, Runtime, Renderer, Screenshot and Camera. The accepted
+run: Native, Audio, Runtime, Renderer, Screenshot and Camera. The same file
+records the phone profile catalog used by the interoperability tests under
+`phone_profiles`. An exact replay checks out that catalog commit too. The accepted
 manifest schema is owned by [`coordinated_sources.py`](../scripts/coordinated_sources.py).
 Default runs continue following the coordinated `dev`/`main` branches. To repeat
 an exact run, select its backend revision and supply the complete artifact JSON

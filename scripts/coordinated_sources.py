@@ -19,6 +19,8 @@ REPOSITORIES = {
 }
 CAMERA = 'esphome-esp-video-camera'
 CAMERA_DEV_REPOSITORY = 'n-IA-hane/esphome-esp-video-camera'
+PHONE_REPOSITORY = SOURCE_CATALOG['phone_profiles']['repository']
+PHONE_CATALOG = PHONE_REPOSITORY.rsplit('/', 1)[1]
 
 
 def git(path: Path, *args: str) -> str:
@@ -67,6 +69,24 @@ def checkout(root: Path, refs: dict[str, str], repositories: dict[str, str] | No
     return components
 
 
+def checkout_sources(root: Path, manifest: dict | None, channel: str, backend: str) -> dict:
+    repositories = requested_repositories(manifest, channel)
+    refs = requested_refs(manifest, channel)
+    catalog_ref = channel
+    if manifest is not None:
+        catalog = manifest.get('phone_profiles')
+        if (not isinstance(catalog, dict) or catalog.get('repository') != PHONE_REPOSITORY
+                or not isinstance(catalog.get('sha'), str)
+                or not re.fullmatch(r'[0-9a-f]{40}', catalog['sha'])):
+            raise ValueError('Exact replay needs the phone_profiles repository and immutable SHA')
+        catalog_ref = catalog['sha']
+    repositories[PHONE_CATALOG] = PHONE_REPOSITORY
+    refs[PHONE_CATALOG] = catalog_ref
+    components = checkout(root, refs, repositories)
+    phone_profiles = components.pop(PHONE_CATALOG)
+    return {'version': 1, 'backend_sha': backend, 'components': components, 'phone_profiles': phone_profiles}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
@@ -77,14 +97,12 @@ def main() -> None:
     args = parser.parse_args()
     raw = args.manifest.read_text() if args.manifest else os.environ.get('COMPONENT_MANIFEST', '')
     manifest = json.loads(raw) if raw.strip() else None
-    refs = requested_refs(manifest, args.ref)
     backend = git(args.backend, 'rev-parse', 'HEAD')
     if manifest is not None and manifest.get('backend_sha') != backend:
         raise ValueError('Select the manifest backend commit before replaying its components')
-    components = checkout(args.root, refs, requested_repositories(manifest, args.ref))
+    receipt = checkout_sources(args.root, manifest, args.ref, backend)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({'version': 1, 'backend_sha': backend,
-                                      'components': components}, indent=2) + '\n')
+    args.output.write_text(json.dumps(receipt, indent=2) + '\n')
 
 
 if __name__ == '__main__':
