@@ -646,23 +646,23 @@ class SipProfileTest(unittest.TestCase):
     def test_name_address_preserves_display_name_and_escapes_quotes(self) -> None:
         rendered = sip.format_name_addr(
             "sip:public@192.0.2.10",
-            'Dio Cane "Casa" \\ ingresso',
+            'Front Desk "Main" \\ entrance',
         )
 
         self.assertEqual(
             rendered,
-            '"Dio Cane \\"Casa\\" \\\\ ingresso" <sip:public@192.0.2.10>',
+            '"Front Desk \\"Main\\" \\\\ entrance" <sip:public@192.0.2.10>',
         )
         self.assertEqual(
             sip.name_addr_display_name(rendered),
-            'Dio Cane "Casa" \\ ingresso',
+            'Front Desk "Main" \\ entrance',
         )
 
     def test_name_address_rejects_header_injection(self) -> None:
         with self.assertRaises(sip.SipError):
             sip.format_name_addr(
                 "sip:public@192.0.2.10",
-                "Dio Cane\r\nVia: bad",
+                "Front Desk\r\nVia: bad",
             )
 
     def test_invite_preserves_registered_contact_request_uri_params(self) -> None:
