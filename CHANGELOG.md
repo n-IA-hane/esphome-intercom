@@ -10,8 +10,8 @@
   fits the phone's display, even when the device name is longer.
 - An existing Home Assistant softphone named `Casa` becomes a SIP account
   with the username `Casa` on upgrade. Its extension and dashboard references
-  stay on the same record. A newly assigned login omits spaces in the
-  softphone name. Existing SIP credentials are preserved.
+  stay on the same record. Spaces and capital letters in the softphone name
+  are preserved in a newly assigned login. Existing SIP credentials are preserved.
 - Managed ESP phones have a SIP account device in VoIP Stack. Open it to see
   registration and call state. The ESPHome hardware device retains its audio
   controls, sensors and existing dashboard references.

@@ -367,6 +367,60 @@ async def test_managed_account_in_native_list_links_to_device_and_delete_revokes
     assert dr.async_get(lab.hass).async_get(lab.device.id).config_entry_id == lab.native.entry_id
 
 
+async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(managed):
+    from homeassistant.config_entries import ConfigEntryState
+    from custom_components.voip_stack.esphome_actions import async_resolve_source_device
+    from custom_components.voip_stack.websocket_api import _get_voip_devices, _ha_softphone_devices
+
+    lab = managed
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source",
+                                       "network", "stream", "web_rtc", "stt", "tts", "voip_stack"})
+    prepare_frontend_dependency(lab.hass)
+    lab.entry.mock_state(lab.hass, ConfigEntryState.LOADED)
+    platforms = ["sensor", "binary_sensor", "event", "switch"]
+    await lab.hass.config_entries.async_forward_entry_setups(lab.entry, platforms)
+    try:
+        lab.controller.start()
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        service = account_service_device(lab)
+        phone = phone_record(lab)
+        entities = er.async_get(lab.hass)
+        account_entities = {e.domain: e for e in er.async_entries_for_device(entities, service.id)}
+        assert set(account_entities) == {"sensor", "binary_sensor", "event"}
+        assert all(e.platform == "voip_stack" and e.config_subentry_id == service.config_subentry_id
+                   for e in account_entities.values())
+        assert all(e.platform == "esphome" for e in er.async_entries_for_device(entities, lab.device.id))
+        assert not _ha_softphone_devices(lab.hass)
+        assert lab.hass.states.get(account_entities["binary_sensor"].entity_id).state == "off"
+        await bind_account(lab, phone)
+        hardware, = await _get_voip_devices(lab.hass)
+        assert hardware["device_id"] == lab.device.id
+        assert lab.hass.states.get(account_entities["binary_sensor"].entity_id).state == "on"
+        for selected in (service.id, lab.device.id):
+            source = await async_resolve_source_device(lab.hass, SimpleNamespace(data={"device_id": selected}))
+            assert source["device_id"] == lab.device.id and source["endpoint_id"] == phone.endpoint_id
+        state_id = account_entities["sensor"].entity_id
+        assert lab.hass.states.get(state_id).state == "idle"
+        calls = lab.runtime.sip
+        calls._bind_endpoint_registry(lab.runtime.endpoints)
+        with calls.state_operation():
+            session = calls.upsert("incoming-esp-line", state="ringing", owner="router", caller="Office",
+                callee="Ingresso", dest_endpoint_id=phone.endpoint_id)
+            calls.claim_endpoint(session.call_id, phone.endpoint_id, role="destination")
+        assert lab.hass.states.get(state_id).state == "ringing"
+        assert lab.hass.states.get(state_id).attributes["call_id"] == session.call_id
+        lab.hass.config_entries.async_remove_subentry(lab.entry, service.config_subentry_id)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert not calls.sessions and not lab.runtime.endpoints.endpoints
+        assert dr.async_get(lab.hass).async_get(service.id) is None
+        assert all(entities.async_get(e.entity_id) is None and lab.hass.states.get(e.entity_id) is None
+                   for e in account_entities.values())
+    finally:
+        await lab.hass.config_entries.async_unload_platforms(lab.entry, platforms)
+
+
 async def test_deleted_account_stays_revoked_if_provisioner_was_stopped(managed):
     from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
     from custom_components.voip_stack.store import sip_accounts
@@ -422,6 +476,7 @@ async def test_only_complete_mac_verified_real_native_actions_enroll(managed, mo
     await lab.controller.async_sync()
     assert not lab.entry.subentries
     assert not lab.registrar.accounts and not lab.sent
+    assert [device.id for device in dr.async_get(lab.hass).devices] == [lab.device.id]
 
 
 async def test_manual_account_collision_is_rejected_without_partial_owner(managed, caplog):

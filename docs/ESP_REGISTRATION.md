@@ -24,6 +24,19 @@ The account slot is not a provider trunk. When `directory`, `blf` or `mwi` are
 selected, contacts, live phone state and message counts use their respective
 LDAP/SIP services. They do not come from a new media engine or public sensor.
 
+### Updating an existing ESPHome phone
+
+Update VoIP Stack in Home Assistant. Existing Home Assistant softphones keep
+their dashboard cards and extensions through this update.
+
+For an ESP running older firmware, rebuild and upload its current board profile
+with managed registration enabled. Keep the existing ESPHome entry, node
+identity and API credentials. When the ESP reconnects, VoIP Stack provisions
+the account over that connection. Check **Devices and services > VoIP Stack**
+for the SIP account device and verify that its connectivity sensor is connected.
+Removing the ESPHome entry is permanent removal of that phone and revokes its
+managed SIP access.
+
 ### How the ESP gets its SIP username
 
 The VoIP integration chooses the SIP login when it creates the account.

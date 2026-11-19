@@ -37,7 +37,7 @@ records to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
 identities, extensions, names, routing rules and mailbox references are retained.
 An identifier beginning with `browser:` remains a valid opaque account ID.
 A softphone named `Casa` gets the SIP username `Casa`. A softphone named
-`Piano Terra` keeps its display name and gets the login `PianoTerra` if it
+`Piano Terra` keeps its display name and gets the login `Piano Terra` if it
 had no SIP credentials. VoIP Stack creates a password when one is
 needed and keeps any existing credentials. The card signs in through HA.
 

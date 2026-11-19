@@ -173,11 +173,19 @@ class EspHomeProvisioner:
 
     @callback
     def _device_changed(self, event):
-        if event.data.get("action") == "remove":
-            async_sync_esphome_endpoint_collision_issue(self.hass, event.data["device_id"])
-            async_sync_esphome_account_name_issue(self.hass, event.data["device_id"])
-            self._removed_devices.add(event.data["device_id"])
+        device_id = event.data["device_id"]
+        if event.data["action"] == "remove":
+            if event.data["device"]["config_entry_id"] == self.entry.entry_id:
+                return
+            async_sync_esphome_endpoint_collision_issue(self.hass, device_id)
+            async_sync_esphome_account_name_issue(self.hass, device_id)
+            self._removed_devices.add(device_id)
             self._refresh_accounts()
+        else:
+            device = dr.async_get(self.hass).async_get(device_id)
+            if device is not None and device.config_entry_id == self.entry.entry_id:
+                # Publishing a PBX service device must not interrupt ESPHome enrollment.
+                return
         self.schedule()
 
     @callback

@@ -973,6 +973,34 @@ async def test_unmapped_line_account_form_value_is_rejected_without_saving(physi
     state.reload.assert_not_awaited()
 
 
+async def test_esphome_line_is_a_blf_target_and_preserves_its_own_credential(physical_flow):
+    from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
+    from .test_managed_phones_ha import account_service_device, phone_record
+
+    state = physical_flow
+    lab = state.lab
+    owner = lab.runtime.phone_provisioning = EspHomeProvisioner(lab.hass, lab.entry)
+    await owner.async_sync()
+    phone = phone_record(lab)
+    service = account_service_device(lab)
+    initial = await start(state)
+    await submit(state, initial, identity())
+    form = await reconfigure(state, "bindings")
+    fields = {field.schema: selector.config["fields"] for field, selector in form["data_schema"].schema.items()}
+    line_models = {f["model_id"] for f in fields["lines"]["account_device"]["selector"].config["filter"]}
+    blf_models = {f["model_id"] for f in fields["keys"]["target_device"]["selector"].config["filter"]}
+    assert line_models == {"sip_account"}
+    assert blf_models == {"sip_account", "esphome_sip_account"}
+    front = lab.runtime.endpoints.require("sip:front").device_id
+    result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
+        "lines": [{"slot": "1", "account_device": front, "transport": "udp"}],
+        "keys": [{"slot": "2", "function": "Phone status (BLF)", "line": "1", "target_device": service.id}],
+    })
+    assert result["reason"] == "reconfigure_successful"
+    assert physical_record(state).data["keys"][0]["target"] == phone.endpoint_id
+    assert phone_record(lab) == phone
+
+
 async def test_account_without_a_registry_device_uses_its_name_in_the_form(physical_flow):
     from custom_components.voip_stack.phone_config import (
         _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry,

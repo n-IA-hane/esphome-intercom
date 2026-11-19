@@ -266,7 +266,7 @@ def migrate_browser_accounts(hass, entry):
 def _browser_account_username(data: Mapping[str, Any]) -> str:
     """Keep a saved SIP login. Derive a new one from the softphone name."""
     username = str(data.get(CONF_PHONE_USERNAME) or "").strip()
-    return normalize_username(username or data[CONF_PHONE_NAME].replace(" ", ""))
+    return normalize_username(username or data[CONF_PHONE_NAME])
 
 
 def phone_identity_updates(entry: ConfigEntry) -> tuple:

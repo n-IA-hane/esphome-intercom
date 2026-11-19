@@ -21,7 +21,7 @@ def add_phone(hass, entry, data):
     return sub
 
 
-@pytest.mark.parametrize(("name", "login"), [("Casa", "Casa"), ('Caffè "Nord"', 'Caffè"Nord"')])
+@pytest.mark.parametrize(("name", "login"), [("Casa", "Casa"), ("Piano Terra", "Piano Terra"), ('Caffè "Nord"', 'Caffè "Nord"')])
 async def test_migrated_phone_keeps_its_display_name_and_registers(hass, socket_enabled, name, login):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.store import sip_accounts
@@ -40,7 +40,7 @@ async def test_migrated_phone_keeps_its_display_name_and_registers(hass, socket_
 
 async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_credentials(hass):
     from custom_components.voip_stack import async_migrate_entry
-    from custom_components.voip_stack.phone_config import phone_endpoint_id, phone_subentry_data
+    from custom_components.voip_stack.phone_config import phone_subentry_data
     entry = MockConfigEntry(domain="voip_stack", version=6, minor_version=4,
         data={"initial_phone_created": True, "preferred_phone_device_id": "placeholder", "unrelated": {"keep": True}},
         options={"unrelated_option": "preserved"})
