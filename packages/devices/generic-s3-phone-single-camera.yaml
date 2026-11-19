@@ -15,8 +15,6 @@ packages:
   camera: !include '${ "../camera/generic-s3-dvp-jpeg.yaml" if "video" in firmware_features and "voip" in firmware_features else "../features/shared/absent.yaml" }'
 
 # Select the actual module memory; the board name alone does not configure PSRAM.
-esphome:
-  platformio_options: !remove
 esp32:
   board: ${board_type}
   flash_size: ${board_flash_size}

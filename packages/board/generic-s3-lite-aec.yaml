@@ -3,10 +3,9 @@ esphome:
   min_version: 2026.11.0
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 esp32:
   board: esp32-s3-devkitc-1
+  flash_mode: dio
   variant: esp32s3
   flash_size: 4MB
   partitions: partitions_4mb_lite_dual_ota.csv

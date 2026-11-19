@@ -9,10 +9,9 @@ esphome:
   min_version: 2026.11.0
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 esp32:
   board: esp32-s3-devkitc-1
+  flash_mode: dio
   flash_size: 16MB
   framework:
     type: esp-idf
@@ -67,6 +66,7 @@ binary_sensor:
     name: Boot Button
     id: boot_button
     pin:
+      # The onboard BOOT button pulls GPIO0 low to select the bootloader at reset.
       number: ${boot_button_pin}
       inverted: true
       mode:

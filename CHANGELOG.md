@@ -2,6 +2,8 @@
 
 ## 2026.12.0-dev
 
+- S3 profiles now set the flash mode through ESPHome's native `esp32.flash_mode`
+  option. WS2812 status lights use `channel_colors` and keep each board's color order.
 - Updated ESP firmware can register again after a managed password change even
   when the PBX rejects the old phone-status subscriptions. During a call,
   **VoIP Diagnostics** shows current packet counters on demand. Periodic
