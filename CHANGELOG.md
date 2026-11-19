@@ -82,6 +82,10 @@
   PPA and SDMMC fixes to checksummed build-local sources for the exact supported
   5.5.6 and 6.0.3 tags, preserving the installed SDK and original build targets.
   Keep the official CSI correction in the camera dependency.
+- Apply Espressif's rotated DMA block fix to the P4 display driver. A small
+  rotated redraw, such as the Hang Up button during a video call, can otherwise
+  stall the display and trigger a watchdog reset. In one repeat on an ESP32-P4,
+  the same button ended a minute-long two-way JPEG call and returned to idle.
 - Declare P4 PSRAM execution through the official framework option so the
   display and camera drivers share the correct interrupt memory policy.
 - Capture P4's composed UI/video through the display owner's public readback,

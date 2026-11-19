@@ -35,7 +35,9 @@
       "path": "components/esp_driver_ppa/src/ppa_srm.c",
       "sha256": "e562ff0080f6ccf7402891bd4f4b176a9bf05a296f3a452d1442055df86b6a4f",
       "git_blob": "0a6edc7ba55222b9e0d9bf8e265b1932ce2ce61a",
-      "patched_sha256": "d7b861d35a3d89490c41be4cf5dc400d9058e6244055f23ebd408e9b731461f9"
+      "patched_sha256": "3e912d6349d396ba933773558585215d038e4001849ef7859894c2bf614bc1e3",
+      "engine_only_sha256": "d7b861d35a3d89490c41be4cf5dc400d9058e6244055f23ebd408e9b731461f9",
+      "rotation_only_sha256": "a7c37e15602ef8c1fb2a451cd7f80d72b91abddbd79b7760a4171d6532b3472d"
     }
   ],
   "additional_bases": {
@@ -71,9 +73,17 @@
           "path": "components/esp_driver_ppa/src/ppa_srm.c",
           "sha256": "1494d1cacf4e686a580443f13176682b1e816c3de094779c2bf85a14f14fe4b5",
           "git_blob": "c388a0cec031aae714fb893f3cf5a36a98c0971f",
-          "patched_sha256": "cf5542ab4bd8093a93489083acda71e68ba829fb5941b4cf3796a911de8f1597"
+          "patched_sha256": "f1d1012c84eb234f1db5a83ef7f2f0e65b5b68ec23d7d689f3dbefdcd7ed1402",
+          "engine_only_sha256": "cf5542ab4bd8093a93489083acda71e68ba829fb5941b4cf3796a911de8f1597",
+          "rotation_only_sha256": "781466332f4165464f62cfabd278de44f41c703bb33cd8824b8dbce97e65272b"
         }
-      ]
+      ],
+      "rotation_fix_commit": "8e4e73b0ddd98f2423490c45423d54fe2370d576",
+      "rotation_patch_file": "8e4e73b0.patch",
+      "rotation_patch_sha256": "b8b960dcd713e73f3b4afad849b5b2f8078ac14c8129543d0a87a93fd13b95b8"
     }
-  }
+  },
+  "rotation_fix_commit": "e106b16b9adf5af60785a3ee8032cf6e877edfe4",
+  "rotation_patch_file": "e106b16b.patch",
+  "rotation_patch_sha256": "bcb49e498c81c87a67609a7b988fdc8842b11edcde5e7fc7b0d6be0e7c82d031"
 }

@@ -22,7 +22,7 @@ def sdk_base(version):
     return MANIFEST["additional_bases"].get(version, MANIFEST)
 
 
-def configure(tmp_path, *, target="esp32p4", version="5.5.6", already_fixed=False,
+def configure(tmp_path, *, target="esp32p4", version="5.5.6", already_fixed=(),
               corrupt=False, source_count=1, bootloader=False):
     # Deliberately nest both SDK and build beneath a Git checkout. A git apply
     # accidentally using the parent's prefix must not silently skip this patch.
@@ -30,8 +30,9 @@ def configure(tmp_path, *, target="esp32p4", version="5.5.6", already_fixed=Fals
     sdk = tmp_path / "sdk"
     fixture = FIXTURE.with_name("esp-idf-6.0.3") if version == "6.0.3" else FIXTURE
     shutil.copytree(fixture, sdk)
-    if already_fixed:
-        subprocess.run(["git", "apply", str(COMPONENT / "9da8ff53.patch")], cwd=sdk,
+    for fix in already_fixed:
+        patch = "9da8ff53.patch" if fix == "engine" else sdk_base(version)["rotation_patch_file"]
+        subprocess.run(["git", "apply", str(COMPONENT / patch)], cwd=sdk,
                        env={**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path)}, check=True)
     original = sdk / "components/esp_driver_ppa/src/ppa_core.c"
     if corrupt:
@@ -110,6 +111,10 @@ def test_official_fix_provenance_and_patch_are_exact(version):
     fixture = FIXTURE.with_name("esp-idf-6.0.3") if version == "6.0.3" else FIXTURE
     if version == "6.0.3":
         assert base["base_commit"] == "76f5dedd9950a3012fee8fb7d5586df21fc67802"
+    expected = {"5.5.6": "e106b16b9adf5af60785a3ee8032cf6e877edfe4",
+                "6.0.3": "8e4e73b0ddd98f2423490c45423d54fe2370d576"}
+    assert base["rotation_fix_commit"] == expected[version]
+    assert hashlib.sha256((COMPONENT / base["rotation_patch_file"]).read_bytes()).hexdigest() == base["rotation_patch_sha256"]
     assert len(base["files"]) == 5
     for item in base["files"]:
         data = (fixture / item["path"]).read_bytes()
@@ -142,6 +147,16 @@ def test_real_cmake_preserves_target_properties_and_only_replaces_official_sourc
 
 
 @pytest.mark.parametrize("version", ["5.5.6", "6.0.3"])
+@pytest.mark.parametrize("present", [("engine",), ("rotation",)])
+def test_partial_official_backport_applies_only_missing_fix(tmp_path, version, present):
+    result, _, build, _ = configure(tmp_path, version=version, already_fixed=present)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for item in sdk_base(version)["files"]:
+        output = build / "p4_ppa_backport" / item["path"]
+        assert hashlib.sha256(output.read_bytes()).hexdigest() == item["patched_sha256"]
+
+
+@pytest.mark.parametrize("version", ["5.5.6", "6.0.3"])
 def test_reconfigure_reuses_verified_copies_without_rewriting(tmp_path, version):
     first, _, build, command = configure(tmp_path, version=version)
     assert first.returncode == 0, first.stdout + first.stderr
@@ -154,8 +169,8 @@ def test_reconfigure_reuses_verified_copies_without_rewriting(tmp_path, version)
 
 @pytest.mark.parametrize("options", [
     {"target": "esp32s3"}, {"version": "6.0.4"}, {"version": "5.5.7"},
-    {"bootloader": True}, {"already_fixed": True},
-    {"version": "6.0.3", "already_fixed": True},
+    {"bootloader": True}, {"already_fixed": ("engine", "rotation")},
+    {"version": "6.0.3", "already_fixed": ("engine", "rotation")},
 ])
 def test_other_targets_versions_and_existing_fix_make_no_copies(tmp_path, options):
     result, sdk, build, _ = configure(tmp_path, **options)
@@ -163,7 +178,7 @@ def test_other_targets_versions_and_existing_fix_make_no_copies(tmp_path, option
     assert not (build / "p4_ppa_backport").exists()
     assert str(sdk / "components/esp_driver_ppa/src/ppa_core.c") in (build / "sources.txt").read_text()
     if options.get("already_fixed"):
-        assert "official fix already present" in result.stdout
+        assert "both official fixes already present" in result.stdout
 
 
 @pytest.mark.parametrize("version", ["5.5.6", "6.0.3"])
@@ -196,7 +211,7 @@ def test_codegen_uses_normal_extra_files_without_replacing_other_hooks(monkeypat
     asyncio.run(module.to_code({}))
     files = core.data[esp32.KEY_ESP32][esp32.KEY_EXTRA_BUILD_FILES]
     if target == "ESP32P4" and version in ("5.5.6", "6.0.3"):
-        assert set(files) == {"p4_ppa_backport.cmake", "9da8ff53.patch", "p4_ppa_backport.json"}
+        assert set(files) == {"p4_ppa_backport.cmake", "9da8ff53.patch", sdk_base(version)["rotation_patch_file"], "p4_ppa_backport.json"}
         assert core.cmake_args["CMAKE_PROJECT_INCLUDE"] == (
             "/existing/p4_sdmmc_reset.cmake;" + str(tmp_path / "p4_ppa_backport.cmake")
         )

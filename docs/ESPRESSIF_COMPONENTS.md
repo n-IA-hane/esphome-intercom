@@ -51,17 +51,20 @@ framework source override. The manifest records official v5.5.6 commit
 `880a203ae603d08a94d06aa01e0d6761958e5e9e` as a resolved qualification reference,
 not as an SDK pin. The installed framework is never patched.
 
-For exact SDK 5.5.6 and 6.0.3, `p4_sdmmc_reset` and `p4_ppa_backport` retain two
-official corrections, the
-[SDMMC reset-order fix](https://github.com/espressif/esp-idf/commit/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5)
-and [PPA engine/completion fix](https://github.com/espressif/esp-idf/commit/9da8ff53f751f6682f69897d886f3a9946deed31)
-in checksummed build-local copies on the original IDF targets. The supported
-6.0.3 source is official tag commit `76f5dedd9950a3012fee8fb7d5586df21fc67802`,
-which still needs both fixes. Their release6 counterparts are `2c454e88`
-and `9e43423b`. A recognized already-fixed source needs no copy. These helpers
-add no hook for other SDK versions; that no-op alone does not establish that
-another tag contains the fixes or has been qualified. Remove each backport when
-the normal recommended SDK supplies and qualifies the corresponding correction.
+On ESP-IDF 5.5.6 and 6.0.3, the P4 build includes Espressif's corrections
+for SDMMC reset order, PPA engine completion and DMA completion of rotated
+rectangles. The build verifies the source and patch checksums before applying
+each missing fix to local copies on the original IDF targets.
+
+| Official fix | ESP-IDF 5.5 branch | ESP-IDF 6.0 branch |
+| --- | --- | --- |
+| SDMMC reset order | [dd47ea36](https://github.com/espressif/esp-idf/commit/dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5) | [2c454e88](https://github.com/espressif/esp-idf/commit/2c454e88e7439d872659f5ffa4e409988c9e37b3) |
+| PPA engine completion | [9da8ff53](https://github.com/espressif/esp-idf/commit/9da8ff53f751f6682f69897d886f3a9946deed31) | [9e43423b](https://github.com/espressif/esp-idf/commit/9e43423b2b9fab1c363b4ba9361527513de17255) |
+| PPA 90° and 270° rotation (DIG-734) | [e106b16b](https://github.com/espressif/esp-idf/commit/e106b16b9adf5af60785a3ee8032cf6e877edfe4) | [8e4e73b0](https://github.com/espressif/esp-idf/commit/8e4e73b0ddd98f2423490c45423d54fe2370d576) |
+
+The 6.0.3 reference is the official tag at `76f5dedd9950a3012fee8fb7d5586df21fc67802`.
+Other SDK versions use the installed driver. Each backport can be removed when
+the recommended SDK includes it and passes the corresponding P4 workload.
 
 Sendspin uses the native ESPHome client, including its pairing controls and
 stream-generation handling. See [Music Assistant pairing](../packages/README.md#pair-sendspin-with-music-assistant).

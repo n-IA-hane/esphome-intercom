@@ -1,4 +1,4 @@
-"""Apply one official PPA fix to an exact SDK's build-local sources."""
+"""Apply official PPA fixes to an exact SDK's build-local sources."""
 
 import logging
 from pathlib import Path
@@ -23,7 +23,8 @@ async def to_code(config):
     if esp32.idf_version() not in _SDK_VERSIONS:
         _LOGGER.info("P4 PPA backport not applied to unsupported SDK %s", esp32.idf_version())
         return
-    for filename in (_HOOK, "9da8ff53.patch", "p4_ppa_backport.json"):
+    rotation_patch = "e106b16b.patch" if esp32.idf_version() == cv.Version(5, 5, 6) else "8e4e73b0.patch"
+    for filename in (_HOOK, "9da8ff53.patch", rotation_patch, "p4_ppa_backport.json"):
         esp32.add_extra_build_file(filename, Path(__file__).parent / filename)
     hook = str(CORE.relative_build_path(_HOOK))
     includes = [value for value in CORE.cmake_args.get("CMAKE_PROJECT_INCLUDE", "").split(";") if value]

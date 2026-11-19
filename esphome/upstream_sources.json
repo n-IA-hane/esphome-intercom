@@ -280,15 +280,17 @@
       "scope": "build_directory_only",
       "installed_sdk_modified": false,
       "outside_supported_version": "no_build_hook; fix presence and qualification must be checked separately for each SDK tag",
-      "adaptation": "Apply the exact official engine-idle/completion patch to four build-local PPA C sources and their private header",
+      "adaptation": "Apply the official PPA engine completion and rotated SRM DMA fixes to verified build-local sources.",
       "source_sha256": {
-        "__init__.py": "2e22adb128593905495f8f5effdcc89fb2c28173ea06503353621c902d961e4b",
-        "p4_ppa_backport.cmake": "dd9729d1ef9eadc332510269123f11b278ca3aeb873027a4abf0ad0497f6875f",
+        "__init__.py": "8bd815436a28c7f99802f5b73e2feaf2e9e2b9edae4102b1b69f850e0c3fe3be",
+        "p4_ppa_backport.cmake": "e72d64f4344abf7c99f191270988512f779084e2437ed14ea2f547bc17642939",
         "9da8ff53.patch": "9e504cbcf1878dee91aa16fcafa6cf763799d5300df32de89479eb265daf25f6",
-        "p4_ppa_backport.json": "57e52efdf36c6b3e24ba560774167351a2222ee607f14c08e23bbf3d36649ed5"
+        "p4_ppa_backport.json": "3bf30e8fc8a8e6c6f57cfad54bf2ec68a58e44f5e68462281c51082dc8403d99",
+        "e106b16b.patch": "bcb49e498c81c87a67609a7b988fdc8842b11edcde5e7fc7b0d6be0e7c82d031",
+        "8e4e73b0.patch": "b8b960dcd713e73f3b4afad849b5b2f8078ac14c8129543d0a87a93fd13b95b8"
       },
-      "removal_condition": "The ESPHome-recommended official SDK contains and qualifies this fix, making the build-local backport unnecessary",
-      "already_fixed_policy": "Reverse-check the exact official patch and skip copies/source replacement when it is already present",
+      "removal_condition": "The ESPHome-recommended SDK includes both fixes and passes the rotated display and camera workload.",
+      "already_fixed_policy": "Skip each official fix already present. Recognize both verified intermediate sources and leave the installed SDK unchanged.",
       "source_references": {
         "5.5.6": {
           "tag": "v5.5.6",
@@ -299,7 +301,11 @@
           "revision": "76f5dedd9950a3012fee8fb7d5586df21fc67802"
         }
       },
-      "official_release6_fix_revision": "9e43423b2b9fab1c363b4ba9361527513de17255"
+      "official_release6_fix_revision": "9e43423b2b9fab1c363b4ba9361527513de17255",
+      "rotated_srm_fix_revisions": {
+        "5.5.6": "e106b16b9adf5af60785a3ee8032cf6e877edfe4",
+        "6.0.3": "8e4e73b0ddd98f2423490c45423d54fe2370d576"
+      }
     }
   }
 }

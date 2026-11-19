@@ -1,4 +1,4 @@
-# Exact official fix, https://github.com/espressif/esp-idf/commit/9da8ff53f751f6682f69897d886f3a9946deed31
+# Official ESP-IDF PPA fixes for engine admission and rotated SRM completion.
 # Build-local copies only. Preserve the original component target and public API.
 include_guard(GLOBAL)
 
@@ -19,22 +19,30 @@ function(_esphome_p4_ppa_backport)
     if(_version STREQUAL "6.0.3")
         string(JSON _base GET "${_manifest}" additional_bases "${_version}")
     endif()
-    string(JSON _expected_patch GET "${_manifest}" patch_sha256)
-    file(SHA256 "${_helper}/9da8ff53.patch" _patch_sha)
-    if(NOT _patch_sha STREQUAL _expected_patch)
-        message(FATAL_ERROR "P4 PPA backport: official patch checksum mismatch")
-    endif()
+    string(JSON _rotation_patch GET "${_base}" rotation_patch_file)
+    string(JSON _engine_sha GET "${_manifest}" patch_sha256)
+    string(JSON _rotation_sha GET "${_base}" rotation_patch_sha256)
     find_package(Git REQUIRED)
     get_filename_component(_idf_parent "${_idf_path}" DIRECTORY)
-    # A dry-run against the installed SDK never modifies it. An SDK already
-    # carrying this exact delta needs neither copies nor target changes.
-    execute_process(COMMAND "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
-        --unset=GIT_INDEX_FILE "GIT_CEILING_DIRECTORIES=${_idf_parent}"
-        "${GIT_EXECUTABLE}" apply --reverse --check "${_helper}/9da8ff53.patch"
-        WORKING_DIRECTORY "${_idf_path}" RESULT_VARIABLE _fixed
-        OUTPUT_QUIET ERROR_QUIET)
-    if(_fixed EQUAL 0)
-        message(STATUS "P4 PPA backport skipped: official fix already present")
+    set(_patch_files "9da8ff53.patch" "${_rotation_patch}")
+    set(_patch_hashes "${_engine_sha}" "${_rotation_sha}")
+    set(_missing_patches "")
+    foreach(_patch _expected IN ZIP_LISTS _patch_files _patch_hashes)
+        file(SHA256 "${_helper}/${_patch}" _actual)
+        if(NOT _actual STREQUAL _expected)
+            message(FATAL_ERROR "P4 PPA backport: official patch checksum mismatch for ${_patch}")
+        endif()
+        # Recognize each official fix independently on an SDK that already carries one or both.
+        execute_process(COMMAND "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+            --unset=GIT_INDEX_FILE "GIT_CEILING_DIRECTORIES=${_idf_parent}"
+            "${GIT_EXECUTABLE}" apply --reverse --check "${_helper}/${_patch}"
+            WORKING_DIRECTORY "${_idf_path}" RESULT_VARIABLE _fixed OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _fixed EQUAL 0)
+            list(APPEND _missing_patches "${_helper}/${_patch}")
+        endif()
+    endforeach()
+    if(NOT _missing_patches)
+        message(STATUS "P4 PPA backport skipped: both official fixes already present")
         return()
     endif()
 
@@ -50,10 +58,18 @@ function(_esphome_p4_ppa_backport)
             message(FATAL_ERROR "P4 PPA backport: missing SDK source ${_path}")
         endif()
         file(SHA256 "${_idf_path}/${_path}" _sha)
-        if(NOT _sha STREQUAL _before)
+        string(JSON _after GET "${_base}" files ${_index} patched_sha256)
+        set(_known_hashes "${_before}" "${_after}")
+        if(_path MATCHES "/ppa_srm[.]c$")
+            # Both patches touch this file; accept either verified intermediate.
+            foreach(_key engine_only_sha256 rotation_only_sha256)
+                string(JSON _partial GET "${_base}" files ${_index} "${_key}")
+                list(APPEND _known_hashes "${_partial}")
+            endforeach()
+        endif()
+        if(NOT _sha IN_LIST _known_hashes)
             message(FATAL_ERROR "P4 PPA backport: unrecognized SDK source ${_path}, SHA256 ${_sha}; no replacement written")
         endif()
-        string(JSON _after GET "${_base}" files ${_index} patched_sha256)
         set(_sha "")
         if(EXISTS "${_copy_root}/${_path}")
             file(SHA256 "${_copy_root}/${_path}" _sha)
@@ -110,7 +126,7 @@ function(_esphome_p4_ppa_backport)
             endif()
             execute_process(COMMAND "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
                 --unset=GIT_INDEX_FILE "GIT_CEILING_DIRECTORIES=${_copy_parent}"
-                "${GIT_EXECUTABLE}" apply ${_args} "${_helper}/9da8ff53.patch"
+                "${GIT_EXECUTABLE}" apply ${_args} ${_missing_patches}
                 WORKING_DIRECTORY "${_copy_root}" RESULT_VARIABLE _result ERROR_VARIABLE _error)
             if(NOT _result EQUAL 0)
                 message(FATAL_ERROR "P4 PPA backport: official patch rejected: ${_error}")
@@ -126,7 +142,7 @@ function(_esphome_p4_ppa_backport)
         endif()
     endforeach()
     set_property(TARGET "${_library}" PROPERTY SOURCES "${_replaced}")
-    message(STATUS "P4 PPA official 9da8ff53 applied to four build-local sources and private header")
+    message(STATUS "P4 PPA official fixes: applied to four build-local sources and private header")
 endfunction()
 
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" ID esphome_p4_ppa_backport
