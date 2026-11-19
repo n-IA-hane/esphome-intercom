@@ -790,6 +790,28 @@ def install_legacy_record(lab):
     return phone_record(lab)
 
 
+@pytest.mark.parametrize("remove", ["device", "entry"])
+async def test_removing_esp_during_login_migration_revokes_both_names(managed, remove):
+    lab = managed
+    old = install_legacy_record(lab)
+    native = lab.native.runtime_data
+    native.device_info = replace(native.device_info, friendly_name="Piano Terra")
+    native.services = native_services("register_ha_account_by_friendly_name")
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert lab.registrar.accounts["piano terra"].registration_only
+    await bind_account(lab, old)
+
+    if remove == "device":
+        dr.async_get(lab.hass).async_remove_device(lab.device.id)
+    else:
+        assert await lab.hass.config_entries.async_remove(lab.native.entry_id)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert not lab.registrar.accounts and not lab.registrar.registrations
+    assert not lab.entry.data.get("managed_esphome_phones")
+    assert lab.runtime.endpoints.get(old.endpoint_id) is None
+
+
 async def test_generated_credential_survives_old_firmware_and_waits_for_authenticated_register(managed):
     from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
     from custom_components.voip_stack.store import update_sip_accounts
