@@ -195,11 +195,13 @@
           "mac": "MAC address",
           "profile_id": "Phone model profile",
           "update_profile": "Update the pinned profile",
-          "account_id": "První účet SIP (volitelné)"
+          "account_id": "Jiný SIP účet",
+          "account_device": "První účet SIP (volitelné)"
         },
         "data_description": {
           "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "account_id": "Ponechte vybranou možnost \"Žádný účet SIP\", pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
+          "account_id": "Tuto volbu použijte, když je pole zařízení prázdné.",
+          "account_device": "Ponechte pole prázdné pro pozdější přiřazení linky."
         },
         "sections": {
           "advanced": {
@@ -231,10 +233,33 @@
       },
       "phone_bindings": {
         "title": "Lines and programmable keys",
-        "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+        "description": "Dostupné linky SIP ({max_lines}) a programovatelná tlačítka ({max_keys}) pro tento profil.",
         "data": {
           "lines": "SIP lines",
           "keys": "Programmable keys"
+        },
+        "sections": {
+          "line": {
+            "name": "Linka SIP",
+            "data": {
+              "account_device": "Účet SIP",
+              "endpoint_id": "Vytvořit nebo použít jiný účet",
+              "transport": "Transport SIP"
+            }
+          },
+          "key": {
+            "name": "Programovatelné tlačítko",
+            "data": {
+              "function": "Funkce",
+              "target_device": "Telefon",
+              "target": "Jiný cíl nebo volané číslo",
+              "label": "Popisek tlačítka (volitelné)",
+              "queue_device": "Fronta hovorů",
+              "other_phone": "Jiný telefon",
+              "other_queue": "Jiná fronta",
+              "parking_target": "Parkovací pozice"
+            }
+          }
         }
       },
       "phone_account": {
@@ -656,11 +681,13 @@
             "mac": "MAC address",
             "profile_id": "Phone model profile",
             "update_profile": "Update model profile",
-            "account_id": "První účet SIP (volitelné)"
+            "account_id": "Jiný SIP účet",
+            "account_device": "První účet SIP (volitelné)"
           },
           "data_description": {
             "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
-            "account_id": "Ponechte vybranou možnost \"Žádný účet SIP\", pokud chcete přidat telefon bez přiřazeného účtu. Účty můžete k jeho linkám přiřadit později."
+            "account_id": "Tuto volbu použijte, když je pole zařízení prázdné.",
+            "account_device": "Ponechte pole prázdné pro pozdější přiřazení linky."
           },
           "sections": {
             "advanced": {
@@ -692,10 +719,33 @@
         },
         "bindings": {
           "title": "Lines and programmable keys",
-          "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+          "description": "Dostupné linky SIP ({max_lines}) a programovatelná tlačítka ({max_keys}) pro tento profil.",
           "data": {
             "lines": "SIP lines",
             "keys": "Programmable keys"
+          },
+          "sections": {
+            "line": {
+              "name": "Linka SIP",
+              "data": {
+                "account_device": "Účet SIP",
+                "endpoint_id": "Vytvořit nebo použít jiný účet",
+                "transport": "Transport SIP"
+              }
+            },
+            "key": {
+              "name": "Programovatelné tlačítko",
+              "data": {
+                "function": "Funkce",
+                "target_device": "Telefon",
+                "target": "Jiný cíl nebo volané číslo",
+                "label": "Popisek tlačítka (volitelné)",
+                "queue_device": "Fronta hovorů",
+                "other_phone": "Jiný telefon",
+                "other_queue": "Jiná fronta",
+                "parking_target": "Parkovací pozice"
+              }
+            }
           }
         },
         "account": {
@@ -905,10 +955,14 @@
           "overview_label": "Line {value}"
         },
         "endpoint_id": {
-          "name": "SIP account"
+          "name": "Vytvořit nebo použít jiný účet",
+          "description": "Tuto volbu použijte, když je pole zařízení prázdné."
         },
         "transport": {
-          "name": "SIP transport"
+          "name": "Transport SIP"
+        },
+        "account_device": {
+          "name": "Účet SIP"
         }
       }
     },
@@ -919,33 +973,39 @@
           "overview_label": "Key {value}"
         },
         "function": {
-          "name": "Function"
+          "name": "Funkce"
         },
         "line": {
-          "name": "Line position"
+          "name": "Line position",
+          "overview_label": "Linka {value}"
         },
         "target": {
-          "name": "Phone, queue or dial target"
+          "name": "Jiný cíl nebo volané číslo",
+          "description": "Tuto volbu použijte, když je pole zařízení prázdné."
         },
         "label": {
-          "name": "Label (blank uses the resolved name)"
+          "name": "Popisek tlačítka (volitelné)"
+        },
+        "target_device": {
+          "name": "Telefon nebo fronta"
         }
       }
     },
     "physical_phone_accounts": {
       "options": {
-        "__create_account__": "Create a SIP account"
+        "__create_account__": "Vytvořit účet SIP",
+        "unavailable": "Nedostupné"
       }
     },
     "physical_phone_key_function": {
       "options": {
-        "line": "Line",
-        "speed_dial": "Speed dial",
-        "blf": "Phone status (BLF)",
-        "queue_login": "Queue login/logout",
-        "queue_pause": "Queue pause/resume",
-        "park": "Sledovat/vyzvednout zaparkovaný hovor",
-        "directory": "Directory",
+        "line": "Linka",
+        "speed_dial": "Rychlá volba",
+        "blf": "Stav telefonu (BLF)",
+        "queue_login": "Přihlášení/odhlášení z fronty",
+        "queue_pause": "Pozastavit/obnovit obsluhu fronty",
+        "park": "Sledovat parkování/vyzvednout hovor",
+        "directory": "Telefonní seznam",
         "park_call": "Zaparkovat aktuální hovor"
       }
     },
@@ -953,11 +1013,6 @@
       "fields": {
         "transport": "Přenos",
         "binding": "Physical phone and line"
-      }
-    },
-    "first_phone_account": {
-      "options": {
-        "no_account": "Žádný účet SIP"
       }
     }
   },

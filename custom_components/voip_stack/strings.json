@@ -195,11 +195,13 @@
           "mac": "MAC address",
           "profile_id": "Phone model profile",
           "update_profile": "Update the pinned profile",
-          "account_id": "First SIP account (optional)"
+          "account_id": "Other SIP account",
+          "account_device": "First SIP account (optional)"
         },
         "data_description": {
           "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
-          "account_id": "Leave \"No SIP account\" selected to add the phone without linking an account. You can assign accounts to its lines later."
+          "account_id": "Only choose this option when the device field is empty.",
+          "account_device": "Clear the field to assign the line later."
         },
         "sections": {
           "advanced": {
@@ -231,10 +233,33 @@
       },
       "phone_bindings": {
         "title": "Lines and programmable keys",
-        "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+        "description": "Available SIP lines ({max_lines}) and programmable keys ({max_keys}) for this profile.",
         "data": {
           "lines": "SIP lines",
           "keys": "Programmable keys"
+        },
+        "sections": {
+          "line": {
+            "name": "SIP line",
+            "data": {
+              "account_device": "SIP account",
+              "endpoint_id": "Create or use another account",
+              "transport": "SIP transport"
+            }
+          },
+          "key": {
+            "name": "Programmable key",
+            "data": {
+              "function": "Function",
+              "target_device": "Phone",
+              "target": "Other destination or dial string",
+              "label": "Key label (optional)",
+              "queue_device": "Call queue",
+              "other_phone": "Other phone",
+              "other_queue": "Other call queue",
+              "parking_target": "Parking slot"
+            }
+          }
         }
       },
       "phone_account": {
@@ -656,11 +681,13 @@
             "mac": "MAC address",
             "profile_id": "Phone model profile",
             "update_profile": "Update model profile",
-            "account_id": "First SIP account (optional)"
+            "account_id": "Other SIP account",
+            "account_device": "First SIP account (optional)"
           },
           "data_description": {
             "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
-            "account_id": "Leave \"No SIP account\" selected to add the phone without linking an account. You can assign accounts to its lines later."
+            "account_id": "Only choose this option when the device field is empty.",
+            "account_device": "Clear the field to assign the line later."
           },
           "sections": {
             "advanced": {
@@ -692,10 +719,33 @@
         },
         "bindings": {
           "title": "Lines and programmable keys",
-          "description": "Edit each line or key at its explicit physical position. Use Reorder keys to move existing keys. This profile supports {max_lines} managed lines and {max_keys} managed keys.",
+          "description": "Available SIP lines ({max_lines}) and programmable keys ({max_keys}) for this profile.",
           "data": {
             "lines": "SIP lines",
             "keys": "Programmable keys"
+          },
+          "sections": {
+            "line": {
+              "name": "SIP line",
+              "data": {
+                "account_device": "SIP account",
+                "endpoint_id": "Create or use another account",
+                "transport": "SIP transport"
+              }
+            },
+            "key": {
+              "name": "Programmable key",
+              "data": {
+                "function": "Function",
+                "target_device": "Phone",
+                "target": "Other destination or dial string",
+                "label": "Key label (optional)",
+                "queue_device": "Call queue",
+                "other_phone": "Other phone",
+                "other_queue": "Other call queue",
+                "parking_target": "Parking slot"
+              }
+            }
           }
         },
         "account": {
@@ -905,10 +955,14 @@
           "overview_label": "Line {value}"
         },
         "endpoint_id": {
-          "name": "SIP account"
+          "name": "Create or use another account",
+          "description": "Only choose this option when the device field is empty."
         },
         "transport": {
           "name": "SIP transport"
+        },
+        "account_device": {
+          "name": "SIP account"
         }
       }
     },
@@ -922,19 +976,25 @@
           "name": "Function"
         },
         "line": {
-          "name": "Line position"
+          "name": "Line position",
+          "overview_label": "Line {value}"
         },
         "target": {
-          "name": "Phone, queue or dial target"
+          "name": "Other destination or dial string",
+          "description": "Only choose this option when the device field is empty."
         },
         "label": {
-          "name": "Label (blank uses the resolved name)"
+          "name": "Key label (optional)"
+        },
+        "target_device": {
+          "name": "Phone or call queue"
         }
       }
     },
     "physical_phone_accounts": {
       "options": {
-        "__create_account__": "Create a SIP account"
+        "__create_account__": "Create a SIP account",
+        "unavailable": "Unavailable"
       }
     },
     "physical_phone_key_function": {
@@ -953,11 +1013,6 @@
       "fields": {
         "transport": "Transport",
         "binding": "Physical phone and line"
-      }
-    },
-    "first_phone_account": {
-      "options": {
-        "no_account": "No SIP account"
       }
     }
   },

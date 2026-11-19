@@ -96,6 +96,9 @@ def physical_flow(phone_lab, monkeypatch):
                                       "display_name": name, "extension": extension}, endpoint_id=identity)
         _add_phone_subentry(lab.hass, lab.entry, data=data, title=name)
     sync_registry_from_entry(lab.hass, lab.entry)
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
+    for identity in ("sip:front", "sip:office"):
+        async_ensure_endpoint_device(lab.hass, lab.entry, lab.runtime.endpoints.get(identity), lab.runtime.endpoints)
     catalog = AssetCatalog()
     monkeypatch.setattr(physical_phone_flow, "PhoneProfileCatalog", lambda _hass: catalog)
     monkeypatch.setattr("custom_components.voip_stack.phone_profile_catalog.PhoneProfileCatalog", lambda _hass: catalog)
@@ -113,10 +116,23 @@ async def submit(state, result, data):
     if result.get("step_id") in {"bindings", "phone_bindings"}:
         # Existing scenarios describe canonical records; exercise the actual UI wire values.
         data = deepcopy(data)
-        fixture_choices = {"sip:front": "Front desk (481)", "sip:office": "Office (482)",
-                           "__create_account__": "Create SIP account"}
+        english_functions = {
+            "line": "Line", "blf": "Phone status (BLF)", "speed_dial": "Speed dial",
+            "queue_login": "Queue login/logout", "queue_pause": "Queue pause/resume", "park": "Monitor/retrieve parking",
+        }
         for line in data.get("lines", []):
-            line["endpoint_id"] = fixture_choices.get(line.get("endpoint_id"), line.get("endpoint_id"))
+            endpoint = state.lab.runtime.endpoints.get(line.get("endpoint_id"))
+            if endpoint and endpoint.device_id:
+                line.pop("endpoint_id")
+                line["account_device"] = endpoint.device_id
+            elif line.get("endpoint_id") == "__create_account__":
+                line["endpoint_id"] = "Create a SIP account"
+        for key in data.get("keys", []):
+            key["function"] = english_functions.get(key["function"], key["function"])
+            endpoint = state.lab.runtime.endpoints.get(key.get("target"))
+            if endpoint and endpoint.device_id:
+                key.pop("target")
+                key["target_device"] = endpoint.device_id
     if result.get("step_id") in {"user", "phone_user"}:
         data = dict(data)
         advanced = dict(data.get("advanced") or {})
@@ -236,9 +252,9 @@ async def test_editor_selects_external_contact_created_through_the_contact_flow(
     form = await binding_editor(state)
     selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
     options = selectors["keys"].serialize()["selector"]["object"]["fields"]["target"]["selector"]["select"]["options"]
-    assert {"value": reference, "label": "External client"} in options
+    assert "External client" in options and reference not in options
     complete = await submit(state, form, bindings(keys=[{"slot": "1", "line": "1",
-        "function": "speed_dial", "target": reference, "label": ""}]))
+        "function": "speed_dial", "target": "External client", "label": ""}]))
     assert complete["type"] == "abort" and complete["reason"] == "reconfigure_successful"
     assert physical_phone_data(physical_record(state))["keys"][0]["target"] == reference
 
@@ -904,30 +920,38 @@ async def test_main_adapter_language_and_account_keep_one_editor_draft(physical_
     state.reload.assert_not_awaited()
 
 
-async def test_line_account_form_roundtrip_uses_readable_choices_and_saves_only_canonical_ids(physical_flow):
+async def test_device_fields_reopen_with_registry_choices_and_store_canonical_ids(physical_flow):
     state = physical_flow
     initial = await start(state)
-    profile_selector = next(value for key, value in initial['data_schema'].schema.items() if key.schema == 'profile_id')
-    assert {'value': PROFILE, 'label': 'Fanvil X3U Pro'} in profile_selector.config['options']
+    model = next(value for field, value in initial["data_schema"].schema.items() if field.schema == "profile_id")
+    assert {"value": PROFILE, "label": "Fanvil X3U Pro"} in model.config["options"]
     await submit(state, initial, identity())
-    form = await reconfigure(state, 'bindings')
-    line_selector = next(value for key, value in form['data_schema'].schema.items() if key.schema == 'lines')
-    choices = line_selector.config['fields']['endpoint_id']['selector'].config['options']
-    values = [choice['value'] for choice in choices]
-    assert 'Front desk (481)' in values and 'Office (482)' in values
-    assert len(values) == len(set(values))
-    assert not {'sip:front', 'sip:office'} & set(values)
-    # This is exactly the updated value returned by HA's nested object edit dialog.
-    await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Office (482)', 'transport': 'udp'}], 'keys': []})
-    record = physical_record(state)
-    assert record.data['lines'] == [{'slot': '1', 'endpoint_id': 'sip:office', 'transport': 'udp'}]
-    assert record.data['catalog_commit'] == PIN
-    form = await reconfigure(state, 'bindings')
-    values = form['data_schema']({})
-    assert values['lines'][0]['endpoint_id'] == 'Office (482)'
-    values['lines'][0]['endpoint_id'] = 'Front desk (481)'
-    await submit(state, form, values)
-    assert physical_record(state).data['lines'][0]['endpoint_id'] == 'sip:front'
+    form = await reconfigure(state, "bindings")
+    fields = {field.schema: selector.config for field, selector in form["data_schema"].schema.items()}
+    for kind, device_field in (("lines", "account_device"), ("keys", "target_device")):
+        device = fields[kind]["fields"][device_field]["selector"]
+        assert device.selector_type == "device"
+        assert device.config["filter"] == [{"integration": "voip_stack", "manufacturer": "VoIP Stack", "model": "SIP account"}]
+    office = state.lab.runtime.endpoints.get("sip:office").device_id
+    front = state.lab.runtime.endpoints.get("sip:front").device_id
+    selected = {
+        "lines": [{"slot": "1", "account_device": front, "transport": "udp"}],
+        "keys": [{"slot": "2", "function": "Phone status (BLF)", "line": "1", "target_device": office}],
+    }
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], selected)
+    assert result["reason"] == "reconfigure_successful"
+    saved = physical_record(state)
+    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}]
+    assert saved.data["keys"][0]["target"] == "sip:office"
+    assert saved.data["keys"][0]["function"] == "blf"
+    assert saved.data["catalog_commit"] == PIN
+    form = await reconfigure(state, "bindings")
+    values = form["data_schema"]({})
+    assert values["lines"] == selected["lines"]
+    assert values["keys"][0] == {**selected["keys"][0], "label": ""}
+    values["keys"][0]["target_device"] = front
+    await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
+    assert physical_record(state).data["keys"][0]["target"] == "sip:front"
     state.reload.assert_not_awaited()
 
 
@@ -945,7 +969,7 @@ async def test_unmapped_line_account_form_value_is_rejected_without_saving(physi
     state.reload.assert_not_awaited()
 
 
-async def test_line_account_without_extension_uses_its_unique_username_in_the_form(physical_flow):
+async def test_account_without_a_registry_device_uses_its_name_in_the_form(physical_flow):
     from custom_components.voip_stack.phone_config import (
         _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry,
     )
@@ -957,8 +981,87 @@ async def test_line_account_without_extension_uses_its_unique_username_in_the_fo
     form = await binding_editor(state)
     line_selector = next(value for key, value in form['data_schema'].schema.items() if key.schema == 'lines')
     choices = line_selector.config['fields']['endpoint_id']['selector'].config['options']
-    assert {'value': 'Guest desk (guest-alpha)', 'label': 'Guest desk (guest-alpha)'} in choices
-    result = await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Guest desk (guest-alpha)'}], 'keys': []})
+    assert 'Guest desk' in choices and 'guest-alpha' not in str(choices)
+    result = await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Guest desk'}], 'keys': []})
     assert result['type'] == 'abort' and result['reason'] == 'reconfigure_successful'
     assert physical_record(state).data['lines'][0]['endpoint_id'] == 'sip:guest'
     assert 'fixture-guest-secret' not in repr(form)
+
+
+async def test_single_position_edits_devices_inline_and_clears_only_supported_assignments(physical_flow):
+    from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
+
+    state = physical_flow
+    profile = "fanvil/h2u-v2"
+    caps = state.catalog.profiles[profile][0]["capabilities"]
+    result = await submit(state, await start(state), identity(profile_id=profile))
+    assert result["reason"] == "phone_configured"
+    form = await reconfigure(state, "bindings")
+    front = state.lab.runtime.endpoints.get("sip:front").device_id
+    office = state.lab.runtime.endpoints.get("sip:office").device_id
+    chosen = {"line": {"account_device": front}, "key": {"function": "blf", "target_device": office}}
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], chosen)
+    assert result["reason"] == "reconfigure_successful"
+    saved = physical_record(state)
+    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}]
+    assert saved.data["keys"] == [{"slot": "1", "line": "1", "function": "blf", "target": "sip:office", "label": ""}]
+    form = await reconfigure(state, "bindings")
+    serialized = FlowManagerIndexView(state.lab.hass.config_entries.subentries)._prepare_result_json(form)
+    line, key = serialized["data_schema"]
+    assert line["expanded"] and key["expanded"]
+    fields = {field["name"]: field for section in (line, key) for field in section["schema"]}
+    assert "slot" not in fields and "line" not in fields
+    for name, device in [("account_device", front), ("target_device", office)]:
+        assert "device" in fields[name]["selector"]
+        assert fields[name]["description"]["suggested_value"] == device
+    assert fields["endpoint_id"]["visible"] == {"field": "account_device", "operator": "not_exists"}
+    assert fields["function"]["selector"]["select"]["translation_key"] == "physical_phone_key_function"
+    rejected = await state.lab.hass.config_entries.subentries.async_configure(
+        form["flow_id"], {**chosen, "key": {"function": "blf", "target_device": state.lab.device.id}})
+    assert rejected["errors"]["base"] == "invalid_phone_key_target"
+    assert physical_record(state).data == saved.data
+    # Each edit takes the same validator and capability gates as the multi-row form.
+    result = await state.lab.hass.config_entries.subentries.async_configure(
+        form["flow_id"], {"line": chosen["line"], "key": {"function": "speed_dial", "target": "+3902123456"}})
+    assert result["reason"] == "reconfigure_successful"
+    assert physical_record(state).data["keys"][0]["target"] == "+3902123456"
+    form = await reconfigure(state, "bindings")
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], {"line": {}, "key": {}})
+    assert result["errors"]["base"] in {"phone_clear_keys_unsupported", "phone_disable_lines_unsupported"}
+    state.lab.hass.config_entries.subentries.async_abort(form["flow_id"])
+    caps.update(clear_keys=True, disable_lines=True)
+    form = await reconfigure(state, "bindings")
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], {"line": {}, "key": {}})
+    assert result["reason"] == "reconfigure_successful"
+    assert physical_record(state).data["keys"] == physical_record(state).data["lines"] == []
+
+
+async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_flow):
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.voip_stack.group_config import normalize_group_data, sync_group_devices
+
+    state = physical_flow
+    data = normalize_group_data({"kind": "queue", "name": "Support", "extension": "700"}, identity="stable-queue")
+    group = ConfigSubentry(subentry_type="group", title=data["name"], data=data, unique_id="group:stable-queue")
+    state.lab.hass.config_entries.async_add_subentry(state.lab.entry, group)
+    sync_group_devices(state.lab.hass, state.lab.entry)
+    queue = SimpleNamespace(queue_id=data["group_id"], name="Support", extension="700", members={"sip:front"})
+    state.lab.runtime.queues = SimpleNamespace(resolve=lambda ref: queue if ref == queue.queue_id else None)
+    queue_device = dr.async_get(state.lab.hass).async_get_device_by_identifier(
+        ("voip_stack", "group:stable-queue"), state.lab.entry.entry_id)
+    await submit(state, await start(state), identity(profile_id="fanvil/h2u-v2"))
+    form = await reconfigure(state, "bindings")
+    section = next(value for field, value in form["data_schema"].schema.items() if field.schema == "key")
+    fields = {field.schema: selector for field, selector in section.schema.schema.items()}
+    assert {item["model"] for item in fields["queue_device"].config["filter"]} == {"Call queue"}
+    assert {item["model"] for item in fields["target_device"].config["filter"]} == {"SIP account"}
+    selected = {"line": {"account_device": state.lab.runtime.endpoints.get("sip:front").device_id},
+                "key": {"function": "queue_login", "queue_device": queue_device.id}}
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], selected)
+    assert result["reason"] == "reconfigure_successful"
+    assert physical_record(state).data["keys"][0]["target"] == "stable-queue"
+    form = await reconfigure(state, "bindings")
+    section = next(value for field, value in form["data_schema"].schema.items() if field.schema == "key")
+    suggestions = {field.schema: field.description["suggested_value"] for field in section.schema.schema
+                   if field.description}
+    assert suggestions["queue_device"] == queue_device.id and "target_device" not in suggestions

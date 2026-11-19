@@ -195,11 +195,13 @@
           "mac": "Indirizzo MAC",
           "profile_id": "Profilo del modello",
           "update_profile": "Aggiorna il profilo fissato",
-          "account_id": "Primo account SIP (facoltativo)"
+          "account_id": "Altro account SIP",
+          "account_device": "Primo account SIP (facoltativo)"
         },
         "data_description": {
           "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
-          "account_id": "Lascia selezionata l'opzione \"Nessun account SIP\" per aggiungere il telefono senza associare un account. Potrai assegnare gli account alle sue linee in seguito."
+          "account_id": "Usa questa scelta quando il campo del dispositivo è vuoto.",
+          "account_device": "Lascia il campo vuoto per assegnare la linea in seguito."
         },
         "sections": {
           "advanced": {
@@ -231,10 +233,33 @@
       },
       "phone_bindings": {
         "title": "Linee e tasti programmabili",
-        "description": "Modifica ogni linea o tasto nella sua posizione fisica esplicita. Usa Riordina tasti per spostare i tasti esistenti. Questo profilo gestisce {max_lines} linee e {max_keys} tasti.",
+        "description": "Linee SIP disponibili ({max_lines}) e tasti programmabili ({max_keys}) per questo profilo.",
         "data": {
           "lines": "Linee SIP",
           "keys": "Tasti programmabili"
+        },
+        "sections": {
+          "line": {
+            "name": "Linea SIP",
+            "data": {
+              "account_device": "Account SIP",
+              "endpoint_id": "Crea o usa un altro account",
+              "transport": "Trasporto SIP"
+            }
+          },
+          "key": {
+            "name": "Tasto programmabile",
+            "data": {
+              "function": "Funzione",
+              "target_device": "Telefono",
+              "target": "Altra destinazione o numero da comporre",
+              "label": "Etichetta sul tasto (facoltativa)",
+              "queue_device": "Coda di chiamata",
+              "other_phone": "Altro telefono",
+              "other_queue": "Altra coda",
+              "parking_target": "Posizione di parcheggio"
+            }
+          }
         }
       },
       "phone_account": {
@@ -656,11 +681,13 @@
             "mac": "Indirizzo MAC",
             "profile_id": "Profilo del modello",
             "update_profile": "Aggiorna il profilo del modello",
-            "account_id": "Primo account SIP (facoltativo)"
+            "account_id": "Altro account SIP",
+            "account_device": "Primo account SIP (facoltativo)"
           },
           "data_description": {
             "update_profile": "I telefoni esistenti mantengono il profilo attuale finché non lo aggiorni o scegli un altro modello.",
-            "account_id": "Lascia selezionata l'opzione \"Nessun account SIP\" per aggiungere il telefono senza associare un account. Potrai assegnare gli account alle sue linee in seguito."
+            "account_id": "Usa questa scelta quando il campo del dispositivo è vuoto.",
+            "account_device": "Lascia il campo vuoto per assegnare la linea in seguito."
           },
           "sections": {
             "advanced": {
@@ -692,10 +719,33 @@
         },
         "bindings": {
           "title": "Linee e tasti programmabili",
-          "description": "Modifica ogni linea o tasto nella sua posizione fisica esplicita. Usa Riordina tasti per spostare i tasti esistenti. Questo profilo gestisce {max_lines} linee e {max_keys} tasti.",
+          "description": "Linee SIP disponibili ({max_lines}) e tasti programmabili ({max_keys}) per questo profilo.",
           "data": {
             "lines": "Linee SIP",
             "keys": "Tasti programmabili"
+          },
+          "sections": {
+            "line": {
+              "name": "Linea SIP",
+              "data": {
+                "account_device": "Account SIP",
+                "endpoint_id": "Crea o usa un altro account",
+                "transport": "Trasporto SIP"
+              }
+            },
+            "key": {
+              "name": "Tasto programmabile",
+              "data": {
+                "function": "Funzione",
+                "target_device": "Telefono",
+                "target": "Altra destinazione o numero da comporre",
+                "label": "Etichetta sul tasto (facoltativa)",
+                "queue_device": "Coda di chiamata",
+                "other_phone": "Altro telefono",
+                "other_queue": "Altra coda",
+                "parking_target": "Posizione di parcheggio"
+              }
+            }
           }
         },
         "account": {
@@ -905,10 +955,14 @@
           "overview_label": "Linea {value}"
         },
         "endpoint_id": {
-          "name": "Account SIP"
+          "name": "Crea o usa un altro account",
+          "description": "Usa questa scelta quando il campo del dispositivo è vuoto."
         },
         "transport": {
           "name": "Trasporto SIP"
+        },
+        "account_device": {
+          "name": "Account SIP"
         }
       }
     },
@@ -922,19 +976,25 @@
           "name": "Funzione"
         },
         "line": {
-          "name": "Posizione linea"
+          "name": "Posizione linea",
+          "overview_label": "Linea {value}"
         },
         "target": {
-          "name": "Telefono, coda o destinazione"
+          "name": "Altra destinazione o numero da comporre",
+          "description": "Usa questa scelta quando il campo del dispositivo è vuoto."
         },
         "label": {
-          "name": "Etichetta (vuota usa il nome risolto)"
+          "name": "Etichetta sul tasto (facoltativa)"
+        },
+        "target_device": {
+          "name": "Telefono o coda di chiamata"
         }
       }
     },
     "physical_phone_accounts": {
       "options": {
-        "__create_account__": "Crea un account SIP"
+        "__create_account__": "Crea un account SIP",
+        "unavailable": "Non disponibile"
       }
     },
     "physical_phone_key_function": {
@@ -953,11 +1013,6 @@
       "fields": {
         "transport": "Trasporto",
         "binding": "Telefono fisico e linea"
-      }
-    },
-    "first_phone_account": {
-      "options": {
-        "no_account": "Nessun account SIP"
       }
     }
   },
