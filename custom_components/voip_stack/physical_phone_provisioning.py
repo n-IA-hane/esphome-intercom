@@ -772,7 +772,7 @@ class PhysicalPhoneProvisioner:
         return {"physical": {"name": phone["name"], "mac": phone["mac"],
                              "language": language, "language_code": language_code,
                              "time_zone": time_zone},
-                "lines": lines, "keys": resolve_phone_keys(self.runtime, phone, profile),
+                "lines": lines, "keys": resolve_phone_keys(self.runtime, phone, profile, sip_lines=lines),
                 "directory": directory, "provisioning": {"url": _delivery_url(self.hass, self.entry, phone, profile, "manual")
                     if "provision" in caps.get("functions", ()) else ""}}
 

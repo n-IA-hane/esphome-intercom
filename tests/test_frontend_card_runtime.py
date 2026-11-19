@@ -353,6 +353,27 @@ assert.equal(destinationTwo._getSoftphoneTargetDevice().route_id,"ws3-route");
 destinationTwo.disconnectedCallback();assert.equal(destinationListeners.size,0);
 destinationPhones.clear();
 
+// A handset REGISTER on the calling account must not put that account in
+// its own dial list. Another account bound only to a card can still be called.
+const officeCard = destinationCard();
+const makeAccount = (endpointId, deviceId, metadata) => ({{
+  id: endpointId, name: endpointId, enabled: true,
+  metadata: {{ endpoint_kind: "sip_account", endpoint_id: endpointId, device_id: deviceId, ...metadata }},
+}});
+officeCard._rosterEntries = [
+  makeAccount("browser:owner", "owner", {{ registered: true, local_ha: false, availability: "available" }}),
+  makeAccount("reception", "reception-device", {{ registered: false, ha_binding: true, availability: "available" }}),
+  makeAccount("offline", "offline-device", {{ registered: false, availability: "offline" }}),
+  makeAccount("legacy-offline", "legacy-device", {{ registered: false }}),
+];
+const officeOptions = () => Array.from(officeCard._softphoneTargets(), (item) => item.device_id);
+assert.deepEqual(officeOptions(), ["reception-device"]);
+officeCard._softphoneSnapshot = null;
+assert.deepEqual(officeOptions(), ["reception-device"]); // Device selected, first snapshot still pending.
+officeCard.config.device_id = "";
+officeCard._softphoneSnapshot = {{ endpoint_id: "browser:owner" }};
+assert.deepEqual(officeOptions(), ["reception-device"]);
+
 assert.equal(cardModel.terminalPeerLabel({{
   direction: "incoming",
   caller: "n-IA-hane",

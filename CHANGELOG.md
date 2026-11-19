@@ -2,6 +2,11 @@
 
 ## 2026.12.0-dev
 
+- The HA softphone card excludes its own account from the destination list
+  even when a desk phone shares the line. Other available card-only accounts
+  can be dialed from the same list.
+- Snom 360 BLF keys use the selected line's SIP address when monitoring a
+  name containing spaces, so dialing and monitoring reach the same account.
 - Public firmware profiles target ESPHome 2026.11.0. The shared packages load
   the selected voice and playback backports when the profile uses those features.
 - Choose a device by its Home Assistant name and icon when assigning a desk

@@ -12,6 +12,8 @@ from xml.etree import ElementTree
 from jinja2 import DictLoader, StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment, safe_range
 
+from .core.sip import format_host_port
+
 DIALOG_KEY_FUNCTIONS = frozenset({"blf", "queue_login", "queue_pause", "park"})
 
 
@@ -43,7 +45,7 @@ def resolve_phone_language(profile, requested):
     return match
 
 
-def _key_target(runtime, key, endpoint_id):
+def _key_target(runtime, key, endpoint_id, sip_authority):
     function, target = key["function"], key.get("target", "")
     if str(target).casefold().startswith("contact:"):
         from .phone_directory import contact_dial_target
@@ -69,24 +71,34 @@ def _key_target(runtime, key, endpoint_id):
         # A handset key sends the SIP URI user. Names containing spaces or
         # vendor delimiters must be escaped before checking the slot byte limit.
         targets = [endpoint.extension] if endpoint.extension else []
-        targets.extend(quote(value, safe="+*") for value in
-                       (endpoint.sip_uri_user, endpoint.name) if value)
+        for value in (endpoint.sip_uri_user, endpoint.name):
+            if value:
+                user = quote(value, safe="+*")
+                # Snom 360 escapes a bare dial string again when turning it
+                # into a URI. A complete address preserves the escaped user.
+                if sip_authority and "%" in user:
+                    user = f"sip:{user}@{sip_authority}"
+                targets.append(user)
         return targets
     if function == "speed_dial" and re.fullmatch(r"[+*#0-9]{1,64}", target):
         return [target]
     raise ValueError("invalid_phone_key_target")
 
 
-def resolve_phone_keys(runtime, phone, profile):
+def resolve_phone_keys(runtime, phone, profile, *, sip_lines=()):
     caps = profile["capabilities"]
     slots = {str(item["slot"]): item for item in caps.get("key_slots", [])}
     lines = {line["slot"]: line["endpoint_id"] for line in phone["lines"]}
+    authorities = {}
+    if profile.get("id") == "snom/360":
+        authorities = {str(line["slot"]): format_host_port(line["server"], line["port"])
+                       for line in sip_lines}
     result = []
     for key in phone["keys"]:
         cap = slots.get(key["slot"])
         if cap is None or key["function"] not in cap.get("functions", caps.get("functions", [])):
             raise ValueError("phone_key_unsupported")
-        candidates = _key_target(runtime, key, lines[key["line"]])
+        candidates = _key_target(runtime, key, lines[key["line"]], authorities.get(key["line"], ""))
         limit = int(cap.get("max_value_bytes", 31))
         target = next((item for item in candidates if len(item.encode()) <= limit), None)
         if target is None:

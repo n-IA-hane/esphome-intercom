@@ -240,16 +240,13 @@ class FrontendCardContractTest(unittest.TestCase):
         body = _method_body(self.source, "_softphoneTargets")
         self.assertIn("this._rosterEntries", body)
         self.assertIn("this._targetFromRosterEntry(entry)", body)
-        self.assertIn("metadata.local_ha", body)
         self.assertNotIn("filter", body)
         self.assertNotIn("_availableDevices", body)
 
-    def test_ha_softphone_targets_are_the_central_roster_with_only_self_exclusion(self) -> None:
+    def test_ha_softphone_uses_the_central_roster_for_dialing(self) -> None:
         load = _method_body(self.source, "_loadSharedRoster")
-        targets = _method_body(self.source, "_softphoneTargets")
         self.assertIn("roster_json", load)
         self.assertNotIn("softphone_targets_json", self.source)
-        self.assertIn("metadata.local_ha", targets)
         self.assertNotIn("entry.address || entry.sip_uri", self.source)
         self.assertNotIn("_isCallableRosterEntry", self.source)
 
@@ -949,13 +946,6 @@ class FrontendCardContractTest(unittest.TestCase):
         before_marker = render[: render.index(marker)]
         condition = before_marker[before_marker.rfind("if (") :]
         self.assertIn("this.config?.show_extended_info", condition)
-
-    def test_unregistered_sip_accounts_are_not_callable_card_contacts(self) -> None:
-        targets = _method_body(self.source, "_softphoneTargets")
-        self.assertIn('metadata.endpoint_kind || ""', targets)
-        self.assertIn('=== "sip_account"', targets)
-        self.assertIn("metadata.registered !== true", targets)
-
 
 if __name__ == "__main__":
     unittest.main()

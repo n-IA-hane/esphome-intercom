@@ -1344,22 +1344,16 @@ class VoipStackCard extends HTMLElement {
   _softphoneTargets() {
     const targets = [];
     const ownEndpointId = this._getSoftphoneEndpointId();
+    const ownDeviceId = this._getConfigDeviceId();
     for (const entry of this._rosterEntries || []) {
       if (!entry || entry.enabled === false) continue;
-      const metadata = entry.metadata || {};
-      if (
-        String(metadata.endpoint_kind || "").trim().toLowerCase() === "sip_account" &&
-        metadata.registered !== true
-      ) continue;
-      const entryEndpointId = String(metadata.endpoint_id || "").trim();
-      if (
-        metadata.local_ha &&
-        !!entryEndpointId &&
-        entryEndpointId === ownEndpointId
-      ) continue;
       const target = this._targetFromRosterEntry(entry);
       if (!target.device_id || !target.name) continue;
+      if (target.device_id === ownDeviceId || (ownEndpointId && target.endpoint_id === ownEndpointId)) continue;
       if (target.state === "unavailable" || ["offline", "unavailable"].includes(target.availability)) continue;
+      // Older phonebooks can lack availability until the first state snapshot.
+      if (target.endpoint_kind === "sip_account" && !target.availability &&
+          !entry.metadata?.registered && !entry.metadata?.ha_binding && !entry.metadata?.local_ha) continue;
       targets.push(target);
     }
     return targets;
@@ -1564,7 +1558,7 @@ class VoipStackCard extends HTMLElement {
   _targetFromRosterEntry(entry) {
     const target = targetFromRosterEntry(entry);
     const phone = voipStackEngine.phoneStateFor(target.endpoint_id, target.device_id);
-    return { ...target, availability: phone?.availability || "", state: phone?.state || "" };
+    return { ...target, availability: phone?.availability || entry.metadata?.availability || "", state: phone?.state || "" };
   }
 
   _normaliseTransport(value) {

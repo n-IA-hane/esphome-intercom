@@ -221,6 +221,43 @@ def test_real_core_resolved_non_dialog_keys_match_asset_reference(real_assets, f
     assert phone_profile.render_phone_bundle(profile, templates, context)[0] == reference.render(profile, templates, context)
 
 
+@pytest.mark.parametrize("server,authority", [
+    ("192.0.2.10", "192.0.2.10:5090"),
+    ("2001:db8::10", "[2001:db8::10]:5090"),
+    ("[2001:db8::10]", "[2001:db8::10]:5090"),
+])
+def test_snom_360_escaped_key_uses_its_line_uri(real_assets, server, authority):
+    _, profile, templates = decoded(real_assets, "snom/360")
+    endpoint = SimpleNamespace(name="Studio Audio", extension="", sip_uri_user="Studio Audio")
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(resolve={"sip:studio": endpoint}.get))
+    phone = {"lines": [{"slot": "1", "endpoint_id": "sip:desk"}], "keys": [
+        {"slot": "1", "line": "1", "function": "blf", "target": "sip:studio"}]}
+    context = context_for(real_assets, profile)
+    context["lines"][0].update(server=server, port=5090)
+
+    def render():
+        context["keys"] = phone_profile.resolve_phone_keys(runtime, phone, profile, sip_lines=context["lines"])
+        files, _ = phone_profile.render_phone_bundle(profile, templates, context)
+        key = ElementTree.fromstring(next(iter(files.values()))).find(".//fkey[@idx='0']")
+        return key.text.strip()
+
+    assert render() == f"blf sip:Studio%20Audio@{authority}"
+    assert context["keys"][0]["dial_target"] == context["keys"][0]["subscription_target"]
+    endpoint.sip_uri_user = "studio"
+    assert render() == "blf studio"
+    endpoint.extension = "426"
+    assert render() == "blf 426"
+
+    # Count the complete value and use a shorter public alias if available.
+    endpoint.extension = ""
+    endpoint.sip_uri_user = "a" * 45 + " office"
+    endpoint.name = "Studio"
+    assert render() == "blf Studio"
+    endpoint.name = endpoint.sip_uri_user
+    with pytest.raises(ValueError, match="phone_key_target_too_long"):
+        render()
+
+
 @pytest.mark.parametrize("mode", ["ldaps", "starttls"])
 def test_real_ldap_profile_rejects_unmapped_transport_mode(real_assets, mode):
     _, profile, templates = decoded(real_assets, "fanvil/x3u-pro")
