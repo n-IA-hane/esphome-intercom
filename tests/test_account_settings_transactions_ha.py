@@ -212,11 +212,11 @@ async def test_v7_generated_username_avoids_own_group_and_migration_is_idempoten
                             data={"initial_phone_created": True})
     entry.add_to_hass(hass)
     data = {"endpoint_id": "default", "kind": "browser", "name": "Casa", "extension": "221",
-            "ring_group": "HA Default", "send_video": True}
+            "ring_group": "HA Phone Default", "send_video": True}
     sub = ConfigSubentry(subentry_type="phone", title="Casa", unique_id="phone:default", data=data)
     hass.config_entries.async_add_subentry(entry, sub)
     assert await async_migrate_entry(hass, entry)
-    assert sub.data["username"] == "ha_default_2"
+    assert sub.data["username"] == "ha_phone_default_2"
     assert all(phone_subentry_data(sub)[key] == value for key, value in data.items() if key != "kind")
     saved = deepcopy(dict(sub.data))
     assert await async_migrate_entry(hass, entry)

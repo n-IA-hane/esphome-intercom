@@ -231,7 +231,9 @@ def _new_account_username(entry, endpoint_id, *, used=()):
             *({"username": value} for value in used)]
     occupied = set().union(*(mapping_route_aliases(row) | mapping_group_aliases(row)
                              for row in rows)) if rows else set()
-    base = "ha_" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(endpoint_id))[:48]
+    # The SIP login is shared by desk phones and HA, including accounts with a legacy ID.
+    account_key = re.sub(r"^(?:browser|sip):", "", str(endpoint_id))
+    base = "ha_phone_" + re.sub(r"[^A-Za-z0-9_.-]", "_", account_key)[:48]
     for suffix in range(len(occupied) + 2):
         candidate = base if not suffix else base + "_" + str(suffix + 1)
         if not route_namespace_conflicts(candidate_routes=(candidate,), existing=rows):

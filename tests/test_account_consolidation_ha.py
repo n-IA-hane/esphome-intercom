@@ -40,7 +40,7 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     opaque = add_phone(hass, entry, {**before, "endpoint_id": "browser:opaque", "name": "Test", "extension": "222",
         "username": "existing-browser-user", "password": "fixture-existing-browser-password"})
     existing = add_phone(hass, entry, {"endpoint_id": "sip:480", "kind": "sip_account", "name": "Desk", "extension": "480",
-        "username": "ha_default", "password": "fixture-existing-sip-password", "enabled": True})
+        "username": "ha_phone_default", "password": "fixture-existing-sip-password", "enabled": True})
     sip_before = dict(existing.data)
     devices = dr.async_get(hass)
     device = devices.async_get_or_create(config_entry_id=entry.entry_id, config_subentry_id=legacy.subentry_id,
@@ -265,6 +265,7 @@ async def test_interrupted_v7_registry_writes_retry_without_namespace_or_credent
     assert second.data["kind"] == "sip_account" and second.data["send_video"]
     assert second.data["future_unknown"] == {"keep": 2}
     assert first.data["username"] != second.data["username"]
+    assert second.data["username"] == "ha_phone_second"
     assert entry.data["preferred_phone_device_id"] == "kept-device"
 
 
