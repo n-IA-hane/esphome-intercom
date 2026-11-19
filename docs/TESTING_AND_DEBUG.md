@@ -494,6 +494,11 @@ ESP devices expose useful SIP snapshots as sensors:
 - `text.<device>_voip_conference_groups`
 - `switch.<device>_voip_conference_ring`
 
+On profiles that expose **VoIP SIP Snapshot**, normal firmware publishes a
+snapshot when the call state changes. Press **VoIP Diagnostics** during a call
+to read the current packet and queue counters. Set `audio_debug: true` for
+periodic samples during a debugging session.
+
 For HA-side runtime, inspect call events, softphone state events and
 `sensor.voip_phonebook`.
 

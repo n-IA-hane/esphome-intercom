@@ -2,6 +2,10 @@
 
 ## 2026.12.0-dev
 
+- Updated ESP firmware can register again after a managed password change even
+  when the PBX rejects the old phone-status subscriptions. During a call,
+  **VoIP Diagnostics** shows current packet counters on demand. Periodic
+  sampling in device activity is reserved for firmware with `audio_debug` enabled.
 - The HA softphone card excludes its own account from the destination list
   even when a desk phone shares the line. Other available card-only accounts
   can be dialed from the same list.
