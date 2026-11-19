@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import quote
 
 from aioesphomeapi import DeviceInfo, UserService, UserServiceArg, UserServiceArgType
 from homeassistant.components.esphome.entry_data import RuntimeEntryData
@@ -25,7 +26,7 @@ def custom_integration_path(enable_custom_integrations):
     custom_components.__path__ = previous
 
 
-def native_services():
+def native_services(register_name=None):
     string = UserServiceArgType.STRING
     integer = UserServiceArgType.INT
     boolean = UserServiceArgType.BOOL
@@ -38,6 +39,8 @@ def native_services():
                                      "transport", "expires", "persist")],
         "register_account": [("account_id", string)],
     }
+    if register_name:
+        fields[register_name] = []
     return {key: UserService(name=name, key=key,
                             args=[UserServiceArg(name=arg, type=kind) for arg, kind in args])
             for key, (name, args) in enumerate(fields.items(), 1)}
@@ -104,7 +107,7 @@ async def phone_lab(hass):
     unsub()
 
 
-async def test_setup_entry_provisions_mac_identity_on_existing_native_owner(phone_lab, monkeypatch, socket_enabled):
+async def test_setup_entry_provisions_device_name_on_existing_native_owner(phone_lab, monkeypatch, socket_enabled):
     """The integration setup hook, rather than a test-only provisioner, must run."""
     from custom_components import voip_stack
     from custom_components.voip_stack import mailbox
@@ -127,7 +130,7 @@ async def test_setup_entry_provisions_mac_identity_on_existing_native_owner(phon
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     records = lab.entry.data.get("managed_esphome_phones", {})
     assert len(records) == 1
-    assert records[lab.device.id]["username"] == "esp_84c7bb000001"
+    assert records[lab.device.id]["username"] == "Ingresso"
     assert [name for name, _data in lab.sent] == [
         "set_ha_display_name", "set_account", "register_account"]
     assert lab.events == []
@@ -227,19 +230,20 @@ async def test_state_bridge_indexes_only_ESP_state_entities_and_rebinds(phone_la
             lab.runtime.esp_state_event_bridge_unsub()
 
 
-async def bind_account(lab, phone):
+async def bind_account(lab, phone, *, expected_status=200, cseq=1):
     from custom_components.voip_stack.core import sip
     from custom_components.voip_stack.core.sip_auth import build_digest_authorization
     uri = "sip:127.0.0.1:5060"
+    userinfo = quote(phone.username, safe="-._~")
     auth = build_digest_authorization(challenge_header=lab.registrar._challenge()[1],
         username=phone.username, password=phone.password, method="REGISTER", uri=uri)
     request = sip.parse_message(sip.build_request("REGISTER", uri, [
         ("Via", "SIP/2.0/UDP 127.0.0.2:41000;branch=z9hG4bK-managed;rport"),
-        ("From", f"<sip:{phone.username}@127.0.0.1>;tag=managed"),
-        ("To", f"<sip:{phone.username}@127.0.0.1>"), ("Call-ID", "managed-register"),
-        ("CSeq", "1 REGISTER"), ("Contact", f"<sip:{phone.username}@127.0.0.2:41000>"),
+        ("From", f"<sip:{userinfo}@127.0.0.1>;tag=managed"),
+        ("To", f"<sip:{userinfo}@127.0.0.1>"), ("Call-ID", "managed-register"),
+        ("CSeq", f"{cseq} REGISTER"), ("Contact", f"<sip:{userinfo}@127.0.0.2:41000>"),
         ("Expires", "120"), ("Authorization", auth)]))
-    assert (await lab.registrar.handle_register(request, ("127.0.0.2", 41000), "UDP")).status == 200
+    assert (await lab.registrar.handle_register(request, ("127.0.0.2", 41000), "UDP")).status == expected_status
 
 
 async def test_identity_idempotence_secret_boundaries_and_sip_readiness(managed, caplog):
@@ -248,8 +252,8 @@ async def test_identity_idempotence_secret_boundaries_and_sip_readiness(managed,
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    assert phone.username == "esp_84c7bb000001"
-    assert lab.registrar.accounts[phone.username].password == phone.password
+    assert phone.username == "Ingresso"
+    assert lab.registrar.accounts[phone.username.casefold()].password == phone.password
     assert lab.sent[1][1] == dict(account_id="ha", registrar="127.0.0.1", port=5060,
         domain="127.0.0.1", username=phone.username, password=phone.password,
         auth_username=phone.username, proxy="", proxy_port=5060, transport="auto", expires=3600, persist=True)
@@ -269,7 +273,7 @@ async def test_identity_idempotence_secret_boundaries_and_sip_readiness(managed,
     assert len(dr.async_get(lab.hass).devices) == 1
 
 
-async def test_name_node_and_address_changes_keep_mac_credential_and_endpoint(managed):
+async def test_name_node_and_address_changes_keep_commissioned_credential_and_endpoint(managed):
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
@@ -305,7 +309,7 @@ async def test_only_complete_mac_verified_real_native_actions_enroll(managed, mo
 async def test_manual_account_collision_is_rejected_without_partial_owner(managed, caplog):
     lab = managed
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": [
-        {"username": "esp_84c7bb000001", "password": "manual-fixture-only", "name": "Manual QA"}]})
+        {"username": "ingresso", "password": "manual-fixture-only", "name": "Manual QA"}]})
     await lab.controller.async_sync()
     assert not lab.entry.data.get("managed_esphome_phones") and not lab.sent
     assert not lab.runtime.endpoints.endpoints
@@ -322,7 +326,7 @@ async def test_manual_account_cannot_take_a_persisted_managed_username(managed):
         update_sip_accounts(lab.hass, [{"username": phone.username, "display_name": "Takeover",
                                       "password": "manual-fixture-only"}])
     assert dict(lab.entry.subentries) == previous
-    assert lab.registrar.accounts[phone.username].password == phone.password
+    assert lab.registrar.accounts[phone.username.casefold()].password == phone.password
 
 
 async def test_live_settings_owner_retains_unknown_but_clears_explicit_empty(managed):
@@ -646,7 +650,7 @@ async def test_managed_default_does_not_replace_multiple_manual_qa_accounts(mana
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": manual})
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    assert set(lab.registrar.accounts) == {phone.username, "qa_0", "qa_1"}
+    assert set(lab.registrar.accounts) == {phone.username.casefold(), "qa_0", "qa_1"}
     assert lab.entry.data["sip_accounts"] == manual
     assert [data["account_id"] for action, data in lab.sent if action == "set_account"] == ["ha"]
 
@@ -705,6 +709,230 @@ async def test_quarantine_record_migration_preserves_matching_mac_origin_identit
     assert len(lab.runtime.endpoints.endpoints) == 1
     assert lab.sent[1][1]["username"] == "phone_node"
     assert lab.sent[1][1]["password"] == "synthetic-retained-password"
+
+
+@pytest.mark.parametrize(("action", "node", "friendly", "expected"), [
+    ("register_ha_account_by_node_name", "door-000001", "Piano Terra 000001", "door-000001"),
+    ("register_ha_account_by_friendly_name", "door-000001", "Piano Terra", "Piano Terra"),
+    ("register_ha_account_by_friendly_name", "door", "", "door"),
+    ("register_ha_account_by_friendly_name", "door", "Ingresso Caffè 2", "Ingresso Caffè 2"),
+    ("register_ha_account_by_friendly_name", "door", "esp_84c7bb000001", "esp_84c7bb000001"),
+])
+async def test_native_name_selection_is_exact_and_independent_of_ha(managed, action, node, friendly, expected):
+    lab = managed
+    native = lab.native.runtime_data
+    native.device_info = replace(native.device_info, name=node, friendly_name=friendly)
+    native.services = native_services(action)
+    dr.async_get(lab.hass).async_update_device(lab.device.id, name_by_user="My HA label")
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    assert phone.username == expected and phone.display_name == "My HA label"
+    assert lab.sent[1][1]["username"] == lab.sent[1][1]["auth_username"] == expected
+    assert lab.sent[2] == (action, {})
+    await bind_account(lab, phone)
+    assert lab.registrar.registered_contacts(expected)
+    native.device_info = replace(native.device_info, name="new_node", friendly_name="New friendly name")
+    await lab.controller.async_sync()
+    assert phone_record(lab).username == expected and len(lab.sent) == 3
+
+
+@pytest.mark.parametrize(("node", "friendly"), [("door-000001", "Desk"), ("door", "Piano Terra")])
+async def test_old_firmware_defers_ambiguous_or_unsupported_new_names(managed, node, friendly):
+    from homeassistant.helpers import issue_registry as ir
+
+    lab = managed
+    native = lab.native.runtime_data
+    native.device_info = replace(native.device_info, name=node, friendly_name=friendly)
+    await lab.controller.async_sync()
+    issue = ("voip_stack", f"esphome_account_name_{lab.device.id}")
+    assert ir.async_get(lab.hass).issues[issue].translation_key == "esphome_account_firmware"
+    assert not lab.sent and not lab.registrar.accounts
+    native.services = native_services("register_ha_account_by_friendly_name")
+    await lab.controller.async_sync()
+    assert phone_record(lab).username == friendly
+    assert issue not in ir.async_get(lab.hass).issues
+
+
+async def test_name_limit_repairs_and_commissioned_literal_survives_firmware_downgrade(managed):
+    from homeassistant.helpers import issue_registry as ir
+
+    lab = managed
+    native = lab.native.runtime_data
+    action = "register_ha_account_by_friendly_name"
+    native.services = native_services(action)
+    native.device_info = replace(native.device_info, friendly_name="à" * 33)
+    await lab.controller.async_sync()
+    issue = ("voip_stack", f"esphome_account_name_{lab.device.id}")
+    assert ir.async_get(lab.hass).issues[issue].translation_key == "esphome_account_name"
+    assert not lab.sent and not lab.registrar.accounts
+    native.device_info = replace(native.device_info, friendly_name="Piano Terra")
+    await lab.controller.async_sync()
+    commissioned = phone_record(lab)
+    assert issue not in ir.async_get(lab.hass).issues
+    native.services = native_services()
+    await lab.controller.async_sync()
+    assert ir.async_get(lab.hass).issues[issue].translation_key == "esphome_account_firmware"
+    assert phone_record(lab) == commissioned and len(lab.sent) == 3
+    native.services = native_services(action)
+    native.device_info = replace(native.device_info, friendly_name="Renamed")
+    await lab.controller.async_sync()
+    assert phone_record(lab) == commissioned
+    assert lab.sent[-2][1]["username"] == "Piano Terra"
+    assert issue not in ir.async_get(lab.hass).issues
+
+
+def install_legacy_record(lab):
+    record = dict(device_id=lab.device.id, origin_entry_id=lab.native.entry_id, mac="84C7BB000001",
+        username="esp_84c7bb000001", password="synthetic-retained-password", display_name="Ingresso",
+        route_id="phone_node", api_host="127.0.0.2", endpoint_id=f"esphome:{lab.device.id}")
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "managed_esphome_phones": {lab.device.id: record}})
+    return phone_record(lab)
+
+
+async def test_generated_credential_survives_old_firmware_and_waits_for_authenticated_register(managed):
+    from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
+    from custom_components.voip_stack.store import update_sip_accounts
+
+    lab = managed
+    old = install_legacy_record(lab)
+    native = lab.native.runtime_data
+    native.device_info = replace(native.device_info, friendly_name="Piano Terra")
+    await lab.controller.async_sync()
+    assert [*lab.registrar.accounts] == [old.username]
+    assert lab.sent[1][1]["username"] == old.username
+    await bind_account(lab, old)
+
+    lab.controller.start()
+    native.services = native_services("register_ha_account_by_friendly_name")
+    lab.runtime.endpoints.claim_call(old.endpoint_id, "busy-dialog")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert [*lab.registrar.accounts] == [old.username]
+    assert lab.registrar.registered_contacts(old.username)
+    lab.runtime.endpoints.release_call(old.endpoint_id, "busy-dialog")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    pending = phone_record(lab)
+    assert pending.username == old.username and pending.pending_username == "Piano Terra"
+    assert lab.registrar.accounts["piano terra"].registration_only
+    assert lab.sent[-2][1]["username"] == "Piano Terra"
+    assert lab.sent[-2][1]["password"] == old.password
+    with pytest.raises(ValueError):
+        update_sip_accounts(lab.hass, [{"username": "PianoTerra", "password": "fixture-only"}])
+    await lab.controller.async_close()
+    lab.controller = EspHomeProvisioner(lab.hass, lab.entry)
+    lab.runtime.phone_provisioning = lab.controller
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab) == pending
+    assert lab.registrar.registered_contacts(old.username)
+
+    new = replace(old, username=pending.pending_username)
+    await bind_account(lab, replace(new, password="incorrect-fixture-password"), expected_status=401)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab) == pending
+    assert lab.registrar.registered_contacts(old.username)
+    assert not lab.registrar.registered_contacts(new.username)
+    lab.runtime.endpoints.claim_call(old.endpoint_id, "another-dialog")
+    native.available = False
+    native.client.is_connected = False
+    lab.hass.states.async_set("sensor.phone_node_voip_state", "unavailable")
+    await bind_account(lab, new)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab) == pending
+    assert [entry.id for entry in lab.registrar.registered_roster_entries()] == [old.username]
+    lab.runtime.endpoints.release_call(old.endpoint_id, "another-dialog")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    migrated = phone_record(lab)
+    assert migrated.username == "Piano Terra" and migrated.pending_username == ""
+    assert (migrated.endpoint_id, migrated.password) == (old.endpoint_id, old.password)
+    assert len(lab.runtime.endpoints.endpoints) == 1
+    assert lab.registrar.registered_contacts(migrated.username)
+    assert not lab.registrar.registered_contacts(old.username)
+    assert [*lab.registrar.accounts] == ["piano terra"]
+    assert not lab.registrar.accounts["piano terra"].registration_only
+    assert [entry.id for entry in lab.registrar.registered_roster_entries()] == ["Piano Terra"]
+
+
+async def test_old_register_retries_only_after_new_native_inventory(managed):
+    lab = managed
+    old = install_legacy_record(lab)
+    native = lab.native.runtime_data
+    action = "register_ha_account_by_friendly_name"
+    native.services = native_services(action)
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).pending_username == "Ingresso"
+    assert len(lab.sent) == 3
+    await bind_account(lab, old)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).username == old.username and len(lab.sent) == 3
+    native.services = native_services(action)
+    await bind_account(lab, old, cseq=2)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).username == old.username and len(lab.sent) == 6
+    assert lab.sent[-2][1]["username"] == "Ingresso"
+
+
+async def test_generated_account_collision_keeps_bound_original(managed):
+    from homeassistant.helpers import issue_registry as ir
+
+    lab = managed
+    old = install_legacy_record(lab)
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": [
+        {"username": "ingresso", "password": "manual-fixture-only", "name": "Manual"}]})
+    await lab.controller.async_sync()
+    assert phone_record(lab) == old
+    assert lab.registrar.accounts["ingresso"].password == "manual-fixture-only"
+    assert lab.sent[1][1]["username"] == old.username
+    await bind_account(lab, old)
+    assert lab.registrar.registered_contacts(old.username)
+    assert ("voip_stack", f"esphome_account_name_{lab.device.id}") in ir.async_get(lab.hass).issues
+
+
+async def test_two_existing_phones_cannot_stage_the_same_name_in_one_sync(managed):
+    from homeassistant.helpers import issue_registry as ir
+    from custom_components.voip_stack.managed_phones import managed_records
+
+    lab = managed
+    first = install_legacy_record(lab)
+    action = "register_ha_account_by_friendly_name"
+    first_native = lab.native.runtime_data
+    first_native.services = native_services(action)
+    first_native.device_info = replace(first_native.device_info, friendly_name="Desk shared")
+    native_entry = MockConfigEntry(domain="esphome", data={"host": "127.0.0.3", "device_name": "desk2"})
+    native_entry.add_to_hass(lab.hass)
+    second_device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=native_entry.entry_id,
+        identifiers={("esphome", "84c7bb000002")}, connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:02")},
+        name="Another display name")
+    native_entry.runtime_data = replace(first_native, entry_id=native_entry.entry_id,
+        device_info=replace(first_native.device_info, name="desk2", mac_address="84:C7:BB:00:00:02"))
+    second = dict(device_id=second_device.id, origin_entry_id=native_entry.entry_id,
+        mac="84c7bb000002", username="esp_84c7bb000002", password="second-fixture-only",
+        display_name="Another display name")
+    old_records = lab.entry.data["managed_esphome_phones"]
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "managed_esphome_phones": {**old_records, second_device.id: second}})
+
+    await lab.controller.async_sync()
+    phones = managed_records(lab.entry).values()
+    (issued,) = [phone for phone in phones if phone.pending_username == "Desk shared"]
+    (waiting,) = [phone for phone in phones if phone.pending_username is None]
+    assert {phone.username: phone.password for phone in phones} == {
+        first.username: first.password, second["username"]: second["password"]}
+    assert lab.registrar.accounts["desk shared"].password == issued.password
+    assert lab.registrar.accounts[waiting.username].password == waiting.password
+    assert ("voip_stack", f"esphome_account_name_{waiting.device_id}") in ir.async_get(lab.hass).issues
+    assert len(lab.runtime.endpoints.endpoints) == 2
+    await bind_account(lab, replace(waiting, username="Desk shared"), expected_status=401)
+    await bind_account(lab, waiting)
+    await bind_account(lab, replace(issued, username="Desk shared"))
+    await lab.controller.async_sync()
+    resolved = managed_records(lab.entry)
+    assert resolved[issued.device_id].username == "Desk shared"
+    assert resolved[waiting.device_id] == waiting
+    assert {*lab.registrar.accounts} == {"desk shared", waiting.username}
+    assert lab.registrar.registered_contacts(waiting.username)
+    assert lab.registrar.registered_contacts("Desk shared")
 
 
 async def test_source_ip_await_cannot_send_to_replaced_api_owner(managed, monkeypatch):

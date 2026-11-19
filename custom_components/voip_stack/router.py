@@ -7,6 +7,7 @@ from enum import StrEnum
 import re
 from typing import Literal
 
+from .core.sip import SipUri
 from .roster import RosterEntry, duplicate_numeric_extensions, entry_matches_extension, find_entry
 
 
@@ -151,10 +152,18 @@ def _uri_port(uri: str) -> int:
 
 
 def _uri(user: str, host: str, port: int = 5060, transport: str = "") -> str:
-    safe_user = re.sub(r"[^A-Za-z0-9_.!~*'()-]+", "_", (user or "voip").strip()).strip("_") or "voip"
-    suffix = "" if int(port) == 5060 else f":{int(port)}"
-    transport_suffix = f";transport={transport}" if transport in {"tcp", "udp"} else ""
-    return f"sip:{safe_user}@{host}{suffix}{transport_suffix}"
+    params = (("transport", transport),) if transport in {"tcp", "udp"} else ()
+    return str(SipUri(user or "voip", host, None if int(port) == 5060 else int(port), params))
+
+
+def _entry_uri(entry: RosterEntry) -> str:
+    if entry.sip_uri or not entry.address:
+        return entry.sip_uri
+    user = entry.id
+    if entry.metadata.get("endpoint_kind") not in {"esphome", "sip_account"}:
+        # Older address-only contacts use their label as an underscore dial string.
+        user = re.sub(r"[^A-Za-z0-9_.!~*'()-]+", "_", user.strip()).strip("_")
+    return _uri(user, entry.address, _entry_port(entry), _entry_transport(entry))
 
 
 def ha_uri_for(target: str, entries: list[RosterEntry], ha_uri: str = "") -> str:
@@ -200,8 +209,7 @@ def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> 
         return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri, reason=RouteReason.NAME_VIA_HA)
     if not entry.enabled:
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
-    transport = _entry_transport(entry)
-    direct_uri = entry.sip_uri or (_uri(entry.id, entry.address, _entry_port(entry), transport) if entry.address else "")
+    direct_uri = _entry_uri(entry)
     if direct_uri and not entry.ha_bridge:
         return RouteDecision(RouteAction.DIRECT, target=entry.id, sip_uri=direct_uri, source="phonebook", entry=entry)
     bridge_target = entry.extension or entry.id
@@ -266,8 +274,7 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
             if trunk_ready:
                 return RouteDecision(RouteAction.TRUNK, target=entry.number, source="trunk", entry=entry)
             return RouteDecision(RouteAction.REJECT, target=entry.number, status=503, reason=RouteReason.TRUNK_UNAVAILABLE, entry=entry)
-        transport = _entry_transport(entry)
-        sip_uri = entry.sip_uri or (_uri(entry.id, entry.address, _entry_port(entry), transport) if entry.address else "")
+        sip_uri = _entry_uri(entry)
         if not sip_uri and not entry.number:
             return RouteDecision(RouteAction.ANSWER_HA, target=entry.id, reason=RouteReason.NAME_VIA_HA, source="phonebook", entry=entry)
         if sip_uri:

@@ -70,6 +70,12 @@ class SipAccount:
     conference_ring: bool = False
     ring_group: str = ""
 
+    registration_only: bool = False
+
+    @property
+    def routable(self) -> bool:
+        return self.enabled and not self.registration_only
+
     @property
     def roster_name(self) -> str:
         return self.display_name or self.username
@@ -159,6 +165,15 @@ def normalize_username(value: str) -> str:
     return cleaned
 
 
+def validate_managed_username(value: str) -> str:
+    """Validate a literal ESPHome name against the device and Digest limits."""
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            or len(value.encode()) > 64):
+        raise ValueError("Invalid managed SIP username")
+    return value
+
+
 def account_from_mapping(raw: dict[str, Any]) -> SipAccount:
     username = normalize_username(str(raw.get("username") or raw.get("id") or ""))
     return SipAccount(
@@ -174,7 +189,9 @@ def account_from_mapping(raw: dict[str, Any]) -> SipAccount:
 
 
 def dump_account(account: SipAccount) -> dict[str, Any]:
-    return asdict(account)
+    data = asdict(account)
+    del data["registration_only"]
+    return data
 
 
 def _extract_uri(header: str) -> str:
@@ -188,7 +205,10 @@ def _extract_register_username(request: sip.SipMessage) -> str:
     """Return the address-of-record user from the mandatory To header."""
 
     uri = sip.parse_sip_uri(_extract_uri(request.header("To")))
-    return normalize_username(uri.user)
+    try:
+        return normalize_username(uri.user)
+    except ValueError:
+        return validate_managed_username(uri.user)
 
 
 def _header_param(header: str, name: str) -> str:
@@ -348,7 +368,7 @@ class SipRegistrar:
         self.enabled = bool(enabled)
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
-        self.accounts = {account.username.lower(): account for account in accounts}
+        self.accounts = {account.username.casefold(): account for account in accounts}
         self._authentication_generations = {username: uuid.uuid4().hex for username in self.accounts}
         self._account_observers = set()
         self._contact_observers = set()
@@ -379,10 +399,11 @@ class SipRegistrar:
 
     def update_accounts(self, accounts: list[SipAccount]) -> None:
         previous_accounts = self.accounts
-        self.accounts = {account.username.lower(): account for account in accounts}
+        self.accounts = {account.username.casefold(): account for account in accounts}
         changed = {username for username in previous_accounts.keys() | self.accounts.keys()
                    if username not in previous_accounts or username not in self.accounts
                    or previous_accounts[username].enabled != self.accounts[username].enabled
+                   or previous_accounts[username].registration_only != self.accounts[username].registration_only
                    or not hmac.compare_digest(previous_accounts[username].password.encode(),
                                               self.accounts[username].password.encode())}
         for username in changed:
@@ -393,7 +414,7 @@ class SipRegistrar:
         retained: dict[str, list[SipRegistration]] = {}
         retained_usernames: set[str] = set()
         for registration in self.registrations.values():
-            key = registration.username.lower()
+            key = registration.username.casefold()
             account = self.accounts.get(key)
             previous = previous_accounts.get(key)
             if (
@@ -404,18 +425,18 @@ class SipRegistrar:
             ):
                 continue
             registration.username = account.username
-            retained.setdefault(account.username.lower(), []).append(registration)
-            retained_usernames.add(account.username.lower())
+            retained.setdefault(account.username.casefold(), []).append(registration)
+            retained_usernames.add(account.username.casefold())
         removed = {
             registration.username
             for registration in self.registrations.values()
-            if registration.username.lower() not in retained_usernames
+            if registration.username.casefold() not in retained_usernames
         }
         registrations: dict[str, SipRegistration] = {}
         for wanted, bindings in retained.items():
             account = self.accounts[wanted]
-            for index, registration in enumerate(bindings):
-                key = account.username if index == 0 else f"{account.username}#{index + 1}"
+            for registration in bindings:
+                key = self._new_binding_key(registrations, account.username)
                 registrations[key] = registration
         self.registrations = registrations
         for username in removed:
@@ -430,7 +451,7 @@ class SipRegistrar:
     def authentication_generation(self, username):
         """One private account lifetime, independent of Contact reachability."""
         account = self.accounts.get(str(username).casefold())
-        return self._authentication_generations.get(str(username).casefold()) if account and account.enabled else None
+        return self._authentication_generations.get(str(username).casefold()) if account and account.routable else None
 
     def subscribe_account_changes(self, observer):
         self._account_observers.add(observer)
@@ -453,11 +474,11 @@ class SipRegistrar:
         return registrations[0] if registrations else None
 
     def _registrations(self, username: str) -> list[SipRegistration]:
-        wanted = str(username or "").lower()
+        wanted = str(username or "").casefold()
         return [
             registration
-            for key, registration in self.registrations.items()
-            if key.lower() == wanted or registration.username.lower() == wanted
+            for registration in self.registrations.values()
+            if registration.username.casefold() == wanted
         ]
 
     def registered_contacts(self, username: str) -> tuple[SipRegistration, ...]:
@@ -474,7 +495,7 @@ class SipRegistrar:
     def select_outbound_flow(self, username: str, uri: sip.SipUri, *, allow_ordinary=False) -> AuthenticatedOutboundFlow | None:
         """Select only the resolved account's exact authenticated UDP Contact."""
         account = self.accounts.get(username.casefold())
-        if account is None or not account.enabled:
+        if account is None or not account.routable:
             return None
         for binding in self.registered_contacts(account.username):
             if (binding.outbound or allow_ordinary) and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
@@ -487,7 +508,7 @@ class SipRegistrar:
         if selected.registrar is not self:
             return None
         account = self.accounts.get(selected.username.casefold())
-        if account is None or not account.enabled:
+        if account is None or not account.routable:
             return None
         return next((binding for binding in self.registered_contacts(selected.username)
             if binding.outbound == selected.outbound and binding.transport.upper() == "UDP"
@@ -506,8 +527,12 @@ class SipRegistrar:
             if identity is None:
                 return ()
             account, instance, epoch = identity
+            if self.authentication_generation(account) is None:
+                return ()
             return tuple(item for item in self.registered_contacts(account)
                          if item.instance_id == instance and item.gruu_epoch == epoch)
+        if self.authentication_generation(uri.user) is None:
+            return ()
         return tuple(item for item in self.registered_contacts(uri.user)
                      if item.instance_id and params["gr"] == self._gruu_tokens.public_id(uri.user, item.instance_id))
 
@@ -535,11 +560,11 @@ class SipRegistrar:
         return f"{username}#{index}"
 
     def remove_registration(self, username: str) -> None:
-        wanted = str(username or "").lower()
+        wanted = str(username or "").casefold()
         removed_username = ""
         for key in list(self.registrations):
             registration = self.registrations[key]
-            if key.lower() == wanted or registration.username.lower() == wanted:
+            if registration.username.casefold() == wanted:
                 self.registrations.pop(key, None)
                 removed_username = registration.username
         if removed_username:
@@ -553,7 +578,7 @@ class SipRegistrar:
         wanted_port = int(port)
         wanted_transport = str(transport or "").upper()
         affected = {
-            registration.username.lower(): registration.username
+            registration.username.casefold(): registration.username
             for registration in self.registrations.values()
             if registration.source_host == wanted_host
             and registration.source_port == wanted_port
@@ -571,7 +596,7 @@ class SipRegistrar:
             )
         }
         remaining = {
-            registration.username.lower() for registration in self.registrations.values()
+            registration.username.casefold() for registration in self.registrations.values()
         }
         for username_key, username in affected.items():
             if username_key not in remaining:
@@ -594,6 +619,9 @@ class SipRegistrar:
         """Authenticate an in-dialog origin against its live REGISTER flow."""
 
         self.expire()
+        account = self.accounts.get(username.casefold())
+        if account is None or not account.routable:
+            return False
         return any(
             registration.source_host == str(host or "")
             and int(registration.source_port) == int(port)
@@ -711,7 +739,7 @@ class SipRegistrar:
             )
         except ValueError:
             return _AuthorizationStatus.INVALID
-        use_key = (nonce, account.username.lower(), cnonce)
+        use_key = (nonce, account.username.casefold(), cnonce)
         fingerprint = self._register_fingerprint(request, addr, transport)
         previous = self.nonce_uses.get(use_key)
         if previous is not None:
@@ -745,7 +773,7 @@ class SipRegistrar:
         self.expire()
         candidates = [
             account for account in self.accounts.values()
-            if account.enabled
+            if account.routable
             and (username is None or account.username.casefold() == username.casefold())
             and self.registration_matches_source(account.username, addr[0], addr[1], transport)
         ]
@@ -760,7 +788,7 @@ class SipRegistrar:
             username = _extract_register_username(request)
         except Exception:
             return self._result(400, "Bad Request")
-        account = self.accounts.get(username.lower())
+        account = self.accounts.get(username.casefold())
         source_key = f"{str(transport or '').upper()}:{addr[0]}"
         authorization_status = (
             _AuthorizationStatus.INVALID
@@ -890,12 +918,12 @@ class SipRegistrar:
 
         was_registered = bool(current_bindings)
         next_registrations = dict(self.registrations)
-        wanted = account.username.lower()
+        wanted = account.username.casefold()
         if wildcard:
             next_registrations = {
                 key: registration
                 for key, registration in next_registrations.items()
-                if registration.username.lower() != wanted
+                if registration.username.casefold() != wanted
             }
         else:
             now = time.time()
@@ -904,7 +932,7 @@ class SipRegistrar:
                     (
                         candidate_key
                         for candidate_key, registration in next_registrations.items()
-                        if registration.username.lower() == wanted
+                        if registration.username.casefold() == wanted
                         and _registration_matches_contact(registration, contact)
                     ),
                     None,
@@ -1029,7 +1057,7 @@ class SipRegistrar:
     def expire(self) -> bool:
         now = time.time()
         previously_registered = {
-            registration.username.lower(): registration.username
+            registration.username.casefold(): registration.username
             for registration in self.registrations.values()
         }
         old = self.registrations
@@ -1038,7 +1066,7 @@ class SipRegistrar:
         if expired:
             self._contacts_changed({old[key].username for key in expired})
         still_registered = {
-            registration.username.lower() for registration in self.registrations.values()
+            registration.username.casefold() for registration in self.registrations.values()
         }
         for wanted, username in previously_registered.items():
             if wanted not in still_registered:
@@ -1064,11 +1092,11 @@ class SipRegistrar:
         selected_user = selected[0].username.casefold() if selected else ""
         entries: list[RosterEntry] = []
         registered_usernames = sorted(
-            {registration.username.lower() for registration in self.registrations.values()}
+            {registration.username.casefold() for registration in self.registrations.values()}
         )
         for username in registered_usernames:
             account = self.accounts.get(username)
-            if account is None or not account.enabled:
+            if account is None or not account.routable:
                 continue
             registrations = (selected if selected_user == username else self.registered_contacts(account.username))
             if not registrations:
@@ -1118,7 +1146,7 @@ class SipRegistrar:
     def snapshot(self) -> dict[str, Any]:
         self.expire()
         registered_users = {
-            registration.username.lower() for registration in self.registrations.values()
+            registration.username.casefold() for registration in self.registrations.values()
         }
         return {
             "registrar_enabled": self.enabled,

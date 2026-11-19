@@ -271,7 +271,7 @@ class SipApplicationMethods:
             if subscription.subscriber.casefold() not in usernames:
                 if subscription.event == "presence" and self._presence_publisher(subscription).casefold() in usernames:
                     target = self.registrar.accounts.get(self._presence_publisher(subscription).casefold())
-                    if target is None or not target.enabled:
+                    if target is None or not target.routable:
                         self._end_subscription(subscription, reason="noresource")
                 continue
             self._end_subscription(subscription, notify=False)
@@ -494,7 +494,7 @@ class SipApplicationMethods:
         publisher = presence_endpoint.username if presence_endpoint is not None and presence_endpoint.username else target
         target_account = self.registrar.accounts.get(publisher.casefold())
         if event not in {"dialog", "as-feature-event"} and ((target_account is None and presence_endpoint is None)
-                                  or (target_account is not None and not target_account.enabled)):
+                                  or (target_account is not None and not target_account.routable)):
             return SipRequestResult(404, "Not Found")
 
         key = _subscription_key(request)
@@ -712,7 +712,7 @@ class SipApplicationMethods:
             return (SipDigestCredentials(config.username, config.password, config.auth_username)
                     if config is not None and config.username else None)
         account = self.registrar.accounts.get(subscriber.casefold())
-        return SipDigestCredentials(account.username, account.password) if account is not None and account.enabled else None
+        return SipDigestCredentials(account.username, account.password) if account is not None and account.routable else None
 
     def _end_subscription(self, subscription, *, reason="timeout", notify=True):
         """Remove an event usage once, retaining its terminal sender until done."""
@@ -819,7 +819,7 @@ class SipApplicationMethods:
             return _endpoint_pidf(resource_uri, False)
         publisher = endpoint.username if endpoint is not None and endpoint.username else subscription.target
         account = self.registrar.accounts.get(publisher.casefold())
-        if account is not None and not account.enabled:
+        if account is not None and not account.routable:
             return (_endpoint_pidf(resource_uri, False) if subscription.presence_endpoint_id
                     else _closed_pidf(subscription.target))
         publication = self._publication(publisher)

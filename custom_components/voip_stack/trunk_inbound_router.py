@@ -59,7 +59,7 @@ from .peer import sip_uri_for_peer
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
 from .runtime_data import call_runtime_artifacts, preferred_browser_phone
-from .core.sip import parse_sip_uri, sip_default_port
+from .core.sip import SipUri, parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 from .sip_runtime import (
@@ -381,9 +381,7 @@ async def async_route_trunk_invite(
                 or (decision.entry.metadata or {}).get("sip_port")
                 or cfg["sip_port"]
             )
-            bridge_uri = parse_sip_uri(
-                f"sip:{decision.entry.id}@{decision.entry.address}:{bridge_port}"
-            )
+            bridge_uri = SipUri(decision.entry.id, decision.entry.address, bridge_port)
         elif decision.sip_uri:
             bridge_uri = parse_sip_uri(decision.sip_uri)
     except Exception as err:

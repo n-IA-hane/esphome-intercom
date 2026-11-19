@@ -171,7 +171,7 @@ def entry_route_mappings(
         if data.get("managed_esphome_phones"):
             from .managed_phones import managed_route_mappings
 
-            mappings.extend(managed_route_mappings(entry))
+            mappings.extend(item for item in managed_route_mappings(entry) if item["id"] not in excluded)
     runtime = getattr(entry, "runtime_data", None) if entry is not None else None
     registry = getattr(runtime, "endpoints", None)
     endpoints = getattr(registry, "endpoints", ())

@@ -1065,6 +1065,14 @@
       "title": "Rubrica LDAP non disponibile",
       "description": "Il listener {service} sulla porta {port} non si avvia. Controlla indirizzo, porta e percorsi del certificato nelle impostazioni della rubrica LDAP, quindi salva per riprovare. SIP continua a funzionare e i telefoni conservano la rubrica precedente."
     },
+    "esphome_account_firmware": {
+      "title": "Aggiorna il firmware del telefono ESPHome",
+      "description": "Aggiorna il firmware VoIP di {phone}. La versione attuale non permette di usare con certezza il nome configurato in ESPHome come nome utente SIP. Home Assistant riproverà quando il telefono si ricollegherà."
+    },
+    "esphome_account_name": {
+      "title": "Controlla il nome utente SIP di ESPHome",
+      "description": "Il nome ESPHome scelto per l'account SIP di {phone} supera la lunghezza consentita o contiene caratteri non supportati. Modifica il nome nella configurazione ESPHome e reinstalla il firmware."
+    },
     "esphome_endpoint_collision": {
       "title": "Conflitto con un telefono ESPHome",
       "description": "Il telefono ESPHome {phone} non può essere aggiunto perché il campo {field} ({value}) è già usato da un altro telefono. Gli altri telefoni continuano a funzionare. Apri la pagina del dispositivo per controllarne il nome e i dati usati per chiamarlo. Identificativi e credenziali non sono stati modificati."

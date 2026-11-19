@@ -20,12 +20,13 @@ from .device_resolver import entity_role, slugify_route_id
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_registry import EndpointCollisionError
 from .managed_phones import (CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID,
-    ManagedPhone, active_managed_accounts, managed_phone_mode, managed_records, normalize_mac)
+    ManagedNameError, ManagedPhone, active_managed_accounts, check_native_username, managed_device_username, managed_phone_mode,
+    managed_records, managed_registration_action, normalize_mac)
 from .phone_endpoint import EndpointKind, PhoneEndpoint
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
     normalize_membership_tracking, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
-from .repairs import async_sync_esphome_endpoint_collision_issue
+from .repairs import async_sync_esphome_account_name_issue, async_sync_esphome_endpoint_collision_issue
 from .sip_registrar import generate_password
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,9 +90,29 @@ class EspHomeProvisioner:
             self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
             self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._entity_changed),
             async_dispatcher_connect(self.hass, SIGNAL_CONFIG_ENTRY_CHANGED, self._entry_changed),
+            self.runtime.endpoints.subscribe(self._endpoint_changed),
         ]
+        registrar = sip_registrar(self.hass)
+        if registrar is not None:
+            self._unsubscribers.append(registrar.subscribe_contact_changes(self._contacts_changed))
         self._refresh_state_entities()
         self.schedule()
+
+    @callback
+    def _contacts_changed(self, usernames):
+        # A REGISTER on the old login can arrive after a device-side storage
+        # failure or an API reconnect. Delivery is idempotent per API inventory.
+        names = {name.casefold() for name in usernames}
+        for phone in managed_records(self.entry).values():
+            if phone.pending_username and (phone.username.casefold() in names or phone.pending_username.casefold() in names):
+                self.schedule()
+                break
+
+    @callback
+    def _endpoint_changed(self, event):
+        if (event.previous is not None and event.previous.active_call_id and not event.endpoint.active_call_id
+                and event.endpoint.kind is EndpointKind.ESPHOME):
+            self.schedule()
 
     @callback
     def _refresh_state_entities(self):
@@ -169,6 +190,7 @@ class EspHomeProvisioner:
     def _device_changed(self, event):
         if event.data.get("action") == "remove":
             async_sync_esphome_endpoint_collision_issue(self.hass, event.data["device_id"])
+            async_sync_esphome_account_name_issue(self.hass, event.data["device_id"])
             self._removed_devices.add(event.data["device_id"])
             self._refresh_accounts()
         self.schedule()
@@ -199,8 +221,9 @@ class EspHomeProvisioner:
 
         registrar = sip_registrar(self.hass)
         if registrar is not None:
-            revoked = {phone.username.casefold() for phone in managed_records(self.entry).values()
-                       if phone.device_id in self._removed_devices or phone.origin_entry_id in self._removed_origins}
+            revoked = {name.casefold() for phone in managed_records(self.entry).values()
+                       if phone.device_id in self._removed_devices or phone.origin_entry_id in self._removed_origins
+                       for name in (phone.username, phone.pending_username) if name}
             registrar.update_accounts([account for account in sip_accounts(self.hass)
                                        if account.username.casefold() not in revoked])
             registrar.enabled = bool(transport_config(self.hass).get(CONF_REGISTRAR_ENABLED)
@@ -218,17 +241,97 @@ class EspHomeProvisioner:
                 and device is not None and origin.entry_id == device.config_entry_id
                 and managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is True)
 
+    def _idle_for_rename(self, phone, *, registered=False):
+        endpoint = self.runtime.endpoints.get(phone.endpoint_id)
+        if endpoint is not None and endpoint.active_call_id:
+            return False
+        if self.runtime.sip is not None and any(
+                phone.endpoint_id in session.endpoint_claims
+                or any(leg.endpoint_id == phone.endpoint_id for leg in session.legs.values())
+                for session in self.runtime.sip.sessions.values()):
+            return False
+        for entity in er.async_entries_for_device(er.async_get(self.hass), phone.device_id):
+            if entity.platform == "esphome" and entity_role(entity) == "voip_state":
+                state = self.hass.states.get(entity.entity_id)
+                value = state.state.casefold() if state else "unavailable"
+                # The ESP has already committed a new line before it can REGISTER.
+                # A disconnected native API cannot acknowledge that SIP operation.
+                if registered and value in {"unknown", "unavailable"}:
+                    continue
+                if value not in {"idle", "not_in_call"}:
+                    return False
+        return True
+
+    def _existing_endpoint(self, phone):
+        endpoint = self.runtime.endpoints.get(phone.endpoint_id)
+        if endpoint is not None and (endpoint.device_id != phone.device_id or endpoint.kind is not EndpointKind.ESPHOME):
+            raise EndpointCollisionError(field="endpoint_id", value=phone.endpoint_id, endpoint_id=phone.endpoint_id,
+                                         conflicting_endpoint_id=endpoint.endpoint_id)
+        return endpoint
+
+    def _reserve_username(self, endpoint_id, username):
+        from .config_validation import entry_route_mappings, route_namespace_conflicts
+
+        existing = entry_route_mappings(self.entry, self.entry.data, exclude_endpoint_ids=(endpoint_id,))
+        if (any(str(item.get("username") or "").casefold() == username.casefold() for item in existing)
+                or route_namespace_conflicts(candidate_routes=(username,), existing=existing)):
+            raise ManagedNameError("esphome_endpoint_collision", value=username)
+
+    def _account_names(self, native, previous, endpoint_id):
+        if previous and previous.pending_username == "":
+            # The former HA account contract also permitted Unicode letters.
+            # Preserve a commissioned legacy credential the old firmware accepted.
+            if not all(char.isalnum() or char in "_.-" for char in previous.username):
+                check_native_username(managed_registration_action(native), previous.username)
+            return previous.username, ""
+        if previous and not self._idle_for_rename(previous):
+            return previous.username, previous.pending_username
+        if previous and previous.pending_username:
+            desired = previous.pending_username
+            check_native_username(managed_registration_action(native), desired)
+        else:
+            desired = managed_device_username(native)
+        self._reserve_username(endpoint_id, desired)
+        if previous is None or desired.casefold() == previous.username.casefold():
+            return desired, ""
+        return previous.username, desired
+
+    def _confirmed_phone(self, phone):
+        """Commit the stored proposal from SIP evidence even after an API disconnect."""
+        username = phone.pending_username
+        if not phone.active or not username:
+            return phone
+        registrar = sip_registrar(self.hass)
+        account = registrar.accounts.get(username.casefold()) if registrar else None
+        if (account is None or not account.registration_only or not registrar.registered_contacts(username)
+                or not self._idle_for_rename(phone, registered=True)):
+            return phone
+        self._reserve_username(phone.endpoint_id, username)
+        if self._existing_endpoint(phone) is not None:
+            self.runtime.endpoints.update(phone.endpoint_id, username=username)
+        return replace(phone, username=username, pending_username="")
+
     def _phone(self, origin, device, native, previous):
         info = native.device_info
         if previous is not None and (previous.mac != normalize_mac(info.mac_address)
                                      or previous.origin_entry_id != origin.entry_id):
             raise ValueError("Managed physical ownership changed")
         name = (device.name_by_user or device.name or info.friendly_name or info.name).strip()
+        endpoint_id = previous.endpoint_id if previous else f"esphome:{device.id}"
+        try:
+            username, pending = self._account_names(native, previous, endpoint_id)
+        except ManagedNameError as error:
+            async_sync_esphome_account_name_issue(self.hass, device.id, name=name, error=error)
+            if previous is None or previous.pending_username == "":
+                raise
+            username, pending = previous.username, None
+        else:
+            async_sync_esphome_account_name_issue(self.hass, device.id)
         if not name or len(name.encode()) > 64 or any(ord(char) < 32 or ord(char) == 127 for char in name):
             raise ValueError("Display name exceeds the native phone contract")
         phone = ManagedPhone(device_id=device.id, origin_entry_id=origin.entry_id,
             mac=normalize_mac(info.mac_address), password=previous.password if previous else generate_password(),
-            username=previous.username if previous else "", endpoint_id=previous.endpoint_id if previous else "",
+            username=username, pending_username=pending, endpoint_id=endpoint_id,
             display_name=name, route_id=slugify_route_id(info.name), api_host=str(origin.data.get("host") or ""),
             extension=previous.extension if previous else "", ring_group=previous.ring_group if previous else "",
             queues=previous.queues if previous else (),
@@ -272,13 +375,29 @@ class EspHomeProvisioner:
                     await self._purge_endpoint(phone.endpoint_id, phone.username)
                     if not self._owned() or revision != self._revision:
                         return
+                    async_sync_esphome_account_name_issue(self.hass, phone.device_id)
                     records.pop(phone.device_id, None)
                     self._delivered.pop(phone.device_id, None)
                     changed = True
                 elif managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
+                    async_sync_esphome_account_name_issue(self.hass, phone.device_id)
                     records[phone.device_id] = replace(phone, active=False)
                     self._delivered.pop(phone.device_id, None)
                     changed |= phone.active
+                elif (phone.pending_username and device.config_entry_id == origin.entry_id
+                      and any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(mac) == phone.mac
+                              for kind, mac in device.connections)):
+                    try:
+                        confirmed = self._confirmed_phone(phone)
+                    except ManagedNameError as error:
+                        async_sync_esphome_account_name_issue(self.hass, phone.device_id,
+                            name=phone.display_name, error=error)
+                    except EndpointCollisionError as error:
+                        async_sync_esphome_endpoint_collision_issue(self.hass, phone.device_id,
+                            name=phone.display_name, error=error)
+                    else:
+                        records[phone.device_id] = confirmed
+                        changed |= confirmed != phone
             self._save(records)
             self._refresh_accounts()
             # Legacy direct phones also use the same permanent-removal owner.
@@ -297,9 +416,13 @@ class EspHomeProvisioner:
                 if not getattr(native, "available", False) or not getattr(getattr(native, "client", None), "is_connected", False):
                     continue
                 for device in dr.async_entries_for_config_entry(devices, origin.entry_id):
-                    if device.id in self._removed_devices or not any(kind == dr.CONNECTION_NETWORK_MAC
-                            and managed_phone_mode(self.hass, origin, device.id, mac) is True
-                            for kind, mac in device.connections):
+                    if device.id in self._removed_devices:
+                        continue
+                    modes = {managed_phone_mode(self.hass, origin, device.id, mac)
+                             for kind, mac in device.connections if kind == dr.CONNECTION_NETWORK_MAC}
+                    if True not in modes:
+                        if False in modes:
+                            async_sync_esphome_account_name_issue(self.hass, device.id)
                         continue
                     try:
                         previous = records.get(device.id)
@@ -309,9 +432,10 @@ class EspHomeProvisioner:
                         from .store import sip_account_dicts
                         if any(str(account.get("username") or account.get("id") or "").casefold() == phone.username.casefold()
                                for account in sip_account_dicts(self.hass)):
-                            raise ValueError("SIP username is already configured")
+                            raise EndpointCollisionError(field="username", value=phone.username,
+                                endpoint_id=phone.endpoint_id, conflicting_endpoint_id="configured SIP account")
                         registry = self.runtime.endpoints
-                        old = registry.get(phone.endpoint_id)
+                        old = self._existing_endpoint(phone)
                         fields = dict(name=phone.display_name, username=phone.username, extension=phone.extension,
                             ring_group=phone.ring_group, conference_group=phone.conference_group,
                             conference_ring=phone.conference_ring, queues=phone.queues)
@@ -331,6 +455,8 @@ class EspHomeProvisioner:
                         await self._deliver_memberships(phone.device_id, phone.record(), native)
                         if not self._owned() or revision != self._revision:
                             return
+                    except ManagedNameError:
+                        continue
                     except EndpointCollisionError as error:
                         async_sync_esphome_endpoint_collision_issue(self.hass, device.id,
                             name=device.name_by_user or device.name or origin.title, error=error)
@@ -435,11 +561,13 @@ class EspHomeProvisioner:
         host = cfg.get("advertise_host") or await network.async_get_source_ip(self.hass, target_ip=phone.api_host)
         if not self._current(phone, native, client, services, revision):
             return
+        username = phone.pending_username or phone.username
+        register = managed_registration_action(native)
         actions = [("set_ha_display_name", {"name": phone.display_name}),
             ("set_account", dict(account_id=MANAGED_ACCOUNT_ID, registrar=host, port=int(cfg["sip_port"]),
-                domain=host, username=phone.username, password=phone.password, auth_username=phone.username,
+                domain=host, username=username, password=phone.password, auth_username=username,
                 proxy="", proxy_port=5060, transport="auto", expires=3600, persist=True)),
-            ("register_account", {"account_id": MANAGED_ACCOUNT_ID})]
+            (register, {"account_id": MANAGED_ACCOUNT_ID} if register == "register_account" else {})]
         directory_data = self._directory_data(host)
         if directory_data is not None:
             actions.append(("configure_directory", directory_data))
@@ -456,8 +584,10 @@ class EspHomeProvisioner:
             signature = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).digest()
             if delivered.get(action) == signature:
                 continue
+            if action in {"set_account", register} and not self._idle_for_rename(phone):
+                continue
             if action == "set_account":
-                delivered.pop("register_account", None)
+                delivered.pop(register, None)
             await client.execute_service(by_name[action], data)
             if not self._current(phone, native, client, services, revision):
                 return

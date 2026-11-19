@@ -36,7 +36,7 @@ from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone, sip_trunk
 from .trunk_signaling import reuse_registered_trunk_flow
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied, is_any_trunk_uri
-from .core.sip import parse_sip_uri
+from .core.sip import SipUri, parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 
@@ -110,7 +110,7 @@ class EndpointDialer:
                 or self.config["sip_port"]
             )
             return (
-                parse_sip_uri(f"sip:{entry.id}@{entry.address}:{bridge_port}"),
+                SipUri(entry.id, entry.address, bridge_port),
                 None,
                 entry,
             )

@@ -1065,6 +1065,14 @@
       "description": "Naslouchací službu {service} na portu {port} se nepodařilo spustit. V nastavení adresáře LDAP zkontrolujte adresu, port a cesty k certifikátům a poté nastavení uložte pro nový pokus. SIP nadále funguje a telefony si ponechají předchozí adresář.",
       "title": "Adresář LDAP není dostupný"
     },
+    "esphome_account_firmware": {
+      "title": "Aktualizujte firmware telefonu ESPHome",
+      "description": "Aktualizujte firmware VoIP telefonu {phone}. Současná verze nedokáže spolehlivě použít nastavený název ESPHome jako uživatelské jméno SIP. Home Assistant zkusí registraci znovu po připojení telefonu."
+    },
+    "esphome_account_name": {
+      "title": "Zkontrolujte uživatelské jméno SIP v ESPHome",
+      "description": "Název ESPHome vybraný pro účet SIP telefonu {phone} je příliš dlouhý nebo obsahuje nepodporované znaky. Upravte název v konfiguraci ESPHome a znovu nainstalujte firmware."
+    },
     "esphome_endpoint_collision": {
       "title": "Konflikt identifikace telefonu ESPHome",
       "description": "Telefon ESPHome {phone} nelze obnovit, protože jeho pole {field} ({value}) již používá jiný telefon. Ostatní telefony zůstávají dostupné. Otevřete stránku zařízení a zkontrolujte jeho název nebo identitu používanou pro směrování hovorů. Identifikátory ani přihlašovací údaje nebyly změněny."

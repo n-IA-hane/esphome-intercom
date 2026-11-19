@@ -120,7 +120,7 @@ def parse_digest_challenge(value: str) -> dict[str, str]:
     for match in _PARAM_RE.finditer(raw):
         key = match.group(1).lower()
         val = match.group(3) if match.group(3) is not None else match.group(2)
-        out[key] = val.replace('\\"', '"') if val is not None else ""
+        out[key] = re.sub(r"\\(.)", r"\1", val) if match.group(3) is not None else val
     return out
 
 
@@ -215,7 +215,8 @@ def build_digest_authorization(
         if key in {"algorithm", "qop", "nc"}:
             rendered.append(f"{key}={val}")
         else:
-            rendered.append(f'{key}="{str(val).replace(chr(34), "")}"')
+            escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+            rendered.append(f'{key}="{escaped}"')
     return "Digest " + ", ".join(rendered)
 
 

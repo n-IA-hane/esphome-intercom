@@ -19,6 +19,33 @@ The account slot is not a provider trunk. When `directory`, `blf` or `mwi` are
 selected, contacts, live phone state and message counts use their respective
 LDAP/SIP services. They do not come from a new media engine or public sensor.
 
+### How the ESP gets its SIP username
+
+With `esphome.name_add_mac_suffix: true`, the VoIP integration uses the
+effective node name reported by ESPHome, including the suffix. For example,
+the node `door` can report `door-a1b2c3`. With the option disabled, the
+integration uses the ESPHome `friendly_name` exactly as configured, including
+spaces and capitalization. An empty friendly name selects the node name. For
+example, `Piano Terra` is the SIP login on the ESP and in Home Assistant.
+The username may occupy up to 64 UTF-8 bytes. Leading or trailing whitespace
+and control characters require a configuration change before enrollment.
+Renaming the device in Home Assistant changes its display name. Its saved
+login, password and device identity stay with that phone.
+
+For an existing managed login of the form `esp_<MAC>`, Home Assistant waits
+until the phone is idle, sends the new login with the same password, then
+switches the existing endpoint after it receives an authenticated SIP
+registration. Manually configured logins and older saved account names keep
+their credentials. A name already reserved by another route appears in
+Home Assistant Repairs. Assign a unique name in the ESPHome configuration.
+If older firmware cannot use the exact name or identify which name it should
+use, Repairs asks for a firmware update. An enrolled phone can keep using its
+old login while it waits. If you later roll Home Assistant back to a version
+that only accepts simple SIP usernames, restore the matching pre-upgrade
+backup as well. That version cannot load a saved login containing spaces.
+
+### Configuring a manual account
+
 For a conventional PBX, configure a manual account as below. It does not require
 HA provisioning. With automatic HA enrollment enabled, leave one capacity slot
 for `ha` and use a different account ID for each manual line. The default capacity

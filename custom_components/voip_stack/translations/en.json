@@ -1065,6 +1065,14 @@
       "title": "LDAP directory unavailable",
       "description": "The {service} listener on port {port} could not start. Check the address, port and certificate paths in LDAP directory settings, then save to retry. SIP continues to run and phones retain their previous directory."
     },
+    "esphome_account_firmware": {
+      "title": "Update the ESPHome phone firmware",
+      "description": "Update the VoIP firmware on {phone}. Its current version cannot reliably use the configured ESPHome name as a SIP username. Home Assistant will retry enrollment when the phone reconnects."
+    },
+    "esphome_account_name": {
+      "title": "Check the ESPHome SIP username",
+      "description": "The ESPHome name selected for the SIP account on {phone} exceeds the supported length or contains unsupported characters. Update the name in the ESPHome configuration and reinstall the firmware."
+    },
     "esphome_endpoint_collision": {
       "title": "ESPHome phone identity conflict",
       "description": "The ESPHome phone {phone} could not be restored because its {field} ({value}) is already owned by another phone. Other phones remain available. Open the device page to review its name or routing identity. No identifiers or credentials were changed."

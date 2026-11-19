@@ -17,6 +17,20 @@ ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX = "esphome_endpoint_collision_"
 _PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
 
 
+def async_sync_esphome_account_name_issue(hass, device_id, *, name="", error=None) -> None:
+    """Clear the enrollment issue once this ESP can supply its SIP username."""
+    issue_id = f"esphome_account_name_{device_id}"
+    if error is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    placeholders = {"phone": str(name)}
+    if error.value is not None:
+        placeholders.update(field="username", value=error.value)
+    ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.WARNING, translation_key=error.issue, translation_placeholders=placeholders,
+        learn_more_url=f"/config/devices/device/{device_id}")
+
+
 def async_sync_esphome_endpoint_collision_issue(hass, device_id, *, name="", error=None) -> None:
     """Expose one rejected native identity without rewriting either owner."""
     issue_id = f"{ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX}{device_id}"

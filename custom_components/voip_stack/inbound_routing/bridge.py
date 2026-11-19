@@ -63,7 +63,7 @@ from ..pending_sip_destination import RetainedSourceMedia
 from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts, sip_trunk
 from ..trunk_signaling import reuse_registered_trunk_flow
-from ..core.sip import parse_sip_uri, sip_default_port, sip_endpoints_equal, sip_uri_targets_listener
+from ..core.sip import SipUri, parse_sip_uri, sip_default_port, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
     bridge_source_audio,
     build_pending_invite_video_relay,
@@ -134,9 +134,7 @@ def _resolve_bridge_uri(
             or (decision.entry.metadata or {}).get("sip_port")
             or default_sip_port
         )
-        bridge_uri = parse_sip_uri(
-            f"sip:{decision.entry.id}@{decision.entry.address}:{bridge_port}"
-        )
+        bridge_uri = SipUri(decision.entry.id, decision.entry.address, bridge_port)
     return (
         bridge_uri or (parse_sip_uri(decision.sip_uri) if decision.sip_uri else None),
         peer_target,

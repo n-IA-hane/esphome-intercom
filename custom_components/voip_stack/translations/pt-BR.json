@@ -1065,6 +1065,14 @@
       "description": "O serviço de escuta {service} na porta {port} não pôde ser iniciado. Verifique o endereço, a porta e os caminhos dos certificados nas configurações do diretório LDAP e salve para tentar novamente. O SIP continua funcionando e os telefones mantêm o diretório anterior.",
       "title": "Diretório LDAP indisponível"
     },
+    "esphome_account_firmware": {
+      "title": "Atualize o firmware do telefone ESPHome",
+      "description": "Atualize o firmware VoIP de {phone}. A versão atual não consegue usar com segurança o nome configurado no ESPHome como nome de usuário SIP. O Home Assistant tentará novamente quando o telefone se reconectar."
+    },
+    "esphome_account_name": {
+      "title": "Verifique o nome de usuário SIP do ESPHome",
+      "description": "O nome do ESPHome selecionado para a conta SIP de {phone} excede o comprimento permitido ou contém caracteres incompatíveis. Altere o nome na configuração do ESPHome e reinstale o firmware."
+    },
     "esphome_endpoint_collision": {
       "title": "Conflito de identidade do telefone ESPHome",
       "description": "O telefone ESPHome {phone} não pôde ser restaurado porque o campo {field} ({value}) já é usado por outro telefone. Os outros telefones continuam disponíveis. Abra a página do dispositivo para verificar seu nome ou a identidade usada para encaminhar chamadas. Os identificadores e as credenciais não foram alterados."

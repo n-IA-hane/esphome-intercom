@@ -6,6 +6,7 @@ from copy import deepcopy
 import hashlib
 from pathlib import PurePosixPath
 import re
+from urllib.parse import quote
 from xml.etree import ElementTree
 
 from jinja2 import DictLoader, StrictUndefined
@@ -65,7 +66,12 @@ def _key_target(runtime, key, endpoint_id):
         return [""]
     endpoint = runtime.endpoints.resolve(target)
     if endpoint is not None:
-        return [str(value) for value in (endpoint.extension, endpoint.sip_uri_user, endpoint.name) if value]
+        # A handset key sends the SIP URI user. Names containing spaces or
+        # vendor delimiters must be escaped before checking the slot byte limit.
+        targets = [endpoint.extension] if endpoint.extension else []
+        targets.extend(quote(value, safe="+*") for value in
+                       (endpoint.sip_uri_user, endpoint.name) if value)
+        return targets
     if function == "speed_dial" and re.fullmatch(r"[+*#0-9]{1,64}", target):
         return [target]
     raise ValueError("invalid_phone_key_target")

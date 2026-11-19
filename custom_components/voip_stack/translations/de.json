@@ -1065,6 +1065,14 @@
       "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Prüfen Sie Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses und speichern Sie diese, um es erneut zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
       "title": "LDAP-Verzeichnis nicht verfügbar"
     },
+    "esphome_account_firmware": {
+      "title": "Firmware des ESPHome-Telefons aktualisieren",
+      "description": "Aktualisiere die VoIP-Firmware von {phone}. Die aktuelle Version kann den konfigurierten ESPHome-Namen nicht zuverlässig als SIP-Benutzernamen verwenden. Home Assistant versucht es nach der nächsten Verbindung erneut."
+    },
+    "esphome_account_name": {
+      "title": "ESPHome-SIP-Benutzernamen prüfen",
+      "description": "Der ausgewählte ESPHome-Name für das SIP-Konto von {phone} ist zu lang oder enthält nicht unterstützte Zeichen. Ändere den Namen in der ESPHome-Konfiguration und installiere die Firmware erneut."
+    },
     "esphome_endpoint_collision": {
       "title": "Identitätskonflikt beim ESPHome-Telefon",
       "description": "Das ESPHome-Telefon {phone} kann nicht wiederhergestellt werden, weil sein Feld {field} ({value}) bereits von einem anderen Telefon verwendet wird. Andere Telefone bleiben erreichbar. Öffne die Geräteseite, um den Namen oder die für die Anrufweiterleitung verwendete Identität zu prüfen. Kennungen und Zugangsdaten wurden nicht geändert."

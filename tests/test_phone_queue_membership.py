@@ -31,7 +31,7 @@ def test_queue_declarations_reject_unbounded_or_ambiguous_names(value):
 def test_managed_queue_record_is_serializable_and_never_changes_sip_account():
     managed = _load("managed_phones")
     phone = managed.ManagedPhone(device_id="esp", origin_entry_id="native",
-        mac="84c7bb000001", password="test-password", queues="Support, 700")
+        mac="84c7bb000001", username="phone", password="test-password", queues="Support, 700")
     assert phone.record()["queues"] == ["Support", "700"]
     assert not hasattr(phone.account(), "queues")
     assert managed.ManagedPhone(**phone.record()) == phone
