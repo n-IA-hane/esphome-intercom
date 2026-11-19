@@ -51,6 +51,7 @@ def restore_esp_identities(hass, runtime):
     """Rebuild physical identities from their existing HA owners, even offline."""
     from homeassistant.helpers import device_registry as dr, entity_registry as er
     from .device_resolver import entity_role
+    from .endpoint_device import account_device_id_for_endpoint
     from .managed_phones import managed_records
     from .phone_config import esphome_phone_policy
     from .store import config_entry
@@ -92,6 +93,7 @@ def restore_esp_identities(hass, runtime):
             fields[field] = str(value).casefold() in {"on", "true", "1"} if field == "conference_ring" else str(value)
         endpoint_id = phone.endpoint_id if phone is not None else f"esphome:{device.id}"
         candidate = PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
+            account_device_id=account_device_id_for_endpoint(hass, entry, endpoint_id) if phone else "",
             name=(device.name_by_user or (phone.display_name if phone is not None else "")
                   or device.name or origin.title or (phone.username if phone is not None else "ESPHome")),
             username=phone.username if phone is not None else str(origin.data.get("device_name") or ""),

@@ -35,11 +35,12 @@ async def logical_browser(trunks, registered_phones, request, monkeypatch):
     from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
 
     entry = config_entry(trunks.hass)
-    timeout = getattr(request, "param", {}).get("ringing_timeout", 1)
+    settings = getattr(request, "param", {})
+    timeout = settings.get("ringing_timeout", 1)
     subentry = ConfigSubentry(
         subentry_type="phone", title="Casa", unique_id="phone:casa",
         data={
-            "endpoint_id": "casa", "name": "Casa", "extension": "221",
+            "endpoint_id": "casa", "name": "Casa", "extension": settings.get("extension", "221"),
             "kind": "browser", "enabled": True,
             "call_policy": {
                 "unavailable": {"kind": "contact", "target": "transfer_b"},
@@ -266,14 +267,14 @@ async def test_disabled_browser_rejects_without_using_phone_policy(
 @pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 3}], indirect=True)
 @pytest.mark.parametrize("transport", ["udp", "tcp"])
 async def test_late_card_can_publicly_answer_and_cancel_noanswer(
-    logical_browser, registered_phones, hass_ws_client, transport,
+    logical_browser, registered_phones, hass_ws_client, transport, dial_target="221",
 ):
     lab = logical_browser
     caller, unavailable, noanswer = registered_phones
     client = await open_browser_ws(lab, hass_ws_client)
     try:
         assert (await browser_snapshot(client))["connected_cards"] == 0
-        target = f'sip:221@127.0.0.1:{lab.runtime.transport_config["sip_port"]};transport={transport}'
+        target = f'sip:{dial_target}@127.0.0.1:{lab.runtime.transport_config["sip_port"]};transport={transport}'
         await asyncio.to_thread(caller.command, f"/dial {target}")
         async with asyncio.timeout(3):
             while (phone := await public_phone(lab))["state"] != "ringing":

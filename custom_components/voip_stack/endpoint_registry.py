@@ -393,6 +393,9 @@ class EndpointRegistry:
         self._validate_index_value(
             endpoint, "device_id", endpoint.device_id, self._device_index, replacing_key
         )
+        self._validate_index_value(
+            endpoint, "account_device_id", endpoint.account_device_id, self._device_index, replacing_key
+        )
         for entity_id in endpoint.entity_ids:
             self._validate_index_value(
                 endpoint, "entity_id", entity_id, self._entity_index, replacing_key
@@ -484,6 +487,7 @@ class EndpointRegistry:
         self._route_index.clear()
         for endpoint_key, endpoint in self._endpoints.items():
             self._add_index(self._device_index, endpoint.device_id, endpoint_key)
+            self._add_index(self._device_index, endpoint.account_device_id, endpoint_key)
             for entity_id in endpoint.entity_ids:
                 self._add_index(self._entity_index, entity_id, endpoint_key)
             self._add_index(self._name_index, endpoint.name, endpoint_key)

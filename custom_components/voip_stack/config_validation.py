@@ -188,10 +188,9 @@ def entry_route_mappings(
             subentry.data for subentry in entry.subentries.values()
             if subentry.subentry_type in {"group", "paging"} and subentry.subentry_id != exclude_subentry_id
         )
-        if data.get("managed_esphome_phones"):
-            from .managed_phones import managed_route_mappings
+        from .managed_phones import managed_route_mappings
 
-            mappings.extend(item for item in managed_route_mappings(entry) if item["id"] not in excluded)
+        mappings.extend(item for item in managed_route_mappings(entry) if item["id"] not in excluded)
     runtime = getattr(entry, "runtime_data", None) if entry is not None else None
     registry = getattr(runtime, "endpoints", None)
     endpoints = getattr(registry, "endpoints", ())

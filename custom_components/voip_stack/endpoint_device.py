@@ -1,10 +1,4 @@
-"""Home Assistant device helpers for logical phone endpoints.
-
-VoIP Stack owns virtual browser and registrar-account phones, so those are
-represented by ``DeviceEntryType.SERVICE`` devices.  ESPHome phones already
-have a physical device owned by the ESPHome config entry; this module only
-resolves that device and deliberately never adopts or mutates it.
-"""
+"""Native Home Assistant service devices for VoIP Stack phone accounts."""
 
 from __future__ import annotations
 
@@ -37,12 +31,20 @@ def enum_value(value: object) -> str:
 
 def is_managed_endpoint(endpoint: PhoneEndpoint) -> bool:
     """Return whether VoIP Stack owns the endpoint's HA device."""
-    return enum_value(endpoint.kind) in MANAGED_ENDPOINT_KINDS
+    return enum_value(endpoint.kind) in MANAGED_ENDPOINT_KINDS or bool(endpoint.account_device_id)
 
 
 def endpoint_device_identifier(endpoint_id: str) -> str:
     """Return the stable Device Registry identifier for a logical phone."""
     return f"{ENDPOINT_DEVICE_PREFIX}{str(endpoint_id).strip()}"
+
+
+def account_device_id_for_endpoint(hass: HomeAssistant, entry: ConfigEntry, endpoint_id: str) -> str:
+    """Recover an account's native service device when rebuilding an offline ESP endpoint."""
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, endpoint_device_identifier(endpoint_id)), entry.entry_id
+    )
+    return device.id if device is not None else ""
 
 
 def endpoint_config_subentry_id(
@@ -56,30 +58,33 @@ def endpoint_config_subentry_id(
     return registry.subentry_ids.get(str(endpoint_id or "").strip())
 
 
-def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
-    """Return DeviceInfo for integration-owned phones only.
-
-    Returning ``None`` for ESPHome endpoints is intentional.  Supplying its
-    identifiers from this integration would make Home Assistant add the VoIP
-    Stack config entry to the ESPHome-owned device.
-    """
-    if not is_managed_endpoint(endpoint):
-        return None
-    model = SIP_ACCOUNT_DEVICE_MODEL
+def account_device_info(endpoint_id: str, name: str, *, hardware_device_id: str = "") -> DeviceInfo:
+    """Use the same stable service identity for every SIP line."""
     info = DeviceInfo(
-        identifiers={(DOMAIN, endpoint_device_identifier(endpoint.endpoint_id))},
-        name=endpoint.name,
+        identifiers={(DOMAIN, endpoint_device_identifier(endpoint_id))},
+        name=name,
         manufacturer="VoIP Stack",
-        model=model,
+        model=SIP_ACCOUNT_DEVICE_MODEL,
+        model_id="esphome_sip_account" if hardware_device_id else "sip_account",
         sw_version=INTEGRATION_VERSION,
         entry_type=DeviceEntryType.SERVICE,
     )
-    if endpoint.supports_ha_client:
+    if hardware_device_id:
+        info["configuration_url"] = f"homeassistant://config/devices/device/{quote(hardware_device_id, safe='')}"
+    else:
         info["configuration_url"] = (
             "homeassistant://voip-stack-popup?endpoint_id="
-            f"{quote(endpoint.endpoint_id, safe='')}"
+            f"{quote(endpoint_id, safe='')}"
         )
     return info
+
+
+def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
+    """Associate PBX entities with the SIP account service device, when present."""
+    if not is_managed_endpoint(endpoint):
+        return None
+    return account_device_info(endpoint.endpoint_id, endpoint.name,
+                               hardware_device_id=endpoint.device_id if endpoint.account_device_id else "")
 
 
 @callback
@@ -91,9 +96,8 @@ def async_ensure_endpoint_device(
 ) -> DeviceEntry | None:
     """Resolve or create the HA device for ``endpoint``.
 
-    ESPHome devices are returned by their existing Device Registry ID and are
-    never passed to ``async_get_or_create``.  This keeps ownership with the
-    ESPHome config entry and avoids unsupported cross-integration merging.
+    A direct ESPHome phone has only its hardware device. For a managed phone
+    the PBX service device and the ESPHome hardware retain separate owners.
     """
     device_registry = dr.async_get(hass)
     if not is_managed_endpoint(endpoint):
@@ -109,7 +113,7 @@ def async_ensure_endpoint_device(
         ),
         **info,
     )
-    if registry is not None and str(getattr(endpoint, "device_id", "") or "") != device.id:
+    if registry is not None and not endpoint.account_device_id and endpoint.device_id != device.id:
         registry.update(endpoint.endpoint_id, device_id=device.id)
     return device
 

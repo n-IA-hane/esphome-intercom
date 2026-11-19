@@ -1499,8 +1499,10 @@ def _ha_softphone_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 
 async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
+    from homeassistant.helpers import entity_registry as er
     from .mailbox import mailbox_snapshot
     from .device_resolver import get_resolver
+    from .endpoint_device import account_device_id_for_endpoint
     from .phone_config import esphome_phone_policy
     from .repairs import async_sync_esphome_action_issue
     from .store import config_entry
@@ -1526,6 +1528,14 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             for value in (device.get("capabilities") or ("audio", "dtmf"))
             if str(value).strip()
         )
+        account_device_id = previous.account_device_id if previous else ""
+        if not account_device_id and entry is not None and device.get("endpoint_id"):
+            account_device_id = account_device_id_for_endpoint(hass, entry, endpoint_id)
+        entity_ids = {value for value in (device.get("entities") or {}).values()
+                      if isinstance(value, str) and "." in value}
+        if account_device_id:
+            entity_ids.update(row.entity_id for row in er.async_entries_for_device(
+                er.async_get(hass), account_device_id))
         endpoint = PhoneEndpoint(
             endpoint_id=endpoint_id,
             name=name,
@@ -1533,11 +1543,8 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             extension=str(device.get("extension") or ""),
             username=str(device.get("endpoint_username") or device.get("sip_uri_user") or ""),
             device_id=device_id,
-            entity_ids=frozenset(
-                str(value)
-                for value in (device.get("entities") or {}).values()
-                if isinstance(value, str) and "." in value
-            ),
+            account_device_id=account_device_id,
+            entity_ids=frozenset(entity_ids),
             availability=(EndpointAvailability.AVAILABLE
                           if device_is_phonebook_available(hass, device)
                           else EndpointAvailability.OFFLINE),

@@ -58,8 +58,9 @@ async def test_canonical_account_presence_is_not_its_availability(canonical_brow
 
 
 @pytest.mark.parametrize('trunks', [True], indirect=True)
-@pytest.mark.parametrize('logical_browser', [{'ringing_timeout': 3}], indirect=True)
-@pytest.mark.parametrize('transport', ['udp', 'tcp'])
+@pytest.mark.parametrize('logical_browser', [{'ringing_timeout': 3, 'extension': '101'}], indirect=True)
+@pytest.mark.parametrize(('transport', 'dial_target'), [('udp', 'Casa'), ('tcp', '101')])
 async def test_canonical_late_card_answers_same_call_and_cancels_fallback(
-        canonical_browser, registered_phones, hass_ws_client, transport):
-    await late_answer(canonical_browser, registered_phones, hass_ws_client, transport)
+        canonical_browser, registered_phones, hass_ws_client, transport, dial_target):
+    assert canonical_browser.browser_subentry.data["username"] == "Casa"
+    await late_answer(canonical_browser, registered_phones, hass_ws_client, transport, dial_target)

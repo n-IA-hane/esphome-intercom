@@ -91,6 +91,8 @@ class EndpointEntityManager(Generic[_EntityT]):
         if endpoint.endpoint_id in self.registry.pending_removals:
             return False
         subentry_id = self._subentry_id(endpoint.endpoint_id)
+        if endpoint.account_device_id and not subentry_id:
+            return False
         subentries = getattr(self.entry, "subentries", None)
         return not (subentry_id and subentries is not None and subentry_id not in subentries)
 

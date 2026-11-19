@@ -422,8 +422,7 @@
             "voicemail_enabled": "Ativar caixa postal",
             "physical_bindings": "Telefones físicos associados",
             "auto_answer": "Atender automaticamente no navegador",
-            "send_video": "Enviar vídeo do navegador",
-            "migration_bindings": "Associações HA herdadas"
+            "send_video": "Enviar vídeo do navegador"
           },
           "data_description": {
             "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia.",
@@ -450,7 +449,9 @@
       "abort": {
         "reconfigure_successful": "Telefone reconfigurado com sucesso.",
         "already_configured": "Este telefone já existe.",
-        "phone_configured": "Conta SIP configurada."
+        "phone_configured": "Conta SIP configurada.",
+        "managed_esphome_account": "O VoIP Stack criou esta conta automaticamente para o [dispositivo ESPHome](/config/devices/device/{device_id}). O nome de usuário SIP aparece abaixo. Excluir a conta revoga o acesso. Adicionar o dispositivo novamente ao ESPHome cria uma nova conta.\n\n    {username}",
+        "managed_esphome_missing": "Esta conta SIP não está mais associada ao dispositivo ESPHome."
       }
     },
     "contact": {

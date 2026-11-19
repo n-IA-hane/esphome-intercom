@@ -128,13 +128,14 @@ async def test_setup_entry_provisions_device_name_on_existing_native_owner(phone
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start)
     assert await voip_stack.async_setup_entry(lab.hass, lab.entry)
     await lab.hass.async_block_till_done(wait_background_tasks=True)
-    records = lab.entry.data.get("managed_esphome_phones", {})
-    assert len(records) == 1
-    assert records[lab.device.id]["username"] == "Ingresso"
+    account = phone_subentry(lab)
+    assert list(lab.entry.subentries) == [account.subentry_id]
+    assert account.data["username"] == "Ingresso" and "managed_esphome_phones" not in lab.entry.data
     assert [name for name, _data in lab.sent] == [
         "set_ha_display_name", "set_account", "register_account"]
     assert lab.events == []
-    assert len(dr.async_get(lab.hass).devices) == 1
+    assert len(dr.async_get(lab.hass).devices) == 2
+    account_service_device(lab)
 
 
 @pytest.fixture
@@ -149,6 +150,26 @@ async def managed(phone_lab):
 def phone_record(lab):
     from custom_components.voip_stack.managed_phones import managed_records
     return managed_records(lab.entry)[lab.device.id]
+
+
+def phone_subentry(lab):
+    from custom_components.voip_stack.managed_phones import managed_account_subentries
+    return managed_account_subentries(lab.entry)[lab.device.id]
+
+
+def account_service_device(lab):
+    phone = phone_record(lab)
+    devices = dr.async_get(lab.hass)
+    service = devices.async_get_device_by_identifier(
+        ("voip_stack", "phone_endpoint:" + phone.endpoint_id), lab.entry.entry_id)
+    hardware = devices.async_get(lab.device.id)
+    assert service and hardware and service.id != hardware.id
+    assert hardware.config_entry_id == phone.origin_entry_id and hardware.config_subentry_id is None
+    assert service.config_subentry_id == phone_subentry(lab).subentry_id
+    assert service.entry_type is dr.DeviceEntryType.SERVICE and service.model == "SIP account"
+    assert service.configuration_url == f"homeassistant://config/devices/device/{hardware.id}"
+    assert not service.connections
+    return service
 
 
 async def test_provisioning_state_listener_is_indexed_and_tracks_registry_changes(managed, monkeypatch):
@@ -270,13 +291,15 @@ async def test_identity_idempotence_secret_boundaries_and_sip_readiness(managed,
     diagnostics = await async_get_config_entry_diagnostics(lab.hass, lab.entry)
     for public in (device, diagnostics, lab.events, caplog.text, repr(phone)):
         assert phone.password not in str(public)
-    assert len(dr.async_get(lab.hass).devices) == 1
+    assert len(dr.async_get(lab.hass).devices) == 2
+    account_service_device(lab)
 
 
 async def test_name_node_and_address_changes_keep_commissioned_credential_and_endpoint(managed):
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
+    subentry_id = phone_subentry(lab).subentry_id
     dr.async_get(lab.hass).async_update_device(lab.device.id, name_by_user="Camera")
     lab.native.runtime_data.device_info = replace(lab.native.runtime_data.device_info, name="renamed_node")
     lab.hass.config_entries.async_update_entry(lab.native, data={**lab.native.data, "host": "127.0.0.3"})
@@ -284,9 +307,104 @@ async def test_name_node_and_address_changes_keep_commissioned_credential_and_en
     renamed = phone_record(lab)
     assert renamed.username == phone.username and renamed.password == phone.password
     assert renamed.endpoint_id == phone.endpoint_id
+    account = phone_subentry(lab)
+    assert account.subentry_id == subentry_id and account.title == "Camera"
+    assert account_service_device(lab).name == "Camera"
     assert renamed.route_id == "renamed_node" and renamed.api_host == "127.0.0.3"
     assert lab.sent[3:] == [("set_ha_display_name", {"name": "Camera"})]
     assert len(lab.runtime.endpoints.endpoints) == 1
+
+
+async def test_managed_account_in_native_list_links_to_device_and_delete_revokes_login(managed, hass_ws_client):
+    from homeassistant.components import websocket_api
+    from homeassistant.components.config import config_entries
+    from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
+    from custom_components.voip_stack.phone_config import phone_subentries
+    from custom_components.voip_stack.store import sip_accounts
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    lab = managed
+    client = await hass_ws_client(lab.hass)
+    lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "lovelace", "media_source",
+                                       "network", "stream", "web_rtc", "stt", "tts"})
+    prepare_frontend_dependency(lab.hass)
+    websocket_api.async_register_command(lab.hass, config_entries.config_subentry_list)
+    websocket_api.async_register_command(lab.hass, config_entries.config_subentry_delete)
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    phone = phone_record(lab)
+    row = phone_subentry(lab)
+    await client.send_json({"id": 1, "type": "config_entries/subentries/list", "entry_id": lab.entry.entry_id})
+    response = await client.receive_json()
+    assert response["success"] and response["result"] == [{
+        "subentry_id": row.subentry_id, "subentry_type": "phone", "title": "Ingresso", "unique_id": row.unique_id}]
+    assert row.unique_id == "phone:" + phone.endpoint_id
+    assert row.data["kind"] == "esphome" and row.data["device_id"] == lab.device.id
+    assert (row.data["username"], row.data["password"]) == (phone.username, phone.password)
+    assert "endpoint_id" not in row.data and "account_subentry_id" not in row.data
+    assert "managed_esphome_phones" not in lab.entry.data
+    assert phone.password not in str(response)
+    assert not phone_subentries(lab.entry)
+    service = account_service_device(lab)
+    assert len(dr.async_get(lab.hass).devices) == 2
+    result = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
+        context={"source": "reconfigure", "subentry_id": row.subentry_id})
+    assert result["reason"] == "managed_esphome_account"
+    assert result["description_placeholders"] == {"device_id": lab.device.id, "username": phone.username}
+    await bind_account(lab, phone)
+    await client.send_json({"id": 2, "type": "config_entries/subentries/delete", "entry_id": lab.entry.entry_id,
+                            "subentry_id": row.subentry_id})
+    assert (await client.receive_json())["success"]
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert dr.async_get(lab.hass).async_get(service.id) is None
+    assert not sip_accounts(lab.hass) and not lab.registrar.registrations
+    assert not lab.runtime.endpoints.endpoints and not lab.entry.subentries
+    assert "managed_esphome_phones" not in lab.entry.data
+    await lab.controller.async_close()
+    lab.runtime.phone_provisioning = EspHomeProvisioner(lab.hass, lab.entry)
+    await lab.runtime.phone_provisioning.async_sync()
+    assert not lab.entry.subentries and not lab.registrar.accounts
+    assert dr.async_get(lab.hass).async_get(lab.device.id).config_entry_id == lab.native.entry_id
+
+
+async def test_deleted_account_stays_revoked_if_provisioner_was_stopped(managed):
+    from custom_components.voip_stack.esphome_provisioning import EspHomeProvisioner
+    from custom_components.voip_stack.store import sip_accounts
+
+    lab = managed
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    account = phone_subentry(lab)
+    phone = phone_record(lab)
+    await bind_account(lab, phone)
+    await lab.controller.async_close()
+    lab.hass.config_entries.async_remove_subentry(lab.entry, account.subentry_id)
+    assert not sip_accounts(lab.hass)
+    lab.controller = EspHomeProvisioner(lab.hass, lab.entry)
+    lab.runtime.phone_provisioning = lab.controller
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert not lab.entry.subentries and not lab.registrar.accounts
+    assert not lab.registrar.registered_contacts(phone.username)
+    assert not lab.runtime.endpoints.endpoints and len(lab.sent) == 3
+
+
+async def test_old_offline_managed_account_migrates_to_native_subentry_without_rotating_login(managed):
+    lab = managed
+    lab.native.runtime_data.available = False
+    old = {"origin_entry_id": lab.native.entry_id, "device_id": lab.device.id, "mac": "84c7bb000001",
+           "username": "esp_84c7bb000001", "password": "retained-test-login", "display_name": "Ingresso"}
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "managed_esphome_phones": {lab.device.id: old}})
+    await lab.controller.async_sync()
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    assert phone.password == old["password"] and phone.username == old["username"]
+    row = phone_subentry(lab)
+    assert list(lab.entry.subentries) == [row.subentry_id] and not lab.sent
+    account_service_device(lab)
+    assert row.unique_id == "phone:" + phone.endpoint_id and row.data["password"] == old["password"]
+    assert "managed_esphome_phones" not in lab.entry.data
 
 
 @pytest.mark.parametrize("mode", ["incomplete", "wrong-mac", "legacy", "no-register-action"])
@@ -302,7 +420,7 @@ async def test_only_complete_mac_verified_real_native_actions_enroll(managed, mo
     else:
         native.services = {key: service for key, service in native.services.items() if service.name != "register_account"}
     await lab.controller.async_sync()
-    assert not lab.entry.data.get("managed_esphome_phones")
+    assert not lab.entry.subentries
     assert not lab.registrar.accounts and not lab.sent
 
 
@@ -313,7 +431,7 @@ async def test_manual_account_collision_is_rejected_without_partial_owner(manage
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": [
         {"username": "ingresso", "password": "manual-fixture-only", "name": "Manual QA"}]})
     await lab.controller.async_sync()
-    assert not lab.entry.data.get("managed_esphome_phones") and not lab.sent
+    assert not lab.entry.subentries and not lab.sent
     assert not lab.runtime.endpoints.endpoints
     assert "manual-fixture-only" not in caplog.text
     issues = ir.async_get(lab.hass)
@@ -679,7 +797,8 @@ async def test_managed_physical_peer_and_contact_have_one_roster_identity(manage
     phones = [entry for entry in entries if entry.metadata.get("endpoint_id") == phone.endpoint_id]
     assert len(phones) == 1
     assert phones[0].id == phone.username and phones[0].sip_uri.startswith(f"sip:{phone.username}@")
-    assert len(dr.async_get(lab.hass).devices) == 1
+    assert len(dr.async_get(lab.hass).devices) == 2
+    account_service_device(lab)
 
 
 async def test_restart_keeps_credential_and_replays_only_on_current_native_owner(managed):
@@ -894,7 +1013,7 @@ async def test_permanent_removal_drains_calls_subscriptions_and_media_before_for
     assert not calls.sessions and not lab.runtime.endpoints.endpoints
     assert not methods.subscriptions and not methods.notifiers
     assert notify_cancelled.is_set()
-    assert not lab.entry.data.get("managed_esphome_phones")
+    assert not lab.entry.subentries
     assert not lab.entry.data.get("esphome_mailboxes")
     assert not lab.registrar.accounts and not lab.registrar.registrations
     assert not any(path.exists() for path in files)
@@ -915,11 +1034,12 @@ async def test_removal_during_api_await_cannot_resurrect_account(managed):
     lab.gate.release.set()
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert [name for name, _data in lab.sent] == ["set_ha_display_name"]
-    assert not lab.entry.data.get("managed_esphome_phones") and not lab.runtime.endpoints.endpoints
+    assert not lab.entry.subentries and not lab.runtime.endpoints.endpoints
 
 
-@pytest.mark.parametrize("inflight", [False, True], ids=["after-cleanup", "during-old-rpc"])
-async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_login(managed, inflight):
+@pytest.mark.parametrize(("inflight", "delete_account"), [(False, False), (True, False), (False, True)],
+                         ids=["after-cleanup", "during-old-rpc", "after-native-account-deletion"])
+async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_login(managed, inflight, delete_account):
     lab = managed
     native = lab.native.runtime_data
     legacy = "esp_84c7bb000001"
@@ -932,8 +1052,15 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     lab.controller.start()
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     original = phone_record(lab)
+    original_account = phone_subentry(lab)
+    original_service = account_service_device(lab)
     assert original.username == legacy
     await bind_account(lab, original)
+    if delete_account:
+        lab.hass.config_entries.async_remove_subentry(lab.entry, original_account.subentry_id)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert not lab.registrar.accounts and not lab.entry.subentries
+        assert dr.async_get(lab.hass).async_get(original_service.id) is None
     if inflight:
         lab.gate.entered, lab.gate.release = asyncio.Event(), asyncio.Event()
         native.services = dict(native.services)
@@ -943,7 +1070,7 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     assert await lab.hass.config_entries.async_remove(lab.native.entry_id)
     if not inflight:
         await lab.hass.async_block_till_done(wait_background_tasks=True)
-        assert not lab.entry.data.get("managed_esphome_phones") and not lab.registrar.accounts
+        assert not lab.entry.subentries and not lab.registrar.accounts
 
     new = MockConfigEntry(domain="esphome", title="Waveshare S3 Audio", data=dict(lab.native.data))
     new.add_to_hass(lab.hass)
@@ -963,6 +1090,14 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     phone = phone_record(lab)
     assert phone.endpoint_id == original.endpoint_id and phone.origin_entry_id == new.entry_id
     assert phone.username == new.title and phone.password != original.password
+    account = phone_subentry(lab)
+    service = account_service_device(lab)
+    assert len(dr.async_get(lab.hass).devices) == 2
+    assert lab.runtime.endpoints.by_device_id(service.id) is lab.runtime.endpoints.by_device_id(restored.id)
+    assert account.subentry_id != original_account.subentry_id
+    assert account.unique_id == original_account.unique_id
+    assert list(lab.entry.subentries) == [account.subentry_id]
+    assert "managed_esphome_phones" not in lab.entry.data
     assert len(lab.sent) == old_rpc_count
     assert [a.username for a in lab.registrar.accounts.values()] == [new.title]
     assert not lab.registrar.registered_contacts(legacy)

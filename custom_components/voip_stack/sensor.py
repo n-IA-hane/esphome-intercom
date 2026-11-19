@@ -150,6 +150,14 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
         from .websocket_api import CALL_EVENT, _ha_softphone_state
 
         await super().async_added_to_hass()
+        if self.endpoint.account_device_id:
+            from .phone_state import phone_state_observer
+
+            observer = phone_state_observer(self.hass)
+            self.async_on_remove(observer.subscribe(self._on_managed_phone_state))
+            if phone := observer.previous.get(self.endpoint.endpoint_id):
+                self._apply_managed_phone_state(phone)
+            return
         runtime = runtime_data(self.hass)
         if (self.endpoint.supports_ha_client and runtime is not None
                 and runtime.endpoints is self.registry):
@@ -159,6 +167,21 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
         self.async_on_remove(
             self.hass.bus.async_listen(CALL_EVENT, self._on_call_event)
         )
+
+    @callback
+    def _on_managed_phone_state(self, update, context):
+        if update["endpoint_id"] == self.endpoint.endpoint_id and (phone := update["phone"]):
+            self._apply_managed_phone_state(phone)
+            if context is not None:
+                self.async_set_context(context)
+            self.async_write_ha_state()
+
+    def _apply_managed_phone_state(self, phone):
+        """Show the same PBX call state used for the line's BLF and monitor."""
+        self._attr_native_value = "offline" if phone["state"] == "unavailable" else phone["state"]
+        calls = phone["calls"]
+        self._attr_extra_state_attributes = endpoint_call_state_attributes(
+            self.endpoint, calls[0] if len(calls) == 1 else {})
 
     @staticmethod
     def _idle_state(endpoint) -> str:
@@ -172,6 +195,8 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
     @callback
     def apply_endpoint(self, endpoint) -> None:
         super().apply_endpoint(endpoint)
+        if endpoint.account_device_id:
+            return
         if not endpoint.active_call_id or self._attr_native_value in {
             "idle",
             "offline",

@@ -141,7 +141,8 @@ async def async_resolve_source_device(
     if not source:
         return None
     devices = await _get_voip_devices(hass)
-    wanted = source.lower()
+    endpoint = _registry_endpoint(hass, source)
+    wanted = (endpoint.device_id if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME else source).lower()
     for device in devices:
         if (
             str(device.get("device_id") or "").lower() == wanted
@@ -153,7 +154,6 @@ async def async_resolve_source_device(
 
     # The registry keeps the ESP identity while its live endpoint is missing.
     # Do not pass that physical phone to the browser adapter.
-    endpoint = _registry_endpoint(hass, source)
     if endpoint is not None and getattr(endpoint, "kind", None) is EndpointKind.ESPHOME:
         name = str(getattr(endpoint, "name", "") or "ESPHome phone")
         raise ServiceValidationError(

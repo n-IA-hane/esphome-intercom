@@ -100,7 +100,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         result = {}
         for identity in identities:
             endpoint = endpoints.get(identity) if endpoints is not None else None
-            device = devices.async_get(endpoint.device_id) if endpoint and endpoint.device_id else None
+            device_id = (endpoint.account_device_id or endpoint.device_id) if endpoint else ""
+            device = devices.async_get(device_id) if device_id else None
             if device is None:
                 device = devices.async_get_device_by_identifier((DOMAIN, endpoint_device_identifier(identity)), entry.entry_id)
             if device is not None and not device.disabled_by:

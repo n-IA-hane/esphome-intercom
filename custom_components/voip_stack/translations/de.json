@@ -422,8 +422,7 @@
             "voicemail_enabled": "Mailbox aktivieren",
             "physical_bindings": "Zugeordnete physische Telefone",
             "auto_answer": "Automatische Annahme im Browser",
-            "send_video": "Video aus dem Browser senden",
-            "migration_bindings": "Übernommene HA-Zuordnungen"
+            "send_video": "Video aus dem Browser senden"
           },
           "data_description": {
             "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox.",
@@ -450,7 +449,9 @@
       "abort": {
         "reconfigure_successful": "Telefon erfolgreich neu konfiguriert.",
         "already_configured": "Dieses Telefon existiert bereits.",
-        "phone_configured": "SIP-Konto konfiguriert."
+        "phone_configured": "SIP-Konto konfiguriert.",
+        "managed_esphome_account": "VoIP Stack hat dieses Konto automatisch für das [ESPHome-Gerät](/config/devices/device/{device_id}) erstellt. Der SIP-Benutzername steht unten. Das Löschen des Kontos entzieht den Zugang. Wenn du das Gerät erneut zu ESPHome hinzufügst, wird ein neues Konto erstellt.\n\n    {username}",
+        "managed_esphome_missing": "Dieses SIP-Konto gehört nicht mehr zum ESPHome-Gerät."
       }
     },
     "contact": {

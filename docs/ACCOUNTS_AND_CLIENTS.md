@@ -36,8 +36,9 @@ Version 7 of the integration configuration converts existing HA/browser phone
 records to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
 identities, extensions, names, routing rules and mailbox references are retained.
 An identifier beginning with `browser:` remains a valid opaque account ID.
-A softphone named `Casa` gets the SIP username `Casa`. A name such as
-`Piano Terra` keeps its space. VoIP Stack creates a password when one is
+A softphone named `Casa` gets the SIP username `Casa`. A softphone named
+`Piano Terra` keeps its display name and gets the login `PianoTerra` if it
+had no SIP credentials. VoIP Stack creates a password when one is
 needed and keeps any existing credentials. The card signs in through HA.
 
 Existing card configurations, including `mode: ha_softphone`, `card_mode` and
@@ -46,10 +47,10 @@ roles. The integration and frontend update together; reload an already open HA
 page to load the new frontend. Recreating accounts or rewriting dashboards is
 not part of the upgrade.
 
-The migration records the existing HA reception declaration as an association
-on that same account. It remains visible in configuration and can be removed.
-This preserves legacy reception through a global popup or a dynamically generated
-dashboard that the backend cannot inspect while its browser is closed.
+An existing card continues to receive calls to the same device. For example,
+calling `Casa` or its extension `101` rings the clients of the `Casa` account.
+The upgrade preserves reception for an existing global popup or dynamically
+generated dashboard even while the browser is closed.
 
 ## Availability and closed browsers
 

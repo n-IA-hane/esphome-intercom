@@ -1125,11 +1125,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             fields[vol.Optional("physical_bindings", default=account_physical_bindings_form_rows(
                 current_bindings))] = account_physical_bindings_selector(
                     self._get_entry(), options=self._physical_binding_options)
-        inherited = [row["reference"] for row in current.get("ha_bindings", ())
-                     if isinstance(row, Mapping) and row.get("source") == "migration" and row.get("reference")]
-        if inherited:
-            fields[vol.Optional("migration_bindings", default=inherited)] = SelectSelector(
-                SelectSelectorConfig(options=inherited, multiple=True))
         fields[vol.Optional("voicemail_enabled", default=bool(current.get("voicemail", {}).get("enabled")))] = BooleanSelector()
         return vol.Schema(fields)
 
@@ -1259,15 +1254,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         data.update({CONF_PHONE_AUTO_ANSWER: bool(values.get(CONF_PHONE_AUTO_ANSWER, False)),
                      CONF_PHONE_SEND_VIDEO: bool(values.get(CONF_PHONE_SEND_VIDEO, False))})
         data[CONF_PHONE_POLICY] = policy_data
-        if "migration_bindings" in user_input:
-            selected = user_input["migration_bindings"]
-            allowed = {row["reference"] for row in current.get("ha_bindings", ())
-                       if isinstance(row, Mapping) and row.get("source") == "migration" and row.get("reference")}
-            if not isinstance(selected, list) or any(not isinstance(ref, str) or ref not in allowed for ref in selected):
-                errors["base"] = "invalid_phone_configuration"
-            else:
-                data["ha_bindings"] = [row for row in current.get("ha_bindings", ())
-                    if not isinstance(row, Mapping) or row.get("source") != "migration" or row.get("reference") in selected]
         if not self._reconfigure:
             self._account_draft = draft_phone_subentry(data, previous=self._account_draft, title=name)
         return data, errors
@@ -1359,6 +1345,15 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
 
     async def async_step_reconfigure(self, user_input=None):
         """Keep endpoint identity and kind stable while editing settings."""
+        record = self._get_reconfigure_subentry()
+        if record.data.get("kind") == EndpointKind.ESPHOME.value:
+            from .managed_phones import managed_records
+
+            phone = managed_records(self._get_entry()).get(record.data["device_id"])
+            if phone is None:
+                return self.async_abort(reason="managed_esphome_missing")
+            return self.async_abort(reason="managed_esphome_account", description_placeholders={
+                "device_id": phone.device_id, "username": phone.username})
         self._reconfigure = True
         self._kind = EndpointKind.SIP_ACCOUNT
         return await self.async_step_sip_account(user_input)

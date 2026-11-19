@@ -934,7 +934,8 @@ async def test_device_fields_reopen_with_registry_choices_and_store_canonical_id
     for kind, device_field in (("lines", "account_device"), ("keys", "target_device")):
         device = fields[kind]["fields"][device_field]["selector"]
         assert device.selector_type == "device"
-        assert device.config["filter"] == [{"integration": "voip_stack", "manufacturer": "VoIP Stack", "model": "SIP account"}]
+        assert device.config["filter"] == [{"integration": "voip_stack", "manufacturer": "VoIP Stack",
+                                            "model": "SIP account", "model_id": "sip_account"}]
     office = state.lab.runtime.endpoints.get("sip:office").device_id
     front = state.lab.runtime.endpoints.get("sip:front").device_id
     selected = {

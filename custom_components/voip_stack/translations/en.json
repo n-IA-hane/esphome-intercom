@@ -422,8 +422,7 @@
             "voicemail_enabled": "Enable mailbox",
             "physical_bindings": "Associated physical phones",
             "auto_answer": "Auto answer in the browser",
-            "send_video": "Send video from the browser",
-            "migration_bindings": "Inherited HA associations"
+            "send_video": "Send video from the browser"
           },
           "data_description": {
             "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
@@ -450,7 +449,9 @@
       "abort": {
         "reconfigure_successful": "Phone reconfigured successfully.",
         "already_configured": "This phone already exists.",
-        "phone_configured": "SIP account configured."
+        "phone_configured": "SIP account configured.",
+        "managed_esphome_account": "VoIP Stack created this login automatically for the [ESPHome device](/config/devices/device/{device_id}). Its SIP username is shown below. Removing this account revokes the login. Adding the device to ESPHome again creates a new login.\n\n    {username}",
+        "managed_esphome_missing": "This ESPHome device no longer has this SIP account."
       }
     },
     "contact": {

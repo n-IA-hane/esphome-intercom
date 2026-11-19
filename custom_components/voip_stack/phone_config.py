@@ -88,7 +88,7 @@ def phone_subentries(entry: ConfigEntry) -> list[ConfigSubentry]:
     return [
         subentry
         for subentry in entry.subentries.values()
-        if subentry.subentry_type == PHONE_SUBENTRY_TYPE
+        if subentry.subentry_type == PHONE_SUBENTRY_TYPE and subentry.data.get("kind") != EndpointKind.ESPHOME.value
     ]
 
 
@@ -221,7 +221,7 @@ def async_bootstrap_browser_phone(
         endpoint_id=new_sip_account_endpoint_id(),
     )
     data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
-    data[CONF_PHONE_USERNAME] = normalize_username(data[CONF_PHONE_NAME])
+    data[CONF_PHONE_USERNAME] = _browser_account_username(data)
     validate_sip_account_namespace(entry, [*map(phone_subentry_data, phone_subentries(entry)), data])
     data[CONF_PHONE_PASSWORD] = generate_password()
     return _add_phone_subentry(
@@ -239,7 +239,6 @@ def migrate_browser_accounts(hass, entry):
     for subentry in phone_subentries(entry):
         data = deepcopy(phone_subentry_data(subentry))
         if data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value:
-            identity = phone_endpoint_id(subentry)
             data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
             data[CONF_PHONE_NAME] = data.get(CONF_PHONE_NAME) or subentry.title
             data[CONF_PHONE_USERNAME] = _browser_account_username(data)
@@ -247,10 +246,8 @@ def migrate_browser_accounts(hass, entry):
             if not isinstance(raw_bindings, (list, tuple)):
                 raise ValueError("Invalid configured HA associations")
             bindings = list(raw_bindings)
-            reference = {"source": "migration", "reference": "legacy_ha_phone:" + identity}
-            if not any(isinstance(row, Mapping) and row.get("source") == reference["source"]
-                       and row.get("reference") == reference["reference"] for row in bindings):
-                bindings.append(reference)
+            if not any(isinstance(row, Mapping) and row.get("source") == "migration" for row in bindings):
+                bindings.append({"source": "migration"})
             data["ha_bindings"] = bindings
             endpoint_from_data(entry, data)
             updates.append((subentry, data))
@@ -267,9 +264,9 @@ def migrate_browser_accounts(hass, entry):
 
 
 def _browser_account_username(data: Mapping[str, Any]) -> str:
-    """Keep an explicit login or use the softphone's configured name."""
+    """Keep a saved SIP login. Derive a new one from the softphone name."""
     username = str(data.get(CONF_PHONE_USERNAME) or "").strip()
-    return normalize_username(username or data[CONF_PHONE_NAME])
+    return normalize_username(username or data[CONF_PHONE_NAME].replace(" ", ""))
 
 
 def phone_identity_updates(entry: ConfigEntry) -> tuple:
@@ -577,12 +574,19 @@ def _clear_browser_runtime(
     stores.pop(endpoint_id, None)
 
 
+def _phone_subentry_ids(entry: ConfigEntry) -> dict[str, str]:
+    """Include ESPHome-managed accounts in native device and entity ownership."""
+    return {
+        phone_endpoint_id(row): row.subentry_id for row in entry.subentries.values()
+        if row.subentry_type == PHONE_SUBENTRY_TYPE and phone_endpoint_id(row)
+    }
+
+
 def async_setup_endpoint_registry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> EndpointRegistry:
     """Create and publish the authoritative configured endpoint registry."""
     registry = EndpointRegistry()
-    subentry_ids: dict[str, str] = {}
     previous_runtime = getattr(entry, "runtime_data", None) or runtime_data(hass)
     presence = (
         previous_runtime.softphone_presence if previous_runtime is not None else {}
@@ -591,8 +595,7 @@ def async_setup_endpoint_registry(
     for subentry in phone_subentries(entry):
         endpoint = endpoint_from_subentry(entry, subentry)
         registry.register(endpoint)
-        subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
-    registry.subentry_ids = subentry_ids
+    registry.subentry_ids = _phone_subentry_ids(entry)
     pending_removals = registry.pending_removals
 
     def _remove_pending_endpoint(endpoint_id: str) -> None:
@@ -642,17 +645,10 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if runtime is None:
         return
     subentries = phone_subentries(entry)
-    subentry_ids = {
-        phone_endpoint_id(subentry): (
-            subentry.subentry_id
-        )
-        for subentry in subentries
-        if phone_endpoint_id(subentry)
-    }
     # Entity/device listeners run synchronously from registry.upsert(). Publish
     # ownership before the first event so a newly added phone is immediately
     # associated with its native HA config subentry.
-    registry.subentry_ids = subentry_ids
+    registry.subentry_ids = _phone_subentry_ids(entry)
     pending_removals = registry.pending_removals
     presence = runtime.softphone_presence
     for subentry in subentries:

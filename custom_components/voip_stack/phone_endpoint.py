@@ -130,6 +130,9 @@ class PhoneEndpoint:
     active_call_id: str = ""
     policy: PhonePolicy = field(default_factory=PhonePolicy)
 
+    # Managed ESPHome phones keep their hardware device as the transport owner.
+    account_device_id: str = ""
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "queues", normalize_phone_queues(self.queues))
         if not isinstance(self.policy, PhonePolicy):
@@ -161,6 +164,7 @@ class PhoneEndpoint:
             "extension",
             "username",
             "device_id",
+            "account_device_id",
             "ring_group",
             "conference_group",
             "offline_forward_target",

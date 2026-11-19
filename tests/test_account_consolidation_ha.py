@@ -21,8 +21,8 @@ def add_phone(hass, entry, data):
     return sub
 
 
-@pytest.mark.parametrize("name", ["Casa", 'Caffè "Nord"'])
-async def test_migrated_phone_registers_with_its_literal_name(hass, socket_enabled, name):
+@pytest.mark.parametrize(("name", "login"), [("Casa", "Casa"), ('Caffè "Nord"', 'Caffè"Nord"')])
+async def test_migrated_phone_keeps_its_display_name_and_registers(hass, socket_enabled, name, login):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.store import sip_accounts
     from .test_linphone_registrar_wire import check_account_registration
@@ -30,10 +30,11 @@ async def test_migrated_phone_registers_with_its_literal_name(hass, socket_enabl
     entry = MockConfigEntry(domain="voip_stack", version=6, minor_version=4,
                             data={"initial_phone_created": True})
     entry.add_to_hass(hass)
-    add_phone(hass, entry, {"endpoint_id": "default", "kind": "browser", "name": name})
+    subentry = add_phone(hass, entry, {"endpoint_id": "default", "kind": "browser", "name": name})
     assert await async_migrate_entry(hass, entry)
     account, = sip_accounts(hass)
-    assert account.username == name and account.password
+    assert entry.subentries[subentry.subentry_id].data["name"] == name
+    assert account.username == login and account.password
     await check_account_registration("UDP", "outbound", account)
 
 
@@ -73,7 +74,7 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
         projected = phone_subentry_data(sub)
         assert all(projected[key] == value for key, value in original.items() if key not in {"kind", "ha_bindings"})
         assert sub.data.get("username") and len(sub.data.get("password", "")) >= 20
-        assert {"source": "migration", "reference": "legacy_ha_phone:" + phone_endpoint_id(sub)} in sub.data["ha_bindings"]
+        assert {"source": "migration"} in sub.data["ha_bindings"]
         assert original["ha_bindings"][0] in sub.data["ha_bindings"]
     assert legacy.data["username"] == "Casa"
     assert phone_subentry_data(existing) == sip_before
@@ -226,7 +227,7 @@ async def test_phone_dispatch_uses_ha_view_but_keeps_real_sip_hangup(phone_lab):
     assert handle.kind is EndpointKind.SIP_ACCOUNT
 
 
-async def test_native_reconfigure_removes_only_inherited_ha_reference(phone_lab):
+async def test_native_reconfigure_preserves_the_existing_ha_reception(phone_lab):
     from homeassistant.config_entries import SOURCE_RECONFIGURE
     from .support.ha_frontend import prepare_frontend_dependency
     lab = phone_lab
@@ -239,12 +240,13 @@ async def test_native_reconfigure_removes_only_inherited_ha_reference(phone_lab)
     sub = add_phone(lab.hass, lab.entry, data)
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
         context={"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id})
-    assert "migration_bindings" in {key.schema for key in form["data_schema"].schema}
+    fields = {key.schema: selector for key, selector in form["data_schema"].schema.items()}
+    assert not {"keep_ha_reception", "migration_bindings"}.intersection(fields)
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
-        "name": "Casa renamed", "username": data["username"], "password": data["password"], "migration_bindings": []})
+        "name": "Casa renamed", "username": data["username"], "password": data["password"]})
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
     assert sub.data["username"] == data["username"] and sub.data["password"] == data["password"]
-    assert sub.data["ha_bindings"] == []
+    assert sub.data["ha_bindings"] == data["ha_bindings"]
     assert sub.data["auto_answer"] and sub.data["send_video"] and sub.data["future_unknown"] == data["future_unknown"]
     from custom_components.voip_stack.phone_config import phone_endpoint_id
     assert phone_endpoint_id(sub) == "default"

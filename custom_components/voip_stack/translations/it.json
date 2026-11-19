@@ -422,8 +422,7 @@
             "voicemail_enabled": "Abilita casella vocale",
             "physical_bindings": "Telefoni fisici associati",
             "auto_answer": "Risposta automatica nel browser",
-            "send_video": "Invia video dal browser",
-            "migration_bindings": "Associazioni HA ereditate"
+            "send_video": "Invia video dal browser"
           },
           "data_description": {
             "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota.",
@@ -450,7 +449,9 @@
       "abort": {
         "reconfigure_successful": "Telefono riconfigurato.",
         "already_configured": "Questo telefono esiste già.",
-        "phone_configured": "Account SIP configurato."
+        "phone_configured": "Account SIP configurato.",
+        "managed_esphome_account": "VoIP Stack ha creato automaticamente questo account per il [dispositivo ESPHome](/config/devices/device/{device_id}). Il nome utente SIP è riportato qui sotto. Eliminando l’account revochi le credenziali. Una nuova aggiunta del dispositivo a ESPHome crea un nuovo account.\n\n    {username}",
+        "managed_esphome_missing": "Questo account SIP non è più associato al dispositivo ESPHome."
       }
     },
     "contact": {

@@ -70,7 +70,7 @@ async def test_account_revocation_closes_authenticated_socket_before_next_search
         reader, writer = await connect(lab)
         phone = phone_record(lab)
         principal = owner.auth.principal(phone.username)
-        account = lab.registrar.accounts[phone.username]
+        account = lab.registrar.accounts[phone.username.casefold()]
         if change == "device":
             from homeassistant.helpers import device_registry as dr
             dr.async_get(lab.hass).async_remove_device(lab.device.id)
@@ -108,7 +108,7 @@ async def test_auth_epoch_survives_display_update_and_register_expiry(managed):
     try:
         phone = phone_record(lab)
         principal = owner.auth.principal(phone.username)
-        account = lab.registrar.accounts[phone.username]
+        account = lab.registrar.accounts[phone.username.casefold()]
         lab.registrar.update_accounts([replace(account, display_name="New name")])
         assert owner.auth.valid(principal)
         await bind_account(lab, phone)
@@ -138,7 +138,7 @@ async def test_pending_bind_cannot_publish_after_same_password_account_aba(manag
         writer.write(bind(username=phone.username, password=phone.password.encode()))
         await writer.drain()
         await entered.wait()
-        account = lab.registrar.accounts[phone.username]
+        account = lab.registrar.accounts[phone.username.casefold()]
         lab.registrar.update_accounts([])
         lab.registrar.update_accounts([account])
         release.set()

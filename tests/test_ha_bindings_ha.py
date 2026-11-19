@@ -138,7 +138,7 @@ async def test_migration_reference_is_declaration_not_an_observed_client(hass):
     tracker, _ = await owner(hass, runtime, entry)
     try:
         assert tracker.has_binding("closed")
-        assert tracker.references("closed")[0]["reference"] == "legacy_ha_phone:closed"
+        assert tracker.references("closed") == ({"source": "migration", "enabled": True},)
         subentry.data["ha_bindings"] = []
         await tracker.async_reload()
         assert not tracker.has_binding("closed")

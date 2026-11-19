@@ -469,14 +469,17 @@ class VoipDeviceResolver:
                 if saved is not None:
                     item.update(queues=list(normalize_phone_queues(saved.get("queues"))),
                                 ring_group=str(saved.get("ring_group") or ""))
-        if entry is None or not entry.data.get("managed_esphome_phones"):
+        if entry is None:
             return out
         from .managed_phones import managed_phone_mode, managed_records
+        records = managed_records(entry)
+        if not records:
+            return out
         from .core import sip
         from .runtime_data import sip_registrar
         registrar = sip_registrar(self.hass)
         current = {item["device_id"]: item for item in out}
-        for phone in managed_records(entry).values():
+        for phone in records.values():
             device = device_registry.async_get(phone.device_id)
             origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
             if (device is None or origin is None or origin.domain != "esphome"
@@ -547,6 +550,10 @@ class VoipDeviceResolver:
                         device_ids.add(entry.device_id)
         if not device_ids:
             return None
+        runtime = runtime_data(self.hass)
+        if runtime is not None:
+            device_ids.update(endpoint.device_id for selected in tuple(device_ids)
+                              if (endpoint := runtime.endpoints.by_device_id(selected)) is not None)
         for dev in await self.list_devices():
             if dev["device_id"] in device_ids:
                 return dev

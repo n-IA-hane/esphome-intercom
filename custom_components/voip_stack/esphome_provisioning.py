@@ -17,11 +17,13 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .config import transport_config
 from .const import CONF_REGISTRAR_ENABLED
 from .device_resolver import entity_role, slugify_route_id
+from .endpoint_device import account_device_info
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_registry import EndpointCollisionError
-from .managed_phones import (CONF_MANAGED_PHONES, MANAGED_ACCOUNT_ID,
+from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
     ManagedNameError, ManagedPhone, active_managed_accounts, check_native_username, managed_device_username,
-    managed_phone_mode, managed_records, managed_registration_action, normalize_mac)
+    managed_account_subentries, managed_phone_mode, managed_records, managed_registration_action,
+    migrate_managed_accounts, normalize_mac, save_managed_account)
 from .phone_endpoint import EndpointKind, PhoneEndpoint
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
     normalize_membership_tracking, observe_native_membership)
@@ -58,6 +60,7 @@ class EspHomeProvisioner:
         self._task = None
         self._closed = False
         self._removed_origins, self._removed_devices = set(), set()
+        self._deleted_accounts = set()
         self._dirty = False
         self._revision = 0
         self._directory_config = None
@@ -71,7 +74,9 @@ class EspHomeProvisioner:
                 and self.runtime.phone_provisioning is self)
 
     def is_removed(self, origin_entry_id, device_id):
-        return origin_entry_id in self._removed_origins or device_id in self._removed_devices
+        return (origin_entry_id in self._removed_origins or device_id in self._removed_devices
+                or device_id in self._deleted_accounts
+                or self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).get(device_id) == {"origin_entry_id": origin_entry_id})
 
     @callback
     def configure_directory_service(self, config, *, epoch=""):
@@ -177,6 +182,16 @@ class EspHomeProvisioner:
 
     @callback
     def _entry_changed(self, change, entry):
+        if entry is self.entry and change is ConfigEntryChange.UPDATED:
+            rows = managed_account_subentries(entry)
+            deleted = {device_id for device_id, receipt in entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).items()
+                       if "endpoint_id" in receipt and device_id not in rows}
+            if deleted != self._deleted_accounts:
+                self._deleted_accounts = deleted
+                if deleted:
+                    self._refresh_accounts()
+                    self.schedule()
+            return
         if entry.domain != "esphome":
             return
         if change is ConfigEntryChange.REMOVED:
@@ -185,14 +200,6 @@ class EspHomeProvisioner:
                 dr.async_get(self.hass), entry.entry_id))
             self._refresh_accounts()
         self.schedule()
-
-    def _save(self, records):
-        if not self._owned():
-            return
-        data = {key: phone.record() for key, phone in records.items()}
-        if data != self.entry.data.get(CONF_MANAGED_PHONES, {}):
-            self.hass.config_entries.async_update_entry(self.entry,
-                data={**self.entry.data, CONF_MANAGED_PHONES: data})
 
     def _refresh_accounts(self):
         if not self._owned():
@@ -212,8 +219,7 @@ class EspHomeProvisioner:
         origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
         device = dr.async_get(self.hass).async_get(phone.device_id)
         return (self._owned() and revision == self._revision
-                and phone.origin_entry_id not in self._removed_origins
-                and phone.device_id not in self._removed_devices
+                and not self.is_removed(phone.origin_entry_id, phone.device_id)
                 and origin is not None and getattr(origin, "runtime_data", None) is native
                 and native.client is client and native.services is services
                 and native.available and client.is_connected
@@ -276,41 +282,81 @@ class EspHomeProvisioner:
         self._membership_scopes[device.id] = (native, native.client)
         return replace(phone, **updates)
 
+    def _sync_account_device(self, phone, row):
+        """Attach the SIP service to its subentry and preserve the transport device ID."""
+        registry = self.runtime.endpoints
+        registry.subentry_ids[phone.endpoint_id] = row.subentry_id
+        device = dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.entry.entry_id, config_subentry_id=row.subentry_id,
+            **account_device_info(phone.endpoint_id, phone.display_name or phone.username,
+                                  hardware_device_id=phone.device_id),
+        )
+        endpoint = registry.get(phone.endpoint_id)
+        if (endpoint is not None and endpoint.kind is EndpointKind.ESPHOME
+                and endpoint.device_id == phone.device_id and endpoint.account_device_id != device.id):
+            registry.update(phone.endpoint_id, account_device_id=device.id)
+
     async def async_sync(self):
         async with self._lock:
             if not self._owned():
                 return
             revision = self._revision
+            migrate_managed_accounts(self.hass, self.entry)
             records = managed_records(self.entry)
+            rows = managed_account_subentries(self.entry)
+            devices = dr.async_get(self.hass)
+            for device_id in rows.keys() - self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).keys():
+                if phone := records.get(device_id):
+                    save_managed_account(self.hass, self.entry, phone)
+            saved_receipts = self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {})
+            receipts = dict(saved_receipts)
             changed = False
-            for phone in tuple(records.values()):
-                origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
-                device = dr.async_get(self.hass).async_get(phone.device_id)
-                if (origin is None or phone.origin_entry_id in self._removed_origins
-                        or device is None or phone.device_id in self._removed_devices):
-                    await self._purge_endpoint(phone.endpoint_id, phone.username)
-                    if not self._owned() or revision != self._revision:
-                        return
-                    async_sync_esphome_account_name_issue(self.hass, phone.device_id)
-                    records.pop(phone.device_id, None)
-                    self._delivered.pop(phone.device_id, None)
-                    changed = True
-                elif managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
-                    async_sync_esphome_account_name_issue(self.hass, phone.device_id)
-                    records[phone.device_id] = replace(phone, active=False)
-                    self._delivered.pop(phone.device_id, None)
-                    changed |= phone.active
-            self._save(records)
+            for device_id, receipt in saved_receipts.items():
+                origin_id = receipt["origin_entry_id"]
+                device = devices.async_get(device_id)
+                origin = self.hass.config_entries.async_get_entry(origin_id)
+                owner_gone = (origin is None or origin_id in self._removed_origins or device is None
+                              or device.config_entry_id != origin_id or device_id in self._removed_devices)
+                phone = records.get(device_id)
+                if owner_gone or device_id not in rows:
+                    if endpoint_id := receipt.get("endpoint_id"):
+                        self.runtime.endpoints.subentry_ids.pop(endpoint_id, None)
+                        endpoint = self.runtime.endpoints.get(endpoint_id)
+                        username = getattr(phone or endpoint, "username", "")
+                        await self._purge_endpoint(endpoint_id, username)
+                        if not self._owned() or revision != self._revision:
+                            return
+                        async_sync_esphome_account_name_issue(self.hass, device_id)
+                        self._delivered.pop(device_id, None)
+                        changed = True
+                    if owner_gone:
+                        receipts.pop(device_id)
+                        if row := rows.get(device_id):
+                            self.hass.config_entries.async_remove_subentry(self.entry, row.subentry_id)
+                        records.pop(device_id, None)
+                    else:
+                        # The native account was deleted. Block only this ESPHome ownership.
+                        receipts[device_id] = {"origin_entry_id": origin_id}
+                elif phone is not None:
+                    self._sync_account_device(phone, rows[device_id])
+                    if phone.active and managed_phone_mode(self.hass, origin, device_id, phone.mac) is False:
+                        async_sync_esphome_account_name_issue(self.hass, device_id)
+                        records[device_id] = replace(phone, active=False)
+                        save_managed_account(self.hass, self.entry, records[device_id])
+                        self._delivered.pop(device_id, None)
+                        changed = True
+            if receipts != saved_receipts:
+                self.hass.config_entries.async_update_entry(self.entry,
+                    data={**self.entry.data, CONF_ESPHOME_ENROLLMENTS: receipts})
             self._refresh_accounts()
             # Legacy direct phones also use the same permanent-removal owner.
             for device_id in self._removed_devices:
                 endpoint = self.runtime.endpoints.by_device_id(device_id)
-                if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME:
+                if endpoint is not None and endpoint.kind is EndpointKind.ESPHOME and endpoint.device_id == device_id:
                     await self._purge_endpoint(endpoint.endpoint_id, endpoint.username)
                     if not self._owned() or revision != self._revision:
                         return
                     changed = True
-            devices = dr.async_get(self.hass)
             for origin in self.hass.config_entries.async_entries("esphome"):
                 if origin.entry_id in self._removed_origins:
                     continue
@@ -318,7 +364,7 @@ class EspHomeProvisioner:
                 if not getattr(native, "available", False) or not getattr(getattr(native, "client", None), "is_connected", False):
                     continue
                 for device in dr.async_entries_for_config_entry(devices, origin.entry_id):
-                    if device.id in self._removed_devices:
+                    if self.is_removed(origin.entry_id, device.id):
                         continue
                     modes = {managed_phone_mode(self.hass, origin, device.id, mac)
                              for kind, mac in device.connections if kind == dr.CONNECTION_NETWORK_MAC}
@@ -352,7 +398,10 @@ class EspHomeProvisioner:
                             registry.update(phone.endpoint_id, **fields)
                         changed |= previous != phone or old is None
                         records[device.id] = phone
-                        self._save(records)
+                        if phone != previous:
+                            rows[device.id] = save_managed_account(self.hass, self.entry, phone)
+                        if phone != previous or old is None:
+                            self._sync_account_device(phone, rows[device.id])
                         async_sync_esphome_endpoint_collision_issue(self.hass, device.id)
                         self._refresh_accounts()
                         await self._deliver(phone, native)

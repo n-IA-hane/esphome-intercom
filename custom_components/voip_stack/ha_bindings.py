@@ -186,13 +186,14 @@ class HaCardBindings:
             data = subentry.data
             endpoint = self.runtime.endpoints.get(phone_endpoint_id(subentry))
             for row in data.get("ha_bindings", ()):
-                if isinstance(row, dict) and row.get("source") == "migration" and isinstance(row.get("reference"), str):
-                    add(endpoint, {"source": "migration", "reference": row["reference"], "enabled": row.get("enabled", True) is True})
+                if isinstance(row, dict) and row.get("source") == "migration":
+                    # The enclosing account already identifies the old HA receiver.
+                    add(endpoint, {"source": "migration", "enabled": row.get("enabled", True) is True})
         candidates = [identity for identity, rows in result.items() if any(row["enabled"] for row in rows)]
         if len(candidates) == 1:
             for row in implicit:
                 add(self.runtime.endpoints.get(candidates[0]), row)
-        return {identity: tuple(sorted(rows, key=lambda row: (row["source"], row["reference"])))
+        return {identity: tuple(sorted(rows, key=lambda row: (row["source"], row.get("reference", ""))))
                 for identity, rows in result.items()}
 
     def _reindex(self):

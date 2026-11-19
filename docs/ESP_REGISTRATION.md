@@ -7,6 +7,11 @@ Manual SIP registration is independent of HA provisioning. Compatible managed
 firmware can also receive a named HA account while retaining additional PBX
 accounts. Endpoint, codec and network compatibility still apply to each line.
 
+After enrollment, **Settings > Devices & services > VoIP Stack** lists a
+**SIP account** device for the ESP. Its page shows registration and call state.
+The device with the same name under **ESPHome** is the hardware and keeps
+its microphone, volume controls and sensors. Both refer to the same phone.
+
 ## Managed HA account or manual PBX account
 
 This guide describes the current preview's optional registration support.

@@ -8,6 +8,7 @@ from .sip_registrar import SipAccount, validate_managed_username
 from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
 CONF_MANAGED_PHONES = "managed_esphome_phones"
+CONF_ESPHOME_ENROLLMENTS = "esphome_sip_enrollments"
 MANAGED_ACCOUNT_ID = "ha"
 MANAGED_ACTIONS = frozenset({"set_ha_display_name", "set_account", "register_account"})
 REGISTER_BY_NODE = "register_ha_account_by_node_name"
@@ -115,10 +116,22 @@ class ManagedPhone:
         return record
 
 
+def managed_account_subentries(entry):
+    """Index native SIP accounts whose physical owner is an ESPHome device."""
+    return {device_id: row for row in getattr(entry, "subentries", {}).values()
+            if row.subentry_type == "phone" and row.data.get("kind") == "esphome"
+            and isinstance(device_id := row.data.get("device_id"), str) and device_id}
+
+
 def managed_records(entry) -> dict[str, ManagedPhone]:
-    """Read the owning config entry without another credential database."""
+    """Read canonical native accounts and unmigrated records from older releases."""
+    candidates = dict(getattr(entry, "data", {}).get(CONF_MANAGED_PHONES, {}))
+    for device_id, row in managed_account_subentries(entry).items():
+        identity = getattr(row, "unique_id", None)
+        if isinstance(identity, str) and identity.startswith("phone:") and identity[6:]:
+            candidates[device_id] = {**row.data, "endpoint_id": identity[6:]}
     records = {}
-    for key, raw in entry.data.get(CONF_MANAGED_PHONES, {}).items():
+    for key, raw in candidates.items():
         if not isinstance(raw, Mapping):
             continue
         try:
@@ -129,6 +142,53 @@ def managed_records(entry) -> dict[str, ManagedPhone]:
         except (TypeError, ValueError):
             continue
     return records
+
+
+def save_managed_account(hass, entry, phone):
+    """The subentry owns the credential. Its native unique ID owns the endpoint ID."""
+    from types import MappingProxyType
+    from homeassistant.config_entries import ConfigSubentry
+
+    row = managed_account_subentries(entry).get(phone.device_id)
+    data = phone.record()
+    unique_id = "phone:" + data.pop("endpoint_id")
+    data["kind"] = "esphome"
+    title = phone.display_name or phone.username
+    if row is None:
+        row = ConfigSubentry(subentry_type="phone", title=title, unique_id=unique_id, data=MappingProxyType(data))
+        hass.config_entries.async_add_subentry(entry, row)
+    elif row.data != data or row.unique_id != unique_id:
+        # Preserve the title if the administrator renamed this account separately.
+        title = title if row.title == (row.data.get("display_name") or row.data.get("username")) else row.title
+        hass.config_entries.async_update_subentry(entry, row, title=title, data=data, unique_id=unique_id)
+
+    # HA permits deletion while this integration is unloaded. Keep enough history
+    # to distinguish that choice from first discovery and purge the original endpoint.
+    receipts = entry.data.get(CONF_ESPHOME_ENROLLMENTS, {})
+    receipt = {"origin_entry_id": phone.origin_entry_id, "endpoint_id": phone.endpoint_id}
+    if receipts.get(phone.device_id) != receipt:
+        hass.config_entries.async_update_entry(entry, data={**entry.data,
+            CONF_ESPHOME_ENROLLMENTS: {**receipts, phone.device_id: receipt}})
+    return row
+
+
+def migrate_managed_accounts(hass, entry):
+    """Move existing credentials before enrolling any new devices, including offline ones."""
+    legacy = entry.data.get(CONF_MANAGED_PHONES)
+    if legacy is None:
+        return
+    records = managed_records(entry)
+    remaining = dict(legacy)
+    for device_id in legacy:
+        if phone := records.get(device_id):
+            save_managed_account(hass, entry, phone)
+            remaining.pop(device_id)
+    data = dict(entry.data)
+    if remaining:
+        data[CONF_MANAGED_PHONES] = remaining
+    else:
+        data.pop(CONF_MANAGED_PHONES)
+    hass.config_entries.async_update_entry(entry, data=data)
 
 
 def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
@@ -155,10 +215,13 @@ def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
 
 def active_managed_accounts(hass, entry) -> list[SipAccount]:
     """A suspended or permanently removed owner cannot regain SIP access."""
+    records = managed_records(entry)
+    if not records:
+        return []
     from homeassistant.helpers import device_registry as dr
 
     accounts = []
-    for phone in managed_records(entry).values():
+    for phone in records.values():
         origin = hass.config_entries.async_get_entry(phone.origin_entry_id)
         device = dr.async_get(hass).async_get(phone.device_id)
         if (phone.active and origin is not None and origin.domain == "esphome"

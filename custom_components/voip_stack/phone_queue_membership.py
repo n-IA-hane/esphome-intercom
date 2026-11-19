@@ -122,7 +122,7 @@ def iter_phone_queue_memberships(hass, entry):
 def _apply_membership_updates(hass, entry, updates):
     """Validate every target before synchronously committing the batch."""
     from dataclasses import replace
-    from .managed_phones import CONF_MANAGED_PHONES, managed_records
+    from .managed_phones import managed_records, save_managed_account
     from .phone_config import (endpoint_from_data, phone_subentry_by_endpoint_id,
         phone_subentry_data, phone_subentry_storage_data, sync_registry_from_entry)
     from .phone_endpoint import EndpointKind
@@ -133,7 +133,8 @@ def _apply_membership_updates(hass, entry, updates):
     managed_by_endpoint = {phone.endpoint_id: phone for phone in managed.values()}
     legacy = dict(entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}))
     subentries, endpoint_updates = [], {}
-    managed_changed = legacy_changed = False
+    managed_changes = []
+    legacy_changed = False
     for endpoint_id, fields in updates.items():
         normalized = {field: membership_value(field, value) for field, value in fields.items()}
         subentry = phone_subentry_by_endpoint_id(entry, endpoint_id)
@@ -154,7 +155,8 @@ def _apply_membership_updates(hass, entry, updates):
                     pending.pop(field, None)
             changed = replace(phone, **normalized, membership_pending=pending)
             managed[phone.device_id] = changed
-            managed_changed |= changed != phone
+            if changed != phone:
+                managed_changes.append(changed)
         else:
             endpoint = runtime.endpoints.get(endpoint_id) if runtime is not None else None
             previous = legacy.get(endpoint_id)
@@ -179,13 +181,10 @@ def _apply_membership_updates(hass, entry, updates):
     for subentry, data in subentries:
         hass.config_entries.async_update_subentry(entry, subentry,
             data=phone_subentry_storage_data(subentry, data))
-    if managed_changed or legacy_changed:
-        data = dict(entry.data)
-        if managed_changed:
-            data[CONF_MANAGED_PHONES] = {key: phone.record() for key, phone in managed.items()}
-        if legacy_changed:
-            data[CONF_ESPHOME_PHONE_MEMBERSHIPS] = legacy
-        hass.config_entries.async_update_entry(entry, data=data)
+    for phone in managed_changes:
+        save_managed_account(hass, entry, phone)
+    if legacy_changed:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_ESPHOME_PHONE_MEMBERSHIPS: legacy})
     if subentries:
         sync_registry_from_entry(hass, entry)
     if runtime is not None:

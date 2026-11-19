@@ -57,6 +57,7 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         PhoneEndpointDndSwitch,
+        predicate=lambda endpoint: endpoint.supports_ha_client,
     )
     manager.async_setup()
     register_endpoint_entity_manager(

@@ -422,8 +422,7 @@
             "voicemail_enabled": "Zapnout hlasovou schránku",
             "physical_bindings": "Přiřazené fyzické telefony",
             "auto_answer": "Automaticky přijmout v prohlížeči",
-            "send_video": "Odesílat video z prohlížeče",
-            "migration_bindings": "Zděděná přiřazení HA"
+            "send_video": "Odesílat video z prohlížeče"
           },
           "data_description": {
             "voicemail_enabled": "Vypnutím trvale odstraníte zprávy, soubory, PIN a nastavení schránky. Opětovné zapnutí vytvoří prázdnou schránku.",
@@ -450,7 +449,9 @@
       "abort": {
         "reconfigure_successful": "Telefon byl úspěšně překonfigurován.",
         "already_configured": "Tento telefon již existuje.",
-        "phone_configured": "Účet SIP je nakonfigurován."
+        "phone_configured": "Účet SIP je nakonfigurován.",
+        "managed_esphome_account": "VoIP Stack automaticky vytvořil tento účet pro [zařízení ESPHome](/config/devices/device/{device_id}). Níže je uvedeno jeho uživatelské jméno SIP. Odstraněním účtu zrušíte přístup. Opětovným přidáním zařízení do ESPHome vznikne nový účet.\n\n    {username}",
+        "managed_esphome_missing": "Tento účet SIP již není přiřazen k zařízení ESPHome."
       }
     },
     "contact": {
