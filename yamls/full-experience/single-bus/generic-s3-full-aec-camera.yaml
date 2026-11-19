@@ -21,6 +21,8 @@ substitutions:
   name: generic-s3-audio-video
   friendly_name: Generic S3 Audio Video
   firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, status_led, diagnostics, video]
+  # firmware_timer_stop_word: true  # Experimental. Say "Stop" to silence a ringing timer.
+  # audio_adaptive_volume: true     # Experimental. Add the Adaptive volume switch to Home Assistant.
 
   # Select the actual module memory. Full audio/video needs PSRAM and sufficient OTA space.
   board_type: freenove_esp32_s3_wroom

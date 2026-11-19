@@ -20,6 +20,7 @@ substitutions:
   name: generic-s3-voip-camera
   friendly_name: Generic S3 VoIP Camera
   firmware_features: [voip, directory, blf, mwi, status_led, diagnostics, video]
+  # audio_adaptive_volume: true     # Experimental. Add the Adaptive volume switch to Home Assistant.
   voip_transport: udp  # SIP signaling: udp or tcp. Audio/video media remain RTP/UDP.
 
   # Match the actual module's flash and PSRAM.

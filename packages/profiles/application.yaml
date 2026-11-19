@@ -12,7 +12,7 @@ substitutions:
   firmware_music_binding: {}
   firmware_announcement_binding: {}
   firmware_timer_binding: {}
-  firmware_timer_stop_word: false
+  firmware_timer_stop_word: false  # Experimental. Local Micro Wake Word model for a ringing timer.
   firmware_display_package: ../features/shared/absent.yaml
   _fw_voice: ${ 'voice' in firmware_features }
   _fw_wake_word: ${ _fw_voice and 'wake_word' in firmware_features }

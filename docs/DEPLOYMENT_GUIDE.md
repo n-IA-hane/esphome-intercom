@@ -108,7 +108,7 @@ device is not a VoIP phone and is rejected.
 
 On profiles with both `wake_word` and `timers`, set
 `firmware_timer_stop_word: true` under `substitutions:` and rebuild to enable
-this optional control. Say **Stop** in English while the device's timer alarm
+this experimental control. Say **Stop** in English while the device's timer alarm
 is ringing. Micro Wake Word must be enabled and the microphone unmuted. The
 usual wake word still starts Assist, and stopping a timer preserves active calls.
 

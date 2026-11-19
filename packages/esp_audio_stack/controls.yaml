@@ -31,6 +31,7 @@ button:
 
 # FULL microphone consumers use unity gain after their processor.
 defaults:
+  # Experimental. Set audio_adaptive_volume: true to include this playback control.
   _adaptive_volume_controls:
     switch:
       - platform: esp_audio_stack

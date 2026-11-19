@@ -31,7 +31,7 @@ WS3 BOX V2 and P4 FULL), add this to the device YAML and install the firmware:
 
 ```yaml
 substitutions:
-  audio_adaptive_volume: true
+  audio_adaptive_volume: true  # Experimental
 ```
 
 The device gains an **Adaptive volume** switch in Home Assistant. Turn it on

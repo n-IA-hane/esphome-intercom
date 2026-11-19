@@ -51,9 +51,9 @@
 
 ### Official component alignment and independent rendering
 
-- Offer an optional [adaptive speaker volume switch](docs/ESP_ENTITY_SURFACE.md#optional-adaptive-volume)
-  on devices using the shared Audio Stack controls.
-- Opt in to saying **Stop** to silence a ringing timer on ESP profiles with
+- Offer an experimental [adaptive speaker volume switch](docs/ESP_ENTITY_SURFACE.md#optional-adaptive-volume)
+  in the YAML profiles that include the shared Audio Stack controls.
+- Opt in to the experimental **Stop** command to silence a ringing timer on ESP profiles with
   local wake-word detection and timers. Active calls and Assist keep their
   normal behavior. [Setup and recognition results](docs/DEPLOYMENT_GUIDE.md#stop-a-ringing-timer-by-voice)
 - Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,

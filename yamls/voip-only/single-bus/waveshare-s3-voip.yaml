@@ -57,6 +57,7 @@ substitutions:
   runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voip, directory, blf, mwi, status_led, diagnostics]
+  # audio_adaptive_volume: true     # Experimental. Add the Adaptive volume switch to Home Assistant.
   # Hardware identity stays stable across YAML updates so HA entities and
   # ESPHome build cache are reused.
   name: waveshare-s3

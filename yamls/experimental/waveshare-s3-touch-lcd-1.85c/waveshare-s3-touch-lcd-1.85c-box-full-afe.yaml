@@ -68,6 +68,8 @@ substitutions:
   esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics]
+  # firmware_timer_stop_word: true  # Experimental. Say "Stop" to silence a ringing timer.
+  # audio_adaptive_volume: true     # Experimental. Add the Adaptive volume switch to Home Assistant.
   # Experimental board profile. Keep the slug stable across future variants so
   # ESPHome reuses the same HA device entity and build cache.
   name: waveshare-s3-touch-lcd-185c

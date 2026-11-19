@@ -95,6 +95,8 @@ substitutions:
   intercom_idf_root: ""
   intercom_idf_ref: "dev"
   firmware_features: [voice, wake_word, voip, directory, blf, mwi, music, sendspin, timers, display, diagnostics]
+  # firmware_timer_stop_word: true  # Experimental. Say "Stop" to silence a ringing timer.
+  # audio_adaptive_volume: true     # Experimental. Add the Adaptive volume switch to Home Assistant.
   runtime_controller_debug: "false"
   name: waveshare-p4-touch
   friendly_name: Waveshare P4 Touch
