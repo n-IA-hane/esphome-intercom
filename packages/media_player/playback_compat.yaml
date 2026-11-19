@@ -1,11 +1,13 @@
-# ESPHome 2026.10 compatibility. Official 106 or later core uses an explicit
-# esphome_legacy_audio_providers: [] override, after validating that core.
+# Keep the HTTP source and speaker player independently selectable.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
 defaults:
   esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
   _legacy_playback_components: ${ (["audio_http"] if "audio_http" in esphome_legacy_audio_providers else []) + (["speaker_source"] if "speaker_source" in esphome_legacy_audio_providers else []) }
   _legacy_playback_provider:
     source: ${ext_components_source}
     components: ${_legacy_playback_components}
+# Remove audio_http after stable ESPHome 2026.12 joins finished workers before
+# IDLE callbacks. Remove speaker_source once it retires source errors while
+# preserving replacement playback and queued media. Check each provider separately.
 external_components: ${ [_legacy_playback_provider] if _legacy_playback_components else [] }

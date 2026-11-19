@@ -109,7 +109,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: esphome/esphome
-          ref: 373224c141dceadbb67ace263040cbfc802c5968
+          ref: 1feda1bcaa861a5f2e933f2c65d599e44f4b132b
           path: .test-deps/esphome
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -271,7 +271,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: esphome/esphome
-          ref: 373224c141dceadbb67ace263040cbfc802c5968
+          ref: 1feda1bcaa861a5f2e933f2c65d599e44f4b132b
           path: .test-deps/esphome
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -465,7 +465,7 @@ jobs:
           assert commit == os.environ['GITHUB_SHA']
           version = importlib.metadata.version('esphome')
           receipt = json.loads(importlib.metadata.distribution('esphome').read_text('direct_url.json'))
-          assert receipt['vcs_info']['commit_id'] == '373224c141dceadbb67ace263040cbfc802c5968'
+          assert receipt['vcs_info']['commit_id'] == '1feda1bcaa861a5f2e933f2c65d599e44f4b132b'
           (output / 'input.json').write_text(json.dumps({
               'checkout_commit': commit,
               'profile': profile.as_posix(),

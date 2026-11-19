@@ -1,6 +1,6 @@
 # Reducer only. Consumer modules supply their policies and hardware bindings.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
 defaults:
   runtime_controller_debug: ${ runtime_controller_debug | default("false") }
 substitutions:

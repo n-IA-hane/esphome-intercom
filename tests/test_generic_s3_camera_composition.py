@@ -58,7 +58,7 @@ def test_camera_and_video_controls_follow_real_capabilities(tmp_path, features, 
     assert config["esp_audio_stack"]["output_sample_rate"] == 16000
     assert [config["esp_audio_stack"][key] for key in
             ("i2s_bclk_pin", "i2s_lrclk_pin", "i2s_din_pin", "i2s_dout_pin")] == [14, 21, 47, 1]
-    assert config["esphome"]["min_version"] == "2026.12.0"
+    assert config["esphome"]["min_version"] == "2026.11.0"
     assert config["esp32"]["flash_size"] == "8MB"
     assert config["esp32"]["flash_mode"] == "dio"
     assert config["psram"]["mode"] == "octal"

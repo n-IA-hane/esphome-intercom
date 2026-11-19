@@ -23,9 +23,9 @@ external_components:
 p4_sdmmc_reset: {}
 p4_ppa_backport: {}
 
-# Coordinated Intercom providers use the complete official Core 12 baseline.
+# The shared feature packages select the required backports for ESPHome 2026.11.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
 
 esp32:
   # This board selects ESPHome's engineering-sample P4 target, including rev1.3.

@@ -1,6 +1,6 @@
 # Waveshare ESP32-S3-Touch-LCD-1.85C-BOX V2, legacy AEC entrypoint.
 # The unified full.yaml entrypoint exposes the same processor/mix/transport choices.
-# V1 has different audio hardware. This profile requires ESPHome 2026.12.0+.
+# V1 has different audio hardware. This profile requires ESPHome 2026.11.0+.
 #
 # This firmware is composed from shared ESPHome packages. Inspect the merged YAML:
 #   esphome config --no-defaults device.yaml > device-expanded.yaml

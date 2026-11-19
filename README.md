@@ -420,10 +420,11 @@ for codecs and endpoint limits.
 ## Installation
 
 This development tree requires **Home Assistant 2026.11.1 or newer**.
-Its coordinated ESP recipes require **ESPHome 2026.12.0**;
-use the exact official preview documented in [stabilization](docs/STABILIZATION.md)
-while that stable ESPHome release is unavailable. Stable **2026.11.0** retains
-its Home Assistant 2026.7 and ESPHome 2026.10 requirements. Choose one channel:
+Use **ESPHome Device Builder 2026.11.0 or newer** for the public firmware
+profiles. Each profile loads its required components, including the selected
+December backports. The [stabilization guide](docs/STABILIZATION.md) lists
+their sources. The stable **VoIP Stack 2026.11.0** release retains its
+Home Assistant 2026.7 and ESPHome 2026.10 requirements.
 
 | Channel | Version | Starting point |
 | --- | --- | --- |

@@ -1,10 +1,12 @@
-# ESPHome 2026.10 compatibility. Official 106 or later core uses an explicit
-# esphome_legacy_audio_providers: [] override, after validating that core.
+# Keep the public provider selection configurable for users testing native playback.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
 defaults:
   esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
   _legacy_voice_provider:
     source: ${ext_components_source}
     components: [voice_assistant]
+# Remove this external voice_assistant when the stable ESPHome 2026.12 provider
+# reports idle on local stop and preserves a restart from an idle callback.
+# Verify deferred on_end still follows the active Home Assistant run.
 external_components: ${ [_legacy_voice_provider] if "voice_assistant" in esphome_legacy_audio_providers else [] }

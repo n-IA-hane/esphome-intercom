@@ -2,6 +2,8 @@
 
 ## 2026.12.0-dev
 
+- Public firmware profiles target ESPHome 2026.11.0. The shared packages load
+  the selected voice and playback backports when the profile uses those features.
 - Choose a device by its Home Assistant name and icon when assigning a desk
   phone line or BLF key. Single-position profiles such as the Snom 360 show
   both selections directly in the form. An automatically generated key label

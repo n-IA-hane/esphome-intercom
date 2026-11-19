@@ -18,9 +18,9 @@
 packages:
   ota_idf_backend: !include ../ota/idf_backend.yaml
 
-# Coordinated Intercom providers use the complete official Core 12 baseline.
+# The shared feature packages select the required backports for ESPHome 2026.11.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
 
 esp32:
   framework:

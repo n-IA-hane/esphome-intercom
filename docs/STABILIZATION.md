@@ -1,15 +1,15 @@
 # Official components and stabilization
 
-The candidate uses the complete official ESPHome source at
-`373224c141dceadbb67ace263040cbfc802c5968` (its development version is
-`2026.12.0.dev0`). Install `requirements-firmware-test.txt` for reproducible
-qualification. Coordinated Intercom recipes declare ESPHome 2026.12.0 as their
-minimum; their actually verified preview is the exact official commit above.
-The shared S3/P4 platform packages declare that minimum; the explicit P4 recipe
-values match it. This does not raise the minimum of independently
-supported component examples in the sibling repositories. An ordinary unpinned
-ESPHome installation follows stable releases and does not identify this
-development candidate.
+The public firmware profiles use the stable ESPHome 2026.11.0 builder.
+Qualification tooling pins its official source revision,
+`1feda1bcaa861a5f2e933f2c65d599e44f4b132b`, in
+`requirements-firmware-test.txt`. Use a profile's existing YAML in Device
+Builder. The shared packages select the additional components it needs.
+
+Micro Wake Word, Voice Assistant and the two playback providers are based on
+ESPHome development revision `373224c141dceadbb67ace263040cbfc802c5968`.
+Their source revisions, local fixes and removal conditions are recorded in
+[`esphome/upstream_sources.json`](../esphome/upstream_sources.json).
 
 `qualification/sources.json` is the common component catalog. The candidate lock
 records both package versions and the installer receipt containing the ESPHome
@@ -18,8 +18,7 @@ configuration and binary hashes. A version string alone is insufficient.
 
 ## Build the preview recipes
 
-From a checkout of the preview revision, install its builder in a separate
-Python environment. Run these commands from the repository root:
+To reproduce the builder used by CI, run these commands from the repository root:
 
 ```sh
 uv venv .venv-preview
@@ -30,6 +29,21 @@ uv pip install --python .venv-preview/bin/python -r requirements-firmware-test.t
 Replace the last argument with your board YAML, then use the same ESPHome
 executable for `compile` and `upload`. The requirements file pins the official
 ESPHome commit used to qualify these recipes.
+
+## December release plan
+
+Use one public YAML per board and feature profile. Validate every public
+configuration with the stable 2026.11 builder. Reuse representative builds and
+hardware results for the features they actually exercised. Record the exact
+component revisions in the release manifest so the released build is reproducible.
+
+When ESPHome 2026.12.0 stable ships, check the **released tag** for each
+backported fix. Where the native component covers it, remove that component
+from the shared package's `external_components` list and retest the same board
+YAML. Removing only the Git revision would still load an external component.
+Ship the verified cleanup in a patch release with its tested ESPHome minimum.
+The original VoIP Stack 2026.12.0 tag will retain its backports for users
+building with ESPHome 2026.11.
 
 ## Work and exit conditions
 

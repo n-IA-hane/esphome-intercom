@@ -1,7 +1,7 @@
 # Assist media lifecycle host tests
 
 The twelve C++ cases compile the maintained `speaker_source` and `audio_http`
-providers with the official ESPHome development host-test runner at `373224c1`. AudioReader,
+providers with the official ESPHome 2026.11.0 host-test runner at `1feda1bc`. AudioReader,
 DecoderSource0.4.0, the FLAC decoder and pthread create/join are real. HTTP
 transport, the speaker sink and the player's FreeRTOS queue interface are host
 fixtures. There is no ESP SDK or HTTP server in this test.
@@ -13,7 +13,7 @@ it is not an optional diagnostic lane.
 
 Dependencies are pinned in CI:
 
-- ESPHome: `373224c141dceadbb67ace263040cbfc802c5968`.
+- ESPHome: `1feda1bcaa861a5f2e933f2c65d599e44f4b132b`.
 - micro-decoder 0.4.0: `4d06df93a1ee69788dfc7d8676cbd66371b3eae9`.
 - micro-flac 0.3.0: `f9c27d4d0166021db977d7fc37d205b21d81e9f2`.
 

@@ -13,7 +13,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-ESPHOME_REVISION = "373224c141dceadbb67ace263040cbfc802c5968"
+ESPHOME_REVISION = "1feda1bcaa861a5f2e933f2c65d599e44f4b132b"
 DECODER_SOURCES = (
     "audio_decoder", "audio_reader", "decoder_source", "md_transfer_buffer", "ring_buffer", "types",
 )

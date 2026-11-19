@@ -5,10 +5,10 @@ change its `firmware_features` list to choose what is compiled. You do not need 
 find and remove a microphone callback, mixer input, button and timer in separate
 files to remove a feature.
 
-Use ESPHome 2026.10 for the stable 2026.11.0 recipes. The coordinated
-2026.12 preview recipes require the ESPHome 2026.12 builder. The
-[preview build instructions](../docs/STABILIZATION.md#build-the-preview-recipes)
-identify the official ESPHome revision used in CI.
+Use ESPHome 2026.11.0 to build the Intercom 2026.12 preview recipes. Their
+shared packages select the required external components. The stable Intercom
+2026.11.0 recipes use ESPHome 2026.10. See the
+[preview build instructions](../docs/STABILIZATION.md#build-the-preview-recipes).
 
 The package layout exists in stable 2026.11.0; this guide also describes current
 preview services, including optional directory, BLF, MWI and S3 JPEG reception.

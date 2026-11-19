@@ -6,7 +6,7 @@ tca9555:
     address: 0x20
     i2c_id: internal_i2c
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
   name: ${name}
   friendly_name: ${friendly_name}
   platformio_options:

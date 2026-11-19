@@ -1,4 +1,4 @@
 # Legacy include path. Sendspin now uses its official dependency unchanged.
 # Native ESPHome provides this backend; no external override is needed.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0

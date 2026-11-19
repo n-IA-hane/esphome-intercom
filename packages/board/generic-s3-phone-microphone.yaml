@@ -1,6 +1,6 @@
 # Standalone telephone hardware; OTA is composed with the selected consumers.
 esphome:
-  min_version: 2026.12.0
+  min_version: 2026.11.0
   name: ${name}
   friendly_name: ${friendly_name}
 esp32:
