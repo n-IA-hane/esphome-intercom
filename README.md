@@ -199,6 +199,9 @@ into one view. See who is ringing, busy, available or offline; inspect calls
 and use the eligible pickup and call controls. Its visual editor asks for the
 **Calling phone**, so the same view can serve a browser phone or an ESP.
 
+For a dedicated full-width dashboard, set the Home Assistant view type to
+**Panel (single card)** and add the VoIP Dashboard as its only card.
+
 See the [Dashboard demo at the top of this page](#voip-stack-for-home-assistant-and-esphome)
 for incoming, active and held calls, presence, voicemail and Do Not Disturb.
 The [card guide](docs/USER_GUIDE.md#choose-a-card-view) includes configuration

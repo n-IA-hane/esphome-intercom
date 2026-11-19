@@ -10,12 +10,65 @@ from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from custom_components.voip_stack.call_queues import QueueDefinition, QueueManager, QueuePolicy
 from custom_components.voip_stack.phone_control import CallControlRequest, PhoneOperation
 from custom_components.voip_stack.roster import RosterEntry
-from .test_sip_phone_transfers_ha import registered_phones as registered_phones
+from custom_components.voip_stack.router import RouteAction, resolve_esp_origin
+from custom_components.voip_stack.sip_capture import SipCapture
+from .test_sip_phone_transfers_ha import assert_peer_audio_tones, registered_phones as registered_phones
 from .test_trunk_calls_ha import lab as lab, trunks as trunks
 from .test_sip_capabilities_ha import wait_until
 from .test_managed_phones_ha import phone_lab as phone_lab, custom_integration_path as custom_integration_path
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize(("kind", "name", "extension", "wire_user"), [
+    ("ring", "RG Casa", "", "RG%20Casa"),
+    ("ring", "RG Casa", "861", "861"),
+    ("conference", "CG Casa", "", "CG%20Casa"),
+    ("conference", "CG Casa", "862", "862"),
+])
+async def test_esp_group_destination_reaches_the_member_over_sip(
+    registered_phones, trunks, tmp_path, kind, name, extension, wire_user,
+):
+    """Dial the address supplied for the group from an independent registered phone."""
+    lab = trunks
+    caller, ring_member, conference_member = registered_phones
+    member, phone, tone = (("transfer_b", ring_member, 550) if kind == "ring"
+                           else ("transfer_c", conference_member, 650))
+    group = RosterEntry(name, ha_bridge=True, extension=extension,
+                        metadata={"group_type": kind, "members": [member], "ring_members": [member]})
+    lab.roster.append(group)
+    lab.runtime.directory.replace(lab.roster)
+    port = lab.runtime.transport_config["sip_port"]
+    route = resolve_esp_origin(name, lab.roster, f"sip:HA@127.0.0.1:{port}")
+    assert route.action == RouteAction.BRIDGE
+    assert route.entry is group
+    assert route.target == (extension or name)
+    capture = SipCapture()
+    capture.start()
+    try:
+        await asyncio.to_thread(caller.command, "/dial " + route.sip_uri)
+        await asyncio.to_thread(caller.wait_for, "Call established", 5)
+        await asyncio.to_thread(phone.wait_for, "Call established", 5)
+        assert f"INVITE sip:{wire_user}@127.0.0.1:{port} SIP/2.0\r\n".encode() in capture.buffer
+        for endpoint in ("transfer_a", member):
+            await wait_until(lambda: any(wav.stat().st_size > 8192
+                                         for wav in (tmp_path / endpoint).glob("*-dec.wav")))
+    finally:
+        try:
+            await asyncio.to_thread(caller.hangup)
+            await asyncio.to_thread(phone.hangup)
+            await wait_until(lambda: not lab.calls.sessions)
+        finally:
+            capture.stop()
+            (tmp_path / "group-sip.pcap").write_bytes(capture.buffer)
+            capture.clear()
+    assert not lab.calls.endpoint_claims_snapshot()
+    assert not lab.calls.relays_snapshot()
+    assert not lab.runtime.rtp_port_pool.get("used")
+    for peer in (caller, phone):
+        await asyncio.to_thread(peer.close)
+    assert_peer_audio_tones(tmp_path, (("transfer_a", tone), (member, 450)))
 
 
 @pytest.fixture

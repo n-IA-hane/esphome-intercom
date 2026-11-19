@@ -360,19 +360,26 @@ const makeAccount = (endpointId, deviceId, metadata) => ({{
   id: endpointId, name: endpointId, enabled: true,
   metadata: {{ endpoint_kind: "sip_account", endpoint_id: endpointId, device_id: deviceId, ...metadata }},
 }});
-officeCard._rosterEntries = [
+const officeRoster = [
   makeAccount("browser:owner", "owner", {{ registered: true, local_ha: false, availability: "available" }}),
   makeAccount("reception", "reception-device", {{ registered: false, ha_binding: true, availability: "available" }}),
+  makeAccount("legacy-card", "legacy-card-device", {{ local_ha: true }}),
   makeAccount("offline", "offline-device", {{ registered: false, availability: "offline" }}),
   makeAccount("legacy-offline", "legacy-device", {{ registered: false }}),
 ];
+officeCard._sharedEntityIds = {{ phonebook: "sensor.office_phonebook" }};
+officeCard._hass = {{ states: {{ "sensor.office_phonebook": {{ attributes: {{
+  roster_json: JSON.stringify({{ contacts: officeRoster }}),
+}} }} }} }};
+assert.equal(officeCard._loadSharedRoster(), true);
 const officeOptions = () => Array.from(officeCard._softphoneTargets(), (item) => item.device_id);
-assert.deepEqual(officeOptions(), ["reception-device"]);
+const expectedOfficeOptions = ["reception-device", "legacy-card-device"];
+assert.deepEqual(officeOptions(), expectedOfficeOptions);
 officeCard._softphoneSnapshot = null;
-assert.deepEqual(officeOptions(), ["reception-device"]); // Device selected, first snapshot still pending.
+assert.deepEqual(officeOptions(), expectedOfficeOptions); // Device selected, first snapshot still pending.
 officeCard.config.device_id = "";
 officeCard._softphoneSnapshot = {{ endpoint_id: "browser:owner" }};
-assert.deepEqual(officeOptions(), ["reception-device"]);
+assert.deepEqual(officeOptions(), expectedOfficeOptions);
 
 assert.equal(cardModel.terminalPeerLabel({{
   direction: "incoming",

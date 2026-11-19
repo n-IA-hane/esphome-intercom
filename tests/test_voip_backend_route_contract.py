@@ -1010,7 +1010,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("softphone_targets_json", sensor)
         self.assertNotIn("softphone_targets_json", card)
         self.assertIn("_targetFromRosterEntry(entry)", card)
-        self.assertIn("metadata.local_ha", card)
+        self.assertIn('"roster_json": self._roster_json', sensor)
 
     def test_ha_softphone_media_path_can_join_conference_without_card_logic(
         self,

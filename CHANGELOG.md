@@ -4,6 +4,9 @@
 
 - S3 profiles now set the flash mode through ESPHome's native `esp32.flash_mode`
   option. WS2812 status lights use `channel_colors` and keep each board's color order.
+- Phone provisioning tests now use the catalog revision recorded with the
+  release candidate. The Snom 360 profile supports twelve SIP lines and twelve
+  programmable keys. Update the model profile to use them on an existing phone.
 - Updated ESP firmware can register again after a managed password change even
   when the PBX rejects the old phone-status subscriptions. During a call,
   **VoIP Diagnostics** shows current packet counters on demand. Periodic
@@ -16,7 +19,7 @@
 - Public firmware profiles target ESPHome 2026.11.0. The shared packages load
   the selected voice and playback backports when the profile uses those features.
 - Choose a device by its Home Assistant name and icon when assigning a desk
-  phone line or BLF key. Single-position profiles such as the Snom 360 show
+  phone line or BLF key. Single-position profiles show
   both selections directly in the form. An automatically generated key label
   fits the phone's display, even when the device name is longer.
 - An existing Home Assistant softphone named `Casa` becomes a SIP account
