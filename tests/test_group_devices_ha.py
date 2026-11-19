@@ -91,10 +91,12 @@ async def test_namespace_conflict_rejected_before_manual_group_save(phone_lab):
         validate_group_namespace(lab.hass, lab.entry, normalize_group_data({"kind": "ring", "name": "Existing"}))
 
 
-async def test_existing_long_ring_text_survives_import_and_group_reconcile(managed):
+async def test_existing_long_ring_text_survives_import_and_group_reconcile(managed, caplog):
     from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
     from custom_components.voip_stack.group_config import reconcile_group_records, group_records
     from custom_components.voip_stack.managed_phones import managed_records
+    from custom_components.voip_stack.router import RouteAction, resolve_ha_router
     lab = managed
     name = "Legacy ring group with a name longer than thirty two bytes"
     entity = er.async_get(lab.hass).async_get_or_create("text", "esphome", "84c7bb000001-voip_ring_groups",
@@ -106,7 +108,17 @@ async def test_existing_long_ring_text_survives_import_and_group_reconcile(manag
     assert phone.ring_group == name
     assert lab.runtime.endpoints.get(phone.endpoint_id).ring_group == name
     reconcile_group_records(lab.hass, lab.entry)
-    assert next(iter(group_records(lab.entry, "ring").values()))["name"] == name
+    (group,) = group_records(lab.entry, "ring").values()
+    assert group["name"] == name and group["origin"] == "auto"
+    caplog.clear()
+    await async_refresh_directory(lab.hass)
+    rows = lab.runtime.directory.snapshot()
+    (published,) = [row for row in rows if row.name == name]
+    assert published.metadata["group_id"] == group["group_id"]
+    assert published.metadata["members"] == [phone.username]
+    route = resolve_ha_router(name, rows)
+    assert route.action == RouteAction.GROUP and route.entry is published
+    assert f"Skipping group {name}" not in caplog.text
 
 
 @pytest.mark.parametrize("kind", ["ring", "queue"])

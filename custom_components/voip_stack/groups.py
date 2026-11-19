@@ -131,11 +131,21 @@ def collect_groups(
     for peer in ha_peers:
         _declare_peer(groups, peer)
 
-    existing = {normalize_roster_key(entry.id) for entry in existing_entries}
-    existing |= {normalize_roster_key(entry.name) for entry in existing_entries}
-    existing.discard("")
-    for key in list(groups):
-        if key in existing:
-            _LOGGER.warning("Skipping group %s because it collides with an existing roster entry", groups[key].name)
-            groups.pop(key, None)
+    owners: dict[str, list[RosterEntry]] = {}
+    for entry in existing_entries:
+        for key in {normalize_roster_key(entry.id), normalize_roster_key(entry.name)}:
+            if key and key in groups:
+                owners.setdefault(key, []).append(entry)
+    for key, entries in owners.items():
+        group = groups.pop(key)
+        if len(entries) == 1:
+            metadata = entries[0].metadata or {}
+            group_id = metadata.get("group_id")
+            # The saved ring group already publishes this membership declaration.
+            if (group_id and group.group_type == GROUP_TYPE_RING
+                    and metadata.get("endpoint_id") == f"group:ring:{group_id}"
+                    and metadata.get("group_type") == GROUP_TYPE_RING
+                    and metadata.get("auto") is True and metadata.get("members") == group.members):
+                continue
+        _LOGGER.warning("Skipping group %s because it collides with an existing roster entry", group.name)
     return {group.name: group for group in groups.values()}

@@ -7,6 +7,8 @@
 - Phone provisioning tests now use the catalog revision recorded with the
   release candidate. The Snom 360 profile supports twelve SIP lines and twelve
   programmable keys. Update the model profile to use them on an existing phone.
+- A saved automatic ring group no longer produces a collision warning when
+  its member phones publish the same group with the same membership.
 - Updated ESP firmware can register again after a managed password change even
   when the PBX rejects the old phone-status subscriptions. During a call,
   **VoIP Diagnostics** shows current packet counters on demand. Periodic
