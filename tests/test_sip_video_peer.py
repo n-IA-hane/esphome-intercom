@@ -184,7 +184,7 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
         local_ip="127.0.0.1",
         local_port=5062,
         local_user="100",
-        local_display_name="Dio Cane",
+        local_display_name="Front Desk",
         remote_uri="sip:9901@127.0.0.1:5060",
         call_id="dahua-sim",
         local_tag="from-tag",
@@ -196,7 +196,7 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
     assert ("User-Agent", "Dahua UAC/3.0") in headers
     assert (
         "From",
-        '"Dio Cane" <sip:100@127.0.0.1:5062>;tag=from-tag',
+        '"Front Desk" <sip:100@127.0.0.1:5062>;tag=from-tag',
     ) in headers
     assert ("Supported", "from-change") in headers
     assert any(name == "Allow" and "UPDATE" in value for name, value in headers)

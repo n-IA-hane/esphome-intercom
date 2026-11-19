@@ -189,7 +189,7 @@ snapshots.
   endpoints support compressed codecs.
 - A FRITZBox-style PCMA call that advertises 16 ms but sends 10 ms RTP packets
   is reframed without decode drops and produces complete Assist input frames.
-- A caller with display name `Dio Cane` remains exactly `Dio Cane` on the
+- A caller with display name `Front Desk` remains exactly `Front Desk` on the
   receiving card and ESP. Spaces must not become underscores, and roster data
   must not replace the peer's valid `From` display name.
 - A caller that dials a numeric extension receives the selected endpoint's
