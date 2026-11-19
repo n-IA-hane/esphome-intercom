@@ -311,7 +311,7 @@
       "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
       "phone_provisioning_url_invalid": "Gib eine gültige HTTP- oder HTTPS-URL ohne eingebettete Zugangsdaten, Abfrageparameter oder Fragment ein. HTTP muss ausdrücklich für die Verwendung im lokalen Netzwerk erlaubt werden.",
       "phone_name_required": "A phone name is required.",
-      "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+      "phone_username_invalid": "Gib einen SIP-Benutzernamen ohne Zeilenumbrüche oder Steuerzeichen ein. Leerzeichen sind erlaubt.",
       "phone_password_required": "A SIP password is required.",
       "phone_forward_target_required": "A forward destination is required for the Forward policy.",
       "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -437,7 +437,7 @@
       },
       "error": {
         "phone_name_required": "Ein Telefonname ist erforderlich.",
-        "phone_username_invalid": "Verwenden Sie nur Buchstaben, Zahlen, Punkte, Unterstriche oder Bindestriche.",
+        "phone_username_invalid": "Gib einen SIP-Benutzernamen ohne Zeilenumbrüche oder Steuerzeichen ein. Leerzeichen sind erlaubt.",
         "phone_password_required": "Ein SIP-Passwort ist erforderlich.",
         "phone_forward_target_required": "Für die Weiterleitungsrichtlinie ist ein Weiterleitungsziel erforderlich.",
         "phone_alias_conflict": "Der Name, die Durchwahl oder der Benutzername wird bereits von einem anderen Telefon verwendet.",
@@ -785,7 +785,7 @@
       },
       "error": {
         "phone_name_required": "A phone name is required.",
-        "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+        "phone_username_invalid": "Gib einen SIP-Benutzernamen ohne Zeilenumbrüche oder Steuerzeichen ein. Leerzeichen sind erlaubt.",
         "phone_password_required": "A SIP password is required.",
         "phone_forward_target_required": "A forward destination is required for the Forward policy.",
         "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -1033,6 +1033,10 @@
     }
   },
   "issues": {
+    "account_route_conflict": {
+      "title": "Routingkonflikt des SIP-Kontos beheben",
+      "description": "Das SIP-Konto {phone} verwendet das Ziel {route}, das bereits als Name, SIP-Benutzername, Durchwahl, Gruppe oder Funktionscode vergeben ist. Weise den betroffenen Zielen in der bisherigen Konfiguration unterschiedliche Werte zu und wiederhole das Upgrade."
+    },
     "phone_identity_conflict": {
       "title": "Telefonidentität muss wiederhergestellt werden",
       "description": "Die gespeicherte Identität von {phone} stimmt nicht mit der bisherigen Kopie überein (nativ: {canonical}, bisher: {legacy}). Es wurde keine Identität geändert. Stellen Sie eine konsistente Konfiguration aus einer bekannten Sicherung wieder her oder bitten Sie den Maintainer der Integration, diese Verweise wiederherzustellen. Löschen Sie das Telefon nicht und legen Sie es nicht erneut an, da vorhandene Geräte, Zuordnungen und Mailboxen seine ursprüngliche Identität verwenden."
@@ -1072,6 +1076,10 @@
     "esphome_account_name": {
       "title": "ESPHome-SIP-Benutzernamen prüfen",
       "description": "Der ausgewählte ESPHome-Name für das SIP-Konto von {phone} ist zu lang oder enthält nicht unterstützte Zeichen. Ändere den Namen in der ESPHome-Konfiguration und installiere die Firmware erneut."
+    },
+    "esphome_account_name_collision": {
+      "title": "Eindeutigen ESPHome-SIP-Benutzernamen wählen",
+      "description": "Der für {phone} gewählte SIP-Benutzername {username} wird bereits von einem anderen Telefon oder Rufziel verwendet. Wähle einen eindeutigen Namen in der ESPHome-Konfiguration und installiere die aktualisierte Firmware."
     },
     "esphome_endpoint_collision": {
       "title": "Identitätskonflikt beim ESPHome-Telefon",

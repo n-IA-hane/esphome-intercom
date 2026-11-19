@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import ExitStack
-from dataclasses import replace
 import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -75,32 +74,20 @@ async def registrar_wire():
         await server.stop()
 
 
-async def test_named_phone_contact_becomes_callable_on_promotion(registrar_wire):
+async def test_named_phone_contact_is_callable_after_registration(registrar_wire):
     registrar, register = registrar_wire
     name = 'Caffè "Nord" #2'
-    pending = sip_registrar.SipAccount(name, name, "fixture-password", registration_only=True)
-    registrar.update_accounts([pending])
-    address, contact = await register(pending)
+    account = sip_registrar.SipAccount(name, name, "fixture-password")
+    registrar.update_accounts([account])
+    address, contact = await register(account)
     binding, = registrar.registered_contacts(name)
     assert binding.contact_uri == contact
     assert sip.parse_sip_uri(contact).user == name
     gruus = [sip.parse_sip_uri(uri) for uri in (binding.public_gruu, binding.temporary_gruu)]
     assert gruus[0].user == name
-    assert registrar.registered_roster_entries() == []
-    assert registrar.account_for_source(address, "UDP", username=name) is None
-    assert registrar.account_for_source(address, "UDP") is None
-    assert not registrar.registration_matches_source(name, *address, "UDP")
-    assert registrar.select_outbound_flow(name, sip.parse_sip_uri(contact), allow_ordinary=True) is None
-    assert registrar.authentication_generation(name) is None
-    for uri in gruus:
-        assert registrar.resolve_gruu(uri) == ()
-        assert registrar.local_gruu_target(uri) is None
-
-    active = replace(pending, registration_only=False)
-    registrar.update_accounts([active])
     assert registrar.registered_contacts(name) == (binding,)
     assert registrar.authentication_generation(name)
-    assert registrar.account_for_source(address, "UDP") == active
+    assert registrar.account_for_source(address, "UDP") == account
     assert registrar.registration_matches_source(name, *address, "UDP")
     assert registrar.select_outbound_flow(name, sip.parse_sip_uri(contact), allow_ordinary=True)
     entry, = registrar.registered_roster_entries()

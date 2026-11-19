@@ -204,7 +204,7 @@ async def test_clearing_conference_membership_clears_ring_without_call_events(ph
     assert events == []
 
 
-async def test_v7_generated_username_avoids_own_group_and_migration_is_idempotent(hass):
+async def test_v7_uses_the_softphone_name_once_and_preserves_its_groups(hass):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.phone_config import phone_subentry_data
 
@@ -216,7 +216,7 @@ async def test_v7_generated_username_avoids_own_group_and_migration_is_idempoten
     sub = ConfigSubentry(subentry_type="phone", title="Casa", unique_id="phone:default", data=data)
     hass.config_entries.async_add_subentry(entry, sub)
     assert await async_migrate_entry(hass, entry)
-    assert sub.data["username"] == "ha_phone_default_2"
+    assert sub.data["username"] == "Casa"
     assert all(phone_subentry_data(sub)[key] == value for key, value in data.items() if key != "kind")
     saved = deepcopy(dict(sub.data))
     assert await async_migrate_entry(hass, entry)

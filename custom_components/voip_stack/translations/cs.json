@@ -312,7 +312,7 @@
       "phone_provisioning_url_invalid": "Zadejte platnou adresu URL HTTP nebo HTTPS bez vložených přihlašovacích údajů, parametrů dotazu a fragmentu. HTTP vyžaduje výslovný souhlas s použitím v místní síti.",
       "phone_provisioning_url_unavailable": "Automatická adresa URL pro konfiguraci telefonu není k dispozici. Nastavte adresu URL HTTPS v Home Assistant, zadejte adresu URL HTTPS dostupnou z telefonu nebo výslovně povolte HTTP v místní síti.",
       "phone_name_required": "A phone name is required.",
-      "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+      "phone_username_invalid": "Zadejte uživatelské jméno SIP bez zalomení řádku a řídicích znaků. Mezery jsou povoleny.",
       "phone_password_required": "A SIP password is required.",
       "phone_forward_target_required": "A forward destination is required for the Forward policy.",
       "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -437,7 +437,7 @@
       },
       "error": {
         "phone_name_required": "Je vyžadováno jméno telefonu.",
-        "phone_username_invalid": "Používejte pouze písmena, číslice, tečky, podtržítka nebo pomlčky.",
+        "phone_username_invalid": "Zadejte uživatelské jméno SIP bez zalomení řádku a řídicích znaků. Mezery jsou povoleny.",
         "phone_password_required": "Je vyžadováno SIP heslo.",
         "phone_forward_target_required": "Pro strategii Přesměrování je vyžadován cílový bod.",
         "phone_alias_conflict": "Jméno, klapka nebo uživatelské jméno je již využíváno jiným telefonem.",
@@ -785,7 +785,7 @@
       },
       "error": {
         "phone_name_required": "A phone name is required.",
-        "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+        "phone_username_invalid": "Zadejte uživatelské jméno SIP bez zalomení řádku a řídicích znaků. Mezery jsou povoleny.",
         "phone_password_required": "A SIP password is required.",
         "phone_forward_target_required": "A forward destination is required for the Forward policy.",
         "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -1033,6 +1033,10 @@
     }
   },
   "issues": {
+    "account_route_conflict": {
+      "title": "Vyřešte konflikt směrování účtu SIP",
+      "description": "Účet SIP {phone} používá cíl {route}, který je již obsazen názvem, uživatelským jménem SIP, klapkou, skupinou nebo kódem funkce. V předchozí konfiguraci přiřaďte kolidujícím cílům různé hodnoty a opakujte aktualizaci."
+    },
     "phone_identity_conflict": {
       "title": "Identitu telefonu je nutné obnovit",
       "description": "Uložená identita telefonu {phone} se liší od původní kopie (nativní: {canonical}, původní: {legacy}). Žádná identita nebyla změněna. Obnovte konzistentní konfiguraci ze známé zálohy nebo požádejte správce integrace o obnovení těchto odkazů. Telefon nemažte a nevytvářejte znovu, protože stávající zařízení, přiřazení a hlasové schránky používají jeho původní identitu."
@@ -1072,6 +1076,10 @@
     "esphome_account_name": {
       "title": "Zkontrolujte uživatelské jméno SIP v ESPHome",
       "description": "Název ESPHome vybraný pro účet SIP telefonu {phone} je příliš dlouhý nebo obsahuje nepodporované znaky. Upravte název v konfiguraci ESPHome a znovu nainstalujte firmware."
+    },
+    "esphome_account_name_collision": {
+      "title": "Zvolte jedinečné uživatelské jméno SIP v ESPHome",
+      "description": "Uživatelské jméno SIP {username} zvolené pro {phone} už používá jiný telefon nebo cíl volání. Zvolte jedinečný název v konfiguraci ESPHome a nainstalujte aktualizovaný firmware."
     },
     "esphome_endpoint_collision": {
       "title": "Konflikt identifikace telefonu ESPHome",

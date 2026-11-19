@@ -1,7 +1,7 @@
 """Private, config-entry-backed ownership of managed ESPHome SIP accounts."""
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 import re
 
 from .sip_registrar import SipAccount, validate_managed_username
@@ -83,8 +83,6 @@ class ManagedPhone:
     conference_group: str = ""
     conference_ring: bool = False
     active: bool = True
-    # None awaits an ESP name, a nonempty name awaits REGISTER, "" is settled.
-    pending_username: str | None = ""
     membership_pending: dict[str, str] = field(default_factory=dict)
     membership_observed: dict[str, str] = field(default_factory=dict)
 
@@ -94,8 +92,6 @@ class ManagedPhone:
             object.__setattr__(self, name, normalize_membership_tracking(getattr(self, name)))
         mac = normalize_mac(self.mac)
         username = validate_managed_username(self.username)
-        if self.pending_username not in (None, ""):
-            validate_managed_username(self.pending_username)
         endpoint_id = self.endpoint_id or f"esphome:{self.device_id}"
         if (not isinstance(self.device_id, str) or not self.device_id
                 or not isinstance(self.origin_entry_id, str) or not self.origin_entry_id
@@ -127,10 +123,8 @@ def managed_records(entry) -> dict[str, ManagedPhone]:
             continue
         try:
             phone = ManagedPhone(**{name: raw[name] for name in ManagedPhone.__dataclass_fields__ if name in raw})
-            if phone.device_id != key or not isinstance(raw.get("username"), str) or not raw["username"]:
+            if phone.device_id != key:
                 continue
-            if "pending_username" not in raw and phone.username == "esp_" + phone.mac:
-                phone = replace(phone, pending_username=None)
             records[key] = phone
         except (TypeError, ValueError):
             continue
@@ -172,21 +166,15 @@ def active_managed_accounts(hass, entry) -> list[SipAccount]:
                 and any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(mac) == phone.mac
                         for kind, mac in device.connections)
                 and managed_phone_mode(hass, origin, phone.device_id, phone.mac) is not False):
-            account = phone.account()
-            accounts.append(account)
-            if phone.pending_username:
-                accounts.append(replace(account, username=phone.pending_username, registration_only=True))
+            accounts.append(phone.account())
     return accounts
 
 
 def managed_route_mappings(entry) -> list[dict]:
     """Reserve physical identities even offline, without exposing credentials."""
-    records = managed_records(entry).values()
     return [{"id": phone.endpoint_id, "name": phone.display_name, "username": phone.username,
              "extension": phone.extension, "ring_group": phone.ring_group,
              "conference_group": phone.conference_group,
              "voicemail": {"enabled": bool(entry.data.get("esphome_mailboxes", {})
                  .get(phone.endpoint_id, {}).get("enabled"))}}
-            for phone in records] + [
-                {"id": phone.endpoint_id, "username": phone.pending_username}
-                for phone in records if phone.pending_username]
+            for phone in managed_records(entry).values()]

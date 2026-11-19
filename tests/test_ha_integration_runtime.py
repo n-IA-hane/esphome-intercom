@@ -837,16 +837,16 @@ async def test_new_entry_bootstraps_one_normal_named_account(
 
     entry = MockConfigEntry(domain=DOMAIN, data={}, version=5)
     entry.add_to_hass(hass)
-    hass.config.location_name = "Casa"
+    hass.config.location_name = "Casa al Mare"
 
     created = async_bootstrap_browser_phone(hass, entry)
 
     assert created is not None
     assert phone_endpoint_id(created) == "sip:" + created.subentry_id
     assert created.data[CONF_PHONE_KIND] == "sip_account"
-    assert created.data["username"] and created.data["password"]
+    assert created.data["username"] == "Casa al Mare" and created.data["password"]
     assert not created.data.get("ha_bindings")
-    assert created.data[CONF_PHONE_NAME] == "Casa"
+    assert created.data[CONF_PHONE_NAME] == "Casa al Mare"
     assert async_bootstrap_browser_phone(hass, entry) is None
     assert len(entry.subentries) == 1
 

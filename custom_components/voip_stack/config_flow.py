@@ -1188,7 +1188,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         if kind is EndpointKind.SIP_ACCOUNT:
             username = str(values.get(CONF_PHONE_USERNAME) or "").strip()
             if not username:
-                username = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-.")
+                username = name
             try:
                 username = normalize_username(username)
             except ValueError:

@@ -13,7 +13,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 
-from .config_validation import route_namespace_conflicts, mailbox_route_aliases
+from .config_validation import conflicting_route, mailbox_route_aliases
 from .const import (
     CONF_SIP_VIDEO,
     CONF_HA_SOFTPHONE_CONFERENCE_GROUP,
@@ -72,6 +72,15 @@ class PhoneIdentityConflict(ValueError):
         super().__init__("phone_identity_conflict")
         self.phone, self.canonical, self.legacy = phone, canonical, legacy
         self.subentry_id = subentry_id
+
+
+class PhoneRouteConflict(ValueError):
+    """An account would take a route that is already in use."""
+
+    def __init__(self, phone: str, route: str):
+        self.phone, self.route = phone, route
+        super().__init__(f"SIP account {phone!r} conflicts with route {route!r}. "
+                         "Assign distinct names, SIP usernames or extensions and retry.")
 
 
 def phone_subentries(entry: ConfigEntry) -> list[ConfigSubentry]:
@@ -212,7 +221,7 @@ def async_bootstrap_browser_phone(
         endpoint_id=new_sip_account_endpoint_id(),
     )
     data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
-    data[CONF_PHONE_USERNAME] = _new_account_username(entry, data[CONF_PHONE_ENDPOINT_ID])
+    data[CONF_PHONE_USERNAME] = normalize_username(data[CONF_PHONE_NAME])
     validate_sip_account_namespace(entry, [*map(phone_subentry_data, phone_subentries(entry)), data])
     data[CONF_PHONE_PASSWORD] = generate_password()
     return _add_phone_subentry(
@@ -223,38 +232,17 @@ def async_bootstrap_browser_phone(
     )
 
 
-def _new_account_username(entry, endpoint_id, *, used=()):
-    from .config_validation import (
-        entry_route_mappings, mapping_group_aliases, mapping_route_aliases,
-    )
-    rows = [*entry_route_mappings(entry, entry.data),
-            *({"username": value} for value in used)]
-    occupied = set().union(*(mapping_route_aliases(row) | mapping_group_aliases(row)
-                             for row in rows)) if rows else set()
-    # The SIP login is shared by desk phones and HA, including accounts with a legacy ID.
-    account_key = re.sub(r"^(?:browser|sip):", "", str(endpoint_id))
-    base = "ha_phone_" + re.sub(r"[^A-Za-z0-9_.-]", "_", account_key)[:48]
-    for suffix in range(len(occupied) + 2):
-        candidate = base if not suffix else base + "_" + str(suffix + 1)
-        if not route_namespace_conflicts(candidate_routes=(candidate,), existing=rows):
-            return normalize_username(candidate)
-    raise ValueError("No unique account username available")
-
-
 def migrate_browser_accounts(hass, entry):
     """Stage the whole future namespace before the first identity-preserving write."""
     updates = []
     future = []
-    used = []
-    converted = set()
     for subentry in phone_subentries(entry):
         data = deepcopy(phone_subentry_data(subentry))
         if data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value:
             identity = phone_endpoint_id(subentry)
             data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
-            username = str(data.get(CONF_PHONE_USERNAME) or "").strip()
-            data[CONF_PHONE_USERNAME] = normalize_username(username) if username else _new_account_username(entry, identity, used=used)
-            used.append(data[CONF_PHONE_USERNAME])
+            data[CONF_PHONE_NAME] = data.get(CONF_PHONE_NAME) or subentry.title
+            data[CONF_PHONE_USERNAME] = _browser_account_username(data)
             raw_bindings = data.get("ha_bindings") or []
             if not isinstance(raw_bindings, (list, tuple)):
                 raise ValueError("Invalid configured HA associations")
@@ -266,17 +254,22 @@ def migrate_browser_accounts(hass, entry):
             data["ha_bindings"] = bindings
             endpoint_from_data(entry, data)
             updates.append((subentry, data))
-            converted.add(identity)
         future.append(data)
     if not updates:
         return
-    validate_sip_account_namespace(entry, future, replacing_endpoint_ids=converted)
+    validate_sip_account_namespace(entry, future)
     for _subentry, data in updates:
-        if data[CONF_PHONE_ENDPOINT_ID] in converted and not data.get(CONF_PHONE_PASSWORD):
+        if not data.get(CONF_PHONE_PASSWORD):
             data[CONF_PHONE_PASSWORD] = generate_password()
     for subentry, data in updates:
         hass.config_entries.async_update_subentry(entry, subentry,
             data=phone_subentry_storage_data(subentry, data))
+
+
+def _browser_account_username(data: Mapping[str, Any]) -> str:
+    """Keep an explicit login or use the softphone's configured name."""
+    username = str(data.get(CONF_PHONE_USERNAME) or "").strip()
+    return normalize_username(username or data[CONF_PHONE_NAME])
 
 
 def phone_identity_updates(entry: ConfigEntry) -> tuple:
@@ -418,6 +411,7 @@ def async_ensure_phone_subentries(
     default_overrides: Mapping[str, Any] | None = None,
 ) -> None:
     """Create the master and migrate legacy registrar accounts once."""
+    pending = []
     if phone_subentry_by_endpoint_id(entry, DEFAULT_ENDPOINT_ID) is None:
         data = browser_phone_data(
             hass,
@@ -439,12 +433,7 @@ def async_ensure_phone_subentries(
                     }
                 }
             )
-        _add_phone_subentry(
-            hass,
-            entry,
-            data=data,
-            title=str(data[CONF_PHONE_NAME]),
-        )
+        pending.append(data)
 
     existing_usernames = {
         str(item.data.get(CONF_PHONE_USERNAME) or "").strip().casefold()
@@ -461,14 +450,18 @@ def async_ensure_phone_subentries(
         username = str(data[CONF_PHONE_USERNAME]).casefold()
         if username in existing_usernames:
             continue
-        _add_phone_subentry(
-            hass,
-            entry,
-            data=data,
-            title=str(data[CONF_PHONE_NAME]),
-        )
+        pending.append(data)
         existing_usernames.add(username)
 
+    # A pre-v3 entry still owns its accounts in the parent record. Check the
+    # same names the v7 conversion will use before moving any of them.
+    projected = [phone_subentry_data(subentry) for subentry in phone_subentries(entry)]
+    for data in (*projected, *pending):
+        if data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value:
+            data[CONF_PHONE_USERNAME] = _browser_account_username(data)
+    validate_sip_account_namespace(entry, [*projected, *pending])
+    for data in pending:
+        _add_phone_subentry(hass, entry, data=data, title=str(data[CONF_PHONE_NAME]))
     if legacy_accounts:
         data = dict(entry.data)
         data.pop(CONF_SIP_ACCOUNTS, None)
@@ -748,7 +741,6 @@ def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]
 def validate_sip_account_namespace(
     entry: ConfigEntry,
     account_data: Iterable[Mapping[str, Any]],
-    *, replacing_endpoint_ids=(),
 ) -> None:
     """Validate a complete future SIP-account set against the dial plan.
 
@@ -767,7 +759,6 @@ def validate_sip_account_namespace(
         if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
     }
     replaced.update(str(data.get(CONF_PHONE_ENDPOINT_ID) or "") for data in candidates)
-    replaced.update(replacing_endpoint_ids)
     existing = entry_route_mappings(entry, {**entry.data, CONF_SIP_ACCOUNTS: []},
                                     exclude_endpoint_ids=replaced)
 
@@ -782,7 +773,7 @@ def validate_sip_account_namespace(
             for part in str(data.get(field) or "").split(",")
             if part.strip()
         )
-        if route_namespace_conflicts(
+        conflict = conflicting_route(
             candidate_routes=(
                 data.get(CONF_PHONE_NAME),
                 data.get(CONF_PHONE_EXTENSION),
@@ -791,16 +782,14 @@ def validate_sip_account_namespace(
             candidate_mailbox_routes=mailbox_route_aliases(data),
             candidate_groups=groups,
             existing=(*existing, *accepted),
-        ):
+        )
+        if conflict is not None:
             label = str(
                 data.get(CONF_PHONE_NAME)
                 or data.get(CONF_PHONE_USERNAME)
                 or "SIP account"
             )
-            raise ValueError(
-                f"SIP account route for {label!r} conflicts with an existing "
-                "phone, contact, Assist extension, or group"
-            )
+            raise PhoneRouteConflict(label, conflict)
         accepted.append(data)
 
     # The same prospective set also has to satisfy the runtime identity index.

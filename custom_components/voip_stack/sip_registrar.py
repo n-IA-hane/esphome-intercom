@@ -70,12 +70,6 @@ class SipAccount:
     conference_ring: bool = False
     ring_group: str = ""
 
-    registration_only: bool = False
-
-    @property
-    def routable(self) -> bool:
-        return self.enabled and not self.registration_only
-
     @property
     def roster_name(self) -> str:
         return self.display_name or self.username
@@ -157,21 +151,21 @@ def generate_password() -> str:
 
 
 def normalize_username(value: str) -> str:
+    """Keep the literal login used for Digest. SIP URI rendering handles escaping."""
     cleaned = (value or "").strip()
     if not cleaned:
         raise ValueError("username is required")
-    if not all(ch.isalnum() or ch in {"_", "-", "."} for ch in cleaned):
-        raise ValueError("username must contain only letters, numbers, _, - or .")
+    if any(byte < 32 or byte == 127 for byte in cleaned.encode()):
+        raise ValueError("SIP username contains a control character")
     return cleaned
 
 
 def validate_managed_username(value: str) -> str:
     """Validate a literal ESPHome name against the device and Digest limits."""
-    if (not isinstance(value, str) or not value or value != value.strip()
-            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    if (not isinstance(value, str) or value != value.strip()
             or len(value.encode()) > 64):
         raise ValueError("Invalid managed SIP username")
-    return value
+    return normalize_username(value)
 
 
 def account_from_mapping(raw: dict[str, Any]) -> SipAccount:
@@ -189,9 +183,7 @@ def account_from_mapping(raw: dict[str, Any]) -> SipAccount:
 
 
 def dump_account(account: SipAccount) -> dict[str, Any]:
-    data = asdict(account)
-    del data["registration_only"]
-    return data
+    return asdict(account)
 
 
 def _extract_uri(header: str) -> str:
@@ -205,10 +197,7 @@ def _extract_register_username(request: sip.SipMessage) -> str:
     """Return the address-of-record user from the mandatory To header."""
 
     uri = sip.parse_sip_uri(_extract_uri(request.header("To")))
-    try:
-        return normalize_username(uri.user)
-    except ValueError:
-        return validate_managed_username(uri.user)
+    return normalize_username(uri.user)
 
 
 def _header_param(header: str, name: str) -> str:
@@ -403,7 +392,6 @@ class SipRegistrar:
         changed = {username for username in previous_accounts.keys() | self.accounts.keys()
                    if username not in previous_accounts or username not in self.accounts
                    or previous_accounts[username].enabled != self.accounts[username].enabled
-                   or previous_accounts[username].registration_only != self.accounts[username].registration_only
                    or not hmac.compare_digest(previous_accounts[username].password.encode(),
                                               self.accounts[username].password.encode())}
         for username in changed:
@@ -451,7 +439,7 @@ class SipRegistrar:
     def authentication_generation(self, username):
         """One private account lifetime, independent of Contact reachability."""
         account = self.accounts.get(str(username).casefold())
-        return self._authentication_generations.get(str(username).casefold()) if account and account.routable else None
+        return self._authentication_generations.get(str(username).casefold()) if account and account.enabled else None
 
     def subscribe_account_changes(self, observer):
         self._account_observers.add(observer)
@@ -495,7 +483,7 @@ class SipRegistrar:
     def select_outbound_flow(self, username: str, uri: sip.SipUri, *, allow_ordinary=False) -> AuthenticatedOutboundFlow | None:
         """Select only the resolved account's exact authenticated UDP Contact."""
         account = self.accounts.get(username.casefold())
-        if account is None or not account.routable:
+        if account is None or not account.enabled:
             return None
         for binding in self.registered_contacts(account.username):
             if (binding.outbound or allow_ordinary) and binding.transport.upper() == "UDP" and binding.contact_uri == str(uri):
@@ -508,7 +496,7 @@ class SipRegistrar:
         if selected.registrar is not self:
             return None
         account = self.accounts.get(selected.username.casefold())
-        if account is None or not account.routable:
+        if account is None or not account.enabled:
             return None
         return next((binding for binding in self.registered_contacts(selected.username)
             if binding.outbound == selected.outbound and binding.transport.upper() == "UDP"
@@ -527,12 +515,8 @@ class SipRegistrar:
             if identity is None:
                 return ()
             account, instance, epoch = identity
-            if self.authentication_generation(account) is None:
-                return ()
             return tuple(item for item in self.registered_contacts(account)
                          if item.instance_id == instance and item.gruu_epoch == epoch)
-        if self.authentication_generation(uri.user) is None:
-            return ()
         return tuple(item for item in self.registered_contacts(uri.user)
                      if item.instance_id and params["gr"] == self._gruu_tokens.public_id(uri.user, item.instance_id))
 
@@ -620,7 +604,7 @@ class SipRegistrar:
 
         self.expire()
         account = self.accounts.get(username.casefold())
-        if account is None or not account.routable:
+        if account is None or not account.enabled:
             return False
         return any(
             registration.source_host == str(host or "")
@@ -773,7 +757,7 @@ class SipRegistrar:
         self.expire()
         candidates = [
             account for account in self.accounts.values()
-            if account.routable
+            if account.enabled
             and (username is None or account.username.casefold() == username.casefold())
             and self.registration_matches_source(account.username, addr[0], addr[1], transport)
         ]
@@ -1096,7 +1080,7 @@ class SipRegistrar:
         )
         for username in registered_usernames:
             account = self.accounts.get(username)
-            if account is None or not account.routable:
+            if account is None or not account.enabled:
                 continue
             registrations = (selected if selected_user == username else self.registered_contacts(account.username))
             if not registrations:

@@ -21,6 +21,22 @@ def add_phone(hass, entry, data):
     return sub
 
 
+@pytest.mark.parametrize("name", ["Casa", 'Caffè "Nord"'])
+async def test_migrated_phone_registers_with_its_literal_name(hass, socket_enabled, name):
+    from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.store import sip_accounts
+    from .test_linphone_registrar_wire import check_account_registration
+
+    entry = MockConfigEntry(domain="voip_stack", version=6, minor_version=4,
+                            data={"initial_phone_created": True})
+    entry.add_to_hass(hass)
+    add_phone(hass, entry, {"endpoint_id": "default", "kind": "browser", "name": name})
+    assert await async_migrate_entry(hass, entry)
+    account, = sip_accounts(hass)
+    assert account.username == name and account.password
+    await check_account_registration("UDP", "outbound", account)
+
+
 async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_credentials(hass):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.phone_config import phone_endpoint_id, phone_subentry_data
@@ -59,7 +75,7 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
         assert sub.data.get("username") and len(sub.data.get("password", "")) >= 20
         assert {"source": "migration", "reference": "legacy_ha_phone:" + phone_endpoint_id(sub)} in sub.data["ha_bindings"]
         assert original["ha_bindings"][0] in sub.data["ha_bindings"]
-    assert legacy.data["username"] != existing.data["username"]
+    assert legacy.data["username"] == "Casa"
     assert phone_subentry_data(existing) == sip_before
     assert all("endpoint_id" not in sub.data for sub in (legacy, opaque, existing))
     assert dict(entry.data) == parent_before and dict(entry.options) == options_before
@@ -70,19 +86,50 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     assert all(dict(entry.subentries[key].data) == value for key, value in after.items())
 
 
-async def test_v7_namespace_conflict_does_not_partially_convert_accounts(hass):
+@pytest.mark.parametrize(("name", "taken"), [("Casa", "casa"), ("Straße", "STRASSE"), ("☎", "☎")])
+async def test_v7_namespace_conflict_does_not_partially_convert_accounts(hass, name, taken):
     from custom_components.voip_stack import async_migrate_entry
+    from homeassistant.helpers import issue_registry as ir
     entry = MockConfigEntry(domain="voip_stack", version=6, minor_version=4, data={"initial_phone_created": True})
     entry.add_to_hass(hass)
-    first = add_phone(hass, entry, {"endpoint_id": "default", "kind": "browser", "name": "Casa", "extension": "221"})
-    second = add_phone(hass, entry, {"endpoint_id": "browser:other", "kind": "browser", "name": "Other", "extension": "222",
-        "username": "taken"})
-    add_phone(hass, entry, {"endpoint_id": "sip:existing", "kind": "sip_account", "name": "Desk", "extension": "480",
-        "username": "taken", "password": "fixture-existing-password"})
-    before = [deepcopy(dict(first.data)), deepcopy(dict(second.data))]
+    first = add_phone(hass, entry, {"endpoint_id": "default", "kind": "browser", "name": "Test", "extension": "221"})
+    desk = add_phone(hass, entry, {"endpoint_id": "sip:existing", "kind": "sip_account", "name": "Desk", "extension": "480",
+        "username": taken, "password": "fixture-existing-password"})
+    second = add_phone(hass, entry, {"endpoint_id": "browser:other", "kind": "browser", "name": name, "extension": "222"})
+    before = [deepcopy(sub.as_dict()) for sub in (first, second, desk)]
     assert await async_migrate_entry(hass, entry) is False
-    assert [dict(first.data), dict(second.data)] == before
+    assert [sub.as_dict() for sub in (first, second, desk)] == before
     assert entry.version == 6
+    issues = ir.async_get(hass)
+    issue_id = "account_route_conflict_" + entry.entry_id
+    assert issues.async_get_issue("voip_stack", issue_id).translation_placeholders == {"phone": name, "route": name}
+    hass.config_entries.async_update_subentry(entry, desk, data={**desk.data, "username": "desk-login"})
+    assert await async_migrate_entry(hass, entry)
+    assert second.data["username"] == name
+    assert issues.async_get_issue("voip_stack", issue_id) is None
+
+
+async def test_pre_v3_default_softphone_checks_its_name_before_moving_legacy_accounts(hass):
+    from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.phone_config import phone_endpoint_id
+
+    hass.config.location_name = "Casa"
+    manual = {"username": "Casa", "password": "fixture-pre-v3-password",
+              "display_name": "Desk", "extension": "480"}
+    entry = MockConfigEntry(domain="voip_stack", version=2, data={"sip_accounts": [manual]})
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry) is False
+    assert entry.version == 2 and not entry.subentries
+    assert entry.data["sip_accounts"] == [manual]
+
+    manual = {**manual, "username": "desk-login"}
+    hass.config_entries.async_update_entry(entry, data={"sip_accounts": [manual]})
+    assert await async_migrate_entry(hass, entry)
+    accounts = {item.data["username"]: item for item in entry.subentries.values() if item.subentry_type == "phone"}
+    assert accounts.keys() == {"Casa", "desk-login"}
+    assert phone_endpoint_id(accounts["Casa"]) == "default"
+    assert accounts["desk-login"].data["password"] == manual["password"]
+    assert accounts["desk-login"].data["extension"] == manual["extension"]
 
 
 @pytest.mark.parametrize("registered,bound,enabled,expected", [
@@ -139,7 +186,8 @@ async def test_registered_account_without_ui_record_keeps_registrar_authority(ph
     assert lab.runtime.endpoints.get(endpoint.endpoint_id).availability.value == expected
 
 
-async def test_native_account_editor_has_one_kind_and_preserves_browser_preferences(phone_lab):
+@pytest.mark.parametrize(("username", "login"), [("new-account", "new-account"), ("", "New account")])
+async def test_native_account_editor_has_one_kind_and_preserves_browser_preferences(phone_lab, username, login):
     from homeassistant.config_entries import SOURCE_USER
     from .support.ha_frontend import prepare_frontend_dependency
     lab = phone_lab
@@ -152,10 +200,10 @@ async def test_native_account_editor_has_one_kind_and_preserves_browser_preferen
     assert {"username", "password", "auto_answer", "send_video", "physical_bindings"} <= fields
     assert "kind" not in fields
     created = await lab.hass.config_entries.subentries.async_configure(result["flow_id"], {
-        "name": "New account", "username": "new-account", "password": "fixture-long-account-password",
+        "name": "New account", "username": username, "password": "fixture-long-account-password",
         "enabled": True, "dnd": False, "auto_answer": True, "send_video": True, "physical_bindings": []})
     assert created["type"] == "abort" and created["reason"] == "phone_configured"
-    account = next(sub for sub in lab.entry.subentries.values() if sub.data.get("username") == "new-account")
+    account = next(sub for sub in lab.entry.subentries.values() if sub.data.get("username") == login)
     assert account.unique_id == "phone:sip:" + account.subentry_id
     assert account.data["kind"] == "sip_account" and account.data["auto_answer"] and account.data["send_video"]
     assert "physical_bindings" not in account.data
@@ -185,7 +233,7 @@ async def test_native_reconfigure_removes_only_inherited_ha_reference(phone_lab)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
     prepare_frontend_dependency(lab.hass)
     data = {"endpoint_id": "default", "kind": "sip_account", "name": "Casa", "extension": "221",
-        "username": "casa", "password": "fixture-account-password", "auto_answer": True, "send_video": True,
+        "username": 'Caffè "Nord"', "password": "fixture-account-password", "auto_answer": True, "send_video": True,
         "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:default"}],
         "future_unknown": {"preserved": True}}
     sub = add_phone(lab.hass, lab.entry, data)
@@ -193,8 +241,9 @@ async def test_native_reconfigure_removes_only_inherited_ha_reference(phone_lab)
         context={"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id})
     assert "migration_bindings" in {key.schema for key in form["data_schema"].schema}
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
-        "name": "Casa renamed", "username": "casa", "password": data["password"], "migration_bindings": []})
+        "name": "Casa renamed", "username": data["username"], "password": data["password"], "migration_bindings": []})
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert sub.data["username"] == data["username"] and sub.data["password"] == data["password"]
     assert sub.data["ha_bindings"] == []
     assert sub.data["auto_answer"] and sub.data["send_video"] and sub.data["future_unknown"] == data["future_unknown"]
     from custom_components.voip_stack.phone_config import phone_endpoint_id
@@ -205,7 +254,10 @@ async def test_native_account_creation_commits_physical_inverse_without_parallel
     from homeassistant.config_entries import SOURCE_USER
     from unittest.mock import AsyncMock
     from custom_components.voip_stack.physical_phone import normalize_physical_phone
+    from custom_components.voip_stack.phone_profile import render_phone_bundle
     from custom_components.voip_stack.physical_phone_provisioning import PhysicalPhoneProvisioner
+    from custom_components.voip_stack.store import sip_accounts
+    from .test_physical_phone_runtime_ha import cached_profile
     from .support.ha_frontend import prepare_frontend_dependency
     lab = phone_lab
     lab.hass.config_entries.async_update_entry(lab.entry,
@@ -219,20 +271,27 @@ async def test_native_account_creation_commits_physical_inverse_without_parallel
     lab.hass.config_entries.async_add_subentry(lab.entry, sub)
     manager = PhysicalPhoneProvisioner(lab.hass, lab.entry)
     lab.runtime.physical_phones = manager
-    manager.catalog.async_profile = AsyncMock(return_value=({"capabilities": {
-        "max_lines": 2, "key_slots": [], "functions": [], "languages": {}}}, {}))
+    profile, templates = cached_profile()
+    manager.catalog.async_profile = AsyncMock(return_value=(profile, templates))
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"), context={"source": SOURCE_USER})
+    username = 'Caffè "Nord"'
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
-        "name": "Bound account", "username": "bound-account", "password": "fixture-bound-account-password",
+        "name": "Bound account", "username": username, "password": "fixture-bound-account-password",
         "physical_bindings": [{"phone_id": hardware["phone_id"], "slot": "1", "transport": "udp"}]})
     assert result["type"] == "abort" and result["reason"] == "phone_configured"
     accounts = [row for row in lab.entry.subentries.values() if row.subentry_type == "phone"]
     assert len(accounts) == 1 and accounts[0].data["kind"] == "sip_account"
     assert "physical_bindings" not in accounts[0].data
-    from custom_components.voip_stack.phone_config import phone_endpoint_id
+    from custom_components.voip_stack.phone_config import phone_endpoint_id, sync_registry_from_entry
     from custom_components.voip_stack.physical_phone import physical_phone_data
     assert physical_phone_data(sub)["lines"] == [{"slot": "1", "endpoint_id": phone_endpoint_id(accounts[0]), "transport": "udp"}]
     assert sub.data["provisioning_token"] == hardware["provisioning_token"]
+    sync_registry_from_entry(lab.hass, lab.entry)
+    lab.registrar.update_accounts(sip_accounts(lab.hass))
+    context = await manager.async_context(physical_phone_data(sub), profile)
+    assert context["lines"][0]["auth_username"] == username
+    files, _ = render_phone_bundle(profile, templates, context)
+    assert files["001122334455.cfg"].splitlines()[0].decode() == f"sip.username={username}"
 
 
 async def test_interrupted_v7_registry_writes_retry_without_namespace_or_credential_loss(hass, monkeypatch):
@@ -264,8 +323,8 @@ async def test_interrupted_v7_registry_writes_retry_without_namespace_or_credent
     assert entry.version == 7 and dict(first.data) == first_saved
     assert second.data["kind"] == "sip_account" and second.data["send_video"]
     assert second.data["future_unknown"] == {"keep": 2}
-    assert first.data["username"] != second.data["username"]
-    assert second.data["username"] == "ha_phone_second"
+    assert first.data["username"] == "Casa"
+    assert second.data["username"] == "Test"
     assert entry.data["preferred_phone_device_id"] == "kept-device"
 
 

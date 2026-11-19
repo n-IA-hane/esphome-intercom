@@ -34,7 +34,7 @@ def build_account_service_handlers(
         accounts = sip_account_dicts(hass)
         if (
             any(
-                str(item.get("username") or "").lower() == username.lower()
+                str(item.get("username") or "").casefold() == username.casefold()
                 for item in accounts
             )
             and not replace_existing
@@ -56,7 +56,7 @@ def build_account_service_handlers(
         accounts = [
             item
             for item in accounts
-            if str(item.get("username") or "").lower() != username.lower()
+            if str(item.get("username") or "").casefold() != username.casefold()
         ]
         accounts.append(dump_account(account))
         try:
@@ -84,7 +84,7 @@ def build_account_service_handlers(
         accounts = [
             item
             for item in sip_account_dicts(hass)
-            if str(item.get("username") or "").lower() != username.lower()
+            if str(item.get("username") or "").casefold() != username.casefold()
         ]
         update_sip_accounts(hass, accounts)
         registrar = sip_registrar(hass)
@@ -100,7 +100,7 @@ def build_account_service_handlers(
         found = False
         accounts = []
         for item in sip_account_dicts(hass):
-            if str(item.get("username") or "").lower() == username.lower():
+            if str(item.get("username") or "").casefold() == username.casefold():
                 item["password"] = password
                 found = True
             accounts.append(item)
@@ -120,7 +120,7 @@ def build_account_service_handlers(
         found = False
         accounts = []
         for item in sip_account_dicts(hass):
-            if str(item.get("username") or "").lower() == username.lower():
+            if str(item.get("username") or "").casefold() == username.casefold():
                 item["enabled"] = enabled
                 found = True
             accounts.append(item)

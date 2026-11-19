@@ -9,6 +9,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import types
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,3 +156,18 @@ def test_manual_password_is_never_echoed_and_account_listing_is_redacted(
     assert "manual-secret" not in repr(listed)
     assert notifications == []
     assert events == []
+
+
+def test_service_cannot_overwrite_a_case_equivalent_login(monkeypatch):
+    module = _load_account_services(monkeypatch, [], [])
+
+    async def refresh(_hass):
+        pass
+
+    handlers = module.build_account_service_handlers(refresh)
+    hass = types.SimpleNamespace(accounts=[{"username": "Straße Nord", "enabled": True}], data={})
+    call = types.SimpleNamespace(hass=hass, data={"username": "STRASSE NORD"})
+    with pytest.raises(ValueError, match="already exists"):
+        asyncio.run(handlers["create_account"](call))
+    asyncio.run(handlers["disable_account"](call))
+    assert hass.accounts == [{"username": "Straße Nord", "enabled": False}]

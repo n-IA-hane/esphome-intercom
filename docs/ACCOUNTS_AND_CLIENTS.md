@@ -36,9 +36,9 @@ Version 7 of the integration configuration converts existing HA/browser phone
 records to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
 identities, extensions, names, routing rules and mailbox references are retained.
 An identifier beginning with `browser:` remains a valid opaque account ID.
-When an account needs a generated SIP login, VoIP Stack uses the prefix
-`ha_phone_`. Existing usernames and passwords stay valid. SIP credentials
-are generated once and never sent to the card.
+A softphone named `Casa` gets the SIP username `Casa`. A name such as
+`Piano Terra` keeps its space. VoIP Stack creates a password when one is
+needed and keeps any existing credentials. The card signs in through HA.
 
 Existing card configurations, including `mode: ha_softphone`, `card_mode` and
 `device_id`, keep their meaning. ESP mirror and directory cards retain their own

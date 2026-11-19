@@ -25,7 +25,7 @@ def async_sync_esphome_account_name_issue(hass, device_id, *, name="", error=Non
         return
     placeholders = {"phone": str(name)}
     if error.value is not None:
-        placeholders.update(field="username", value=error.value)
+        placeholders["username"] = error.value
     ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
         severity=ir.IssueSeverity.WARNING, translation_key=error.issue, translation_placeholders=placeholders,
         learn_more_url=f"/config/devices/device/{device_id}")
@@ -61,6 +61,18 @@ def async_sync_phone_identity_issue(hass, entry, error=None) -> None:
             "canonical": str(getattr(error, "canonical", "")),
             "legacy": str(getattr(error, "legacy", "")),
         })
+
+
+def async_sync_account_route_issue(hass, entry, error=None) -> None:
+    """Identify the routing conflict that blocks the account upgrade."""
+    issue_id = "account_route_conflict_" + entry.entry_id
+    if error is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
+        is_fixable=False, is_persistent=False, severity=ir.IssueSeverity.ERROR,
+        translation_key="account_route_conflict",
+        translation_placeholders={"phone": error.phone, "route": error.route})
 
 
 def async_sync_runtime_issues(hass: HomeAssistant) -> None:

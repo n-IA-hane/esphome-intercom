@@ -6,12 +6,13 @@
   phone line or BLF key. Single-position profiles such as the Snom 360 show
   both selections directly in the form. An automatically generated key label
   fits the phone's display, even when the device name is longer.
-- New automatically generated SIP logins for Home Assistant accounts start
-  with `ha_phone_`. Existing accounts keep their saved credentials.
-- [Managed ESP phones](docs/ESP_REGISTRATION.md#how-the-esp-gets-its-sip-username)
-  use their ESPHome friendly name as their SIP login, or their effective
-  node name when MAC suffixes are enabled. Existing MAC-generated logins
-  switch on authenticated registration and keep their password.
+- An existing Home Assistant softphone named `Casa` becomes a SIP account
+  with the username `Casa` on upgrade. Its extension and dashboard references
+  stay on the same record.
+- A [new managed ESP phone](docs/ESP_REGISTRATION.md#how-the-esp-gets-its-sip-username)
+  uses its ESPHome friendly name, falling back to the node name. With MAC
+  suffixes enabled, it uses the node name already suffixed by ESPHome.
+  Previously enrolled ESP phones keep their saved login and password.
 
 - Configure a discovered desk phone with an optional first SIP account. A
   DHCP change leaves the manual address field empty. The physical device's

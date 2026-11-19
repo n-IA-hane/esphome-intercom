@@ -312,7 +312,7 @@
       "phone_provisioning_url_invalid": "Insira uma URL HTTP ou HTTPS válida, sem credenciais incorporadas, parâmetros de consulta ou fragmento. HTTP exige consentimento explícito para uso na rede local.",
       "phone_provisioning_url_unavailable": "Nenhuma URL automática de provisionamento está disponível. Configure uma URL HTTPS do Home Assistant, insira uma URL HTTPS acessível pelo telefone ou permita explicitamente HTTP na rede local.",
       "phone_name_required": "A phone name is required.",
-      "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+      "phone_username_invalid": "Insira um nome de usuário SIP sem quebras de linha ou caracteres de controle. Espaços são permitidos.",
       "phone_password_required": "A SIP password is required.",
       "phone_forward_target_required": "A forward destination is required for the Forward policy.",
       "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -437,7 +437,7 @@
       },
       "error": {
         "phone_name_required": "O nome do telefone é obrigatório.",
-        "phone_username_invalid": "Use somente letras, números, pontos, sublinhados ou hífens.",
+        "phone_username_invalid": "Insira um nome de usuário SIP sem quebras de linha ou caracteres de controle. Espaços são permitidos.",
         "phone_password_required": "A senha SIP é obrigatória.",
         "phone_forward_target_required": "Um destino de encaminhamento é obrigatório para a política Encaminhar.",
         "phone_alias_conflict": "O nome, a extensão ou o usuário já está sendo usado por outro telefone.",
@@ -785,7 +785,7 @@
       },
       "error": {
         "phone_name_required": "A phone name is required.",
-        "phone_username_invalid": "Use only letters, numbers, dots, underscores or hyphens.",
+        "phone_username_invalid": "Insira um nome de usuário SIP sem quebras de linha ou caracteres de controle. Espaços são permitidos.",
         "phone_password_required": "A SIP password is required.",
         "phone_forward_target_required": "A forward destination is required for the Forward policy.",
         "phone_alias_conflict": "The name, extension or username is already used by another phone.",
@@ -1033,6 +1033,10 @@
     }
   },
   "issues": {
+    "account_route_conflict": {
+      "title": "Resolva o conflito de rota da conta SIP",
+      "description": "A conta SIP {phone} usa o destino {route}, que já está em uso como nome, usuário SIP, ramal, grupo ou código de serviço. Atribua valores diferentes aos destinos em conflito na configuração anterior e tente a atualização novamente."
+    },
     "phone_identity_conflict": {
       "title": "A identidade do telefone precisa ser recuperada",
       "description": "A identidade salva de {phone} difere da cópia anterior (nativa: {canonical}, anterior: {legacy}). Nenhuma identidade foi alterada. Restaure uma configuração consistente de um backup conhecido ou peça ao mantenedor da integração para recuperar essas referências. Não exclua e recrie o telefone para ignorar esta verificação, pois os dispositivos, associações e caixas de correio existentes usam sua identidade original."
@@ -1072,6 +1076,10 @@
     "esphome_account_name": {
       "title": "Verifique o nome de usuário SIP do ESPHome",
       "description": "O nome do ESPHome selecionado para a conta SIP de {phone} excede o comprimento permitido ou contém caracteres incompatíveis. Altere o nome na configuração do ESPHome e reinstale o firmware."
+    },
+    "esphome_account_name_collision": {
+      "title": "Escolha um nome de usuário SIP exclusivo no ESPHome",
+      "description": "O nome de usuário SIP {username} escolhido para {phone} já é usado por outro telefone ou destino de chamada. Escolha um nome exclusivo na configuração do ESPHome e instale o firmware atualizado."
     },
     "esphome_endpoint_collision": {
       "title": "Conflito de identidade do telefone ESPHome",

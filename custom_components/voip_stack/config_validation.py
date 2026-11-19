@@ -61,59 +61,79 @@ def mapping_group_aliases(item: Mapping[str, Any]) -> set[str]:
     return normalized_aliases(mapping_group_values(item))
 
 
-def route_namespace_conflicts(
+def conflicting_route(
     *,
     candidate_routes: Iterable[object] = (),
     candidate_mailbox_routes: Iterable[object] = (),
     candidate_groups: Iterable[object] = (),
     existing: Iterable[Mapping[str, Any]] = (),
-) -> bool:
-    """Check routes and group names as one canonical routing namespace.
+) -> str | None:
+    """Identify the original route value that conflicts with the dial plan.
 
     Reusing a group name on multiple members is intentional. A phone/contact
     alias may not shadow a group, and a newly declared group may not shadow an
     existing phone/contact alias.
     """
-    raw_routes = {str(value or "").strip().casefold() for value in candidate_routes} - {""}
-    raw_groups = {str(value or "").strip().casefold() for value in candidate_groups} - {""}
-    mailbox_routes = {str(value).strip().casefold() for value in candidate_mailbox_routes}
-    wanted_routes = normalized_aliases(raw_routes)
-    wanted_groups = normalized_aliases(raw_groups)
-    if wanted_routes & wanted_groups or mailbox_routes & (raw_routes | raw_groups):
-        return True
+    routes = tuple(value for raw in candidate_routes if (value := str(raw or "").strip()))
+    groups = tuple(value for raw in candidate_groups if (value := str(raw or "").strip()))
+    mailboxes = tuple(str(value).strip() for value in candidate_mailbox_routes)
+    mailbox_keys = {value.casefold() for value in mailboxes}
+    group_keys = normalized_aliases(value.casefold() for value in groups)
+    for value in routes:
+        if normalize_roster_key(value.casefold()) in group_keys:
+            return value
+    for value in (*routes, *groups):
+        if value.casefold() in mailbox_keys:
+            return value
     existing_routes: set[str] = set()
     existing_groups: set[str] = set()
     existing_mailboxes: set[str] = set()
     existing_exact: set[str] = set()
+    existing_usernames: set[str] = set()
     for item in existing:
         if not isinstance(item, Mapping):
             continue
-        if item.get("parking_feature_routes") and any(
-            parse_parking_address(item["parking_feature_routes"], value) is not None for value in raw_routes | raw_groups
-        ):
-            return True
-        if item.get("mailbox_feature_routes") and any(
-            parse_mailbox_address(value) is not None for value in raw_routes | raw_groups
-        ):
-            return True
-        routes = mapping_route_aliases(item)
+        if parking := item.get("parking_feature_routes"):
+            for value in (*routes, *groups):
+                if parse_parking_address(parking, value) is not None:
+                    return value
+        if item.get("mailbox_feature_routes"):
+            for value in (*routes, *groups):
+                if parse_mailbox_address(value) is not None:
+                    return value
+        route_keys = mapping_route_aliases(item)
         if item.get("group_id") and item.get("kind") == "ring":
             # A materialised ring group is the same route declared by its
             # members. Its name may be reused as membership, not as a phone.
             group_name = normalized_aliases((item.get("name"),))
             existing_groups.update(group_name)
-            routes -= group_name
-        existing_routes.update(routes)
+            route_keys -= group_name
+        existing_routes.update(route_keys)
         existing_groups.update(mapping_group_aliases(item))
         existing_mailboxes.update(value.casefold() for value in mailbox_route_aliases(item))
         existing_exact.update(str(value or "").strip().casefold()
                               for value in (*(item.get(field) for field in ROUTE_ALIAS_FIELDS), *mapping_group_values(item)))
-    return bool(
-        wanted_routes & (existing_routes | existing_groups)
-        or wanted_groups & existing_routes
-        or mailbox_routes & (existing_exact | existing_mailboxes)
-        or (raw_routes | raw_groups) & existing_mailboxes
-    )
+        if username := item.get("username"):
+            # The registrar compares logins even when a route has no alphanumeric key.
+            existing_usernames.add(str(username).strip().casefold())
+    unavailable_routes = existing_routes | existing_groups
+    unavailable_logins = existing_usernames | existing_mailboxes
+    for value in routes:
+        if normalize_roster_key(value.casefold()) in unavailable_routes or value.casefold() in unavailable_logins:
+            return value
+    for value in groups:
+        if normalize_roster_key(value.casefold()) in existing_routes or value.casefold() in existing_mailboxes:
+            return value
+    unavailable_mailboxes = existing_exact | existing_mailboxes
+    for value in mailboxes:
+        if value.casefold() in unavailable_mailboxes:
+            return value
+    return None
+
+
+def route_namespace_conflicts(**candidates) -> bool:
+    """Check whether a candidate route or group conflicts with the dial plan."""
+    return conflicting_route(**candidates) is not None
 
 
 def extension_conflicts(extension: str, existing: Mapping[str, Any]) -> bool:

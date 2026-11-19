@@ -492,7 +492,7 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     if credentials == "explicit":
         values.update(username="study", password="test-only")
         invalid = await lab.hass.config_entries.subentries.async_configure(
-            form["flow_id"], form["data_schema"]({**values, "username": "invalid user"}),
+            form["flow_id"], form["data_schema"]({**values, "username": "invalid\ruser"}),
         )
         assert invalid["type"] == "form"
         assert invalid["errors"] == {"username": "phone_username_invalid"}

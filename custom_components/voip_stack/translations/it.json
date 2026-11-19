@@ -312,7 +312,7 @@
       "phone_provisioning_url_invalid": "Inserisci un URL HTTP o HTTPS valido, senza credenziali incorporate, parametri di query o un frammento. Per usare HTTP devi consentirlo esplicitamente per la rete locale.",
       "phone_provisioning_url_unavailable": "Non è disponibile un URL automatico per la configurazione del telefono. Configura un URL HTTPS di Home Assistant, inserisci un URL HTTPS raggiungibile dal telefono oppure consenti esplicitamente HTTP sulla rete locale.",
       "phone_name_required": "Il nome del telefono è obbligatorio.",
-      "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
+      "phone_username_invalid": "Inserisci un nome utente SIP senza interruzioni di riga o caratteri di controllo. Puoi usare gli spazi.",
       "phone_password_required": "La password SIP è obbligatoria.",
       "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
       "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
@@ -437,7 +437,7 @@
       },
       "error": {
         "phone_name_required": "Il nome del telefono è obbligatorio.",
-        "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
+        "phone_username_invalid": "Inserisci un nome utente SIP senza interruzioni di riga o caratteri di controllo. Puoi usare gli spazi.",
         "phone_password_required": "La password SIP è obbligatoria.",
         "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
         "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
@@ -785,7 +785,7 @@
       },
       "error": {
         "phone_name_required": "Il nome del telefono è obbligatorio.",
-        "phone_username_invalid": "Usa solo lettere, numeri, punti, trattini bassi o trattini.",
+        "phone_username_invalid": "Inserisci un nome utente SIP senza interruzioni di riga o caratteri di controllo. Puoi usare gli spazi.",
         "phone_password_required": "La password SIP è obbligatoria.",
         "phone_forward_target_required": "La destinazione è obbligatoria con la policy Inoltra.",
         "phone_alias_conflict": "Nome, interno o username è già usato da un altro telefono.",
@@ -1033,6 +1033,10 @@
     }
   },
   "issues": {
+    "account_route_conflict": {
+      "title": "Risolvi il conflitto di instradamento dell’Account SIP",
+      "description": "L’Account SIP {phone} usa la destinazione {route}, già impegnata da un nome, un nome utente SIP, un interno, un gruppo o un codice di servizio. Assegna valori distinti alle destinazioni in conflitto nella configurazione precedente, poi riprova l’aggiornamento."
+    },
     "phone_identity_conflict": {
       "title": "L'identità del telefono richiede un recupero",
       "description": "L'identità salvata per {phone} è diversa dalla copia precedente (nativa: {canonical}, precedente: {legacy}). Nessuna identità è stata modificata. Ripristina una configurazione coerente da un backup noto oppure chiedi al manutentore dell'integrazione di recuperare questi riferimenti. Non eliminare e ricreare il telefono per aggirare il controllo: dispositivi, associazioni e segreterie esistenti usano la sua identità originale."
@@ -1072,6 +1076,10 @@
     "esphome_account_name": {
       "title": "Controlla il nome utente SIP di ESPHome",
       "description": "Il nome ESPHome scelto per l'account SIP di {phone} supera la lunghezza consentita o contiene caratteri non supportati. Modifica il nome nella configurazione ESPHome e reinstalla il firmware."
+    },
+    "esphome_account_name_collision": {
+      "title": "Scegli un nome utente SIP univoco in ESPHome",
+      "description": "Il nome utente SIP {username} scelto per {phone} è già usato da un altro telefono o da una destinazione di chiamata. Scegli un nome univoco nella configurazione ESPHome e installa il firmware aggiornato."
     },
     "esphome_endpoint_collision": {
       "title": "Conflitto con un telefono ESPHome",
