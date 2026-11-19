@@ -21,6 +21,7 @@ CAMERA = 'esphome-esp-video-camera'
 CAMERA_DEV_REPOSITORY = 'n-IA-hane/esphome-esp-video-camera'
 PHONE_REPOSITORY = SOURCE_CATALOG['phone_profiles']['repository']
 PHONE_CATALOG = PHONE_REPOSITORY.rsplit('/', 1)[1]
+BACKEND_REPOSITORY = SOURCE_CATALOG['repositories']['esphome-intercom']['repository']
 
 
 def git(path: Path, *args: str) -> str:
@@ -33,6 +34,10 @@ def requested_repositories(manifest: dict | None, default_ref: str) -> dict[str,
         return {**REPOSITORIES, CAMERA: CAMERA_DEV_REPOSITORY if default_ref == 'dev' else REPOSITORIES[CAMERA]}
     if manifest.get('version') != 1 or set(manifest.get('components', {})) != set(REPOSITORIES):
         raise ValueError('Manifest must contain the complete coordinated component set')
+    if 'public_backend_sha' in manifest and (
+            not isinstance(manifest['public_backend_sha'], str) or
+            not re.fullmatch(r'[0-9a-f]{40}', manifest['public_backend_sha'])):
+        raise ValueError('Public profile replay needs an immutable backend SHA')
     repositories = {}
     for name, repository in REPOSITORIES.items():
         item = manifest['components'][name]
@@ -84,12 +89,48 @@ def checkout_sources(root: Path, manifest: dict | None, channel: str, backend: s
     refs[PHONE_CATALOG] = catalog_ref
     components = checkout(root, refs, repositories)
     phone_profiles = components.pop(PHONE_CATALOG)
-    return {'version': 1, 'backend_sha': backend, 'components': components, 'phone_profiles': phone_profiles}
+    receipt = {'version': 1, 'backend_sha': backend, 'components': components, 'phone_profiles': phone_profiles}
+    if manifest is not None and 'public_backend_sha' in manifest:
+        receipt['public_backend_sha'] = manifest['public_backend_sha']
+    return receipt
+
+
+def resolve_sources(manifest: dict | None, channel: str, backend: str,
+                    *, public_backend_from_channel: bool = False) -> dict:
+    """Freeze one source set before independent CI jobs start their checkouts."""
+    repositories = requested_repositories(manifest, channel)
+    if manifest is not None:
+        catalog = manifest.get('phone_profiles')
+        if (not isinstance(catalog, dict) or catalog.get('repository') != PHONE_REPOSITORY or
+                not isinstance(catalog.get('sha'), str) or
+                not re.fullmatch(r'[0-9a-f]{40}', catalog['sha'])):
+            raise ValueError('Exact replay needs the phone_profiles repository and immutable SHA')
+        return manifest
+    if public_backend_from_channel:
+        repositories['esphome-intercom'] = BACKEND_REPOSITORY
+    repositories[PHONE_CATALOG] = PHONE_REPOSITORY
+    resolved = {}
+    for name, repository in repositories.items():
+        output = subprocess.check_output(
+            ['git', 'ls-remote', '--exit-code', f'https://github.com/{repository}.git', f'refs/heads/{channel}'],
+            text=True,
+        ).strip().split()
+        if len(output) != 2 or not re.fullmatch(r'[0-9a-f]{40}', output[0]):
+            raise ValueError(f'Could not resolve immutable source: {name}')
+        resolved[name] = {'repository': repository, 'sha': output[0]}
+    catalog = resolved.pop(PHONE_CATALOG)
+    receipt = {'version': 1, 'backend_sha': backend, 'components': resolved, 'phone_profiles': catalog}
+    if public_backend_from_channel:
+        receipt['public_backend_sha'] = resolved.pop('esphome-intercom')['sha']
+    return receipt
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--root', type=Path)
+    parser.add_argument('--resolve-only', action='store_true')
+    parser.add_argument('--public-backend-from-channel', action='store_true',
+                        help='Record the public profile backend separately from an unpublished candidate')
     parser.add_argument('--backend', type=Path, default=Path.cwd())
     parser.add_argument('--ref', choices=('dev', 'main'), default='dev')
     parser.add_argument('--manifest', type=Path)
@@ -100,7 +141,13 @@ def main() -> None:
     backend = git(args.backend, 'rev-parse', 'HEAD')
     if manifest is not None and manifest.get('backend_sha') != backend:
         raise ValueError('Select the manifest backend commit before replaying its components')
-    receipt = checkout_sources(args.root, manifest, args.ref, backend)
+    if args.resolve_only:
+        receipt = resolve_sources(manifest, args.ref, backend,
+                                  public_backend_from_channel=args.public_backend_from_channel)
+    else:
+        if args.root is None:
+            parser.error('--root is required for source checkout')
+        receipt = checkout_sources(args.root, manifest, args.ref, backend)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2) + '\n')
 

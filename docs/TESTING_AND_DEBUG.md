@@ -118,9 +118,20 @@ run: Native, Audio, Runtime, Renderer, Screenshot and Camera. The same file
 records the phone profile catalog used by the interoperability tests under
 `phone_profiles`. An exact replay checks out that catalog commit too. The accepted
 manifest schema is owned by [`coordinated_sources.py`](../scripts/coordinated_sources.py).
-Default runs continue following the coordinated `dev`/`main` branches. To repeat
+At workflow start, one resolver freezes the coordinated `dev`/`main` branches.
+For a PR or an unpublished branch, `backend_sha` identifies the candidate while
+`public_backend_sha` records the channel commit used by the unchanged public WS3
+profile. Published Dev/main and release runs require the candidate backend itself.
+Software, HA and composed firmware jobs replay that same immutable manifest.
+The public WS3 build independently fetches its YAML dependencies and checks the
+fetched commits against the frozen set. A branch changing during that build
+produces a failed source comparison. To repeat
 an exact run, select its backend revision and supply the complete artifact JSON
 as the manual workflow's `component_manifest` input.
+
+`software-full` verifies the official ESPHome revision in
+`requirements-firmware-test.txt` before collecting the firmware-backed tests.
+The mutation score includes changes that have no covering test in its denominator.
 
 For an isolated local checkout, use an empty component parent directory:
 

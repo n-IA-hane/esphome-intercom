@@ -11,6 +11,46 @@ from .voip_phase1_support import (
 
 
 class RouterContractTest(unittest.TestCase):
+    def test_selected_phone_and_literal_names_take_precedence_over_dial_syntax(self) -> None:
+        ha = "sip:pbx@192.0.2.12"
+        for name, user in (
+            ("Reception@Hotel", "Reception%40Hotel"),
+            ("Caffè 20%@Casa", "Caff%C3%A8%2020%25%40Casa"),
+            ("*42", "*42"),
+            ("*123#", "*123%23"),
+        ):
+            with self.subTest(name=name):
+                phone = roster.RosterEntry(
+                    "desk-record", name=name, sip_uri=f"sip:{user}@192.0.2.14", extension="204",
+                    metadata={"endpoint_kind": "sip_account", "endpoint_id": "account-selected",
+                              "device_id": "selected-ha-device"},
+                )
+                # Older persisted rosters can have the same normalized spelling.
+                other = roster.RosterEntry(roster.normalize_roster_key(name), address="192.0.2.25")
+                entries = [other, phone]
+                for target in (name, phone.id, "selected-ha-device", "account-selected"):
+                    decision = router.resolve_ha_router(target, entries, trunk_ready=True)
+                    self.assertIs(decision.entry, phone)
+                    self.assertEqual(decision.sip_uri, phone.sip_uri)
+                self.assertIs(router.resolve_esp_origin(name, entries, ha).entry, phone)
+                inbound = router.route_inbound_trunk(
+                    router.CallContext(call_id="selection", direction="inbound", origin="trunk", route_hint=name), entries)
+                self.assertIs(inbound.entry, phone)
+
+    def test_uri_and_unclaimed_external_shortcuts_remain_explicit(self) -> None:
+        lookalikes = [roster.RosterEntry("ReceptionHotel", address="192.0.2.14"),
+                      roster.RosterEntry("42", address="192.0.2.15")]
+        for target in ("Reception@Hotel", "sip:Reception@Hotel", "sips:Reception@Hotel", "sip:pbx.example"):
+            with self.subTest(target=target):
+                entries = lookalikes if target == "Reception@Hotel" else [
+                    *lookalikes, roster.RosterEntry(target, address="192.0.2.16")]
+                decision = router.resolve_ha_router(target, entries)
+                self.assertEqual(decision.action, router.RouteAction.DIRECT)
+                self.assertEqual(decision.sip_uri, target if target.startswith(("sip:", "sips:")) else f"sip:{target}")
+        self.assertEqual(router.resolve_ha_router("*42", lookalikes, trunk_ready=True).action, router.RouteAction.TRUNK)
+        disabled = roster.RosterEntry("*42", enabled=False)
+        self.assertEqual(router.resolve_ha_router("*42", [*lookalikes, disabled], trunk_ready=True).status, 403)
+
     def test_secure_sip_uri_stays_on_the_direct_tls_route(self) -> None:
         target = "sips:door@pbx.example:5061"
         decision = router.resolve_ha_router(target, [], trunk_ready=True)

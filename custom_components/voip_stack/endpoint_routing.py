@@ -19,6 +19,7 @@ from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_form
 from .core import sdp
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
+from .roster import find_entry
 from .router import resolve_ha_router
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, runtime_data
 from .store import manual_roster_entries
@@ -294,7 +295,7 @@ def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, sourc
 
     from .parking import resolve_parking_route
     parking = resolve_parking_route(hass, target)
-    if parking is not None:
+    if parking is not None and find_entry(entries, target, literal_only=True) is None:
         return parking
 
     if str(target or "").strip().casefold().startswith(("voicemail.", "mailbox", "*97", "*98", "*60")):

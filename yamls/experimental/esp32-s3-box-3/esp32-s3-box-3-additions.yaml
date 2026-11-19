@@ -3,6 +3,11 @@
 # Status: optional contributor-tested overlay; no audio path is declared here
 # Support: https://github.com/sponsors/n-IA-hane
 #
+# Compatibility only: current full profiles already include display and sensor_dock.
+# Do not add this overlay to those profiles. Select those firmware_features instead.
+# Keep this overlay only for older custom configurations that provide both I2C buses
+# and do not include the integrated display or sensor-dock packages.
+#
 # Main packages:
 #   Parent: esp32-s3-box-3-full-aec.yaml
 #   Requires parent I2C ids internal_i2c and external_i2c

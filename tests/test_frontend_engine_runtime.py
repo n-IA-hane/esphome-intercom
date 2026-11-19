@@ -1227,6 +1227,12 @@ assert.equal(supersededRequests[0].return_response, true);
 assert.equal(supersededRequests[0].service_data.destination, "peer");
 assert.equal(supersededServices.length, 1);
 assert.equal(supersededServices[0][2].call_id, "orphan-B");
+await superseded.startHaSoftphone(
+  {{name:"Reception@Hotel", device_id:"receiver-device", endpoint_id:"sip:receiver"}},
+  {{endpoint_id:"kitchen", device_id:"kitchen-device"}},
+  {{callee:"Reception@Hotel", shouldAbort:()=>true}},
+);
+assert.equal(supersededRequests.at(-1).service_data.destination, "receiver-device");
 
 // Browser capture/playback follows the negotiated local SDP direction. A
 // recvonly answer must not ask for microphone permission; hold/resume and

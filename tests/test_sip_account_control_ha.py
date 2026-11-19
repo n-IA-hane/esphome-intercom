@@ -21,6 +21,48 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize(("label", "wire_user"), [
+    ("Reception@Hotel", "Reception%40Hotel"),
+    ("Caffè 20%@Casa", "Caff%C3%A8%2020%25%40Casa"),
+    ("*42", "*42"),
+])
+async def test_registered_call_to_literal_name_keeps_the_registered_sip_identity(
+    registered_phones, trunks, tmp_path, label, wire_user,
+):
+    from custom_components.voip_stack.endpoint_routing import roster_from_peers
+
+    caller, handset, other = registered_phones
+    lab = trunks
+    registrar = lab.calls.component("registrar")
+    previous = registrar.accounts["transfer_b"]
+    lab.runtime.endpoints.update("transfer_b", name=label)
+    lab.roster[:] = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
+    lab.runtime.directory.replace(lab.roster)
+    port = lab.runtime.transport_config["sip_port"]
+    capture = SipCapture()
+    capture.start()
+    try:
+        await asyncio.to_thread(caller.command, f"/dial sip:{wire_user}@127.0.0.1:{port}")
+        await asyncio.to_thread(handset.wait_for, "Call established", 5)
+        await asyncio.to_thread(caller.wait_for, "Call established", 5)
+        assert f"INVITE sip:{wire_user}@127.0.0.1:{port} SIP/2.0\r\n".encode() in capture.buffer
+        assert "Incoming call" not in other.read()
+        for endpoint in ("transfer_a", "transfer_b"):
+            await wait_until(lambda: any(wav.stat().st_size > 8192
+                                         for wav in (tmp_path / endpoint).glob("*-dec.wav")))
+    finally:
+        try:
+            await asyncio.to_thread(caller.hangup)
+            await wait_until(lambda: not lab.calls.sessions)
+        finally:
+            capture.stop()
+            (tmp_path / "literal-name.pcap").write_bytes(capture.buffer)
+            capture.clear()
+    assert registrar.accounts["transfer_b"] == previous
+    assert_peer_audio_tones(tmp_path, (("transfer_b", 450), ("transfer_a", 550)))
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize(("kind", "name", "extension", "wire_user"), [
     ("ring", "RG Casa", "", "RG%20Casa"),
     ("ring", "RG Casa", "861", "861"),

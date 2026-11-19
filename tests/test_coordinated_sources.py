@@ -61,6 +61,87 @@ def test_existing_checkout_is_preserved(tmp_path):
     assert work.read_text() == 'preserve'
 
 
+def test_resolved_manifest_replay_never_resolves_moving_branches(tmp_path, monkeypatch):
+    resolved = []
+
+    def remote_revision(command, **kwargs):
+        assert command[:3] == ['git', 'ls-remote', '--exit-code']
+        resolved.append(command[3])
+        return 'a' * 40 + '\trefs/heads/dev\n'
+
+    monkeypatch.setattr(module.subprocess, 'check_output', remote_revision)
+    first = module.resolve_sources(None, 'dev', 'b' * 40)
+    assert len(resolved) == len(module.REPOSITORIES) + 1
+    assert len(set(resolved)) == len(resolved)
+    assert module.resolve_sources(first, 'main', 'b' * 40) == first
+    assert len(resolved) == len(module.REPOSITORIES) + 1
+    assert first['phone_profiles']['sha'] == 'a' * 40
+
+
+def test_unpublished_candidate_records_the_literal_public_profile_backend(monkeypatch):
+    requests = []
+
+    def remote_revision(command, **kwargs):
+        requests.append(command[3])
+        return 'a' * 40 + '\trefs/heads/dev\n'
+
+    monkeypatch.setattr(module.subprocess, 'check_output', remote_revision)
+    candidate = 'b' * 40
+    receipt = module.resolve_sources(None, 'dev', candidate, public_backend_from_channel=True)
+    assert receipt['backend_sha'] == candidate
+    assert receipt['public_backend_sha'] == 'a' * 40
+    assert set(receipt['components']) == set(module.REPOSITORIES)
+    assert requests.count(f'https://github.com/{module.BACKEND_REPOSITORY}.git') == 1
+    assert module.resolve_sources(receipt, 'main', candidate) == receipt
+    assert len(requests) == len(module.REPOSITORIES) + 2
+
+
+@pytest.mark.parametrize('catalog', [None, {'repository': module.PHONE_REPOSITORY, 'sha': int('1' * 40)}])
+def test_resolver_rejects_a_catalog_that_checkout_cannot_replay(catalog):
+    manifest = {'version': 1, 'components': {
+        name: {'repository': repo, 'sha': 'a' * 40} for name, repo in module.REPOSITORIES.items()
+    }, 'phone_profiles': catalog}
+    with pytest.raises(ValueError, match='phone_profiles'):
+        module.resolve_sources(manifest, 'dev', 'b' * 40)
+
+
+@pytest.mark.parametrize('event,ref_type,ref_name,unpublished', [
+    ('pull_request', 'branch', '123/merge', True),
+    ('push', 'branch', 'feature-test', True),
+    ('push', 'branch', 'dev', False),
+    ('push', 'branch', 'main', False),
+    ('push', 'tag', 'v2026.12.0-dev', False),
+    ('push', 'tag', 'v2026.12.0', False),
+])
+def test_public_profile_backend_selection_uses_the_actual_workflow_condition(event, ref_type, ref_name, unpublished):
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
+    resolver = next(s for s in workflow['jobs']['coordinated-sources']['steps'] if s.get('id') == 'resolve')
+    condition = resolver['run'].split('python3 scripts/coordinated_sources.py', 1)[0]
+    result = subprocess.run(['bash', '-eu', '-c', condition + '\nprintf "%s" "${public_backend[*]}"'],
+        env={**os.environ, 'GITHUB_EVENT_NAME': event, 'GITHUB_REF_TYPE': ref_type, 'GITHUB_REF_NAME': ref_name},
+        capture_output=True, text=True, check=True)
+    assert result.stdout == ('--public-backend-from-channel' if unpublished else '')
+
+
+def test_component_jobs_consume_the_single_resolved_source_set():
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
+    jobs = workflow['jobs']
+    resolver = jobs['coordinated-sources']
+    step = next(s for s in resolver['steps'] if s.get('id') == 'resolve')
+    assert '--resolve-only' in step['run']
+    assert '--public-backend-from-channel' in step['run']
+    assert step['env']['COMPONENT_MANIFEST'] == '${{ inputs.component_manifest }}'
+    for job in ('software', 'home-assistant', 'box-v2-firmware', 'ws3-public-firmware'):
+        depends = jobs[job]['needs']
+        assert 'coordinated-sources' in ([depends] if isinstance(depends, str) else depends)
+        consumers = [s for s in jobs[job]['steps'] if 'COMPONENT_MANIFEST' in s.get('env', {})]
+        assert consumers
+        assert all(s['env']['COMPONENT_MANIFEST'] == '${{ needs.coordinated-sources.outputs.manifest }}'
+                   for s in consumers)
+
+
 @pytest.mark.parametrize("owner", ["intercom", "renderer"])
 def test_ci_component_refs_cover_incremental_preview_tags(owner):
     root = Path(__file__).resolve().parents[1]

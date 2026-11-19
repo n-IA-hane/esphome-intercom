@@ -143,7 +143,19 @@ def find_entry(
     *,
     include_extension: bool = True,
     include_number: bool = True,
+    literal_only: bool = False,
 ) -> RosterEntry | None:
+    raw = target.strip()
+    if not raw:
+        return None
+    named = None
+    for entry in entries:
+        if raw in (entry.metadata.get("endpoint_id"), entry.metadata.get("device_id")):
+            return entry
+        if named is None and raw in (entry.id, entry.name):
+            named = entry
+    if named is not None or literal_only:
+        return named
     wanted = normalize_roster_key(target)
     for entry in entries:
         keys = {normalize_roster_key(entry.id), normalize_roster_key(entry.name)}

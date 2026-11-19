@@ -27,7 +27,40 @@ jobs:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
         run: python3 scripts/yaml_paths.sh check --expect remote --ref "$COMPONENT_REF"
 
+  coordinated-sources:
+    runs-on: ubuntu-latest
+    outputs:
+      manifest: ${{ steps.resolve.outputs.manifest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Freeze coordinated revisions
+        id: resolve
+        env:
+          COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
+          COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
+        run: |
+          public_backend=()
+          if [[ "$GITHUB_EVENT_NAME" == pull_request || ( "$GITHUB_REF_TYPE" == branch && "$GITHUB_REF_NAME" != dev && "$GITHUB_REF_NAME" != main ) ]]; then
+            public_backend+=(--public-backend-from-channel)
+          fi
+          python3 scripts/coordinated_sources.py --resolve-only --ref "$COMPONENT_REF" "${public_backend[@]}" --output coordinated-sources.json
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          manifest = json.loads(Path('coordinated-sources.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('manifest=' + json.dumps(manifest, separators=(',', ':')) + '\n')
+          PYTHON
+      - name: Preserve resolved sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: resolved-sources
+          path: coordinated-sources.json
+          if-no-files-found: error
+
   software:
+    needs: coordinated-sources
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -37,7 +70,7 @@ jobs:
       - name: Check out coordinated ESP component sources
         env:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
-          COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
+          COMPONENT_MANIFEST: ${{ needs.coordinated-sources.outputs.manifest }}
         run: >-
           python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
           --output test-results/coordinated-sources.json
@@ -149,6 +182,7 @@ jobs:
           if-no-files-found: error
 
   home-assistant:
+    needs: coordinated-sources
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -158,7 +192,7 @@ jobs:
       - name: Check out coordinated ESP component sources
         env:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
-          COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
+          COMPONENT_MANIFEST: ${{ needs.coordinated-sources.outputs.manifest }}
         run: >-
           python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
           --output test-results/ha-coordinated-sources.json
@@ -322,6 +356,7 @@ jobs:
       - run: mkdocs build --strict
 
   box-v2-firmware:
+    needs: coordinated-sources
     name: ${{ matrix.job_name }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -347,7 +382,7 @@ jobs:
       - name: Check out coordinated ESP component sources
         env:
           COMPONENT_REF: ${{ (github.base_ref == 'main' || github.ref_name == 'main' || (github.ref_type == 'tag' && !(endsWith(github.ref_name, '-dev') || contains(github.ref_name, '-dev.')))) && 'main' || 'dev' }}
-          COMPONENT_MANIFEST: ${{ inputs.component_manifest }}
+          COMPONENT_MANIFEST: ${{ needs.coordinated-sources.outputs.manifest }}
         run: >-
           python3 scripts/coordinated_sources.py --root .. --ref "$COMPONENT_REF"
           --output "test-results/${{ matrix.build_dir }}-coordinated-sources.json"
@@ -421,7 +456,7 @@ jobs:
           if-no-files-found: error
 
   ws3-public-firmware:
-    needs: source-channel
+    needs: [source-channel, coordinated-sources]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -479,6 +514,7 @@ jobs:
         if: always()
         env:
           BUILD_OUTCOME: ${{ steps.ws3_compile.outcome }}
+          COMPONENT_MANIFEST: ${{ needs.coordinated-sources.outputs.manifest }}
         run: |
           python - <<'PY'
           import hashlib
@@ -508,6 +544,19 @@ jobs:
                       'tracked_changes': git('status', '--porcelain', '--untracked-files=no'),
                   })
           (output / 'fetched-sources.json').write_text(json.dumps(clones, indent=2) + '\n')
+          expected = json.loads(os.environ['COMPONENT_MANIFEST'])
+          source_shas = {item['repository']: item['sha'] for item in expected['components'].values()}
+          source_shas['n-IA-hane/esphome-intercom'] = expected.get('public_backend_sha', expected['backend_sha'])
+          seen = set()
+          for fetched in clones:
+              repository = fetched['url'].removesuffix('.git').split('github.com/')[-1]
+              if repository in source_shas:
+                  assert fetched['commit'] == source_shas[repository], fetched
+                  assert not fetched['tracked_changes'], fetched
+                  seen.add(repository)
+          if os.environ['BUILD_OUTCOME'] == 'success':
+              assert {'n-IA-hane/esphome-intercom', 'n-IA-hane/esphome-voip-stack',
+                      'n-IA-hane/esphome-audio-stack', 'n-IA-hane/esphome-runtime-controller'} <= seen
           artifacts = []
           for build in sorted((project / '.esphome/build').glob('*')):
               for name in ('firmware.elf', 'firmware.ota.bin', 'firmware.factory.bin'):

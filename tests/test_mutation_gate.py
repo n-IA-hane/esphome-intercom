@@ -34,6 +34,13 @@ def test_bounded_timeout_counts_as_detected_mutation(tmp_path: Path) -> None:
     assert "mutation_score=65.00% detected=65" in result.stdout
 
 
+def test_uncovered_mutations_reduce_the_score(tmp_path: Path) -> None:
+    result = run_gate(tmp_path, {"killed": 1, "no_tests": 99}, 63.5)
+    assert result.returncode == 1
+    assert "mutation_score=1.00%" in result.stdout
+    assert "no_tests=99" in result.stdout
+
+
 def test_survivor_and_interrupted_run_still_fail(tmp_path: Path) -> None:
     low_score = run_gate(
         tmp_path,

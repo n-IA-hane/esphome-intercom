@@ -1,5 +1,6 @@
 """Upgrade existing HA receivers, then exercise their public SIP call paths."""
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -43,6 +44,39 @@ async def canonical_browser(logical_browser):
     assert fixture.runtime.endpoints.require('casa').availability.value == 'available'
     yield fixture
     await bindings.async_close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_selected_ha_device_calls_its_registered_account_with_a_uri_shaped_name(
+    canonical_browser, registered_phones,
+):
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
+    from custom_components.voip_stack.endpoint_routing import roster_from_peers
+    from .test_browser_logical_availability_ha import resources
+
+    lab = canonical_browser
+    registrar = lab.calls.component("registrar")
+    original_account = registrar.accounts["transfer_b"]
+    registry = lab.runtime.endpoints
+    registry.update("transfer_b", name="Reception@Hotel")
+    selected = async_ensure_endpoint_device(lab.hass, config_entry(lab.hass), registry.require("transfer_b"), registry)
+    lab.runtime.directory.replace(roster_from_peers(lab.hass, [], registrar.registered_roster_entries()))
+    reply = await lab.hass.services.async_call("voip_stack", "call", {
+        "device_id": "browser-casa", "destination": selected.id, "media_client_id": "operator-card",
+    }, blocking=True, return_response=True)
+    call_id = reply["call"]["call_id"]
+    try:
+        await asyncio.to_thread(registered_phones[1].wait_for, "Call established", 4)
+        assert "Incoming call" not in registered_phones[2].read()
+        assert registrar.accounts["transfer_b"] == original_account
+    finally:
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": "browser-casa", "call_id": call_id,
+        }, blocking=True)
+    async with asyncio.timeout(3):
+        while lab.calls.sessions:
+            await asyncio.sleep(.01)
+    assert resources(lab)["call_scoped_quiescent"]
 
 
 @pytest.mark.parametrize('trunks', [True], indirect=True)

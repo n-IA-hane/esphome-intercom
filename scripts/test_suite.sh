@@ -87,6 +87,7 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_trunk_voicemail_ha.py
   tests/test_assist_core_boundary_ha.py
   tests/test_media_account_authorization_ha.py
   tests/test_queue_select_ha.py
@@ -264,6 +265,21 @@ case "$MODE" in
     pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow and not diagnostic_reference")
     ;;
   software-full)
+    "$PYTHON" - <<'PY'
+import importlib.metadata
+import json
+from pathlib import Path
+import re
+
+expected = re.search(r"@([0-9a-f]{40})", Path('requirements-firmware-test.txt').read_text()).group(1)
+try:
+    distribution = importlib.metadata.distribution('esphome')
+    receipt = json.loads(distribution.read_text('direct_url.json') or '{}')
+except importlib.metadata.PackageNotFoundError:
+    receipt = {}
+if receipt.get('vcs_info', {}).get('commit_id') != expected:
+    raise SystemExit('Install requirements-firmware-test.txt in the selected test Python before software-full')
+PY
     pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-o tmp_path_retention_policy=failed)
     pytest_args+=(-m "not live and not mutation and not browser_real and not diagnostic_reference")

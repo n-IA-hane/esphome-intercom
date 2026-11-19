@@ -289,7 +289,13 @@ async def _prepare_forward_existing_call(
                 or not claim.authorizes_browser_answer(registry.get_session(call_id), endpoint_id)):
             raise ValueError("A resolved HA pickup requires its current pickup claim and exact endpoint")
         return claim
-    if _resolved_decision is not None and _resolved_decision.action is not RouteAction.GROUP:
+    initial_deposit = (
+        initial_selection and _queue_offer is None and _resolved_decision is not None
+        and _resolved_decision.action is RouteAction.VOICEMAIL
+        and _resolved_decision.entry is not None
+        and _resolved_decision.entry.metadata.get("mailbox_mode") == "deposit"
+    )
+    if _resolved_decision is not None and _resolved_decision.action is not RouteAction.GROUP and not initial_deposit:
         if _resolved_decision.action is not RouteAction.ANSWER_HA or _queue_offer is not None:
             raise ValueError("Internal queue attempts require a resolved ring group")
         resolved_pickup_claim = validate_resolved_pickup()
@@ -592,9 +598,9 @@ async def _prepare_forward_existing_call(
         if session_endpoint is None and native_caller and session is not None:
             session_endpoint = endpoint_directory(hass).get(str(session.metadata.get("dest_endpoint_id")
                 or session.metadata.get("target_endpoint_id") or "")) or endpoint_directory(hass).resolve(session.callee)
-        if session_endpoint is None and initial_selection:
+        if session_endpoint is None and initial_selection and not initial_deposit:
             session_endpoint = preferred_browser_phone(hass)
-        if session_endpoint is None and application is None and not native_caller:
+        if session_endpoint is None and application is None and not native_caller and not initial_deposit:
             raise _service_error(
                 f"call_id {call_id} has no Home Assistant phone owner",
                 "call_phone_owner_missing",
@@ -619,7 +625,7 @@ async def _prepare_forward_existing_call(
         # store yet, but HA is still its default owner.  Preserve that
         # ownership so ``on_failure: resume`` can enter normal ringing
         # instead of leaving the answered caller on silent RTP.
-        ha_claimed = application is None and (
+        ha_claimed = application is None and not initial_deposit and (
             bool(session is not None and session.owner == "ha_softphone")
             or registry.resource_for(call_id, "preanswered") is not None
             or bool(
@@ -672,7 +678,7 @@ async def _prepare_forward_existing_call(
         if local_source is not None:
             await local_source.retire_destination()
             local_source.pause()
-        elif application is None and not native_caller:
+        elif application is None and not native_caller and session_endpoint_id:
             _release_ha_softphone_claim(
                 hass,
                 call_id,

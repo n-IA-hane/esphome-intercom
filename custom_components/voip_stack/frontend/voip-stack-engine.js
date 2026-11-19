@@ -2525,7 +2525,8 @@ class VoipStackEngine extends EventTarget {
       service: "call",
       return_response: true,
       service_data: {
-        destination: context.callee || target.name || target.device_id || "",
+        destination: (!target.manual && target.endpoint_id && (target.device_id || target.endpoint_id))
+          || context.callee || target.name || target.device_id || "",
         call_id: context.call_id || "",
         send_video: Boolean(context.sendVideo),
         media_client_id: this._mediaClientId,

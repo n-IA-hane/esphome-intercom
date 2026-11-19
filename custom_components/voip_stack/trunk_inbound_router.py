@@ -283,9 +283,10 @@ async def async_route_trunk_invite(
         decision.action.value, decision.reason,
     )
 
-    if explicit_account and decision.action is RouteAction.GROUP:
+    if explicit_account and decision.action in {RouteAction.GROUP, RouteAction.VOICEMAIL}:
         await runtime.forward_existing_call(
             call_id=invite.call_id, destination=destination, initial_selection=True,
+            on_failure="terminate" if decision.action is RouteAction.VOICEMAIL else "resume",
             _resolved_decision=decision,
         )
         return
