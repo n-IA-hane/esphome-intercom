@@ -373,6 +373,18 @@ class EspHomeProvisioner:
             await self._sync_legacy_memberships()
             if not self._owned() or revision != self._revision:
                 return
+            if self._removed_devices:
+                # HA restores the device ID when the same ESP is added again.
+                # Keep it fenced until the old account, endpoint and memberships
+                # have been purged. The removed config entry stays revoked.
+                restored = any(
+                    (device := devices.async_get(device_id)) is not None
+                    and device.config_entry_id not in self._removed_origins
+                    for device_id in self._removed_devices
+                )
+                self._removed_devices.clear()
+                if restored:
+                    self.schedule()
             if changed and self._owned():
                 from .config_entry_runtime import async_refresh_and_push_phonebook
                 await async_refresh_and_push_phonebook(self.hass)

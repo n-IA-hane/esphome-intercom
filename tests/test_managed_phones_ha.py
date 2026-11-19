@@ -918,6 +918,62 @@ async def test_removal_during_api_await_cannot_resurrect_account(managed):
     assert not lab.entry.data.get("managed_esphome_phones") and not lab.runtime.endpoints.endpoints
 
 
+@pytest.mark.parametrize("inflight", [False, True], ids=["after-cleanup", "during-old-rpc"])
+async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_login(managed, inflight):
+    lab = managed
+    native = lab.native.runtime_data
+    legacy = "esp_84c7bb000001"
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
+        "managed_esphome_phones": {lab.device.id: {
+            "device_id": lab.device.id, "origin_entry_id": lab.native.entry_id,
+            "mac": native.device_info.mac_address, "username": legacy,
+            "password": "fixture-previous-password", "display_name": "Ingresso",
+        }}})
+    lab.controller.start()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    original = phone_record(lab)
+    assert original.username == legacy
+    await bind_account(lab, original)
+    if inflight:
+        lab.gate.entered, lab.gate.release = asyncio.Event(), asyncio.Event()
+        native.services = dict(native.services)
+        lab.controller.schedule()
+        await asyncio.wait_for(lab.gate.entered.wait(), 2)
+    old_rpc_count = len(lab.sent)
+    assert await lab.hass.config_entries.async_remove(lab.native.entry_id)
+    if not inflight:
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert not lab.entry.data.get("managed_esphome_phones") and not lab.registrar.accounts
+
+    new = MockConfigEntry(domain="esphome", title="Waveshare S3 Audio", data=dict(lab.native.data))
+    new.add_to_hass(lab.hass)
+    restored = dr.async_get(lab.hass).async_get_or_create(config_entry_id=new.entry_id,
+        identifiers=lab.device.identifiers, connections=lab.device.connections, name=new.title)
+    assert new.entry_id != lab.native.entry_id and restored.id == lab.device.id
+    action = "register_ha_account_by_friendly_name"
+    client = SimpleNamespace(is_connected=True, execute_service=AsyncMock())
+    new.runtime_data = RuntimeEntryData(entry_id=new.entry_id, title=new.title, client=client, store=MagicMock(),
+        device_info=replace(native.device_info, friendly_name=new.title),
+        services=native_services(action), available=True)
+    new.runtime_data.first_connect_done.set()
+    if inflight:
+        lab.gate.release.set()
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+
+    phone = phone_record(lab)
+    assert phone.endpoint_id == original.endpoint_id and phone.origin_entry_id == new.entry_id
+    assert phone.username == new.title and phone.password != original.password
+    assert len(lab.sent) == old_rpc_count
+    assert [a.username for a in lab.registrar.accounts.values()] == [new.title]
+    assert not lab.registrar.registered_contacts(legacy)
+    assert len(lab.runtime.endpoints.endpoints) == 1
+    assert [call.args[0].name for call in client.execute_service.await_args_list] == [
+        "set_ha_display_name", "set_account", action]
+    assert client.execute_service.await_args_list[1].args[1]["account_id"] == "ha"
+    await bind_account(lab, phone)
+    assert len(lab.registrar.registered_contacts(new.title)) == 1
+
+
 @pytest.mark.parametrize("global_registrar,refused", [(False, 405), (True, 401)])
 async def test_managed_register_uses_generated_secret_on_real_udp_then_legacy_revokes(
         managed, socket_enabled, global_registrar, refused):
