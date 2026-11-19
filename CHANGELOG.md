@@ -9,6 +9,9 @@
   programmable keys. Update the model profile to use them on an existing phone.
 - A saved automatic ring group no longer produces a collision warning when
   its member phones publish the same group with the same membership.
+- Incoming trunk calls to a shared SIP account now ring its registered desk
+  phone and its Home Assistant card. Either can answer, including when the
+  account has the same name as the Home Assistant installation.
 - Updated ESP firmware can register again after a managed password change even
   when the PBX rejects the old phone-status subscriptions. During a call,
   **VoIP Diagnostics** shows current packet counters on demand. Periodic

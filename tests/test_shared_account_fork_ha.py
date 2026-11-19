@@ -1,7 +1,9 @@
 """One canonical account offers its saved HA card and independent SIP Contacts."""
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
+import shutil
 
 import pytest
 
@@ -64,6 +66,134 @@ async def assert_no_active_calls(peers):
     for peer in peers:
         await asyncio.to_thread(peer.command, "/listcalls")
         await asyncio.to_thread(peer.wait_for, "Active calls (0)", 3)
+
+
+@asynccontextmanager
+async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback):
+    """Originate from an independent provider at the trusted trunk IP."""
+    from custom_components.voip_stack import trunk_dtmf
+    from custom_components.voip_stack.config import normalized_trunk_config
+    from custom_components.voip_stack.sip_trunk import SipTrunkClient
+    from custom_components.voip_stack.trunk_runtime import trunk_client_config
+
+    executable = shutil.which("sipp")
+    if executable is None:
+        pytest.skip("SIPp is required for the independent trunk caller")
+    monkeypatch.setattr(trunk_dtmf, "_FIRST_DIGIT_TIMEOUT", 0.1)
+    lab.runtime.preferred_phone_device_id = "browser-casa"
+    port = lab.runtime.transport_config["sip_port"]
+    config = normalized_trunk_config({
+        "trunk_enabled": True, "trunk_register": False, "trunk_server": "127.0.0.2",
+        "trunk_allowed_ips": ["127.0.0.2/32"], "trunk_inbound_mode": "dtmf",
+        "trunk_dtmf_enabled": True, "trunk_dtmf_timeout_ms": 100,
+        "trunk_inbound_default_target": fallback,
+    })
+    provider = SipTrunkClient(config=trunk_client_config(config), local_ip="127.0.0.1",
+                              local_sip_port=port, trunk_id="office")
+    lab.runtime.trunk_configs["office"] = config
+    lab.calls.adopt_component("trunk:office", provider, closer=provider.stop)
+    caller = await asyncio.create_subprocess_exec(
+        executable, "-sn", "uac", f"127.0.0.1:{port}", "-s", "450", "-i", "127.0.0.2",
+        "-p", str(unused_udp_port_factory()), "-mi", "127.0.0.2", "-mp", str(unused_udp_port_factory()),
+        "-d", "1200", "-m", "1", "-nostdin", "-timeout", "12s", "-timeout_error",
+        "-trace_msg", "-message_file", str(tmp_path / "trunk-sip.log"), cwd=tmp_path, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        yield caller
+    finally:
+        if caller.returncode is None:
+            caller.terminate()
+            await caller.wait()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 8, "extension": "998"}], indirect=True)
+@pytest.mark.parametrize(("answering_client", "forward_when"), [
+    ("browser", None), ("handset", None), ("handset", "always"), ("handset", "unavailable"),
+])
+async def test_dtmf_trunk_fallback_offers_each_client_after_account_policy(
+    shared_account, hass_ws_client, monkeypatch, unused_udp_port_factory, tmp_path, answering_client, forward_when,
+):
+    """The site-named fallback can be the mixed account or an offline phone forwarding to it."""
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.phone_policy import PhonePolicy
+    from .test_browser_logical_availability_ha import resources
+
+    lab, _, handsets = shared_account
+    fallback = "Casa"
+    if forward_when:
+        fallback = "Unregistered office line"
+        lab.runtime.endpoints.register(PhoneEndpoint(
+            "away", fallback, EndpointKind.SIP_ACCOUNT, username="away",
+            policy=PhonePolicy.from_data({forward_when: {"kind": "contact", "target": "casa"}}),
+        ))
+    monkeypatch.setattr(lab.hass.config, "location_name", fallback)
+    observer = await open_browser_ws(lab, hass_ws_client)
+    try:
+        async with no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback) as caller:
+            for handset in handsets:
+                await asyncio.to_thread(handset.wait_for, "Incoming call", 4)
+            ringing = await browser_snapshot(observer)
+            assert ringing["state"] == "ringing" and ringing["can_answer"]
+            call_id = ringing["call_id"]
+            if answering_client == "browser":
+                await lab.hass.services.async_call("voip_stack", "answer", {
+                    "device_id": "browser-casa", "call_id": call_id, "media_client_id": "office-card",
+                }, blocking=True)
+            else:
+                await asyncio.to_thread(handsets[0].command, "/accept")
+                await asyncio.to_thread(handsets[0].wait_for, "Call established", 4)
+            await wait_for(lambda: lab.calls.get_session(call_id).state == "in_call")
+            current = await browser_snapshot(observer)
+            assert current["call_id"] == call_id
+            assert current["can_attach_media"] is (answering_client == "browser")
+            assert await asyncio.wait_for(caller.wait(), 5) == 0
+            await wait_for(lambda: not lab.calls.sessions)
+            await assert_no_active_calls(handsets)
+            assert resources(lab)["call_scoped_quiescent"]
+    finally:
+        await observer.close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize(("fallback", "forbidden"), [("HA", False), ("Disabled site phone", True)])
+async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
+    shared_account, hass_ws_client, monkeypatch, unused_udp_port_factory, tmp_path, fallback, forbidden,
+):
+    from custom_components.voip_stack.phone_endpoint import EndpointAvailability, EndpointKind, PhoneEndpoint
+    from .test_browser_logical_availability_ha import resources
+
+    lab, _, handsets = shared_account
+    if forbidden:
+        monkeypatch.setattr(lab.hass.config, "location_name", fallback)
+        lab.runtime.endpoints.register(PhoneEndpoint(
+            "blocked", fallback, EndpointKind.SIP_ACCOUNT, username="blocked",
+            availability=EndpointAvailability.UNAVAILABLE,
+        ))
+    observer = await open_browser_ws(lab, hass_ws_client)
+    try:
+        async with no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback) as caller:
+            if forbidden:
+                # The stock UAC offers no telephone-event. HA answers before
+                # collecting SIP INFO, so rejection must end that dialog.
+                assert await asyncio.wait_for(caller.wait(), 4) != 0
+                wire = (tmp_path / "trunk-sip.log").read_text()
+                assert "SIP/2.0 200 OK" in wire and "BYE sip:sipp@127.0.0.2" in wire
+                assert "SIP/2.0 180" not in wire
+                assert (await browser_snapshot(observer))["state"] == "idle"
+            else:
+                async with asyncio.timeout(4):
+                    while (ringing := await browser_snapshot(observer))["state"] != "ringing":
+                        await asyncio.sleep(.01)
+                await lab.hass.services.async_call("voip_stack", "answer", {
+                    "device_id": "browser-casa", "call_id": ringing["call_id"], "media_client_id": "legacy-card",
+                }, blocking=True)
+                assert await asyncio.wait_for(caller.wait(), 5) == 0
+            assert all("Incoming call" not in handset.read() for handset in handsets)
+            await wait_for(lambda: not lab.calls.sessions)
+            assert resources(lab)["call_scoped_quiescent"]
+    finally:
+        await observer.close()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

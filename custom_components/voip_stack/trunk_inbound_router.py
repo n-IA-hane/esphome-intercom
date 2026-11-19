@@ -19,6 +19,7 @@ from .const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
 )
+from .account_dialing import account_dial_decision
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
@@ -42,6 +43,7 @@ from .fsm import (
     sip_terminal_reason,
 )
 from .inbound_answer import async_commit_runtime_answer
+from .inbound_routing.targets import resolve_inbound_target, validate_target_endpoint
 from .media_ports import (
     RtpPortReservation,
     release_video_media_reservation,
@@ -56,9 +58,11 @@ from .outbound_bridge_commit import (
 from .pbx_routing import dtmf_extension_routes
 from .peer_snapshot import async_build_peer_snapshot
 from .peer import sip_uri_for_peer
+from .phone_endpoint import EndpointKind
 from .phonebook_runtime import registered_roster_entries
+from .roster import find_entry
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
-from .runtime_data import call_runtime_artifacts, preferred_browser_phone
+from .runtime_data import call_runtime_artifacts, endpoint_directory, preferred_browser_phone
 from .core.sip import SipUri, parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
@@ -221,28 +225,51 @@ async def async_route_trunk_invite(
 
     default_target = trunk_default_target(configured_trunk)
     route_hint = destination or digits
-    decision = route_inbound_trunk(
-        CallContext(
-            call_id=invite.call_id,
-            direction="inbound",
-            origin="trunk",
-            caller=invite.caller,
-            route_hint=route_hint,
-            source_host=invite.source_host,
-        ),
-        roster_entries,
-        trunk_ready=False,
+    requested = route_hint or default_target
+    roster_entries = roster_from_peers(hass, peers, registered_roster_entries(hass))
+    selected = find_entry(roster_entries, requested, include_number=False)
+    explicit_account = (
+        selected is not None
+        and selected.metadata.get("endpoint_kind") == EndpointKind.SIP_ACCOUNT.value
     )
-    if decision.action is RouteAction.ANSWER_HA:
+    if explicit_account:
+        resolution = resolve_inbound_target(
+            invite=invite, decision=runtime.route_resolver.route(requested, roster_entries),
+            endpoint_registry=endpoint_directory(hass) if selected.metadata.get("endpoint_id") else None,
+            roster_entries=roster_entries,
+            route_resolver=runtime.route_resolver.route,
+            apply_policy=automation_action not in {"forward", "bridge"},
+        )
+        decision = resolution.decision
+        failure = resolution.failure
+        if failure is None and decision.action is not RouteAction.REJECT:
+            failure = validate_target_endpoint(invite=invite, endpoint=resolution.endpoint)
+        if failure is not None:
+            preanswered = registry.resource_for(invite.call_id, "preanswered")
+            await terminate_source(
+                failure.decline_reason, status=failure.status,
+                answered=bool((preanswered or {}).get("final_response_sent", True)),
+            )
+            return
+        decision = account_dial_decision(hass, decision)
+    else:
+        decision = route_inbound_trunk(
+            CallContext(
+                call_id=invite.call_id, direction="inbound", origin="trunk",
+                caller=invite.caller, route_hint=route_hint, source_host=invite.source_host,
+            ),
+            roster_entries, trunk_ready=False,
+        )
+    if decision.action is RouteAction.ANSWER_HA and not explicit_account:
         # ANSWER_HA identifies the endpoint kind, not necessarily the default
         # browser phone. Preserve explicit DTMF extensions for the second pass.
         destination = route_hint or decision.target or default_target
     elif decision.action is RouteAction.REJECT:
         preanswered = registry.resource_for(invite.call_id, "preanswered")
-        terminal_reason = RouteReason.ROUTE_NOT_FOUND.value
+        terminal_reason = decision.reason.value if explicit_account else RouteReason.ROUTE_NOT_FOUND.value
         trace_call(_LOGGER, invite.call_id, "No trunk route matches digits %s or target %s", digits or "none", route_hint or "none")
         answered = bool((preanswered or {}).get("final_response_sent", True))
-        await terminate_source(terminal_reason, status=404, answered=answered)
+        await terminate_source(terminal_reason, status=decision.status if explicit_account else 404, answered=answered)
         return
     else:
         destination = decision.target or route_hint or default_target
@@ -256,6 +283,12 @@ async def async_route_trunk_invite(
         decision.action.value, decision.reason,
     )
 
+    if explicit_account and decision.action is RouteAction.GROUP:
+        await runtime.forward_existing_call(
+            call_id=invite.call_id, destination=destination, initial_selection=True,
+            _resolved_decision=decision,
+        )
+        return
     if decision.action is RouteAction.AUTOMATION:
         from .automation_call import route_automation_call
         await route_automation_call(runtime, invite, decision, registry, None)
@@ -309,7 +342,7 @@ async def async_route_trunk_invite(
             )
         return
 
-    if runtime.route_resolver.is_ha_target(destination):
+    if not explicit_account and runtime.route_resolver.is_ha_target(destination):
         endpoint = preferred_browser_phone(hass)
         if endpoint is None:
             preanswered = registry.resource_for(invite.call_id, "preanswered")
@@ -329,16 +362,13 @@ async def async_route_trunk_invite(
         )
         return
 
-    decision = runtime.route_resolver.route(
-        destination,
-        roster_from_peers(hass, peers, registered_roster_entries(hass)),
-    )
+    if not explicit_account:
+        decision = runtime.route_resolver.route(destination, roster_entries)
     if decision.action is RouteAction.ANSWER_HA:
-        roster = roster_from_peers(hass, peers, registered_roster_entries(hass))
         target_endpoint = runtime.route_resolver.logical_endpoint(
             decision.target or destination,
             peers,
-            roster,
+            roster_entries,
         ) or preferred_browser_phone(hass)
         if target_endpoint is not None and target_endpoint.supports_ha_client:
             runtime.defer_invite_to_softphone(

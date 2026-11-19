@@ -1023,6 +1023,7 @@ async def _prepare_forward_existing_call(
                             endpoint_registry=endpoint_registry,
                             browser_leg_for_member=runtime.browser_leg_for_member,
                             prepare_outbound_leg=runtime.prepare_outbound_leg,
+                            logical_endpoint_for_member=runtime.route_resolver.logical_endpoint,
                         ),
                         invite=invite,
                         members=members,
@@ -1166,7 +1167,9 @@ async def _prepare_forward_existing_call(
                     attempts=attempts,
                     browser_legs=browser_legs,
                     preflight_failures=[],
-                    on_ringing=_publish_group_ringing,
+                    # A SIP branch's 180 must leave the same account's incoming
+                    # browser offer answerable until either client wins.
+                    on_ringing=None if account_plan and browser_legs and local_source is None else _publish_group_ringing,
                     on_leg_state=leg_state,
                 )
                 fork_result = None
