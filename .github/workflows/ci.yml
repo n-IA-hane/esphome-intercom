@@ -225,6 +225,12 @@ jobs:
         run: |
           python -m pip install uv==0.13.7
           uv pip install --system -r requirements-ha-test.txt
+      - name: Check core call paths before the extended suite
+        env:
+          PYTEST_ADDOPTS: --junitxml=test-results/call-smoke.xml -ra
+        run: PYTHON=python HA_PYTHON=python scripts/test_suite.sh calls --keep-going
+      - name: Require executed core call tests
+        run: python scripts/check_test_results.py test-results/call-smoke.xml
       - name: Run Home Assistant suite
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/home-assistant.xml -ra
@@ -236,7 +242,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: home-assistant-results
-          path: test-results/home-assistant.xml
+          path: |
+            test-results/home-assistant.xml
+            test-results/call-smoke.xml
           if-no-files-found: error
 
   browser-presentation:
@@ -343,6 +351,31 @@ jobs:
           path: |
             test-results/voice-assistant-idle.xml
             test-results/assist-media.xml
+          if-no-files-found: error
+
+  editorial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - run: >-
+          python -m pip install pytest==9.0.3 pytest-asyncio==1.4.0
+          pytest-timeout==2.4.0 voluptuous==0.16.0 PyYAML==6.0.3
+      - name: Check documentation assets and text style separately from call tests
+        env:
+          PYTEST_ADDOPTS: --junitxml=test-results/editorial.xml -ra
+        run: PYTHON=python scripts/test_suite.sh editorial --keep-going
+      - name: Require executed editorial tests
+        run: python scripts/check_test_results.py test-results/editorial.xml
+      - name: Preserve editorial test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: editorial-results
+          path: test-results/editorial.xml
           if-no-files-found: error
 
   documentation:

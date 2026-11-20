@@ -38,6 +38,8 @@ def test_help_exposes_fail_fast_override_and_reproducible_seed() -> None:
     assert "coverage" in result.stdout
     assert "peer" in result.stdout
     assert "mutation" in result.stdout
+    assert "editorial" in result.stdout
+    assert "calls" in result.stdout
 
 
 def test_invalid_seed_fails_before_test_collection() -> None:
@@ -90,12 +92,23 @@ def _record_suite_arguments(tmp_path: Path, mode: str, *options: str) -> list[st
     return json.loads(recorded.read_text())
 
 
-@pytest.mark.parametrize("mode", ["software-full", "ha", "browser", "peer"])
+@pytest.mark.parametrize("mode", ["software-full", "ha", "browser", "peer", "editorial", "calls"])
 def test_direct_suites_forward_reproduction_options(tmp_path: Path, mode: str) -> None:
     arguments = _record_suite_arguments(tmp_path, mode, "--seed", "123", "--keep-going")
     assert "--hypothesis-seed" in arguments
     assert arguments[arguments.index("--hypothesis-seed") + 1] == "123"
     assert arguments.count("--maxfail=0") == 1
+
+
+def test_editorial_checks_have_their_own_suite(tmp_path: Path) -> None:
+    arguments = _record_suite_arguments(tmp_path, "editorial")
+    assert {value for value in arguments if value.startswith("tests/")} == {
+        "tests/test_documentation_contract.py", "tests/test_text_style.py",
+    }
+    for mode in ("fast", "software-full"):
+        arguments = _record_suite_arguments(tmp_path, mode)
+        assert "--ignore=tests/test_documentation_contract.py" in arguments
+        assert "--ignore=tests/test_text_style.py" in arguments
 
 
 def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> None:

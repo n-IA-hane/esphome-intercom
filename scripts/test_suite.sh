@@ -10,7 +10,7 @@ SEED=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|software-full|peer|coverage|ha|js-runtime|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|software-full|editorial|calls|peer|coverage|ha|js-runtime|browser|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -262,6 +262,7 @@ export YAML_PATH_MODE=$path_mode
 case "$MODE" in
   fast)
     pytest_args+=("${ha_ignores[@]}")
+    pytest_args+=(--ignore=tests/test_documentation_contract.py --ignore=tests/test_text_style.py)
     pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow and not diagnostic_reference")
     ;;
   software-full)
@@ -281,8 +282,12 @@ if receipt.get('vcs_info', {}).get('commit_id') != expected:
     raise SystemExit('Install requirements-firmware-test.txt in the selected test Python before software-full')
 PY
     pytest_args+=("${ha_ignores[@]}")
+    pytest_args+=(--ignore=tests/test_documentation_contract.py --ignore=tests/test_text_style.py)
     pytest_args+=(-o tmp_path_retention_policy=failed)
     pytest_args+=(-m "not live and not mutation and not browser_real and not diagnostic_reference")
+    ;;
+  editorial)
+    pytest_args=(tests/test_documentation_contract.py tests/test_text_style.py -q --tb=short)
     ;;
   browser)
     "$PYTHON" - <<'PY'
@@ -371,6 +376,17 @@ PY
     COVERAGE_FILE=$coverage_file "$HA_PYTHON" -m pytest "${ha_args[@]}"
     "$PYTHON" -m coverage report --show-missing --skip-covered
     exec "$PYTHON" -m coverage xml
+    ;;
+  calls)
+    resolve_ha_python
+    PYTHON=$HA_PYTHON
+    pytest_args=(
+      tests/test_sip_account_control_ha.py::test_registered_call_to_literal_name_keeps_the_registered_sip_identity
+      tests/test_sip_phone_transfers_ha.py::test_attended_transfer_reuses_destination_and_delivers_duplex_audio
+      tests/test_shared_account_fork_ha.py::test_source_cancel_stops_both_shared_contacts_and_releases_all_owners
+      tests/test_shared_account_fork_ha.py::test_ha_winner_acknowledges_and_retires_late_sip_200_without_losing_claim
+      -q --tb=short
+    )
     ;;
   ha)
     resolve_ha_python

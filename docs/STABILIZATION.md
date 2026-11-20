@@ -1,5 +1,30 @@
 # Official components and stabilization
 
+## Consolidation before the stable release
+
+The current consolidation starts from Intercom `bf0461ad`, VoIP ESP
+`d9dc9dc5`, Audio Stack `d4a872b7`, Runtime Controller `68dd0606` and renderer
+`edda01a9`. These revisions identify the starting point, not a completed
+qualification. Existing account identities, credentials, device/entity IDs,
+automations and public firmware settings must survive the work.
+
+The work proceeds through baseline regressions and CI checks, SIP input and
+authorization fixes, shared directory ownership and UI corrections, then
+protocol/media/call-control separation and the firmware subsystems. Each
+extraction preserves the current resource owner and cleanup barrier. Decoder,
+SDK and driver upgrades are separate changes.
+
+CI reports editorial checks independently from the call and browser jobs.
+Release verification also reads the authenticated GitHub run and every job:
+the commit and source ref must match the candidate, and all required jobs
+must have completed successfully. A user-requested diagnostic installation
+before that point is an unqualified candidate with a preserved rollback.
+
+The release verifier requires `--ci-run-id` and `--ci-ref` in addition to the
+package, qualification and archive arguments. Do not substitute a successful
+run for an older commit or a different source channel. Passing software checks
+does not replace the physical audio, display and teardown checks below.
+
 The public firmware profiles use the stable ESPHome 2026.11.0 builder.
 Qualification tooling pins its official source revision,
 `1feda1bcaa861a5f2e933f2c65d599e44f4b132b`, in
