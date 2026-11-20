@@ -9,7 +9,8 @@ from .media_session_updates import (
 )
 from .runtime_data import require_runtime_data
 from .sip_client import PreparedDialogMediaUpdate
-from .websocket_api import _ha_softphone_store, _fire_call_event
+from .websocket_api import _ha_softphone_store
+from .call_events import fire_call_event as _fire_call_event
 
 
 def attach_browser_dialog_updates(hass, client, endpoint_id, source_device_id, *, source_call_id=""):

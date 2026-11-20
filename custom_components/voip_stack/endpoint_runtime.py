@@ -163,7 +163,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .softphone_termination import (
         async_terminate_sip_bridge_session as _terminate_sip_bridge,
     )
-    from .websocket_api import _ha_peer_name
+    from .call_events import home_phone_name as _ha_peer_name
     from .peer_snapshot import (
         async_advertise_host as _ha_advertise_host,
         async_build_peer_snapshot as _async_build_peer_snapshot,

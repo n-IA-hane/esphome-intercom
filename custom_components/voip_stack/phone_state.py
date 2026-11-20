@@ -286,7 +286,7 @@ class PhoneStateObserver:
     @callback
     def refresh(self, event=None, *, dialogs=None):
         from .dialog_info import activity_snapshot
-        from .websocket_api import CALL_EVENT
+        from .const import CALL_EVENT
         from .parking import PARKING_CHANGED
 
         runtime = require_runtime_data(self.hass)

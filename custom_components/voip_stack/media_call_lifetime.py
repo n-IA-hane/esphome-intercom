@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant, callback
 
 from .runtime_data import call_projection
-from .websocket_api import CALL_EVENT, _ha_softphone_store
+from .const import CALL_EVENT
+from .websocket_api import _ha_softphone_store
 
 if TYPE_CHECKING:
     from .pbx_runtime import SipEndpointRuntime

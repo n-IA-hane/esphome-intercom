@@ -21,7 +21,7 @@ from .endpoint_entity_manager import (
     event_matches_endpoint,
     register_endpoint_entity_manager,
 )
-from .websocket_api import CALL_EVENT, SIP_DTMF_EVENT
+from .const import CALL_EVENT, SIP_DTMF_EVENT
 
 
 async def async_setup_entry(

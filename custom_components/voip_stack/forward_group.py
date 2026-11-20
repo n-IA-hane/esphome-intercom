@@ -50,9 +50,7 @@ from .runtime_data import (
     endpoint_directory,
     sip_endpoint_runtime,
 )
-from .websocket_api import (
-    _ha_peer_name,
-)
+from .call_events import home_phone_name as _ha_peer_name
 
 if TYPE_CHECKING:
     from .forward_operation import ForwardOperation

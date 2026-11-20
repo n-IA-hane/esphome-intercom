@@ -383,8 +383,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("EndpointTerminationHandler(hass).terminate(", decline)
 
     def test_mid_call_dtmf_is_an_event_not_a_second_dialplan(self) -> None:
-        websocket_source = WEBSOCKET_API.read_text()
-        self.assertIn('SIP_DTMF_EVENT = "voip_stack.dtmf"', websocket_source)
+        const = (ROOT / "custom_components" / "voip_stack" / "const.py").read_text()
+        self.assertIn('SIP_DTMF_EVENT = "voip_stack.dtmf"', const)
         self.assertIn("def attach_dtmf_event_bridge(", self.dtmf_events)
         self.assertIn(
             '"source_leg": "caller" if source_is_caller else "callee"',
@@ -1423,7 +1423,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         websocket = WEBSOCKET_API.read_text()
         self.assertIn(
             'HA_SOFTPHONE_STATE_EVENT = "voip_stack.ha_softphone_state"',
-            websocket,
+            (ROOT / "custom_components" / "voip_stack" / "const.py").read_text(),
         )
         self.assertIn(
             'WS_TYPE_SUBSCRIBE_HA_SOFTPHONE = f"{DOMAIN}/subscribe_ha_softphone_state"',
@@ -1431,11 +1431,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("def _publish_ha_softphone_state(", websocket)
         self.assertIn("def websocket_subscribe_ha_softphone_state(", websocket)
-        fire_event = websocket[
-            websocket.index("def _fire_call_event(") : websocket.index(
-                "def _ha_softphone_store("
-            )
-        ]
+        fire_event = (ROOT / "custom_components" / "voip_stack" / "call_events.py").read_text()
         self.assertIn('event["scope"] = scope', fire_event)
         self.assertNotIn('event.get("scope") or scope', fire_event)
 

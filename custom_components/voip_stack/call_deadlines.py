@@ -14,7 +14,7 @@ from .automation_routing import deadline_is_current
 from .call_registry import TERMINAL_STATES
 from .endpoint_lifecycle import call_registry
 from .service_errors import service_error as _service_error
-from .websocket_api import _fire_call_event
+from .call_events import fire_call_event as _fire_call_event
 
 
 class CallDeadline:

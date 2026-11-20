@@ -169,7 +169,7 @@ class AutomationCall(LocalCallApplication):
         await self.run_operation(call, wait, timeout=None)
 
     async def wait_for_dtmf(self, call: ServiceCall) -> dict:
-        from .websocket_api import SIP_DTMF_EVENT
+        from .const import SIP_DTMF_EVENT
         from homeassistant.core import callback
 
         execution = current_execution.get()

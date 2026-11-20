@@ -687,7 +687,7 @@ async def _pickup_group_phone(call, endpoint, session):
     from homeassistant.core import ServiceCall, callback
     from .call_projection import observe_phone_leg_projection, publish_phone_projection
     from .route_decisions import ensure_ring_group_phone_not_declined
-    from .websocket_api import CALL_EVENT
+    from .const import CALL_EVENT
     from .outbound_attempts import BrowserLeg, async_close_outbound_leg
     from .softphone_answer import async_answer_browser_call
     from .softphone_commands import async_resolve_browser_call_command

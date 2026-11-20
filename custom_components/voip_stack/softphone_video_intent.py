@@ -16,7 +16,8 @@ from .endpoint_lifecycle import call_registry
 from .media_ports import RtpPortReservation, reserve_sip_video_media
 from .media_session_updates import commit_video_session_update, committed_video_format_state
 from .runtime_data import require_runtime_data, sip_endpoint_manager
-from .websocket_api import _fire_call_event, _ha_softphone_store
+from .call_events import fire_call_event as _fire_call_event
+from .websocket_api import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)

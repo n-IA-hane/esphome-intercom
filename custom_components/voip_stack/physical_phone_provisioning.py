@@ -242,7 +242,7 @@ class PhysicalPhoneProvisioner:
                 if state.get("apply_status") == "requesting":
                     state.update(apply_status="uncertain" if state.get("apply_attempted_revision") else "pending",
                         apply_error="phone_apply_result_uncertain" if state.get("apply_attempted_revision") else "")
-        from .websocket_api import CALL_EVENT
+        from .const import CALL_EVENT
         self._unsubscribers.append(self.hass.bus.async_listen(
             CALL_EVENT, self._wake_idle))
         self._unsubscribers.append(self.hass.bus.async_listen(

@@ -65,9 +65,7 @@ from .sip_client import SIP_TIMER_B
 from .sip_runtime import (
     send_final_response as _sip_send_final_response,
 )
-from .websocket_api import (
-    _ha_peer_name,
-)
+from .call_events import home_phone_name as _ha_peer_name
 
 _LOGGER = logging.getLogger(f"{__package__}.call_forwarder")
 

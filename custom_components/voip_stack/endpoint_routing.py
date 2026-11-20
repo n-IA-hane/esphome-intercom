@@ -285,7 +285,7 @@ def is_ha_target(hass: HomeAssistant, value: str) -> bool:
     """Return whether a dial token names the configured HA browser phone."""
 
     # Kept deferred because websocket_api imports routing helpers during setup.
-    from .websocket_api import _ha_peer_name
+    from .call_events import home_phone_name as _ha_peer_name
 
     return same_route_name(value, _ha_peer_name(hass)) or same_route_name(value, "ha")
 

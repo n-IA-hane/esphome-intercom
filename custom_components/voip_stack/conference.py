@@ -42,7 +42,7 @@ from .runtime_data import (
 from .core.rtp_payload import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite, SipInviteResult
-from .websocket_api import _fire_call_event
+from .call_events import fire_call_event as _fire_call_event
 from .phone_endpoint import EndpointAvailability
 
 _LOGGER = logging.getLogger(__name__)

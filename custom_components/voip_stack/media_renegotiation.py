@@ -49,7 +49,8 @@ from .sip_bridge import (
 )
 from .sip_listener import SipInvite, SipInviteResult
 from .session_cleanup import async_wait_for_cleanup
-from .websocket_api import _fire_call_event, _ha_softphone_store
+from .call_events import fire_call_event as _fire_call_event
+from .websocket_api import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)

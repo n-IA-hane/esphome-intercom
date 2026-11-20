@@ -65,3 +65,11 @@ VOIP_STACK_RTP_PORT = 40000
 
 CONF_TRUNK_REGISTER = "trunk_register"
 CONF_TRUNK_ALLOWED_IPS = "trunk_allowed_ips"
+
+# Native Home Assistant events shared by call owners and protocol adapters.
+CALL_EVENT = "voip_stack.call_event"
+HA_SOFTPHONE_STATE_EVENT = "voip_stack.ha_softphone_state"
+SIP_CALL_STATE_EVENT = "voip_stack.call_state"
+SIP_INCOMING_CALL_EVENT = "voip_stack.incoming_call"
+SIP_ROUTE_REQUEST_EVENT = "voip_stack.route_request"
+SIP_DTMF_EVENT = "voip_stack.dtmf"

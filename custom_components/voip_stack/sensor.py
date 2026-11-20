@@ -111,7 +111,8 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
         self._revision = -1
 
     async def async_added_to_hass(self) -> None:
-        from .websocket_api import CALL_EVENT, _ha_softphone_state
+        from .const import CALL_EVENT
+        from .websocket_api import _ha_softphone_state
 
         await super().async_added_to_hass()
         if self.endpoint.account_device_id:

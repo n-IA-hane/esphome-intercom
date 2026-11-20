@@ -14,7 +14,7 @@ from .endpoint_session import TerminationIntent
 from .inbound_routing.automation import SIP_ROUTE_DECISION_TIMEOUT
 from .phone_policy import DestinationKind
 from .runtime_data import registration_data, runtime_data
-from .websocket_api import CALL_EVENT
+from .const import CALL_EVENT
 
 
 _LOGGER = logging.getLogger(__name__)

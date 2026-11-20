@@ -17,7 +17,7 @@ from .automation_routing import automation_event_type, matches_call
 from .call_deadlines import CallDeadline
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CallToken, TerminationIntent
-from .websocket_api import CALL_EVENT, SIP_DTMF_EVENT
+from .const import CALL_EVENT, SIP_DTMF_EVENT
 from .runtime_data import registration_data
 
 

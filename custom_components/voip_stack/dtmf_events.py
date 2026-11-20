@@ -11,7 +11,7 @@ from .dtmf import parse_sip_info_digit
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
 from .runtime_data import call_runtime_artifacts, sip_endpoint_manager
-from .websocket_api import SIP_DTMF_EVENT
+from .const import SIP_DTMF_EVENT
 
 
 _LOGGER = logging.getLogger(__name__)
