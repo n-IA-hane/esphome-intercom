@@ -1,28 +1,12 @@
-"""Sensor platform for VoIP Stack.
+"""Home Assistant sensor projections for the phonebook and logical phone call state."""
 
-HA publishes one SIP dial-plan roster.
-
-Entity names:
-  - sensor.voip_phonebook       format per row:
-      name|ip|sip_port|rtp_port|audio_mode|tx_formats|rx_formats|sip_tcp
-
-ESP YAMLs subscribe to the unified sensor and normalize it locally into their
-SIP dial plan.
-"""
-
-import asyncio
-import contextlib
-import logging
-
-from homeassistant.components import persistent_notification
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .device_resolver import entity_role
 from .endpoint_device import (
     endpoint_call_state_attributes,
     endpoint_config_subentry_id,
@@ -34,15 +18,11 @@ from .endpoint_entity_manager import (
     event_projects_endpoint_state,
     register_endpoint_entity_manager,
 )
-from .peer_snapshot import async_build_peer_snapshot
-from .peer import Peer
+from .phonebook_coordinator import PHONEBOOK_UPDATED, PhonebookCoordinator
 from .phone_entity import PhoneEndpointEntity
 from .runtime_data import require_runtime_data, runtime_data
 
-_LOGGER = logging.getLogger(__name__)
-
 PARALLEL_UPDATES = 0
-UNAVAILABLE_STATES = {"", "unknown", "unavailable"}
 PHONE_CALL_STATES = [
     "offline",
     "idle",
@@ -95,20 +75,6 @@ def _migrate_default_call_state_entity(hass, entry, endpoint) -> None:
     )
 
 
-def _state_is_available(state) -> bool:
-    return (
-        state is not None
-        and str(state.state or "").strip().lower() not in UNAVAILABLE_STATES
-    )
-
-
-def _is_voip_roster_entity(entity: object) -> bool:
-    return getattr(entity, "platform", None) == "esphome" and entity_role(entity) in {
-        "voip_state", "voip_endpoint", "voip_ring_groups",
-        "voip_conference_groups", "voip_conference_ring",
-    }
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -116,8 +82,8 @@ async def async_setup_entry(
 ) -> None:
     from .physical_phone_entity import async_setup_physical_phone_sensors
     await async_setup_physical_phone_sensors(hass, entry, async_add_entities)
-    unified_sensor = VoipPhonebookSensor(hass)
-    async_add_entities([unified_sensor], True)
+    runtime = require_runtime_data(hass)
+    async_add_entities([VoipPhonebookSensor(runtime.phonebook)])
     endpoint_manager = EndpointEntityManager(
         hass,
         entry,
@@ -125,8 +91,6 @@ async def async_setup_entry(
         PhoneEndpointCallStateSensor,
     )
     endpoint_manager.async_setup()
-    runtime = require_runtime_data(hass)
-    runtime.phonebook_sensor = unified_sensor
     register_endpoint_entity_manager(
         entry, "endpoint_call_state_entity_manager", endpoint_manager
     )
@@ -261,332 +225,39 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
 
 
 class VoipPhonebookSensor(SensorEntity):
-    """Publish the shared directory for existing cards and automations."""
+    """Expose the latest committed phonebook projection to cards and automations."""
 
     _attr_has_entity_name = False
     _attr_should_poll = False
     _attr_icon = "mdi:phone-voip"
+    _attr_unique_id = "voip_stack_phonebook"
+    _attr_name = "VoIP Phonebook"
     _unrecorded_attributes = frozenset({"phonebook", "roster_json"})
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        self.hass = hass
-        self._attr_unique_id = "voip_stack_phonebook"
-        self._attr_name = "VoIP Phonebook"
+    def __init__(self, coordinator: PhonebookCoordinator) -> None:
+        self.coordinator = coordinator
         self.entity_id = "sensor.voip_phonebook"
-        self._attr_native_value = "0 entries"
-        self._phonebook = ""
-        self._roster_json = '{"version":2,"capabilities":["extension","ring_group","conference_group","conference_ring"],"contacts":[]}'
-        self._count = 0
-        self._name_conflicts: tuple[str, ...] | None = None
-        self._tracked_entities: set[str] = set()
-        self._known_esp_peers: dict[str, Peer] = {}
-        self._online_esp_services: dict[str, str] = {}
-        self._rehydrate_services: set[str] = set()
-        self._unsub_state = None
-        self._recompute_task: asyncio.Task | None = None
-        self._recompute_requested = False
-        self._delivery_ready = False
+
+    @property
+    def native_value(self) -> str:
+        count = self.coordinator.count
+        return "1 entry" if count == 1 else f"{count} entries"
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
-        return {
-            "phonebook": self._phonebook,
-            "roster_json": self._roster_json,
-            "count": self._count,
-        }
+        return {"phonebook": self.coordinator.phonebook, "roster_json": self.coordinator.roster_json,
+                "count": self.coordinator.count}
 
     @callback
     def async_entity_id_changed(self, old_entity_id: str) -> None:
-        """Preserve subscriptions when Home Assistant renames this entity."""
+        """Keep the projection subscribed during a native entity rename."""
         super().async_entity_id_changed(old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self.async_on_remove(self._stop_state_tracking)
-        self.async_on_remove(self._cancel_recompute)
-        @callback
-        def _on_registry_change(event) -> None:
-            entity_id = event.data.get("entity_id") or ""
-            entity = er.async_get(self.hass).async_get(entity_id)
-            if (
-                not _is_voip_roster_entity(entity)
-                and entity_id not in self._tracked_entities
-                and event.data.get("old_entity_id") not in self._tracked_entities
-            ):
-                return
-            self.hass.async_create_task(self._refresh_tracked_entities())
-
-        self.async_on_remove(self.hass.bus.async_listen(
-            "entity_registry_updated", _on_registry_change
-        ))
-        await self._refresh_tracked_entities(initial=True)
-        self._delivery_ready = True
+        self.async_on_remove(async_dispatcher_connect(self.hass, PHONEBOOK_UPDATED, self._directory_updated))
 
     @callback
-    def _stop_state_tracking(self) -> None:
-        if self._unsub_state:
-            self._unsub_state()
-            self._unsub_state = None
-
-    @callback
-    def _cancel_recompute(self) -> None:
-        self._recompute_requested = False
-        if self._recompute_task is not None:
-            self._recompute_task.cancel()
-
-    async def async_will_remove_from_hass(self) -> None:
-        # Native remove callbacks cancel even aborted adds; normal removal can
-        # additionally wait until the existing owner finishes cancellation.
-        task = self._recompute_task
-        if task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            if self._recompute_task is task:
-                self._recompute_task = None
-
-    @callback
-    def _schedule_recompute(self) -> None:
-        """Coalesce state bursts while guaranteeing a final fresh snapshot."""
-        self._recompute_requested = True
-        if self._recompute_task is None or self._recompute_task.done():
-            self._recompute_task = self.hass.async_create_task(self._drain_recomputes())
-
-    async def _drain_recomputes(self) -> None:
-        current = asyncio.current_task()
-        try:
-            while self._recompute_requested:
-                self._recompute_requested = False
-                await self._recompute()
-        finally:
-            if self._recompute_task is current:
-                self._recompute_task = None
-                if self._recompute_requested:
-                    self._schedule_recompute()
-
-    async def _schedule_and_wait_recompute(self) -> None:
-        self._schedule_recompute()
-        task = self._recompute_task
-        if task is not None:
-            await task
-
-    async def _refresh_tracked_entities(self, initial: bool = False) -> None:
-        entity_registry = er.async_get(self.hass)
-        new_set = {
-            e.entity_id
-            for e in entity_registry.entities.values()
-            if _is_voip_roster_entity(e)
-        }
-        if new_set == self._tracked_entities and not initial:
-            return
-        self._tracked_entities = new_set
-
-        @callback
-        def _on_state_change(event) -> None:
-            entity_id = event.data.get("entity_id") or ""
-            new_state = event.data.get("new_state")
-            old_state = event.data.get("old_state")
-            role = entity_role(er.async_get(self.hass).async_get(entity_id))
-            if role == "voip_endpoint":
-                old_value = old_state.state if old_state is not None else None
-                new_value = new_state.state if new_state is not None else None
-                old_endpoint = (
-                    (old_state.attributes or {}).get("endpoint")
-                    if old_state is not None
-                    else None
-                )
-                new_endpoint = (
-                    (new_state.attributes or {}).get("endpoint")
-                    if new_state is not None
-                    else None
-                )
-                if old_value != new_value or old_endpoint != new_endpoint:
-                    self._schedule_recompute()
-                return
-            if (
-                role in {"voip_ring_groups", "voip_conference_groups", "voip_conference_ring"}
-            ):
-                old_value = old_state.state if old_state is not None else None
-                new_value = new_state.state if new_state is not None else None
-                if old_value != new_value:
-                    self._schedule_recompute()
-                return
-            old_avail = _state_is_available(old_state)
-            new_avail = _state_is_available(new_state)
-            if old_avail == new_avail:
-                return
-            self._schedule_recompute()
-
-        self._stop_state_tracking()
-        if new_set:
-            self._unsub_state = async_track_state_change_event(
-                self.hass, list(new_set), _on_state_change
-            )
-        await self._schedule_and_wait_recompute()
-
-    async def _recompute(self) -> None:
-        from .phonebook_runtime import (
-            format_entry_unified,
-            push_roster_json_to_esps,
-            registered_roster_entries,
-        )
-        from .directory_runtime import async_refresh_directory
-        from .roster import dump_roster_json
-
-        runtime = require_runtime_data(self.hass)
-        live_peers = await async_build_peer_snapshot(self.hass)
-        if runtime_data(self.hass) is not runtime or (
-                runtime.phonebook_sensor is not None and runtime.phonebook_sensor is not self):
-            return
-        peers = self._stable_phonebook_peers(live_peers)
-        entries = [format_entry_unified(p) for p in peers]
-        roster_entries = await async_refresh_directory(
-            self.hass, peers=peers, registered=registered_roster_entries(self.hass)
-        )
-        if roster_entries is None or runtime_data(self.hass) is not runtime:
-            return
-        from .repairs import async_sync_extension_issues
-        async_sync_extension_issues(self.hass, roster_entries)
-        self._report_name_conflicts(roster_entries)
-        phonebook = ",".join(entries)
-        roster_json = dump_roster_json(roster_entries)
-        visible_count = len(roster_entries)
-        new_value = (
-            f"{visible_count} entry"
-            if visible_count == 1
-            else f"{visible_count} entries"
-        )
-        if (
-            new_value != self._attr_native_value
-            or phonebook != self._phonebook
-            or roster_json != self._roster_json
-        ):
-            self._attr_native_value = new_value
-            self._phonebook = phonebook
-            self._roster_json = roster_json
-            self._count = visible_count
-            _LOGGER.debug("Phonebook recomputed (%d entries)", visible_count)
-            if self.hass and self.entity_id:
-                self.async_write_ha_state()
-                if self._delivery_ready:
-                    await push_roster_json_to_esps(self.hass, roster_json)
-        if self._delivery_ready and self._rehydrate_services:
-            services = self._rehydrate_services
-            self._rehydrate_services = set()
-            await push_roster_json_to_esps(
-                self.hass,
-                roster_json,
-                target_services=services,
-            )
-
-    @callback
-    def _report_name_conflicts(self, entries) -> None:
-        """Report ambiguous phonebook names once, until the conflict changes."""
-        from .roster import normalize_roster_key
-
-        names = {}
-        for entry in entries:
-            if not entry.enabled:
-                continue
-            key = normalize_roster_key(entry.display_name)
-            if key:
-                names.setdefault(key, []).append(entry)
-        conflicts = []
-        for matches in names.values():
-            if len(matches) < 2:
-                continue
-            destinations = []
-            for entry in matches:
-                metadata = entry.metadata or {}
-                kind = (
-                    "Assist pipeline" if metadata.get("virtual_endpoint") == "assist_pipeline"
-                    else "browser phone" if metadata.get("endpoint_kind") == "browser"
-                    else "group" if metadata.get("group_type")
-                    else "phone/contact"
-                )
-                extension = f", extension {entry.extension}" if entry.extension else ""
-                destinations.append(f"{entry.display_name} ({kind}{extension})")
-            conflicts.append("; ".join(sorted(destinations)))
-        current = tuple(sorted(conflicts))
-        if current == self._name_conflicts:
-            return
-        self._name_conflicts = current
-        notification_id = "voip_stack_duplicate_phonebook_names"
-        if not current:
-            persistent_notification.async_dismiss(self.hass, notification_id)
-            return
-        message = (
-            "Phonebook names must be unique, including browser phones and Assist pipelines. "
-            "Rename one destination in each conflicting pair:\n\n"
-            + "\n".join(f"- {conflict}" for conflict in current)
-            + "\n\nUse the VoIP Stack phone settings, the contact editor, or the Assist "
-            "pipeline settings to change the corresponding name. Different extension "
-            "numbers do not make duplicate names valid."
-        )
-        _LOGGER.error("Duplicate VoIP phonebook names: %s. Rename the conflicting destinations.",
-                      " | ".join(current))
-        persistent_notification.async_create(
-            self.hass, message, title="VoIP Stack: duplicate phonebook names",
-            notification_id=notification_id,
-        )
-
-    async def async_update(self) -> None:
-        await self._schedule_and_wait_recompute()
-
-    def _stable_phonebook_peers(self, live_peers: list[Peer]) -> list[Peer]:
-        """Keep configured ESP contacts stable across API reconnects."""
-
-        browser_peers: list[Peer] = []
-        online_services: dict[str, str] = {}
-        live_esp_keys: set[str] = set()
-        for peer in live_peers:
-            if peer.endpoint_kind != "esphome":
-                browser_peers.append(peer)
-                continue
-            key = peer.device_id or peer.endpoint_id
-            live_esp_keys.add(key)
-            previous = self._known_esp_peers.get(key)
-            entities = (peer.device or {}).get("entities") or {}
-            restoring = any(
-                (state := self.hass.states.get(str(entities.get(role) or "")))
-                is None
-                or str(state.state or "").strip().lower()
-                in {"unknown", "unavailable"}
-                for role in (
-                    "voip_state",
-                    "voip_extension",
-                    "voip_ring_groups",
-                    "voip_conference_groups",
-                    "voip_conference_ring",
-                )
-                if entities.get(role)
-            )
-            if previous is None or not restoring:
-                self._known_esp_peers[key] = peer
-            route_id = str((peer.device or {}).get("route_id") or "")
-            if route_id:
-                online_services[key] = f"{route_id}_set_roster_json"
-
-        runtime = require_runtime_data(self.hass)
-        for key in self._online_esp_services.keys() - online_services.keys():
-            runtime.phonebook_delivered_roster.pop(self._online_esp_services[key], None)
-        self._rehydrate_services.update(
-            online_services[key]
-            for key in online_services.keys() - self._online_esp_services.keys()
-        )
-        self._online_esp_services = online_services
-
-        for key, peer in tuple(self._known_esp_peers.items()):
-            state_entity = str(
-                (((peer.device or {}).get("entities") or {}).get("voip_state")) or ""
-            )
-            if state_entity and state_entity not in self._tracked_entities:
-                self._known_esp_peers.pop(key, None)
-
-        return [
-            *(
-                self._known_esp_peers[key]
-                for key in sorted(live_esp_keys)
-                if key in self._known_esp_peers
-            ),
-            *browser_peers,
-        ]
+    def _directory_updated(self, coordinator: PhonebookCoordinator) -> None:
+        if self.coordinator is coordinator:
+            self.async_write_ha_state()

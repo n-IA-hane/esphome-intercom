@@ -14,7 +14,6 @@ from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
-from pytest_homeassistant.common import MockConfigEntry
 
 from .test_managed_phones_ha import custom_integration_path as custom_integration_path, phone_lab as phone_lab
 
@@ -164,77 +163,96 @@ async def test_subentry_delete_uses_native_registry_cleanup_and_keeps_pbx_cleanu
         await platform.async_reset()
 
 
-async def test_phonebook_aborted_add_releases_its_registry_subscription(hass, monkeypatch):
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+async def test_phonebook_failed_start_detaches_registry_and_service_listeners(phone_lab, monkeypatch):
+    from homeassistant.const import EVENT_SERVICE_REGISTERED
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
 
-    entry = MockConfigEntry(domain="voip_stack", data={})
-    entry.add_to_hass(hass)
-    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="sensor",
-        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
-    platform.config_entry = entry
-    sensor = VoipPhonebookSensor(hass)
-    sensor.add_to_platform_start(hass, platform, None)
-    before = hass.bus.async_listeners().get("entity_registry_updated", 0)
-    monkeypatch.setattr(sensor, "_refresh_tracked_entities", AsyncMock(side_effect=RuntimeError("initial snapshot failed")))
+    lab = phone_lab
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    events = ("entity_registry_updated", EVENT_SERVICE_REGISTERED)
+    baseline = {name: lab.hass.bus.async_listeners().get(name, 0) for name in events}
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(side_effect=RuntimeError("initial snapshot failed")))
+    with pytest.raises(RuntimeError, match="initial snapshot failed"):
+        await coordinator.async_start()
+    assert coordinator.closed
+    assert baseline == {name: lab.hass.bus.async_listeners().get(name, 0) for name in events}
+
+
+async def test_phonebook_close_cancels_active_refresh_and_queued_state_event(phone_lab, monkeypatch):
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+
+    lab = phone_lab
+    role = er.async_get(lab.hass).async_get_or_create("text", "esphome", "board-voip_ring_groups")
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+    async def snapshot(_hass):
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    source = AsyncMock(side_effect=snapshot)
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    adding = asyncio.create_task(coordinator.async_start())
+    await asyncio.wait_for(entered.wait(), 1)
+    lab.hass.states.async_set(role.entity_id, "Reception")
+    await asyncio.sleep(0)
+    await coordinator.async_close()
+    with pytest.raises(asyncio.CancelledError):
+        await adding
+    assert cancelled.is_set()
+    lab.hass.states.async_set(role.entity_id, "Later state")
+    await lab.hass.async_block_till_done()
+    source.assert_awaited_once_with(lab.hass)
+
+
+async def test_phonebook_tracks_availability_edges_without_sensor_or_call_state_refreshes(phone_lab, monkeypatch):
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+
+    lab = phone_lab
+    state = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "board-voip_state")
+    source = AsyncMock(return_value=[])
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
+    owner = entry_phonebook(lab.hass, lab.runtime)
+    await owner.async_start()
     try:
-        with pytest.raises(RuntimeError, match="initial snapshot failed"):
-            await sensor.async_added_to_hass()
-        sensor.add_to_platform_abort()
-        assert hass.bus.async_listeners().get("entity_registry_updated", 0) == before
+        source.reset_mock()
+        for status, expected in (("unknown", 0), ("unavailable", 0), ("idle", 1),
+                                 ("ringing", 1), ("in_call", 1), ("unavailable", 2)):
+            lab.hass.states.async_set(state.entity_id, status)
+            await lab.hass.async_block_till_done()
+            assert source.await_count == expected, status
+        assert lab.hass.states.get("sensor.voip_phonebook") is None
     finally:
-        if remove := getattr(sensor, "_unsub_registry", None):
-            remove()
+        await owner.async_close()
+    lab.hass.states.async_set(state.entity_id, "idle")
+    await lab.hass.async_block_till_done()
+    assert source.await_count == 2
 
 
-async def test_phonebook_aborted_add_cancels_recompute_requeued_by_a_real_state_event(hass, monkeypatch):
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+async def test_phonebook_recomputes_when_endpoint_metadata_changes(phone_lab, monkeypatch):
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
 
-    entry = MockConfigEntry(domain="voip_stack", data={})
-    entry.add_to_hass(hass)
-    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="sensor",
-        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
-    platform.config_entry = entry
-    role = er.async_get(hass).async_get_or_create("text", "esphome", "board-voip_ring_groups")
-    sensor = VoipPhonebookSensor(hass)
-    sensor.add_to_platform_start(hass, platform, None)
-    first_started, first_release, second_started, second_release = [asyncio.Event() for _ in range(4)]
-    producer_tasks = []
-
-    async def snapshot():
-        producer_tasks.append(asyncio.current_task())
-        if len(producer_tasks) == 1:
-            first_started.set()
-            await first_release.wait()
-            raise RuntimeError("initial snapshot failed")
-        second_started.set()
-        await second_release.wait()
-
-    monkeypatch.setattr(sensor, "_recompute", snapshot)
-    adding = asyncio.create_task(sensor.async_added_to_hass())
+    lab = phone_lab
+    state = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "board-voip_endpoint")
+    source = AsyncMock(return_value=[])
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
+    owner = entry_phonebook(lab.hass, lab.runtime)
+    await owner.async_start()
     try:
-        await asyncio.wait_for(first_started.wait(), 1)
-        hass.states.async_set(role.entity_id, "Reception")
-        await asyncio.sleep(0)
-        first_release.set()
-        with pytest.raises(RuntimeError, match="initial snapshot failed"):
-            await adding
-        await asyncio.wait_for(second_started.wait(), 1)
-        pending = producer_tasks[-1]
-        assert not pending.done()
-        sensor.add_to_platform_abort()
-        await asyncio.sleep(0)
-        assert pending.done()
-        assert all(task.done() for task in producer_tasks)
-        hass.states.async_set(role.entity_id, "Later state")
-        await asyncio.sleep(0)
-        assert len(producer_tasks) == 2
+        lab.hass.states.async_set(state.entity_id, "ready", {"endpoint": {"extension": "51"}})
+        await lab.hass.async_block_till_done()
+        source.reset_mock()
+        lab.hass.states.async_set(state.entity_id, "ready", {"endpoint": {"extension": "51"}, "other": True})
+        await lab.hass.async_block_till_done()
+        source.assert_not_awaited()
+        lab.hass.states.async_set(state.entity_id, "ready", {"endpoint": {"extension": "52"}})
+        await lab.hass.async_block_till_done()
+        source.assert_awaited_once_with(lab.hass)
     finally:
-        first_release.set()
-        second_release.set()
-        for task in producer_tasks:
-            task.cancel()
-        await asyncio.gather(adding, *producer_tasks, return_exceptions=True)
-        for name in ("_unsub_state", "_unsub_registry"):
-            if remove := getattr(sensor, name, None):
-                remove()
-                setattr(sensor, name, None)
+        await owner.async_close()

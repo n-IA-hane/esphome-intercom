@@ -269,8 +269,8 @@ async def test_shared_entity_rename_keeps_subscriptions(
         entity = VoipStackCallEvent(hass, entry)
         role = "call_event"
     else:
-        entity = VoipPhonebookSensor(hass)
-        monkeypatch.setattr(entity, "_refresh_tracked_entities", AsyncMock())
+        from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
+        entity = VoipPhonebookSensor(PhonebookCoordinator(hass, None))
         role = "phonebook"
     platform = EntityPlatform(
         hass=hass,
@@ -308,33 +308,34 @@ async def test_shared_entity_rename_keeps_subscriptions(
         await platform.async_reset()
 
 
-@pytest.mark.parametrize("domain, role", [("text", "voip_ring_groups"), ("switch", "voip_ring_on_conference")])
+@pytest.mark.parametrize("domain, role", [("text", "voip_ring_groups"), ("text", "voip_conference_groups"), ("switch", "voip_ring_on_conference")])
 async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monkeypatch, domain: str, role: str) -> None:
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+    from custom_components.voip_stack import peer_snapshot
 
     registry = er.async_get(hass)
     entity = registry.async_get_or_create(domain, "esphome", f"board-{role}",
                                           suggested_object_id="board_voip_ring_groups")
-    sensor = VoipPhonebookSensor(hass)
-    monkeypatch.setattr(sensor, "_schedule_and_wait_recompute", AsyncMock())
-    scheduled = []
-    monkeypatch.setattr(sensor, "_schedule_recompute", lambda: scheduled.append(True))
     entry = MockConfigEntry(domain="voip_stack", data={})
     entry.add_to_hass(hass)
-    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="sensor",
-        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
-    platform.config_entry = entry
-    await platform.async_add_entities([sensor])
+    runtime = entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
+        endpoints=EndpointRegistry(), phones=None)
+    source = AsyncMock(return_value=[])
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
+    coordinator = entry_phonebook(hass, runtime)
+    await coordinator.async_start()
     try:
         hass.states.async_set(entity.entity_id, "before")
         registry.async_update_entity(entity.entity_id, new_entity_id=f"{domain}.renamed_groups")
         await hass.async_block_till_done()
-        assert sensor._tracked_entities == {f"{domain}.renamed_groups"}
+        assert coordinator._tracked_entities == {f"{domain}.renamed_groups"}
         hass.states.async_set(f"{domain}.renamed_groups", "first")
         await hass.async_block_till_done()
-        scheduled.clear()
+        source.reset_mock()
         hass.states.async_set(f"{domain}.renamed_groups", "second")
         await hass.async_block_till_done()
-        assert scheduled == [True]
+        source.assert_awaited_once_with(hass)
     finally:
-        await platform.async_reset()
+        await coordinator.async_close()

@@ -53,7 +53,7 @@ async def test_phonebook_duplicate_name_notification(hass, caplog):
     from homeassistant.components import persistent_notification as notifications
     from homeassistant.core import callback
     from custom_components.voip_stack.roster import RosterEntry
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+    from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
 
     updates = []
 
@@ -66,9 +66,9 @@ async def test_phonebook_duplicate_name_notification(hass, caplog):
                         metadata={"endpoint_kind": "browser"})
     assist = RosterEntry("assist-a", "CASA", extension="777",
                          metadata={"virtual_endpoint": "assist_pipeline"})
-    sensor = VoipPhonebookSensor(hass)
+    owner = PhonebookCoordinator(hass, None)
     try:
-        sensor._report_name_conflicts([phone, assist])
+        owner._report_name_conflicts([phone, assist])
         await hass.async_block_till_done()
         assert len(updates) == 1
         notification = updates[0][1]["voip_stack_duplicate_phonebook_names"]
@@ -77,14 +77,14 @@ async def test_phonebook_duplicate_name_notification(hass, caplog):
         assert "must be unique" in notification["message"]
         assert "Duplicate VoIP phonebook names" in caplog.text
 
-        sensor._report_name_conflicts([assist, phone])
+        owner._report_name_conflicts([assist, phone])
         await hass.async_block_till_done()
         assert len(updates) == 1
         assert caplog.text.count("Duplicate VoIP phonebook names") == 1
 
         # Reloading after a rename must also clear the previous notification.
         renamed = RosterEntry("assist-a", "Assistant", extension="777")
-        VoipPhonebookSensor(hass)._report_name_conflicts([phone, renamed])
+        PhonebookCoordinator(hass, None)._report_name_conflicts([phone, renamed])
         await hass.async_block_till_done()
         assert updates[-1][0] is notifications.UpdateType.REMOVED
     finally:
@@ -95,7 +95,7 @@ async def test_phonebook_unique_names_do_not_notify(hass):
     from homeassistant.components import persistent_notification as notifications
     from homeassistant.core import callback
     from custom_components.voip_stack.roster import RosterEntry
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+    from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
 
     updates = []
 
@@ -105,7 +105,7 @@ async def test_phonebook_unique_names_do_not_notify(hass):
 
     unsubscribe = notifications.async_register_callback(hass, updated)
     try:
-        VoipPhonebookSensor(hass)._report_name_conflicts([
+        PhonebookCoordinator(hass, None)._report_name_conflicts([
             RosterEntry("a", "Home", metadata={"ring_group": "All rooms"}),
             RosterEntry("b", "Kitchen", metadata={"ring_group": "All rooms"}),
             RosterEntry("c", "Home", enabled=False),
@@ -451,80 +451,52 @@ async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
     monkeypatch: pytest.MonkeyPatch,
     advertised_host: str | None,
 ) -> None:
-    from homeassistant.const import EVENT_SERVICE_REGISTERED
-
-    from custom_components.voip_stack.config_entry_runtime import (
-        register_phonebook_service_event_sync,
-    )
-    from custom_components.voip_stack.phonebook_runtime import (
-        push_roster_json_to_esps,
-    )
+    from custom_components.voip_stack import peer_snapshot, phonebook_runtime
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+    from custom_components.voip_stack.phonebook_runtime import push_roster_json_to_esps
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import store_manual_roster_entries
 
-    runtime = VoipStackRuntime(
-        transport_config={},
-        assist_config={},
-        trunk_config={},
-        endpoints=MagicMock(),
-        phones=MagicMock(),
-        phonebook_sensor=SimpleNamespace(
-            async_update=AsyncMock(),
-            extra_state_attributes={"roster_json": '{"contacts":["Casa"]}'},
-        ),
-    )
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
-    entry.runtime_data = runtime
-
-    from custom_components.voip_stack import phonebook_runtime
-
-    monkeypatch.setattr(
-        phonebook_runtime,
-        "_get_voip_devices",
-        AsyncMock(
-            return_value=[
-                {"host": advertised_host, "name": "P4", "route_id": "p4"},
-                {"host": "192.0.2.11", "name": "S3", "route_id": "s3"},
-            ]
-        ),
-    )
-
-    deliveries: list[tuple[str, str]] = []
-
-    async def _record_delivery(call) -> None:
+    runtime = entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
+        endpoints=EndpointRegistry(), phones=MagicMock())
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+    monkeypatch.setattr(phonebook_runtime, "_get_voip_devices", AsyncMock(return_value=[
+        {"host": advertised_host, "name": "P4", "route_id": "p4"},
+        {"host": "192.0.2.11", "name": "S3", "route_id": "s3"},
+    ]))
+    deliveries = []
+    async def record(call):
         deliveries.append((call.service, call.data["roster_json"]))
 
-    hass.services.async_register("esphome", "p4_set_roster_json", _record_delivery)
-    hass.services.async_register("esphome", "s3_set_roster_json", _record_delivery)
+    hass.services.async_register("esphome", "p4_set_roster_json", record)
+    hass.services.async_register("esphome", "s3_set_roster_json", record)
+    coordinator = entry_phonebook(hass, runtime)
+    casa = RosterEntry("Casa", number="410")
+    store_manual_roster_entries(hass, [casa])
+    try:
+        await coordinator.async_start()
+        assert not deliveries
+        coordinator.enable_delivery()
+        first = coordinator.roster_json
+        await asyncio.gather(push_roster_json_to_esps(hass, first), push_roster_json_to_esps(hass, first))
+        assert deliveries == [("p4_set_roster_json", first), ("s3_set_roster_json", first)]
 
-    first = '{"contacts":["Casa"]}'
-    await asyncio.gather(
-        push_roster_json_to_esps(hass, first),
-        push_roster_json_to_esps(hass, first),
-    )
-    assert deliveries == [
-        ("p4_set_roster_json", first),
-        ("s3_set_roster_json", first),
-    ]
-
-    changed = '{"contacts":["Casa","Test"]}'
-    await push_roster_json_to_esps(hass, changed)
-    assert deliveries[-2:] == [
-        ("p4_set_roster_json", changed),
-        ("s3_set_roster_json", changed),
-    ]
-
-    runtime.phonebook_sensor.extra_state_attributes["roster_json"] = changed
-    register_phonebook_service_event_sync(hass)
-    runtime.phonebook_delivered_roster.pop("p4_set_roster_json")
-    hass.bus.async_fire(
-        EVENT_SERVICE_REGISTERED,
-        {"domain": "esphome", "service": "p4_set_roster_json"},
-    )
-    await hass.async_block_till_done()
-
-    assert deliveries.count(("p4_set_roster_json", changed)) == 2
-    assert deliveries.count(("s3_set_roster_json", changed)) == 1
+        store_manual_roster_entries(hass, [casa, RosterEntry("Test", number="411")])
+        await coordinator.async_refresh(deliver=True)
+        changed = coordinator.roster_json
+        assert changed != first
+        assert deliveries[-2:] == [("p4_set_roster_json", changed), ("s3_set_roster_json", changed)]
+        hass.services.async_remove("esphome", "p4_set_roster_json")
+        hass.services.async_register("esphome", "p4_set_roster_json", record)
+        await hass.async_block_till_done()
+        assert deliveries.count(("p4_set_roster_json", changed)) == 2
+        assert deliveries.count(("s3_set_roster_json", changed)) == 1
+    finally:
+        await coordinator.async_close()
 
 
 async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
@@ -532,7 +504,7 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
 ) -> None:
     from custom_components.voip_stack.peer import Peer
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
-    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+    from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
 
     runtime = VoipStackRuntime(
         transport_config={},
@@ -566,7 +538,7 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     ):
         hass.states.async_set(entity_id, value)
 
-    sensor = VoipPhonebookSensor(hass)
+    sensor = PhonebookCoordinator(hass, runtime)
     sensor._tracked_entities = set(entities.values())
     original = Peer(
         name="S3",

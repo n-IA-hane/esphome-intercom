@@ -6,13 +6,10 @@ import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_SERVICE_REGISTERED
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 
-from .entity_identity import phonebook_state
 
 from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS
-from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     CONF_ESPHOME_PHONE_POLICIES,
     CONF_PHONE_KIND,
@@ -23,7 +20,7 @@ from .phone_config import (
     sync_registry_from_entry,
 )
 from .phone_endpoint import EndpointKind
-from .phonebook_runtime import push_roster_json_to_esps
+from .phonebook_coordinator import PhonebookCoordinator, entry_phonebook
 from .runtime_data import runtime_data, sip_registrar
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 from .store import sip_accounts
@@ -36,49 +33,20 @@ from .websocket_api import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_refresh_phonebook_sensor(hass: HomeAssistant) -> None:
-    runtime = runtime_data(hass)
-    sensor = runtime.phonebook_sensor if runtime is not None else None
-    if sensor is not None:
-        await sensor.async_update()
-
-
-async def async_current_roster_json(hass: HomeAssistant) -> str:
-    runtime = runtime_data(hass)
-    if runtime is not None and runtime.directory is not None and not runtime.directory.closed:
-        from .roster import dump_roster_json
-
-        return dump_roster_json(list(runtime.directory.snapshot()))
-    sensor = runtime.phonebook_sensor if runtime is not None else None
-    if sensor is not None:
-        return str(sensor.extra_state_attributes.get("roster_json", "") or "")
-    state = phonebook_state(hass)
-    if state is None:
-        return ""
-    return str(state.attributes.get("roster_json") or "")
-
-
 async def async_refresh_and_push_phonebook(hass: HomeAssistant) -> None:
     runtime = runtime_data(hass)
-    if runtime is not None and runtime.phonebook_sensor is None:
-        from .directory_runtime import async_refresh_directory
-
-        if await async_refresh_directory(hass) is None:
-            return
-    await async_refresh_phonebook_sensor(hass)
-    if runtime_data(hass) is not runtime:
-        return
-    roster_json = await async_current_roster_json(hass)
-    await push_roster_json_to_esps(hass, roster_json)
+    if runtime is not None:
+        await entry_phonebook(hass, runtime).async_refresh(deliver=True)
 
 
-async def async_deferred_phonebook_sync(hass: HomeAssistant) -> None:
+async def async_deferred_phonebook_sync(coordinator: PhonebookCoordinator) -> None:
     """Push the canonical phonebook after entry setup/reload settles."""
-
     for delay in (0.0, 2.0, 10.0):
         if delay:
             await asyncio.sleep(delay)
-        await async_refresh_and_push_phonebook(hass)
+        if coordinator.closed:
+            return
+        await coordinator.async_refresh(deliver=True)
 
 
 def entry_runtime_signature(entry: ConfigEntry) -> dict:
@@ -252,42 +220,3 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     await async_refresh_mailbox_state(hass)
     from .physical_phone_runtime import async_reconcile_physical_phone_runtime
     await async_reconcile_physical_phone_runtime(hass, entry)
-
-
-def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
-    """Restore the phonebook only on the ESPHome device whose service appears."""
-
-    runtime = runtime_data(hass)
-    if runtime is None:
-        return
-    if runtime.phonebook_service_event_unsub is not None:
-        return
-
-    @callback
-    def _on_service_registered(event: Event) -> None:
-        if event.data.get("domain") != "esphome":
-            return
-        service = str(event.data.get("service") or "")
-        if not service.endswith("_set_roster_json"):
-            return
-        create_runtime_task(hass, _async_restore_phonebook_service(hass, service))
-
-    runtime.phonebook_service_event_unsub = hass.bus.async_listen(
-        EVENT_SERVICE_REGISTERED,
-        _on_service_registered,
-    )
-
-
-async def _async_restore_phonebook_service(hass: HomeAssistant, service: str) -> None:
-    """Rehydrate one restarted ESP without republishing to every phone."""
-
-    runtime = runtime_data(hass)
-    await async_refresh_phonebook_sensor(hass)
-    if runtime_data(hass) is not runtime:
-        return
-    roster_json = await async_current_roster_json(hass)
-    await push_roster_json_to_esps(
-        hass,
-        roster_json,
-        target_services={service},
-    )

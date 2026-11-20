@@ -205,7 +205,7 @@ def compose_directory_entries(hass, peers, registered):
     return result
 
 
-async def async_refresh_directory(hass, *, peers=None, registered=None):
+async def async_refresh_directory(hass, *, peers=None, registered=None, prepare_peers=None):
     """Publish only while the runtime and latest refresh still own the result."""
     from .peer_snapshot import async_build_peer_snapshot, async_advertise_host
     from .phonebook_runtime import registered_roster_entries
@@ -220,8 +220,11 @@ async def async_refresh_directory(hass, *, peers=None, registered=None):
     restore_esp_identities(hass, runtime)
     if peers is None:
         peers = await async_build_peer_snapshot(hass)
-    if runtime_data(hass) is not runtime or runtime.directory is not directory or directory.closed:
+    if (runtime_data(hass) is not runtime or runtime.directory is not directory
+            or not directory.owns_refresh(generation)):
         return None
+    if prepare_peers is not None:
+        peers = prepare_peers(peers)
     if registered is None:
         registered = registered_roster_entries(hass)
     entries = compose_directory_entries(hass, peers, registered)

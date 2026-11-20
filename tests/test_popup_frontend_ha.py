@@ -227,11 +227,10 @@ async def test_shared_setup_reload_refreshes_assets_without_recreating_services(
     resources = types.SimpleNamespace(async_get_info=AsyncMock(), async_items=lambda: items,
         async_create_item=AsyncMock(side_effect=create_item), async_update_item=AsyncMock(side_effect=update_item))
     hass.data["lovelace"] = types.SimpleNamespace(resource_mode="storage", resources=resources)
-    services, websocket, bridge, phonebook = AsyncMock(), Mock(), Mock(), Mock()
+    services, websocket, bridge = AsyncMock(), Mock(), Mock()
     monkeypatch.setattr(integration, "_async_register_services", services)
     monkeypatch.setattr(integration, "async_register_websocket_api", websocket)
     monkeypatch.setattr(integration, "_register_esp_state_event_bridge", bridge)
-    monkeypatch.setattr(integration, "_register_phonebook_service_event_sync", phonebook)
     monkeypatch.setattr(integration, "_get_transport_config", lambda _: {})
     monkeypatch.setattr(audio_ws_view, "async_register_audio_ws_view", Mock())
     monkeypatch.setattr(mailbox_api, "async_register_mailbox_api", Mock())
@@ -261,7 +260,7 @@ async def test_shared_setup_reload_refreshes_assets_without_recreating_services(
     services.assert_awaited_once()
     websocket.assert_called_once()
     capture.assert_awaited_once()
-    assert bridge.call_count == phonebook.call_count == 2
+    assert bridge.call_count == 2
     assert hass.data[frontend.DATA_EXTRA_MODULE_URL] is modules
     urls = [url for url in modules.urls if url.split("?")[0].endswith("/voip-stack-popup.js")]
     assert len(urls) == 1 and urls[0].endswith("-200")

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.ha
 @pytest.fixture
 async def pnp_listener(phone_lab, monkeypatch, socket_enabled, unused_tcp_port_factory):
     """Use the real PBX listener without unrelated registered trunk clients."""
-    from custom_components.voip_stack import endpoint_runtime, peer_snapshot, sensor
+    from custom_components.voip_stack import endpoint_runtime, peer_snapshot
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     from custom_components.voip_stack.phone_profile_catalog import PhoneProfileCatalog
 
@@ -62,7 +62,6 @@ async def pnp_listener(phone_lab, monkeypatch, socket_enabled, unused_tcp_port_f
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     snapshot = AsyncMock(return_value=[])
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", snapshot)
-    monkeypatch.setattr(sensor, "async_build_peer_snapshot", snapshot)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     try:
         yield lab

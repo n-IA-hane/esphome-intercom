@@ -24,7 +24,6 @@ from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
     entry_phone_signature as _entry_phone_signature,
     entry_runtime_signature as _entry_runtime_signature,
-    register_phonebook_service_event_sync as _register_phonebook_service_event_sync,
 )
 from .const import (
     CONF_ASSIST_ENDPOINT_ENABLED,
@@ -655,7 +654,6 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
         # config-entry reload. The event listeners are explicitly removed by
         # unload, so restore just those idempotent subscriptions here.
         _register_esp_state_event_bridge(hass)
-        _register_phonebook_service_event_sync(hass)
         if _get_transport_config(hass).get(CONF_SIP_VIDEO, False):
             from .video_ws_view import async_register_video_ws_view
 
@@ -687,7 +685,6 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
 
     await async_register_sip_capture(hass)
     _register_esp_state_event_bridge(hass)
-    _register_phonebook_service_event_sync(hass)
 
     # Sensor platform is forwarded per config entry; YAML setup gets only
     # services + websocket API.
@@ -716,6 +713,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     """Set up VoIP Stack from a config entry (UI setup)."""
     previous_runtime = _runtime_data(hass)
     previous_entry_runtime = getattr(entry, "runtime_data", None)
+    if previous_phonebook := getattr(previous_entry_runtime, "phonebook", None):
+        await previous_phonebook.async_close()
     previous_discovery = getattr(previous_entry_runtime, "phone_discovery", None)
     if previous_discovery is not None:
         previous_entry_runtime.phone_discovery = None
@@ -789,6 +788,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             previous_runtime.softphone_presence if previous_runtime is not None else {}
         ),
     )
+    from .phonebook_coordinator import entry_phonebook
+    coordinator = entry_phonebook(hass, entry.runtime_data)
+    entry.async_on_unload(coordinator.close)
     from .local_softphone_runtime import async_setup_local_softphone_bridge
 
     async_setup_local_softphone_bridge(hass)
@@ -868,12 +870,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await async_reconcile_physical_phone_runtime(hass, entry)
     from .trunk_config import sync_trunk_devices
     sync_trunk_devices(hass, entry)
+    await coordinator.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    coordinator.enable_delivery()
     from .logbook import async_setup_account_activity
     async_setup_account_activity(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     _register_runtime_shutdown(hass, entry)
-    entry.async_create_background_task(hass, _deferred_phonebook_sync(hass), "voip-phonebook-startup-sync")
+    entry.async_create_background_task(hass, _deferred_phonebook_sync(coordinator), "voip-phonebook-startup-sync")
     # Platforms can now serve fresh snapshots after an entry reload.
     hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
     return True
@@ -892,6 +896,8 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     from .websocket_api import _async_shutdown_all
 
     runtime = _runtime_data(hass)
+    if runtime is not None and runtime.phonebook is not None:
+        await runtime.phonebook.async_close()
     if runtime is not None and runtime.phone_discovery is not None:
         discovery, runtime.phone_discovery = runtime.phone_discovery, None
         await discovery.async_close()
@@ -934,10 +940,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     await _async_stop_runtime(hass)
     unsub = entry.runtime_data.esp_state_event_bridge_unsub
     entry.runtime_data.esp_state_event_bridge_unsub = None
-    if unsub is not None:
-        unsub()
-    unsub = entry.runtime_data.phonebook_service_event_unsub
-    entry.runtime_data.phonebook_service_event_unsub = None
     if unsub is not None:
         unsub()
     entry.runtime_data.endpoints.close()

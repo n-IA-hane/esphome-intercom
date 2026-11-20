@@ -321,12 +321,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("lambda call:", services)
         self.assertNotIn("call_handler(", services)
 
-    def test_phonebook_sensor_treats_unknown_as_unavailable(self) -> None:
-        sensor = SENSOR.read_text()
-        self.assertIn('UNAVAILABLE_STATES = {"", "unknown", "unavailable"}', sensor)
-        self.assertIn("_state_is_available(old_state)", sensor)
-        self.assertIn("_state_is_available(new_state)", sensor)
-
     def test_stale_call_id_cannot_replace_active_softphone_session(self) -> None:
         ws = (
             ROOT / "custom_components" / "voip_stack" / "websocket_api.py"

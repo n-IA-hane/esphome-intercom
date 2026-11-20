@@ -267,7 +267,9 @@ async def test_full_sensor_setup_with_ha11_device_info_keeps_phonebook_loaded(ph
     from custom_components.voip_stack import physical_phone_entity, sensor
     lab = physical_entities
     monkeypatch.setattr(physical_phone_entity, "DeviceInfo", ha11_device_info)
-    monkeypatch.setattr(sensor, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    await coordinator.async_start()
     platform = EntityPlatform(hass=lab.hass, logger=logging.getLogger(__name__), domain="sensor",
         platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
     platform.config_entry = lab.entry
@@ -283,7 +285,7 @@ async def test_full_sensor_setup_with_ha11_device_info_keeps_phonebook_loaded(ph
         book = lab.hass.states.get("sensor.voip_phonebook")
         assert book is not None and book.state not in {"unknown", "unavailable"}
         assert "roster_json" in book.attributes
-        assert lab.runtime.phonebook_sensor is not None
+        assert lab.runtime.phonebook is coordinator
         physical = [entity for entity in platform.entities.values()
             if isinstance(entity, physical_phone_entity.PhysicalPhoneProvisioningSensor)]
         assert len(physical) == 1 and physical[0].available
@@ -292,3 +294,4 @@ async def test_full_sensor_setup_with_ha11_device_info_keeps_phonebook_loaded(ph
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await platform.async_reset()
+        await coordinator.async_close()

@@ -858,10 +858,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", sensor)
         self.assertNotIn("class HaSoftphoneEndpointSensor", sensor)
         self.assertNotIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", peer_snapshot)
-        self.assertIn("old_endpoint", sensor)
-        self.assertIn("new_endpoint", sensor)
-        self.assertIn("voip_ring_groups", sensor)
-        self.assertIn("voip_conference_groups", sensor)
         self.assertNotIn("async_prune_ha_softphone_groups", sensor)
         self.assertNotIn("async_prune_ha_softphone_groups", websocket)
         self.assertNotIn("local_ha_seen = False", websocket)
@@ -1010,7 +1006,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("softphone_targets_json", sensor)
         self.assertNotIn("softphone_targets_json", card)
         self.assertIn("_targetFromRosterEntry(entry)", card)
-        self.assertIn('"roster_json": self._roster_json', sensor)
 
     def test_ha_softphone_media_path_can_join_conference_without_card_logic(
         self,
@@ -1503,9 +1498,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         update_listener = self.config_entry_runtime[
             self.config_entry_runtime.index(
                 "async def async_config_entry_updated("
-            ) : self.config_entry_runtime.index(
-                "def register_phonebook_service_event_sync("
-            )
+            ) :
         ]
         self.assertNotIn("ha_endpoint_sensor", update_listener)
 
@@ -1676,7 +1669,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn("_register_esp_state_event_bridge(hass)", initialized)
-        self.assertIn("_register_phonebook_service_event_sync(hass)", initialized)
 
     def test_trunk_dtmf_has_priority_over_automation_override(self) -> None:
         runner = self.trunk_inbound_router

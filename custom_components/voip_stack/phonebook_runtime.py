@@ -64,11 +64,13 @@ async def push_roster_json_to_esps(
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    coordinator = runtime.phonebook
     directory = runtime.directory
     generation = directory.generation if directory is not None else None
 
     def current():
         return (runtime_data(hass) is runtime and runtime.directory is directory
+                and runtime.phonebook is coordinator and (coordinator is None or not coordinator.closed)
                 and (directory is None or (not directory.closed and directory.generation == generation)))
 
     async with runtime.phonebook_push_lock:

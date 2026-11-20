@@ -14,6 +14,7 @@ from .endpoint_registry import EndpointRegistry
 from .phone_endpoint import PhoneEndpoint
 
 if TYPE_CHECKING:
+    from .phonebook_coordinator import PhonebookCoordinator
     from .device_resolver import VoipDeviceResolver
     from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
@@ -101,11 +102,10 @@ class VoipStackRuntime:
     softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
     softphone_presence: dict[str, int] = field(default_factory=dict)
     sip_bridge_state: dict[str, Any] = field(default_factory=dict)
-    phonebook_sensor: Any | None = None
+    phonebook: PhonebookCoordinator | None = None
     phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
-    phonebook_service_event_unsub: Any | None = None
     phone_provisioning: Any | None = None
     physical_phones: Any | None = None
     phone_discovery: Any | None = None

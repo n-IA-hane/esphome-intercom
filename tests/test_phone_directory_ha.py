@@ -26,15 +26,8 @@ async def test_phonebook_export_uses_backend_directory_without_reading_sensor(ma
     await lab.controller.async_sync()
     phone = phone_record(lab)
 
-    class UnavailableProjection:
-        async def async_update(self):
-            raise AssertionError("An export must not drive the sensor")
-
-        @property
-        def extra_state_attributes(self):
-            raise AssertionError("The sensor is not the phonebook owner")
-
-    lab.runtime.phonebook_sensor = UnavailableProjection() if sensor_present else None
+    if sensor_present:
+        lab.hass.states.async_set("sensor.voip_phonebook", "unavailable", {"roster_json": "stale"})
     before = len(lab.sent)
 
     async def no_delivery(_hass):
@@ -194,6 +187,7 @@ async def test_esp_restore_collision_never_reassigns_a_stable_endpoint_owner(pho
 
 async def test_cold_reload_publishes_managed_identity_without_api_or_binding(managed):
     from custom_components.voip_stack.phone_config import async_setup_endpoint_registry
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
     from custom_components.voip_stack.sensor import VoipPhonebookSensor
 
     lab = managed
@@ -204,9 +198,9 @@ async def test_cold_reload_publishes_managed_identity_without_api_or_binding(man
     lab.native.runtime_data.client.is_connected = False
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
     lab.runtime.phone_provisioning = None
-    sensor = VoipPhonebookSensor(lab.hass)
-    sensor.entity_id = None
-    await sensor.async_update()
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    await coordinator.async_refresh()
+    sensor = VoipPhonebookSensor(coordinator)
     rows = json.loads(sensor.extra_state_attributes["roster_json"])["contacts"]
     matching = [row for row in rows if row["metadata"].get("endpoint_id") == phone.endpoint_id]
     assert len(matching) == 1
@@ -227,10 +221,14 @@ def add_phone(lab, *, identity, name, kind="browser", username="", extension="",
     sync_registry_from_entry(lab.hass, lab.entry)
 
 
-async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_services(managed, tmp_path):
-    from homeassistant.helpers.entity_component import EntityComponent
+@pytest.mark.parametrize("publish_sensor", [True, False], ids=["sensor", "disabled-sensor"])
+async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_services(managed, tmp_path, publish_sensor):
+    from datetime import timedelta
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers.entity_platform import EntityPlatform
     from custom_components.voip_stack.store import store_manual_roster_entries
     from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
     from custom_components.voip_stack.sensor import VoipPhonebookSensor
     from custom_components.voip_stack.directory_runtime import directory_uri
     from custom_components.voip_stack.config_entry_runtime import async_refresh_and_push_phonebook
@@ -251,15 +249,28 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
         sent.append(json.loads(call.data["roster_json"]))
 
     lab.hass.services.async_register("esphome", "phone_node_set_roster_json", receive)
-    sensor = VoipPhonebookSensor(lab.hass)
-    lab.runtime.phonebook_sensor = sensor
-    component = EntityComponent(logging.getLogger(__name__), "sensor", lab.hass)
-    await component.async_add_entities([sensor])
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    await coordinator.async_start()
+    coordinator.enable_delivery()
+    sensor = VoipPhonebookSensor(coordinator)
+    platform = EntityPlatform(hass=lab.hass, logger=logging.getLogger(__name__), domain="sensor",
+        platform_name="voip_stack", platform=None, scan_interval=timedelta(seconds=30), entity_namespace=None)
+    platform.config_entry = lab.entry
+    if not publish_sensor:
+        er.async_get(lab.hass).async_get_or_create("sensor", "voip_stack", "voip_stack_phonebook",
+            config_entry=lab.entry, disabled_by=er.RegistryEntryDisabler.USER)
+    await platform.async_add_entities([sensor])
     try:
         await async_refresh_and_push_phonebook(lab.hass)
         state = lab.hass.states.get(sensor.entity_id)
-        assert state is not None
-        payload = json.loads(state.attributes["roster_json"])
+        if publish_sensor:
+            assert state is not None
+            payload = json.loads(state.attributes["roster_json"])
+            assert state.attributes["count"] == len(payload["contacts"])
+        else:
+            assert state is None
+            assert sent
+            payload = sent[-1]
         assert payload["version"] == 2
         assert sent and sent[-1] == payload
         rows = {row["name"]: row for row in payload["contacts"]}
@@ -284,8 +295,8 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
         assert "synthetic-phone-secret" not in public and "synthetic-contact-secret" not in public
         (tmp_path / "public-roster-v2.json").write_text(public)
     finally:
-        await component.async_remove_entity(sensor.entity_id)
-        lab.runtime.phonebook_sensor = None
+        await platform.async_reset()
+        await coordinator.async_close()
 
 
 async def test_directory_snapshot_owns_metadata_and_rejects_ambiguous_aliases(phone_lab):
@@ -391,14 +402,13 @@ async def test_directory_await_does_not_publish_for_retired_owner(managed, monke
         assert original.snapshot() == before
 
 
-async def test_stale_sensor_refresh_cannot_deliver_into_new_runtime(managed, monkeypatch):
-    from custom_components.voip_stack import sensor as module
+async def test_stale_coordinator_refresh_cannot_deliver_into_new_runtime(managed, monkeypatch):
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
     lab = managed
     await lab.controller.async_sync()
-    sensor = module.VoipPhonebookSensor(lab.hass)
-    sensor.entity_id = None
-    lab.runtime.phonebook_sensor = sensor
-    sensor._delivery_ready = True
+    coordinator = entry_phonebook(lab.hass, lab.runtime)
+    coordinator.enable_delivery()
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def peers(_hass):
@@ -406,10 +416,10 @@ async def test_stale_sensor_refresh_cannot_deliver_into_new_runtime(managed, mon
         await release.wait()
         return []
 
-    monkeypatch.setattr(module, "async_build_peer_snapshot", peers)
-    task = asyncio.create_task(sensor.async_update())
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", peers)
+    task = asyncio.create_task(coordinator.async_refresh(deliver=True))
     await entered.wait()
-    lab.entry.runtime_data = replace(lab.runtime, directory=None, phonebook_sensor=None)
+    lab.entry.runtime_data = replace(lab.runtime, directory=None, phonebook=None)
     release.set()
     await task
     assert lab.entry.runtime_data.directory is None

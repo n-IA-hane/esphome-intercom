@@ -304,7 +304,12 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
     monkeypatch.setattr(voip_stack, "_async_start_sip_trunk", AsyncMock())
     monkeypatch.setattr(voip_stack, "_deferred_phonebook_sync", AsyncMock())
     monkeypatch.setattr(phone_services, "async_setup_phone_services", AsyncMock())
+    installed_phonebooks = []
     async def forward_platforms(entry, platforms):
+        coordinator = entry.runtime_data.phonebook
+        assert coordinator is not None and entry.runtime_data.directory is not None
+        assert not coordinator.closed
+        installed_phonebooks.append(coordinator)
         # Give the platform boundary its normal endpoint permission identity.
         for endpoint in entry.runtime_data.endpoints.endpoints:
             entry.runtime_data.endpoints.update(endpoint.endpoint_id, entity_ids={"sensor.reload_phone"})
@@ -338,6 +343,7 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         assert phone["state"] == "unavailable" and phone["availability"] == "offline"
         assert not entry.runtime_data.softphone_presence
         assert await voip_stack.async_unload_entry(hass, entry)
+        assert installed_phonebooks[0].closed
         await hass.async_block_till_done(wait_background_tasks=True)
         assert (await client.receive_json())["event"] == {"kind": "closed", "reason": "runtime_unloaded"}
         assert await voip_stack.async_setup_entry(hass, entry)
@@ -345,6 +351,8 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
         ready = await client.receive_json()
         assert ready == {"id": 1, "type": "event", "event": {"event_type": "voip_stack.runtime_ready", "data": {}}}
         assert entry.runtime_data.sip is not first_runtime and not client.closed
+        assert len(installed_phonebooks) == 2 and installed_phonebooks[1] is not installed_phonebooks[0]
+        assert entry.runtime_data.phonebook is installed_phonebooks[1] and not installed_phonebooks[1].closed
         await client.send_json({"id": 3, "type": "voip_stack/subscribe_phone_states"})
         assert (await client.receive_json())["success"] is True
         new_snapshot = (await client.receive_json())["event"]
