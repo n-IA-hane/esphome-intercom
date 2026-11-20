@@ -174,7 +174,7 @@ async def exercise(output):
               const socket=new WebSocket(location.origin.replace('http','ws')+'/video');
               await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
               fallbackSender._ws=socket;
-              await fallbackSender._replaceSender('jpeg',3,'',false);
+              await fallbackSender._sender._replaceSender('jpeg',3,'',false);
             }""")
             await page.wait_for_function("fallbackSender.stats.sent>=2", timeout=10000)
             async with asyncio.timeout(3):

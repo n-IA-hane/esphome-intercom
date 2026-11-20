@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "custom_components/voip_stack/frontend/voip-stack-media-devices.js"
 VIDEO = MODULE.with_name("voip-stack-video.js")
 VIDEO_MODEL = MODULE.with_name("voip-stack-video-model.js")
+MODULE_LOADER = ROOT / "tests/support/frontend_module_loader.js"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -189,8 +190,6 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const videoSource = fs.readFileSync({json.dumps(str(VIDEO))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 const context = vm.createContext({{
   EventTarget, performance, console, Blob, URL, setTimeout, clearTimeout,
   CustomEvent: class CustomEvent extends Event {{
@@ -199,16 +198,10 @@ const context = vm.createContext({{
   WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
-const model = new vm.SourceTextModule(modelSource, {{ context }});
-await model.link(() => {{ throw new Error("unexpected model import"); }});
-await model.evaluate();
-const videoModule = new vm.SourceTextModule(videoSource, {{
-  context,
-  initializeImportMeta(meta) {{ meta.url = "https://ha.example/voip-stack-video.js?v=test"; }},
-  importModuleDynamically: async () => model,
-}});
-await videoModule.link(() => {{ throw new Error("unexpected static import"); }});
-await videoModule.evaluate();
+const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+const frontend = createFrontendLoader({json.dumps(str(VIDEO.parent))}, context,
+  "https://ha.example/voip-stack-video.js?v=test");
+const videoModule = await frontend.load("voip-stack-video.js");
 const Video = videoModule.namespace.VoipStackVideo;
 
 let releaseCameraB;
@@ -261,20 +254,20 @@ video._negotiated = {{
   send: {{ codec: "vp8", encoding: "VP8", max_framerate: 15 }},
 }};
 video._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
-await video._replaceSender("vp8", 1, "cam-a", true);
-const oldEncoder = video._encoder;
+await video._sender._replaceSender("vp8", 1, "cam-a", true);
+const oldEncoder = video._sender._encoder;
 const replacement = video.switchCamera("cam-b");
 await Promise.resolve();
 assert.equal(tracks.get("cam-a").stopped, false);
-assert.equal(video._encoder, oldEncoder);
+assert.equal(video._sender._encoder, oldEncoder);
 releaseCameraB();
 await replacement;
 assert.equal(tracks.get("cam-a").stopped, true);
 assert.equal(tracks.get("cam-b").stopped, false);
 assert.equal(video.cameraSettings.deviceId, "cam-b");
 assert.equal(video.canSend, true);
-assert.notEqual(video._encoder, oldEncoder);
-await video._cleanupSender();
+assert.notEqual(video._sender._encoder, oldEncoder);
+await video._sender._cleanupSender();
 assert.equal(tracks.get("cam-b").stopped, true);
 """
     completed = subprocess.run(

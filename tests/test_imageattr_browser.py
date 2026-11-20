@@ -42,15 +42,15 @@ const receiver=(w,h)=>({recv:{wildcard:false,sets:[{x:{min:8,max:w,step:8,values
 const results=[];
 for (const [sw,sh,mw,mh] of [[640,480,320,240],[640,360,320,240],[480,640,320,240],
                             [640,480,160,120],[320,240,640,480],[640,480,0,0]]) {
- const v=new VoipStackVideo();v._generation=3;v._senderGeneration=7;
+ const v=new VoipStackVideo();v._generation=3;v._sender._senderGeneration=7;
  v._cameraEnabled=v._cameraAllowed=true;
  v._negotiated={send:{encoding:'JPEG',clock_rate:90000,image_attributes:mw?receiver(mw,mh):null}};
  const encoded=[];v._ws={readyState:WebSocket.OPEN,bufferedAmount:0,send:(frame)=>encoded.push(frame)};
- const encoder=await v._createJpegEncoder(sw,sh,3,7);v._encoder=encoder;v._jpegEncoderWorker=encoder.worker;
+ const encoder=await v._sender._createJpegEncoder(sw,sh,3,7);v._sender._encoder=encoder;v._sender._jpegEncoderWorker=encoder.worker;
  const canvas=new OffscreenCanvas(sw,sh),ctx=canvas.getContext('2d');
  ctx.fillStyle='#ff0000';ctx.fillRect(0,0,sw/2,sh);
  ctx.fillStyle='#0000ff';ctx.fillRect(sw/2,0,sw/2,sh);
- v._dispatchJpegFrame(new VideoFrame(canvas,{timestamp:1000000}),encoder.worker,encoder,3,7);
+ v._sender._dispatchJpegFrame(new VideoFrame(canvas,{timestamp:1000000}),encoder.worker,encoder,3,7);
  const started=performance.now();
  while(!encoded.length && performance.now()-started<3000) await new Promise(r=>setTimeout(r,5));
  if(!encoded.length) throw new Error('JPEG encode did not complete');

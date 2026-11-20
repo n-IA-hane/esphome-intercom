@@ -41,13 +41,12 @@ const context=vm.createContext({EventTarget,Event,performance,console,URL,Blob,
   CustomEvent:class extends Event {constructor(type,init){super(type);this.detail=init?.detail;}},
   document:{body:{appendChild(){}},createElement:tag=>tag==='video'?new Video():{getContext:()=>({})}},
 });
-const model=new vm.SourceTextModule(fs.readFileSync(MODEL,'utf8'),{context});
-await model.link(()=>{throw Error('Unexpected model import');});await model.evaluate();
-const module=new vm.SourceTextModule(fs.readFileSync(SOURCE,'utf8')+'\nexport {createVideoElementFrameReader};',{
-  context,initializeImportMeta(meta){meta.url='https://ha.test/video.js';},importModuleDynamically:async()=>model,
-});
-await module.link(()=>{throw Error('Unexpected import');});await module.evaluate();
-const reader=module.namespace.createVideoElementFrameReader(stream,15,track);
+const {createFrontendLoader}=await import(LOADER);
+const modules=createFrontendLoader(FRONTEND,context,'https://ha.test/voip-stack-video.js?v=reader',
+  {exposeFrameReader:true});
+const module=await modules.load('voip-stack-video.js');
+const readerModule=await modules.load('voip-stack-video-sender.js');
+const reader=readerModule.namespace.createVideoElementFrameReader(stream,15,track);
 await reader.start();let ended=false;
 const pending=reader.read().then(value=>{ended=value.done;return value;});
 await assert.rejects(reader.read(),/already pending/);
@@ -62,53 +61,54 @@ assert.ok(!videos[0].callback);await reader.cancel();track.end();await reader.ca
 late?.(0,{mediaTime:1});assert.equal(timers.size,0);assert.equal(videos[0].removed,1);
 
 // stop() does not emit ended. The existing sender must cancel explicitly.
-const stopped=new Track('video');const explicit=module.namespace.createVideoElementFrameReader(stream,15,stopped);
+const stopped=new Track('video');const explicit=readerModule.namespace.createVideoElementFrameReader(stream,15,stopped);
 await explicit.start();const stopping=explicit.read();stopped.stop();await explicit.cancel();
 assert.equal((await stopping).done,true);assert.equal(videos.at(-1).removed,1);
 
 // Check readyState too, including tracks which ended before listener setup.
 const before=new Track('video');before.stop();
-const already=module.namespace.createVideoElementFrameReader(stream,15,before);
+const already=readerModule.namespace.createVideoElementFrameReader(stream,15,before);
 await assert.rejects(already.start(),/cancelled/);assert.equal(videos.at(-1).played,undefined);
 assert.equal((await already.read()).done,true);
-const between=new Track('video');const checked=module.namespace.createVideoElementFrameReader(stream,15,between);
+const between=new Track('video');const checked=readerModule.namespace.createVideoElementFrameReader(stream,15,between);
 await checked.start();between.stop();assert.equal((await checked.read()).done,true);
 
 pendingPlay=true;const startingTrack=new Track('video');
-const startup=module.namespace.createVideoElementFrameReader(stream,15,startingTrack);
+const startup=readerModule.namespace.createVideoElementFrameReader(stream,15,startingTrack);
 const starting=startup.start();const rejected=assert.rejects(starting,/cancelled/);
 startingTrack.end();await rejected;assert.equal(timers.size,0);
 await startup.cancel();assert.equal(videos.at(-1).removed,1);
 
 // An old source ending after cancellation cannot touch the replacement reader.
 pendingPlay=false;const newTrack=new Track('video');
-const replacement=module.namespace.createVideoElementFrameReader(stream,15,newTrack);
+const replacement=readerModule.namespace.createVideoElementFrameReader(stream,15,newTrack);
 await replacement.start();const replacementVideo=videos.at(-1);const replacementRead=replacement.read();
 track.end();assert.ok(!replacementVideo.removed);assert.ok(replacementVideo.callback||timers.size);
 newTrack.end();assert.equal((await replacementRead).done,true);assert.equal(timers.size,0);
 
 // EOF from the actual adapter reaches the existing encoder-owner finally.
 const ownerTrack=new Track('video');const ownerStream={getTracks:()=>[ownerTrack]};
-const owned=module.namespace.createVideoElementFrameReader(ownerStream,15,ownerTrack);await owned.start();
+const owned=readerModule.namespace.createVideoElementFrameReader(ownerStream,15,ownerTrack);await owned.start();
 const sender=new module.namespace.VoipStackVideo();
-Object.assign(sender,{_generation:7,_senderGeneration:2,_cameraEnabled:true,_cameraAllowed:true,
-  _cameraReader:owned,_cameraStream:ownerStream,_canSend:true});
-const encoder={state:'configured',close(){this.state='closed';}};sender._encoder=encoder;
-const encoding=sender._encodeCamera(15,owned,encoder,7,2);ownerTrack.end();await encoding;
-assert.equal(sender._canSend,false);assert.equal(sender._cameraReader,null);
-assert.equal(sender._cameraStream,null);assert.equal(sender._encoder,null);assert.equal(encoder.state,'closed');
+Object.assign(sender,{_generation:7,_cameraEnabled:true,_cameraAllowed:true,_canSend:true});
+Object.assign(sender._sender,{_senderGeneration:2,_cameraReader:owned,_cameraStream:ownerStream});
+const encoder={state:'configured',close(){this.state='closed';}};sender._sender._encoder=encoder;
+const encoding=sender._sender._encodeCamera(15,owned,encoder,7,2);ownerTrack.end();await encoding;
+assert.equal(sender._canSend,false);assert.equal(sender._sender._cameraReader,null);
+assert.equal(sender._sender._cameraStream,null);assert.equal(sender._sender._encoder,null);assert.equal(encoder.state,'closed');
 
 // A superseded encode loop must leave its replacement's owner untouched.
-const oldTrack=new Track('video');const oldReader=module.namespace.createVideoElementFrameReader(stream,15,oldTrack);
+const oldTrack=new Track('video');const oldReader=readerModule.namespace.createVideoElementFrameReader(stream,15,oldTrack);
 await oldReader.start();const oldEncoder={state:'configured',close(){throw Error('old finally touched encoder');}};
-Object.assign(sender,{_cameraReader:oldReader,_encoder:oldEncoder,_canSend:true,_cameraStream:stream});
-const oldEncoding=sender._encodeCamera(15,oldReader,oldEncoder,7,2);
-sender._senderGeneration=3;sender._cameraReader=replacement;sender._encoder=encoder;
-oldTrack.end();await oldEncoding;assert.equal(sender._cameraReader,replacement);
-assert.equal(sender._encoder,encoder);assert.equal(sender._canSend,true);
+sender._canSend=true;
+Object.assign(sender._sender,{_cameraReader:oldReader,_encoder:oldEncoder,_cameraStream:stream});
+const oldEncoding=sender._sender._encodeCamera(15,oldReader,oldEncoder,7,2);
+sender._sender._senderGeneration=3;sender._sender._cameraReader=replacement;sender._sender._encoder=encoder;
+oldTrack.end();await oldEncoding;assert.equal(sender._sender._cameraReader,replacement);
+assert.equal(sender._sender._encoder,encoder);assert.equal(sender._canSend,true);
 '''
-    script = script.replace("SOURCE", json.dumps(str(FRONT / "voip-stack-video.js")))
-    script = script.replace("MODEL", json.dumps(str(FRONT / "voip-stack-video-model.js")))
+    script = script.replace("FRONTEND", json.dumps(str(FRONT)))
+    script = script.replace("LOADER", json.dumps(str(ROOT / "tests/support/frontend_module_loader.js")))
     script = script.replace("MODE", json.dumps(callback_mode))
     result = subprocess.run(["node", "--no-warnings", "--experimental-vm-modules",
                              "--input-type=module", "-e", script], capture_output=True,
@@ -151,13 +151,12 @@ const context=vm.createContext({EventTarget,performance,console,Blob,URL,setTime
   navigator:{mediaDevices:{getUserMedia:async()=>({getVideoTracks:()=>[track],getTracks:()=>[track]})}},
   document:{body:{appendChild(){}},createElement:tag=>tag==='video'?new Video():new Canvas()},
 });
-const model=new vm.SourceTextModule(fs.readFileSync(MODEL,'utf8'),{context});
-await model.link(()=>{throw Error('Unexpected model import');});await model.evaluate();
-const module=new vm.SourceTextModule(fs.readFileSync(SOURCE,'utf8')+'\nexport {createVideoElementFrameReader};',{
-  context,initializeImportMeta(meta){meta.url='https://ha.test/video.js';},importModuleDynamically:async()=>model,
-});
-await module.link(()=>{throw Error('Unexpected static import');});await module.evaluate();
-const reader=module.namespace.createVideoElementFrameReader({},15,track);
+const {createFrontendLoader}=await import(LOADER);
+const modules=createFrontendLoader(FRONTEND,context,'https://ha.test/voip-stack-video.js?v=reader',
+  {exposeFrameReader:true});
+const module=await modules.load('voip-stack-video.js');
+const readerModule=await modules.load('voip-stack-video-sender.js');
+const reader=readerModule.namespace.createVideoElementFrameReader({},15,track);
 await reader.start();
 const video=videos.at(-1);
 assert.equal(video.callback,undefined,'no frame callback before demand');
@@ -180,15 +179,15 @@ pendingPlay=true;
 const sender=new module.namespace.VoipStackVideo();
 sender._generation=3;sender._cameraEnabled=true;sender._cameraAllowed=true;
 sender._negotiated={can_send:true,can_receive:false,send:{codec:'vp8',encoding:'VP8',clock_rate:90000,payload_type:104}};
-const starting=sender._replaceSender('vp8',3,'',false);
+const starting=sender._sender._replaceSender('vp8',3,'',false);
 const rejected=assert.rejects(starting,/cancelled|superseded/);
 await new Promise(resolve=>setImmediate(resolve));
-assert.ok(sender._senderSetupReader);
-await sender._cleanupSender();await rejected;
-assert.ok(track.stopped);assert.ok(videos.at(-1).removed);assert.equal(sender._senderSetupReader,null);
+assert.ok(sender._sender._senderSetupReader);
+await sender._sender._cleanupSender();await rejected;
+assert.ok(track.stopped);assert.ok(videos.at(-1).removed);assert.equal(sender._sender._senderSetupReader,null);
 '''
-    script = script.replace("SOURCE", json.dumps(str(FRONT / "voip-stack-video.js")))
-    script = script.replace("MODEL", json.dumps(str(FRONT / "voip-stack-video-model.js")))
+    script = script.replace("FRONTEND", json.dumps(str(FRONT)))
+    script = script.replace("LOADER", json.dumps(str(ROOT / "tests/support/frontend_module_loader.js")))
     result = subprocess.run(["node", "--no-warnings", "--experimental-vm-modules",
                              "--input-type=module", "-e", script], capture_output=True,
                             text=True, timeout=12)

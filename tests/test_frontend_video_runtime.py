@@ -25,6 +25,7 @@ VIDEO_ENGINE = (
     / "voip-stack-video.js"
 )
 VIDEO_MODEL = VIDEO_ENGINE.with_name("voip-stack-video-model.js")
+MODULE_LOADER = ROOT / "tests/support/frontend_module_loader.js"
 VIDEO_WORKER = VIDEO_ENGINE.with_name("voip-stack-video-worker.js")
 BROWSER_PROBE = ROOT / "tools" / "sip_video_browser_probe.py"
 
@@ -107,7 +108,7 @@ def test_real_chromium_worker_recovers_after_h264_decode_error():
     nals = [nal for nal in re.split(b"\x00\x00(?:\x00)?\x01", encoded.stdout) if nal]
     idr = next(nal for nal in nals if nal[0] & 31 == 5)
     assert {nal[0] & 31 for nal in nals}.issuperset({7, 8, 5})
-    source = {path.name: path.read_bytes() for path in (VIDEO_ENGINE, VIDEO_MODEL, VIDEO_WORKER)}
+    source = {path.name: path.read_bytes() for path in VIDEO_ENGINE.parent.glob("voip-stack-video*.js")}
 
     with playwright.sync_playwright() as runner:
         browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
@@ -130,30 +131,30 @@ def test_real_chromium_worker_recovers_after_h264_decode_error():
             page.evaluate("""async()=>{
               const {VoipStackVideo}=await import('/voip-stack-video.js');
               const video=window.video=new VoipStackVideo();
-              video._generation=2;video._canvas=document.querySelector('canvas');
+              video._generation=2;video._receiver._canvas=document.querySelector('canvas');
               video._negotiated={receive:{encoding:'H264',codec:'avc1.42801f',clock_rate:90000}};
-              await video._setupDecoder('avc1.42801f',2);
+              await video._receiver._setupDecoder('avc1.42801f',2);
               window.codecErrors=[];
-              video._decoderWorker.addEventListener('message',({data:m})=>{
+              video._receiver._decoderWorker.addEventListener('message',({data:m})=>{
                 if(m.type==='decoder_error')codecErrors.push(m.error);
               });
               window.submit=(data,timestamp)=>{
                 const bytes=new Uint8Array(data.length+6);bytes[0]=1;bytes[1]=1;
                 new DataView(bytes.buffer).setUint32(2,timestamp,false);bytes.set(data,6);
-                video._decodeMessage(bytes.buffer);
+                video._receiver._decodeMessage(bytes.buffer);
               };
             }""")
             page.evaluate("data=>submit(data,0)", list(b"\x00\x00\x00\x01" + idr))
             page.wait_for_function("video.stats.decode_errors===1", timeout=5000)
             assert page.evaluate("video.stats.rendered") == 0
             assert page.evaluate("codecErrors.length") == 1
-            assert page.evaluate("video._decoder.decodeQueueSize") == 0
+            assert page.evaluate("video._receiver._decoder.decodeQueueSize") == 0
             page.evaluate("data=>submit(data,90000)", list(encoded.stdout))
             page.wait_for_function("video.stats.rendered===1", timeout=5000)
             assert page.evaluate("video.stats.decode_errors") == 1
-            assert page.evaluate("[video._canvas.width,video._canvas.height]") == [32, 32]
+            assert page.evaluate("[video._receiver._canvas.width,video._receiver._canvas.height]") == [32, 32]
             page.evaluate("video.close()")
-            assert page.evaluate("video._decoder===null && video._decoderWorker===null")
+            assert page.evaluate("video._receiver._decoder===null && video._receiver._decoderWorker===null")
         finally:
             browser.close()
 
@@ -221,8 +222,6 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 const cameraStorage = new Map();
 const context = vm.createContext({{
   EventTarget,
@@ -242,23 +241,12 @@ const context = vm.createContext({{
   WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
-const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
-await modelModule.evaluate();
-const module = new vm.SourceTextModule(source, {{
-  context,
-  initializeImportMeta(meta) {{
-    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
-  }},
-  importModuleDynamically: async (specifier) => {{
-    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
-    return modelModule;
-  }},
-}});
-await module.link((specifier) => {{
-  throw new Error(`unexpected static import: ${{specifier}}`);
-}});
-await module.evaluate();
+const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+const frontend = createFrontendLoader({json.dumps(str(VIDEO_ENGINE.parent))}, context,
+  "https://ha.example/voip-stack-video.js?v=runtime-contract");
+const module = await frontend.load("voip-stack-video.js");
+const modelModule = await frontend.load("voip-stack-video-model.js");
+const codecSupport = (await frontend.load("voip-stack-video-codecs.js")).namespace;
 const Video = module.namespace.VoipStackVideo;
 const {{ cameraEncoderContract }} = modelModule.namespace;
 
@@ -290,7 +278,7 @@ class ProbeEncoder {{
   }}
 }}
 const encoderPreference = new Video();
-const hardwareConfig = await encoderPreference._supportedConfig(
+const hardwareConfig = await codecSupport.supportedConfig(
   ProbeEncoder,
   {{ codec: "avc1.42C00D" }},
   true,
@@ -305,7 +293,7 @@ class SoftwareFallbackEncoder {{
     return {{ supported: config.hardwareAcceleration === "prefer-software", config }};
   }}
 }}
-const softwareConfig = await encoderPreference._supportedConfig(
+const softwareConfig = await codecSupport.supportedConfig(
   SoftwareFallbackEncoder,
   {{ codec: "avc1.42C00D" }},
   true,
@@ -357,7 +345,7 @@ context.WebSocket = originalWebSocket;
 const timestamps = new Video();
 timestamps._clockRate = 90000;
 assert.deepEqual(
-  [0, 3000, 1000, 2000].map((value) => timestamps._unwrapRtpTimestamp(value)),
+  [0, 3000, 1000, 2000].map((value) => timestamps._receiver._unwrapRtpTimestamp(value)),
   [0, 33333, 11111, 22222],
 );
 
@@ -368,7 +356,7 @@ noCanvas._active = true;
 noCanvas._canReceive = true;
 assert.equal(noCanvas.visible, false);
 let noCanvasClosed = false;
-noCanvas._queueDecodedFrame({{
+noCanvas._receiver._queueDecodedFrame({{
   timestamp: 1,
   displayWidth: 1,
   displayHeight: 1,
@@ -381,14 +369,14 @@ assert.equal(noCanvas._stats.dropped_no_canvas, 1);
 noCanvas._stats.rendered = 1;
 // Historical diagnostics must not reveal a newly created receiver before
 // it renders its own first frame after renegotiation.
-noCanvas._cleanupReceiver();
+noCanvas._receiver._cleanupReceiver();
 noCanvas._canReceive = true;
 assert.equal(noCanvas.visible, false);
 
 const wrapped = new Video();
 wrapped._clockRate = 90000;
 assert.deepEqual(
-  [0xffffff00, 0x100].map((value) => wrapped._unwrapRtpTimestamp(value)),
+  [0xffffff00, 0x100].map((value) => wrapped._receiver._unwrapRtpTimestamp(value)),
   [0, 5689],
 );
 
@@ -404,14 +392,14 @@ const chunk = (type) => ({{
   timestamp: 0,
   copyTo(target) {{ target.set([1, 2]); }},
 }});
-sender._sendEncodedChunk(chunk("key"));
-assert.equal(sender._sendDropUntilKeyFrame, true);
+sender._sender._sendEncodedChunk(chunk("key"));
+assert.equal(sender._sender._sendDropUntilKeyFrame, true);
 sender._ws.bufferedAmount = 0;
-sender._sendEncodedChunk(chunk("delta"));
+sender._sender._sendEncodedChunk(chunk("delta"));
 assert.equal(sent.length, 0);
-sender._sendEncodedChunk(chunk("key"));
+sender._sender._sendEncodedChunk(chunk("key"));
 assert.equal(sent.length, 1);
-assert.equal(sender._sendDropUntilKeyFrame, false);
+assert.equal(sender._sender._sendDropUntilKeyFrame, false);
 
 // A synchronous decoder failure must re-enter keyframe acquisition and emit
 // an RTCP feedback request through the media WebSocket.
@@ -419,7 +407,7 @@ const receiver = new Video();
 const controls = [];
 receiver._clockRate = 90000;
 receiver._ws = {{ readyState: 1, send(value) {{ controls.push(value); }} }};
-receiver._decoder = {{
+receiver._receiver._decoder = {{
   state: "configured",
   decodeQueueSize: 0,
   decode() {{ throw new Error("decoder rejected frame"); }},
@@ -429,24 +417,24 @@ const bytes = new Uint8Array(frame);
 bytes[0] = 1;
 bytes[1] = 1;
 new DataView(frame).setUint32(2, 9000, false);
-receiver._decodeMessage(frame);
+receiver._receiver._decodeMessage(frame);
 assert.equal(receiver._stats.decode_errors, 1);
-assert.equal(receiver._dropUntilKeyFrame, true);
+assert.equal(receiver._receiver._dropUntilKeyFrame, true);
 assert.equal(JSON.parse(controls.at(-1)).type, "request_key_frame");
 
 // Codec setup without a buffered key frame must retain the resync gate. A
 // later delta cannot be treated as independently decodable.
 const emptyFlush = new Video();
-emptyFlush._dropUntilKeyFrame = true;
-emptyFlush._flushPendingDecode();
-assert.equal(emptyFlush._dropUntilKeyFrame, true);
+emptyFlush._receiver._dropUntilKeyFrame = true;
+emptyFlush._receiver._flushPendingDecode();
+assert.equal(emptyFlush._receiver._dropUntilKeyFrame, true);
 
 // Remote RTCP PLI/FIR control must force the next camera encode to be a key
 // frame, while unrelated JSON remains available to the negotiation handler.
 const camera = new Video();
-camera._forceCameraKeyFrame = false;
+camera._sender._forceCameraKeyFrame = false;
 assert.equal(camera._handleEncoderControl({{ type: "force_key_frame", feedback: "pli" }}), true);
-assert.equal(camera._forceCameraKeyFrame, true);
+assert.equal(camera._sender._forceCameraKeyFrame, true);
 assert.equal(camera._handleEncoderControl({{ type: "media_update" }}), false);
 const epochs = [];
 camera._ws = {{ readyState: 1, send(value) {{ epochs.push(JSON.parse(value)); }} }};
@@ -463,8 +451,8 @@ const jpegPostsA = [];
 const jpegWorkerA = {{
   postMessage(message, transfer = []) {{ jpegPostsA.push([message, transfer]); }},
 }};
-jpeg._decoderWorker = jpegWorkerA;
-jpeg._decoder = {{
+jpeg._receiver._decoderWorker = jpegWorkerA;
+jpeg._receiver._decoder = {{
   state: "configured",
   kind: "jpeg",
   worker: jpegWorkerA,
@@ -482,36 +470,36 @@ const jpegFrame = (timestamp) => {{
 const frameA = jpegFrame(1);
 const frameB = jpegFrame(2);
 const frameBLatest = jpegFrame(3);
-jpeg._decodeJpegMessage(frameA);
+jpeg._receiver._decodeJpegMessage(frameA);
 assert.equal(jpegPostsA.length, 1);
 jpeg._generation = 2;
-jpeg._jpegDecodePending = false;
-jpeg._jpegQueuedBuffer = null;
-jpeg._jpegDecodeToken = null;
+jpeg._receiver._jpegDecodePending = false;
+jpeg._receiver._jpegQueuedBuffer = null;
+jpeg._receiver._jpegDecodeToken = null;
 const jpegPostsB = [];
 const jpegWorkerB = {{
   postMessage(message, transfer = []) {{ jpegPostsB.push([message, transfer]); }},
 }};
-jpeg._decoderWorker = jpegWorkerB;
-jpeg._decoder = {{
+jpeg._receiver._decoderWorker = jpegWorkerB;
+jpeg._receiver._decoder = {{
   state: "configured",
   kind: "jpeg",
   worker: jpegWorkerB,
 }};
-jpeg._decodeJpegMessage(frameB);
-jpeg._decodeJpegMessage(frameBLatest);
+jpeg._receiver._decodeJpegMessage(frameB);
+jpeg._receiver._decodeJpegMessage(frameBLatest);
 assert.equal(jpegPostsB.length, 1);
 let staleBitmapClosed = false;
-jpeg._handleDecoderWorkerMessage(jpegWorkerA, 1, {{
+jpeg._receiver._handleDecoderWorkerMessage(jpegWorkerA, 1, {{
   type: "jpeg_bitmap",
   generation: 1,
   timestamp: 1,
   bitmap: {{ width: 1, height: 1, close() {{ staleBitmapClosed = true; }} }},
 }});
 assert.equal(staleBitmapClosed, true);
-assert.equal(jpeg._jpegDecodePending, true);
-assert.equal(jpeg._jpegQueuedBuffer, frameBLatest);
-jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+assert.equal(jpeg._receiver._jpegDecodePending, true);
+assert.equal(jpeg._receiver._jpegQueuedBuffer, frameBLatest);
+jpeg._receiver._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
   type: "jpeg_bitmap",
   generation: 2,
   timestamp: 2,
@@ -523,13 +511,13 @@ assert.equal(jpegPostsB.length, 2);
 // the public counter exact without causing one card render per malformed AU.
 let jpegErrorEvents = 0;
 jpeg.addEventListener("state", () => {{ jpegErrorEvents++; }});
-jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+jpeg._receiver._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
   type: "jpeg_decoder_error",
   generation: 2,
   error_count: 1,
   error: "bad jpeg",
 }});
-jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+jpeg._receiver._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
   type: "jpeg_decoder_error",
   generation: 2,
   error_count: 5,
@@ -537,7 +525,7 @@ jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
 }});
 assert.equal(jpeg._stats.decode_errors, 5);
 assert.equal(jpegErrorEvents, 2);
-jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+jpeg._receiver._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
   type: "jpeg_decoder_error",
   generation: 2,
   error_count: 5,
@@ -579,12 +567,12 @@ const updateEpoch = new Video();
 const updateWs = {{ readyState: 1 }};
 updateEpoch._ws = updateWs;
 updateEpoch._callId = "epoch";
-updateEpoch._lastRenderedAt = 10;
-updateEpoch._lastRenderedTimestamp = 999999;
-updateEpoch._lastDecodedAt = 10;
-updateEpoch._lastDecodedTimestamp = 999999;
-updateEpoch._cleanupSender = async () => {{}};
-updateEpoch._cleanupReceiver = () => {{}};
+updateEpoch._receiver._lastRenderedAt = 10;
+updateEpoch._receiver._lastRenderedTimestamp = 999999;
+updateEpoch._receiver._lastDecodedAt = 10;
+updateEpoch._receiver._lastDecodedTimestamp = 999999;
+updateEpoch._sender._cleanupSender = async () => {{}};
+updateEpoch._receiver._cleanupReceiver = () => {{}};
 updateEpoch._setupCodecs = async () => {{}};
 await updateEpoch._applyMediaUpdate({{
   encoding: "H264",
@@ -592,10 +580,10 @@ await updateEpoch._applyMediaUpdate({{
   can_receive: false,
   can_send: false,
 }}, updateWs, "epoch");
-assert.equal(updateEpoch._lastRenderedAt, 0);
-assert.equal(updateEpoch._lastRenderedTimestamp, null);
-assert.equal(updateEpoch._lastDecodedAt, 0);
-assert.equal(updateEpoch._lastDecodedTimestamp, null);
+assert.equal(updateEpoch._receiver._lastRenderedAt, 0);
+assert.equal(updateEpoch._receiver._lastRenderedTimestamp, null);
+assert.equal(updateEpoch._receiver._lastDecodedAt, 0);
+assert.equal(updateEpoch._receiver._lastDecodedTimestamp, null);
 
 // A direct/transcode topology change must release the old server-side owner
 // and reconnect. Reconfiguring codecs on the same WebSocket would leave its
@@ -723,12 +711,12 @@ cameraRace._negotiated = {{ send: {{ codec: "vp8", encoding: "VP8" }} }};
 let cameraSetups = 0;
 let releaseCameraSetup;
 const cameraSetupGate = new Promise((resolve) => {{ releaseCameraSetup = resolve; }});
-cameraRace._replaceSender = () => {{
+cameraRace._sender._replaceSender = () => {{
   cameraSetups++;
   const setup = cameraSetupGate.then(() => {{
-    cameraRace._encoder = {{ state: "configured" }};
+    cameraRace._sender._encoder = {{ state: "configured" }};
   }});
-  cameraRace._senderSetupPromise = setup;
+  cameraRace._sender._senderSetupPromise = setup;
   return setup;
 }};
 const enableOne = cameraRace.setCameraEnabled(true);
@@ -748,23 +736,23 @@ const oldReader = {{
 }};
 const oldEncoder = {{ state: "configured", close() {{ this.state = "closed"; }} }};
 const oldTrack = {{ stopped: false, stop() {{ this.stopped = true; }} }};
-ownership._cameraReader = oldReader;
-ownership._encoder = oldEncoder;
-ownership._cameraStream = {{ getTracks() {{ return [oldTrack]; }} }};
-ownership._encodeTask = Promise.resolve();
-const oldCleanup = ownership._cleanupSender();
-assert.equal(ownership._cameraReader, null);
+ownership._sender._cameraReader = oldReader;
+ownership._sender._encoder = oldEncoder;
+ownership._sender._cameraStream = {{ getTracks() {{ return [oldTrack]; }} }};
+ownership._sender._encodeTask = Promise.resolve();
+const oldCleanup = ownership._sender._cleanupSender();
+assert.equal(ownership._sender._cameraReader, null);
 const newReader = {{ cancel() {{ throw new Error("must remain owned by B"); }} }};
 const newEncoder = {{ state: "configured", close() {{ throw new Error("must remain open"); }} }};
 const newStream = {{ getTracks() {{ return []; }} }};
-ownership._cameraReader = newReader;
-ownership._encoder = newEncoder;
-ownership._cameraStream = newStream;
+ownership._sender._cameraReader = newReader;
+ownership._sender._encoder = newEncoder;
+ownership._sender._cameraStream = newStream;
 releaseReaderCancel();
 await oldCleanup;
-assert.equal(ownership._cameraReader, newReader);
-assert.equal(ownership._encoder, newEncoder);
-assert.equal(ownership._cameraStream, newStream);
+assert.equal(ownership._sender._cameraReader, newReader);
+assert.equal(ownership._sender._encoder, newEncoder);
+assert.equal(ownership._sender._cameraStream, newStream);
 assert.equal(oldEncoder.state, "closed");
 assert.equal(oldTrack.stopped, true);
 
@@ -772,36 +760,36 @@ assert.equal(oldTrack.stopped, true);
 // call teardown forever. Published media ownership is removed synchronously
 // and the one-shot cleanup deadline releases the caller.
 const stuckCleanup = new Video();
-stuckCleanup._cameraReader = {{ cancel: () => new Promise(() => {{}}) }};
-stuckCleanup._encodeTask = new Promise(() => {{}});
-stuckCleanup._encoder = {{ state: "configured", close() {{ this.state = "closed"; }} }};
-stuckCleanup._cameraStream = {{ getTracks: () => [{{ stop() {{}} }}] }};
+stuckCleanup._sender._cameraReader = {{ cancel: () => new Promise(() => {{}}) }};
+stuckCleanup._sender._encodeTask = new Promise(() => {{}});
+stuckCleanup._sender._encoder = {{ state: "configured", close() {{ this.state = "closed"; }} }};
+stuckCleanup._sender._cameraStream = {{ getTracks: () => [{{ stop() {{}} }}] }};
 const stuckStarted = performance.now();
-await stuckCleanup._cleanupSender();
+await stuckCleanup._sender._cleanupSender();
 assert.ok(performance.now() - stuckStarted < 1000);
-assert.equal(stuckCleanup._cameraReader, null);
-assert.equal(stuckCleanup._encoder, null);
+assert.equal(stuckCleanup._sender._cameraReader, null);
+assert.equal(stuckCleanup._sender._encoder, null);
 
 // Unexpected camera EOF releases the published sender immediately instead
 // of leaving the card in a false video-transmitting state.
 const cameraEof = new Video();
 cameraEof._generation = 3;
-cameraEof._senderGeneration = 4;
+cameraEof._sender._senderGeneration = 4;
 cameraEof._cameraEnabled = true;
 cameraEof._cameraAllowed = true;
 cameraEof._canSend = true;
 const eofReader = {{ read: async () => ({{ done: true }}) }};
 const eofEncoder = {{ state: "configured", encodeQueueSize: 0, close() {{ this.state = "closed"; }} }};
 let eofTrackStopped = 0;
-cameraEof._cameraReader = eofReader;
-cameraEof._encoder = eofEncoder;
-cameraEof._cameraStream = {{ getTracks: () => [{{ stop() {{ eofTrackStopped++; }} }}] }};
-const eofTask = cameraEof._encodeCamera(15, eofReader, eofEncoder, 3, 4);
-cameraEof._encodeTask = eofTask;
+cameraEof._sender._cameraReader = eofReader;
+cameraEof._sender._encoder = eofEncoder;
+cameraEof._sender._cameraStream = {{ getTracks: () => [{{ stop() {{ eofTrackStopped++; }} }}] }};
+const eofTask = cameraEof._sender._encodeCamera(15, eofReader, eofEncoder, 3, 4);
+cameraEof._sender._encodeTask = eofTask;
 await eofTask;
-assert.equal(cameraEof._cameraReader, null);
-assert.equal(cameraEof._encoder, null);
-assert.equal(cameraEof._cameraStream, null);
+assert.equal(cameraEof._sender._cameraReader, null);
+assert.equal(cameraEof._sender._encoder, null);
+assert.equal(cameraEof._sender._cameraStream, null);
 assert.equal(cameraEof._canSend, false);
 assert.equal(eofEncoder.state, "closed");
 assert.equal(eofTrackStopped, 1);
@@ -817,7 +805,7 @@ h264Low._negotiated = {{
     fmtp: "profile-level-id=42800d;packetization-mode=1",
   }},
 }};
-const h264LowContract = h264Low._cameraCaptureContract();
+const h264LowContract = h264Low._sender._cameraCaptureContract();
 assert.equal(h264LowContract.maxFs, 396);
 assert.deepEqual(
   [h264LowContract.maxWidth, h264LowContract.maxHeight],
@@ -826,14 +814,14 @@ assert.deepEqual(
 // Level 1.3 admits 11880 macroblocks/s over this 396-MB picture.
 assert.equal(h264LowContract.maxFr, 30);
 h264Low._negotiated.send.max_framerate = 20;
-assert.equal(h264Low._cameraCaptureContract().maxFr, 20);
+assert.equal(h264Low._sender._cameraCaptureContract().maxFr, 20);
 
 const h264OneB = new Video();
 h264OneB._encoding = "H264";
 h264OneB._negotiated = {{
   send: {{ codec: "avc1.42B00B", profile_level_id: "42b00b" }},
 }};
-const h264OneBContract = h264OneB._cameraCaptureContract();
+const h264OneBContract = h264OneB._sender._cameraCaptureContract();
 assert.equal(h264OneBContract.maxFs, 99);
 assert.deepEqual(
   [h264OneBContract.maxWidth, h264OneBContract.maxHeight],
@@ -846,7 +834,7 @@ h264Default._encoding = "H264";
 h264Default._negotiated = {{
   send: {{ codec: "avc1.42801F", profile_level_id: "42801f" }},
 }};
-const h264DefaultContract = h264Default._cameraCaptureContract();
+const h264DefaultContract = h264Default._sender._cameraCaptureContract();
 assert.deepEqual(
   [h264DefaultContract.idealWidth, h264DefaultContract.idealHeight],
   [640, 360],
@@ -861,7 +849,7 @@ vp8Limited._encoding = "VP8";
 vp8Limited._negotiated = {{
   send: {{ codec: "vp8", encoding: "VP8", fmtp: "max-fr=12;max-fs=1200" }},
 }};
-const vp8Contract = vp8Limited._cameraCaptureContract();
+const vp8Contract = vp8Limited._sender._cameraCaptureContract();
 assert.deepEqual(
   [vp8Contract.maxWidth, vp8Contract.maxHeight, vp8Contract.maxFr],
   [640, 360, 12],
@@ -880,7 +868,7 @@ jpegLimited._negotiated = {{
     encoding: "JPEG",
   }},
 }};
-const jpegContract = jpegLimited._cameraCaptureContract();
+const jpegContract = jpegLimited._sender._cameraCaptureContract();
 assert.equal(jpegContract.maxFr, 3);
 assert.deepEqual(
   [jpegContract.constraints.frameRate.ideal, jpegContract.constraints.frameRate.max],
@@ -918,33 +906,33 @@ class TestWorker {{
 }}
 context.Worker = TestWorker;
 const workerDecoder = new Video();
-workerDecoder._codecWorkerUrl = () => "/worker.js";
+workerDecoder._receiver._workerUrl = () => "/worker.js";
 workerDecoder._generation = 21;
-await workerDecoder._setupDecoder("avc1.42801F", 21);
-const decoderWorker = workerDecoder._decoderWorker;
-assert.equal(workerDecoder._decoder.worker, decoderWorker);
+await workerDecoder._receiver._setupDecoder("avc1.42801F", 21);
+const decoderWorker = workerDecoder._receiver._decoderWorker;
+assert.equal(workerDecoder._receiver._decoder.worker, decoderWorker);
 assert.equal(decoderWorker.options.type, "module");
-workerDecoder._dropUntilKeyFrame = false;
+workerDecoder._receiver._dropUntilKeyFrame = false;
 const workerFrame = new ArrayBuffer(8);
 new Uint8Array(workerFrame).set([1, 1]);
 new DataView(workerFrame).setUint32(2, 9000, false);
-workerDecoder._decodeMessage(workerFrame);
+workerDecoder._receiver._decodeMessage(workerFrame);
 assert.equal(workerMessages.at(-1)[0].type, "decode");
 assert.equal(workerMessages.at(-1)[1][0], workerFrame);
-workerDecoder._decoder.decodeQueueSize = 7;
-workerDecoder._handleDecoderWorkerMessage(decoderWorker, 21, {{
+workerDecoder._receiver._decoder.decodeQueueSize = 7;
+workerDecoder._receiver._handleDecoderWorkerMessage(decoderWorker, 21, {{
   type: "decoder_error", generation: 21, error: "Decoding error.",
 }});
-assert.equal(workerDecoder._decoder.decodeQueueSize, 0);
-assert.equal(workerDecoder._dropUntilKeyFrame, true);
+assert.equal(workerDecoder._receiver._decoder.decodeQueueSize, 0);
+assert.equal(workerDecoder._receiver._dropUntilKeyFrame, true);
 const currentErrors = workerDecoder.stats.decode_errors;
-workerDecoder._handleDecoderWorkerMessage(decoderWorker, 20, {{
+workerDecoder._receiver._handleDecoderWorkerMessage(decoderWorker, 20, {{
   type: "decoder_error", generation: 20,
 }});
 assert.equal(workerDecoder.stats.decode_errors, currentErrors);
-workerDecoder._cleanupReceiver();
+workerDecoder._receiver._cleanupReceiver();
 assert.equal(decoderWorker.terminated, true);
-workerDecoder._handleDecoderWorkerMessage(decoderWorker, 21, {{
+workerDecoder._receiver._handleDecoderWorkerMessage(decoderWorker, 21, {{
   type: "decoder_error", generation: 21,
 }});
 assert.equal(workerDecoder.stats.decode_errors, currentErrors);
@@ -963,12 +951,12 @@ assert.equal(rendered.visible, false);
 let draws = 0;
 let firstClosed = 0;
 let secondClosed = 0;
-rendered._canvas = {{ getContext: () => ({{ drawImage() {{ draws++; }} }}) }};
-rendered._queueDecodedFrame({{
+rendered._receiver._canvas = {{ getContext: () => ({{ drawImage() {{ draws++; }} }}) }};
+rendered._receiver._queueDecodedFrame({{
   timestamp: 1, displayWidth: 1, displayHeight: 1,
   close() {{ firstClosed++; }},
 }});
-rendered._queueDecodedFrame({{
+rendered._receiver._queueDecodedFrame({{
   timestamp: 2, displayWidth: 1, displayHeight: 1,
   close() {{ secondClosed++; }},
 }});
@@ -980,11 +968,11 @@ assert.equal(secondClosed, 1);
 assert.equal(rendered._stats.rendered, 1);
 assert.equal(rendered._stats.dropped_render_coalesce, 1);
 assert.equal(rendered.visible, true);
-rendered._cleanupReceiver();
+rendered._receiver._cleanupReceiver();
 assert.equal(rendered.visible, false);
 rendered._canReceive = true;
 assert.equal(rendered.visible, false);
-rendered._queueDecodedFrame({{
+rendered._receiver._queueDecodedFrame({{
   timestamp: 3, displayWidth: 1, displayHeight: 1, close() {{}},
 }});
 renderCallback();
@@ -993,12 +981,12 @@ assert.equal(rendered._stats.rendered, 2);
 // A newly mounted card has an empty canvas even within the same call.
 rendered.setCanvas({{ getContext: () => ({{ drawImage() {{ draws++; }} }}) }});
 assert.equal(rendered.visible, false);
-rendered._queueDecodedFrame({{
+rendered._receiver._queueDecodedFrame({{
   timestamp: 4, displayWidth: 1, displayHeight: 1, close() {{}},
 }});
 renderCallback();
 assert.equal(rendered.visible, true);
-rendered.setCanvas(rendered._canvas);
+rendered.setCanvas(rendered._receiver._canvas);
 assert.equal(rendered.visible, true);
 
 
@@ -1012,9 +1000,9 @@ await decoderOwner._setupCodecs({{
   can_send: false,
   receive: {{ codec: "avc1.42E01F", encoding: "H264" }},
 }}, 11);
-const decoderA = decoderOwner._decoder;
+const decoderA = decoderOwner._receiver._decoder;
 decoderOwner._generation = 12;
-decoderOwner._decoder = {{ state: "configured" }};
+decoderOwner._receiver._decoder = {{ state: "configured" }};
 let staleFrameClosed = false;
 decoderA.init.output({{ close() {{ staleFrameClosed = true; }} }});
 decoderA.init.error();
@@ -1047,8 +1035,6 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 const context = vm.createContext({{
   EventTarget,
   performance,
@@ -1062,23 +1048,12 @@ const context = vm.createContext({{
   WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
-const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
-await modelModule.evaluate();
-const module = new vm.SourceTextModule(source, {{
-  context,
-  initializeImportMeta(meta) {{
-    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
-  }},
-  importModuleDynamically: async (specifier) => {{
-    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
-    return modelModule;
-  }},
-}});
-await module.link((specifier) => {{
-  throw new Error(`unexpected static import: ${{specifier}}`);
-}});
-await module.evaluate();
+const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+const frontend = createFrontendLoader({json.dumps(str(VIDEO_ENGINE.parent))}, context,
+  "https://ha.example/voip-stack-video.js?v=runtime-contract");
+const module = await frontend.load("voip-stack-video.js");
+const modelModule = await frontend.load("voip-stack-video-model.js");
+const codecSupport = (await frontend.load("voip-stack-video-codecs.js")).namespace;
 const Video = module.namespace.VoipStackVideo;
 
 const asymmetric = {{
@@ -1135,7 +1110,7 @@ assert.deepEqual(
 // independently uses the decoder clock.
 const wire = [];
 media._ws = {{ readyState: 1, bufferedAmount: 0, send(value) {{ wire.push(value); }} }};
-media._sendEncodedChunk({{
+media._sender._sendEncodedChunk({{
   type: "key",
   byteLength: 2,
   timestamp: 1000000,
@@ -1143,13 +1118,13 @@ media._sendEncodedChunk({{
 }});
 assert.equal(new DataView(wire.at(-1).buffer).getUint32(2, false), 45000);
 assert.deepEqual(
-  [0, 9000].map((value) => media._unwrapRtpTimestamp(value)),
+  [0, 9000].map((value) => media._receiver._unwrapRtpTimestamp(value)),
   [0, 100000],
 );
 
 // H.264 level asymmetry is directional: camera constraints follow TX level
 // 1.3 even though the decoder may accept High Profile Level 3.1.
-const capture = media._cameraCaptureContract();
+const capture = media._sender._cameraCaptureContract();
 assert.equal(capture.maxFs, 396);
 assert.deepEqual([capture.maxWidth, capture.maxHeight], [352, 288]);
 
@@ -1171,9 +1146,9 @@ codecs._cameraEnabled = true;
 codecs._negotiated = asymmetric;
 codecs._updateMediaSummary(asymmetric);
 const senderCodecs = [];
-codecs._ensureSender = async (codec) => {{
+codecs._sender._ensureSender = async (codec) => {{
   senderCodecs.push(codec);
-  codecs._encoder = {{ state: "configured" }};
+  codecs._sender._encoder = {{ state: "configured" }};
 }};
 await codecs._setupCodecs(asymmetric, 7);
 await Promise.resolve();
@@ -1192,8 +1167,8 @@ splitEncoding._negotiated = {{
   receive: {{ codec: "jpeg", encoding: "JPEG", clock_rate: 90000, payload_type: 26 }},
 }};
 let jpegCalls = 0;
-splitEncoding._decodeJpegMessage = () => {{ jpegCalls++; }};
-splitEncoding._decodeMessage(new ArrayBuffer(8));
+splitEncoding._receiver._decodeJpegMessage = () => {{ jpegCalls++; }};
+splitEncoding._receiver._decodeMessage(new ArrayBuffer(8));
 assert.equal(jpegCalls, 1);
 assert.equal(splitEncoding._mediaContract("send").encoding, "VP8");
 
@@ -1203,8 +1178,8 @@ const updates = new Video();
 const updateWs = {{ readyState: 1 }};
 updates._ws = updateWs;
 updates._callId = "hold-resume";
-updates._cleanupSender = async function() {{ this._canSend = false; }};
-updates._cleanupReceiver = function() {{ this._canReceive = false; }};
+updates._sender._cleanupSender = async function() {{ this._canSend = false; }};
+updates._receiver._cleanupReceiver = function() {{ this._canReceive = false; }};
 const applied = [];
 updates._setupCodecs = async function(payload) {{
   applied.push({{
@@ -1256,8 +1231,6 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 const context = vm.createContext({{
   EventTarget,
   performance,
@@ -1272,23 +1245,12 @@ const context = vm.createContext({{
   WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
-const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
-await modelModule.evaluate();
-const module = new vm.SourceTextModule(source, {{
-  context,
-  initializeImportMeta(meta) {{
-    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
-  }},
-  importModuleDynamically: async (specifier) => {{
-    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
-    return modelModule;
-  }},
-}});
-await module.link((specifier) => {{
-  throw new Error(`unexpected static import: ${{specifier}}`);
-}});
-await module.evaluate();
+const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+const frontend = createFrontendLoader({json.dumps(str(VIDEO_ENGINE.parent))}, context,
+  "https://ha.example/voip-stack-video.js?v=runtime-contract");
+const module = await frontend.load("voip-stack-video.js");
+const modelModule = await frontend.load("voip-stack-video-model.js");
+const codecSupport = (await frontend.load("voip-stack-video-codecs.js")).namespace;
 const Video = module.namespace.VoipStackVideo;
 
 class ControlledReader {{
@@ -1356,7 +1318,7 @@ class JpegWorker {{
 context.Worker = JpegWorker;
 
 const sender = new Video();
-sender._codecWorkerUrl = () => "/voip-stack-video-worker.js";
+sender._sender._workerUrl = () => "/voip-stack-video-worker.js";
 sender._generation = 3;
 sender._cameraAllowed = true;
 sender._cameraEnabled = true;
@@ -1376,11 +1338,11 @@ sender._ws = {{
   bufferedAmount: 0,
   send(value) {{ wire.push(value); }},
 }};
-await sender._replaceSender("jpeg", 3, "", false);
-const senderGeneration = sender._senderGeneration;
+await sender._sender._replaceSender("jpeg", 3, "", false);
+const senderGeneration = sender._sender._senderGeneration;
 assert.equal(workers.length, 1);
-assert.equal(sender._encoder.kind, "jpeg");
-assert.equal(sender._encoder.state, "configured");
+assert.equal(sender._sender._encoder.kind, "jpeg");
+assert.equal(sender._sender._encoder.state, "configured");
 assert.equal(workers[0].options.type, "module");
 assert.equal(workers[0].messages[0][0].type, "configure_jpeg_encoder");
 assert.equal(typeof context.VideoEncoder, "undefined");
@@ -1406,7 +1368,7 @@ await new Promise((resolve) => setImmediate(resolve));
 reader.push(latest);
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(middle.closed, 1);
-assert.equal(sender._jpegQueuedFrame, latest);
+assert.equal(sender._sender._jpegQueuedFrame, latest);
 assert.equal(
   workers[0].messages.filter(([message]) => message.type === "encode_jpeg").length,
   1,
@@ -1434,9 +1396,9 @@ assert.equal(sent[1], 1);
 assert.equal(new DataView(sent.buffer).getUint32(2, false), 90000);
 assert.deepEqual([...sent.slice(6)], [0xff, 0xd8, 0xff, 0xd9]);
 
-const cleanup = sender._cleanupSender();
-assert.equal(sender._encoder, null);
-assert.equal(sender._jpegEncoderWorker, null);
+const cleanup = sender._sender._cleanupSender();
+assert.equal(sender._sender._encoder, null);
+assert.equal(sender._sender._jpegEncoderWorker, null);
 assert.equal(workers[0].terminated, true);
 assert.equal(track.stopped, true);
 await cleanup;
@@ -1477,8 +1439,6 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 const warnings = [];
 const context = vm.createContext({{
   EventTarget,
@@ -1493,20 +1453,12 @@ const context = vm.createContext({{
   }},
   WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
 }});
-const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
-await modelModule.evaluate();
-const module = new vm.SourceTextModule(source, {{
-  context,
-  initializeImportMeta(meta) {{
-    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
-  }},
-  importModuleDynamically: async () => modelModule,
-}});
-await module.link((specifier) => {{
-  throw new Error(`unexpected static import: ${{specifier}}`);
-}});
-await module.evaluate();
+const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+const frontend = createFrontendLoader({json.dumps(str(VIDEO_ENGINE.parent))}, context,
+  "https://ha.example/voip-stack-video.js?v=runtime-contract");
+const module = await frontend.load("voip-stack-video.js");
+const modelModule = await frontend.load("voip-stack-video-model.js");
+const codecSupport = (await frontend.load("voip-stack-video-codecs.js")).namespace;
 const Video = module.namespace.VoipStackVideo;
 
 const track = {{
@@ -1558,7 +1510,7 @@ async function startSender() {{
     send: {{ codec: "vp8", encoding: "VP8", clock_rate: 90000, payload_type: 104 }},
   }};
   sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
-  await sender._replaceSender("vp8", 3, "", false);
+  await sender._sender._replaceSender("vp8", 3, "", false);
   return [sender, encoders.at(-1)];
 }}
 // Emit 15 fps output for a little over 2 s, with frames of laterBytes after
@@ -1586,13 +1538,13 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 // on the third chunk.
 const [overshooting, hardware] = await startSender();
 assert.equal(hardware.configs[0].hardwareAcceleration, "prefer-hardware");
-overshooting._forceCameraKeyFrame = false;
+overshooting._sender._forceCameraKeyFrame = false;
 assert.equal(emit(hardware, 135000), 3);
 await settle();
 assert.equal(hardware.configs.length, 2);
 assert.equal(hardware.configs[1].hardwareAcceleration, "prefer-software");
 assert.equal(hardware.configs[1].bitrate, 600000);
-assert.equal(overshooting._forceCameraKeyFrame, true);
+assert.equal(overshooting._sender._forceCameraKeyFrame, true);
 assert.match(warnings.at(-1), /switching to software encoding/);
 emit(hardware, 135000);
 await settle();
@@ -1885,21 +1837,12 @@ import fs from "fs";
 import vm from "vm";
 import assert from "assert/strict";
 
-const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
-const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
 
 async function load(context) {{
-  const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-  await modelModule.link(() => {{ throw new Error("no imports"); }});
-  await modelModule.evaluate();
-  const module = new vm.SourceTextModule(source, {{
-    context,
-    initializeImportMeta(meta) {{ meta.url = "https://ha.example/voip-stack-video.js?v=x"; }},
-    importModuleDynamically: async () => modelModule,
-  }});
-  await module.link((s) => {{ throw new Error(`unexpected import ${{s}}`); }});
-  await module.evaluate();
-  return module.namespace.VoipStackVideo;
+  const {{ createFrontendLoader }} = await import({json.dumps(str(MODULE_LOADER))});
+  const frontend = createFrontendLoader({json.dumps(str(VIDEO_ENGINE.parent))}, context,
+    "https://ha.example/voip-stack-video.js?v=x");
+  return (await frontend.load("voip-stack-video.js")).namespace.VoipStackVideo;
 }}
 
 for (const useRvfc of [true, false]) {{
@@ -1993,7 +1936,7 @@ for (const useRvfc of [true, false]) {{
   const workers = [];
   const Video = await load(context);
   const sender = new Video();
-  sender._codecWorkerUrl = () => "/w.js";
+  sender._sender._workerUrl = () => "/w.js";
   sender._generation = 3;
   sender._cameraAllowed = true;
   sender._cameraEnabled = true;
@@ -2002,8 +1945,8 @@ for (const useRvfc of [true, false]) {{
     send: {{ codec: "jpeg", encoding: "JPEG", clock_rate: 90000, payload_type: 26 }},
   }};
   sender._ws = {{ readyState: 1, bufferedAmount: 0, send() {{}} }};
-  await sender._replaceSender("jpeg", 3, "", false);
-  assert.ok(sender._cameraReader, "fallback reader installed");
+  await sender._sender._replaceSender("jpeg", 3, "", false);
+  assert.ok(sender._sender._cameraReader, "fallback reader installed");
   assert.equal(videos.length, 1);
   assert.equal(videos[0].attrs.playsinline, "");
   assert.equal(videos[0].muted, true);
@@ -2030,7 +1973,7 @@ for (const useRvfc of [true, false]) {{
   assert.equal(configure.width, 360, "encoder must be configured with the upright size");
   assert.equal(configure.height, 640);
 
-  await sender._cleanupSender();
+  await sender._sender._cleanupSender();
   assert.equal(track.stopped, true);
   assert.equal(videos[0].removed, true);
   assert.equal(videos[0].srcObject, null);

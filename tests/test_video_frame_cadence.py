@@ -33,24 +33,22 @@ const frontend=FRONTEND, vector=VECTOR;
 let clock=0;
 const context=vm.createContext({EventTarget,performance:{now:()=>clock*1000},console,URL,setTimeout,clearTimeout,
  CustomEvent:class extends Event{constructor(type,init){super(type);this.detail=init?.detail;}}});
-const model=new vm.SourceTextModule(fs.readFileSync(frontend+"/voip-stack-video-model.js","utf8"),{context});
-await model.link(()=>{throw Error("unexpected model import");});await model.evaluate();
-const engine=new vm.SourceTextModule(fs.readFileSync(frontend+"/voip-stack-video.js","utf8"),{
- context,initializeImportMeta(meta){meta.url="https://ha.invalid/voip-stack-video.js?v=cadence";},
- importModuleDynamically:async()=>model});
-await engine.link(()=>{throw Error("unexpected engine import");});await engine.evaluate();
+const {createFrontendLoader}=await import(LOADER);
+const modules=createFrontendLoader(frontend,context,"https://ha.invalid/voip-stack-video.js?v=cadence");
+const engine=await modules.load("voip-stack-video.js");
 const Video=engine.namespace.VoipStackVideo;
 const owner=new Video();owner._emit=()=>{};
 async function run(generation,senderGeneration,timestamps,estimate=vector.fps,ceiling=vector.fps){
  const accepted=[],closed=[];let index=0;
  const encoder={kind:"jpeg",worker:{},state:"configured",close(){this.state="closed";}};
  const reader={async read(){if(index===timestamps.length)return{done:true};const i=index++;clock=vector.times[i];return{done:false,value:{timestamp:timestamps[i],index:i,close(){closed.push(i);}}};}};
- Object.assign(owner,{_generation:generation,_senderGeneration:senderGeneration,_cameraEnabled:true,_cameraAllowed:true,
+ Object.assign(owner,{_generation:generation,_cameraEnabled:true,_cameraAllowed:true});
+ Object.assign(owner._sender,{_senderGeneration:senderGeneration,
   _cameraReader:reader,_encoder:encoder,_jpegEncoderWorker:encoder.worker});
- owner._dispatchJpegFrame=(frame)=>{accepted.push(frame.index);frame.close();};
- await owner._encodeCamera(estimate,reader,encoder,generation,senderGeneration,ceiling);
+ owner._sender._dispatchJpegFrame=(frame)=>{accepted.push(frame.index);frame.close();};
+ await owner._sender._encodeCamera(estimate,reader,encoder,generation,senderGeneration,ceiling);
  assert.equal(closed.length,timestamps.length);assert.equal(new Set(closed).size,timestamps.length);
- assert.equal(owner._cameraReader,null);assert.equal(encoder.state,"closed");return accepted;
+ assert.equal(owner._sender._cameraReader,null);assert.equal(encoder.state,"closed");return accepted;
 }
 const timestamps=vector.times.map(t=>t*1e6);
 const accepted=await run(1,1,timestamps);
@@ -81,18 +79,19 @@ if(vector.name==="ten_fps_jitter"){
   const prepared=new Video();Object.assign(prepared,{_generation:1,_cameraAllowed:true,_cameraEnabled:true,
    _negotiated:{send:{encoding:"JPEG",codec:"jpeg",max_framerate:limit}}});
   prepared._emit=()=>{};prepared._sendTxEpoch=()=>{};
-  prepared._createJpegEncoder=async()=>({kind:"jpeg",worker:{},state:"configured",close(){this.state="closed";}});
-  prepared._encodeCamera=(...args)=>{encodeArguments=args;return Promise.resolve();};
-  await prepared._replaceSender("jpeg",1,"",false);
+  prepared._sender._createJpegEncoder=async()=>({kind:"jpeg",worker:{},state:"configured",close(){this.state="closed";}});
+  prepared._sender._encodeCamera=(...args)=>{encodeArguments=args;return Promise.resolve();};
+  await prepared._sender._replaceSender("jpeg",1,"",false);
   assert.equal(constraints.frameRate.ideal,limit||30);
   assert.equal(constraints.frameRate.max,limit||undefined);
   assert.equal(encodeArguments[0],estimate);
   assert.equal(encodeArguments[5],limit||Infinity);
-  await prepared._cleanupSender();
+  await prepared._sender._cleanupSender();
  }
 }
 console.log(JSON.stringify(accepted));
-'''.replace("FRONTEND", json.dumps(str(FRONTEND))).replace("VECTOR", json.dumps(vector))
+'''.replace("FRONTEND", json.dumps(str(FRONTEND))).replace("VECTOR", json.dumps(vector)).replace(
+        "LOADER", json.dumps(str(ROOT / "tests/support/frontend_module_loader.js")))
     result = subprocess.run(
         ["node", "--no-warnings", "--experimental-vm-modules", "--input-type=module", "-e", script],
         capture_output=True, text=True, timeout=10,
