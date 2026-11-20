@@ -150,7 +150,7 @@ class RecorderProcessor extends AudioWorkletProcessor {
         this._position += this._ratio;
       }
       this._position -= src.length;
-      this._lastSample = src[src.length - 1] || this._lastSample;
+      this._lastSample = src[src.length - 1] ?? this._lastSample;
     }
     return true;
   }

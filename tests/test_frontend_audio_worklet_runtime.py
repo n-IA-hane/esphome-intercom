@@ -157,6 +157,41 @@ assert.equal(silence._hasPreviousInput, true);
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+@pytest.mark.parametrize("target_rate,expected_samples", [(8000, 320), (16000, 640)])
+def test_microphone_silence_does_not_reinsert_the_previous_render_quantum(
+    target_rate, expected_samples,
+) -> None:
+    script = rf'''
+import assert from "node:assert/strict";
+import {{pathToFileURL}} from "node:url";
+
+let Processor;
+globalThis.sampleRate = 48000;
+globalThis.AudioWorkletProcessor = class {{constructor() {{this.port = {{}};}}}};
+globalThis.registerProcessor = (_name, implementation) => {{Processor = implementation;}};
+await import(pathToFileURL({json.dumps(str(PROCESSOR))}));
+const recorder = new Processor({{processorOptions: {{
+  antiAlias: false,
+  format: {{sampleRate: {target_rate}, frameMs: 20, pcmFormat: "s16le", channels: 1}},
+}}}});
+const captured = [];
+recorder.port.postMessage = message => captured.push(...new Int16Array(message.buffer));
+for (let quantum = 0; quantum < 20; quantum++) {{
+  const input = new Float32Array(128);
+  if (quantum === 0) input.fill(0.5);
+  assert.equal(recorder.process([[input]]), true);
+}}
+assert.equal(captured.length, {expected_samples}, "Keep the negotiated frame/sample count");
+assert.ok(captured[10] > 16000, "The nonzero control must reach the encoded microphone output");
+// Allow the interpolation boundary after the first quantum, then require digital silence.
+const silenceStart = Math.ceil(128 * {target_rate} / 48000) + 1;
+assert.deepEqual(captured.slice(silenceStart).filter(value => value !== 0), [],
+  "Zero-valued input must replace the preceding sample across later render quanta");
+'''
+    subprocess.run(["node", "--input-type=module", "-e", script], check=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_microphone_anti_alias_filter_is_effective_and_optional() -> None:
     script = rf'''
 import fs from "fs";
