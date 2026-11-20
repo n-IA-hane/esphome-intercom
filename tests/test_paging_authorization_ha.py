@@ -35,18 +35,28 @@ async def prepare_paging(lab):
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("name,address", [("Source", "127.0.0.3"), ("Unknown", "127.0.0.3")])
 async def test_unidentified_origin_never_acquires_named_phone_or_pages(queue_lab, name, address):
-    lab = queue_lab
+    await assert_unidentified_paging_origin(queue_lab, name, address, authenticated=False)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("name", ["Source", "Unknown"])
+async def test_authenticated_account_cannot_impersonate_a_paging_origin(queue_lab, name):
+    await assert_unidentified_paging_origin(queue_lab, name, "127.0.0.3", authenticated=True)
+
+
+async def assert_unidentified_paging_origin(lab, name, address, *, authenticated):
     owner = await prepare_paging(lab)
     claims = []
     remove = lab.runtime.endpoints.subscribe(lambda event: claims.append(event.endpoint.active_call_id)
         if event.endpoint.endpoint_id == "source" and event.endpoint.active_call_id else None)
-    client, _audio = await lab.caller(name, address)
+    client, _audio = await lab.caller(name, address, authenticate=authenticated,
+        account_endpoint_id="sip:bedroom1" if authenticated else None)
     try:
         result = await client.invite(target="402", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3, audio_direction="sendonly")
         if result == "ringing":
             await client.wait_for_final(timeout=3)
-        assert client.last_sip_status_code == 403
+        assert client.last_sip_status_code == (403 if authenticated else 401)
         assert not claims
         assert not owner.jobs
         assert all(not phone.invites for phone in lab.phones)
@@ -81,7 +91,7 @@ async def test_ordinary_unknown_call_does_not_claim_known_nominal_phone(queue_la
     claimed = []
     remove = lab.runtime.endpoints.subscribe(lambda event: claimed.append(event.endpoint.active_call_id)
         if event.endpoint.endpoint_id == "source" and event.endpoint.active_call_id else None)
-    client, _audio = await lab.caller("Source", "127.0.0.3")
+    client, _audio = await lab.caller("Source", "127.0.0.3", authenticate=False)
     try:
         result = await client.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)

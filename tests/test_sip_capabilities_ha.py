@@ -15,7 +15,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
-from .test_trunk_calls_ha import lab as lab, trunks as trunks
+from .test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 
 
 pytestmark = pytest.mark.ha
@@ -444,7 +444,9 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
     registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
     transport, peer = await lab.hass.loop.create_datagram_endpoint(
         lambda: RegisteredPeer(outcome), local_addr=("127.0.0.1", 0))
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent caller", local_sip_port=0,
+        username=account.username, password=account.password,
         local_rtp_port=36000, supported_formats=[AudioFormat(16000, frame_ms=20)])
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
         lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))

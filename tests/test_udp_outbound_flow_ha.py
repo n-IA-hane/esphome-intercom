@@ -19,7 +19,7 @@ from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack import sip_runtime
 from tests.test_automation_originate_ha import lab as lab, dial
-from tests.test_trunk_calls_ha import trunks as trunks
+from tests.test_trunk_calls_ha import trunks as trunks, sip_test_account
 
 
 pytestmark = [pytest.mark.ha, pytest.mark.parametrize("trunks", [True], indirect=True)]
@@ -406,7 +406,9 @@ async def test_selected_outbound_binding_reaches_browser_and_inbound_factories(w
                 "device_id": browser.device_id, "destination": "outbound-phone",
             }, blocking=True, context=context)
         else:
+            account = sip_test_account(wire.lab, "sip:bedroom1")
             caller = SipCallClient(local_ip="127.0.0.2", local_name="Direct incoming caller",
+                username=account.username, password=account.password,
                 local_sip_port=5060, local_rtp_port=40010,
                 supported_formats=[AudioFormat(16000, frame_ms=20)])
             caller.transport, caller.protocol = await wire.lab.hass.loop.create_datagram_endpoint(

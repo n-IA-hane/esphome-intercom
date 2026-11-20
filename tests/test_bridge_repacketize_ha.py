@@ -8,14 +8,14 @@ import struct
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp, sip
+from custom_components.voip_stack.core import rtp, sdp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.inbound_routing import bridge
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from tests.test_sip_capabilities_ha import wait_until
-from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
+from tests.test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 
 
 pytestmark = pytest.mark.ha
@@ -84,8 +84,10 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     # The alternative case still sends valid10ms packets, even when HA prefers20.
     offered_ms = 20 if source_rate == 16000 else 10
     source_ms = 10 if offer_tx10 else offered_ms
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(
         local_ip="127.0.0.2", local_name="Independent source", local_sip_port=0,
+        username=account.username, password=account.password,
         local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(source_rate, frame_ms=offered_ms)]
             + ([AudioFormat(16000, frame_ms=10)] if offer_tx10 else []),
@@ -93,15 +95,19 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
                                 AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)],
         allow_directional_audio_payloads=True, independent_audio_ptime=True,
     )
-    class SourceProtocol(SipDatagramQueueProtocol):
-        def datagram_received(self, data, addr):
-            message = sip.parse_message(data)
+    read_response = caller._read_response
+
+    async def observe_response(*args, **kwargs):
+        response = await read_response(*args, **kwargs)
+        if response is not None:
+            message, _address = response
             if message.status_code == 200 and message.header("CSeq").endswith(" INVITE"):
                 observed["source_answer"] = message.body
-            super().datagram_received(data, addr)
+        return response
 
+    monkeypatch.setattr(caller, "_read_response", observe_response)
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SourceProtocol(caller.queue), local_addr=("127.0.0.2", 0),
+        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0),
     )
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
     original_build = caller._build_pending_invite

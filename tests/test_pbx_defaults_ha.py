@@ -12,7 +12,7 @@ from custom_components.voip_stack.parking_config import parking_settings, normal
 from custom_components.voip_stack.mailbox import async_setup_mailboxes, mailbox_snapshot
 from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.voicemail_config import require_voicemail_config
-from .test_trunk_calls_ha import trunks as trunks, lab as lab
+from .test_trunk_calls_ha import trunks as trunks, lab as lab, sip_test_account
 from .test_voicemail_ha import custom_integrations as custom_integrations
 
 from .support.ha_frontend import prepare_frontend_dependency
@@ -159,7 +159,9 @@ async def test_unconfigured_spoken_menu_returns_sip_failure_without_claims(trunk
     lab = trunks
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
-    client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user="caller", local_sip_port=5060,
+    account = sip_test_account(lab, "sip:bedroom1")
+    client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user=account.username, local_sip_port=5060,
+                           username=account.username, password=account.password,
                            local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)])
     client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
         lambda: SipDatagramQueueProtocol(client.queue), local_addr=("127.0.0.2", 0))

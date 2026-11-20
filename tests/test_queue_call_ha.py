@@ -17,7 +17,7 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
-from .test_trunk_calls_ha import lab as lab, trunks as trunks
+from .test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 from .test_sip_capabilities_ha import wait_until
 from .test_udp_outbound_flow_ha import wire_lab as wire_lab, register_phone
 
@@ -47,12 +47,20 @@ async def queue_lab(trunks, monkeypatch):
     lab.runtime.directory.replace(lab.roster)
     clients, sockets = [], []
 
-    async def caller(name="Source", address="127.0.0.2"):
+    async def caller(name="Source", address="127.0.0.2", *, authenticate=True, account_endpoint_id=None):
+        account = None
+        if authenticate:
+            endpoint = lab.runtime.endpoints.by_username(name.lower())
+            identity = account_endpoint_id or (endpoint.endpoint_id if endpoint is not None else "")
+            assert identity, "A legitimate fixture caller needs its own configured SIP endpoint"
+            account = sip_test_account(lab, identity)
         audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         audio.bind((address, 0))
         audio.setblocking(False)
         sockets.append(audio)
         client = SipCallClient(local_ip=address, local_name=name, local_uri_user=name.lower(), local_sip_port=5060,
+                               username=account.username if account is not None else "",
+                               password=account.password if account is not None else "",
                                local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, "s16le", 1, 20)])
         client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
             lambda: SipDatagramQueueProtocol(client.queue), local_addr=(address, 0))
@@ -1094,6 +1102,8 @@ async def test_external_call_does_not_claim_the_preferred_shared_account(queue_l
     lab.runtime.preferred_phone_device_id = endpoint.device_id
     for phone in lab.phones:
         phone.auto_answer = False
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source2", name="Other", username="other",
+        kind=EndpointKind.SIP_ACCOUNT, availability="available"))
     source, _ = await lab.caller()
     other, _ = await lab.caller("Other", "127.0.0.3")
     try:

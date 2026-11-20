@@ -7,6 +7,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.local_softphone_runtime import local_softphone_bridge
 from custom_components.voip_stack.websocket_api import _ha_softphone_store
 from tests.test_automation_originate_ha import lab as lab
+from tests.test_trunk_calls_ha import sip_test_account
 
 pytestmark = pytest.mark.ha
 
@@ -86,7 +87,9 @@ async def test_public_sip_browser_answer_declares_atomic_video_choice_on_udp(lab
     source = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     source.bind(("127.0.0.2", 0))
     source.setblocking(False)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent SIP camera",
+        username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=20)],
         local_video_rtp_port=source.getsockname()[1],
         video_formats=(sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=15),))

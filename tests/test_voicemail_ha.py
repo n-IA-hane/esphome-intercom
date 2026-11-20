@@ -21,7 +21,7 @@ from custom_components.voip_stack.websocket_api import CALL_EVENT
 
 from .test_automation_originate_ha import lab as lab, simple_sequence, tts_fixture, dial
 from .test_browser_phone_policy_ha import browser_lab as browser_lab, originate
-from .test_trunk_calls_ha import trunks as trunks
+from .test_trunk_calls_ha import trunks as trunks, sip_test_account
 
 from .support.ha_frontend import prepare_frontend_dependency
 
@@ -658,7 +658,9 @@ async def test_sip_phone_deposits_through_real_listener_without_browser(trunks, 
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user="caller",
+    account = sip_test_account(lab, "sip:bedroom1")
+    client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user=account.username,
+                           username=account.username, password=account.password,
                            local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
                            supported_formats=[AudioFormat(sample_rate=16000, frame_ms=20)])
     client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
@@ -1035,7 +1037,14 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    client = SipCallClient(local_ip="127.0.0.2", local_name="Source", local_uri_user="other" if other_mailbox else "source",
+    caller_endpoint_id = mailbox_id
+    if other_mailbox:
+        caller_endpoint_id = "voicemail-other-source"
+        lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=caller_endpoint_id, name="Other", username="other",
+            kind=EndpointKind.SIP_ACCOUNT, availability="available"))
+    account = sip_test_account(lab, caller_endpoint_id)
+    client = SipCallClient(local_ip="127.0.0.2", local_name="Source", local_uri_user=account.username,
+                           username=account.username, password=account.password,
                            local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
                            supported_formats=[AudioFormat(sample_rate=16000, frame_ms=20)])
     client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(

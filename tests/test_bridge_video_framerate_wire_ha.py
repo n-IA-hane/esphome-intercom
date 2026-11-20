@@ -15,6 +15,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.sip_client import SipCallClient
 from tests.test_automation_originate_ha import lab as lab
+from tests.test_trunk_calls_ha import sip_test_account
 
 
 pytestmark = pytest.mark.ha
@@ -86,7 +87,9 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
         if source_calls else receiver_hint)
     receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=caller_fps,
         image_attributes=sdp.parse_imageattr(caller_hint)[1] if caller_hint else None)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Bounded JPEG receiver",
+        username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],
         local_video_rtp_port=caller_video.getsockname()[1], video_formats=(receiver,),
         video_direction="sendrecv" if source_calls else "recvonly")
@@ -241,7 +244,9 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
         receiver.answered.set()
 
     monkeypatch.setattr(receiver, "answer", answer)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent camera caller",
+        username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],
         local_video_rtp_port=35004,
         video_formats=(sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=caller_fps),))

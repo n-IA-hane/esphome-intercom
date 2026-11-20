@@ -20,7 +20,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from .test_sip_capabilities_ha import RegisteredPeer, register_peer, wait_until
-from .test_trunk_calls_ha import lab as lab, trunks as trunks
+from .test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 
 
 pytestmark = pytest.mark.ha
@@ -81,7 +81,9 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         return sock
 
     caller_audio = audio_socket("127.0.0.2")
+    account = sip_test_account(runtime, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent caller", local_sip_port=0,
+        username=account.username, password=account.password,
         local_rtp_port=caller_audio.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)])
     caller.transport, caller.protocol = await runtime.hass.loop.create_datagram_endpoint(
         lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))

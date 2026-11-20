@@ -16,7 +16,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot as build_real_peer_snapshot
 from tests.test_sip_capabilities_ha import CAPS, register_peer, wait_until
-from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
+from tests.test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 
 
 pytestmark = pytest.mark.ha
@@ -77,7 +77,10 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
+    account = sip_test_account(lab, "sip:bedroom1") if caller_discovery is None else None
     caller = SipCallClient(local_ip="127.0.0.2", local_name="managed_caller" if caller_discovery else "Asymmetric caller",
+        username=account.username if account is not None else "",
+        password=account.password if account is not None else "",
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(source_rate, frame_ms=10)],
         supported_recv_formats=[AudioFormat(rate, frame_ms=10) for rate in source_receive_rates],
@@ -277,6 +280,8 @@ async def restore_managed_caller(lab, caller, discovery):
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
         "managed_esphome_phones": {device.id: phone.record()}})
     restored = managed_records(entry)[device.id]
+    caller.local_uri_user = caller.username = restored.username
+    caller.password = restored.password
     registrar = sip_registrar(lab.hass)
     registrar.enabled = True
     registrar.update_accounts([restored.account()])

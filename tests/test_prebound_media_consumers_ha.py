@@ -15,7 +15,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from .test_automation_originate_ha import lab as lab, dial
-from .test_trunk_calls_ha import trunks as trunks
+from .test_trunk_calls_ha import trunks as trunks, sip_test_account
 
 pytestmark = pytest.mark.ha
 
@@ -57,10 +57,12 @@ async def terminate_calls(lab):
 
 
 async def make_caller(lab, name="Independent caller"):
+    account = sip_test_account(lab, "sip:bedroom1")
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.2", 0))
     media.setblocking(False)
     caller = SipCallClient(local_ip="127.0.0.2", local_name=name,
+        username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=media.getsockname()[1],
         supported_formats=[AudioFormat(16000, frame_ms=20)], codec_policy=CodecPolicy(audio=("L16",)))
     protocol = SipDatagramQueueProtocol(caller.queue)
@@ -223,7 +225,8 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
     picker_media.bind(("127.0.0.1", 0))
     picker_media.setblocking(False)
     picker = SipCallClient(local_ip="127.0.0.1", local_name="Reservation picker", local_uri_user="reservation-picker",
-        username="reservation-picker", local_sip_port=0, local_rtp_port=picker_media.getsockname()[1],
+        username=registration.config.username, password=registration.config.password,
+        local_sip_port=0, local_rtp_port=picker_media.getsockname()[1],
         supported_formats=[AudioFormat(16000, frame_ms=20)], codec_policy=CodecPolicy(audio=("L16",)))
     captured, consumed = {}, []
     source_pcm = struct.pack("!320h", *([2345] * 320))
