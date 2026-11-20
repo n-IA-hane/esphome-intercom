@@ -1134,13 +1134,16 @@ class VoipStackEngine extends EventTarget {
 
   async _selectAudioOutput(deviceId, remember) {
     const generation = ++this._outputSwitchGeneration;
+    let context = this._audioContext;
     let selected = deviceId;
     if (selected && typeof navigator.mediaDevices?.selectAudioOutput === "function") {
       selected = String((await navigator.mediaDevices.selectAudioOutput({
         deviceId: selected,
       }))?.deviceId || selected);
     }
-    let context = this._audioContext;
+    if (generation !== this._outputSwitchGeneration || context !== this._audioContext) {
+      throw new Error("Audio output selection was superseded");
+    }
     let temporary = false;
     if (!context) {
       context = this._createAudioContext();
@@ -1152,7 +1155,7 @@ class VoipStackEngine extends EventTarget {
       } else {
         await context.setSinkId(selected);
       }
-      if (generation !== this._outputSwitchGeneration) {
+      if (generation !== this._outputSwitchGeneration || (!temporary && context !== this._audioContext)) {
         throw new Error("Audio output selection was superseded");
       }
       if (remember) this._mediaDevices.commit("audiooutput", selected, { deviceId: selected });

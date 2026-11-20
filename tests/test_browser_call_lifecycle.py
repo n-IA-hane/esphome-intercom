@@ -654,6 +654,92 @@ def test_remembering_another_owned_call_preserves_active_and_held_microphone_int
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
+    import json
+    pytest.importorskip("playwright.async_api")
+    peer = SoftwareCallPeer()
+
+    async def check(context, base):
+        page = await open_engine(context, base)
+        await page.evaluate(HARNESS)
+        await page.wait_for_function("card._softphoneSnapshot?.endpoint_id === 'desk'")
+        receipt = {}
+        try:
+            await page.get_by_role("button", name="Call", exact=True).click()
+            await wait_until(lambda: bool(peer.attempts))
+            await peer.broadcast("in_call")
+            await page.wait_for_function("engine._audioReady && engine.callId")
+            await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
+            await page.evaluate("""() => {
+              window.firstOutputContext=engine._audioContext;
+              window.outputRoutes=[];
+              const route=AudioContext.prototype.setSinkId;
+              if(typeof route!=='function')throw Error('Chromium has no native AudioContext.setSinkId');
+              AudioContext.prototype.setSinkId=function(sinkId){
+                outputRoutes.push({sinkId,first:this===firstOutputContext,current:this===engine._audioContext});
+                return route.call(this,sinkId);
+              };
+              navigator.mediaDevices.selectAudioOutput=()=>new Promise(resolve=>{window.resolveOutputChoice=resolve;});
+              window.outputSelection=engine.setMediaDevice('audiooutput','default').then(
+                ()=>({status:'resolved'}),error=>({status:'rejected',message:error.message}));
+            }""")
+            await page.wait_for_function("typeof resolveOutputChoice === 'function'")
+            await page.get_by_role("button", name="Hang up call", exact=True).click()
+            await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+            await wait_until(lambda: all(record["closed"] for record in peer.connections))
+            await page.get_by_role("button", name="Call", exact=True).click()
+            await wait_until(lambda: len(peer.attempts) == 2)
+            await peer.broadcast("in_call")
+            await page.wait_for_function("engine._audioReady && engine.callId === 'software-call-2'")
+            await wait_until(lambda: len(peer.connections) == 2 and peer.connections[-1]["rx_nonzero"] >= 4)
+            before = await page.evaluate("""() => {
+              window.replacementOutputContext=engine._audioContext;
+              return {different:replacementOutputContext!==firstOutputContext,
+                oldState:firstOutputContext.state,sinkId:replacementOutputContext.sinkId,
+                selected:engine.mediaDeviceState.selected.audiooutput,
+                active:engine.mediaDeviceState.active.audiooutput,routes:outputRoutes.length};
+            }""")
+            selection = await page.evaluate("async()=>{resolveOutputChoice({deviceId:'default'});return await outputSelection;}")
+            after = await page.evaluate("""() => ({sinkId:replacementOutputContext.sinkId,
+              selected:engine.mediaDeviceState.selected.audiooutput,
+              active:engine.mediaDeviceState.active.audiooutput,routes:outputRoutes.slice(),
+              sameContext:engine._audioContext===replacementOutputContext,callId:engine.callId})""")
+            receipt.update(before=before, after=after, selection=selection)
+            assert before["different"] and before["oldState"] == "closed"
+            assert selection["status"] == "rejected" and "superseded" in selection["message"]
+            assert after["sameContext"] and after["callId"] == "software-call-2"
+            assert len(after["routes"]) == before["routes"], "A retired chooser routed the replacement call"
+            assert after["sinkId"] == before["sinkId"]
+            assert after["selected"] == before["selected"] and after["active"] == before["active"]
+            current = await page.evaluate("""async () => {
+              navigator.mediaDevices.selectAudioOutput=async()=>({deviceId:'default'});
+              await engine.setMediaDevice('audiooutput','default');
+              return {sinkId:replacementOutputContext.sinkId,routes:outputRoutes.slice(),
+                selected:engine.mediaDeviceState.selected.audiooutput,
+                active:engine.mediaDeviceState.active.audiooutput};
+            }""")
+            receipt["current_choice"] = current
+            assert current["sinkId"] == "default"
+            assert current["selected"] == "default" and current["active"] == "default"
+            assert len(current["routes"]) == before["routes"] + 1 and current["routes"][-1]["current"]
+            frames = peer.connections[-1]["rx_nonzero"]
+            await wait_until(lambda: peer.connections[-1]["rx_nonzero"] >= frames + 4)
+        finally:
+            await page.evaluate("async()=>{if(window.resolveOutputChoice){resolveOutputChoice({deviceId:'default'});await outputSelection;}}")
+            await peer.broadcast("idle")
+            await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+            await wait_until(lambda: all(record["closed"] for record in peer.connections))
+            assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
+            await page.evaluate("card.remove()")
+            await wait_until(lambda: not peer.subscriptions)
+            receipt["connections"] = peer.connections
+            receipt["scope"] = "Native Chromium AudioContext and PCM, controlled deferred chooser; no physical output qualification"
+            (tmp_path / "retired-output-chooser.json").write_text(json.dumps(receipt, indent=2))
+
+    asyncio.run(browser_session(check, peer=peer))
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 def test_card_camera_intent_preserves_unknown_destination_video_contract():
     """The real card and engine must send the user's intent to the public RPC."""
     pytest.importorskip("playwright.async_api")
