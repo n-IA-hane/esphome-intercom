@@ -18,7 +18,7 @@ DOCS = ROOT / "docs"
 AUTOMATION_COOKBOOK = DOCS / "AUTOMATION_DIALPLAN.md"
 AUTOMATION_ROUTING = ROOT / "custom_components" / "voip_stack" / "automation_routing.py"
 DTMF_EVENTS = ROOT / "custom_components" / "voip_stack" / "dtmf_events.py"
-WEBSOCKET_API = ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+CALL_EVENTS = ROOT / "custom_components" / "voip_stack" / "call_events.py"
 MARKDOWN_FILES = (
     ROOT / "README.md",
     *sorted(path for path in DOCS.rglob("*.md") if "private" not in path.parts),
@@ -352,7 +352,7 @@ def test_automation_cookbook_uses_real_event_types_and_payload_fields() -> None:
     """Pin cookbook event recipes to the event types and fields emitted by code."""
 
     event_types = set(_literal_assignment(AUTOMATION_ROUTING, "AUTOMATION_EVENT_TYPES"))
-    call_fields = _mapping_keys_in_function(WEBSOCKET_API, "_fire_call_event", "event")
+    call_fields = _mapping_keys_in_function(CALL_EVENTS, "fire_call_event", "event")
     dtmf_fields = _mapping_keys_in_function(DTMF_EVENTS, "publish_dtmf_event", "payload")
     errors: list[str] = []
     for index, block in enumerate(YAML_FENCE.findall(AUTOMATION_COOKBOOK.read_text()), 1):

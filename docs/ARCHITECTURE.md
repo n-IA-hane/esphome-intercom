@@ -1,8 +1,8 @@
 # SIP architecture
 
-This document describes the active VoIP architecture. It intentionally does not
-describe the retired proprietary intercom protocol except by omission: SIP,
-SDP and RTP are the functional primitives.
+VoIP Stack uses SIP for signaling, SDP for media negotiation and RTP for audio
+and video. This document describes the owners of those operations and their
+integration with Home Assistant, ESPHome and browser clients.
 
 ![VoIP Stack SIP topology](images/sip-topology.png)
 
@@ -20,11 +20,12 @@ Every ESP running `voip_stack` is a SIP user agent:
 - it can run full-duplex, mic-only or speaker-only; signaling-only endpoints
   are rejected because every VoIP endpoint must expose real audio media.
 
-Inbound reachability is deliberately independent of roster membership. The
-phonebook is a dial plan, not a caller allowlist: a reachable compatible SIP
-peer can call an ESP even when it is unknown to HA and has no registration,
-when direct calls are enabled. `registration.accept_direct_calls` is a separate
-policy from account registration. See [registered ESP accounts](ESP_REGISTRATION.md).
+The phonebook supplies dialing destinations. ESP caller admission belongs to
+the registration policy: incoming calls use a recognized configured account,
+or an explicitly enabled direct-call path. Direct calls are disabled by default.
+Ordinary automatic answering is restricted to recognized account traffic;
+paging retains its separate configured permissions. See
+[registered ESP accounts](ESP_REGISTRATION.md).
 
 Home Assistant is more than a card backend:
 
@@ -110,6 +111,34 @@ core owns its participants, media resources and termination.
   The intentional `connecting -> ringing` fallback remains valid, while a late
   provisional event cannot regress an established dialog back to `calling` or
   `ringing`.
+
+### Implementation boundaries
+
+| Operation | Implementation | State and resource owner |
+| --- | --- | --- |
+| SDP interpretation | `core/sdp_document.py`, `core/sdp_parser.py` | An immutable input document retains the raw text and ordered media lines. |
+| Audio and video negotiation | `core/sdp_audio.py`, `core/sdp_video.py` | Functions return media contracts; the SIP dialog commits the selected contract. |
+| SDP serialization | `core/sdp_composer.py` | Offers and answers use the negotiated contracts and the existing payload order. |
+| Initial outgoing INVITE | `sip_client.py`, `sip_invite_exchange.py` | `SipCallClient` owns the socket, transaction and dialog. `InviteExchange` contains temporary request and next-hop data. |
+| Forwarding | `call_forwarder.py`, `forward_plan.py`, `forward_operation.py`, `forward_group.py` | The existing call session owns one forward task, staged media, rollback and cleanup. |
+| Call events | `call_events.py`, `const.py` | Call owners publish through the native HA event bus with the existing call context. |
+| Directory delivery | `phonebook_coordinator.py` | The coordinator observes the entry-owned directory and sends updates. The sensor exposes its projection. |
+| Browser audio | `voip-stack-engine.js`, `voip-stack-audio-session.js` | The engine owns the call and socket; `BrowserAudioSession` owns the physical audio graph, tracks and worklets. |
+| Browser video | `voip-stack-video.js`, `voip-stack-video-sender.js`, `voip-stack-video-receiver.js` | One parent owns the socket and common generation. Sender and receiver own camera/encoder and decoder/presentation resources respectively. |
+
+`core.sdp` is the public import entry point for SDP. Its exports refer to the
+same functions and immutable types implemented in the leaf modules. The parser,
+audio negotiator and video negotiator have no dependency on that entry point.
+Compound audio negotiation decodes one `SdpDocument` and shares it between
+consumers, preserving the different treatment of rejected media and advisory
+OPTIONS capabilities.
+
+Resource cleanup follows the same owner as acquisition. Moving a preparation
+step into a helper does not create another socket reader, call task, generation
+counter or media registry. The software checks compare the original public
+behavior, wire/media results and cleanup against the same scenarios; device
+qualification additionally checks real-time scheduling, memory and physical
+audio/display behavior.
 
 ### Committed state and read-only consumers
 
@@ -295,9 +324,9 @@ ESPHome API security. HA SIP legs can use verified TLS and the media runtime
 uses separate RTP/RTCP sockets where the negotiated profile requires them.
 Codec-rich or encrypted signaling legs should terminate on Home Assistant,
 where the bridge can convert and route them to lightweight ESP PCM endpoints.
-Because local SIP/RTP is plaintext and inbound calls are not phonebook-gated,
-deployments needing caller admission must enforce it at a firewall, VLAN, VPN
-or SBC boundary.
+SIP admission authenticates account calls and accepts configured trunk traffic.
+The unencrypted ESP media path still requires the deployment's LAN/VPN access
+boundary.
 
 ### Telephone applications and voicemail
 
@@ -408,10 +437,12 @@ HA-router routing:
 - disabled entry: reject;
 - unresolved explicit route hint: reject `route_not_found`.
 
-The source caller need not be registered or present in the phonebook. HA still
-applies the Request-URI dial plan, media checks, DND and busy policy. The local
-registrar authenticates account registration and supplies a current Contact;
-it is not a global INVITE allowlist.
+Before allocating a call, HA identifies a configured trunk, a current locally
+owned SIP leg or an account authenticated by SIP Digest. An account caller uses
+its authenticated identity. A registrar-only phone also needs a current
+registered Contact. HA then applies the Request-URI dial plan, media checks,
+DND and busy policy. Registration supplies reachability; the INVITE admission
+step establishes the calling account's identity.
 
 The optional SIP trunk is used only when enabled and ready. A registered trunk
 requires a current registration; a static trunk requires an active runtime and
