@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-import errno
 import ipaddress
 import logging
 import re
@@ -16,6 +15,7 @@ import ssl
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .sip_capture import send_sip_datagram
+from .sip_invite_exchange import InviteExchange
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
@@ -29,7 +29,6 @@ from .core.rtp_payload import (
 from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
 from .core.sip_transport import (
-    SIP_UDP_SAFE_REQUEST_BYTES as _SIP_UDP_SAFE_REQUEST_BYTES,
     default_tls_context,
     SipMessageDispatcher,
 )
@@ -67,17 +66,6 @@ from .core.sip_transaction import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _uri_with_transport(uri: sip.SipUri, transport: str) -> sip.SipUri:
-    """Return one URI with a single authoritative transport parameter."""
-
-    params = tuple(
-        (key, value)
-        for key, value in uri.params
-        if key.strip().lower() != "transport"
-    )
-    return replace(uri, params=(*params, ("transport", transport.lower())))
 
 
 def _explicit_uri_transport(uri: sip.SipUri) -> str:
@@ -2037,117 +2025,69 @@ class SipCallClient:
         audio_direction: str = "sendrecv",
     ) -> str:
         self._pending_answer_mode = answer_mode
-        transport_param = (("transport", self.signaling_transport.lower()),)
-        request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
-        logical_uri = sip.parse_sip_uri(request_uri)
-        route_uri = logical_uri
-        if self.outbound_proxy:
-            proxy = str(self.outbound_proxy).strip()
-            route_uri = sip.parse_sip_uri(
-                proxy
-                if proxy.lower().startswith(("sip:", "sips:"))
-                else f"sip:{proxy}"
-            )
-        elif remote_host != logical_uri.host:
-            # The caller supplied an already selected next hop while keeping
-            # the logical Request-URI intact, as required for trunks/proxies.
-            route_uri = sip.SipUri("", remote_host, int(remote_sip_port))
-        self._tls_server_name = route_uri.host
+        exchange = InviteExchange.for_target(
+            target, remote_host, remote_sip_port, request_uri, self.signaling_transport,
+        )
+        route = exchange.next_hop(self.outbound_proxy)
+        self._tls_server_name = route.host
         self._signaling_nominal = (remote_host, int(remote_sip_port))
         try:
-            endpoints = (
-                ((remote_host, int(remote_sip_port), self.signaling_transport),)
-                if self._reused_flow_send is not None and self._reused_udp_send_to is None
-                else tuple(
-                    endpoint
-                    for candidate in await self.target_resolver.resolve(
-                        route_uri,
-                        transport=self.signaling_transport,
-                    )
-                    for endpoint in candidate.endpoints()
-                )
-            )
+            if self._reused_flow_send is not None and self._reused_udp_send_to is None:
+                exchange.replace_endpoints(((exchange.host, exchange.port, self.signaling_transport),))
+            else:
+                await exchange.resolve(self.target_resolver, route, self.signaling_transport)
         except (OSError, RuntimeError, sip.SipError) as err:
             return self._transport_failure(err, target, remote_host, remote_sip_port)
-        endpoint_index = -1
-        selection_errors: list[OSError | RuntimeError] = []
-
-        async def select_next_endpoint() -> bool:
-            nonlocal endpoint_index
-            selection_errors.clear()
-            while endpoint_index + 1 < len(endpoints):
-                endpoint_index += 1
-                selected_host, selected_port, selected_transport = endpoints[
-                    endpoint_index
-                ]
-                if selected_transport != self.signaling_transport:
-                    continue
-                started = asyncio.get_running_loop().time()
-                _LOGGER.debug(
-                    "SIP transport attempt call_id=%s transport=%s remote=%s:%s",
-                    self.dialog_ids.call_id,
-                    selected_transport,
-                    selected_host,
-                    selected_port,
-                )
-                try:
-                    await self._select_initial_signaling_target(
-                        selected_host,
-                        selected_port,
-                    )
-                    _LOGGER.debug(
-                        "SIP transport ready call_id=%s transport=%s remote=%s:%s local_port=%s elapsed_ms=%.1f",
-                        self.dialog_ids.call_id,
-                        selected_transport,
-                        selected_host,
-                        selected_port,
-                        self.local_sip_port,
-                        (asyncio.get_running_loop().time() - started) * 1000,
-                    )
-                    return True
-                except (ConnectionError, OSError, RuntimeError) as err:
-                    selection_errors.append(err)
-                    _LOGGER.info(
-                        "SIP initial target unavailable %s:%s transport=%s call_id=%s "
-                        "error_type=%s errno=%s elapsed_ms=%.1f error=%s",
-                        selected_host,
-                        selected_port,
-                        selected_transport,
-                        self.dialog_ids.call_id,
-                        type(err).__name__,
-                        getattr(err, "errno", None),
-                        (asyncio.get_running_loop().time() - started) * 1000,
-                        err,
-                    )
-            return False
-
-        if not await select_next_endpoint():
+        if not await self._select_next_invite_target(exchange):
             return self._transport_failure(
-                OSError("every resolved SIP target is unreachable"),
-                target,
-                remote_host,
-                remote_sip_port,
+                OSError("every resolved SIP target is unreachable"), target, remote_host, remote_sip_port,
             )
-        contact_uri = str(
-            sip.SipUri(
-                self.local_uri_user,
-                self.local_ip,
-                self.local_sip_port,
-                params=transport_param,
-            )
-        )
+
+        self._begin_initial_invite(exchange, target_display_name)
+        failure = await self._prepare_initial_media(exchange)
+        if failure is not None:
+            return failure
+        self._prepare_initial_offer(delayed_offer=delayed_offer, audio_direction=audio_direction)
+        exchange.request = self._build_pending_invite()
+        failure = await self._prepare_invite_request_transport(exchange)
+        if failure is not None:
+            return failure
+        failure = await self._send_initial_invite(exchange)
+        if failure is not None:
+            return failure
+        exchange.log_sent(self._pending_invite_body, self.signaling_transport)
+        return await self._exchange_initial_responses(exchange, timeout)
+
+    async def _connect_invite_target(self, host: str, port: int) -> int:
+        await self._select_initial_signaling_target(host, port)
+        return self.local_sip_port
+
+    async def _select_next_invite_target(self, exchange: InviteExchange) -> bool:
+        return await exchange.select_next(self.signaling_transport, self.dialog_ids.call_id, self._connect_invite_target)
+
+    def _initial_contact_uri(self) -> str:
+        return str(sip.SipUri(self.local_uri_user, self.local_ip, self.local_sip_port,
+                              params=(("transport", self.signaling_transport.lower()),)))
+
+    def _set_invite_contact(self, exchange: InviteExchange, *, preserve_identity: bool) -> None:
+        contact = self._initial_contact_uri()
+        if not preserve_identity:
+            self._pending_local_uri = self.local_identity_uri or contact
+            self._pending_remote_uri = exchange.request_uri
+        self._pending_contact_uri = self.local_contact_uri or contact
+
+    def _begin_initial_invite(self, exchange: InviteExchange, target_display_name: str) -> None:
+        contact_uri = self._initial_contact_uri()
         local_uri = self.local_identity_uri or contact_uri
         sip.parse_sip_uri(local_uri)
-        contact_uri = self.local_contact_uri or contact_uri
-        remote_uri = request_uri
-        self._pending_target = target
-        self._pending_target_display = str(target_display_name or target).strip()
-        self._pending_remote_host = remote_host
-        self._pending_remote_sip_port = int(remote_sip_port)
-        self._pending_request_uri = request_uri
+        self._pending_target = exchange.target
+        self._pending_target_display = str(target_display_name or exchange.target).strip()
+        self._pending_remote_host = exchange.host
+        self._pending_remote_sip_port = exchange.port
+        self._pending_request_uri = exchange.request_uri
         self._pending_local_uri = local_uri
-        self._pending_contact_uri = contact_uri
-        self._pending_remote_uri = remote_uri
+        self._pending_contact_uri = self.local_contact_uri or contact_uri
+        self._pending_remote_uri = exchange.request_uri
         self._pending_invite_auth.clear()
         self._retry_after_used = False
         self._invite_abort_event.clear()
@@ -2157,25 +2097,31 @@ class SipCallClient:
         self._received_provisional = False
         self._reliable_rseq.clear()
         self._deferred_signaling.clear()
-        if self.prepare_media is not None:
-            prepare = asyncio.create_task(self.prepare_media(self._resolved_signaling_target[0]))
-            aborted = asyncio.create_task(self._invite_abort_event.wait())
-            try:
-                async with asyncio.timeout(3):
-                    done, _ = await asyncio.wait((prepare, aborted), return_when=asyncio.FIRST_COMPLETED)
-                    if aborted in done:
-                        self._invite_transaction_active = False
-                        return "cancelled"
-                    await prepare
-            except (OSError, ValueError) as err:
-                return self._transport_failure(err, target, remote_host, remote_sip_port)
-            finally:
-                prepare.cancel()
-                aborted.cancel()
-                await asyncio.gather(prepare, aborted, return_exceptions=True)
-            if self._cancel_requested or self._closing:
-                self._invite_transaction_active = False
-                return "cancelled"
+
+    async def _prepare_initial_media(self, exchange: InviteExchange) -> str | None:
+        if self.prepare_media is None:
+            return None
+        prepare = asyncio.create_task(self.prepare_media(self._resolved_signaling_target[0]))
+        aborted = asyncio.create_task(self._invite_abort_event.wait())
+        try:
+            async with asyncio.timeout(3):
+                done, _ = await asyncio.wait((prepare, aborted), return_when=asyncio.FIRST_COMPLETED)
+                if aborted in done:
+                    self._invite_transaction_active = False
+                    return "cancelled"
+                await prepare
+        except (OSError, ValueError) as err:
+            return self._transport_failure(err, exchange.target, exchange.host, exchange.port)
+        finally:
+            prepare.cancel()
+            aborted.cancel()
+            await asyncio.gather(prepare, aborted, return_exceptions=True)
+        if self._cancel_requested or self._closing:
+            self._invite_transaction_active = False
+            return "cancelled"
+        return None
+
+    def _prepare_initial_offer(self, *, delayed_offer: bool, audio_direction: str) -> None:
         offer = ""
         if not delayed_offer:
             offer = sdp.build_offer_directional(
@@ -2203,427 +2149,278 @@ class SipCallClient:
             offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
         self._initial_delayed_offer = bool(delayed_offer)
         self._local_sdp_body = offer
-        body = offer.encode()
-        self._pending_invite_body = body
+        self._pending_invite_body = offer.encode()
         self._invite_cseq = self.dialog_ids.cseq
-        raw = self._build_pending_invite()
 
-        udp_fallback_used = False
-        sent_invite = False
-
-        async def prepare_request_transport():
-            nonlocal endpoints, endpoint_index, request_uri, route_uri, logical_uri
-            nonlocal transport_param, contact_uri, local_uri, remote_uri, raw, udp_fallback_used
-            if self.signaling_transport != "UDP" or len(raw) <= _SIP_UDP_SAFE_REQUEST_BYTES or udp_fallback_used:
-                return None
-            borrowed_flow = (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close,
-                             self._reused_udp_send_to)
-            udp_local_port = self.local_sip_port
-            # Borrowing a registration flow must not pin an oversized request to UDP.
-            # Retain its release callback until TCP succeeds or UDP is restored.
-            self._reused_flow_send = self._reused_flow_responses = self._reused_flow_close = None
-            self._reused_udp_send_to = None
+    async def _prepare_invite_request_transport(self, exchange: InviteExchange) -> str | None:
+        if not exchange.needs_tcp(self.signaling_transport):
+            return None
+        borrowed_flow = (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close, self._reused_udp_send_to)
+        udp_port = self.local_sip_port
+        udp_endpoints = exchange.endpoints
+        udp_tls_name = self._tls_server_name
+        self._reused_flow_send = self._reused_flow_responses = self._reused_flow_close = None
+        self._reused_udp_send_to = None
+        try:
+            _LOGGER.debug("SIP request transport upgrade call_id=%s bytes=%s from=UDP to=TCP reason=message_size",
+                          self.dialog_ids.call_id, len(exchange.request))
+            if self.transport is not None:
+                self.transport.close()
+                self.transport = None
+                self.protocol = None
+            self._resolved_signaling_target = None
+            self.signaling_transport = "TCP"
+            # RFC 3261 section 18.1.1 changes the connection target; the logical
+            # Request-URI and an already transmitted From/To remain unchanged.
+            route = exchange.next_hop(self.outbound_proxy, transport="TCP")
+            self._tls_server_name = route.host
             try:
-                # RFC 3261 section 18.1.1 requires requests larger than 1300
-                # bytes to use a congestion-controlled transport when the path
-                # MTU is unknown. Rebuild Via for the selected transport and
-                # advertise the owned TCP flow in Contact. Registration stays
-                # on its configured transport; From/To and Request-URI persist.
-                udp_endpoints = endpoints
-                udp_request_uri = request_uri
-                udp_route_uri = route_uri
-                _LOGGER.debug(
-                    "SIP request transport upgrade call_id=%s bytes=%s from=UDP to=TCP reason=message_size",
-                    self.dialog_ids.call_id,
-                    len(raw),
-                )
-                if self.transport is not None:
-                    self.transport.close()
-                    self.transport = None
-                    self.protocol = None
-                self._resolved_signaling_target = None
-                self.signaling_transport = "TCP"
-                transport_param = (("transport", "tcp"),)
-                # Transport selection does not rewrite the called SIP identity.
-                # Keep Request-URI/To intact, including when using an outbound proxy.
-                route_uri = _uri_with_transport(logical_uri, "tcp")
-                if self.outbound_proxy:
-                    proxy = str(self.outbound_proxy).strip()
-                    route_uri = _uri_with_transport(
-                        sip.parse_sip_uri(
-                            proxy
-                            if proxy.lower().startswith(("sip:", "sips:"))
-                            else f"sip:{proxy}"
-                        ),
-                        "tcp",
-                    )
-                elif remote_host != logical_uri.host:
-                    route_uri = sip.SipUri(
-                        "",
-                        remote_host,
-                        int(remote_sip_port),
-                        params=transport_param,
-                    )
-                self._tls_server_name = route_uri.host
-                try:
-                    endpoints = tuple(
-                        endpoint
-                        for candidate in await self.target_resolver.resolve(
-                            route_uri,
-                            transport="TCP",
-                        )
-                        for endpoint in candidate.endpoints()
-                    )
-                except (OSError, RuntimeError, sip.SipError) as err:
-                    return self._transport_failure(
-                        err,
-                        target,
-                        remote_host,
-                        remote_sip_port,
-                    )
-                endpoint_index = -1
-                if not await select_next_endpoint():
-                    if self._cancel_requested or self._closing or self._closed:
-                        self._invite_transaction_active = False
-                        return "cancelled"
-                    # RFC 3261 18.1.1 permits UDP retry after refusal/reset or ICMP
-                    # protocol-unreachable (ENOPROTOOPT on Linux), not a timeout.
-                    if not selection_errors or not all(
-                        isinstance(error, OSError)
-                        and error.errno
-                        in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}
-                        for error in selection_errors
-                    ):
-                        return self._transport_failure(
-                            selection_errors[-1]
-                            if selection_errors
-                            else OSError("no SIP TCP target"),
-                            target,
-                            remote_host,
-                            remote_sip_port,
-                        )
-                    _LOGGER.info(
-                        "SIP request transport fallback call_id=%s bytes=%s from=TCP to=UDP "
-                        "reason=connection_rejected_before_send",
-                        self.dialog_ids.call_id,
-                        len(raw),
-                    )
-                    self.signaling_transport = "UDP"
-                    udp_fallback_used = True
-                    if borrowed_flow is not None:
-                        (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close,
-                         self._reused_udp_send_to) = borrowed_flow
-                        if borrowed_flow[0] is not None:
-                            self.local_sip_port = udp_local_port
-                        borrowed_flow = None
-                    transport_param = (("transport", "udp"),)
-                    request_uri = udp_request_uri
-                    logical_uri = sip.parse_sip_uri(request_uri)
-                    route_uri = udp_route_uri
-                    self._tls_server_name = route_uri.host
-                    self._resolved_signaling_target = None
-                    endpoints = udp_endpoints
-                    endpoint_index = -1
-                    if not await select_next_endpoint():
-                        return self._transport_failure(
-                            selection_errors[-1]
-                            if selection_errors
-                            else OSError("no SIP UDP target"),
-                            target,
-                            remote_host,
-                            remote_sip_port,
-                        )
-                contact_uri = str(
-                    sip.SipUri(
-                        self.local_uri_user,
-                        self.local_ip,
-                        self.local_sip_port,
-                        params=transport_param,
-                    )
-                )
-                if not sent_invite:
-                    local_uri = self.local_identity_uri or contact_uri
-                    remote_uri = request_uri
-                self._pending_request_uri = request_uri
-                self._pending_local_uri = local_uri
-                contact_uri = self.local_contact_uri or contact_uri
-                self._pending_contact_uri = contact_uri
-                self._pending_remote_uri = remote_uri
-                self._refresh_pending_invite_authorization(advance_nonce=False)
-                raw = self._build_pending_invite()
-                _LOGGER.info(
-                    "SIP initial request is %s bytes; selected %s per RFC 3261 section 18.1.1",
-                    len(raw),
-                    self.signaling_transport,
-                )
+                await exchange.resolve(self.target_resolver, route, "TCP")
+            except (OSError, RuntimeError, sip.SipError) as err:
+                return self._transport_failure(err, exchange.target, exchange.host, exchange.port)
+            if not await self._select_next_invite_target(exchange):
                 if self._cancel_requested or self._closing or self._closed:
                     self._invite_transaction_active = False
                     return "cancelled"
-                return None
-            finally:
-                if borrowed_flow is not None and borrowed_flow[2] is not None:
-                    borrowed_flow[2]()
+                # Only a definite refusal/reset or protocol-unreachable error
+                # permits UDP fallback before this TCP request was sent.
+                if not exchange.tcp_refused_before_send():
+                    return self._transport_failure(exchange.selection_error("TCP"), exchange.target, exchange.host, exchange.port)
+                _LOGGER.info("SIP request transport fallback call_id=%s bytes=%s from=TCP to=UDP "
+                             "reason=connection_rejected_before_send", self.dialog_ids.call_id, len(exchange.request))
+                self.signaling_transport = "UDP"
+                exchange.udp_fallback_used = True
+                (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close,
+                 self._reused_udp_send_to) = borrowed_flow
+                if borrowed_flow[0] is not None:
+                    self.local_sip_port = udp_port
+                borrowed_flow = None
+                self._tls_server_name = udp_tls_name
+                self._resolved_signaling_target = None
+                exchange.replace_endpoints(udp_endpoints)
+                if not await self._select_next_invite_target(exchange):
+                    return self._transport_failure(exchange.selection_error("UDP"), exchange.target, exchange.host, exchange.port)
+            self._set_invite_contact(exchange, preserve_identity=self.invite_sent_at is not None)
+            self._refresh_pending_invite_authorization(advance_nonce=False)
+            exchange.request = self._build_pending_invite()
+            _LOGGER.info("SIP initial request is %s bytes; selected %s per RFC 3261 section 18.1.1",
+                         len(exchange.request), self.signaling_transport)
+            if self._cancel_requested or self._closing or self._closed:
+                self._invite_transaction_active = False
+                return "cancelled"
+            return None
+        finally:
+            # A restored UDP flow still belongs to the client; release only a
+            # borrowed flow that was relinquished by the transport change.
+            if borrowed_flow is not None and borrowed_flow[2] is not None:
+                borrowed_flow[2]()
 
-        transport_error = await prepare_request_transport()
-        if transport_error is not None:
-            return transport_error
+    def _refresh_invite_for_next_hop(self, exchange: InviteExchange) -> None:
+        self.dialog_ids.branch = sip.make_branch()
+        self._set_invite_contact(exchange, preserve_identity=False)
+        exchange.request = self._build_pending_invite()
 
-        def refresh_pending_local_uri() -> None:
-            nonlocal contact_uri, local_uri, raw
-            contact_uri = str(
-                sip.SipUri(
-                    self.local_uri_user,
-                    self.local_ip,
-                    self.local_sip_port,
-                    params=transport_param,
-                )
-            )
-            local_uri = self.local_identity_uri or contact_uri
-            self._pending_local_uri = local_uri
-            contact_uri = self.local_contact_uri or contact_uri
-            self._pending_contact_uri = contact_uri
-            raw = self._build_pending_invite()
-
+    async def _send_initial_invite(self, exchange: InviteExchange) -> str | None:
         sip.mark_sip_event(self, "INVITE")
         while True:
             if self._cancel_requested or self._closing or self._closed:
                 self._invite_transaction_active = False
                 return "cancelled"
             try:
-                await self._send_raw(raw, remote_host, int(remote_sip_port))
+                await self._send_raw(exchange.request, exchange.host, exchange.port)
                 if self.invite_sent_at is None:
                     self.invite_sent_at = asyncio.get_running_loop().time()
-                sent_invite = True
                 break
             except (ConnectionError, OSError, RuntimeError) as err:
-                if not await select_next_endpoint():
+                if not await self._select_next_invite_target(exchange):
                     self._invite_transaction_active = False
                     return self._transport_failure(
                         err,
-                        target,
-                        remote_host,
-                        remote_sip_port,
+                        exchange.target,
+                        exchange.host,
+                        exchange.port,
                     )
-                self.dialog_ids.branch = sip.make_branch()
-                refresh_pending_local_uri()
-        offered_audio = []
-        offered_dtmf = []
-        offered_video = []
-        if body.strip():
-            offered_audio = [
-                item
-                for item in sdp.offered_media_descriptions(body)
-                if "TELEPHONE-EVENT" not in item
-            ]
-            offered_dtmf = [
-                f"pt={item.payload_type}:TELEPHONE-EVENT/{item.sample_rate}"
-                for item in sdp.offered_dtmf_formats(body)
-            ]
-            offered_video = [
-                item.wire_token() for item in sdp.offered_video_formats(body)
-            ]
-        _LOGGER.info(
-            "SIP TX INVITE %s@%s:%s bytes=%s transport=%s "
-            "audio=[%s] dtmf=[%s] video=[%s]",
-            target,
-            remote_host,
-            remote_sip_port,
-            len(raw),
-            self.signaling_transport,
-            ", ".join(offered_audio) if body else "delayed",
-            ", ".join(offered_dtmf) if body else "delayed",
-            ", ".join(offered_video) if body else "delayed",
-        )
-        transaction = SipClientTransaction[
-            tuple[sip.SipMessage, tuple[str, int]]
-        ](
-            transport=self.signaling_transport,
-            timeout=timeout,
-            t1=SIP_T1,
-            t2=SIP_T2,
-        )
+                self._refresh_invite_for_next_hop(exchange)
+        return None
+
+    def _new_initial_transaction(
+        self, timeout: float,
+    ) -> SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]]:
+        transaction = SipClientTransaction(transport=self.signaling_transport, timeout=timeout, t1=SIP_T1, t2=SIP_T2)
         self._invite_transaction = transaction
-        auth_challenges = DigestChallengeTracker()
-        received_provisional = False
+        return transaction
 
-        async def failover_transaction() -> bool:
-            nonlocal raw, transaction
-            if received_provisional:
-                return False
-            while await select_next_endpoint():
-                self.dialog_ids.branch = sip.make_branch()
-                refresh_pending_local_uri()
-                try:
-                    await self._send_raw(raw, remote_host, int(remote_sip_port))
-                except (ConnectionError, OSError, RuntimeError):
-                    continue
-                transaction = SipClientTransaction(
-                    transport=self.signaling_transport,
-                    timeout=timeout,
-                    t1=SIP_T1,
-                    t2=SIP_T2,
-                )
-                self._invite_transaction = transaction
-                return True
-            return False
+    async def _failover_initial_transaction(
+        self, exchange: InviteExchange, timeout: float,
+    ) -> SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]] | None:
+        if self._received_provisional:
+            return None
+        while await self._select_next_invite_target(exchange):
+            self._refresh_invite_for_next_hop(exchange)
+            try:
+                await self._send_raw(exchange.request, exchange.host, exchange.port)
+            except (ConnectionError, OSError, RuntimeError):
+                continue
+            return self._new_initial_transaction(timeout)
+        return None
 
-        async def _retransmit_invite() -> None:
-            await self._send_raw(raw, remote_host, int(remote_sip_port))
-            _LOGGER.debug(
-                "SIP UDP retransmit INVITE #%d %s@%s:%s",
-                transaction.retransmissions + 1,
-                target,
-                remote_host,
-                remote_sip_port,
+    async def _handle_invite_provisional(
+        self, exchange: InviteExchange, transaction: SipClientTransaction,
+        msg: sip.SipMessage, addr: tuple[str, int],
+    ) -> str | None:
+        remote_tag = sip.extract_tag(msg.header("To"))
+        previous_early = self.early_dialogs.get(remote_tag)
+        if msg.status_code > 100 and remote_tag:
+            self.early_dialogs.setdefault(remote_tag, None)
+        self._received_provisional = True
+        if not await self._ack_reliable_provisional(msg, addr):
+            self.request_cancel()
+            return "prack_failed"
+        if (msg.status_code > 100 and msg.body and msg.header("Content-Type").split(";", 1)[0].strip().lower() == "application/sdp"
+                and "100rel" not in sip.option_tags(msg, "Require")):
+            self._commit_200_ok(msg, exchange.target, exchange.host, exchange.port,
+                exchange.request_uri, self._pending_local_uri, self._pending_remote_uri, provisional=True)
+        candidate = self.early_dialogs.get(remote_tag)
+        if (candidate is not None and self.on_provisional_media is not None
+                and (previous_early is None or not self._same_dialog_media(previous_early, candidate))):
+            proposal = await self.on_provisional_media(candidate)
+            if proposal is not None and not await apply_remote_offer_media(proposal.commit, proposal.rollback):
+                self.request_cancel()
+                return "media_update_failed"
+        if self._cancel_requested and not self._cancel_sent:
+            self._send_cancel()
+        if _is_invite_progress_response(msg.status_code):
+            if self._cancel_requested:
+                return None
+            # Proceeding is bounded by the caller/application policy,
+            # not an implicit 60-second ringing limit (RFC 3261 17.1.1.2).
+            transaction.reset_deadline(None)
+            progress = self._invite_progress
+            if progress is not None and not progress.done():
+                progress.set_result("ringing")
+        # A peer or controlled test transport can deliver a burst of
+        # provisional responses without blocking. Yield so the caller
+        # can observe progress or request cancellation promptly.
+        await asyncio.sleep(0)
+        return None
+
+    async def _handle_invite_success(self, exchange: InviteExchange, msg: sip.SipMessage) -> str:
+        if not self._commit_200_ok(
+            msg, exchange.target, exchange.host, exchange.port, exchange.request_uri,
+            self._pending_local_uri, self._pending_remote_uri,
+        ):
+            return (
+                "cancelled"
+                if self._closing or self._closed
+                else "media_incompatible"
             )
+        if self._cancel_requested:
+            await self._terminate_confirmed_dialog()
+            return "cancelled"
+        await self._complete_imageattr_fallback()
+        return "in_call" if self.dialog is not None else "timeout"
+
+    async def _retry_initial_authentication(
+        self, exchange: InviteExchange, msg: sip.SipMessage, addr: tuple[str, int],
+        auth_challenges: DigestChallengeTracker,
+    ) -> str | None:
+        self._send_invite_error_ack(msg, addr[0], addr[1])
+        if self._cancel_requested:
+            self._invite_transaction_active = False
+            return "cancelled"
+        try:
+            auth_header, challenge, auth_value = auth_challenges.authorize(
+                msg,
+                username=self.username,
+                auth_username=self.auth_username,
+                password=self.password,
+                method="INVITE",
+                uri=exchange.request_uri,
+                nonce_count=1,
+                body=self._pending_invite_body,
+            )
+        except Exception as err:
+            _LOGGER.info("SIP digest auth failed to build INVITE response: %s", err)
+            return sip.sip_failure_reason(msg.status_code)
+        self.dialog_ids.cseq += 1
+        self.dialog_ids.branch = sip.make_branch()
+        self._invite_cseq = self.dialog_ids.cseq
+        self._pending_invite_auth[auth_header] = (
+            challenge,
+            auth_value,
+            1,
+        )
+        exchange.request = self._build_pending_invite()
+        transport_error = await self._prepare_invite_request_transport(exchange)
+        if transport_error is not None:
+            return transport_error
+        sip.mark_sip_event(self, "INVITE")
+        try:
+            await self._send_raw(exchange.request, exchange.host, exchange.port)
+        except (ConnectionError, OSError, RuntimeError) as err:
+            return self._transport_failure(err, exchange.target, exchange.host, exchange.port)
+        return None
+
+    async def _exchange_initial_responses(self, exchange: InviteExchange, timeout: float) -> str:
+        transaction = self._new_initial_transaction(timeout)
+        auth_challenges = DigestChallengeTracker()
+
+        async def retransmit() -> None:
+            await self._send_raw(exchange.request, exchange.host, exchange.port)
+            _LOGGER.debug("SIP UDP retransmit INVITE #%d %s@%s:%s", transaction.retransmissions + 1,
+                          exchange.target, exchange.host, exchange.port)
 
         while True:
-            if self._cancel_requested and received_provisional and not self._cancel_sent:
+            if self._cancel_requested and self._received_provisional and not self._cancel_sent:
                 self._send_cancel()
             try:
-                received = await transaction.receive(
-                    self._read_response,
-                    _retransmit_invite,
-                    retransmit_enabled=not received_provisional,
-                )
+                received = await transaction.receive(self._read_response, retransmit,
+                                                     retransmit_enabled=not self._received_provisional)
                 if received is None:
-                    if not await failover_transaction():
+                    transaction = await self._failover_initial_transaction(exchange, timeout)
+                    if transaction is None:
                         return "timeout"
                     continue
                 msg, addr = received
             except (ConnectionError, OSError, RuntimeError) as err:
-                if not await failover_transaction():
-                    return self._transport_failure(
-                        err,
-                        target,
-                        remote_host,
-                        remote_sip_port,
-                    )
+                transaction = await self._failover_initial_transaction(exchange, timeout)
+                if transaction is None:
+                    return self._transport_failure(err, exchange.target, exchange.host, exchange.port)
                 continue
             except Exception as err:
                 _LOGGER.info("SIP RX malformed: %s", err)
                 continue
             if not msg.is_response:
                 continue
-            if not matches_response(
-                msg,
-                method="INVITE",
-                cseq=self._invite_cseq,
-                branch=self.dialog_ids.branch,
-            ):
+            if not matches_response(msg, method="INVITE", cseq=self._invite_cseq, branch=self.dialog_ids.branch):
                 _LOGGER.debug("SIP response ignored for non-active INVITE transaction")
                 continue
             sip.mark_sip_event(self, "SIP_RESPONSE", int(msg.status_code or 0), msg.reason)
             _LOGGER.info("SIP RX %s %s from %s:%s", msg.status_code, msg.reason, addr[0], addr[1])
             if msg.status_code is not None and 100 <= msg.status_code < 200:
-                remote_tag = sip.extract_tag(msg.header("To"))
-                previous_early = self.early_dialogs.get(remote_tag)
-                if msg.status_code > 100 and remote_tag:
-                    self.early_dialogs.setdefault(remote_tag, None)
-                received_provisional = True
-                self._received_provisional = True
-                if not await self._ack_reliable_provisional(msg, addr):
-                    self.request_cancel()
-                    return "prack_failed"
-                if (msg.status_code > 100 and msg.body and msg.header("Content-Type").split(";", 1)[0].strip().lower() == "application/sdp"
-                        and "100rel" not in sip.option_tags(msg, "Require")):
-                    self._commit_200_ok(msg, target, remote_host, int(remote_sip_port),
-                        request_uri, local_uri, remote_uri, provisional=True)
-                candidate = self.early_dialogs.get(remote_tag)
-                if (candidate is not None and self.on_provisional_media is not None
-                        and (previous_early is None or not self._same_dialog_media(previous_early, candidate))):
-                    proposal = await self.on_provisional_media(candidate)
-                    if proposal is not None and not await apply_remote_offer_media(proposal.commit, proposal.rollback):
-                        self.request_cancel()
-                        return "media_update_failed"
-                if self._cancel_requested and not self._cancel_sent:
-                    self._send_cancel()
-                if _is_invite_progress_response(msg.status_code):
-                    if self._cancel_requested:
-                        continue
-                    # Proceeding is bounded by the caller/application policy,
-                    # not an implicit 60-second ringing limit (RFC 3261 17.1.1.2).
-                    transaction.reset_deadline(None)
-                    progress = self._invite_progress
-                    if progress is not None and not progress.done():
-                        progress.set_result("ringing")
-                # A peer or controlled test transport can deliver a burst of
-                # provisional responses without blocking. Yield so the caller
-                # can observe progress or request cancellation promptly.
-                await asyncio.sleep(0)
+                result = await self._handle_invite_provisional(exchange, transaction, msg, addr)
+                if result is not None:
+                    return result
                 continue
             if msg.status_code and 200 <= msg.status_code < 300:
-                if not self._commit_200_ok(msg, target, remote_host, int(remote_sip_port), request_uri, local_uri, remote_uri):
-                    return (
-                        "cancelled"
-                        if self._closing or self._closed
-                        else "media_incompatible"
-                    )
-                if self._cancel_requested:
-                    await self._terminate_confirmed_dialog()
-                    return "cancelled"
-                await self._complete_imageattr_fallback()
-                return "in_call" if self.dialog is not None else "timeout"
+                return await self._handle_invite_success(exchange, msg)
             if msg.status_code in {401, 407} and self.password:
-                self._send_invite_error_ack(msg, addr[0], addr[1])
-                if self._cancel_requested:
-                    self._invite_transaction_active = False
-                    return "cancelled"
-                try:
-                    auth_header, challenge, auth_value = auth_challenges.authorize(
-                        msg,
-                        username=self.username,
-                        auth_username=self.auth_username,
-                        password=self.password,
-                        method="INVITE",
-                        uri=request_uri,
-                        nonce_count=1,
-                        body=self._pending_invite_body,
-                    )
-                except Exception as err:
-                    _LOGGER.info("SIP digest auth failed to build INVITE response: %s", err)
-                    return sip.sip_failure_reason(msg.status_code)
-                self.dialog_ids.cseq += 1
-                self.dialog_ids.branch = sip.make_branch()
-                self._invite_cseq = self.dialog_ids.cseq
-                self._pending_invite_auth[auth_header] = (
-                    challenge,
-                    auth_value,
-                    1,
-                )
-                raw = self._build_pending_invite()
-                transport_error = await prepare_request_transport()
-                if transport_error is not None:
-                    return transport_error
-                sip.mark_sip_event(self, "INVITE")
-                try:
-                    await self._send_raw(raw, remote_host, int(remote_sip_port))
-                except (ConnectionError, OSError, RuntimeError) as err:
-                    return self._transport_failure(err, target, remote_host, remote_sip_port)
-                transaction = SipClientTransaction(
-                    transport=self.signaling_transport, timeout=timeout, t1=SIP_T1, t2=SIP_T2,
-                )
-                self._invite_transaction = transaction
-                received_provisional = False
+                error = await self._retry_initial_authentication(exchange, msg, addr, auth_challenges)
+                if error is not None:
+                    return error
+                transaction = self._new_initial_transaction(timeout)
                 self._received_provisional = False
                 self._reliable_rseq.clear()
                 continue
             if msg.status_code and msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 try:
-                    retry_raw = await self._retry_invite_after(
-                        msg,
-                        remote_host=remote_host,
-                        remote_sip_port=int(remote_sip_port),
-                    )
+                    retry = await self._retry_invite_after(msg, remote_host=exchange.host, remote_sip_port=exchange.port)
                 except (ConnectionError, OSError, RuntimeError) as err:
-                    return self._transport_failure(
-                        err, target, remote_host, remote_sip_port
-                    )
-                if retry_raw is not None:
-                    raw = retry_raw
+                    return self._transport_failure(err, exchange.target, exchange.host, exchange.port)
+                if retry is not None:
+                    exchange.request = retry
                     transaction.restart_retransmissions()
-                    received_provisional = False
                     self._reliable_rseq.clear()
                     continue
                 self._invite_transaction_active = False
