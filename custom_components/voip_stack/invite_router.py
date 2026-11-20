@@ -29,9 +29,7 @@ from .const import (
     TRUNK_INBOUND_MODE_DTMF,
 )
 from .endpoint_lifecycle import call_registry as _call_registry
-from .endpoint_session import LegPhase
 from .endpoint_routing import (
-    peer_for_target as _peer_for_target,
     roster_from_peers as _roster_from_peers,
 )
 from .inbound_routing.automation import (
@@ -50,7 +48,6 @@ from .inbound_routing.targets import (
     validate_target_endpoint,
 )
 from .inbound_routing.trunk import prepare_trunk_preanswer
-from .pbx_routing import roster_entry_for_target as _roster_entry_for_target
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteAction
 from .pbx_trace import trace_call
@@ -113,11 +110,6 @@ async def route_invite(
     _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
     peers = await _async_build_peer_snapshot(hass)
     caller_identity = invite.routing_caller
-    caller_peer = _peer_for_target(caller_identity, peers)
-    if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
-        caller_peer = None
-    # The listener selected audio from this INVITE and the local backend.
-    # Discovery identifies the caller here; it cannot renegotiate that audio.
     application = _call_registry(hass).component("sip_application")
     gruu = dict(invite.request_uri.params).get("gr")
     local_instance = application is not None and gruu and gruu == application.gruu_id
@@ -137,46 +129,22 @@ async def route_invite(
         invite.source_port,
         invite.signaling_transport,
     )
-    caller_roster_entry = _roster_entry_for_target(caller_identity, roster_entries)
-    caller_is_known_roster_endpoint = bool(
-        caller_roster_entry is not None
-        and caller_roster_entry.address
-        and str(caller_roster_entry.address) == str(invite.source_host)
-    )
     trunk_invite = _is_trunk_invite(invite)
     trunk_direct_preprocessed = False
     direct_fallback_target = ""
-    local_ha_origin = bool(
-        _is_ha_target(caller_identity)
-        and invite.source_host in {local_ip, "127.0.0.1", "::1"}
-    )
-    caller_is_trusted_endpoint = bool(
-        registered_source
-        or caller_peer is not None
-        or caller_is_known_roster_endpoint
-        or trunk_invite
-        or local_ha_origin
-    )
     registry = _call_registry(hass)
     endpoint_registry = endpoint_directory(hass)
-    source_endpoint_id = str(
-        ((caller_roster_entry.metadata or {}).get("endpoint_id"))
-        if caller_roster_entry is not None
-        else ""
-    ).strip()
-    identified_source = source_endpoint_id if not trunk_invite and (
-        registered_source or caller_peer is not None or caller_is_known_roster_endpoint
-    ) else ""
-    # Directory names describe a caller; only the verified ingress owns a phone.
-    source_endpoint_id = identified_source
-    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
+    source_endpoint_id = "" if trunk_invite else invite.identified_source_endpoint_id
+    source_endpoint = endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
+    if not trunk_invite and source_endpoint is None:
+        return SipInviteResult(403, "Forbidden", decline_reason="unauthorized_caller")
     if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
         from .queue_agent import route_queue_agent_call
         return await route_queue_agent_call(runtime, invite, registry,
-                                            source_endpoint if identified_source and not trunk_invite else None)
+                                            source_endpoint)
     from .esphome_origination import apply_correlated_invite, CorrelationError
     try:
-        requested_trunk = apply_correlated_invite(registry, invite, identified_source)
+        requested_trunk = apply_correlated_invite(registry, invite, source_endpoint_id)
     except CorrelationError as err:
         return SipInviteResult(err.status, "Forbidden" if err.status == 403 else "Call/Transaction Does Not Exist",
                               decline_reason=err.reason)
@@ -185,20 +153,6 @@ async def route_invite(
     decision = _inbound_route_decision(invite, peers, roster_entries)
     if getattr(decision, "trunk_id", ""):
         invite = replace(invite, outbound_trunk_id=decision.trunk_id)
-    if not caller_is_trusted_endpoint and decision.action is RouteAction.TRUNK:
-        _LOGGER.warning(
-            "SIP unauthenticated trunk route rejected caller=%s source=%s:%s target=%s",
-            caller_identity or "unknown",
-            invite.source_host,
-            invite.source_port,
-            invite.routing_target,
-        )
-        return SipInviteResult(
-            403,
-            "Forbidden",
-            to_tag="",
-            decline_reason="unauthenticated_trunk",
-        )
     if trunk_invite:
         trunk_cfg = _get_inbound_trunk_config(hass)
         dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
@@ -221,30 +175,6 @@ async def route_invite(
                 )
                 decision = _inbound_route_decision(fallback_invite, peers, roster_entries)
             trunk_direct_preprocessed = True
-    local_client = registry.sip_client_for(invite.call_id)
-    local_session = registry.get_session(invite.call_id)
-    if (not trunk_invite and local_client is not None and local_session is not None
-            and local_session.live and not local_session.metadata.get("inbound_trunk_id")
-            and (decision.action.is_local_application
-                 or decision.action in {RouteAction.ANSWER_HA, RouteAction.GROUP})):
-        source_id = str(local_session.metadata.get("source_endpoint_id") or "")
-        endpoint = endpoint_registry.get(source_id) if source_id else None
-        leg = local_session.legs.get(invite.call_id)
-        # The client leg and phone claim belong to the current session
-        # generation. A matching Call-ID or From name grants no authority.
-        if (endpoint is not None and endpoint.supports_ha_client
-                and endpoint.active_call_id == local_session.call_id
-                and local_session.endpoint_claims.get(source_id) == "source"
-                and leg is not None and leg.dialog is local_client and leg.role == "ha_softphone"
-                and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
-                and registry.get_session(local_session.call_id, generation=local_session.generation) is local_session
-                and local_client.matches_local_invite_source(invite,
-                    listener_hosts={local_ip, "127.0.0.1", "::1"}, listener_port=int(runtime.config["sip_port"]))):
-            identified_source = source_id
-    source_endpoint_id = identified_source
-    source_endpoint = endpoint_registry.get(identified_source) if identified_source else None
-    if invite.identified_source_endpoint_id != identified_source:
-        invite = replace(invite, identified_source_endpoint_id=identified_source)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
 
@@ -357,7 +287,7 @@ async def route_invite(
         decision=decision,
         registered_source=registered_source,
         native_override=native_override,
-        caller_is_trusted_endpoint=caller_is_trusted_endpoint,
+        caller_is_trusted_endpoint=bool(source_endpoint or trunk_invite),
         automation_routing_enabled=native_override or bool(
             _get_inbound_trunk_config(hass).get(
                 CONF_AUTOMATION_ROUTING_ENABLED,

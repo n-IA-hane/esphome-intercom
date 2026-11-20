@@ -15,6 +15,7 @@ from .sip_listener import (
     InfoHandler,
     ApplicationRequestRouter,
     InviteHandler,
+    InviteAuthorizer,
     OfferlessInviteHandler,
     MediaUpdateHandler,
     RequestHandler,
@@ -136,6 +137,7 @@ class SipEndpointManager:
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
         invite_identity_resolver=None,
+        invite_authorizer: InviteAuthorizer | None = None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -161,6 +163,7 @@ class SipEndpointManager:
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
         self.invite_identity_resolver = invite_identity_resolver
+        self.invite_authorizer = invite_authorizer
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -232,6 +235,7 @@ class SipEndpointManager:
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
                     invite_identity_resolver=self.invite_identity_resolver,
+                    invite_authorizer=self.invite_authorizer,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -259,6 +263,7 @@ class SipEndpointManager:
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
                     invite_identity_resolver=self.invite_identity_resolver,
+                    invite_authorizer=self.invite_authorizer,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,

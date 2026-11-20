@@ -5,11 +5,35 @@ registration or as a static trunk authorized by source IP. ESP devices can keep
 using SIP through HA. Coordinated preview firmware can also configure
 independent registered accounts for another PBX; those accounts are separate
 from HA's trunk settings. See [ESP registration](ESP_REGISTRATION.md) for the
-required firmware channel. Static ESP peers do not require REGISTER.
+required firmware channel.
 
 Each trunk has its own connection, credentials and incoming routing settings.
 Disabled trunks do not register or accept new external calls. Local calls work
 without any trunk configured.
+
+## Who can call Home Assistant?
+
+A handset or managed ESP with a VoIP Stack SIP account uses its existing login
+and password. When the initial INVITE needs credentials, HA responds with
+**401 Unauthorized** and the phone resends it with SIP Digest credentials. Only the authenticated call
+rings or enters a PBX service. This applies to calls that send their audio or
+video offer later, too.
+
+To accept incoming calls from a local device that cannot use a SIP account,
+add a [static trunk](#static-trunk-without-register) for that device. For
+example, choose **Add SIP trunk**, clear **Register the trunk**, set **Trunk
+server** to the door station's address and select its **Trunk SIP transport**.
+In **Allowed incoming IP addresses**, enter the door station's single IP,
+such as `192.0.2.45/32`. Choose its **Incoming call handling** and **Fallback
+destination**. Use an IPv6 `/128` for one IPv6 device, or a restricted subnet
+only when all its signaling peers should share that trunk's routing policy.
+This works with a local device without a provider subscription. The first
+trunk added also becomes the outgoing default; check the default when adding
+a provider later.
+
+A directory contact remains a destination you can dial. Its address or
+display name does not authorize incoming calls. Existing configured trunks
+continue to use their own source and routing settings.
 
 ## Which phones may use the trunk?
 

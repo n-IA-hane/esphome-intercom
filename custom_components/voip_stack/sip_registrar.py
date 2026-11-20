@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict, field, replace
 from enum import StrEnum
+import hashlib
 import hmac
 import logging
 import math
@@ -715,16 +716,16 @@ class SipRegistrar:
                 authorization_header=request.header("Authorization"),
                 username=account.username,
                 password=account.password,
-                method="REGISTER",
+                method=request.method,
                 uri=auth_uri,
                 realm=REALM,
                 nonce=nonce,
                 body=request.body,
             )
-        except ValueError:
+        except (TypeError, ValueError):
             return _AuthorizationStatus.INVALID
         use_key = (nonce, account.username.casefold(), cnonce)
-        fingerprint = self._register_fingerprint(request, addr, transport)
+        fingerprint = self._register_fingerprint(request, addr, transport) if request.method == "REGISTER" else ()
         previous = self.nonce_uses.get(use_key)
         if previous is not None:
             previous_count, previous_fingerprint = previous
@@ -733,17 +734,42 @@ class SipRegistrar:
             if nonce_count == previous_count:
                 return (
                     _AuthorizationStatus.VALID
-                    if hmac.compare_digest(
-                        repr(fingerprint),
-                        repr(previous_fingerprint),
-                    )
+                    if request.method == "REGISTER" and fingerprint == previous_fingerprint
                     else _AuthorizationStatus.STALE
                 )
-        if use_key not in self.nonce_uses:
-            while len(self.nonce_uses) >= MAX_NONCE_USE_RECORDS:
-                self.nonce_uses.pop(next(iter(self.nonce_uses)))
+        if use_key not in self.nonce_uses and len(self.nonce_uses) >= MAX_NONCE_USE_RECORDS:
+            # Forget a counter only when its nonce is no longer usable.
+            oldest_nonce = next(iter(self.nonce_uses))[0]
+            self.nonces.pop(oldest_nonce, None)
+            self._prune_nonces()
+            if nonce == oldest_nonce:
+                return _AuthorizationStatus.STALE
         self.nonce_uses[use_key] = (nonce_count, fingerprint)
         return _AuthorizationStatus.VALID
+
+    def authorize_invite(self, request: sip.SipMessage, addr: tuple[str, int],
+                         transport: str) -> tuple[SipAccount | None, str, str]:
+        """Authenticate an initial INVITE independently of REGISTER bindings."""
+        header = request.header("Authorization")
+        params = parse_digest_challenge(header)
+        account = self.accounts.get(params.get("username", "").casefold())
+        status = _AuthorizationStatus.INVALID
+        if (self.enabled and account is not None and account.enabled and header.lower().startswith("digest ")
+                and len(request.header_values("Authorization")) == 1):
+            status = self._check_authorization(request, account, addr, transport)
+            if status is _AuthorizationStatus.VALID:
+                return account, "", ""
+        source = f"{transport.upper()}:{addr[0]}"
+        stale = status is _AuthorizationStatus.STALE
+        nonce, challenge = self._challenge(
+            source, stale=stale, force_new=stale and self.source_nonces.get(source) == params.get("nonce"),
+        )
+        # A stateless rejection has a repeatable To tag and retains no INVITE,
+        # dialog, SDP, media ports or retransmission task (RFC 3261, 8.2.7).
+        transaction = (request.header("Call-ID"), request.header("CSeq"), request.header("Via"),
+                       request.header("From"), request.header("To"))
+        tag = hmac.new(nonce.encode(), repr(transaction).encode(), hashlib.sha256).hexdigest()[:24]
+        return None, challenge, tag
 
     def account_for_source(
         self,

@@ -21,6 +21,18 @@ from .test_automation_originate_ha import lab as lab, dial, tts_fixture
 pytestmark = pytest.mark.ha
 
 
+def sip_test_account(lab, endpoint_id):
+    """Give this specific fixture phone credentials for the ordinary INVITE challenge."""
+    from custom_components.voip_stack.sip_registrar import SipAccount
+
+    phone = lab.runtime.endpoints.require(endpoint_id)
+    registrar = lab.calls.component("registrar")
+    account = SipAccount(phone.username, phone.name, "isolated-test-only")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), account])
+    return account
+
+
 @pytest.fixture
 async def trunks(lab, monkeypatch, request):
     full_runtime = bool(getattr(request, "param", False))
@@ -225,11 +237,13 @@ async def test_sip_phone_uses_its_line_preference_through_real_ha_listener_and_d
         availability="available", policy=PhonePolicy(outbound_trunk_id="work"),
     ))
     lab.roster.append(RosterEntry("source", address="127.0.0.2", metadata={"endpoint_id": "source"}))
+    account = sip_test_account(lab, "source")
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
     client = SipCallClient(local_ip="127.0.0.2", local_name="Source", local_uri_user="source",
                            local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
+                           username=account.username, password=account.password,
                            supported_formats=[AudioFormat(sample_rate=16000, frame_ms=20)])
     # Bind the independent phone to another loopback IP, outside the providers'
     # trusted source address. Signaling and all call state use the real client.
@@ -298,6 +312,7 @@ async def test_sip_phone_uses_its_line_preference_through_real_ha_listener_and_d
             await client.close()
             client = SipCallClient(local_ip="127.0.0.2", local_name="Source", local_uri_user="source",
                 local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
+                username=account.username, password=account.password,
                 supported_formats=[AudioFormat(sample_rate=16000, frame_ms=20)])
             client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
                 lambda: SipDatagramQueueProtocol(client.queue), local_addr=("127.0.0.2", 0),

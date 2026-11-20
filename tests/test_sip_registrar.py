@@ -13,6 +13,44 @@ from .voip_phase1_support import (
 
 
 class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
+    def test_new_invite_admission_rejects_reused_or_expired_credentials(self):
+        from dataclasses import replace
+
+        account = sip_registrar.SipAccount("phone", "Phone", "test-only")
+        registrar = sip_registrar.SipRegistrar(enabled=True, accounts=[account],
+            local_ip="127.0.0.1", local_sip_port=5060)
+        addr = ("127.0.0.1", 5062)
+        request = sip.SipMessage(method="INVITE", uri="sip:desk@127.0.0.1",
+            headers=(("From", "<sip:phone@127.0.0.1>;tag=a"), ("To", "<sip:desk@127.0.0.1>"),
+                     ("Call-ID", "admission"), ("CSeq", "1 INVITE")))
+        _, challenge, _ = registrar.authorize_invite(request, addr, "UDP")
+
+        def signed(password, count=1, method="INVITE"):
+            authorization = sip_auth.build_digest_authorization(challenge_header=challenge,
+                username=account.username, password=password, method=method, uri=request.uri,
+                nonce_count=count, cnonce="caller")
+            return replace(request, headers=(*request.headers, ("Authorization", authorization)))
+
+        for wrong in (signed("wrong"), signed(account.password, method="REGISTER")):
+            principal, retry, _ = registrar.authorize_invite(wrong, addr, "UDP")
+            self.assertIsNone(principal)
+            self.assertNotIn("stale=true", retry)
+        accepted = signed(account.password)
+        self.assertIs(registrar.authorize_invite(accepted, addr, "UDP")[0], account)
+        # The listener serves live retransmissions from its own transaction.
+        # A fresh application admission cannot spend the same nonce-count twice.
+        self.assertIsNone(registrar.authorize_invite(accepted, addr, "UDP")[0])
+        altered = replace(accepted, body=b"different offer")
+        principal, retry, _ = registrar.authorize_invite(altered, addr, "UDP")
+        self.assertIsNone(principal)
+        self.assertIn("stale=true", retry)
+        nonce = sip_auth.parse_digest_challenge(challenge)["nonce"]
+        registrar.nonces[nonce] = 0
+        principal, retry, _ = registrar.authorize_invite(signed(account.password, count=2), addr, "UDP")
+        self.assertIsNone(principal)
+        self.assertIn("stale=true", retry)
+        self.assertFalse(registrar.registrations)
+
     def test_shared_flow_identity_requires_one_enabled_registered_account(self) -> None:
         from dataclasses import replace
 
@@ -145,6 +183,29 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         for _ in range(sip_registrar.MAX_ACTIVE_NONCES + 20):
             registrar._challenge()
         self.assertEqual(len(registrar.nonces), sip_registrar.MAX_ACTIVE_NONCES)
+
+    def test_replay_cache_retires_the_nonce_with_its_counter(self) -> None:
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        account = sip_registrar.SipAccount("phone", "Phone", "test-only")
+        registrar = sip_registrar.SipRegistrar(enabled=True, accounts=[account],
+            local_ip="127.0.0.1", local_sip_port=5060)
+        request = sip.SipMessage(method="INVITE", uri="sip:desk@127.0.0.1")
+        signed = []
+        with patch.object(sip_registrar, "MAX_NONCE_USE_RECORDS", 1):
+            for address in (("127.0.0.2", 5060), ("127.0.0.3", 5060)):
+                _, challenge, _ = registrar.authorize_invite(request, address, "UDP")
+                header = sip_auth.build_digest_authorization(challenge_header=challenge,
+                    username=account.username, password=account.password, method="INVITE", uri=request.uri)
+                call = replace(request, headers=(("Authorization", header),))
+                self.assertIs(registrar.authorize_invite(call, address, "UDP")[0], account)
+                signed.append((call, address))
+            old, old_address = signed[0]
+            principal, challenge, _ = registrar.authorize_invite(old, old_address, "UDP")
+            self.assertIsNone(principal)
+            self.assertIn("stale=true", challenge)
+            self.assertEqual(len(registrar.nonce_uses), 1)
 
     def test_register_aor_comes_from_to_not_request_uri_or_from(self) -> None:
         request = sip.parse_message(

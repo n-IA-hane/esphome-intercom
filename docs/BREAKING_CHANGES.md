@@ -4,6 +4,21 @@ Follow the entries between your installed version and the version you are
 upgrading to. Each section describes the migration for that release.
 For a fresh installation, use the [deployment guide](DEPLOYMENT_GUIDE.md).
 
+## Incoming SIP calls require an authorized source
+
+HA now accepts new SIP calls from authenticated SIP accounts and explicitly
+configured trunks. Unknown callers cannot start a call or enter a PBX service.
+If a door station or other SIP device previously called HA just because
+its address appeared in the directory, configure its incoming access before
+updating. Use a VoIP Stack SIP account on that device, or add a static SIP
+trunk restricted to its source IP and transport and choose its incoming
+destination. A saved contact still works for calls from HA to that device.
+
+Handsets and managed ESPs with configured VoIP Stack SIP credentials answer
+the normal 401 challenge on new calls. Their account IDs, logins and passwords
+are preserved. Existing provider trunks retain their incoming routing.
+See [incoming SIP access](SIP_TRUNK.md#who-can-call-home-assistant).
+
 ## Updating from 2026.11.0 to the 2026.12 preview
 
 1. **Home Assistant only.** On HA 2026.11.1 or newer, make a Home Assistant

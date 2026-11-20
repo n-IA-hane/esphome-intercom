@@ -7,7 +7,7 @@ import struct
 
 import pytest
 
-from .test_trunk_calls_ha import lab as lab, trunks as trunks
+from .test_trunk_calls_ha import lab as lab, sip_test_account, trunks as trunks
 
 pytestmark = pytest.mark.ha
 
@@ -29,6 +29,7 @@ async def test_programmed_contact_alias_uses_current_route_permissions_and_duple
     state.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source", name="Source",
         username="source", kind=EndpointKind.SIP_ACCOUNT, availability="available",
         policy=PhonePolicy(outbound_trunk_id="work")))
+    account = sip_test_account(state, "source")
     state.roster.append(RosterEntry("source", address="127.0.0.2", metadata={"endpoint_id": "source"}))
     entry = RosterEntry(id="customer", name="Customer", number="003905512345",
         metadata={"endpoint_id": "contact:customer", "endpoint_kind": "contact"})
@@ -45,6 +46,7 @@ async def test_programmed_contact_alias_uses_current_route_permissions_and_duple
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
     client = SipCallClient(local_ip="127.0.0.2", local_name="Source", local_uri_user="source",
+        username=account.username, password=account.password,
         local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
         supported_formats=[AudioFormat(sample_rate=16000, frame_ms=20)])
     client.transport, client.protocol = await state.hass.loop.create_datagram_endpoint(

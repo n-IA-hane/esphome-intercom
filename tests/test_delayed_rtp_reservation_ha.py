@@ -11,7 +11,7 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
-from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
+from tests.test_trunk_calls_ha import lab as lab, sip_test_account, trunks as trunks
 from tests.test_automation_call import application as application
 
 pytestmark = pytest.mark.ha
@@ -40,13 +40,33 @@ async def test_initial_delayed_offer_is_bound_before_sdp_without_decoders(trunks
         original_init(decoder, *args, **kwargs)
 
     monkeypatch.setattr(RtpAudioReceiver, "__init__", initialize)
-    request = (f"INVITE sip:bedroom0@127.0.0.1:{lab.runtime.transport_config['sip_port']} SIP/2.0\r\n"
-        f"Via: SIP/2.0/UDP 127.0.0.2:{signal.getsockname()[1]};branch=z9hG4bKdelayed-reservation\r\n"
-        "From: <sip:caller@127.0.0.2>;tag=caller\r\nTo: <sip:bedroom0@127.0.0.1>\r\n"
-        f"Call-ID: {call_id}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\n"
-        f"Contact: <sip:caller@127.0.0.2:{signal.getsockname()[1]}>\r\nContent-Length: 0\r\n\r\n").encode()
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+
+    account = sip_test_account(lab, "sip:bedroom1")
+    target = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    uri = f"sip:bedroom0@127.0.0.1:{target[1]}"
+
+    def request(method, sequence, *, to="", authorization=""):
+        headers = [
+            ("Via", f"SIP/2.0/UDP 127.0.0.2:{signal.getsockname()[1]};branch=z9hG4bKdelayed{sequence}"),
+            ("From", f"<sip:{account.username}@127.0.0.2>;tag=caller"),
+            ("To", to or "<sip:bedroom0@127.0.0.1>"), ("Call-ID", call_id),
+            ("CSeq", f"{sequence} {method}"), ("Max-Forwards", "70"),
+            ("Contact", f"<sip:{account.username}@127.0.0.2:{signal.getsockname()[1]}>"),
+        ]
+        if authorization:
+            headers.append(("Authorization", authorization))
+        return sip.build_request(method, uri, headers)
+
     try:
-        await lab.hass.loop.sock_sendto(signal, request, ("127.0.0.1", lab.runtime.transport_config["sip_port"]))
+        await lab.hass.loop.sock_sendto(signal, request("INVITE", 1), target)
+        async with asyncio.timeout(3):
+            denied = sip.parse_message(await lab.hass.loop.sock_recv(signal, 16384))
+        assert denied.status_code == 401 and not decoders and not lab.runtime.rtp_port_pool.get("used")
+        await lab.hass.loop.sock_sendto(signal, request("ACK", 1, to=denied.header("To")), target)
+        digest = build_digest_authorization(challenge_header=denied.header("WWW-Authenticate"),
+            username=account.username, password=account.password, method="INVITE", uri=uri)
+        await lab.hass.loop.sock_sendto(signal, request("INVITE", 2, authorization=digest), target)
         async with asyncio.timeout(3):
             while True:
                 response = sip.parse_message(await lab.hass.loop.sock_recv(signal, 16384))
@@ -334,7 +354,9 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.2", 0))
     media.setblocking(False)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Delayed reservation caller",
+        local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=media.getsockname()[1],
         supported_send_formats=[AudioFormat(16000, frame_ms=20)],
         supported_recv_formats=[AudioFormat(16000, frame_ms=20)],
@@ -424,7 +446,9 @@ async def test_delayed_bind_failure_rejects_before_sdp_and_releases_all(trunks, 
         return sock
 
     monkeypatch.setattr(media_ports, "bind_sip_audio_socket", bind)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Bind failure caller",
+        local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=40000)
     protocol = SipDatagramQueueProtocol(caller.queue)
     original = protocol.datagram_received
@@ -442,9 +466,10 @@ async def test_delayed_bind_failure_rejects_before_sdp_and_releases_all(trunks, 
         await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], delayed_offer=True, timeout=3)
         assert len(attempts) == failed_bind
-        assert final_responses and all(response.status_code == 480 and not response.body
+        assert final_responses[0].status_code == 401 and len(final_responses) >= 2
+        assert all(response.status_code == 480 and not response.body
             and response.header("X-Voip-Stack-Decline-Reason") == "transport_unreachable"
-            for response in final_responses)
+            for response in final_responses[1:])
         assert all(sock.fileno() < 0 for sock in opened)
         assert not lab.phones[0].invites
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")

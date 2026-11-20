@@ -180,6 +180,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         SipInitialInvite,
         SipInvite,
         SipInviteResult,
+        SipRequestResult,
         UasDelayedOfferPlan,
     )
     from .sip_registrar import SipRegistrar
@@ -287,6 +288,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     def _classified_trunk_invite(invite):
         from .runtime_data import runtime_data, sip_trunks
 
+        if invite.identified_source_endpoint_id:
+            return invite
         runtime = runtime_data(hass)
         if runtime is not None and runtime.trunk_configs:
             return _classify_trunk_invite(invite, enabled=True, trunk=None, trunks=sip_trunks(hass))
@@ -297,6 +300,56 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             enabled=_trunk_enabled(trunk_cfg),
             trunk=trunk,
         )
+
+    def authorize_initial_invite(request, invite, addr, transport):
+        """Bind admission to a configured trunk, owned local call or Digest account."""
+        from .core.sip import make_tag
+        from .core.sip_auth import parse_digest_challenge
+        from .endpoint_session import LegPhase
+        from .sip_registrar import REALM
+
+        try:
+            classified = _classified_trunk_invite(invite)
+        except ValueError:
+            classified = None
+        if classified is not None and invite.received_via_trunk and classified.received_via_trunk:
+            return classified
+
+        registry = _call_registry(hass)
+        local_client = registry.sip_client_for(invite.call_id)
+        session = registry.get_session(invite.call_id)
+        if local_client is not None and session is not None and session.live and not session.metadata.get("inbound_trunk_id"):
+            identity = str(session.metadata.get("source_endpoint_id") or "")
+            leg = session.legs.get(invite.call_id)
+            source = endpoint_directory(hass).get(identity) if identity else None
+            if (source is not None and source.supports_ha_client and source.active_call_id == session.call_id
+                    and session.endpoint_claims.get(identity) == "source"
+                    and leg is not None and leg.dialog is local_client and leg.role == "ha_softphone"
+                    and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                    and registry.get_session(session.call_id, generation=session.generation) is session
+                    and local_client.matches_local_invite_source(invite, listener_hosts={local_ip, "127.0.0.1", "::1"},
+                                                                listener_port=int(cfg["sip_port"]))):
+                return replace(invite, identified_source_endpoint_id=identity,
+                               caller_route=source.username or source.name, caller=source.name)
+
+        if classified is not None and classified.received_via_trunk:
+            if parse_digest_challenge(request.header("Authorization")).get("realm") != REALM:
+                return classified
+        elif classified is None:
+            # A shared signaling address cannot choose a provider. An account
+            # on that address can still prove its own identity using Digest.
+            claimed = registrar.accounts.get(invite.caller_uri.user.casefold()) if invite.caller_uri else None
+            if not registrar.enabled or claimed is None or not claimed.enabled:
+                return SipRequestResult(403, "Ambiguous trunk source", to_tag=make_tag())
+        account, challenge, tag = registrar.authorize_invite(request, addr, transport)
+        if account is None:
+            return SipRequestResult(401, "Unauthorized", headers=(("WWW-Authenticate", challenge),), to_tag=tag)
+        source = endpoint_directory(hass).by_username(account.username)
+        if (source is None or invite.caller_uri is None
+                or invite.caller_uri.user.casefold() != account.username.casefold()):
+            return SipRequestResult(403, "Forbidden", to_tag=make_tag())
+        return replace(invite, identified_source_endpoint_id=source.endpoint_id, caller_route=account.username,
+                       caller=source.name, caller_name=source.name, caller_number=account.username)
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         return _classified_trunk_invite(invite).received_via_trunk
@@ -437,10 +490,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         # alias before consulting the canonical phonebook dial plan.
         route_target = invite.routing_target
         target = _ha_peer_name(hass) if _is_ha_target(route_target) else route_target
-        source = _logical_endpoint_for_member(invite.routing_caller, peers, entries)
         return EndpointRouteResolver(
             hass, local_ip, int(cfg["sip_port"]),
-            source_endpoint_id=source.endpoint_id if source is not None and not invite.received_via_trunk else "",
+            source_endpoint_id=invite.identified_source_endpoint_id,
             trunk_id=invite.outbound_trunk_id,
         ).route(target, entries)
 
@@ -920,6 +972,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_offerless_invite=_on_offerless_invite,
         codec_policy_resolver=codec_policy_for_invite,
         invite_identity_resolver=identity_for_invite,
+        invite_authorizer=authorize_initial_invite,
         on_terminated=_on_terminated,
         on_register=_on_register,
         on_info=_on_info,

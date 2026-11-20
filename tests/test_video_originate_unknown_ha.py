@@ -15,6 +15,19 @@ from tests.test_automation_originate_ha import lab as lab
 pytestmark = pytest.mark.ha
 
 
+def source_account(lab, username, display_name):
+    """Give the real SIP caller credentials, without granting trust by address."""
+    from .test_trunk_calls_ha import sip_test_account
+
+    identity = f"sip:{username}"
+    if lab.runtime.endpoints.get(identity) is None:
+        lab.runtime.endpoints.register(PhoneEndpoint(
+            endpoint_id=identity, username=username, name=display_name,
+            kind=EndpointKind.SIP_ACCOUNT, capabilities=frozenset({"audio", "dtmf"}),
+        ))
+    return sip_test_account(lab, identity)
+
+
 @pytest.mark.parametrize("policy", ["unknown_compliant", "known_audio_only", "unknown_bad_profile"])
 async def test_public_unknown_video_negotiates_without_relaxing_profile_validation(lab, monkeypatch, policy):
     lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: False})
@@ -155,6 +168,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
             **lab.roster[2].metadata, "capabilities": ["audio", "dtmf"],
         })
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
+    account = source_account(lab, "plain-source", "Standard source")
     first, destination = lab.phones
     first.auto_answer = False
     sockets = []
@@ -184,6 +198,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     monkeypatch.setattr(destination, "answer", answer)
     source_format = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG") if source_codec == "JPEG" else sdp.CONSTRAINED_BASELINE_H264_FORMAT
     caller = SipCallClient(local_ip="127.0.0.2", local_name="plain-source", local_sip_port=0,
+        local_uri_user=account.username, username=account.username, password=account.password,
         local_rtp_port=source_audio.getsockname()[1], supported_formats=(AudioFormat(16000, frame_ms=20),),
         local_video_rtp_port=source_video.getsockname()[1], video_formats=(source_format,), video_direction="sendonly")
     call_id = ""
@@ -339,7 +354,12 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     sink_audio = media_socket('127.0.0.3')
     sink_video = media_socket('127.0.0.3')
     jpeg = sdp.RtpVideoFormat(payload_type=26, encoding='JPEG')
+    lab.runtime.endpoints.register(PhoneEndpoint(
+        endpoint_id='sip:caller', username='caller', name='Caller', kind=EndpointKind.SIP_ACCOUNT,
+        capabilities=frozenset({'audio', 'dtmf'}),
+    ))
     caller = SipCallClient(local_ip='127.0.0.2', local_name='caller', local_sip_port=0,
+        local_uri_user='caller', username='caller', password='fixture-only',
         local_rtp_port=source_audio.getsockname()[1],
         supported_send_formats=[AudioFormat(16000, frame_ms=10)],
         supported_recv_formats=[AudioFormat(48000, frame_ms=10)],

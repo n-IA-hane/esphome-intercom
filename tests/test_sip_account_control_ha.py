@@ -21,6 +21,171 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("transport", ["UDP", "TCP"])
+@pytest.mark.parametrize("offered", [False, True])
+async def test_initial_invite_challenges_before_session_or_media(trunks, transport, offered):
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from .test_inbound_did_identity import wire_invite
+    from .test_mwi_unregister_ha import MwiPeer, TcpMwiPeer
+
+    lab = trunks
+    address = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    # The fixture's two registered UDP trunks share 127.0.0.1.
+    source_host = "127.0.0.24" if transport == "UDP" else "127.0.0.1"
+    contact = RosterEntry("001111", address=source_host)
+    lab.roster.append(contact)
+    lab.runtime.directory = PhoneDirectory(lab.roster)
+    if transport == "UDP":
+        connection, peer = await asyncio.get_running_loop().create_datagram_endpoint(
+            MwiPeer, local_addr=(source_host, 0))
+    else:
+        connection = peer = await TcpMwiPeer().connect(address)
+    try:
+        request = sip.parse_message(wire_invite(body=offered))
+        via = f"SIP/2.0/{transport} {source_host}:{peer.port};branch=z9hG4bK-admission;rport"
+        headers = [(k, via if k == "Via" else v) for k, v in request.headers if k != "Content-Length"]
+        invite = sip.build_request("INVITE", request.uri, headers, request.body)
+        first = await peer.exchange(invite, address)
+        repeated = await peer.exchange(invite, address)
+        assert first.status_code == repeated.status_code == 401
+        assert first.header("WWW-Authenticate") == repeated.header("WWW-Authenticate")
+        assert first.header("WWW-Authenticate").startswith("Digest ")
+        assert sip.extract_tag(first.header("To")) == sip.extract_tag(repeated.header("To")) != ""
+        for method in ("ACK", "CANCEL"):
+            control_headers = [(k, "1 " + method if k == "CSeq" else v) for k, v in headers
+                               if k != "Content-Type"]
+            if method == "ACK":
+                control_headers = [(k, first.header("To") if k == "To" else v) for k, v in control_headers]
+            peer.transport.sendto(sip.build_request(method, request.uri, control_headers), address)
+        cancelled, _ = await peer.receive()
+        assert cancelled.status_code == 481 and cancelled.header("CSeq") == "1 CANCEL"
+        assert not lab.calls.sessions and not lab.calls.endpoint_claims_snapshot()
+        assert not lab.calls.relays_snapshot() and not lab.runtime.rtp_port_pool.get("used")
+    finally:
+        connection.close()
+        if transport == "TCP":
+            await connection.wait_closed()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(trunks):
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from .test_inbound_did_identity import wire_invite
+    from .test_mwi_unregister_ha import MwiPeer
+    from .test_trunk_calls_ha import sip_test_account
+
+    lab = trunks
+    address = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    connection, peer = await asyncio.get_running_loop().create_datagram_endpoint(
+        MwiPeer, local_addr=("127.0.0.1", 0))
+    try:
+        ambiguous = await peer.exchange(wire_invite(body=False), address)
+        assert ambiguous.status_code == 403 and not lab.calls.sessions
+    finally:
+        connection.close()
+    account = sip_test_account(lab, "sip:bedroom1")
+    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    origin = SipCallClient(local_ip=address[0], local_name=account.display_name, local_uri_user=account.username,
+        local_sip_port=0, local_rtp_port=36022, supported_formats=[AudioFormat(16000, frame_ms=20)],
+        username=account.username, password=account.password)
+    try:
+        state = await origin.invite(target="bedroom0", remote_host=address[0], remote_sip_port=address[1], timeout=3)
+        if state == "ringing":
+            state = await origin.wait_for_final(timeout=3)
+        assert state == "in_call"
+        session = lab.calls.get_session(origin.dialog_ids.call_id)
+        assert session is not None and session.metadata["source_endpoint_id"] == "sip:bedroom1"
+        assert not session.metadata.get("inbound_trunk_id")
+        assert origin.bye()
+        await wait_until(lambda: not lab.calls.sessions)
+    finally:
+        await origin.close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_provider_contact_line_keeps_its_route_with_foreign_authorization(trunks):
+    from dataclasses import replace
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.runtime_data import sip_trunks
+    from .test_inbound_did_identity import wire_invite
+
+    lab = trunks
+    work = sip_trunks(lab.hass)["work"]
+    request = sip.parse_message(wire_invite(body=False))
+    request = replace(request, uri=request.uri + ";line=" + work.contact_line,
+        headers=(*request.headers, ("Authorization", 'Digest realm="provider.example", username="gateway"')))
+    listener = lab.calls.component("udp_listener").udp_server.endpoint
+    initial = listener._parse_initial_invite(request, ("127.0.0.1", 5060), authorize=True)
+    assert initial.trunk_id == "work" and initial.received_via_trunk
+    assert not initial.identified_source_endpoint_id
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
+async def test_authenticated_invite_retransmission_and_cancel_share_one_ringing_call(registered_phones, trunks):
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+    from .test_inbound_did_identity import wire_invite
+    from .test_mwi_unregister_ha import MwiPeer
+
+    lab = trunks
+    address = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    connection, peer = await asyncio.get_running_loop().create_datagram_endpoint(
+        MwiPeer, local_addr=("127.0.0.24", 0))
+    account = lab.calls.component("registrar").accounts["transfer_a"]
+    uri = f"sip:transfer_b@127.0.0.1:{address[1]}"
+    body = sip.parse_message(wire_invite()).body
+
+    def request(method, sequence, authorization="", to_tag=""):
+        headers = [
+            ("Via", f"SIP/2.0/UDP 127.0.0.24:{peer.port};branch=z9hG4bK-auth{sequence};rport"),
+            ("From", "<sip:transfer_a@127.0.0.1>;tag=caller"),
+            ("To", f"<{uri}>" + (f";tag={to_tag}" if to_tag else "")),
+            ("Call-ID", "authenticated-ringing"), ("CSeq", f"{sequence} {method}"),
+            ("Contact", f"<sip:transfer_a@127.0.0.24:{peer.port}>"),
+        ]
+        if authorization:
+            headers.append(("Authorization", authorization))
+        if method == "INVITE":
+            headers.append(("Content-Type", "application/sdp"))
+        return sip.build_request(method, uri, headers, body if method == "INVITE" else b"")
+
+    try:
+        challenge = await peer.exchange(request("INVITE", 1), address)
+        assert challenge.status_code == 401 and not lab.calls.sessions
+        peer.transport.sendto(request("ACK", 1, to_tag=sip.extract_tag(challenge.header("To"))), address)
+
+        def digest(password):
+            return build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+                username=account.username, password=password, method="INVITE", uri=uri)
+
+        denied = await peer.exchange(request("INVITE", 2, digest("incorrect")), address)
+        assert denied.status_code == 401 and not lab.calls.sessions
+        assert not lab.calls.endpoint_claims_snapshot() and not lab.runtime.rtp_port_pool.get("used")
+        peer.transport.sendto(request("ACK", 2, to_tag=sip.extract_tag(denied.header("To"))), address)
+        authorized = request("INVITE", 3, digest(account.password))
+        trying = await peer.exchange(authorized, address)
+        assert trying.status_code == 100
+        await asyncio.to_thread(registered_phones[1].wait_for, "Incoming call", 5)
+        ringing, _ = await peer.receive()
+        assert ringing.status_code == 180
+        duplicate = await peer.exchange(authorized, address)
+        assert duplicate.status_code == 180 and duplicate.header("To") == ringing.header("To")
+        assert list(lab.calls.sessions) == ["authenticated-ringing"]
+        peer.transport.sendto(request("CANCEL", 3), address)
+        finals = [response for response, _ in (await peer.receive(), await peer.receive())]
+        assert {(r.status_code, r.header("CSeq")) for r in finals} == {(200, "3 CANCEL"), (487, "3 INVITE")}
+        peer.transport.sendto(request("ACK", 3, to_tag=sip.extract_tag(ringing.header("To"))), address)
+        await wait_until(lambda: not lab.calls.sessions)
+        assert not lab.calls.endpoint_claims_snapshot() and not lab.calls.relays_snapshot()
+        assert not lab.runtime.rtp_port_pool.get("used")
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize(("label", "wire_user"), [
     ("Reception@Hotel", "Reception%40Hotel"),
     ("Caffè 20%@Casa", "Caff%C3%A8%2020%25%40Casa"),
