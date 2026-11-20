@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APPLICATION_MODULES = (
     "call_forwarder.py",
+    "forward_operation.py",
+    "forward_group.py",
     "ring_group_orchestrator.py",
     "softphone_answer.py",
     "trunk_inbound_router.py",

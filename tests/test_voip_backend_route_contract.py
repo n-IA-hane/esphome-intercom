@@ -111,7 +111,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_dtmf = TRUNK_DTMF.read_text()
         cls.trunk_routing = TRUNK_ROUTING.read_text()
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
-        cls.call_forwarder = CALL_FORWARDER.read_text()
+        cls.forward_admission = CALL_FORWARDER.read_text()
+        cls.forward_operation = CALL_FORWARDER.with_name("forward_operation.py").read_text()
+        cls.forward_group = CALL_FORWARDER.with_name("forward_group.py").read_text()
+        cls.call_forwarder = "\n".join((cls.forward_admission, cls.forward_operation, cls.forward_group))
         cls.group_candidates = GROUP_CANDIDATES.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.ring_group_fork = RING_GROUP_FORK.read_text()
@@ -147,7 +150,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_every_outbound_trunk_leg_uses_provider_identity_uri(self) -> None:
         self.assertIn("_trunk_identity_uri(trunk_cfg)", self.softphone_originate)
-        self.assertIn("_trunk_identity_uri(trunk_cfg)", self.call_forwarder)
+        self.assertIn("_trunk_identity_uri(trunk_cfg)", self.forward_operation)
         self.assertIn("local_identity_uri=policy.local_identity_uri", self.endpoint_dialing)
         self.assertIn("_trunk_identity_uri(trunk_config)", self.inbound_bridge)
 
@@ -206,43 +209,31 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("ha_softphone_presence_events", defer)
 
     def test_ha_phone_forward_hands_off_the_existing_sip_dialog(self) -> None:
-        forward = self.call_forwarder
-        worker = next(
-            node for node in ast.walk(ast.parse(forward))
-            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_perform_forward"
-        )
-        run = ast.get_source_segment(forward, worker)
-        reservation_start = run.index(
-            'reservation = (preanswered or {}).get("rtp_reservation")'
-        )
-        browser = next(
-            node for node in ast.walk(worker)
-            if isinstance(node, ast.If)
-            and ast.unparse(node.test) == "decision.action is RouteAction.ANSWER_HA"
-        )
-        browser_branch = ast.get_source_segment(forward, browser)
-        self.assertIn(browser_branch, run[:reservation_start])
-        self.assertIn("result = await _perform_forward()", forward)
-
-        self.assertIn("if decision.action is RouteAction.ANSWER_HA:", forward)
-        self.assertIn("runtime.route_resolver.logical_endpoint(", forward)
-        self.assertIn("cannot forward a call to itself", forward)
-        self.assertNotIn("target_browser_endpoint.offline_policy", forward)
+        # Browser, trunk and application HA suites also verify the call on the
+        # wire. The browser branch must retain the pending INVITE and avoid SIP
+        # resources even if a new destination handler is added to the dispatch.
+        methods = {node.name: node for node in ast.walk(ast.parse(self.forward_operation))
+                   if isinstance(node, ast.AsyncFunctionDef)}
+        dispatch = ast.get_source_segment(self.forward_operation, methods["_dispatch"])
+        browser = methods["_answer_browser"]
+        browser_branch = ast.get_source_segment(self.forward_operation, browser)
+        selection = next(node for node in ast.walk(methods["_dispatch"]) if isinstance(node, ast.If)
+                         and ast.unparse(node.test) == "decision.action is RouteAction.ANSWER_HA")
+        self.assertEqual([ast.unparse(node) for node in selection.body], ["return await self._answer_browser()"])
+        self.assertIn(ast.get_source_segment(self.forward_operation, selection),
+                      dispatch[:dispatch.index('get("rtp_reservation")')])
+        self.assertIn("await self._dispatch()", self.forward_operation)
+        self.assertIn("self.runtime.route_resolver.logical_endpoint(", self.forward_admission)
+        self.assertIn("cannot forward a call to itself", self.forward_admission)
+        self.assertNotIn("browser_endpoint.offline_policy", self.call_forwarder)
         self.assertIn("registry.claim_endpoint(", browser_branch)
         self.assertIn("registry.release_endpoint_claim(", browser_branch)
-        self.assertIn("runtime.defer_invite_to_softphone(", browser_branch)
         self.assertIn('last_sip_event="ROUTE_FORWARD"', browser_branch)
-        defer = next(
-            node for node in ast.walk(browser)
-            if isinstance(node, ast.Call)
-            and ast.unparse(node.func) == "runtime.defer_invite_to_softphone"
-        )
-        self.assertEqual(ast.unparse(defer.args[0]), "invite")
+        defer = next(node for node in ast.walk(browser) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute) and node.func.attr == "defer_invite_to_softphone")
+        self.assertEqual(ast.unparse(defer.args[0]), "self.invite")
         self.assertIsInstance(browser.body[-1], ast.Return)
-        self.assertEqual(
-            ast.dump(browser.body[-1].value),
-            ast.dump(ast.parse('TransferResult("ringing", destination)', mode="eval").body),
-        )
+        self.assertEqual(ast.unparse(browser.body[-1].value), "TransferResult('ringing', destination)")
         self.assertNotIn("RtpPortReservation.allocate", browser_branch)
         self.assertNotIn("SipCallClient(", browser_branch)
         self.assertNotIn("registry.pending_invites.pop", browser_branch)
@@ -482,9 +473,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("if route_bucket or pending", busy_guard)
 
     def test_forward_to_assist_releases_untransferred_video_media(self) -> None:
-        assist_branch = self.call_forwarder.split(
-            "if decision.action is RouteAction.ASSIST:", 1
-        )[1].split("bridge_to_trunk =", 1)[0]
+        method = next(node for node in ast.walk(ast.parse(self.forward_operation))
+                      if isinstance(node, ast.AsyncFunctionDef) and node.name == "_route_assist")
+        assist_branch = ast.get_source_segment(self.forward_operation, method)
         self.assertIn(
             "transferred_media = registry.take_media(call_id, provisional=True)",
             assist_branch,
@@ -1213,14 +1204,22 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registry.attach_media(invite.call_id, media)", ring_group)
 
     def test_initial_automation_group_selection_keeps_ha_members(self) -> None:
-        forward = self.call_forwarder
+        forward = self.forward_group
         candidates = self.group_candidates
         group_fork = self.ring_group_fork
         trunk_route = self.trunk_inbound_router
-        self.assertIn("initial_selection: bool = False", forward)
+        self.assertIn("initial_selection: bool = False", self.forward_admission)
         self.assertIn("async_prepare_group_candidates(", forward)
         self.assertIn("excluded_endpoint_ids", candidates)
-        self.assertIn("not initial_selection and application is None", forward)
+        exclusion = ast.parse(
+            "not self.operation.plan.initial_selection and self.operation.source.application is None "
+            "and self.operation.source.receiver_endpoint_id",
+            mode="eval",
+        ).body
+        self.assertTrue(any(
+            ast.dump(node) == ast.dump(exclusion)
+            for node in ast.walk(ast.parse(forward))
+        ))
         self.assertIn("browser_endpoint_can_ring(endpoint)", candidates)
         self.assertIn("browser_legs: list[BrowserLeg]", candidates)
         self.assertIn('role="group_candidate"', candidates)
@@ -1233,7 +1232,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('"answer",', forward)
         browser_answer = forward[
             forward.index('"answer",') : forward.index(
-                "call_artifacts.answer_commit = False",
+                "self.operation.artifacts.answer_commit = False",
                 forward.index('"answer",'),
             )
         ]
@@ -1248,11 +1247,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_initial_automation_can_select_the_default_ha_phone(self) -> None:
-        forward = self.call_forwarder
+        forward = self.forward_admission
         self.assertIn(
-            "not initial_selection\n"
-            "            and target_browser_endpoint is not None\n"
-            "            and target_browser_endpoint.endpoint_id == session_endpoint_id",
+            "not self.request.initial_selection\n"
+            "            and plan.browser_endpoint is not None\n"
+            "            and plan.browser_endpoint.endpoint_id == session_endpoint_id",
             forward,
         )
 
@@ -1671,8 +1670,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_preanswered_forward_failure_resumes_ha_ringing(self) -> None:
         forward = self.call_forwarder
         self.assertIn(
-            'or registry.resource_for(call_id, "preanswered") is not None',
-            forward,
+            'or self.registry.resource_for(call_id, "preanswered") is not None',
+            self.forward_admission,
         )
         self.assertIn("resume_callee=original_callee", forward)
         self.assertIn("async_abort_route(", forward)

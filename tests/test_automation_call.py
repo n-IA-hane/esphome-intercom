@@ -486,7 +486,6 @@ async def test_forward_to_another_automation_reuses_media_and_releases_old_contr
     monkeypatch.setattr(call_forwarder, "_call_registry", lambda _h: registry)
     monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: [next_contact])
-    monkeypatch.setattr(call_forwarder, "publish_bridge_projection", Mock())
     forbidden = Mock(side_effect=AssertionError("A local application must not dial a new SIP leg"))
     runtime = call_forwarder.ForwardRuntime(
         hass=app.hass, config={"sip_port": 5060}, local_ip="127.0.0.1",

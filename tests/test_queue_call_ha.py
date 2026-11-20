@@ -232,21 +232,22 @@ async def test_public_browser_queue_call_uses_main_udp_for_provisional_and_compl
 @pytest.mark.parametrize("source_kind", ["sip", "browser"])
 async def test_answered_queue_caller_never_confirms_an_unanswered_sip_candidate(queue_lab, monkeypatch, source_kind):
     from unittest.mock import AsyncMock
-    from custom_components.voip_stack import call_forwarder, softphone_originate
+    from custom_components.voip_stack import softphone_originate
     from custom_components.voip_stack.phone_state import phone_states, phone_state_dto, phone_state_observer
     from custom_components.voip_stack.roster import dump_roster_json
     lab = queue_lab
     for phone in lab.phones:
         phone.auto_answer = False
     prepared, release = asyncio.Event(), asyncio.Event()
-    original_prepare = call_forwarder.async_prepare_group_candidates
+    from custom_components.voip_stack import forward_group
+    original_prepare = forward_group.async_prepare_group_candidates
 
     async def hold_after_real_candidate_claims(*args, **kwargs):
         await original_prepare(*args, **kwargs)
         prepared.set()
         await release.wait()
 
-    monkeypatch.setattr(call_forwarder, "async_prepare_group_candidates", hold_after_real_candidate_claims)
+    monkeypatch.setattr(forward_group, "async_prepare_group_candidates", hold_after_real_candidate_claims)
     caller = None
     source = None
     session = None
