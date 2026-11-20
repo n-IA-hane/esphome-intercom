@@ -1,5 +1,6 @@
 """Explicit microphone acquisition replaces the page's passive permission cache."""
 
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,21 +13,22 @@ ENGINE = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/fro
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_successful_current_microphone_selection_replaces_negative_and_pending_probe():
-    source = ENGINE.read_text()
-    methods = []
-    for name in ("_openAudioInput", "setMediaDevice", "_selectMicrophone", "checkAutoAnswerMedia",
-                 "autoAnswerMediaResult", "recordAutoAnswerMedia"):
-        start = source.find("  async " + name + "(")
-        if start < 0:
-            start = source.index("  " + name + "(")
-        methods.append(source[start:source.index("\n  }", start) + 4])
     script = r'''
 import assert from 'node:assert/strict';
-const Engine = class { METHODS };
+import {pathToFileURL} from 'node:url';
+const storage = () => {
+  const values = new Map();
+  return {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key)};
+};
+globalThis.localStorage = storage();
+globalThis.sessionStorage = storage();
+globalThis.window = {location: {protocol: 'https:', host: 'ha.example'}, addEventListener() {},
+  setTimeout, clearTimeout, setInterval, clearInterval};
 const streams = new Map();
 let acquire;
 Object.defineProperty(globalThis, 'navigator', {value: {mediaDevices: {
-  getUserMedia: constraints => acquire(constraints.audio.deviceId.exact),
+  getUserMedia: constraints => acquire(constraints.audio?.deviceId?.exact || ""),
 }}, configurable: true});
 function stream(id) {
   const track = {stopped: false, getSettings: () => ({deviceId: id}), stop() {this.stopped = true;}};
@@ -34,13 +36,10 @@ function stream(id) {
   streams.set(id, track);
   return value;
 }
+const {voipStackEngine} = await import(pathToFileURL(ENGINE));
 function engine() {
-  const value = new Engine();
-  Object.assign(value, {_autoAnswerMedia: new Map(), _microphoneSwitchGeneration: 0,
-    _audioContext: null, _captureNode: null, _emit() {},
-    _audioCaptureConstraints: id => ({deviceId: {exact: id}}),
-    _mediaDevices: {commit(_kind, id) {this.selected = id;}, refresh: async () => {}},
-  });
+  globalThis.localStorage = storage();
+  const value = new voipStackEngine.constructor();
   value.recordAutoAnswerMedia('audio', false);
   return value;
 }
@@ -49,24 +48,27 @@ const selected = engine();
 await selected.setMediaDevice('audioinput', 'chosen');
 assert.equal((await selected.checkAutoAnswerMedia('audio')).ready, true);
 assert.equal(streams.get('chosen').stopped, true);
-assert.equal(selected._mediaDevices.selected, 'chosen');
+assert.equal(selected._mediaDevices.preference('audioinput'), 'chosen');
 assert.equal(Object.hasOwn(selected, '_autoAnswer'), false);
 
 const pending = engine();
-pending._autoAnswerMedia.clear();
+pending.resetAutoAnswerMedia('audio');
 let finishProbe;
-pending._probeAutoAnswerMedia = () => new Promise(resolve => {finishProbe = resolve;});
+acquire = id => id ? Promise.resolve(stream(id)) : new Promise((_resolve, reject) => {
+  finishProbe = () => reject(new Error('probe denied'));
+});
 const oldProbe = pending.checkAutoAnswerMedia('audio');
+while (!finishProbe) await new Promise(resolve => setImmediate(resolve));
 await pending.setMediaDevice('audioinput', 'during-probe');
-finishProbe({ready: false});
-await oldProbe;
+finishProbe();
+assert.equal((await oldProbe).ready, false);
 assert.equal((await pending.checkAutoAnswerMedia('audio')).ready, true);
 
 const failed = engine();
 acquire = async () => {throw new Error('denied');};
 await assert.rejects(failed.setMediaDevice('audioinput', 'denied'), /denied/);
 assert.equal(failed.autoAnswerMediaResult('audio').ready, false);
-assert.equal(failed._mediaDevices.selected, undefined);
+assert.equal(failed._mediaDevices.preference('audioinput'), '');
 
 const concurrent = engine();
 let releaseOld;
@@ -75,9 +77,9 @@ const obsolete = concurrent.setMediaDevice('audioinput', 'old');
 await concurrent.setMediaDevice('audioinput', 'new');
 releaseOld();
 await assert.rejects(obsolete, /superseded/);
-assert.equal(concurrent._mediaDevices.selected, 'new');
+assert.equal(concurrent._mediaDevices.preference('audioinput'), 'new');
 assert.equal(concurrent.autoAnswerMediaResult('audio').ready, true);
 assert.equal(streams.get('old').stopped, true);
-'''.replace("METHODS", "\n".join(methods))
-    result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, timeout=20)
+'''
+    result = subprocess.run(["node", "--input-type=module", "-e", f"const ENGINE={json.dumps(str(ENGINE))};\n" + script], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
