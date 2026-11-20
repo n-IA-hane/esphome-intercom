@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 import contextlib
+import errno
 from dataclasses import dataclass, field
 from fractions import Fraction
 import logging
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _MAX_FMTP_LENGTH = 1024
 _PROCESS_STOP_TIMEOUT = 0.25
+_FFMPEG_INPUT_BIND_ATTEMPTS = 3
 _FFMPEG_INPUT_BIND_TIMEOUT = 1.0
 _FFMPEG_INPUT_BIND_POLL_INTERVAL = 0.005
 _JPEG_NORMALIZE_TIMEOUT = 1.5
@@ -101,38 +103,49 @@ async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
 
 
 def _available_udp_port() -> int:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-    finally:
-        sock.close()
+    """Find a local RTP/RTCP pair for FFmpeg's SDP demuxer."""
+    for _ in range(16):
+        with (socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rtp_socket,
+              socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rtcp_socket):
+            rtp_socket.bind(("0.0.0.0", 0))
+            port = rtp_socket.getsockname()[1]
+            if port == 65535:
+                continue
+            try:
+                rtcp_socket.bind(("0.0.0.0", port + 1))
+            except OSError as err:
+                if err.errno == errno.EADDRINUSE:
+                    continue
+                raise
+            return port
+    raise VideoTranscoderError("No available RTP/RTCP input pair for FFmpeg")
 
 
 async def _wait_for_udp_listener(
     process: asyncio.subprocess.Process,
     port: int,
 ) -> None:
-    """Wait until FFmpeg owns its RTP input port or exits."""
+    """Wait until FFmpeg owns both inputs before delivering any video."""
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _FFMPEG_INPUT_BIND_TIMEOUT
     while True:
         if process.returncode is not None:
             raise VideoTranscoderError(
-                f"FFmpeg exited before binding RTP input port: {process.returncode}"
+                f"FFmpeg exited before binding its RTP/RTCP input pair: {process.returncode}"
             )
 
-        if await asyncio.to_thread(_process_owns_udp_port, process.pid, port):
+        if await asyncio.to_thread(_process_owns_udp_ports, process.pid, port, port + 1):
             return
 
         if loop.time() >= deadline:
-            raise VideoTranscoderError("FFmpeg did not bind its RTP input port")
+            raise VideoTranscoderError("FFmpeg did not bind its RTP/RTCP input pair")
         await asyncio.sleep(_FFMPEG_INPUT_BIND_POLL_INTERVAL)
 
 
-def _process_owns_udp_port(pid: int, port: int) -> bool:
-    """Return whether one Linux child process owns the requested UDP port."""
+def _process_owns_udp_ports(pid: int, *ports: int) -> bool:
+    """Return whether one Linux child owns every requested UDP port."""
+    remaining = set(ports)
 
     socket_inodes: set[str] = set()
     try:
@@ -156,12 +169,10 @@ def _process_owns_udp_port(pid: int, port: int) -> bool:
                 next(table, None)
                 for row in table:
                     fields = row.split()
-                    if (
-                        len(fields) > 9
-                        and fields[9] in socket_inodes
-                        and int(fields[1].rsplit(":", 1)[1], 16) == int(port)
-                    ):
-                        return True
+                    if len(fields) > 9 and fields[9] in socket_inodes:
+                        remaining.discard(int(fields[1].rsplit(":", 1)[1], 16))
+                        if not remaining:
+                            return True
         except (OSError, ValueError):
             continue
     return False
@@ -572,7 +583,6 @@ class FfmpegVideoTranscoder:
         send_socket: socket.socket | None = None
         stderr_task: asyncio.Task[None] | None = None
         try:
-            self.input_port = _available_udp_port()
             command = [
                 _ffmpeg_binary(self.hass),
                 "-hide_banner",
@@ -600,23 +610,39 @@ class FfmpegVideoTranscoder:
                 "-payload_type", str(int(self.output_format.payload_type)),
                 f"rtp://127.0.0.1:{int(self.output_port)}?pkt_size=1200",
             ]
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            assert process.stdin is not None
-            process.stdin.write(_input_sdp(self.input_format, self.input_port).encode())
-            await process.stdin.drain()
-            process.stdin.close()
-            stderr_task = asyncio.create_task(
-                self._drain_stderr(process),
-                name=f"voip-video-transcoder-stderr-{self.call_id}",
-            )
-            # Do not release buffered RTP until FFmpeg owns the UDP input.
-            # Otherwise in-band H.264 SPS/PPS can be lost before the bind.
-            await _wait_for_udp_listener(process, self.input_port)
+            for attempt in range(_FFMPEG_INPUT_BIND_ATTEMPTS):
+                self.input_port = _available_udp_port()
+                self.stderr_tail.clear()
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                assert process.stdin is not None
+                process.stdin.write(_input_sdp(self.input_format, self.input_port).encode())
+                await process.stdin.drain()
+                process.stdin.close()
+                stderr_task = asyncio.create_task(
+                    self._drain_stderr(process),
+                    name=f"voip-video-transcoder-stderr-{self.call_id}",
+                )
+                try:
+                    await _wait_for_udp_listener(process, self.input_port)
+                except VideoTranscoderError:
+                    if process.returncode is None:
+                        raise
+                    await stderr_task
+                    # FFmpeg binds its own sockets after the parent's probes close.
+                    # Retry only when another socket claimed the pair in that gap.
+                    if (attempt + 1 == _FFMPEG_INPUT_BIND_ATTEMPTS or not any(
+                        "bind failed: Address already in use" in line for line in self.stderr_tail
+                    )):
+                        raise
+                    await process.wait()
+                    _LOGGER.info("FFmpeg input port pair already in use, selecting another pair")
+                    continue
+                break
             send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             send_socket.setblocking(False)
             async with self._lifecycle_lock:

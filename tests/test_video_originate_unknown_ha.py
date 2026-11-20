@@ -80,16 +80,41 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
     assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
 
 
-@pytest.mark.parametrize("source_codec,transcoding,video_enabled,known_audio_only,expected", [
-    pytest.param("JPEG", False, True, False, "direct", id="direct-no-transcoder"),
-    pytest.param("JPEG", True, True, False, "direct", id="direct-with-transcoding-enabled"),
-    pytest.param("H264", True, True, False, "convert", id="unknown-h264-to-jpeg"),
-    pytest.param("H264", False, True, False, "audio", id="no-transcoding-rejects-only-video"),
-    pytest.param("JPEG", True, False, False, "audio", id="video-policy-disabled"),
-    pytest.param("JPEG", True, True, True, "audio", id="known-audio-only-destination"),
-])
+@pytest.fixture
+def occupied_transcoder_rtcp(request, monkeypatch):
+    """Another UDP owner acquires the first adjacent port before FFmpeg opens it."""
+    from custom_components.voip_stack import video_transcoder
+
+    if not request.param:
+        yield
+        return
+    select_pair = video_transcoder._available_udp_port
+    attempted = []
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as other:
+        def select_then_claim_adjacent():
+            port = select_pair()
+            if not attempted:
+                other.bind(("127.0.0.1", port + 1))
+            attempted.append(port)
+            return port
+
+        monkeypatch.setattr(video_transcoder, "_available_udp_port", select_then_claim_adjacent)
+        yield
+    assert len(attempted) >= 2 and attempted[0] not in attempted[1:]
+
+
+@pytest.mark.parametrize("source_codec,transcoding,video_enabled,known_audio_only,expected,occupied_transcoder_rtcp", [
+    pytest.param("JPEG", False, True, False, "direct", False, id="direct-no-transcoder"),
+    pytest.param("JPEG", True, True, False, "direct", False, id="direct-with-transcoding-enabled"),
+    pytest.param("H264", True, True, False, "convert", False, id="unknown-h264-to-jpeg"),
+    pytest.param("H264", True, True, False, "convert", True,
+                 id="unknown-h264-to-jpeg-rtcp-in-use"),
+    pytest.param("H264", False, True, False, "audio", False, id="no-transcoding-rejects-only-video"),
+    pytest.param("JPEG", True, False, False, "audio", False, id="video-policy-disabled"),
+    pytest.param("JPEG", True, True, True, "audio", False, id="known-audio-only-destination"),
+], indirect=["occupied_transcoder_rtcp"])
 async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
-    lab, monkeypatch, source_codec, transcoding, video_enabled, known_audio_only, expected,
+    lab, monkeypatch, source_codec, transcoding, video_enabled, known_audio_only, expected, occupied_transcoder_rtcp,
 ):
     """Real forward O/A and RTP replace legacy source-text capability prerequisites."""
     from unittest.mock import AsyncMock

@@ -371,13 +371,33 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
                 await transcoder.async_start()
         self.assertIsNone(hass.runtime.media.transcoder)
 
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required")
+    async def test_unrelated_ffmpeg_start_failure_is_not_retried(self) -> None:
+        hass = _Hass()
+        transcoder = video_transcoder.FfmpegVideoTranscoder(
+            hass=hass,
+            call_id="invalid-input-description",
+            input_format=sdp.CONSTRAINED_BASELINE_H264_FORMAT,
+            output_port=45678,
+        )
+        with (
+            mock.patch.object(video_transcoder, "_input_sdp", return_value="invalid SDP\n"),
+            mock.patch.object(video_transcoder, "_available_udp_port",
+                              wraps=video_transcoder._available_udp_port) as choose_pair,
+            self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "exited before binding"),
+        ):
+            await transcoder.async_start()
+        choose_pair.assert_called_once()
+        self.assertFalse(transcoder.ready)
+        self.assertIsNone(hass.runtime.media.transcoder)
+
     async def test_udp_readiness_waits_for_listener(self) -> None:
         process = types.SimpleNamespace(returncode=None, pid=123)
         port = 45678
         with (
             mock.patch.object(
                 video_transcoder,
-                "_process_owns_udp_port",
+                "_process_owns_udp_ports",
                 side_effect=(False, True),
             ) as owns_port,
             mock.patch.object(
@@ -387,7 +407,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             await video_transcoder._wait_for_udp_listener(process, port)
-        self.assertEqual(owns_port.call_count, 2)
+        self.assertEqual(owns_port.call_args_list, [mock.call(process.pid, port, port + 1)] * 2)
 
     def test_udp_readiness_observes_only_process_owned_socket(self) -> None:
         listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -395,10 +415,10 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         port = int(listener.getsockname()[1])
         try:
             self.assertTrue(
-                video_transcoder._process_owns_udp_port(os.getpid(), port)
+                video_transcoder._process_owns_udp_ports(os.getpid(), port)
             )
             self.assertFalse(
-                video_transcoder._process_owns_udp_port(os.getpid(), port + 1)
+                video_transcoder._process_owns_udp_ports(os.getpid(), port, port + 1)
             )
         finally:
             listener.close()
@@ -420,7 +440,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(video_transcoder, "_FFMPEG_INPUT_BIND_TIMEOUT", 0.01),
             mock.patch.object(
                 video_transcoder,
-                "_process_owns_udp_port",
+                "_process_owns_udp_ports",
                 return_value=False,
             ),
             self.assertRaisesRegex(
