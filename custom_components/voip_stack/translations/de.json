@@ -621,18 +621,22 @@
             "fallback": "Fallback destination",
             "hold_media": "Hold audio URI",
             "strategy": "Verteilstrategie",
-            "agent_order": "Bevorzugte Telefonreihenfolge (Auswahlreihenfolge)",
             "auto_pause_after": "Nach unbeantworteten Anrufversuchen pausieren (0 deaktiviert)",
             "fallback_full": "Ersatzziel bei voller Warteschlange",
             "fallback_timeout": "Ersatzziel nach maximaler Wartezeit",
             "fallback_no_agents": "Ersatzziel ohne verfügbare Mitarbeiter",
             "fallback_disabled": "Ersatzziel bei deaktivierter Warteschlange",
-            "fallback_removed": "Ersatzziel bei entfernter Warteschlange"
+            "fallback_removed": "Ersatzziel bei entfernter Warteschlange",
+            "queue_members": "Mitglieder der Warteschlange"
           },
           "data_description": {
-            "agent_order": "Wählen Sie die bevorzugten Telefone in der gewünschten Klingelreihenfolge aus. Die übrigen Mitglieder folgen danach. Die Mitgliedschaft bleibt unverändert.",
             "auto_pause_after": "Bei 0 deaktiviert. Mit 3 wird nach drei unbeantworteten Versuchen mit Klingeln pausiert; besetzte oder nicht erreichbare Telefone und Abbrüche zählen nicht.",
-            "fallback": "Wird verwendet, wenn für den jeweiligen Austrittsgrund kein eigenes Ziel angegeben ist."
+            "fallback": "Wird verwendet, wenn für den jeweiligen Austrittsgrund kein eigenes Ziel angegeben ist.",
+            "queue_members": "Füge die Telefone hinzu, die Anrufe annehmen können, und ziehe sie in die gewünschte Reihenfolge. Gleichzeitiges Klingeln ruft alle verfügbaren Mitglieder. Die feste Reihenfolge folgt der Liste, Rundlauf durchläuft sie und längste Leerlaufzeit verwendet sie bei Gleichstand.",
+            "ring_timeout": "Klingeldauer eines einzelnen Versuchs. Die Warteschlange verwendet ihre eigene Wartezeit und ihr eigenes Ausweichziel. Die persönliche Nichtannahme-Regel eines Telefons gilt für direkte Anrufe.",
+            "max_wait": "Gesamte Wartezeit einschließlich Klingeln und Pausen zwischen Versuchen. Der letzte Versuch kann kürzer sein, um diese Grenze einzuhalten.",
+            "retry_delay": "Pause vor dem nächsten Versuch für denselben wartenden Anruf. Eine geänderte Agentenverfügbarkeit kann eine frühere Prüfung auslösen.",
+            "fallback_timeout": "Ziel nach Ablauf der maximalen Wartezeit. Ein Mailboxziel zeichnet direkt auf; ein Telefonziel verwendet die normalen Klingelregeln dieses Telefons. Leer verwendet das gemeinsame Ausweichziel."
           }
         }
       },
@@ -640,7 +644,8 @@
         "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Group updated",
+        "queue_member_device_missing": "Für {count} gespeicherte Warteschlangenmitglieder fehlt ein aktiviertes Home-Assistant-Gerät. Stelle deren Gerät wieder her oder ändere die Mitgliedschaft in den Telefoneinstellungen, bevor du diese Warteschlange bearbeitest."
       }
     },
     "paging": {
@@ -747,6 +752,9 @@
                 "parking_target": "Parkposition"
               }
             }
+          },
+          "data_description": {
+            "keys": "Ziehe vorhandene Tasten, um ihre Reihenfolge an den belegten Positionen zu ändern. Eine neue Taste behält die gewählte Position."
           }
         },
         "account": {
@@ -775,13 +783,8 @@
           "title": "Configure physical phone",
           "menu_options": {
             "user": "Properties and profile",
-            "bindings": "Lines and key properties",
-            "key_order": "Reorder keys"
+            "bindings": "Lines and key properties"
           }
-        },
-        "key_order": {
-          "title": "Reorder keys",
-          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -1014,6 +1017,13 @@
       "fields": {
         "transport": "Transport",
         "binding": "Physical phone and line"
+      }
+    },
+    "queue_members": {
+      "fields": {
+        "device": {
+          "name": "Telefon"
+        }
       }
     }
   },

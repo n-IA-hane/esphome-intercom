@@ -621,18 +621,22 @@
             "fallback": "Fallback destination",
             "hold_media": "Hold audio URI",
             "strategy": "Distribution strategy",
-            "agent_order": "Preferred phone order (selection order)",
             "auto_pause_after": "Pause after unanswered rings (0 disables)",
             "fallback_full": "Fallback when full",
             "fallback_timeout": "Fallback after maximum wait",
             "fallback_no_agents": "Fallback without operators",
             "fallback_disabled": "Fallback when disabled",
-            "fallback_removed": "Fallback when removed"
+            "fallback_removed": "Fallback when removed",
+            "queue_members": "Queue members"
           },
           "data_description": {
-            "agent_order": "Select preferred phones in the order they should ring. Remaining members follow. This does not change membership.",
             "auto_pause_after": "Disabled at 0. Set 3 to pause after three unanswered ringing attempts; busy, offline and cancellations do not count.",
-            "fallback": "Used when a specific exit destination is empty."
+            "fallback": "Used when a specific exit destination is empty.",
+            "queue_members": "Add the phones that may answer, then drag to order them. Ring all rings every eligible member together. Configured order follows the list, round robin rotates through it, and longest idle uses it to break ties.",
+            "ring_timeout": "How long each attempt rings. The queue uses its own wait limit and fallback. A phone's personal no-answer rule applies to direct calls.",
+            "max_wait": "Total waiting time, including ringing and pauses between attempts. The final attempt may be shorter to respect this limit.",
+            "retry_delay": "Pause before offering the same waiting call again. Changes in agent availability can trigger an earlier check.",
+            "fallback_timeout": "Where the queue sends the caller after the maximum wait. A voicemail destination deposits directly; a phone destination applies that phone's normal ringing policy. Empty uses the common fallback."
           }
         }
       },
@@ -640,7 +644,8 @@
         "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Group updated",
+        "queue_member_device_missing": "{count} saved queue members have no enabled Home Assistant device. Restore their device or update membership in their phone settings before editing this queue."
       }
     },
     "paging": {
@@ -747,6 +752,9 @@
                 "parking_target": "Parking slot"
               }
             }
+          },
+          "data_description": {
+            "keys": "Drag existing keys to change their order across the occupied positions. A new key keeps the position you choose."
           }
         },
         "account": {
@@ -775,13 +783,8 @@
           "title": "Configure physical phone",
           "menu_options": {
             "user": "Properties and profile",
-            "bindings": "Lines and key properties",
-            "key_order": "Reorder keys"
+            "bindings": "Lines and key properties"
           }
-        },
-        "key_order": {
-          "title": "Reorder keys",
-          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -1014,6 +1017,13 @@
       "fields": {
         "transport": "Transport",
         "binding": "Physical phone and line"
+      }
+    },
+    "queue_members": {
+      "fields": {
+        "device": {
+          "name": "Phone"
+        }
       }
     }
   },

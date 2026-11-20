@@ -21,6 +21,45 @@ def add_phone(lab, identity, *, ring="", queues=()):
     sync_registry_from_entry(lab.hass, lab.entry)
 
 
+async def test_queue_picker_uses_managed_account_device_and_legacy_esp_hardware(managed):
+    from custom_components.voip_stack.endpoint_device import selection_device_refs
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from .test_managed_phones_ha import account_service_device, phone_record
+
+    lab = managed
+    await lab.controller.async_sync()
+    account = phone_record(lab)
+    service = account_service_device(lab)
+    hardware = dr.async_get(lab.hass).async_get_or_create(config_entry_id=lab.native.entry_id,
+        identifiers={("esphome", "legacy-queue-phone")}, name="Offline legacy phone")
+    legacy = PhoneEndpoint(endpoint_id="esphome:" + hardware.id, name="Offline legacy phone",
+                           device_id=hardware.id, kind=EndpointKind.ESPHOME, availability="offline")
+    lab.runtime.endpoints.register(legacy)
+    assert selection_device_refs(lab.hass, lab.entry, [account.endpoint_id, legacy.endpoint_id]) == {
+        service.id: account.endpoint_id, hardware.id: legacy.endpoint_id}
+
+
+async def test_missing_saved_queue_member_device_cannot_be_dropped_on_open(phone_lab):
+    from custom_components.voip_stack.group_config import group_subentries, reconcile_group_records
+    from custom_components.voip_stack.phone_queue_membership import iter_phone_memberships
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    lab = phone_lab
+    lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
+    prepare_frontend_dependency(lab.hass)
+    add_phone(lab, "unmapped", queues=["Support"])
+    registry = dr.async_get(lab.hass)
+    device_id = lab.runtime.endpoints.require("unmapped").device_id
+    if device_id and registry.async_get(device_id):
+        registry.async_remove_device(device_id)
+    reconcile_group_records(lab.hass, lab.entry)
+    (group,) = group_subentries(lab.entry)
+    form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "group"),
+        context={"source": "reconfigure", "subentry_id": group.subentry_id})
+    assert form["type"] == "abort" and form["reason"] == "queue_member_device_missing"
+    assert dict(iter_phone_memberships(lab.hass, lab.entry, "queue")) == {"unmapped": ("Support",)}
+
+
 async def test_auto_group_device_shared_by_two_phones_and_removed_only_when_empty(phone_lab):
     from custom_components.voip_stack.group_config import reconcile_group_records, group_records
     lab = phone_lab
@@ -132,6 +171,15 @@ async def test_native_group_flow_updates_canonical_membership_rename_and_empty_l
     lab = phone_lab
     add_phone(lab, "first")
     add_phone(lab, "second")
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
+    registry = lab.runtime.endpoints
+    phone_devices = {key: async_ensure_endpoint_device(lab.hass, lab.entry, registry.require(key), registry).id
+                     for key in ("first", "second")}
+
+    def membership(*identities):
+        if kind == "queue":
+            return {"queue_members": [{"device": phone_devices[key]} for key in identities]}
+        return {"members": list(identities)}
     from .support.ha_frontend import prepare_frontend_dependency
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
     prepare_frontend_dependency(lab.hass)
@@ -147,7 +195,7 @@ async def test_native_group_flow_updates_canonical_membership_rename_and_empty_l
         (lab.entry.entry_id, "group"), context={"source": "user"})
     form = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {"kind": kind})
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
-        "name": "Team", "members": ["first"], "keep_empty": True}))
+        "name": "Team", **membership("first"), "keep_empty": True}))
     assert result["type"] == "create_entry"
     await config_entry_runtime.async_config_entry_updated(lab.hass, lab.entry)
     record = next(iter(group_records(lab.entry).values()))
@@ -162,8 +210,20 @@ async def test_native_group_flow_updates_canonical_membership_rename_and_empty_l
     item = next(item for item in lab.entry.subentries.values() if item.subentry_type == "group")
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "group"),
         context={"source": "reconfigure", "subentry_id": item.subentry_id})
+    if kind == "queue":
+        assert "agent_order" not in form["data_schema"]({}) and "members" not in form["data_schema"]({})
+        assert form["data_schema"]({})["queue_members"] == membership("first")["queue_members"]
+        bad = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
+            "name": "Team", **membership("first", "first")}))
+        assert bad["errors"] == {"base": "invalid_group"}
+        assert next(iter(group_records(lab.entry).values()))["policy"]["agent_order"] == ("first",)
+        group_device = dr.async_get(lab.hass).async_get_device_by_identifier(("voip_stack", "group:"+identity), lab.entry.entry_id)
+        bad = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
+            "name": "Team", "queue_members": [{"device": group_device.id}]}))
+        assert bad["errors"] == {"base": "invalid_group"}
+
     renamed = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
-        "name": "Renamed", "extension": "1710", "members": ["first", "second"], "keep_empty": True}))
+        "name": "Renamed", "extension": "1710", **membership("second", "first"), "keep_empty": True}))
     assert renamed["type"] == "abort"
     await config_entry_runtime.async_config_entry_updated(lab.hass, lab.entry)
     records = group_records(lab.entry)
@@ -177,8 +237,21 @@ async def test_native_group_flow_updates_canonical_membership_rename_and_empty_l
         assert manager.agent_states[identity]["second"] == "available"
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "group"),
         context={"source": "reconfigure", "subentry_id": item.subentry_id})
+    if kind == "queue":
+        assert records[identity]["policy"]["agent_order"] == ("second", "first")
+        assert form["data_schema"]({})["queue_members"] == membership("second", "first")["queue_members"]
+        # A policy from an older configuration can omit a member or refer to a deleted phone.
+        lab.hass.config_entries.subentries.async_abort(form["flow_id"])
+        old = lab.entry.subentries[item.subentry_id]
+        lab.hass.config_entries.async_update_subentry(lab.entry, old, data={
+            **old.data, "policy": {**old.data["policy"], "agent_order": ["stale", "second"]}})
+        form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "group"),
+            context={"source": "reconfigure", "subentry_id": item.subentry_id})
+        assert form["data_schema"]({})["queue_members"] == membership("second", "first")["queue_members"]
+        assert group_records(lab.entry)[identity]["policy"]["agent_order"] == ["stale", "second"]
+
     empty = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
-        "name": "Renamed", "members": [], "keep_empty": False}))
+        "name": "Renamed", **membership(), "keep_empty": False}))
     assert empty["type"] == "abort"
     await config_entry_runtime.async_config_entry_updated(lab.hass, lab.entry)
     await lab.hass.async_block_till_done(wait_background_tasks=True)

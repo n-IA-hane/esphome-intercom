@@ -621,18 +621,22 @@
             "fallback": "Destinazione alternativa",
             "hold_media": "URI audio di attesa",
             "strategy": "Strategia di distribuzione",
-            "agent_order": "Ordine preferito dei telefoni (ordine di selezione)",
             "auto_pause_after": "Pausa dopo squilli senza risposta (0 disabilita)",
             "fallback_full": "Destinazione se piena",
             "fallback_timeout": "Destinazione a fine attesa",
             "fallback_no_agents": "Destinazione senza operatori",
             "fallback_disabled": "Destinazione se disabilitata",
-            "fallback_removed": "Destinazione se rimossa"
+            "fallback_removed": "Destinazione se rimossa",
+            "queue_members": "Membri della coda"
           },
           "data_description": {
-            "agent_order": "Seleziona i telefoni nell'ordine di squillo desiderato. Gli altri membri seguono. Non cambia l'appartenenza.",
             "auto_pause_after": "0 disabilita. Imposta 3 per mettere in pausa dopo tre squilli senza risposta; occupato, offline e annullamenti non contano.",
-            "fallback": "Usata quando la destinazione specifica della condizione è vuota."
+            "fallback": "Usata quando la destinazione specifica della condizione è vuota.",
+            "queue_members": "Aggiungi i telefoni che possono rispondere e trascinali per ordinarli. Tutti insieme fa squillare i membri disponibili; Ordine configurato segue la lista; A rotazione riparte dall'operatore successivo; Libero da più tempo usa la lista in caso di parità.",
+            "ring_timeout": "Durata dello squillo per ogni tentativo. La coda usa il proprio limite di attesa e la propria destinazione di ripiego. La regola personale del telefono per mancata risposta vale per le chiamate dirette.",
+            "max_wait": "Tempo totale di attesa, compresi gli squilli e le pause fra i tentativi. L'ultimo tentativo può essere più breve per rispettare questo limite.",
+            "retry_delay": "Pausa prima di riproporre la stessa chiamata in attesa. Un cambio nella disponibilità degli operatori può anticipare la verifica.",
+            "fallback_timeout": "Destinazione al termine dell'attesa massima. Una destinazione di segreteria registra subito il messaggio; una destinazione telefono applica le normali regole di squillo di quel telefono. Se vuota, usa la destinazione alternativa comune."
           }
         }
       },
@@ -640,7 +644,8 @@
         "invalid_group": "Nome o interno in conflitto, telefoni o parametri non validi."
       },
       "abort": {
-        "reconfigure_successful": "Gruppo aggiornato"
+        "reconfigure_successful": "Gruppo aggiornato",
+        "queue_member_device_missing": "Per {count} membri già salvati manca un dispositivo Home Assistant attivo. Ripristina il dispositivo o modifica l'appartenenza nelle impostazioni del telefono prima di modificare questa coda."
       }
     },
     "paging": {
@@ -747,6 +752,9 @@
                 "parking_target": "Posizione di parcheggio"
               }
             }
+          },
+          "data_description": {
+            "keys": "Trascina i tasti esistenti per cambiarne l’ordine nelle posizioni occupate. Un nuovo tasto mantiene la posizione che scegli."
           }
         },
         "account": {
@@ -775,13 +783,8 @@
           "title": "Configura telefono fisico",
           "menu_options": {
             "user": "Proprietà e profilo",
-            "bindings": "Linee e proprietà dei tasti",
-            "key_order": "Riordina tasti"
+            "bindings": "Linee e proprietà dei tasti"
           }
-        },
-        "key_order": {
-          "title": "Riordina tasti",
-          "description": "Per ogni posizione fisica occupata, scegli il tasto esistente da collocare. Ogni tasto va selezionato una sola volta."
         }
       },
       "error": {
@@ -1014,6 +1017,13 @@
       "fields": {
         "transport": "Trasporto",
         "binding": "Telefono fisico e linea"
+      }
+    },
+    "queue_members": {
+      "fields": {
+        "device": {
+          "name": "Telefono"
+        }
       }
     }
   },

@@ -2,6 +2,13 @@
 
 ## 2026.12.0-dev
 
+- Edit queue membership and distribution order in one native, draggable list
+  of Home Assistant phone devices. Explain the queue's ring, retry and waiting
+  timers separately from each phone's personal no-answer policy.
+- Reorder programmable phone keys directly in their main list. Preserve
+  explicit position changes, new assignments and unmanaged gaps, and remove
+  the separate key-order page.
+
 - Deliver incoming trunk calls to the mailbox selected by the phone's forwarding
   policy and keep the same call and media owner through recording and hangup.
 - Resolve a selected local phone by its identity before interpreting names

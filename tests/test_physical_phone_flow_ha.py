@@ -952,7 +952,7 @@ async def test_device_fields_reopen_with_registry_choices_and_store_canonical_id
     form = await reconfigure(state, "bindings")
     values = form["data_schema"]({})
     assert values["lines"] == selected["lines"]
-    assert values["keys"][0] == {**selected["keys"][0], "label": ""}
+    assert values["keys"][0] == {**selected["keys"][0], "label": "", "_original_slot": "2"}
     values["keys"][0]["target_device"] = front
     await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
     assert physical_record(state).data["keys"][0]["target"] == "sip:front"

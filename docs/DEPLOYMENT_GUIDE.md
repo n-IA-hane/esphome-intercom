@@ -303,9 +303,9 @@ administrative credentials are under **Advanced**. Configure additional lines
 and keys afterward. The account editor's **Associated physical phones** picker
 and the physical phone's line editor share the same associations.
 
-Use **Reorder keys** to change the physical order of existing keys. Each editor
-row's explicit position controls its placement; rearranging rows alone does not
-move the hardware keys. Existing profiles stay pinned until explicitly updated.
+In **Lines and key properties**, drag existing programmable keys to reorder
+their assignments across the managed positions. Choose the physical slot for
+each new key. Existing profiles stay pinned until explicitly updated.
 Automatic application additionally requires a qualified method, configured
 private administrative credentials and idle guards. A prepared or downloaded
 file does not prove device adoption. See [managed SIP phones](PHONE_PROVISIONING.md)

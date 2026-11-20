@@ -47,6 +47,45 @@ def account_device_id_for_endpoint(hass: HomeAssistant, entry: ConfigEntry, endp
     return device.id if device is not None else ""
 
 
+def selection_device_refs(hass, entry, identities, *, groups=()):
+    """Project existing HA registry devices onto this entry's allowed references."""
+    devices = dr.async_get(hass)
+    endpoints = getattr(getattr(entry, "runtime_data", None), "endpoints", None)
+    result = {}
+    for identity in identities:
+        endpoint = endpoints.get(identity) if endpoints is not None else None
+        device_id = (endpoint.account_device_id or endpoint.device_id) if endpoint else ""
+        device = devices.async_get(device_id) if device_id else None
+        if device is None:
+            device = devices.async_get_device_by_identifier((DOMAIN, endpoint_device_identifier(identity)), entry.entry_id)
+        if device is not None and not device.disabled_by:
+            result[device.id] = identity
+    for identity in groups:
+        device = devices.async_get_device_by_identifier((DOMAIN, f"group:{identity}"), entry.entry_id)
+        if device is not None and not device.disabled_by:
+            result[device.id] = identity
+    return result
+
+
+def selection_device_picker(hass, refs):
+    """Offer devices matching the products represented by the supplied registry IDs."""
+    from homeassistant.helpers.selector import DeviceSelector
+
+    devices = dr.async_get(hass)
+    filters = []
+    for identity in refs:
+        device = devices.async_get(identity)
+        # HA filters the picker by product. Only this entry's mapped device IDs are accepted.
+        config = hass.config_entries.async_get_entry(device.config_entry_id)
+        match = {key: value for key, value in (
+            ("integration", config.domain if config else None),
+            ("manufacturer", device.manufacturer), ("model", device.model), ("model_id", device.model_id),
+        ) if value}
+        if match not in filters:
+            filters.append(match)
+    return DeviceSelector({"filter": filters})
+
+
 def endpoint_config_subentry_id(
     hass: HomeAssistant,
     endpoint_id: str,

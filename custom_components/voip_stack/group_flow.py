@@ -2,9 +2,11 @@
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigSubentryFlow
-from homeassistant.helpers.selector import BooleanSelector, NumberSelector, SelectSelector, TextSelector
+from homeassistant.helpers.selector import BooleanSelector, NumberSelector, ObjectSelector, SelectSelector, TextSelector
 
+from .endpoint_device import selection_device_picker, selection_device_refs
 from .group_config import group_members, normalize_group_data, validate_group_namespace
+from .phone_queue_membership import iter_phone_memberships
 
 
 class GroupSubentryFlowHandler(ConfigSubentryFlow):
@@ -31,6 +33,17 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
         choices = [{"value": endpoint.endpoint_id, "label": endpoint.name}
                    for endpoint in getattr(getattr(runtime, "endpoints", None), "endpoints", ())]
         members = list(group_members(self.hass, entry, previous)) if previous else []
+        if self._kind == "queue":
+            eligible = dict(iter_phone_memberships(self.hass, entry, "queue"))
+            device_refs = selection_device_refs(self.hass, entry, eligible)
+            devices = {identity: device_id for device_id, identity in device_refs.items()}
+            missing = set(members) - devices.keys()
+            if missing:
+                return self.async_abort(reason="queue_member_device_missing",
+                                        description_placeholders={"count": str(len(missing))})
+            preferred = previous.get("policy", {}).get("agent_order", ())
+            ordered = dict.fromkeys(identity for identity in (*preferred, *members) if identity in members)
+            default_rows = [{"device": devices[identity]} for identity in ordered]
         values = {**previous, **previous.get("policy", {})}
         errors = {}
         if user_input is not None:
@@ -38,7 +51,7 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
             try:
                 kind = self._kind
                 policy = {key: user_input[key] for key in (
-                    "max_waiting", "max_wait", "ring_timeout", "no_agent_wait", "retry_delay", "wrap_up", "fallback", "hold_media", "strategy", "agent_order", "auto_pause_after",
+                    "max_waiting", "max_wait", "ring_timeout", "no_agent_wait", "retry_delay", "wrap_up", "fallback", "hold_media", "strategy", "auto_pause_after",
                     "fallback_full", "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed")
                     if key in user_input} if kind == "queue" else {}
                 for integer in ("max_waiting", "auto_pause_after"):
@@ -46,15 +59,20 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
                         if float(policy[integer]) != int(policy[integer]):
                             raise ValueError("Queue capacity and pause threshold must be integers")
                         policy[integer] = int(policy[integer])
+                if kind == "queue":
+                    rows = user_input.get("queue_members", default_rows)
+                    selected = [device_refs[row["device"]] for row in rows]
+                    if len(selected) != len(set(selected)):
+                        raise ValueError("A queue member can only appear once")
+                    policy["agent_order"] = selected
+                else:
+                    selected = list(dict.fromkeys(user_input.get("members", members)))
+                    if any(identity not in {choice["value"] for choice in choices} for identity in selected):
+                        raise ValueError("Select configured phones")
                 data = normalize_group_data({**previous, **user_input, "kind": kind, "origin":
                     "manual" if user_input.get("keep_empty", previous.get("origin") != "auto") else "auto",
                     "policy": {**previous.get("policy", {}), **policy}}, identity=previous.get("group_id", ""))
                 validate_group_namespace(self.hass, entry, data, exclude=previous.get("group_id", ""))
-                selected = list(dict.fromkeys(user_input.get("members", members)))
-                if any(identity not in selected for identity in policy.get("agent_order", ())):
-                    raise ValueError("Agent order must contain only selected members")
-                if any(identity not in {choice["value"] for choice in choices} for identity in selected):
-                    raise ValueError("Select configured phones")
                 data["member_update"] = selected
                 if previous and previous["name"] != data["name"]:
                     data["previous_name"] = previous["name"]
@@ -65,10 +83,19 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
                     return self.async_update_and_abort(entry, self._current, data=data, title=data["name"])
                 return self.async_create_entry(title=data["name"], data=data, unique_id=f"group:{data['group_id']}")
         kind = self._kind
+        if kind == "queue":
+            member_field = vol.Required("queue_members", default=values.get("queue_members", default_rows))
+            member_selector = ObjectSelector({
+                "multiple": True, "read_only": not device_refs, "label_field": "device", "translation_key": "queue_members",
+                "fields": {"device": {"required": True, "selector": selection_device_picker(self.hass, device_refs)}},
+            })
+        else:
+            member_field = vol.Required("members", default=values.get("members", members))
+            member_selector = SelectSelector({"options": choices, "multiple": True})
         fields = {
             vol.Required("name", default=values.get("name", "")): TextSelector(),
             vol.Optional("extension", default=values.get("extension", "")): TextSelector(),
-            vol.Required("members", default=values.get("members", members)): SelectSelector({"options": choices, "multiple": True}),
+            member_field: member_selector,
             vol.Required("enabled", default=values.get("enabled", True)): BooleanSelector(),
             vol.Required("keep_empty", default=values.get("origin") != "auto"): BooleanSelector(),
         }
@@ -80,8 +107,6 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
         if kind == "queue":
             fields[vol.Optional("strategy", default=values.get("strategy", "ring_all"))] = SelectSelector({
                 "options": ["ring_all", "round_robin", "longest_idle", "ordered"], "translation_key": "queue_strategy"})
-            fields[vol.Optional("agent_order", default=list(values.get("agent_order", [])))] = SelectSelector({
-                "options": choices, "multiple": True, "sort": False})
             fields[vol.Optional("auto_pause_after", default=values.get("auto_pause_after", 0))] = NumberSelector({
                 "min": 0, "max": 100, "mode": "box"})
         for key in ("fallback", "hold_media", "fallback_full", "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed"):

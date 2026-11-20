@@ -20,10 +20,11 @@ UTF-8 bytes and their declaration list to 240 bytes. Existing HA ring-group
 declarations retain their 255-byte text limit. ESP firmware retains its native
 group limits of 32 bytes per name and 240 bytes per list.
 
-The central group editor's member checkboxes and the fields on individual phones
-edit the same phone declarations. They do not create a second member list. A
-group rename updates those declarations while keeping the group's identity and
-existing agents' queue state.
+The central group editor and the fields on individual phones edit the same phone
+declarations. In a queue, **Queue members** is one vertical list: add a phone,
+drag its handle to change its order, or remove its row. The list contains both
+the members and their distribution order. HA displays their existing device
+names. A group rename keeps its identity and the agents' existing queue state.
 
 The **Keep empty** setting controls lifetime:
 
@@ -90,6 +91,21 @@ ring attempt, 1 second without any available online agents before fallback,
 audio are empty by default. Configure them on the queue device or with
 `voip_stack.configure_queue`.
 
+These timers belong to the queue. An unanswered 20-second offer releases the
+phones, then the same caller can be offered again after the retry delay. Their
+cards can briefly return to idle between offers while the caller keeps the
+same place and call. The maximum wait includes ringing and retry pauses, so the
+last offer may be shorter.
+
+A phone's personal no-answer timeout and voicemail rule apply to direct calls.
+They do not take over an offer from a queue. When the queue's maximum wait
+expires, it uses its own timeout destination, then its common fallback if the
+specific destination is empty. Without either destination, it ends the call.
+For example, a fallback to `Casa` starts an ordinary call with Casa's personal
+rules; `voicemail.Casa` deposits directly in Casa's enabled mailbox. To keep one
+continuous ring-all offer until the queue's deadline, set the ring time per
+attempt to the same duration as the maximum wait.
+
 ## Actions
 
 | Action | Fields |
@@ -144,16 +160,21 @@ quality on a particular phone.
 `strategy` defaults to `ring_all`. The alternatives reuse the same global phone
 reservation owner:
 
+- `ring_all`: offer to all eligible members together. The list order does not
+  establish a ringing priority.
 - `round_robin`: remember the last operator actually offered a call, including
-  across restarts. An unavailable phone or a failed preparation does not advance
-  the cursor.
+  across restarts, and continue around the configured list. An unavailable phone
+  or a failed preparation does not advance the cursor.
 - `longest_idle`: offer to the eligible phone whose last conversation ended
-  longest ago, including ordinary calls outside a queue.
+  longest ago, including ordinary calls outside a queue. The list breaks ties.
 - `ordered`: offer in configured order and escalate after an unsuccessful
-  attempt. `agent_order` is an ordered list of stable phone identities. In the
-  editor, select the preferred phones in that order; remove and select again to
-  change it. Other members follow in their existing order. It does not change
-  membership.
+  attempt.
+
+The queue editor derives membership and order from **Queue members**. The
+`configure_queue` action retains its `agent_order` field for automations that
+only change priority; it accepts existing members, and unlisted members follow
+in their existing order. Opening an older queue preserves its preferred order
+and appends its other members to the editor list. No data changes until Save.
 
 Sequential strategies reserve only the current candidate. Other queues may
 still use another eligible phone. Callers remain FIFO within their queue; there

@@ -73,8 +73,8 @@ disables, without SIP or LDAP account passwords. It does not delete or disable
 the shared account. A profile without the required disable capability refuses
 that removal before saving.
 
-After adoption, **Reconfigure** separates **Properties and profile**, **Lines and
-key properties**, and **Reorder keys**. The line editor supports adding, modifying
+After adoption, **Reconfigure** offers **Properties and profile** and **Lines and
+key properties**. The line editor supports adding, modifying
 and deleting associations. It can create an account through the existing account
 editor. That account stays a draft until the complete binding passes validation;
 confirmation retains the native HA reference allocated for the draft. Cancelling
@@ -150,14 +150,15 @@ reported slot from that card using the same account. See
 
 ### Managed positions and queue keys
 
-Each key has an explicit physical position. Changing the order of editor rows
-does not move keys between those positions. Use **Reorder keys** to choose which
-existing key belongs at each occupied position. Every key must be selected once;
-duplicate or incomplete selections are rejected before saving. The saved list
-is in physical position order. This operation preserves unmanaged positions,
-line associations and the phone's identity and private credential.
+In **Lines and key properties**, drag an existing programmable key to change
+which assignment occupies each selected position. For example, if positions
+2 and 7 are managed, moving the second row above the first swaps the two
+assignments. Positions 3 through 6 stay untouched. Each key keeps its label,
+function, target and associated SIP line.
 
-<img src="images/physical-phone-reorder.png" width="340" alt="Native key reordering form with an explicit physical position for each key"/>
+Choose a physical position to move a key explicitly or add a new one. These
+assignments keep their chosen positions when you save, including when you
+reuse the position of a key you just deleted.
 
 Removing a managed key means clearing it on the phone, not just omitting it
 from the next file. Successfully prepared configurations claim only their

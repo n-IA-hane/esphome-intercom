@@ -621,18 +621,22 @@
             "fallback": "Fallback destination",
             "hold_media": "Hold audio URI",
             "strategy": "Způsob rozdělování hovorů",
-            "agent_order": "Preferované pořadí telefonů (pořadí výběru)",
             "auto_pause_after": "Pozastavit po nezodpovězených vyzváněních (0 vypne)",
             "fallback_full": "Náhradní cíl při plné frontě",
             "fallback_timeout": "Náhradní cíl po maximální době čekání",
             "fallback_no_agents": "Náhradní cíl bez dostupných operátorů",
             "fallback_disabled": "Náhradní cíl při vypnuté frontě",
-            "fallback_removed": "Náhradní cíl při odstranění fronty"
+            "fallback_removed": "Náhradní cíl při odstranění fronty",
+            "queue_members": "Členové fronty"
           },
           "data_description": {
-            "agent_order": "Vyberte preferované telefony v pořadí, v jakém mají vyzvánět. Ostatní členové následují. Členství se tím nemění.",
             "auto_pause_after": "Hodnota 0 funkci vypne. Hodnota 3 pozastaví přiřazování po třech nezodpovězených pokusech s vyzváněním; obsazenost, nedostupnost a zrušení se nepočítají.",
-            "fallback": "Použije se, když není vyplněn cíl pro konkrétní důvod ukončení čekání."
+            "fallback": "Použije se, když není vyplněn cíl pro konkrétní důvod ukončení čekání.",
+            "queue_members": "Přidejte telefony, které mohou přijímat hovory, a přetažením je seřaďte. Současné vyzvánění volá všechny dostupné členy. Pevné pořadí sleduje seznam, střídání jím postupuje dokola a nejdéle nečinný používá seznam při shodě.",
+            "ring_timeout": "Doba vyzvánění jednoho pokusu. Fronta používá vlastní limit čekání a náhradní cíl. Osobní pravidlo telefonu při nepřijetí platí pro přímé hovory.",
+            "max_wait": "Celková doba čekání včetně vyzvánění a přestávek mezi pokusy. Poslední pokus může být kratší, aby tento limit dodržel.",
+            "retry_delay": "Přestávka před dalším pokusem o předání stejného čekajícího hovoru. Změna dostupnosti operátora může vyvolat dřívější kontrolu.",
+            "fallback_timeout": "Cíl po uplynutí maximální doby čekání. Cíl hlasové schránky ihned nahraje zprávu; telefonní cíl použije běžná pravidla vyzvánění telefonu. Prázdná hodnota použije společný náhradní cíl."
           }
         }
       },
@@ -640,7 +644,8 @@
         "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Group updated",
+        "queue_member_device_missing": "Počet uložených členů fronty bez povoleného zařízení Home Assistant: {count}. Před úpravou fronty obnovte zařízení nebo změňte členství v nastavení telefonu."
       }
     },
     "paging": {
@@ -747,6 +752,9 @@
                 "parking_target": "Parkovací pozice"
               }
             }
+          },
+          "data_description": {
+            "keys": "Přetažením existujících tlačítek změníte jejich pořadí v obsazených pozicích. Nové tlačítko si ponechá zvolenou pozici."
           }
         },
         "account": {
@@ -775,13 +783,8 @@
           "title": "Configure physical phone",
           "menu_options": {
             "user": "Properties and profile",
-            "bindings": "Lines and key properties",
-            "key_order": "Reorder keys"
+            "bindings": "Lines and key properties"
           }
-        },
-        "key_order": {
-          "title": "Reorder keys",
-          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -1014,6 +1017,13 @@
       "fields": {
         "transport": "Přenos",
         "binding": "Physical phone and line"
+      }
+    },
+    "queue_members": {
+      "fields": {
+        "device": {
+          "name": "Telefon"
+        }
       }
     }
   },

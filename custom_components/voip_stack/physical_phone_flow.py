@@ -10,15 +10,14 @@ import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant.config_entries import ConfigSubentry, ConfigSubentryFlow, SOURCE_USER
 from homeassistant.data_entry_flow import Optional as visible_optional, section
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.selector import (
-    AreaSelector, BooleanSelector, DeviceSelector, EntitySelector, ObjectSelector,
+    AreaSelector, BooleanSelector, EntitySelector, ObjectSelector,
     SelectSelector, TextSelector, TextSelectorConfig, TextSelectorType,
 )
 
 from .const import DOMAIN
-from .endpoint_device import endpoint_device_identifier
+from .endpoint_device import selection_device_picker, selection_device_refs
 from .group_config import group_records
 from .phone_config import (
     _add_phone_subentry, endpoint_from_data, phone_subentries,
@@ -31,7 +30,7 @@ from .phone_profile_catalog import PhoneProfileCatalog
 from .physical_phone import (
     KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, physical_phone_records,
     provisioning_enabled, discovery_enabled, draft_physical_subentry, physical_phone_data, physical_phone_id, physical_phone_model,
-    matches_announced_model, phone_candidate_name, reorder_physical_keys,
+    matches_announced_model, phone_candidate_name, canonical_physical_keys, reorder_physical_keys,
 )
 from .physical_phone_validation import physical_slot, physical_validation_runtime, validate_physical_inventory
 
@@ -40,6 +39,18 @@ _IDENTITY_FIELDS = frozenset({
     "name", "mac", "profile_id", "host", "area_id", "person",
     "follow_ha_language", "enabled",
 })
+
+
+_KEY_ORIGIN = "_original_slot"
+
+
+class _PhysicalKeyRowsSelector(ObjectSelector):
+    """Validate the original slot with the row, while exposing only editable fields."""
+
+    def serialize(self):
+        serialized = deepcopy(super().serialize())
+        serialized["selector"]["object"]["fields"].pop(_KEY_ORIGIN)
+        return serialized
 
 
 def _slot(value):
@@ -83,6 +94,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._other_targets = {}
         self._functions = {}
         self._selector_labels = {}
+        self._rendered_key_slots = set()
 
     def _previous(self):
         return physical_phone_data(self._current) if self._current is not None else self._seed
@@ -93,39 +105,10 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 if item.data.get("kind") == EndpointKind.SIP_ACCOUNT.value}
 
     def _selection_devices(self, identities, *, groups=()):
-        """Project existing HA registry devices onto this entry's allowed references."""
-        devices = dr.async_get(self.hass)
-        entry = self._get_entry()
-        endpoints = getattr(getattr(entry, "runtime_data", None), "endpoints", None)
-        result = {}
-        for identity in identities:
-            endpoint = endpoints.get(identity) if endpoints is not None else None
-            device_id = (endpoint.account_device_id or endpoint.device_id) if endpoint else ""
-            device = devices.async_get(device_id) if device_id else None
-            if device is None:
-                device = devices.async_get_device_by_identifier((DOMAIN, endpoint_device_identifier(identity)), entry.entry_id)
-            if device is not None and not device.disabled_by:
-                result[device.id] = identity
-        for identity in groups:
-            device = devices.async_get_device_by_identifier((DOMAIN, f"group:{identity}"), entry.entry_id)
-            if device is not None and not device.disabled_by:
-                result[device.id] = identity
-        return result
+        return selection_device_refs(self.hass, self._get_entry(), identities, groups=groups)
 
     def _device_selector(self, refs):
-        devices = dr.async_get(self.hass)
-        filters = []
-        for identity in refs:
-            device = devices.async_get(identity)
-            # HA filters the picker by product. Only this entry's mapped device IDs are accepted.
-            config = self.hass.config_entries.async_get_entry(device.config_entry_id)
-            match = {key: value for key, value in (
-                ("integration", config.domain if config else None),
-                ("manufacturer", device.manufacturer), ("model", device.model), ("model_id", device.model_id),
-            ) if value}
-            if match not in filters:
-                filters.append(match)
-        return DeviceSelector({"filter": filters})
+        return selection_device_picker(self.hass, refs)
 
     async def _load_selector_labels(self):
         language = self.context.get("language") or self.hass.config.language
@@ -149,10 +132,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._draft = deepcopy(physical_phone_data(self._current))
         if not provisioning_enabled(self._get_entry()):
             return self.async_abort(reason="phone_provisioning_disabled")
-        options = ["user", "bindings"]
-        if len(self._draft.get("keys", [])) > 1:
-            options.append("key_order")
-        return self.async_show_menu(step_id="reconfigure", menu_options=options)
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "bindings"])
 
     def _new_inventory_draft(self):
         if self._current is not None:
@@ -386,6 +366,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 or any(not isinstance(row, dict) for row in [*raw_lines, *raw_keys])):
             raise ValueError("invalid_phone_bindings")
         lines, keys = [], []
+        retained, anchored, origins = [], [], set()
         for raw in raw_lines:
             line = {"slot": _slot(raw.get("slot")), "transport": str(raw.get("transport") or "udp").lower()}
             if line["transport"] not in PHYSICAL_LINE_TRANSPORTS:
@@ -410,7 +391,23 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 key["target"] = self._target_devices[device]
             elif other and key["function"] in {"blf", "speed_dial", "queue_login", "queue_pause"}:
                 key["target"] = self._other_targets.get(other, other)
+            origin = raw.get(_KEY_ORIGIN)
+            if _KEY_ORIGIN in raw:
+                if not isinstance(origin, str) or origin not in self._rendered_key_slots or origin in origins:
+                    raise ValueError("invalid_phone_key_order")
+                origins.add(origin)
             keys.append(key)
+            if origin == key["slot"]:
+                retained.append(key)
+            else:
+                anchored.append(key)
+        if len({key["slot"] for key in keys}) != len(keys):
+            raise ValueError("invalid_phone_key")
+        if len(retained) > 1:
+            # Native dragging preserves a row's original slot. New keys and
+            # explicitly changed positions stay exactly where the editor put them.
+            moved = reorder_physical_keys(retained, [key["slot"] for key in retained])
+            keys = canonical_physical_keys([*moved, *anchored])
         return lines, keys
 
     def _validation_runtime(self):
@@ -483,7 +480,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         target_fields["target"] = {"selector": SelectSelector({"options": list(self._other_targets), "custom_value": True})}
         if len(line_slots) == 1 and len(caps.get("key_slots", [])) == 1 and len(lines) <= 1 and len(keys) <= 1:
             return self._single_binding_schema(lines, keys, functions, queues, account_fields)
+        self._rendered_key_slots = {key["slot"] for key in keys}
         for key in keys:
+            key[_KEY_ORIGIN] = key["slot"]
             key["function"] = self._option_label("physical_phone_key_function", key["function"])
         return vol.Schema({
             vol.Required("lines", default=lines): ObjectSelector({
@@ -493,9 +492,10 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     **account_fields,
                     "transport": {"selector": SelectSelector({"options": list(PHYSICAL_LINE_TRANSPORTS)})},
                 }}),
-            vol.Required("keys", default=keys): ObjectSelector({
+            vol.Required("keys", default=keys): _PhysicalKeyRowsSelector({
                 "multiple": True,
                 "translation_key": "physical_phone_keys", "fields": {
+                    _KEY_ORIGIN: {"selector": TextSelector()},
                     "slot": {"required": True, "selector": SelectSelector({"options": [str(item["slot"]) for item in caps.get("key_slots", [])]})},
                     "function": {"required": True, "selector": SelectSelector({"options": list(self._functions)})},
                     "line": {"required": True, "selector": SelectSelector({"options": line_slots})},
@@ -603,30 +603,6 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         return self.async_show_form(step_id="bindings", errors=errors, data_schema=schema,
             description_placeholders={"max_lines": str(self._profile["capabilities"]["max_lines"]),
                                       "max_keys": str(len(self._profile["capabilities"].get("key_slots", [])))})
-
-    async def async_step_key_order(self, user_input=None):
-        if not provisioning_enabled(self._get_entry()):
-            return self.async_abort(reason="phone_provisioning_disabled")
-        if self._profile is None:
-            await self._manifest_for_form()
-            self._profile, _templates = await self._catalog.async_profile(self._draft["profile_id"], commit=self._draft["catalog_commit"])
-        keys = self._draft.get("keys", [])
-        positions = sorted((key["slot"] for key in keys), key=int)
-        errors = {}
-        if user_input is not None:
-            try:
-                proposal = {**self._draft, "keys": reorder_physical_keys(keys, [user_input.get(slot) for slot in positions])}
-                data = validate_physical_inventory(self.hass, self._get_entry(), proposal, self._profile,
-                    previous=self._previous(), current_subentry_id=self._current.subentry_id)
-            except ValueError as error:
-                errors["base"] = self._error(error)
-            else:
-                return self._store_inventory(data)
-        await self._load_selector_labels()
-        options = [{"value": key["slot"], "label": f"{key.get('label') or self._option_label('physical_phone_key_function', key['function'])} ({key['slot']})"}
-                   for key in keys]
-        return self.async_show_form(step_id="key_order", errors=errors,
-            data_schema=vol.Schema({vol.Required(slot, default=slot): SelectSelector({"options": options}) for slot in positions}))
 
     async def async_step_account(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):

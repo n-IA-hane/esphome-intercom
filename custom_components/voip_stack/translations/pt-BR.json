@@ -621,18 +621,22 @@
             "fallback": "Fallback destination",
             "hold_media": "Hold audio URI",
             "strategy": "Estratégia de distribuição",
-            "agent_order": "Ordem preferencial dos telefones (ordem de seleção)",
             "auto_pause_after": "Pausar após tentativas sem atendimento (0 desativa)",
             "fallback_full": "Destino alternativo quando a fila está cheia",
             "fallback_timeout": "Destino alternativo após a espera máxima",
             "fallback_no_agents": "Destino alternativo sem operadores disponíveis",
             "fallback_disabled": "Destino alternativo quando a fila está desativada",
-            "fallback_removed": "Destino alternativo quando a fila é removida"
+            "fallback_removed": "Destino alternativo quando a fila é removida",
+            "queue_members": "Membros da fila"
           },
           "data_description": {
-            "agent_order": "Selecione os telefones preferenciais na ordem em que devem tocar. Os demais membros vêm em seguida. Isso não altera a participação no grupo.",
             "auto_pause_after": "Desativado em 0. Defina 3 para pausar após três tentativas com toque sem atendimento; ocupado, indisponível e cancelamentos não contam.",
-            "fallback": "Usado quando o destino específico para um motivo de saída está vazio."
+            "fallback": "Usado quando o destino específico para um motivo de saída está vazio.",
+            "queue_members": "Adicione os telefones que podem atender e arraste para ordenar. O toque simultâneo chama todos os membros disponíveis. A ordem configurada segue a lista, a alternância percorre a lista e o maior tempo livre usa a lista em caso de empate.",
+            "ring_timeout": "Tempo de toque de cada tentativa. A fila usa seu próprio limite de espera e destino alternativo. A regra pessoal de chamada não atendida do telefone vale para chamadas diretas.",
+            "max_wait": "Tempo total de espera, incluindo os toques e as pausas entre tentativas. A última tentativa pode ser menor para respeitar esse limite.",
+            "retry_delay": "Pausa antes de oferecer novamente a mesma chamada em espera. Uma mudança na disponibilidade dos agentes pode antecipar a verificação.",
+            "fallback_timeout": "Destino após o tempo máximo de espera. Um destino de correio de voz grava diretamente; um destino de telefone aplica as regras normais de toque desse telefone. Vazio usa o destino alternativo comum."
           }
         }
       },
@@ -640,7 +644,8 @@
         "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Group updated",
+        "queue_member_device_missing": "Falta um dispositivo habilitado do Home Assistant para {count} membros salvos da fila. Restaure o dispositivo ou altere a participação nas configurações do telefone antes de editar esta fila."
       }
     },
     "paging": {
@@ -747,6 +752,9 @@
                 "parking_target": "Posição de estacionamento"
               }
             }
+          },
+          "data_description": {
+            "keys": "Arraste as teclas existentes para alterar a ordem nas posições ocupadas. Uma nova tecla mantém a posição escolhida."
           }
         },
         "account": {
@@ -775,13 +783,8 @@
           "title": "Configure physical phone",
           "menu_options": {
             "user": "Properties and profile",
-            "bindings": "Lines and key properties",
-            "key_order": "Reorder keys"
+            "bindings": "Lines and key properties"
           }
-        },
-        "key_order": {
-          "title": "Reorder keys",
-          "description": "For each occupied physical position, choose the existing key to place there. Each key must be selected once."
         }
       },
       "error": {
@@ -1014,6 +1017,13 @@
       "fields": {
         "transport": "Transporte",
         "binding": "Physical phone and line"
+      }
+    },
+    "queue_members": {
+      "fields": {
+        "device": {
+          "name": "Telefone"
+        }
       }
     }
   },
