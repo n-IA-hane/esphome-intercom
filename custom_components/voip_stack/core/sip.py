@@ -470,15 +470,23 @@ def parse_host_port(
         suffix = authority[closing + 1 :]
         if suffix and not suffix.startswith(":"):
             raise SipError(f"bad SIP address: {value!r}")
-        port = int(suffix[1:]) if suffix else default_port
+        port = _parse_numeric_field(suffix[1:], "SIP port") if suffix else default_port
     elif authority.count(":") == 1:
         host, raw_port = authority.rsplit(":", 1)
-        port = int(raw_port) if raw_port else default_port
+        port = _parse_numeric_field(raw_port, "SIP port") if raw_port else default_port
     else:
         host, port = authority, default_port
     if not host or (port is not None and not 1 <= int(port) <= 65535):
         raise SipError(f"bad SIP address: {value!r}")
     return host, port
+
+
+def _parse_numeric_field(value: str, field: str) -> int:
+    """Keep malformed wire numbers inside the public parser error contract."""
+    try:
+        return int(value)
+    except ValueError as error:
+        raise SipError(f"invalid {field}: {value!r}") from error
 
 
 def contact_target_uri(message: SipMessage) -> str:
@@ -739,7 +747,7 @@ def parse_via(value: str) -> SipVia:
     rport_raw = param_map.get("rport")
     rport = None
     if rport_raw not in (None, ""):
-        rport = int(rport_raw)
+        rport = _parse_numeric_field(rport_raw, "Via rport")
         if not 1 <= rport <= 65535:
             raise SipError(f"bad Via rport: {rport_raw!r}")
     return SipVia(
@@ -757,7 +765,7 @@ def parse_cseq(value: str) -> SipCSeq:
     parts = (value or "").strip().split()
     if len(parts) != 2:
         raise SipError(f"bad CSeq header: {value!r}")
-    number = int(parts[0])
+    number = _parse_numeric_field(parts[0], "CSeq number")
     method = parts[1].upper()
     if not 0 <= number <= 0x7FFFFFFF:
         raise SipError(f"bad CSeq number: {value!r}")
@@ -963,7 +971,7 @@ def parse_message(data: bytes) -> SipMessage:
     if start.startswith(SIP_VERSION + " "):
         if len(parts) < 3:
             raise SipError("malformed SIP status line")
-        code = int(parts[1])
+        code = _parse_numeric_field(parts[1], "SIP status code")
         if not 100 <= code <= 699:
             raise SipError(f"SIP status code out of range: {code}")
         if any(ord(ch) < 0x20 for ch in parts[2]):

@@ -37,6 +37,34 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    async def test_malformed_numeric_messages_do_not_end_the_client_receiver(self):
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1", local_name="Receiver", local_sip_port=0, local_rtp_port=41000,
+        )
+        peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        peer.bind(("127.0.0.1", 0))
+        peer.setblocking(False)
+        try:
+            await client.start()
+            target = ("127.0.0.1", client.local_sip_port)
+            valid = sip.build_response(180, "Ringing", [("Call-ID", client.dialog_ids.call_id)])
+            malformed = (
+                b"BYE sip:peer@host:50udp SIP/2.0\r\nContent-Length: 0\r\n\r\n",
+                b"BYE sip:peer@[::1]:bad SIP/2.0\r\nContent-Length: 0\r\n\r\n",
+                b"SIP/2.0 bad Broken\r\nContent-Length: 0\r\n\r\n",
+            )
+            for raw in malformed:
+                with self.subTest(raw=raw):
+                    await asyncio.get_running_loop().sock_sendto(peer, raw, target)
+                    await asyncio.get_running_loop().sock_sendto(peer, valid, target)
+                    message, address = await client._read_response(1)
+                    self.assertEqual(message.status_code, 180)
+                    self.assertEqual(message.header("Call-ID"), client.dialog_ids.call_id)
+                    self.assertEqual(address, peer.getsockname())
+        finally:
+            peer.close()
+            await client.close()
+
     def test_local_invite_correlation_requires_the_owned_flow_and_actual_listener(self):
         client = sip_client.SipCallClient(local_ip="127.0.0.1", local_name="Caller",
             local_sip_port=0, local_rtp_port=41000, supported_formats=[audio_format.AudioFormat(16000)])

@@ -32,6 +32,18 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_numeric_wire_fields_use_the_parser_error_contract(self) -> None:
+        for parser, value in (
+            (sip.parse_host_port, "host:50udp"),
+            (sip.parse_host_port, "[::1]:bad"),
+            (sip.parse_via, "SIP/2.0/UDP host:5060;rport=bad"),
+            (sip.parse_cseq, "bad INVITE"),
+            (sip.parse_message, b"SIP/2.0 bad Broken\r\nContent-Length: 0\r\n\r\n"),
+        ):
+            with self.subTest(parser=parser.__name__, value=value):
+                with self.assertRaises(sip.SipError):
+                    parser(value)
+
     def test_trunk_flow_binding_releases_only_original_dialog(self) -> None:
         module = _load_intercom_module("trunk_signaling")
         closed = []
