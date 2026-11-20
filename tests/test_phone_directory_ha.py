@@ -17,6 +17,41 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("sensor_present", [False, True])
+async def test_phonebook_export_uses_backend_directory_without_reading_sensor(managed, sensor_present):
+    from homeassistant.core import ServiceCall
+    from custom_components.voip_stack.phonebook_services import build_phonebook_service_handlers
+
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+
+    class UnavailableProjection:
+        async def async_update(self):
+            raise AssertionError("An export must not drive the sensor")
+
+        @property
+        def extra_state_attributes(self):
+            raise AssertionError("The sensor is not the phonebook owner")
+
+    lab.runtime.phonebook_sensor = UnavailableProjection() if sensor_present else None
+    before = len(lab.sent)
+
+    async def no_delivery(_hass):
+        raise AssertionError("An export must not provision devices")
+
+    handlers = build_phonebook_service_handlers(no_delivery)
+    result = await handlers["export_phonebook"](
+        ServiceCall(lab.hass, "voip_stack", "export_phonebook", {})
+    )
+    rows = json.loads(result["roster_json"])["contacts"]
+    own = [row for row in rows if row["metadata"].get("endpoint_id") == phone.endpoint_id]
+    assert len(own) == 1
+    assert own[0]["id"] == phone.username
+    assert own[0]["name"] == "Ingresso"
+    assert len(lab.sent) == before
+
+
 async def test_phone_key_validation_uses_current_contacts_without_mutating_the_directory(managed):
     from custom_components.voip_stack.phone_directory import PhoneDirectory
     from custom_components.voip_stack.physical_phone_validation import physical_validation_runtime

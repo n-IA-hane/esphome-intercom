@@ -99,7 +99,6 @@ def store_manual_roster_entries(hass: HomeAssistant, entries) -> None:
     from .contact_config import replace_contacts
 
     replace_contacts(hass, entry, payload)
-    hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = contacts
 
 
 def update_sip_accounts(hass: HomeAssistant, accounts: list[dict]) -> None:

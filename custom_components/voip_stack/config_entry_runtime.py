@@ -11,7 +11,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .entity_identity import phonebook_state
 
-from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
+from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS
 from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     CONF_ESPHOME_PHONE_POLICIES,
@@ -26,7 +26,7 @@ from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import runtime_data, sip_registrar
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
-from .store import manual_roster_entries, sip_accounts
+from .store import sip_accounts
 from .websocket_api import (
     _async_load_ha_softphone_store,
     _publish_ha_softphone_state,
@@ -243,10 +243,6 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     }
     runtime.entry_contacts_signature = contacts_signature
 
-    if contacts_changed:
-        hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (
-            manual_roster_entries(hass)
-        )
     directory_phones_changed = phones_changed and not _only_browser_camera_send_changed(
         previous_phones, phone_signature
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
@@ -54,6 +55,13 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
         char for char in str(value or "").lower() if char.isalnum()
     )
     roster.parse_roster_json = lambda _value: []
+    roster.dump_roster_json = json.dumps
+    directory = types.ModuleType(f"{PACKAGE}.directory_runtime")
+
+    async def refresh_directory(hass):
+        return hass.runtime.entries
+
+    directory.async_refresh_directory = refresh_directory
     mailbox = types.ModuleType(f"{PACKAGE}.mailbox")
     mailbox.mailbox_settings = lambda _hass, _endpoint: {}
     store = types.ModuleType(f"{PACKAGE}.store")
@@ -69,6 +77,7 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
         roster,
         store,
         mailbox,
+        directory,
     ):
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
 
@@ -83,20 +92,21 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
 
 def test_export_returns_roster_only_in_service_response(monkeypatch) -> None:
     module = _load_phonebook_services(monkeypatch)
-    roster_json = '[{"name":"Private","sip_uri":"sip:427@10.0.0.7"}]'
+    entries = [{"name": "Private", "sip_uri": "sip:427@10.0.0.7"}]
+    roster_json = json.dumps(entries)
 
     class Sensor:
-        extra_state_attributes = {"roster_json": roster_json}
+        extra_state_attributes = {"roster_json": "stale sensor data"}
 
         async def async_update(self) -> None:
-            return None
+            raise AssertionError("Export must not drive a presentation entity")
 
     async def refresh(_hass) -> None:
         return None
 
     hass = types.SimpleNamespace(
         data={"voip_stack": {"phonebook_sensor": Sensor()}},
-        runtime=types.SimpleNamespace(phonebook_sensor=Sensor()),
+        runtime=types.SimpleNamespace(phonebook_sensor=Sensor(), entries=entries),
     )
     call = types.SimpleNamespace(hass=hass, data={})
     handlers = module.build_phonebook_service_handlers(refresh)

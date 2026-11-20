@@ -261,11 +261,12 @@ class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):
 
 
 class VoipPhonebookSensor(SensorEntity):
-    """Authoritative SIP phonebook publisher."""
+    """Publish the shared directory for existing cards and automations."""
 
     _attr_has_entity_name = False
     _attr_should_poll = False
     _attr_icon = "mdi:phone-voip"
+    _unrecorded_attributes = frozenset({"phonebook", "roster_json"})
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass

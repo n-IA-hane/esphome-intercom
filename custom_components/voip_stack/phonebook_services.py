@@ -9,20 +9,26 @@ from typing import Any
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .entity_identity import phonebook_state
-
 from .config import assist_config
 from .config_validation import route_namespace_conflicts
 from .const import (
     CONF_ASSIST_ENDPOINT_ENABLED,
     CONF_ASSIST_EXTENSION,
 )
+from .directory_runtime import async_refresh_directory
 from .phonebook_runtime import push_roster_json_to_esps
-from .runtime_data import endpoint_directory, runtime_data
-from .roster import RosterEntry, normalize_roster_key, parse_roster_json
+from .runtime_data import endpoint_directory
+from .roster import RosterEntry, dump_roster_json, normalize_roster_key, parse_roster_json
 from .store import manual_roster_entries, store_manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _async_directory_json(hass: Any) -> str:
+    entries = await async_refresh_directory(hass)
+    if entries is None:
+        raise ServiceValidationError("The VoIP phone directory is unavailable")
+    return dump_roster_json(entries)
 
 
 def _entry_mapping(entry: RosterEntry) -> dict[str, Any]:
@@ -249,27 +255,13 @@ def build_phonebook_service_handlers(
         _LOGGER.info("Phonebook manual contacts cleared")
 
     async def export_phonebook(call: ServiceCall) -> dict[str, str]:
-        hass = call.hass
-        runtime = runtime_data(hass)
-        sensor = runtime.phonebook_sensor if runtime is not None else None
-        if sensor is not None:
-            await sensor.async_update()
-            roster_json = sensor.extra_state_attributes.get("roster_json", "")
-        else:
-            roster_json = ""
+        roster_json = await _async_directory_json(call.hass)
         _LOGGER.info("Phonebook exported (%d bytes)", len(roster_json))
         return {"roster_json": str(roster_json)}
 
     async def push_phonebook(call: ServiceCall) -> None:
         hass = call.hass
-        runtime = runtime_data(hass)
-        sensor = runtime.phonebook_sensor if runtime is not None else None
-        if sensor is not None:
-            await sensor.async_update()
-            roster_json = sensor.extra_state_attributes.get("roster_json", "")
-        else:
-            state = phonebook_state(hass)
-            roster_json = str(state.attributes.get("roster_json") or "") if state is not None else ""
+        roster_json = await _async_directory_json(hass)
         await push_roster_json_to_esps(hass, roster_json)
         _LOGGER.info("Phonebook push requested (%d bytes)", len(roster_json))
 
