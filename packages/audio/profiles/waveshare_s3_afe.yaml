@@ -21,7 +21,6 @@ esp_afe:
   vad_enabled: true
   continuous_vad: true
   agc_enabled: false
-  feed_buf_in_psram: true
   feed_ring_in_psram: true
   fetch_ring_in_psram: true
 esp_audio_stack:

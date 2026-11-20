@@ -55,7 +55,6 @@ esp_afe:
   vad_enabled: true
   continuous_vad: true
   agc_enabled: false
-  feed_buf_in_psram: false
   feed_ring_in_psram: false
   fetch_ring_in_psram: false
 microphone:

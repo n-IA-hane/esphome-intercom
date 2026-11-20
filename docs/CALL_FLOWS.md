@@ -117,20 +117,20 @@ See the [historical recording of a SIP bridge across transport boundaries](https
 
 ## Unknown or unregistered caller
 
-1. A SIP peer with network reachability sends INVITE to the ESP or HA listener.
-   Phonebook membership is not a source allowlist; on an ESP, direct-call
-   admission also follows `registration.accept_direct_calls` independently of
-   its configured accounts.
-2. The receiver validates the SIP transaction, Request-URI, current busy/DND
-   state and SDP media.
-3. A directly addressed idle ESP rings when direct calls are allowed and media
-   is compatible. HA resolves
-   the destination using the same dial plan used for registered callers.
-4. The call proceeds or receives the normal routing/media/status response.
+1. The listener validates the request transaction and determines its admission
+   path before allocating a new call.
+2. HA identifies a configured trunk, a current locally owned SIP leg or an
+   account authenticated by SIP Digest. A network-reachable unknown peer does
+   not gain access through the destination phonebook.
+3. An ESP checks its recognized PBX bindings. A direct peer requires the
+   explicit `registration.accept_direct_calls` option.
+4. An admitted request proceeds through destination routing, busy/DND checks
+   and SDP negotiation. An idle direct ESP rings for manual answer when its
+   configured direct-call policy and media contract permit the call.
 
-The HA registrar authenticates REGISTER and publishes the endpoint's current
-Contact. It does not make registered accounts the only callers HA or an ESP can
-receive. Use network policy when an installation needs that restriction.
+Registration publishes reachability. Admission determines whether a new
+request may use it. See the [architecture](ARCHITECTURE.md) and
+[registered ESP accounts](ESP_REGISTRATION.md) for the current owners.
 
 ## In-dialog hold or media update
 

@@ -5,7 +5,7 @@ This guide covers installation, firmware selection and network settings.
 and video use UDP in both cases.
 
 The current development tree requires Home Assistant 2026.11.1 or newer and
-uses the official ESPHome development revision recorded in
+uses the official ESPHome 2026.11.0 release recorded in
 [stabilization](STABILIZATION.md). Stable 2026.11.0 retains its Home Assistant
 2026.7 and ESPHome 2026.10 requirements. HA and ESP firmware do not need matching version
 numbers: a HACS update and a device firmware update are separate operations.

@@ -254,22 +254,20 @@ sharing logs; authentication headers are not added by these diagnostic entries.
 
 ## Unknown or unregistered caller is rejected
 
-The phonebook is an outbound dial plan, not an inbound caller allowlist. An ESP
-or HA may therefore receive a compatible SIP INVITE from any peer that can
-reach its listener, even when the caller is absent from the phonebook and has
-not registered to HA. The optional HA registrar authenticates `REGISTER`; it
-does not require every inbound caller to own an account.
+Check admission separately from the destination phonebook. HA requires a
+configured trunk, an existing locally owned SIP leg or a Digest-authenticated
+account for a new call. A `401` followed by a new authenticated INVITE can be
+the normal account challenge; a repeating rejection needs investigation of
+the account and the exact Request-URI.
 
-Unknown callers may reach local HA, ESP, registered-phone and group targets.
-They cannot use HA as an unauthenticated gateway to the configured external
-trunk; outbound trunk routes require a registered, roster-known, HA-local or
-trusted-trunk origin.
+An ESP accepts calls through its recognized configured PBX bindings. Direct
+calls require `registration.accept_direct_calls: true`; use this explicitly
+for a standalone direct-call installation. A phonebook entry alone does not
+grant incoming-call access. See [registered ESP accounts](ESP_REGISTRATION.md).
 
-- Check DND, busy state, Request-URI routing and SDP compatibility before
-  treating an unknown caller as unauthorized.
-- Keep SIP/RTP on a trusted LAN or VPN. Use firewall, VLAN, VPN or an SBC when
-  caller admission policy is required; the ESP profile does not provide
-  SIP/TLS, SRTP or an inbound caller allowlist.
+After admission, check DND, busy state, destination routing and SDP
+compatibility. Keep unencrypted SIP/RTP on the intended LAN or VPN. Network
+access and SIP account admission address different parts of that boundary.
 
 ## Call fails with `media_incompatible`
 

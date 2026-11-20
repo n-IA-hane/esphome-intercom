@@ -372,7 +372,8 @@ Automation call to voicemail is a separate action.
 
 ### `voip_stack.set_ha_softphone_settings`
 
-Publish HA softphone identity and group membership.
+Update the configured SIP account's HA client preferences and group membership.
+The action retains its existing service name for automation compatibility.
 
 Fields:
 
@@ -384,10 +385,11 @@ Fields:
 - `auto_answer`: persistent Auto Answer preference.
 - `send_video`: persistent default camera-transmission preference.
 
-Changing these settings updates HA's virtual endpoint sensor. The phonebook
-sensor observes that change, rebuilds the central roster and pushes updates to
-online ESP devices. The same values are editable directly from each browser
-phone Device through native Extension, Ring groups, Conference groups and Ring
+Changing these settings updates the persisted account configuration. The
+entry-owned directory and its coordinator rebuild and deliver the contact
+projection; no sensor is required for internal delivery. The phonebook sensor
+shows that projection for diagnostics. The same values are editable from the
+account Device through native Extension, Ring groups, Conference groups and Ring
 for conference calls entities, plus Auto answer and Send video switches. The
 Device entities, this action and the card all use the same persisted phone
 configuration.

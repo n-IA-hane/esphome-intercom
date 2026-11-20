@@ -222,14 +222,15 @@ ESPHome also exposes native API actions such as
 `esphome.<slug>_set_contacts`, `esphome.<slug>_flush_contacts` and
 `esphome.<slug>_update_contacts`. These are local ESP actions: they change only
 that device's mirror/manual entries. In HA-managed installs, prefer the central
-`voip_stack.*` services above and let HA push `sensor.voip_phonebook` to the
-devices.
+`voip_stack.*` services above and let the directory coordinator deliver the
+current canonical roster to the devices. `sensor.voip_phonebook` exposes the
+same projection for diagnostics; disabling the sensor does not stop delivery.
 
-HA pushes the canonical roster whenever the phonebook sensor changes. It also
-refreshes after ESPHome registers an `esphome.<slug>_set_roster_json` service,
-which covers the common reboot timing where a device's endpoint sensor appears
-before its action service is callable. `voip_stack.push_phonebook` remains a
-diagnostic/manual recovery tool, not the normal synchronization path.
+HA refreshes the directory and delivers its canonical roster when the owning
+account, device or configuration changes. Delivery also observes the native
+ESPHome action inventory, so a device reconnect does not depend on sensor
+publication order. `voip_stack.push_phonebook` remains a diagnostic/manual
+recovery tool, not the normal synchronization path.
 
 Local SIP accounts are created with `voip_stack.create_account`.
 The `username` becomes the SIP username and central roster ID. If `password` is

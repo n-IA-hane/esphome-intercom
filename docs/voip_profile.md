@@ -31,18 +31,20 @@ SHA-512-256, including `auth` and `auth-int` where the request body is available
 Stale nonces are challenged explicitly; authentication retries use a new client
 transaction.
 
-Phonebook membership and HA registration are not inbound caller admission
-rules. Any peer that can reach an ESP or HA SIP listener may send an INVITE;
-normal routing, busy/DND and SDP checks then decide the result. Deploy SIP/RTP
-on a trusted LAN/VPN and enforce stricter admission with network controls or an
-SBC. This inbound openness does not make HA an anonymous PSTN gateway:
-external-trunk routes require a registered, roster-known, HA-local or trusted
-trunk origin.
+The phonebook supplies dialing destinations. Incoming calls follow a separate
+admission policy. HA identifies a configured trunk, an existing locally owned
+SIP leg or a Digest-authenticated account before creating a new call. ESP
+firmware recognizes its configured PBX bindings; a direct caller requires
+`registration.accept_direct_calls: true`. Routing, busy/DND and SDP checks
+follow admission. Keep unencrypted SIP/RTP inside the intended LAN/VPN trust
+boundary. See [account registration](ESP_REGISTRATION.md).
 
 Configured local SIP accounts are retained by the PBX as logical endpoints so
 their group membership and settings survive disconnects. Cards expose such an
-account as a callable contact only while the registrar has at least one live
-Contact binding; expiry or explicit deregistration removes it from the card.
+account as a callable contact when it is enabled and has a live SIP Contact or
+a saved HA client association. Browser presence describes the available media
+transport; it does not create or remove the account. See
+[accounts and clients](ACCOUNTS_AND_CLIENTS.md).
 
 Outbound audio/video offers remain video-capable. A standards-compliant answer
 retains rejected media sections with port zero. For PSTN interoperability, the
