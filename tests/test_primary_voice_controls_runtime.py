@@ -122,7 +122,7 @@ def _compile_and_run(source, tmp_path):
     binary = tmp_path / "controls"
     component = RUNTIME / "esphome/components/runtime_controller"
     run = subprocess.run(["g++", "-std=c++17", "-I", str(RUNTIME / "tests/fixtures/core/stubs"), "-I", str(component),
-                          str(cpp), str(component / "runtime_controller.cpp"), str(component / "runtime_controller_state.cpp"),
+                          str(cpp), *(str(path) for path in sorted(component.glob("*.cpp"))),
                           "-o", str(binary)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     run = subprocess.run([str(binary)], capture_output=True, text=True)

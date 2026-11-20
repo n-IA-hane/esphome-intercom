@@ -331,8 +331,8 @@ def test_round_boot_events_execute_against_the_real_runtime_profile(tmp_path):
     component = runtime / "esphome/components/runtime_controller"
     binary = tmp_path / "boot-profile"
     compiled = subprocess.run(["g++", "-std=c++17", "-I", str(runtime / "tests/fixtures/core/stubs"),
-        "-I", str(component), str(source), str(component / "runtime_controller.cpp"),
-        str(component / "runtime_controller_state.cpp"), "-o", str(binary)], capture_output=True, text=True)
+        "-I", str(component), str(source), *(str(path) for path in sorted(component.glob("*.cpp"))),
+        "-o", str(binary)], capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
     executed = subprocess.run([str(binary)], capture_output=True, text=True)
     assert executed.returncode == 0, executed.stderr
