@@ -59,6 +59,12 @@ async def test_registered_call_to_literal_name_keeps_the_registered_sip_identity
             (tmp_path / "literal-name.pcap").write_bytes(capture.buffer)
             capture.clear()
     assert registrar.accounts["transfer_b"] == previous
+    assert not lab.calls.endpoint_claims_snapshot()
+    assert not lab.calls.relays_snapshot()
+    assert not lab.runtime.rtp_port_pool.get("used")
+    # The PBX can be idle before the independent peers finalize their WAV headers.
+    for peer in (caller, handset):
+        await asyncio.to_thread(peer.close)
     assert_peer_audio_tones(tmp_path, (("transfer_b", 450), ("transfer_a", 550)))
 
 
