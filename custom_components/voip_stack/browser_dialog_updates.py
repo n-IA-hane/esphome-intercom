@@ -9,7 +9,7 @@ from .media_session_updates import (
 )
 from .runtime_data import require_runtime_data
 from .sip_client import PreparedDialogMediaUpdate
-from .websocket_api import _ha_softphone_store
+from .browser_phone_data import _ha_softphone_store
 from .call_events import fire_call_event as _fire_call_event
 
 

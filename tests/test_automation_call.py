@@ -125,7 +125,7 @@ async def test_announcement_answers_once_and_sends_complete_pcm(
     app, registry, peer, released = application
     binding = None
     if phone_takeover:
-        from custom_components.voip_stack import automation_context, peer_snapshot, websocket_api
+        from custom_components.voip_stack import automation_context, peer_snapshot, browser_phone_runtime
         from custom_components.voip_stack.call_scope import call_belongs_to_endpoint
         registry.release_resource(app.session.call_id, f"automation:{app.session.call_id}", value=app)
         registry.transition(app.session.call_id, owner="ha_softphone", state="ringing")
@@ -137,7 +137,7 @@ async def test_announcement_answers_once_and_sends_complete_pcm(
         }, ringing_guard=(fields["sequence"], app.session.callee))
         binding = module.current_execution.set(execution)
         monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
-        monkeypatch.setattr(websocket_api, "_release_ha_softphone_claim", Mock())
+        monkeypatch.setattr(browser_phone_runtime, "_release_ha_softphone_claim", Mock())
         original_token = app.session.token
         app, _ = await module.resolve_application_action(service(app))
         assert app.session.token == original_token

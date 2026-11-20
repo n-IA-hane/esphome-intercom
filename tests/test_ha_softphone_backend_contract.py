@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -13,7 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.architecture
 INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
-ENDPOINT_RUNTIME = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
+ENDPOINT_GROUP_CALLS = ROOT / "custom_components" / "voip_stack" / "endpoint_group_calls.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_BRIDGE = (
     ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "bridge.py"
@@ -91,7 +92,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_ha_softphone_busy_excludes_bridge_runtime_maps(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_projection.py"
         ).read_text()
         state_body = _function_body(ws, "_ha_softphone_state")
         busy_expr = state_body.split('"busy":', 1)[1].split(",", 1)[0]
@@ -101,7 +102,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_shutdown_revokes_media_owners_without_rebinding_maps(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_runtime.py"
         ).read_text()
         body = _function_body(ws, "_async_shutdown_all")
         self.assertIn("async_revoke_media_owners", body)
@@ -111,7 +112,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_shutdown_does_not_cancel_inflight_executor_capture_writes(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_runtime.py"
         ).read_text()
         body = _function_body(ws, "_async_shutdown_all")
         capture_cleanup = body.split("capture_tasks =", 1)[1].split(
@@ -131,7 +132,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_topology_details_are_exposed_only_in_debug_mode(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_projection.py"
         ).read_text()
         state_body = _function_body(ws, "_ha_softphone_state")
         for key in ("rtp_relays", "sip_client_dialogs", "sip_trunk"):
@@ -142,7 +143,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_idle_softphone_counters_do_not_fall_back_to_other_relays(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_projection.py"
         ).read_text()
         body = _function_body(ws, "_runtime_counter")
         self.assertIn("return store_value", body)
@@ -196,9 +197,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_dependent_browser_video_is_paced_without_dropping_a_gop(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
-        sender = body.split("async def browser_to_rtp()", 1)[1].split(
-            "async def symmetric_rtp_keepalive()", 1
-        )[0]
+        sender = VIDEO_WS.with_name("video_ws_frames.py").read_text(encoding="utf-8")
         limiter = sender.split("max_framerate = send_format.max_framerate", 1)[1]
         limiter = limiter.split("def media_current()", 1)[0]
 
@@ -216,12 +215,15 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_video_media_floods_yield_and_share_one_rtp_source_lock(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
 
+        frames = VIDEO_WS.with_name("video_ws_frames.py").read_text(encoding="utf-8")
         self.assertIn("rtp_send_lock = asyncio.Lock()", body)
-        self.assertGreaterEqual(body.count("async with rtp_send_lock:"), 4)
-        self.assertGreaterEqual(body.count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4)
+        self.assertIn("BrowserVideoSender(rtp_source, transport, rtp_send_lock,", body)
+        self.assertIn("self.send_lock = send_lock", frames)
+        self.assertGreaterEqual(body.count("async with rtp_send_lock:") + frames.count("async with self.send_lock:"), 4)
+        self.assertGreaterEqual((body + frames).count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4)
         self.assertIn("build_keepalive(", body)
         self.assertIn("sequence = int(rtp_source.sequence)", body)
-        self.assertIn("browser video TX drops=%s", body)
+        self.assertIn("browser video TX drops=%s", frames)
         self.assertIn("video RTP RX drops=%s", body)
         self.assertIn("video transcode input drops=%s", body)
 
@@ -323,7 +325,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_stale_call_id_cannot_replace_active_softphone_session(self) -> None:
         ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_runtime.py"
         ).read_text()
         sink = _function_body(ws, "_set_ha_softphone_call_state")
         projection = _function_body(
@@ -340,11 +342,12 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
-        self.assertIn("latched_rtp_source", audio_ws)
-        self.assertIn("latched_rtp_ssrc", audio_ws)
-        self.assertIn("remote_rtp_port = source[1]", audio_ws)
-        self.assertIn("packet.ssrc != latched_rtp_ssrc", audio_ws)
-        self.assertIn("(remote_rtp_host, remote_rtp_port)", audio_ws)
+        frames = (ROOT / "custom_components" / "voip_stack" / "audio_ws_frames.py").read_text()
+        self.assertIn("self.source = source", frames)
+        self.assertIn("self.ssrc = packet.ssrc", frames)
+        self.assertIn("self.remote_port = source[1]", frames)
+        self.assertIn("packet.ssrc != self.ssrc", frames)
+        self.assertIn("(incoming.remote_host, incoming.remote_port)", audio_ws)
         self.assertIn("session.signaling_host", audio_ws)
 
     def test_video_rtp_setup_failure_releases_prebound_rtp_and_rtcp(self) -> None:
@@ -454,12 +457,13 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
+        frames = (ROOT / "custom_components" / "voip_stack" / "audio_ws_frames.py").read_text()
         self.assertIn("async def browser_to_rtp()", audio_ws)
         self.assertIn("async def playout()", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_TARGET_MS = 60", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", audio_ws)
-        self.assertIn("_conceal_pcm_frame(", audio_ws)
-        self.assertIn('counters["tx_playout_late_discard"]', audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_TARGET_MS = 60", frames)
+        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", frames)
+        self.assertIn("_conceal_pcm_frame(", frames)
+        self.assertIn('counters["tx_playout_late_discard"]', frames)
         self.assertIn("payload = encoder.encode(pcm)", audio_ws)
         self.assertIn("transport.sendto(", audio_ws)
         self.assertNotIn("async def ws_to_rtp()", audio_ws)
@@ -487,16 +491,14 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("endpoint_id, asyncio.Lock()", prepare)
         self.assertIn("async with start_lock:", prepare)
 
-        endpoint_runtime = ENDPOINT_RUNTIME.read_text()
-        start = endpoint_runtime.index("async def _start_ring_group_from_ha(")
-        end = endpoint_runtime.index(
-            "\n    pbx_runtime.ring_conference_members_from_ha",
-            start,
-        )
-        ring_start = endpoint_runtime[start:end]
+        group_calls = ENDPOINT_GROUP_CALLS.read_text()
+        group_start = next(node for node in ast.walk(ast.parse(group_calls))
+                           if isinstance(node, ast.AsyncFunctionDef) and node.name == "start_ring_group_from_ha")
+        ring_start = ast.get_source_segment(group_calls, group_start)
         upsert = ring_start.index("session = registry.upsert(")
         publish = ring_start.index("publish_phone_projection(")
-        snapshot = ring_start.index("peers = await _async_build_peer_snapshot(hass)")
+        snapshot = ring_start.index("await self.member_roster()")
+        self.assertIn("peers = await self.build_peer_snapshot(self.hass)", group_calls)
         self.assertLess(upsert, publish)
         self.assertLess(publish, snapshot)
         self.assertIn("state=CallState.REMOTE_RINGING.value", ring_start)
@@ -504,7 +506,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("leg_id=origin_leg_id", ring_start)
         self.assertNotIn("CallProjectionEvent.phone(", ring_start)
         self.assertIn("TerminalReason.TRANSPORT_UNREACHABLE.value", ring_start)
-        self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", ring_start)
+        self.assertIn("EndpointTerminationHandler(self.hass).terminate_reason(", ring_start)
 
         orchestrator = RING_GROUP_ORCHESTRATOR.read_text()
         self.assertNotIn('"local_group_selected"', orchestrator)
@@ -722,7 +724,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_websocket_state_subscriptions_keep_internal_endpoint_scoping(self) -> None:
         websocket = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+            ROOT / "custom_components" / "voip_stack" / "browser_phone_data.py"
         ).read_text()
         selector = _function_body(websocket, "_endpoint_id_from_selector")
         self.assertIn("for entity in _values(entity_id)", selector)

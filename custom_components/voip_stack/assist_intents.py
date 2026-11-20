@@ -122,7 +122,7 @@ def _response(
 
 
 async def _voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
-    from .websocket_api import _get_voip_devices
+    from .esphome_phone_inventory import _get_voip_devices
 
     return await _get_voip_devices(hass)
 

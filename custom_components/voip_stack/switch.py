@@ -43,7 +43,7 @@ async def async_set_endpoint_dnd(
     if current is not None and bool(current.dnd) != bool(enabled):
         registry.update(endpoint_id, dnd=bool(enabled))
     if endpoint.supports_ha_client:
-        from .websocket_api import _publish_ha_softphone_state
+        from .browser_phone_runtime import _publish_ha_softphone_state
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
 
@@ -113,7 +113,7 @@ class PhoneEndpointSettingSwitch(PhoneEndpointEntity, SwitchEntity):
             self.async_write_ha_state()
 
     async def _async_set(self, enabled: bool) -> None:
-        from .websocket_api import async_set_ha_softphone_settings
+        from .browser_phone_runtime import async_set_ha_softphone_settings
         await async_set_ha_softphone_settings(self.hass, endpoint_id=self.endpoint.endpoint_id,
                                               **{self.entity_description.key: enabled})
 

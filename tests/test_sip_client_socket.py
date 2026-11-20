@@ -144,12 +144,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view._browser_audio_message_limit(session),4096)
 
     async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
-        audio_ws_view = _load_audio_ws_runtime_module()
+        audio_frames = _load_intercom_module("audio_ws_frames")
         pcm = b"".join(
             int(12000).to_bytes(2, "little", signed=True) for _ in range(160)
         )
 
-        concealed = audio_ws_view._conceal_pcm_frame(pcm, len(pcm))
+        concealed = audio_frames._conceal_pcm_frame(pcm, len(pcm))
         concealed_samples = [
             int.from_bytes(concealed[index : index + 2], "little", signed=True)
             for index in range(0, len(concealed), 2)
@@ -162,7 +162,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        recovered = audio_ws_view._fade_in_pcm_frame(pcm, 32)
+        recovered = audio_frames._fade_in_pcm_frame(pcm, 32)
         recovered_samples = [
             int.from_bytes(recovered[index : index + 2], "little", signed=True)
             for index in range(0, 64, 2)
@@ -1690,7 +1690,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     async def test_video_packetization_executor_preserves_call_control_deadline(
         self,
     ) -> None:
-        video_ws_view = _load_video_ws_runtime_module()
+        video_frames = _load_intercom_module("video_ws_frames")
         call_control_ran = asyncio.Event()
 
         def slow_packetizer(*_args, **_kwargs):
@@ -1702,12 +1702,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             call_control_ran.set()
 
         with patch.object(
-            video_ws_view,
+            video_frames,
             "_packetize_browser_access_unit",
             side_effect=slow_packetizer,
         ):
             packetize_task = asyncio.create_task(
-                video_ws_view._async_packetize_browser_access_unit(
+                video_frames._async_packetize_browser_access_unit(
                     b"frame",
                     encoding="VP8",
                     payload_type=103,
@@ -1731,7 +1731,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     async def test_video_packetization_has_one_global_cpu_slot_and_skips_stale_work(
         self,
     ) -> None:
-        video_ws_view = _load_video_ws_runtime_module()
+        video_frames = _load_intercom_module("video_ws_frames")
         entered = threading.Event()
         release = threading.Event()
         calls = 0
@@ -1745,12 +1745,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         current = True
         with patch.object(
-            video_ws_view,
+            video_frames,
             "_packetize_browser_access_unit",
             side_effect=blocking_packetizer,
         ):
             first = asyncio.create_task(
-                video_ws_view._async_packetize_browser_access_unit(
+                video_frames._async_packetize_browser_access_unit(
                     b"first",
                     encoding="VP8",
                     payload_type=103,
@@ -1761,7 +1761,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.to_thread(entered.wait, 1)
             second = asyncio.create_task(
-                video_ws_view._async_packetize_browser_access_unit(
+                video_frames._async_packetize_browser_access_unit(
                     b"stale",
                     encoding="VP8",
                     payload_type=103,
@@ -1778,7 +1778,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
 
     async def test_video_rtp_send_burst_yields_to_call_end(self) -> None:
-        video_ws_view = _load_video_ws_runtime_module()
+        video_frames = _load_intercom_module("video_ws_frames")
 
         class Transport:
             def __init__(self) -> None:
@@ -1792,10 +1792,10 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         asyncio.get_running_loop().call_soon(call_ended.set)
         sent: list[tuple[int, int]] = []
         datagrams = [(bytes(12), 4)] * (
-            video_ws_view._VIDEO_RTP_SEND_BURST_PACKETS + 3
+            video_frames._VIDEO_RTP_SEND_BURST_PACKETS + 3
         )
 
-        complete = await video_ws_view._send_packetized_datagrams(
+        complete = await video_frames._send_packetized_datagrams(
             transport,
             datagrams,
             ("192.0.2.10", 4000),
@@ -1808,7 +1808,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(complete)
         self.assertEqual(
             len(transport.sent),
-            video_ws_view._VIDEO_RTP_SEND_BURST_PACKETS,
+            video_frames._VIDEO_RTP_SEND_BURST_PACKETS,
         )
         self.assertEqual(len(sent), len(transport.sent))
 

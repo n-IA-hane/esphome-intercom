@@ -151,6 +151,8 @@ groups = _load_module("groups")
 router = _load_module("router")
 endpoint_routing = _load_module("endpoint_routing")
 websocket_api = _load_module("websocket_api")
+browser_phone_projection = _load_module("browser_phone_projection")
+browser_phone_runtime = _load_module("browser_phone_runtime")
 call_projection = _load_module("call_projection")
 fsm = _load_module("fsm")
 const = _load_module("const")
@@ -214,6 +216,8 @@ runtime_data_module.require_runtime_data = _test_runtime
 runtime_data_module.runtime_data = _test_runtime
 endpoint_lifecycle_module.require_runtime_data = _test_runtime
 websocket_api.runtime_data = _test_runtime
+browser_phone_projection.runtime_data = _test_runtime
+browser_phone_runtime.runtime_data = _test_runtime
 call_projection.require_runtime_data = _test_runtime
 
 
@@ -272,7 +276,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertFalse(normal["debug_mode"])
         self.assertEqual(normal["media_debug"], {})
 
-        with patch.object(websocket_api, "current_debug_mode", return_value=True):
+        with patch.object(browser_phone_projection, "current_debug_mode", return_value=True):
             debug = websocket_api._ha_softphone_state(hass, "default")
 
         self.assertTrue(debug["debug_mode"])
@@ -457,7 +461,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         terminal = [
             event
             for event_type, event in hass.bus.events
-            if event_type == websocket_api.SIP_CALL_ENDED_EVENT
+            if event_type == const.SIP_CALL_ENDED_EVENT
         ]
         self.assertEqual(len(terminal), 1)
         self.assertEqual(terminal[0]["state"], "idle")
@@ -479,7 +483,7 @@ class GroupCallMatrixTest(unittest.TestCase):
 
         self.assertFalse(
             any(
-                event_type == websocket_api.SIP_CALL_ENDED_EVENT
+                event_type == const.SIP_CALL_ENDED_EVENT
                 for event_type, _event in hass.bus.events
             )
         )

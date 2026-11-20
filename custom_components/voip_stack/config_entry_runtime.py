@@ -24,7 +24,7 @@ from .phonebook_coordinator import PhonebookCoordinator, entry_phonebook
 from .runtime_data import runtime_data, sip_registrar
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 from .store import sip_accounts
-from .websocket_api import (
+from .browser_phone_runtime import (
     _async_load_ha_softphone_store,
     _publish_ha_softphone_state,
 )

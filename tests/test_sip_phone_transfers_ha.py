@@ -336,7 +336,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
             ])
             raise
     monkeypatch.setattr(lab.calls, "claim_endpoint", traced_claim)
-    from custom_components.voip_stack import endpoint_runtime, invite_router, outbound_bridge_commit
+    from custom_components.voip_stack import invite_router, outbound_bridge_commit
 
     first_media_started = asyncio.Event()
     release_first_media = asyncio.Event()
@@ -348,7 +348,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
         return await start_media(relay)
     monkeypatch.setattr(outbound_bridge_commit, "async_start_sip_bridge_media", staged_media)
 
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", roster_from_peers)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     monkeypatch.setattr(invite_router, "_roster_from_peers", roster_from_peers)
     registrar = lab.calls.component("registrar")
     if origin == "caller":

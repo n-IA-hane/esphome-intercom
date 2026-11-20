@@ -26,7 +26,7 @@ from .fsm import (
 )
 from .runtime_data import call_runtime_artifacts, endpoint_directory
 from .phone_policy_runtime import dispatch_phone_failure, phone_failure_destination
-from .websocket_api import _ha_softphone_store
+from .browser_phone_data import _ha_softphone_store
 
 _LOGGER = logging.getLogger(__name__)
 

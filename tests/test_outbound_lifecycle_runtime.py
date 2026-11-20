@@ -264,17 +264,18 @@ def _load_outbound_lifecycle(
     phone_policy_runtime = types.ModuleType(f"{PKG_NAME}.phone_policy_runtime")
     phone_policy_runtime.phone_failure_destination = lambda _endpoint, _status: None
     phone_policy_runtime.dispatch_phone_failure = lambda *_args: False
-    websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
-    websocket_api._ha_softphone_store = lambda _hass, endpoint_id: stores.setdefault(
+    browser_phone_data = types.ModuleType(f"{PKG_NAME}.browser_phone_data")
+    browser_phone_runtime = types.ModuleType(f"{PKG_NAME}.browser_phone_runtime")
+    browser_phone_data._ha_softphone_store = lambda _hass, endpoint_id: stores.setdefault(
         endpoint_id, {}
     )
-    websocket_api._set_ha_softphone_call_state = lambda _hass, state, **kwargs: (
+    browser_phone_runtime._set_ha_softphone_call_state = lambda _hass, state, **kwargs: (
         states.append((state, kwargs))
     )
     call_projection = types.ModuleType(f"{PKG_NAME}.call_projection")
 
     def publish_phone_projection(_hass, session, endpoint_id, **details) -> bool:
-        websocket_api._set_ha_softphone_call_state(
+        browser_phone_runtime._set_ha_softphone_call_state(
             _hass,
             session.state,
             endpoint_id=endpoint_id,
@@ -309,7 +310,8 @@ def _load_outbound_lifecycle(
         session_cleanup.__name__: session_cleanup,
         runtime_data.__name__: runtime_data,
         phone_policy_runtime.__name__: phone_policy_runtime,
-        websocket_api.__name__: websocket_api,
+        browser_phone_data.__name__: browser_phone_data,
+        browser_phone_runtime.__name__: browser_phone_runtime,
     }
     with patch.dict(sys.modules, dependencies):
         sys.modules[module_name] = module

@@ -77,8 +77,8 @@ from .runtime_data import (
     runtime_data as _runtime_data,
 )
 from .contact_config import contact_dicts
-from .websocket_api import (
-    async_register_websocket_api,
+from .websocket_api import async_register_websocket_api
+from .browser_phone_runtime import (
     _async_load_ha_softphone_store,
     async_set_ha_softphone_settings,
 )
@@ -893,7 +893,7 @@ def _register_runtime_shutdown(hass: HomeAssistant, entry: VoipStackConfigEntry)
 
 async def _async_stop_runtime(hass: HomeAssistant) -> None:
     """Release media owners before closing the PBX runtime."""
-    from .websocket_api import _async_shutdown_all
+    from .browser_phone_runtime import _async_shutdown_all
 
     runtime = _runtime_data(hass)
     if runtime is not None and runtime.phonebook is not None:

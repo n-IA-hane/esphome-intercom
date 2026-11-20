@@ -1316,7 +1316,7 @@ async def test_entry_store_lifetime_reuses_owners_and_cancels_delayed_writes(
     before = dict(lab.entry.data)
     monkeypatch.setattr(lab.hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True))
     monkeypatch.setattr(voip_stack, "_async_apply_assist_intents", AsyncMock())
-    monkeypatch.setattr("custom_components.voip_stack.websocket_api._async_shutdown_all", AsyncMock())
+    monkeypatch.setattr("custom_components.voip_stack.browser_phone_runtime._async_shutdown_all", AsyncMock())
     async def stop_sip(_hass):
         assert lab.runtime.phone_discovery is None
         discovery.async_close.assert_awaited_once()

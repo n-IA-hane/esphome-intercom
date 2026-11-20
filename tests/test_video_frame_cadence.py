@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 from collections import defaultdict
 from fractions import Fraction
 import json
-import math
 import random
 from pathlib import Path
 import struct
 import subprocess
-import textwrap
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from aiohttp import WSMsgType
 import pytest
+
+from .voip_phase1_support import _load_intercom_module
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "custom_components/voip_stack/frontend"
-BACKEND = ROOT / "custom_components/voip_stack/video_ws_view.py"
+
 VECTORS = json.loads((ROOT / "tests/fixtures/video_cadence.json").read_text())
 
 
@@ -107,11 +108,8 @@ def test_camera_sender_preserves_source_cadence(vector):
 
 
 def _backend_sender(events, *, encoding="JPEG", wait_hook=None):
-    """Load the complete production nested sender; replace only external I/O."""
-    tree = ast.parse(BACKEND.read_text())
-    session_body = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "_run_video_session")
-    sender = next(node for node in session_body.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "browser_to_rtp")
-    helpers = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_VideoFrameCadence"]
+    """Run the production sender with a controlled WebSocket, packet output and clock."""
+    frames = _load_intercom_module("video_ws_frames")
     clock = SimpleNamespace(now=10.0)
     session = SimpleNamespace(media_generation=1, remote_connection_held=False, can_send=True, removed=False,
                               send_video_format=SimpleNamespace(encoding=encoding, max_framerate=10, payload_type=26))
@@ -134,8 +132,8 @@ def _backend_sender(events, *, encoding="JPEG", wait_hook=None):
                 session.media_generation = event["generation"]
             session.send_video_format.max_framerate = event.get("fps", session.send_video_format.max_framerate)
             if "control" in event:
-                return SimpleNamespace(type=2, data=json.dumps({"type": event["control"]}))
-            return SimpleNamespace(type=1, data=header.pack(1, 1, event.get("timestamp", 0)) + event["id"].to_bytes(4, "big"))
+                return SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps({"type": event["control"]}))
+            return SimpleNamespace(type=WSMsgType.BINARY, data=header.pack(1, 1, event.get("timestamp", 0)) + event["id"].to_bytes(4, "big"))
 
     async def packetize(data, **kwargs):
         if not kwargs["should_continue"]():
@@ -159,33 +157,21 @@ def _backend_sender(events, *, encoding="JPEG", wait_hook=None):
             return None
         raise TimeoutError
 
-    namespace = {
-        "math": math, "asyncio": SimpleNamespace(sleep=asyncio.sleep, wait_for=wait_for), "json": json,
-        "WSMsgType": SimpleNamespace(BINARY=1, TEXT=2, CLOSE=3, CLOSED=4, ERROR=5),
-        "_VIDEO_RTP_RECEIVE_BURST_PACKETS": 32, "_VIDEO_HEADER": header, "_VIDEO_ACCESS_UNIT": 1,
-        "_MAX_BROWSER_ACCESS_UNIT_BYTES": 1024 * 1024,
-        "_async_packetize_browser_access_unit": packetize, "_send_packetized_datagrams": send_datagrams,
-        "H264RtpError": ValueError, "_LOGGER": SimpleNamespace(debug=lambda *args: None),
-    }
-    for helper in helpers:
-        exec(compile(ast.Module(body=[helper], type_ignores=[]), str(BACKEND), "exec"), namespace)
-    wrapper = """def create_sender(ws, session, loop, closed, call_ended, counters, rtp_send_lock, outbound_clock):
-    sequence = 0
-    remote_host, remote_port, latched_source, latched_ssrc = '127.0.0.1', 40002, None, None
-    last_regular_rtp_tx_at = 0.0
-    jpeg_normalization_required, browser_tx_drop_logs = False, 0
-    ssrc, transport, jpeg_normalizer = 123, None, None
-    rtp_source = type('Source', (), {'sequence': 0})()
-    async def refresh_media_state(generation):
+    async def refresh(_generation):
         return True
-    def store_counters():
-        pass
-    def request_key_frame(now):
-        pass
-""" + textwrap.indent(ast.unparse(sender), "    ") + "\n    return browser_to_rtp\n"
-    exec(compile(wrapper, str(BACKEND), "exec"), namespace)
-    task = namespace["create_sender"](WebSocket(), session, SimpleNamespace(time=lambda: clock.now), closed, ended, counters,
-        asyncio.Lock(), SimpleNamespace(map_browser=lambda timestamp, now: timestamp, reset_browser=lambda: None))
+
+    async def task():
+        source = SimpleNamespace(sequence=0, ssrc=123,
+            clock=SimpleNamespace(map_browser=lambda timestamp, now: timestamp, reset_browser=lambda: None))
+        sender = frames.BrowserVideoSender(source, None, asyncio.Lock(),
+            lambda: ("127.0.0.1", 40002), SimpleNamespace(time=lambda: clock.now))
+        with (patch.object(frames, "asyncio", SimpleNamespace(wait_for=wait_for, sleep=asyncio.sleep)),
+              patch.object(frames, "_async_packetize_browser_access_unit", packetize),
+              patch.object(frames, "_send_packetized_datagrams", send_datagrams)):
+            await sender.run(WebSocket(), session, closed=closed, call_ended=ended,
+                counters=counters, refresh_media_state=refresh, request_key_frame=lambda now: None,
+                store_counters=lambda: None, jpeg_normalizer=None)
+
     return task, sent, waits, counters
 
 
@@ -274,21 +260,13 @@ async def test_server_resets_for_committed_rate_and_generation_changes():
 
 @pytest.mark.parametrize("vector", VECTORS, ids=lambda item: item["name"])
 def test_server_cadence_preserves_bounded_arrival_credit(vector):
-    tree = ast.parse(BACKEND.read_text())
-    helper = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_VideoFrameCadence")
-    namespace = {"math": math}
-    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(BACKEND), "exec"), namespace)
-    cadence = namespace["_VideoFrameCadence"]()
+    cadence = _load_intercom_module("video_ws_frames")._VideoFrameCadence()
     assert [i for i, at in enumerate(vector["times"]) if cadence.delay(at, vector["fps"]) == 0] == vector.get("backend_accepted", vector["accepted"])
 
 
 @pytest.mark.parametrize("fps", [10, 25, 29.97])
 def test_server_credit_matches_token_bucket_and_never_accumulates_stall_bursts(fps):
-    tree = ast.parse(BACKEND.read_text())
-    helper = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_VideoFrameCadence")
-    namespace = {"math": math}
-    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(BACKEND), "exec"), namespace)
-    cadence = namespace["_VideoFrameCadence"]()
+    cadence = _load_intercom_module("video_ws_frames")._VideoFrameCadence()
     # Independent RFC 3290 token occupancy oracle uses exact rational time,
     # unlike production's progressing deadline representation.
     rng = random.Random(3290)
@@ -318,12 +296,7 @@ def test_server_credit_matches_token_bucket_and_never_accumulates_stall_bursts(f
 
 @pytest.mark.parametrize("encoding,backlog", [("JPEG", False), ("JPEG", True), ("H264", True)])
 async def test_receiver_has_no_fps_ceiling_and_only_coalesces_independent_backlog(encoding, backlog):
-    tree = ast.parse(BACKEND.read_text())
-    sender = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "_video_access_units_to_ws")
-    # Type annotations are not relevant to the real coroutine's I/O contract.
-    for arg in sender.args.args:
-        arg.annotation = None
-    sender.returns = None
+    frames = _load_intercom_module("video_ws_frames")
     closed = asyncio.Event()
     queue = asyncio.Queue()
     sent, waits = [], []
@@ -361,9 +334,8 @@ async def test_receiver_has_no_fps_ceiling_and_only_coalesces_independent_backlo
     if backlog:
         for i in range(20):
             queue.put_nowait(frame(i))
-    namespace = {"asyncio": SimpleNamespace(QueueEmpty=asyncio.QueueEmpty, get_running_loop=lambda: SimpleNamespace(time=lambda: clock.now), wait_for=wait_for),
-                 "_VIDEO_HEADER": struct.Struct("!BBI"), "_VIDEO_ACCESS_UNIT": 1, "_JPEG_BROWSER_MAX_FPS": 15}
-    exec(compile(ast.Module(body=[sender], type_ignores=[]), str(BACKEND), "exec"), namespace)
-    await namespace["_video_access_units_to_ws"](WebSocket(), closed, Source(), asyncio.Lock())
+    with patch.object(frames, "asyncio", SimpleNamespace(QueueEmpty=asyncio.QueueEmpty,
+            get_running_loop=lambda: SimpleNamespace(time=lambda: clock.now), wait_for=wait_for)):
+        await frames._video_access_units_to_ws(WebSocket(), closed, Source(), asyncio.Lock())
     assert sent == ([19] if backlog and encoding == "JPEG" else list(range(20)))
     assert not waits

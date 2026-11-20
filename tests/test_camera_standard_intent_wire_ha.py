@@ -40,7 +40,7 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
     })
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
 

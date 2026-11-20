@@ -144,15 +144,16 @@ def _load_audio_ws_runtime_module():
         sys.modules[f"{package_name}.{name}"] = module
     _alias_canonical_media_core(package_name)
 
-    websocket_api = types.ModuleType(f"{package_name}.websocket_api")
-    websocket_api.CALL_EVENT = "voip_stack_call_event"
-    websocket_api._ha_softphone_store = (
+    browser_phone_data = types.ModuleType(f"{package_name}.browser_phone_data")
+    browser_phone_data._ha_softphone_store = (
         lambda hass, _endpoint_id="default": hass.store
     )
-    websocket_api._publish_ha_softphone_state = (
+    browser_phone_runtime = types.ModuleType(f"{package_name}.browser_phone_runtime")
+    browser_phone_runtime._publish_ha_softphone_state = (
         lambda _hass, endpoint_id="default": None  # noqa: ARG005
     )
-    sys.modules[websocket_api.__name__] = websocket_api
+    sys.modules[browser_phone_data.__name__] = browser_phone_data
+    sys.modules[browser_phone_runtime.__name__] = browser_phone_runtime
 
     homeassistant = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
     if not hasattr(homeassistant, "__path__"):
@@ -210,15 +211,16 @@ def _load_video_ws_runtime_module():
     package.__path__ = [str(PKG_DIR)]
     sys.modules[package_name] = package
     _alias_canonical_media_core(package_name)
-    websocket_api = types.ModuleType(f"{package_name}.websocket_api")
-    websocket_api.CALL_EVENT = "voip_stack_call_event"
-    websocket_api._ha_softphone_store = (
+    browser_phone_data = types.ModuleType(f"{package_name}.browser_phone_data")
+    browser_phone_data._ha_softphone_store = (
         lambda hass, _endpoint_id="default": hass.store
     )
-    websocket_api._publish_ha_softphone_state = (
+    browser_phone_runtime = types.ModuleType(f"{package_name}.browser_phone_runtime")
+    browser_phone_runtime._publish_ha_softphone_state = (
         lambda _hass, endpoint_id="default": None  # noqa: ARG005
     )
-    sys.modules[websocket_api.__name__] = websocket_api
+    sys.modules[browser_phone_data.__name__] = browser_phone_data
+    sys.modules[browser_phone_runtime.__name__] = browser_phone_runtime
 
     spec = importlib.util.spec_from_file_location(
         module_name, PKG_DIR / "video_ws_view.py"

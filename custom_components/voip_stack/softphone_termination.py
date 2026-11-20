@@ -12,7 +12,7 @@ from .endpoint_session import TerminationInitiator, TerminationIntent
 from .fsm import TerminalReason
 from .route_decisions import set_pending_route_decision
 from .softphone_commands import BrowserCallCommand
-from .websocket_api import _ha_softphone_store
+from .browser_phone_data import _ha_softphone_store
 
 
 async def async_terminate_sip_bridge_session(

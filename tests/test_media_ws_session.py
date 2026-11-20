@@ -192,8 +192,8 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         )
         local_runtime = types.ModuleType(f"{PKG_NAME}.local_softphone_runtime")
         local_runtime.local_softphone_bridge = lambda _hass: bridge
-        websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
-        websocket_api._endpoint_id_from_selector = (
+        browser_phone_data = types.ModuleType(f"{PKG_NAME}.browser_phone_data")
+        browser_phone_data._endpoint_id_from_selector = (
             lambda _hass, *, endpoint_id, device_id: endpoint_id or device_id
         )
 
@@ -202,7 +202,7 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
             {
                 authorization.__name__: authorization,
                 local_runtime.__name__: local_runtime,
-                websocket_api.__name__: websocket_api,
+                browser_phone_data.__name__: browser_phone_data,
             },
         ):
             context = media_ws_session.resolve_media_websocket_request(request)

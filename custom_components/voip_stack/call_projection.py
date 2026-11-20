@@ -103,7 +103,7 @@ class CallStatePublisher:
             if endpoint_id not in session.endpoint_claims:
                 store = runtime.softphones.get(endpoint_id, {})
                 if store.get("call_id") == session.call_id:
-                    from .websocket_api import _set_ha_softphone_call_state
+                    from .browser_phone_runtime import _set_ha_softphone_call_state
                     _set_ha_softphone_call_state(
                         self.hass, "cancelled", endpoint_id=endpoint_id,
                         call_id=session.call_id, caller=session.caller, callee=session.callee,
@@ -301,7 +301,7 @@ def publish_call_projection(
         publisher.acknowledge(session, event.scope, event.endpoint_id)
     metadata = session.metadata
     if event.scope == "phone":
-        from .websocket_api import _set_ha_softphone_call_state
+        from .browser_phone_runtime import _set_ha_softphone_call_state
 
         endpoint = runtime_data.endpoints.get(event.endpoint_id)
         _set_ha_softphone_call_state(
@@ -319,7 +319,7 @@ def publish_call_projection(
             **details,
         )
     else:
-        from .websocket_api import _set_sip_bridge_call_state
+        from .browser_phone_runtime import _set_sip_bridge_call_state
 
         _set_sip_bridge_call_state(
             hass,

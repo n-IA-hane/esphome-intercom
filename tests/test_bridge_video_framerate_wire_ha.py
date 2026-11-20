@@ -45,7 +45,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
     })
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
@@ -223,7 +223,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
     lab.runtime.transport_config[CONF_SIP_VIDEO] = True
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")

@@ -290,7 +290,7 @@ async def take_over_ringing_phone(call: ServiceCall, call_id: str) -> Automation
     """
     from .peer_snapshot import async_advertise_host
     from .roster import RosterEntry
-    from .websocket_api import _release_ha_softphone_claim
+    from .browser_phone_runtime import _release_ha_softphone_claim
 
     execution = current_execution.get()
     registry = call_registry(call.hass)

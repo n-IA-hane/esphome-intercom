@@ -55,13 +55,15 @@ async def test_subscription_projects_each_users_control_without_mutating_account
 async def test_idle_account_never_inherits_another_trunks_sip_outcome(hass, phones, monkeypatch):
     from custom_components.voip_stack import websocket_api as api
 
-    original = api._sip_runtime_snapshot
+    from custom_components.voip_stack import browser_phone_projection as projection
+
+    original = projection._sip_runtime_snapshot
 
     def foreign_diagnostics(hass, **kwargs):
         return {**original(hass, **kwargs), "last_sip_status_code": 503,
                 "last_sip_event": "foreign_trunk_failed", "last_sip_reason": "Service Unavailable"}
 
-    monkeypatch.setattr(api, "_sip_runtime_snapshot", foreign_diagnostics)
+    monkeypatch.setattr(projection, "_sip_runtime_snapshot", foreign_diagnostics)
     state = api._ha_softphone_state(hass, "kitchen")
     assert state["sip_status_code"] == ""
     assert state["last_sip_event"] == ""

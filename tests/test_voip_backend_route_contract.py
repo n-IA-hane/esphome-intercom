@@ -28,6 +28,12 @@ SENSOR = ROOT / "custom_components" / "voip_stack" / "sensor.py"
 PEER_SNAPSHOT = ROOT / "custom_components" / "voip_stack" / "peer_snapshot.py"
 SERVICES = ROOT / "custom_components" / "voip_stack" / "services.py"
 WEBSOCKET_API = ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
+BROWSER_PHONE_DATA = WEBSOCKET_API.with_name("browser_phone_data.py")
+BROWSER_PHONE_PROJECTION = WEBSOCKET_API.with_name("browser_phone_projection.py")
+BROWSER_PHONE_RUNTIME = WEBSOCKET_API.with_name("browser_phone_runtime.py")
+PHONE_INVENTORY = WEBSOCKET_API.with_name("esphome_phone_inventory.py")
+BROWSER_PHONE_IMPLEMENTATION = (WEBSOCKET_API, BROWSER_PHONE_DATA,
+                                BROWSER_PHONE_PROJECTION, BROWSER_PHONE_RUNTIME, PHONE_INVENTORY)
 ACCOUNT_SERVICES = ROOT / "custom_components" / "voip_stack" / "account_services.py"
 SERVICES_YAML = ROOT / "custom_components" / "voip_stack" / "services.yaml"
 ICONS_JSON = ROOT / "custom_components" / "voip_stack" / "icons.json"
@@ -91,10 +97,23 @@ INBOUND_TARGETS = (
 )
 
 
+def _owner_source(path: Path, name: str) -> str:
+    """Read the actual function or immutable field table from its owner."""
+    source = path.read_text()
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return ast.get_source_segment(source, node)
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name
+                                               for target in node.targets):
+            return ast.get_source_segment(source, node)
+    raise AssertionError(f"{name} is not defined in {path.name}")
+
+
 class VoipBackendRouteContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = BACKEND.read_text()
+        cls.endpoint_group_calls = BACKEND.with_name("endpoint_group_calls.py").read_text()
         cls.init_source = INIT.read_text()
         cls.service_endpoints = SERVICE_ENDPOINTS.read_text()
         cls.esphome_actions = ESPHOME_ACTIONS.read_text()
@@ -178,33 +197,23 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.inbound_softphone,
         )
         self.assertNotIn('return SipInviteResult(200, "OK"', answer_ha_branch)
-        self.assertIn("def _defer_invite_to_ha_softphone(", self.source)
+        self.assertIn("def defer_invite(", self.inbound_softphone)
         self.assertIn(
-            "registry.set_pending_invite(invite.call_id, invite)", self.source
+            "registry.set_pending_invite(invite.call_id, invite)", self.inbound_softphone
         )
-        publish = self.source[
-            self.source.index("def _publish_pending_ha_softphone_ringing(") :
-            self.source.index("def _defer_invite_to_ha_softphone(")
-        ]
-        defer = self.source[
-            self.source.index("def _defer_invite_to_ha_softphone(") :
-            self.source.index("def _inbound_route_decision(")
-        ]
+        publish = _owner_source(INBOUND_SOFTPHONE, "publish_pending_ringing")
+        defer = _owner_source(INBOUND_SOFTPHONE, "defer_invite")
         self.assertIn("observe_phone_leg_projection(", publish)
         self.assertNotIn("CallProjectionEvent.phone(", publish)
         self.assertLess(
             defer.index("session = registry.upsert("),
             defer.index("hass.loop.call_soon(_publish_ringing_if_current)"),
         )
-        self.assertIn("CallState.RINGING.value", self.source)
+        self.assertIn("CallState.RINGING.value", self.inbound_softphone)
 
     def test_browser_presence_never_owns_the_logical_call_lifetime(self) -> None:
-        self.assertNotIn("def _schedule_ha_softphone_offline_wait(", self.source)
-        defer = self.source[
-            self.source.index("def _defer_invite_to_ha_softphone(") : self.source.index(
-                "def _inbound_route_decision("
-            )
-        ]
+        self.assertNotIn("def _schedule_ha_softphone_offline_wait(", self.source + self.inbound_softphone)
+        defer = _owner_source(INBOUND_SOFTPHONE, "defer_invite")
         self.assertNotIn("offline_wait_seconds", defer)
         self.assertNotIn("ha_softphone_presence_events", defer)
 
@@ -225,7 +234,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("await self._dispatch()", self.forward_operation)
         self.assertIn("self.runtime.route_resolver.logical_endpoint(", self.forward_admission)
         self.assertIn("cannot forward a call to itself", self.forward_admission)
-        self.assertNotIn("browser_endpoint.offline_policy", self.call_forwarder)
+        for source in (self.call_forwarder, self.forward_admission, browser_branch):
+            self.assertNotIn("browser_endpoint.offline_policy", source)
         self.assertIn("registry.claim_endpoint(", browser_branch)
         self.assertIn("registry.release_endpoint_claim(", browser_branch)
         self.assertIn('last_sip_event="ROUTE_FORWARD"', browser_branch)
@@ -241,11 +251,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_forwarded_browser_ringing_preserves_offer_and_target_capability(
         self,
     ) -> None:
-        publish = self.source[
-            self.source.index(
-                "def _publish_pending_ha_softphone_ringing("
-            ) : self.source.index("def _defer_invite_to_ha_softphone(")
-        ]
+        publish = _owner_source(INBOUND_SOFTPHONE, "publish_pending_ringing")
         for field in (
             'endpoint.supports("video")',
             "dialed_target=invite.target",
@@ -716,8 +722,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_group_identity_capacity_and_local_ws_errors_are_isolated(self) -> None:
-        self.assertIn('call_id = f"ha-{secrets.token_hex(16)}"', self.source)
-        self.assertNotIn('call_id = f"ha-{int(time.time() * 1000):x}"', self.source)
+        self.assertIn('call_id = f"ha-{secrets.token_hex(16)}"', self.endpoint_group_calls)
+        self.assertNotIn('call_id = f"ha-{int(time.time() * 1000):x}"', self.endpoint_group_calls)
         self.assertIn(
             "len(browser_endpoint_ids) + len(attempts) < available_legs",
             self.conference_ringing,
@@ -780,13 +786,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("ring_endpoint_ids = tuple(", self.inbound_local)
         self.assertIn("runtime.browser_leg_for_member(", self.inbound_local)
         self.assertIn("ring_endpoint_ids=ring_endpoint_ids", self.inbound_local)
-        self.assertIn("async def _ring_conference_members_from_ha", self.source)
+        self.assertIn("async def ring_conference_from_ha", self.endpoint_group_calls)
         self.assertIn(
-            "pbx_runtime.ring_conference_members_from_ha = _ring_conference_members_from_ha",
+            "pbx_runtime.ring_conference_members_from_ha = routing.groups.ring_conference_from_ha",
             self.source,
         )
-        self.assertIn("caller=_ha_peer_name(hass)", self.source)
-        self.assertIn("source_host=local_ip", self.source)
+        self.assertIn("caller=home_phone_name(self.hass)", self.endpoint_group_calls)
+        self.assertIn("source_host=self.local_ip", self.endpoint_group_calls)
         self.assertIn("runtime.ring_conference_members(", self.inbound_local)
         self.assertIn(
             "runtime.run_ring_group_call(",
@@ -801,9 +807,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         config_flow = CONFIG_FLOW.read_text()
         strings = STRINGS_JSON.read_text()
         init_py = INIT.read_text()
-        websocket = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
-        ).read_text()
+        websocket = "\n".join(path.read_text() for path in BROWSER_PHONE_IMPLEMENTATION)
         sensor = SENSOR.read_text()
         peer_snapshot = PEER_SNAPSHOT.read_text()
         const = (ROOT / "custom_components" / "voip_stack" / "const.py").read_text()
@@ -862,7 +866,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("ha_endpoint_state", peer_snapshot)
 
     def test_ha_softphone_settings_use_phone_subentries_as_the_only_store(self) -> None:
-        websocket = WEBSOCKET_API.read_text()
+        websocket = "\n".join(path.read_text() for path in BROWSER_PHONE_IMPLEMENTATION)
         self.assertIn('runtime["config_entry_id"]', websocket)
         self.assertIn("update_phone_subentry(", websocket)
         self.assertNotIn("_HA_SOFTPHONE_OPTION_KEYS", websocket)
@@ -916,7 +920,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_ha_softphone_starts_ring_group_without_sip_self_invite(self) -> None:
-        runtime = BACKEND.read_text()
+        runtime = self.endpoint_group_calls
         call_service = SOFTPHONE_ORIGINATE.read_text()
         self.assertIn(".start_ring_group_from_ha", call_service)
         self.assertIn("await start_ring_group(", call_service)
@@ -930,12 +934,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ],
         )
         self.assertIn(
-            "pbx_runtime.start_ring_group_from_ha = _start_ring_group_from_ha",
-            runtime,
+            "pbx_runtime.start_ring_group_from_ha = routing.groups.start_ring_group_from_ha",
+            self.source,
         )
         self.assertIn('last_sip_event="LOCAL_RING_GROUP"', runtime)
         self.assertIn("fmt.nominal_frame_bytes <= 1200", runtime)
-        self.assertIn("browser_endpoint = browser_phone(hass, endpoint_id)", runtime)
+        self.assertIn("browser_endpoint = browser_phone(self.hass, endpoint_id)", runtime)
         self.assertIn("origin_endpoint_id=endpoint_id", runtime)
 
     def test_ad_hoc_sip_uri_requires_admin_before_network_resolution(self) -> None:
@@ -1351,19 +1355,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("session_device_id=origin_device_id", external_winner)
         self.assertIn("if ha_origin:", external_winner)
 
-        websocket = WEBSOCKET_API.read_text()
-        state = websocket[
-            websocket.index("def _ha_softphone_state(") : websocket.index(
-                "def _set_ha_softphone_call_state("
-            )
-        ]
+        state = "\n".join((_owner_source(BROWSER_PHONE_PROJECTION, "_ha_softphone_state"),
+                            _owner_source(BROWSER_PHONE_RUNTIME, "_publish_ha_softphone_state")))
         self.assertIn('"dialed_target": dialed_target', state)
         self.assertIn('"last_terminal_dialed_target", ""', state)
-        call_fields = websocket[
-            websocket.index("_CALL_SCOPED_SOFTPHONE_FIELDS = (") : websocket.index(
-                "def _set_ha_softphone_call_state("
-            )
-        ]
+        call_fields = _owner_source(BROWSER_PHONE_DATA, "_CALL_SCOPED_SOFTPHONE_FIELDS")
         for field in ("connected_party", "answered_by"):
             self.assertIn(f'"{field}": store.get("{field}", "")', state)
             self.assertIn(f'"{field}",', call_fields)
@@ -1392,12 +1388,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_softphone_settings_changes_do_not_emit_call_lifecycle_events(self) -> None:
-        websocket = WEBSOCKET_API.read_text()
-        group_update = websocket[
-            websocket.index(
-                "async def async_set_ha_softphone_settings("
-            ) : websocket.index("def _sip_runtime_snapshot(")
-        ]
+        websocket = "\n".join(path.read_text() for path in BROWSER_PHONE_IMPLEMENTATION)
+        # Preserve every original node between settings and runtime diagnostics.
+        group_update = "\n".join([
+            *(_owner_source(BROWSER_PHONE_RUNTIME, name) for name in (
+                "async_set_ha_softphone_settings", "_async_shutdown_all",
+                "_async_load_ha_softphone_store", "_async_save_ha_softphone_store")),
+            *(_owner_source(BROWSER_PHONE_DATA, name) for name in (
+                "_sip_bridge_store", "_ha_softphone_dnd", "_MEDIA_COUNTER_KEYS",
+                "_CALL_SCOPED_SOFTPHONE_FIELDS")),
+            _owner_source(BROWSER_PHONE_PROJECTION, "_runtime_counter"),
+        ])
         init_py = INIT.read_text()
         dnd_service = init_py[
             init_py.index("async def _handle_set_dnd_service(") : init_py.index(
@@ -1429,17 +1430,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'WS_TYPE_SUBSCRIBE_HA_SOFTPHONE = f"{DOMAIN}/subscribe_ha_softphone_state"',
             websocket,
         )
-        self.assertIn("def _publish_ha_softphone_state(", websocket)
+        self.assertIn("def _publish_ha_softphone_state(", BROWSER_PHONE_RUNTIME.read_text())
         self.assertIn("def websocket_subscribe_ha_softphone_state(", websocket)
         fire_event = (ROOT / "custom_components" / "voip_stack" / "call_events.py").read_text()
         self.assertIn('event["scope"] = scope', fire_event)
         self.assertNotIn('event.get("scope") or scope', fire_event)
 
-        terminal = websocket[
-            websocket.index("def _set_ha_softphone_call_state(") : websocket.index(
-                "def _set_sip_bridge_call_state("
-            )
-        ]
+        terminal = "\n".join(_owner_source(BROWSER_PHONE_RUNTIME, name) for name in (
+            "_set_ha_softphone_call_state", "_reset_ha_softphone_store"))
         self.assertIn("if terminal and state != CallState.IDLE.value:", terminal)
         self.assertIn('store["state"] = CallState.IDLE.value', terminal)
         self.assertLess(
@@ -1453,22 +1451,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ),
         )
 
-        release = websocket[
-            websocket.index("def _release_ha_softphone_claim(") : websocket.index(
-                "def _ha_softphone_groups("
-            )
-        ]
+        release = _owner_source(BROWSER_PHONE_RUNTIME, "_release_ha_softphone_claim")
         self.assertIn("registry.release_endpoint_claim(", release)
         self.assertIn("observe_phone_leg_projection(", release)
         self.assertIn("TerminalReason.FORWARDED.value", release)
 
     def test_explicit_browser_selector_returns_registry_canonical_id(self) -> None:
-        websocket = WEBSOCKET_API.read_text()
-        selector = websocket[
-            websocket.index("def _endpoint_id_from_selector(") : websocket.index(
-                "def async_register_websocket_api("
-            )
-        ]
+        selector = _owner_source(BROWSER_PHONE_DATA, "_endpoint_id_from_selector")
         self.assertIn(
             "resolved_id = endpoint.endpoint_id",
             selector,
@@ -1744,14 +1733,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 self.assertEqual(eval(expression, {"__builtins__": {}}, {"source": source}), expected)
 
     def test_direct_ha_alias_resolves_through_phonebook_name(self) -> None:
-        router = self.source[
-            self.source.index("def _inbound_route_decision(") : self.source.index(
-                "async def _async_forward_existing_call("
-            )
-        ]
+        router = ast.unparse(ast.parse(_owner_source(BACKEND.with_name("endpoint_call_routing.py"), "inbound_route_decision")))
         self.assertIn("route_target = invite.routing_target", router)
         self.assertIn(
-            "target = _ha_peer_name(hass) if _is_ha_target(route_target) else route_target",
+            "target = home_phone_name(dialer.hass) if dialer.route_resolver.is_ha_target(route_target) else route_target",
             router,
         )
 
@@ -1789,12 +1774,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("peer_name=resolved_callee", self.inbound_bridge)
 
     def test_softphone_snapshot_exposes_video_rtp_diagnostics(self) -> None:
-        websocket = WEBSOCKET_API.read_text()
-        counters = websocket[
-            websocket.index("_MEDIA_COUNTER_KEYS = (") : websocket.index(
-                "def _runtime_counter("
-            )
-        ]
+        counters = "\n".join(_owner_source(BROWSER_PHONE_DATA, name) for name in (
+            "_MEDIA_COUNTER_KEYS", "_CALL_SCOPED_SOFTPHONE_FIELDS"))
         for name in (
             "video_rtp_tx_packets",
             "video_rtp_rx_packets",
@@ -1819,7 +1800,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "video_jpeg_normalizer_errors",
         ):
             self.assertIn(f'"{name}"', counters)
-        self.assertIn('"media_debug": media_debug', websocket)
+        self.assertIn('"media_debug": media_debug',
+                      _owner_source(BROWSER_PHONE_PROJECTION, "_ha_softphone_state"))
 
     def test_video_reinvite_resets_generation_owned_media_state(self) -> None:
         video_ws = (
@@ -1833,7 +1815,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registry.clear_video_parameter_sets(call_id)", commit)
         self.assertIn("commit_video_session_update(", commit)
         self.assertIn(
-            "[*parameter_sets, *_sdp_parameter_sets(browser_format)]", video_ws
+            "[*parameter_sets, *_sdp_parameter_sets(browser_format)]",
+            (ROOT / "custom_components" / "voip_stack" / "video_ws_frames.py").read_text()
         )
         self.assertIn("outbound_clock.reset_browser()", video_ws)
         self.assertIn("observed_generation = -1", video_ws)

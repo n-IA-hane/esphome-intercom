@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .runtime_data import call_projection
 from .const import CALL_EVENT
-from .websocket_api import _ha_softphone_store
+from .browser_phone_data import _ha_softphone_store
 
 if TYPE_CHECKING:
     from .pbx_runtime import SipEndpointRuntime

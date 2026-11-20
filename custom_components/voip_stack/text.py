@@ -72,7 +72,7 @@ class PhoneEndpointSettingText(PhoneEndpointEntity, TextEntity):
             self.async_write_ha_state()
 
     async def async_set_value(self, value: str) -> None:
-        from .websocket_api import async_set_ha_softphone_settings
+        from .browser_phone_runtime import async_set_ha_softphone_settings
 
         await async_set_ha_softphone_settings(
             self.hass,

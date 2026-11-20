@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.voip_stack import call_projection, endpoint_lifecycle, websocket_api
+from custom_components.voip_stack import call_projection, endpoint_lifecycle, browser_phone_runtime
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
@@ -26,8 +26,8 @@ async def test_publisher_delivers_one_described_forward_after_phone_projection(h
                               phones=None, sip=registry)
     monkeypatch.setattr(call_projection, "require_runtime_data", lambda _hass: runtime)
     bridge_sink, phone_sink = Mock(), Mock()
-    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", bridge_sink)
-    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", phone_sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_sip_bridge_call_state", bridge_sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_ha_softphone_call_state", phone_sink)
     publisher = call_projection.CallStatePublisher(hass, registry)
     registry.adopt_component("state_publisher", publisher, closer=publisher.close)
     session = registry.upsert("described", state="connecting", owner="router", caller="Caller", callee="Target A",
@@ -155,7 +155,7 @@ async def test_media_route_cannot_outlive_its_call_generation(monkeypatch):
 def test_phone_projection_derives_authoritative_identity(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_ha_softphone_call_state", sink)
     session = runtime.upsert(
         "call-1",
         state="in_call",
@@ -184,7 +184,7 @@ def test_phone_projection_derives_authoritative_identity(monkeypatch) -> None:
 def test_projection_rejects_stale_generation(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_sip_bridge_call_state", sink)
     stale = runtime.upsert("call-1", state="connecting")
     runtime._discard_dark_session("call-1", TerminationIntent("cancelled"))
     runtime.create_session("call-1")
@@ -199,7 +199,7 @@ async def test_terminal_projection_waits_for_cleanup_and_runtime_retirement(
 ) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_sip_bridge_call_state", sink)
     gate = asyncio.Event()
     runtime.bind_termination_observer(
         lambda session, intent: call_projection.publish_bridge_projection(
@@ -238,7 +238,7 @@ async def test_terminal_projection_waits_for_cleanup_and_runtime_retirement(
 async def test_terminal_projection_rejects_superseded_generation(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_sip_bridge_call_state", sink)
     session = runtime.upsert("call-1", state="in_call")
     intent = TerminationIntent("remote_hangup")
 
@@ -283,7 +283,7 @@ async def test_staged_phone_terminal_details_publish_after_cleanup(
 ) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_ha_softphone_call_state", sink)
     runtime.bind_termination_observer(
         lambda session, intent: endpoint_lifecycle.project_session_termination(
             object(), session, intent
@@ -337,7 +337,7 @@ def test_terminal_projection_details_cannot_mutate_terminating_session(
 def test_live_projection_is_rejected_after_terminal_claim(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_sip_bridge_call_state", sink)
     session = runtime.upsert("call-1", state="in_call")
     session.claim_termination(TerminationIntent("remote_hangup"))
 
@@ -350,7 +350,7 @@ def test_live_projection_is_rejected_after_terminal_claim(monkeypatch) -> None:
 def test_new_phone_leg_rings_while_the_original_caller_is_answered(monkeypatch):
     runtime = _runtime(monkeypatch)
     sink = Mock()
-    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", sink)
+    monkeypatch.setattr(browser_phone_runtime, "_set_ha_softphone_call_state", sink)
     session = runtime.upsert("greeting", state="in_call", owner="automation", caller="Alice", callee="Welcome")
     assert call_projection.observe_phone_leg_projection(
         object(), runtime, session, "reception", "ringing",

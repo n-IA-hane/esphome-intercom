@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from ..call_projection import publish_phone_projection
+from ..call_projection import observe_phone_leg_projection, publish_phone_projection
+from ..endpoint_lifecycle import call_registry
+from ..runtime_data import endpoint_directory
 from ..endpoint_registry import EndpointBusyError
 from ..endpoint_termination import EndpointTerminationHandler
 from ..endpoint_session import TerminationInitiator
@@ -352,3 +354,116 @@ def answer_inbound_ha_softphone(
         last_sip_event="SIP_RESPONSE",
     )
     return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
+
+
+def publish_pending_ringing(
+    hass: HomeAssistant,
+    invite: SipInvite,
+    *,
+    route_kind: str,
+    endpoint_id: str,
+    endpoint_device_id: str,
+    callee: str,
+    sip_uri: str | None = None,
+    last_sip_event: str = "INVITE",
+) -> None:
+    """Project one pending SIP dialog onto its owning browser phone."""
+    registry = call_registry(hass)
+    endpoint = endpoint_directory(hass).get(endpoint_id)
+    video_enabled = bool(
+        invite.video_format is not None
+        and (endpoint is None or endpoint.supports("video"))
+    )
+    session = registry.get_session(invite.call_id)
+    if session is None:
+        return
+    observe_phone_leg_projection(
+        hass,
+        registry,
+        session,
+        endpoint_id,
+        CallState.RINGING.value,
+        leg_id=f"browser:{endpoint_id}",
+        peer_name=invite.caller, direction="incoming",
+        dialed_target=invite.target,
+        selected_tx_format=invite.send_format.audio_format.wire_token(),
+        selected_rx_format=invite.recv_format.audio_format.wire_token(),
+        selected_tx_rtp_format=invite.send_format.wire_token(),
+        selected_rx_rtp_format=invite.recv_format.wire_token(),
+        audio_mode="full_duplex",
+        route_kind=route_kind,
+        sip_uri=sip_uri,
+        sip_status_code=180,
+        last_sip_event=last_sip_event,
+        video_offered=video_enabled,
+        video_format=(invite.video_format.wire_token() if video_enabled else ""),
+        video_send_format=(
+            invite.send_video_format.wire_token()
+            if video_enabled and invite.send_video_format is not None
+            else ""
+        ),
+        video_receive_format=(
+            invite.recv_video_format.wire_token()
+            if video_enabled and invite.recv_video_format is not None
+            else ""
+        ),
+    )
+
+
+def defer_invite(
+    hass: HomeAssistant,
+    invite: SipInvite,
+    *,
+    route_kind: str,
+    endpoint_id: str,
+    endpoint_device_id: str,
+    callee: str | None = None,
+    sip_uri: str | None = None,
+    last_sip_event: str = "INVITE",
+) -> None:
+    registry = call_registry(hass)
+    session = registry.upsert(
+        invite.call_id,
+        state=CallState.RINGING.value,
+        caller=invite.caller,
+        callee=callee or invite.target,
+        route_kind=route_kind,
+        owner="ha_softphone",
+        endpoint_id=endpoint_id,
+        session_device_id=endpoint_device_id,
+        dialed_target=invite.target,
+        ingress="trunk" if invite.received_via_trunk else "extension",
+        origin="trunk" if invite.received_via_trunk else "extension",
+    )
+    registry.set_pending_invite(invite.call_id, invite)
+    registry.claim_endpoint(
+        invite.call_id,
+        endpoint_id,
+        role="destination",
+    )
+    expected_revision = session.revision
+
+    def _publish_ringing_if_current() -> None:
+        if not registry.is_current(
+            invite.call_id,
+            revision=expected_revision,
+            owner="ha_softphone",
+        ):
+            _LOGGER.debug(
+                "Ignoring stale HA ringing callback for call %s revision %s",
+                invite.call_id,
+                expected_revision,
+            )
+            return
+        publish_pending_ringing(
+            hass,
+            invite,
+            route_kind=route_kind,
+            endpoint_id=endpoint_id,
+            endpoint_device_id=endpoint_device_id,
+            callee=callee or invite.target,
+            sip_uri=sip_uri,
+            last_sip_event=last_sip_event,
+        )
+
+    hass.loop.call_soon(_publish_ringing_if_current)

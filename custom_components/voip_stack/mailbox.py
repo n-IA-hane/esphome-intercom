@@ -253,7 +253,8 @@ async def async_setup_mailboxes(hass, entry):
 
     @callback
     def changed(event):
-        from .websocket_api import _publish_ha_softphone_state, _ha_softphone_store
+        from .browser_phone_runtime import _publish_ha_softphone_state
+        from .browser_phone_data import _ha_softphone_store
 
         endpoint = runtime.endpoints.get(str(event.data.get("endpoint_id") or ""))
         if endpoint is not None and endpoint.supports_ha_client:
@@ -297,7 +298,8 @@ async def async_remove_entry_mailboxes(hass, entry):
 
 async def async_refresh_mailbox_state(hass):
     from .phone_config import phone_subentries
-    from .websocket_api import _publish_ha_softphone_state, _ha_softphone_store
+    from .browser_phone_runtime import _publish_ha_softphone_state
+    from .browser_phone_data import _ha_softphone_store
 
     runtime = require_runtime_data(hass)
     if runtime.sip is None:

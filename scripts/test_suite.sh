@@ -181,6 +181,7 @@ ha_tests=(
   tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_browser_phone_policy_ha.py
+  tests/test_browser_phone_owner_ha.py
   tests/test_browser_automation_contact_ha.py
   tests/test_conference_service_ha.py
   tests/test_browser_answer_noanswer_race_ha.py

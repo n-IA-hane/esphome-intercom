@@ -138,7 +138,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
     from .local_media_bridge import LocalMediaBridge, application_rtp_peer
     from .sip_rtp_bridge import SipRtpRelay, _RelayProtocol
     from .sip_runtime import send_final_response
-    from .websocket_api import _release_ha_softphone_claim
+    from .browser_phone_runtime import _release_ha_softphone_claim
 
     picker = incoming.identified_source_endpoint_id
     if not picker:

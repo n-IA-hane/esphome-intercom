@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import contextlib
 from dataclasses import dataclass, field
 import json
@@ -23,6 +22,7 @@ from homeassistant.core import HomeAssistant
 from .core import rtp
 from .core.sip_stun import is_stun_message
 from .audio_ws import decode_audio_frame, encode_audio_frame
+from .audio_ws_frames import BrowserAudioReceiver, BrowserPcmPlayout
 from .browser_playback import BrowserPlayback
 from .call_projection import publish_esp_media_route
 from .config import debug_mode, media_capture_enabled
@@ -61,10 +61,8 @@ from .media_ws_session import (
     async_claimed_media_websocket,
     async_prepare_media_websocket_request,
 )
-from .websocket_api import (
-    _ha_softphone_store,
-    _publish_ha_softphone_state,
-)
+from .browser_phone_data import _ha_softphone_store
+from .browser_phone_runtime import _publish_ha_softphone_state
 from .websocket_owner import (
     WebSocketOwnerBusyError,
 )
@@ -76,37 +74,6 @@ _AUDIO_OWNER_HANDOFF_TIMEOUT = 5.0
 # Keep control/conference small. SIP reserves the bounded PCM encoder envelope
 # before prepare, so a claim handoff or re-INVITE cannot outgrow its reader.
 _MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096
-_BROWSER_PLAYOUT_TARGET_MS = 60
-_BROWSER_PLAYOUT_MAX_MS = 200
-
-
-def _conceal_pcm_frame(last_pcm: bytes, frame_bytes: int) -> bytes:
-    """Return one click-free s16le PLC frame which decays to silence."""
-    if frame_bytes < 2 or not last_pcm:
-        return bytes(frame_bytes)
-    last_sample = int.from_bytes(last_pcm[-2:], "little", signed=True)
-    samples = frame_bytes // 2
-    output = bytearray(frame_bytes)
-    for index in range(samples):
-        sample = round(last_sample * (samples - index - 1) / samples)
-        output[index * 2 : index * 2 + 2] = int(sample).to_bytes(
-            2, "little", signed=True
-        )
-    return bytes(output)
-
-
-def _fade_in_pcm_frame(pcm: bytes, fade_samples: int) -> bytes:
-    """Fade in recovered s16le PCM so PLC recovery cannot click."""
-    samples = min(len(pcm) // 2, max(0, fade_samples))
-    if samples == 0:
-        return pcm
-    output = bytearray(pcm)
-    for index in range(samples):
-        offset = index * 2
-        sample = int.from_bytes(pcm[offset : offset + 2], "little", signed=True)
-        sample = round(sample * (index + 1) / samples)
-        output[offset : offset + 2] = int(sample).to_bytes(2, "little", signed=True)
-    return bytes(output)
 
 
 @dataclass(slots=True)
@@ -888,14 +855,7 @@ async def _run_audio_session(
         "drop_connection_hold": 0,
         "dtmf_rx_events": 0,
     }
-    logged_first_rtp = False
-    latched_rtp_source: tuple[str, int] | None = None
-    latched_rtp_ssrc: int | None = None
-    last_audio_sequence: int | None = None
-    last_audio_timestamp: int | None = None
-    last_audio_format = None
-    remote_rtp_host = str(session.remote_rtp_host)
-    remote_rtp_port = int(session.remote_rtp_port)
+    incoming = BrowserAudioReceiver(session.remote_rtp_host, session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
     last_counter_event = 0.0
     ws_send_lock = asyncio.Lock()
@@ -951,8 +911,8 @@ async def _run_audio_session(
                 channel="audio",
                 values={
                     "local_rtp_port": session.local_rtp_port,
-                    "remote_rtp_host": remote_rtp_host,
-                    "remote_rtp_port": remote_rtp_port,
+                    "remote_rtp_host": incoming.remote_host,
+                    "remote_rtp_port": incoming.remote_port,
                     "tx_format": session.send_format.audio_format.wire_token(),
                     "rx_format": session.recv_format.audio_format.wire_token(),
                     "tx_rtp_format": session.send_format.wire_token(),
@@ -988,9 +948,7 @@ async def _run_audio_session(
         return payload
 
     async def refresh_media_state(generation: int) -> None:
-        nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port
-        nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
-        nonlocal last_audio_sequence, last_audio_timestamp, last_audio_format
+        nonlocal applied_media_generation
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
@@ -1015,14 +973,7 @@ async def _run_audio_session(
             protocol.reconfigure_frame_ms(
                 session.recv_format.audio_format.frame_ms
             )
-            remote_rtp_host = str(session.remote_rtp_host)
-            remote_rtp_port = int(session.remote_rtp_port)
-            latched_rtp_source = None
-            latched_rtp_ssrc = None
-            logged_first_rtp = False
-            last_audio_sequence = None
-            last_audio_timestamp = None
-            last_audio_format = None
+            incoming.reset(session.remote_rtp_host, session.remote_rtp_port)
             protocol.dropped_packets += drain_queue(queue)
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
@@ -1069,9 +1020,6 @@ async def _run_audio_session(
     )
     publish_esp_media_route(hass, session.call_id, browser_media_route())
     async def rtp_to_ws() -> None:
-        nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
-        nonlocal remote_rtp_host, remote_rtp_port
-        nonlocal last_audio_sequence, last_audio_timestamp, last_audio_format
         if playback is not None:
             await playback.wait_ready()
         observed_generation = int(session.media_generation)
@@ -1087,90 +1035,13 @@ async def _run_audio_session(
                 counters["drop_addr"] += 1
                 continue
             try:
-                packet = rtp.parse_packet(data)
-                if (
-                    dtmf_decoder is not None
-                    and packet.payload_type == dtmf_decoder.payload_type
-                ):
-                    digit = dtmf_decoder.decode(data)
-                    event = telephone_event_code(digit)
-                    if (
-                        digit
-                        and event is not None
-                        and event in session.dtmf_events
-                        and session.on_dtmf is not None
-                    ):
-                        session.on_dtmf(digit)
-                        counters["dtmf_rx_events"] += 1
-                    continue
-                if not logged_first_rtp:
-                    _LOGGER.info(
-                        "HA softphone RTP RX first packet call_id=%s from=%s:%s payload_type=%s expected=%s bytes=%d",
-                        session.call_id,
-                        addr[0],
-                        addr[1],
-                        packet.payload_type,
-                        session.recv_format.payload_type,
-                        len(data),
-                    )
-                    logged_first_rtp = True
-                received_format = rtp_decoder.format_for(packet.payload_type)
-                if received_format is None:
-                    counters["drop_payload_type"] += 1
-                    continue
-                if session.local_audio_direction not in {"recvonly", "sendrecv"}:
-                    counters["drop_direction"] += 1
-                    continue
-                if latched_rtp_ssrc is not None and packet.ssrc != latched_rtp_ssrc:
-                    counters["drop_addr"] += 1
-                    continue
-                try:
-                    frames = rtp_decoder.decode(packet.payload_type, packet.payload)
-                except rtp.RtpError as err:
-                    counters["drop_payload_size"] += 1
-                    _LOGGER.debug("HA softphone RTP RX oversized audio drop: %s", err)
-                    continue
-                source = (str(addr[0]), int(addr[1]))
-                if latched_rtp_source is None:
-                    latched_rtp_source = source
-                    latched_rtp_ssrc = packet.ssrc
-                    remote_rtp_host = source[0]
-                    remote_rtp_port = source[1]
-                elif source[0] != latched_rtp_source[0]:
-                    counters["drop_addr"] += 1
-                    continue
-                elif source[1] != latched_rtp_source[1]:
-                    # Preserve the SSRC latch while allowing a NAT mapping to
-                    # change its source port during a long-lived call.
-                    latched_rtp_source = source
-                    remote_rtp_port = source[1]
-                sequence_delta = (
-                    (packet.sequence - last_audio_sequence) & 0xFFFF
-                    if last_audio_sequence is not None
-                    else 0
+                batch = incoming.decode(
+                    data, addr, session, decoder=rtp_decoder, encoder=rtp_encoder,
+                    dtmf_decoder=dtmf_decoder, dtmf_send_lock=dtmf_send_lock, counters=counters,
                 )
-                timestamp_delta = (
-                    (packet.timestamp - last_audio_timestamp) & 0xFFFFFFFF
-                    if last_audio_timestamp is not None
-                    else 0
-                )
-                expected_timestamp_delta = int(
-                    received_format.rtp_timestamp_step
-                )
-                remote_silence_resume = (
-                    last_audio_sequence is not None
-                    and last_audio_format == received_format
-                    and sequence_delta == 1
-                    and timestamp_delta > expected_timestamp_delta * 2
-                )
-                last_audio_sequence = packet.sequence
-                last_audio_timestamp = packet.timestamp
-                last_audio_format = received_format
-                if not dtmf_send_lock.locked() and rtp_encoder.follow_received(received_format):
-                    _LOGGER.info("SIP audio TX follows negotiated RX codec call_id=%s tx=%s",
-                                 session.call_id, rtp_encoder.fmt.wire_token())
-                counters["rtp_rx"] += 1
-                counters["rtp_rx_bytes"] += len(data)
+                if batch is None:
+                    continue
+                frames, remote_silence_resume = batch
                 async with ws_send_lock:
                     if remote_silence_resume:
                         await ws.send_json({"type": "remote_silence_resume"})
@@ -1203,7 +1074,7 @@ async def _run_audio_session(
         nonlocal transport_detached
         if closed.is_set() or transport_detached or active_sessions.get(active_key) is not session:
             raise RuntimeError("The browser media owner changed before handoff")
-        result = adopt(transport, remote_rtp_host, remote_rtp_port, rtp_source)
+        result = adopt(transport, incoming.remote_host, incoming.remote_port, rtp_source)
         transport_detached = True
         closed.set()
         if handoff_requested is not None:
@@ -1245,15 +1116,9 @@ async def _run_audio_session(
                 await ws.send_json(negotiation_payload(message_type="media_update"))
 
     async def browser_to_rtp() -> None:
-        nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
+        nonlocal sequence, timestamp
         observed_generation = int(session.media_generation)
-        tx_frames: deque[bytes] = deque()
-        frame_ms = max(1.0, float(session.send_format.audio_format.frame_ms))
-        target_frames = max(1, int(_BROWSER_PLAYOUT_TARGET_MS // frame_ms))
-        max_frames = max(target_frames, int(_BROWSER_PLAYOUT_MAX_MS // frame_ms))
-        last_pcm = b""
-        plc_active = False
-        silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
+        playout_buffer = BrowserPcmPlayout(session.send_format.audio_format, counters)
 
         async def send_dtmf(digit: str, duration_ms: int) -> None:
             """Send one browser digit using RFC 4733, then SIP INFO fallback."""
@@ -1305,7 +1170,7 @@ async def _run_audio_session(
                                 marker=marker,
                             )
                         )
-                        transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                        transport.sendto(packet, (incoming.remote_host, incoming.remote_port))
                         if shared_clock:
                             sequence = rtp.next_sequence(sequence)
                             rtp_source.sequence = sequence
@@ -1325,60 +1190,22 @@ async def _run_audio_session(
                     )
 
         async def sync_tx_generation() -> bool:
-            nonlocal observed_generation, frame_ms, target_frames, max_frames
-            nonlocal silence_pcm, last_pcm, plc_active
+            nonlocal observed_generation
             if observed_generation == session.media_generation:
                 return False
             observed_generation = int(session.media_generation)
             await refresh_media_state(observed_generation)
-            tx_frames.clear()
-            frame_ms = max(1.0, float(session.send_format.audio_format.frame_ms))
-            target_frames = max(1, int(_BROWSER_PLAYOUT_TARGET_MS // frame_ms))
-            max_frames = max(target_frames, int(_BROWSER_PLAYOUT_MAX_MS // frame_ms))
-            silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
-            last_pcm = b""
-            plc_active = False
+            playout_buffer.reconfigure(session.send_format.audio_format)
             counters["tx_playout_rebuffer"] += 1
             return True
 
         async def playout() -> None:
-            nonlocal sequence, timestamp, ssrc, last_pcm, plc_active
-            started = False
-            prefill_frames = 0
+            nonlocal sequence, timestamp, ssrc
             next_deadline = loop.time()
             while not closed.is_set():
                 if await sync_tx_generation():
-                    started = False
-                    prefill_frames = 0
-                # Pace RTP independently of browser capture startup. Keep the
-                # existing PCM prebuffer while sending negotiated silence.
-                if not started and tx_frames:
-                    prefill_frames += 1
-                    started = (
-                        len(tx_frames) >= target_frames
-                        or prefill_frames >= target_frames
-                    )
-
-                if not started:
-                    pcm = silence_pcm
-                elif tx_frames:
-                    pcm = tx_frames.popleft()
-                    if plc_active:
-                        pcm = _fade_in_pcm_frame(
-                            pcm,
-                            int(session.send_format.audio_format.sample_rate) * 2 // 1000,
-                        )
-                    last_pcm = pcm
-                    plc_active = False
-                else:
-                    pcm = (
-                        silence_pcm
-                        if plc_active
-                        else _conceal_pcm_frame(last_pcm, len(silence_pcm))
-                    )
-                    last_pcm = pcm
-                    plc_active = True
-                    counters["tx_playout_plc"] += 1
+                    playout_buffer.restart_prefill()
+                pcm = playout_buffer.next_frame(session.send_format.audio_format.sample_rate)
 
                 if not (
                     session.remote_audio_connection_held
@@ -1402,7 +1229,7 @@ async def _run_audio_session(
                                     payload=payload,
                                 )
                             )
-                            transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                            transport.sendto(packet, (incoming.remote_host, incoming.remote_port))
                             if audio_observers:
                                 for observer in tuple(audio_observers):
                                     try:
@@ -1426,9 +1253,9 @@ async def _run_audio_session(
                     timestamp, rtp_encoder.fmt.rtp_timestamp_step
                 )
                 rtp_source.timestamp = timestamp
-                counters["tx_playout_depth"] = len(tx_frames)
+                counters["tx_playout_depth"] = len(playout_buffer.frames)
                 publish_counters()
-                frame_delay = frame_ms / 1000
+                frame_delay = playout_buffer.frame_ms / 1000
                 next_deadline += frame_delay
                 now = loop.time()
                 if next_deadline <= now:
@@ -1477,15 +1304,7 @@ async def _run_audio_session(
                         playback.ready(ws)
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
-                    tx_frames.append(pcm)
-                    queue_limit = target_frames if plc_active else max_frames
-                    while len(tx_frames) > queue_limit:
-                        tx_frames.popleft()
-                        counters["tx_playout_late_discard"] += 1
-                    counters["tx_playout_depth"] = len(tx_frames)
-                    counters["tx_playout_peak"] = max(
-                        counters["tx_playout_peak"], len(tx_frames)
-                    )
+                    playout_buffer.append(pcm)
                 except Exception as err:  # noqa: BLE001 - malformed frames cannot stop call control.
                     counters["tx_error"] += 1
                     _LOGGER.debug("HA softphone browser audio TX drop: %s", err)

@@ -110,10 +110,8 @@ def softphone_commands(monkeypatch):
             "send_bye": Mock(return_value=True),
             "send_final_response": Mock(return_value=True),
         },
-        "websocket_api": {
-            "_ha_softphone_store": Mock(return_value={}),
-            "_set_ha_softphone_call_state": Mock(),
-        },
+        "browser_phone_data": {"_ha_softphone_store": Mock(return_value={})},
+        "browser_phone_runtime": {"_set_ha_softphone_call_state": Mock()},
     }
     for name, values in dependencies.items():
         dependency = types.ModuleType(f"{package_name}.{name}")

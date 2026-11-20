@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from .endpoint_session import LegPhase
+from .trunk_policy import trunk_available
 
 if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from .core.codec_policy import CodecPolicy
+    from .core.sip import SipMessage
     from .endpoint_registry import EndpointRegistry
     from .pbx_runtime import SipEndpointRuntime
     from .phone_endpoint import PhoneEndpoint
-    from .sip_listener import SipInitialInvite
+    from .sip_listener import SipInitialInvite, SipInvite, SipRequestResult
+    from .sip_registrar import SipRegistrar
 
 
 def owned_local_call_source(
@@ -42,3 +49,136 @@ def owned_local_call_source(
             )):
         return source
     return None
+
+
+def classify_trunk_invite(invite, *, enabled: bool, trunk, trunks=None):
+    """Apply the authoritative trunk source classification."""
+
+    if trunks is not None:
+        from .trunk_policy import identify_inbound_trunk
+
+        identity = identify_inbound_trunk(
+            trunks, invite.source_host, invite.source_port, invite.signaling_transport,
+            flow_trunk_id=invite.trunk_id if invite.received_via_trunk else "",
+            contact_line=str(dict(invite.request_uri.params).get("line") or ""),
+        ) if enabled else ""
+        return replace(invite, received_via_trunk=bool(identity), trunk_id=identity)
+    trusted = False
+    if enabled and trunk_available(trunk):
+        if invite.received_via_trunk:
+            trusted = True
+        else:
+            accepts_source = getattr(trunk, "accepts_inbound_source", None)
+            trusted = bool(
+                callable(accepts_source)
+                and accepts_source(
+                    invite.source_host,
+                    invite.source_port,
+                    invite.signaling_transport,
+                )
+            )
+    if invite.received_via_trunk == trusted:
+        return invite
+    return replace(invite, received_via_trunk=trusted)
+
+
+@dataclass(frozen=True, slots=True)
+class SipIngressPolicy:
+    """Use the existing registrar and trunk catalog for listener admission and media policy."""
+
+    hass: HomeAssistant
+    config: dict[str, Any]
+    local_ip: str
+    registrar: SipRegistrar
+
+    def classify(self, invite):
+        from .config import trunk_config, trunk_enabled
+        from .runtime_data import runtime_data, sip_trunk, sip_trunks
+
+        if invite.identified_source_endpoint_id or invite.authenticated_username:
+            return invite
+        runtime = runtime_data(self.hass)
+        if runtime is not None and runtime.trunk_configs:
+            return classify_trunk_invite(invite, enabled=True, trunk=None, trunks=sip_trunks(self.hass))
+        trunk_cfg = trunk_config(self.hass)
+        trunk = sip_trunk(self.hass)
+        return classify_trunk_invite(
+            invite,
+            enabled=trunk_enabled(trunk_cfg),
+            trunk=trunk,
+        )
+
+    def is_trunk(self, invite: SipInvite) -> bool:
+        return self.classify(invite).received_via_trunk
+
+    def authorize_initial_invite(
+        self, request: SipMessage, invite: SipInitialInvite, addr: tuple[str, int], transport: str,
+    ) -> SipInitialInvite | SipRequestResult:
+        """Bind admission to a configured trunk, owned local call or Digest account."""
+        from .core.sip import make_tag
+        from .core.sip_auth import parse_digest_challenge
+        from .endpoint_lifecycle import call_registry
+        from .runtime_data import endpoint_directory
+        from .sip_listener import SipRequestResult
+        from .sip_registrar import REALM
+
+        try:
+            classified = self.classify(invite)
+        except ValueError:
+            classified = None
+        if classified is not None and invite.received_via_trunk and classified.received_via_trunk:
+            return classified
+
+        source = owned_local_call_source(invite, call_registry(self.hass), endpoint_directory(self.hass),
+                                         listener_hosts={self.local_ip, "127.0.0.1", "::1"},
+                                         listener_port=int(self.config["sip_port"]))
+        if source is not None:
+            return replace(invite, identified_source_endpoint_id=source.endpoint_id,
+                           caller_route=source.username or source.name, caller=source.name)
+
+        if classified is not None and classified.received_via_trunk:
+            if parse_digest_challenge(request.header("Authorization")).get("realm") != REALM:
+                return classified
+        elif classified is None:
+            # A shared signaling address cannot choose a provider. An account
+            # on that address can still prove its own identity using Digest.
+            claimed = self.registrar.accounts.get(invite.caller_uri.user.casefold()) if invite.caller_uri else None
+            if not self.registrar.enabled or claimed is None or not claimed.enabled:
+                return SipRequestResult(403, "Ambiguous trunk source", to_tag=make_tag())
+        account, challenge, tag = self.registrar.authorize_invite(request, addr, transport)
+        if account is None:
+            return SipRequestResult(401, "Unauthorized", headers=(("WWW-Authenticate", challenge),), to_tag=tag)
+        source = endpoint_directory(self.hass).by_username(account.username)
+        if (invite.caller_uri is None or invite.caller_uri.user.casefold() != account.username.casefold()
+                or (source is None and not self.registrar.registered_contacts(account.username))):
+            return SipRequestResult(403, "Forbidden", to_tag=make_tag())
+        display = source.name if source is not None else account.display_name or account.username
+        return replace(invite, identified_source_endpoint_id=source.endpoint_id if source is not None else "",
+                       authenticated_username=account.username, caller_route=account.username,
+                       caller=display, caller_name=display, caller_number=account.username)
+
+    def identity_for_invite(self, request: SipMessage, initial: SipInitialInvite) -> SipInitialInvite:
+        from .config import trunk_config
+        from .inbound_identity import apply_inbound_identity
+
+        try:
+            classified = self.classify(initial)
+        except ValueError:
+            return initial  # The routing boundary rejects ambiguous sources.
+        if not classified.received_via_trunk:
+            return classified
+        config = (trunk_config(self.hass, trunk_id=classified.trunk_id)
+                  if classified.trunk_id else trunk_config(self.hass))
+        return apply_inbound_identity(classified, config, request)
+
+    def codec_policy_for_invite(self, initial: SipInitialInvite) -> CodecPolicy:
+        from .config import trunk_config
+        from .core.codec_policy import CodecPolicy
+        try:
+            classified = self.classify(initial)
+        except ValueError:
+            return CodecPolicy()  # The routing boundary rejects ambiguous sources.
+        if not classified.received_via_trunk:
+            return CodecPolicy()
+        config = trunk_config(self.hass, trunk_id=classified.trunk_id) if classified.trunk_id else trunk_config(self.hass)
+        return CodecPolicy.from_config(config)

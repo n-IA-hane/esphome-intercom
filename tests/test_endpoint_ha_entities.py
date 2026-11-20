@@ -490,13 +490,13 @@ def test_browser_phone_setting_entities_share_the_service_settings_writer(
     )
     registry.register(endpoint)
     calls: list[dict[str, object]] = []
-    fake_websocket = types.ModuleType(f"{PKG_NAME}.websocket_api")
+    fake_phone_runtime = types.ModuleType(f"{PKG_NAME}.browser_phone_runtime")
 
     async def async_set_ha_softphone_settings(_hass, **settings):
         calls.append(settings)
 
-    fake_websocket.async_set_ha_softphone_settings = async_set_ha_softphone_settings
-    monkeypatch.setitem(sys.modules, f"{PKG_NAME}.websocket_api", fake_websocket)
+    fake_phone_runtime.async_set_ha_softphone_settings = async_set_ha_softphone_settings
+    monkeypatch.setitem(sys.modules, f"{PKG_NAME}.browser_phone_runtime", fake_phone_runtime)
 
     setting = next(item for item in endpoint_text._SETTINGS if item.key == "ring_group")
     text_entity = endpoint_text.PhoneEndpointSettingText(
@@ -587,17 +587,17 @@ def test_sip_account_dnd_is_persisted_without_transport_hook(monkeypatch) -> Non
     )
     fake_store = types.ModuleType(f"{PKG_NAME}.store")
     fake_store.config_entry = lambda _hass: entry
-    fake_websocket = types.ModuleType(f"{PKG_NAME}.websocket_api")
+    fake_phone_runtime = types.ModuleType(f"{PKG_NAME}.browser_phone_runtime")
     # This unit owns the persistence boundary; the real HA/WS suite owns state
     # serialization. SIP accounts now legitimately publish that same view.
-    fake_websocket._publish_ha_softphone_state = lambda received_hass, *, endpoint_id: published.append(
+    fake_phone_runtime._publish_ha_softphone_state = lambda received_hass, *, endpoint_id: published.append(
         (received_hass, endpoint_id, registry.require(endpoint_id).dnd)
     )
     monkeypatch.setitem(
         sys.modules, f"{PKG_NAME}.phone_config", fake_phone_config
     )
     monkeypatch.setitem(sys.modules, f"{PKG_NAME}.store", fake_store)
-    monkeypatch.setitem(sys.modules, f"{PKG_NAME}.websocket_api", fake_websocket)
+    monkeypatch.setitem(sys.modules, f"{PKG_NAME}.browser_phone_runtime", fake_phone_runtime)
     monkeypatch.setattr(
         endpoint_switch,
         "endpoint_directory",

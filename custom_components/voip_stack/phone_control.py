@@ -25,7 +25,7 @@ from .softphone_commands import (
     async_resolve_browser_call_command,
 )
 from .softphone_termination import async_hangup_browser_call
-from .websocket_api import _ha_softphone_state
+from .browser_phone_projection import _ha_softphone_state
 
 
 class PhoneOperation(StrEnum):
@@ -454,7 +454,7 @@ class PhoneAdapterRegistry:
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 from .runtime_data import runtime_data
-                from .websocket_api import _account_browser_media
+                from .browser_phone_projection import _account_browser_media
                 runtime = runtime_data(self._hass)
                 call_id = str(call.data.get("call_id") or endpoint.active_call_id or "")
                 media = bool(runtime is not None and runtime.sip is not None

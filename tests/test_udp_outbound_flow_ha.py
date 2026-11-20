@@ -208,7 +208,7 @@ async def test_immediate_browser_call_and_unregister_use_current_binding_owner(w
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 
     wire, lab = wire_lab, wire_lab.lab
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", roster_from_peers)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     endpoint = PhoneEndpoint(endpoint_id="wire-account", username="outbound-phone", name="Wire account",
         kind=EndpointKind.SIP_ACCOUNT, device_id="wire-account-device")
     source = PhoneEndpoint(endpoint_id="wire-browser", username="wire-browser", name="Browser source",

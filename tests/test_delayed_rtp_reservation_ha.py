@@ -475,3 +475,70 @@ async def test_delayed_bind_failure_rejects_before_sdp_and_releases_all(trunks, 
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
     finally:
         await caller.close()
+
+
+@pytest.mark.parametrize("outcome", ["tcp-bind-fails", "cancel-after-udp-bind"])
+async def test_endpoint_startup_publishes_one_owner_and_releases_partial_listeners(lab, monkeypatch, outcome):
+    from custom_components.voip_stack import endpoint_runtime
+    from custom_components.voip_stack.pbx_runtime import RuntimePhase
+    from custom_components.voip_stack.runtime_data import sip_endpoint_manager
+    from custom_components.voip_stack.sip_listener import SipTcpServer
+
+    # The media lab starts with a synthetic active call registry. This
+    # endpoint startup starts with the same unloaded state as config setup.
+    lab.runtime.sip = None
+    observed = asyncio.Event()
+    original = SipTcpServer.start
+    owners = []
+
+    async def inspect_tcp_start(server):
+        observed.set()
+        # UDP has bound. The first inbound record can already see the registry.
+        owner = lab.runtime.sip
+        manager = sip_endpoint_manager(lab.hass)
+        assert owner.phase is RuntimePhase.ACTIVE
+        assert owner.component("udp_listener") is owner.component("tcp_listener") is manager
+        assert owner.component("registrar") is not None
+        assert owner.component("sip_application") is manager.request_router
+        assert callable(owner.refer_call) and callable(owner.ring_conference_members_from_ha)
+        assert callable(owner.start_ring_group_from_ha)
+        owners.append(owner)
+        if outcome == "cancel-after-udp-bind":
+            await asyncio.Future()
+        return await original(server)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen()
+        port = blocker.getsockname()[1]
+        lab.runtime.transport_config["sip_port"] = port
+        with monkeypatch.context() as patch:
+            patch.setattr(SipTcpServer, "start", inspect_tcp_start)
+            startup = asyncio.create_task(endpoint_runtime.async_start_sip_endpoint(lab.hass))
+            try:
+                async with asyncio.timeout(3):
+                    await observed.wait()
+                if outcome == "cancel-after-udp-bind":
+                    startup.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await startup
+                else:
+                    assert not await startup
+            finally:
+                if not startup.done():
+                    startup.cancel()
+                await asyncio.gather(startup, return_exceptions=True)
+    assert lab.runtime.sip is None and owners[0].phase is RuntimePhase.STOPPED
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.bind(("127.0.0.1", port))
+
+    try:
+        assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
+        replacement = lab.runtime.sip
+        manager = sip_endpoint_manager(lab.hass)
+        assert replacement is not owners[0] and replacement.phase is RuntimePhase.ACTIVE
+        assert manager.udp_server is not None and manager.tcp_server is not None
+        assert callable(replacement.forward_call)
+    finally:
+        await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
+    assert lab.runtime.sip is None

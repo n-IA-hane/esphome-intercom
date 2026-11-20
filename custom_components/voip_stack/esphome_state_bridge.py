@@ -15,7 +15,7 @@ from .outbound_lifecycle import HA_SOFTPHONE_ACTIVE_STATES
 from .peer_snapshot import device_entity_state
 from .runtime_data import runtime_data
 from .call_events import fire_call_event as _fire_call_event
-from .websocket_api import _get_voip_devices
+from .esphome_phone_inventory import _get_voip_devices
 
 _TERMINAL_ESP_STATES = {
     "idle",

@@ -27,7 +27,7 @@ from .fsm import TerminalReason
 from .route_decisions import set_pending_route_decision
 from .runtime_data import conference_component
 from .service_errors import service_error
-from .websocket_api import _ha_softphone_store
+from .browser_phone_data import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)

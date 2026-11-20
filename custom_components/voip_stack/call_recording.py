@@ -13,7 +13,7 @@ from .runtime_data import require_runtime_data
 
 def _publish_recording_state(hass, session):
     from .call_scope import call_endpoint_ids
-    from .websocket_api import _publish_ha_softphone_state
+    from .browser_phone_runtime import _publish_ha_softphone_state
     runtime = require_runtime_data(hass)
     for identity in call_endpoint_ids(runtime.sip, session.call_id):
         endpoint = runtime.endpoints.get(identity)

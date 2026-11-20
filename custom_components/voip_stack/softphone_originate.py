@@ -88,9 +88,7 @@ from .sip_runtime import (
 from .softphone_commands import (
     bind_service_call_controller as _bind_service_call_controller,
 )
-from .websocket_api import (
-    _ha_softphone_store,
-)
+from .browser_phone_data import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)

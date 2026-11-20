@@ -70,7 +70,7 @@ async def test_three_browser_accounts_finish_concurrent_conference_hangups_and_c
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", lambda *_args: lab.roster)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))

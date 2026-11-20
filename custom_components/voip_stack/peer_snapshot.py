@@ -15,7 +15,7 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .runtime_data import endpoint_directory
-from .websocket_api import _get_voip_devices
+from .esphome_phone_inventory import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
 

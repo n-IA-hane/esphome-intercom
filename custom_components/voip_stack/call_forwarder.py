@@ -45,9 +45,7 @@ from .runtime_data import (
 )
 from .service_errors import service_error as _service_error
 from .trunk_policy import registry_external_call_denied
-from .websocket_api import (
-    _release_ha_softphone_claim,
-)
+from .browser_phone_runtime import _release_ha_softphone_claim
 
 _LOGGER = logging.getLogger(__name__)
 

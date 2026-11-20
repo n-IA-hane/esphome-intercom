@@ -288,7 +288,7 @@ def resolve_media_websocket_request(request: Any) -> MediaWebSocketRequestContex
     except ValueError as err:
         raise web.HTTPBadRequest(text=str(err)) from err
 
-    from .websocket_api import _endpoint_id_from_selector
+    from .browser_phone_data import _endpoint_id_from_selector
 
     hass = request.app["hass"]
     try:

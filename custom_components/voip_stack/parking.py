@@ -384,7 +384,7 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
     from .local_call_media import ApplicationCallSource, LocalCallMedia
     from .media_ports import RtpPortReservation
     from .media_reservation import release_video_media_reservation
-    from .websocket_api import _release_ha_softphone_claim
+    from .browser_phone_runtime import _release_ha_softphone_claim
 
     runtime = require_runtime_data(hass)
     registry = runtime.sip
@@ -816,7 +816,7 @@ async def pickup_phone_call(call, endpoint, slot):
     from homeassistant.core import ServiceCall
     from .softphone_answer import async_answer_browser_call
     from .softphone_commands import async_resolve_browser_call_command
-    from .websocket_api import _release_ha_softphone_claim
+    from .browser_phone_runtime import _release_ha_softphone_claim
 
     hass = call.hass
     registry = call_registry(hass)

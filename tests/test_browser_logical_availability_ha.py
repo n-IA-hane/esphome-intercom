@@ -32,7 +32,7 @@ pytestmark = pytest.mark.ha
 
 @pytest.fixture
 async def logical_browser(trunks, registered_phones, request, monkeypatch):
-    from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
+    from custom_components.voip_stack import invite_router, peer_snapshot
 
     entry = config_entry(trunks.hass)
     settings = getattr(request, "param", {})
@@ -62,7 +62,7 @@ async def logical_browser(trunks, registered_phones, request, monkeypatch):
     # The reused transfer fixture freezes its directory. Exercise real configured
     # phone/contact discovery instead, including changes made after startup.
     peer_snapshot.async_build_peer_snapshot.side_effect = async_build_peer_snapshot
-    monkeypatch.setattr(endpoint_runtime, "_roster_from_peers", roster_from_peers)
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     monkeypatch.setattr(invite_router, "_roster_from_peers", roster_from_peers)
     setup_phone_policy_events(trunks.hass, entry)
     trunks.browser_subentry = subentry
