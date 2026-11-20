@@ -26,6 +26,89 @@ MEDIA_MODEL = ENGINE.with_name("voip-stack-media-model.js")
 SESSION_MODEL = ENGINE.with_name("voip-stack-session-model.js")
 CARD_MODEL = ENGINE.with_name("voip-stack-card-model.js")
 MEDIA_DEVICES = ENGINE.with_name("voip-stack-media-devices.js")
+AUDIO_SESSION = ENGINE.with_name("voip-stack-audio-session.js")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_audio_wire_and_public_stats_preserve_mute_direction_and_backpressure(tmp_path):
+    script = r'''
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+const storage=()=>{const values=new Map();return {getItem:key=>values.get(key)||null,
+  setItem:(key,value)=>values.set(key,String(value)),removeItem:key=>values.delete(key)};};
+globalThis.sessionStorage=storage();globalThis.localStorage=storage();
+const tracks=[];const contexts=[];const worklets=[];
+Object.defineProperty(globalThis,'navigator',{value:{mediaDevices:{
+  getUserMedia:async()=>{
+    const track={enabled:true,stops:0,getSettings:()=>({deviceId:'default'}),stop(){this.stops++;}};
+    tracks.push(track);return {getAudioTracks:()=>[track],getTracks:()=>[track]};
+  },
+}},configurable:true});
+const node=()=>({connect:target=>target,disconnect(){}});
+class AudioContext {
+  constructor(){contexts.push(this);this.state='running';this.destination={};
+    this.audioWorklet={addModule:async()=>{}};}
+  createMediaStreamSource(){return node();}
+  createGain(){return {...node(),gain:{value:1}};}
+  async close(){this.state='closed';}
+}
+class Worklet {
+  constructor(_context,name){this.name=name;this.messages=[];
+    this.port={postMessage:value=>this.messages.push(value)};worklets.push(this);}
+  connect(target){return target;}disconnect(){}
+}
+globalThis.AudioWorkletNode=Worklet;globalThis.WebSocket={OPEN:1,CONNECTING:0};
+globalThis.window={location:{protocol:'https:',host:'ha.example'},AudioContext,
+  addEventListener(){},setTimeout,clearTimeout,setInterval,clearInterval};
+const {voipStackEngine:engine}=await import(pathToFileURL(ENGINE));
+engine.claimSoftphoneSession('wire-call','desk');engine._callId='wire-call';engine._endpointId='desk';
+await engine._setupAudio({audio_mode:'full_duplex'},
+  {tx_format:'48000:s16le:1:20',rx_format:'48000:s16le:1:20',audio_direction:'sendrecv'});
+const wire=[];const socket={readyState:1,bufferedAmount:0,
+  send:frame=>wire.push(Uint8Array.from(frame)),close(){this.readyState=3;}};
+engine._ws=socket;
+const samples=Int16Array.from({length:960},(_,index)=>index%2?-1200:1200);
+const expected=Uint8Array.from(new Uint8Array(samples.buffer));
+engine._sendAudio(samples.buffer);
+assert.equal(wire[0].byteLength,1921);assert.equal(wire[0][0],1);
+assert.deepEqual(wire[0].subarray(1),expected);
+assert.equal(engine.stats.sent,1);assert.equal(engine.stats.tx_dropped,0);
+assert.equal(engine.setMicrophoneMuted(true,{call_id:'wire-call',endpoint_id:'desk'}),true);
+assert.equal(tracks[0].enabled,false);engine._sendAudio(samples.buffer);
+assert.ok(wire[1].subarray(1).every(value=>value===0));
+assert.deepEqual(new Uint8Array(samples.buffer),expected,'Muting must not modify the capture buffer');
+socket.bufferedAmount=1_000_000_000;engine._sendAudio(samples.buffer);
+assert.equal(wire.length,2);assert.equal(engine.stats.sent,2);assert.equal(engine.stats.tx_dropped,1);
+socket.bufferedAmount=0;engine._sendAudio(samples.buffer);
+assert.equal(wire.length,3);assert.ok(wire[2].subarray(1).every(value=>value===0));
+engine.setMicrophoneMuted(false,{call_id:'wire-call',endpoint_id:'desk'});engine._sendAudio(samples.buffer);
+assert.equal(tracks[0].enabled,true);assert.deepEqual(wire[3].subarray(1),expected);
+engine._applyAudioDirection('recvonly');engine._sendAudio(samples.buffer);
+assert.equal(wire.length,4);assert.equal(engine.stats.sent,4);assert.equal(engine.stats.tx_dropped,1);
+const playback=worklets.find(value=>value.name==='voip-stack-playback-processor');
+const received=Uint8Array.from(wire[0]).buffer;engine._handleMessage({data:received});
+assert.equal(engine.stats.received,1);assert.equal(playback.messages.length,1);
+assert.equal(playback.messages[0].byteOffset,1);assert.equal(playback.messages[0].buffer,received);
+playback.port.onmessage({data:{type:'stats',buffered_frames:3,underruns:2,frames_drop:1}});
+assert.equal(engine.stats.sent,4);assert.equal(engine.stats.received,1);assert.equal(engine.stats.tx_dropped,1);
+assert.equal(engine.stats.buffered_frames,3);assert.equal(engine.stats.underruns,2);
+engine._applyAudioDirection('sendonly');engine._handleMessage({data:Uint8Array.from(wire[0]).buffer});
+assert.equal(playback.messages.length,1);assert.equal(engine.stats.received,1);
+engine._sendAudio(samples.buffer);assert.equal(wire.length,5);assert.equal(engine.stats.sent,5);
+const snapshot=engine.stats;snapshot.sent=999;assert.equal(engine.stats.sent,5);
+engine.releaseSoftphoneSession('wire-call','desk');await engine.close('test-complete');
+assert.ok(contexts.every(value=>value.state==='closed'));assert.ok(tracks.every(value=>value.stops===1));
+assert.equal(socket.readyState,3);assert.equal(engine.mediaCleanupPending,false);
+console.log(JSON.stringify({stats:engine.stats,wire:wire.map(frame=>({bytes:frame.byteLength,
+  marker:frame[0],nonzero:frame.subarray(1).some(value=>value!==0)})),
+  closedContexts:contexts.length,stoppedTracks:tracks.length,socketClosed:socket.readyState===3}));
+'''
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", f"const ENGINE={json.dumps(str(ENGINE))};\n" + script],
+        cwd=ROOT, capture_output=True, text=True, timeout=15,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    (tmp_path / "audio-wire-stats.json").write_text(json.dumps(json.loads(completed.stdout), indent=2))
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -119,6 +202,9 @@ source = source.replace(
 ).replace(
   /import\(`\.\/voip-stack-card-model\.js[^`]+`\)/,
   "Promise.resolve(globalThis.__cardModel)",
+).replace(
+  /import\(`\.\/voip-stack-audio-session\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__audioSession)",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();
@@ -187,6 +273,14 @@ const context = vm.createContext({{
   setInterval,
   clearInterval,
 }});
+const audioSource = fs.readFileSync({json.dumps(str(AUDIO_SESSION))}, "utf8").replace(
+  /import\(`\.\/voip-stack-media-devices\.js[^`]+`\)/,
+  "Promise.resolve(globalThis.__deviceModel)",
+);
+const audioModule = new vm.SourceTextModule(audioSource, {{ context }});
+await audioModule.link(() => {{ throw new Error("unexpected audio import"); }});
+await audioModule.evaluate();
+context.__audioSession = audioModule.namespace;
 const module = new vm.SourceTextModule(source, {{ context }});
 await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
@@ -200,7 +294,7 @@ for (const mode of ["retry", "already-ended", "new-call", "offline", "denied"]) 
   control._endpointId = "control-endpoint";
   control._state = "IN_CALL";
   let sends = 0, reconnects = 0, trackStops = 0;
-  control._mediaStream = {{ getTracks: () => [{{ stop() {{ trackStops++; }} }}] }};
+  control._audioSession.mediaStream = {{ getTracks: () => [{{ stop() {{ trackStops++; }} }}] }};
   const listeners = new Map();
   const connection = {{
     addEventListener(name, callback) {{ listeners.set(name, callback); }},
@@ -328,10 +422,10 @@ assert.equal(prepared,false,"First worklet process can belong to prerender befor
 assert.equal(readinessChecks,1,"Recheck on a subsequent render callback without a timer");
 outputTime=1;inputProcessed();await preparing;
 assert.equal(audioTrackStops, 0, "Retain the initialized microphone for the call");
-assert.equal(audioPreflight._preparedAudio.ready, true);
+assert.equal(audioPreflight._audioSession.prepared.ready, true);
 assert.deepEqual(preparationOrder,["input","output"]);
 await audioPreflight.close("switch", true, true);
-assert.equal(audioPreflight._preparedAudio.ready, true, "Opening media must preserve prepared devices");
+assert.equal(audioPreflight._audioSession.prepared.ready, true, "Opening media must preserve prepared devices");
 audioPreflight.claimSoftphoneSession("new-call", "kitchen");
 audioPreflight.releaseMediaIntent(intentToken);
 assert.equal(audioTrackStops, 0, "Keep audio ready while the destination rings");
@@ -346,7 +440,7 @@ for(let i=0;i<30;i++) await Promise.resolve();
 audioPreflight.releaseMediaIntent(cancelToken);
 await assert.rejects(cancelPrepare,/cancelled|superseded/i);
 assert.equal(audioTrackStops,2);
-assert.equal(audioPreflight._preparedAudio,null);
+assert.equal(audioPreflight._audioSession.prepared,null);
 const originalInput=context.navigator.mediaDevices.getUserMedia;
 let grantInput;
 context.navigator.mediaDevices.getUserMedia=()=>new Promise(resolve=>{{grantInput=resolve;}});
@@ -358,11 +452,11 @@ let lateStops=0;
 grantInput({{getAudioTracks:()=>[{{}}],getTracks:()=>[{{stop(){{lateStops++;}}}}]}});
 await assert.rejects(latePreparation,/cancelled/i);
 assert.equal(lateStops,1,"A late microphone grant must be released after cancellation");
-assert.equal(audioPreflight._preparedAudio,null);
+assert.equal(audioPreflight._audioSession.prepared,null);
 context.navigator.mediaDevices.getUserMedia=originalInput;
 const playbackOnlyPrepare = audioPreflight.prepareAudioCall({{needsMicrophone:false}});
 for(let i=0;i<30;i++) await Promise.resolve();
-assert.equal(audioPreflight._preparedAudio.mediaStream,null,"Playback-only preparation must not acquire a microphone");
+assert.equal(audioPreflight._audioSession.prepared.mediaStream,null,"Playback-only preparation must not acquire a microphone");
 inputProcessed();await playbackOnlyPrepare;
 await audioPreflight._discardPreparedAudio();
 const outputTimestamp = PreparedContext.prototype.getOutputTimestamp;
@@ -370,11 +464,11 @@ delete PreparedContext.prototype.getOutputTimestamp;
 let fallbackPrepared=false;
 const fallbackPrepare=audioPreflight.prepareAudioCall({{needsMicrophone:false}}).then(()=>{{fallbackPrepared=true;}});
 for(let i=0;i<30;i++) await Promise.resolve();
-audioPreflight._preparedAudio.audioContext.currentTime=1;
+audioPreflight._audioSession.prepared.audioContext.currentTime=1;
 inputProcessed();
 for(let i=0;i<30;i++) await Promise.resolve();
 assert.equal(fallbackPrepared,false,"Without output timestamps, require advancement after the first round-trip");
-audioPreflight._preparedAudio.audioContext.currentTime=2;
+audioPreflight._audioSession.prepared.audioContext.currentTime=2;
 inputProcessed();await fallbackPrepare;
 await audioPreflight._discardPreparedAudio();
 PreparedContext.prototype.getOutputTimestamp=outputTimestamp;
@@ -654,7 +748,7 @@ stableMetadata._state = "IN_CALL";
 stableMetadata._endpointId = "kitchen";
 stableMetadata._deviceId = "fallback-device";
 stableMetadata._callId = "stable-call";
-stableMetadata._audioReady = true;
+stableMetadata._audioSession.ready = true;
 stableMetadata._ws = {{ readyState: context.WebSocket.OPEN }};
 let metadataReconnects = 0;
 stableMetadata._setupAudioOrAbort = async () => {{ metadataReconnects++; return true; }};
@@ -775,7 +869,7 @@ microphone.prepareAudioCall = async () => {{ throw new Error("must not prepare a
 context.navigator.permissions = {{ query: async () => ({{ state: "prompt" }}) }};
 assert.equal((await microphone.checkAutoAnswerMedia("audio")).ready, true);
 assert.equal(microphoneStopped, 1);
-assert.equal(microphone._preparedAudio, null);
+assert.equal(microphone._audioSession.prepared, null);
 // A refused microphone returns false rather than throwing, because the probe
 // does not catch errors from it.
 context.navigator.mediaDevices = {{
@@ -1109,15 +1203,15 @@ let releaseOldAudio;
 let releaseOldVideo;
 const oldAudioGate = new Promise((resolve) => {{ releaseOldAudio = resolve; }});
 const oldVideoGate = new Promise((resolve) => {{ releaseOldVideo = resolve; }});
-closeRace._audioContext = {{ close: () => oldAudioGate }};
+closeRace._audioSession.audioContext = {{ close: () => oldAudioGate }};
 closeRace._video = {{ close: () => oldVideoGate }};
 closeRace._callId = "A";
 const closingA = closeRace.close("test");
 assert.equal(closeRace.mediaCleanupPending, true);
-assert.equal(closeRace._audioContext, null);
+assert.equal(closeRace._audioSession.audioContext, null);
 let bClosed = 0;
 const contextB = {{ close: async () => {{ bClosed++; }} }};
-closeRace._audioContext = contextB;
+closeRace._audioSession.audioContext = contextB;
 closeRace._callId = "B";
 closeRace._state = "IN_CALL";
 releaseOldAudio();
@@ -1125,7 +1219,7 @@ releaseOldVideo();
 await closingA;
 assert.equal(closeRace.mediaCleanupPending, false);
 assert.equal(bClosed, 0);
-assert.equal(closeRace._audioContext, contextB);
+assert.equal(closeRace._audioSession.audioContext, contextB);
 assert.equal(closeRace._callId, "B");
 assert.equal(closeRace._state, "IN_CALL");
 
@@ -1305,7 +1399,7 @@ let releaseRetiredSetup, setupEntered, retiredContext;
 const retiredSetupReady = new Promise(resolve => {{releaseRetiredSetup=resolve;}});
 const setupStarted = new Promise(resolve => {{setupEntered=resolve;}});
 let loads = 0;
-parked._loadAudioWorklets = async (audioContext) => {{
+parked._audioSession._loadAudioWorklets = async (audioContext) => {{
   if (++loads === 1) {{retiredContext=audioContext; setupEntered(); await retiredSetupReady;}}
 }};
 const parkedPcm = {{call_id:"parked-call",tx_format:"48000:s16le:1:10",
@@ -1315,25 +1409,25 @@ const retiredSetup = parked._setupAudioOrAbort("phone-device",{{audio_mode:"full
 await setupStarted;
 await parked._cleanupAudio("route_replaced");
 await parked._setupAudio({{audio_mode:"full_duplex"}},parkedPcm,"phone|parked-call");
-const replacementContext = parked._audioContext;
-const replacementPlayback = parked._playbackNode;
+const replacementContext = parked._audioSession.audioContext;
+const replacementPlayback = parked._audioSession.playbackNode;
 releaseRetiredSetup();
 assert.equal(await retiredSetup,false);
 assert.deepEqual(parkedServices,[],"Retired audio setup must never issue hangup");
 assert.deepEqual(parkedErrors,[]);
-assert.equal(parked._audioContext,replacementContext);
-assert.equal(parked._playbackNode,replacementPlayback);
+assert.equal(parked._audioSession.audioContext,replacementContext);
+assert.equal(parked._audioSession.playbackNode,replacementPlayback);
 assert.equal(retiredContext.state,"closed");
 assert.equal(replacementContext.state,"running");
-assert.equal(parked._audioReady,true);
+assert.equal(parked._audioSession.ready,true);
 assert.equal(parked._callId,"parked-call");
 await parked.close();
 
 const preparedSession = new Engine();
-const loadWorklets = preparedSession._loadAudioWorklets.bind(preparedSession);
+const loadWorklets = preparedSession._audioSession._loadAudioWorklets.bind(preparedSession._audioSession);
 let releaseModules;
 const modulesReady = new Promise(resolve => {{releaseModules = resolve;}});
-preparedSession._loadAudioWorklets = async (...args) => {{
+preparedSession._audioSession._loadAudioWorklets = async (...args) => {{
   await modulesReady;
   return loadWorklets(...args);
 }};
@@ -1343,9 +1437,9 @@ for (let i=0;i<30;i++) await Promise.resolve();
 assert.equal(readyToDial, false, "A slow processor download must finish before SIP starts");
 releaseModules();
 await prepareSession;
-const preparedContext = preparedSession._preparedAudio.audioContext;
-const preparedStream = preparedSession._preparedAudio.mediaStream;
-const preparedSource = preparedSession._preparedAudio.source;
+const preparedContext = preparedSession._audioSession.prepared.audioContext;
+const preparedStream = preparedSession._audioSession.prepared.mediaStream;
+const preparedSource = preparedSession._audioSession.prepared.source;
 const preparedRequests = microphoneRequests;
 assert.equal(preparedContext.loadedModules.length, 2, "Processors must load before dialing");
 preparedContext.audioWorklet.addModule = async () => {{throw new Error("Late worklet download after dialing");}};
@@ -1355,11 +1449,11 @@ await preparedSession._setupAudio({{audio_mode: "full_duplex"}}, {{
   rx_format: "16000:s16le:1:20", audio_direction: "sendrecv",
 }});
 assert.equal(microphoneRequests, preparedRequests, "Reuse input instead of opening it twice");
-assert.equal(preparedSession._mediaStream, preparedStream);
-assert.equal(preparedSession._audioContext, preparedContext);
-assert.equal(preparedSession._source, preparedSource,"Keep the ready microphone graph owner after SIP answer");
+assert.equal(preparedSession._audioSession.mediaStream, preparedStream);
+assert.equal(preparedSession._audioSession.audioContext, preparedContext);
+assert.equal(preparedSession._audioSession.source, preparedSource,"Keep the ready microphone graph owner after SIP answer");
 assert.equal(preparedContext.sourcesCreated,1,"Do not restart the source after the websocket opens");
-assert.equal(preparedSession._preparedAudio, null);
+assert.equal(preparedSession._audioSession.prepared, null);
 await preparedSession.close();
 microphoneRequests=0;stoppedTracks=0;
 const audio = new Engine();
@@ -1373,17 +1467,17 @@ const pcm = {{
 audio._lastSessionPayload = pcm;
 await audio._setupAudio({{ audio_mode: "full_duplex" }}, pcm);
 assert.equal(microphoneRequests, 0);
-assert.equal(audio._captureNode, null);
-assert.equal(audio._playbackNode?.name, "voip-stack-playback-processor");
+assert.equal(audio._audioSession.captureNode, null);
+assert.equal(audio._audioSession.playbackNode?.name, "voip-stack-playback-processor");
 
 await audio._reconcileAudioMedia({{ ...pcm, audio_direction: "sendrecv" }});
 assert.equal(microphoneRequests, 1);
-assert.equal(audio._captureNode?.name, "voip-stack-processor");
-assert.equal(audio._playbackNode?.name, "voip-stack-playback-processor");
+assert.equal(audio._audioSession.captureNode?.name, "voip-stack-processor");
+assert.equal(audio._audioSession.playbackNode?.name, "voip-stack-playback-processor");
 
 await audio._reconcileAudioMedia({{ ...pcm, audio_direction: "inactive" }});
-assert.equal(audio._captureNode, null);
-assert.equal(audio._playbackNode, null);
+assert.equal(audio._audioSession.captureNode, null);
+assert.equal(audio._audioSession.playbackNode, null);
 assert.equal(stoppedTracks, 1);
 
 const sendOnly = new Engine();
@@ -1393,8 +1487,8 @@ await sendOnly._setupAudio(
   {{ ...pcm, call_id: "send-only", audio_direction: "sendonly" }},
 );
 assert.equal(microphoneRequests, 2);
-assert.equal(sendOnly._captureNode?.name, "voip-stack-processor");
-assert.equal(sendOnly._playbackNode, null);
+assert.equal(sendOnly._audioSession.captureNode?.name, "voip-stack-processor");
+assert.equal(sendOnly._audioSession.playbackNode, null);
 
 // Reapplying an unchanged negotiated direction is a no-op. Card listeners
 // call reconcileSession() from engine state events, so emitting here would
@@ -1512,7 +1606,7 @@ assert.equal(outboundStarts, 1);
 // never settles cannot keep the media gate or the next Hangup blocked forever.
 const stuckClose = new Engine();
 stuckClose._callId = "stuck-media";
-stuckClose._audioContext = {{ close: () => new Promise(() => {{}}) }};
+stuckClose._audioSession.audioContext = {{ close: () => new Promise(() => {{}}) }};
 stuckClose._video = {{
   configure() {{}},
   close: () => new Promise(() => {{}}),
@@ -1521,7 +1615,7 @@ const stuckCloseStarted = Date.now();
 await stuckClose.close("hangup");
 assert.ok(Date.now() - stuckCloseStarted < 1500);
 assert.equal(stuckClose._callId, "");
-assert.equal(stuckClose._audioContext, null);
+assert.equal(stuckClose._audioSession.audioContext, null);
 
 // Incoming codec/rate changes must never become the microphone TX contract.
 const asymmetric = new Engine();
@@ -1533,19 +1627,19 @@ const asymmetricSession = {{
 }};
 asymmetric._lastSessionPayload = asymmetricSession;
 await asymmetric._setupAudio({{audio_mode: "full_duplex"}}, asymmetricSession);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.sampleRate, 8000);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.channels, 1);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20);
-assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 16000);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.sampleRate, 8000);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.channels, 1);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.frameMs, 20);
+assert.equal(asymmetric._audioSession.playbackNode.options.processorOptions.format.sampleRate, 16000);
 await asymmetric._reconcileAudioMedia({{
   rx_format: "48000:s16le:2:20", selected_rx_format: "48000:s16le:2:20",
 }});
-assert.equal(asymmetric._txFormat.sampleRate, 8000);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.sampleRate, 8000);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.channels, 1);
-assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20);
-assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
-assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
+assert.equal(asymmetric._audioSession.txFormat.sampleRate, 8000);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.sampleRate, 8000);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.channels, 1);
+assert.equal(asymmetric._audioSession.captureNode.options.processorOptions.format.frameMs, 20);
+assert.equal(asymmetric._audioSession.playbackNode.options.processorOptions.format.sampleRate, 48000);
+assert.equal(asymmetric._audioSession.playbackNode.options.outputChannelCount[0], 2);
 await asymmetric.close("test-complete");
 // A Dashboard query can return a cached idle before the new INVITE commits.
 // Only a terminal observation of the exact owned dialog may release its media.

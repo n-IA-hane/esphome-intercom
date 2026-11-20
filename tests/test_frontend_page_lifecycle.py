@@ -304,7 +304,7 @@ if(MODE==='typed_cancellation') {
   assert.equal(contexts.length,1,'Retired completion cannot allocate/publish a second AudioContext');
   releaseCurrentWorklet();await Promise.all([newAttach,duplicate]);
   assert.equal(engine._microphoneAntiAlias,true,'Replacement preference wins');
-  assert.equal(engine._audioContext,contexts[0],'Replacement publishes only its own resources');
+  assert.equal(engine._audioSession.audioContext,contexts[0],'Replacement publishes only its own resources');
   assert.equal(contexts[0].closed,undefined);
   assert.equal(engine.callId,'same-call');
   assert.equal(sockets.filter(socket=>socket.readyState===1).length,1);

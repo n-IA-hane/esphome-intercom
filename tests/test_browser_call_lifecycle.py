@@ -328,18 +328,18 @@ def test_pcm_call_survives_last_view_and_restores_after_reload(unmount_phase, tm
         await peer.broadcast("in_call")
         peer.start_reply.set()
         await wait_until(lambda: bool(peer.connections))
-        await page.wait_for_function("engine._audioReady && engine.callId")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId")
         await wait_until(lambda: peer.connections[-1]["rx_nonzero"] >= 4)
         await page.evaluate("""() => {
-          window.playbackProbe=engine._audioContext.createAnalyser();
-          playbackProbe.fftSize=2048;engine._playbackNode.connect(playbackProbe);
+          window.playbackProbe=engine._audioSession.audioContext.createAnalyser();
+          playbackProbe.fftSize=2048;engine._audioSession.playbackNode.connect(playbackProbe);
           window.samplePlayback=()=>{
             const time=new Float32Array(playbackProbe.fftSize);
             const spectrum=new Float32Array(playbackProbe.frequencyBinCount);
             playbackProbe.getFloatTimeDomainData(time);playbackProbe.getFloatFrequencyData(spectrum);
             let peak=1;for(let i=2;i<spectrum.length;i++)if(spectrum[i]>spectrum[peak])peak=i;
             return {rms:Math.sqrt(time.reduce((sum,value)=>sum+value*value,0)/time.length),
-              hz:peak*engine._audioContext.sampleRate/playbackProbe.fftSize};
+              hz:peak*engine._audioSession.audioContext.sampleRate/playbackProbe.fftSize};
           };
         }""")
         await page.wait_for_function("samplePlayback().rms > .02")
@@ -380,13 +380,13 @@ def test_pcm_call_survives_last_view_and_restores_after_reload(unmount_phase, tm
         await page.reload()
         await page.wait_for_function("window.engine")
         await page.evaluate(HARNESS)
-        await page.wait_for_function("engine._audioReady && engine.callId")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId")
         await wait_until(lambda: len(peer.connections) == 2 and peer.connections[-1]["rx_nonzero"] >= 4)
         assert await page.evaluate("engine.mediaClientId") == original_id
         assert peer.connections[0]["closed"]
         assert {item["call_id"] for item in peer.connections} == {peer.state["call_id"]}
         await page.get_by_role("button", name="Hang up call", exact=True).click()
-        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
         await wait_until(lambda: all(item["closed"] for item in peer.connections))
         assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
         await page.evaluate("card.remove()")
@@ -416,19 +416,19 @@ def test_failed_start_keeps_phone_and_redials_with_fresh_browser_media(tmp_path)
         await page.wait_for_function("card._errorMsg.includes('controlled call service refusal') && !card._starting")
         assert await page.evaluate("card._getSoftphoneEndpointId()") == "desk"
         assert await page.evaluate("card._getConfigDeviceId()") == "desk-device"
-        assert await page.evaluate("!engine._mediaIntent && !engine._preparedAudio && !engine._ownedSoftphoneCalls.size")
+        assert await page.evaluate("!engine._mediaIntent && !engine._audioSession.prepared && !engine._ownedSoftphoneCalls.size")
         assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
         assert not peer.connections
         await page.get_by_role("button", name="Call", exact=True).click()
         await wait_until(lambda: len(peer.attempts) == 2)
         await peer.broadcast("in_call")
-        await page.wait_for_function("engine._audioReady && engine.callId")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId")
         await wait_until(lambda: bool(peer.connections) and peer.connections[-1]["rx_nonzero"] >= 4)
         assert [item["device_id"] for item in peer.attempts] == ["desk-device", "desk-device"]
         assert len(peer.connections) == 1
         assert await page.evaluate("gumCalls.length") == 2
         await page.get_by_role("button", name="Hang up call", exact=True).click()
-        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
         await wait_until(lambda: all(item["closed"] for item in peer.connections))
         assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
         await page.evaluate("card.remove()")
@@ -459,21 +459,21 @@ def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_pla
         await wait_until(lambda: bool(peer.attempts))
         peer.state.update(connected_at=time.time() - 12, peer_name="Peer", callee="Peer", direction="outgoing")
         await peer.broadcast("in_call")
-        await page.wait_for_function("engine._audioReady && engine.callId")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId")
         await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
         await page.screenshot(path=str(tmp_path / "audio-call.png"), full_page=True)
         mute = page.get_by_role("button", name="Mute microphone", exact=True)
         assert await mute.count() == 1, "The active browser call has no microphone mute control"
         await page.evaluate("""() => {
-          window.playbackProbe=engine._audioContext.createAnalyser();playbackProbe.fftSize=2048;
-          engine._playbackNode.connect(playbackProbe);
+          window.playbackProbe=engine._audioSession.audioContext.createAnalyser();playbackProbe.fftSize=2048;
+          engine._audioSession.playbackNode.connect(playbackProbe);
           window.playbackPower=()=>{
             const data=new Float32Array(playbackProbe.fftSize);playbackProbe.getFloatTimeDomainData(data);
             return Math.sqrt(data.reduce((sum,value)=>sum+value*value,0)/data.length);
           };
         }""")
         await mute.click()
-        await page.wait_for_function("engine.microphoneMuted && !engine._mediaStream.getAudioTracks()[0].enabled")
+        await page.wait_for_function("engine.microphoneMuted && !engine._audioSession.mediaStream.getAudioTracks()[0].enabled")
         assert await page.get_by_role("button", name="Unmute microphone", exact=True).get_attribute("aria-pressed") == "true"
         await page.wait_for_function("playbackPower() > .02")
         muted_playback = await page.evaluate("playbackPower()")
@@ -500,30 +500,30 @@ def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_pla
         await page.evaluate("firstCard.remove()")
         assert await page.evaluate("firstCard._videoDurationTimer === null")
         await page.evaluate("engine.setMediaDevice('audioinput','')")
-        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        assert await page.evaluate("!engine._audioSession.mediaStream.getAudioTracks()[0].enabled")
         await assert_silent_frames()
         await peer.media_sockets[-1].send_json({"audio_direction": "recvonly"})
-        await page.wait_for_function("engine._audioDirection === 'recvonly' && !engine._captureNode && engine._audioReady")
+        await page.wait_for_function("engine._audioDirection === 'recvonly' && !engine._audioSession.captureNode && engine._audioSession.ready")
         assert await page.evaluate("engine.microphoneMuted")
         await peer.media_sockets[-1].send_json({"audio_direction": "sendrecv"})
-        await page.wait_for_function("engine._audioDirection === 'sendrecv' && !!engine._captureNode && engine._audioReady")
-        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        await page.wait_for_function("engine._audioDirection === 'sendrecv' && !!engine._audioSession.captureNode && engine._audioSession.ready")
+        assert await page.evaluate("!engine._audioSession.mediaStream.getAudioTracks()[0].enabled")
         await assert_silent_frames()
         assert len(peer.connections) == 1
         await peer.media_sockets[-1].close()
         await wait_until(lambda: len(peer.connections) == 2)
-        await page.wait_for_function("engine._audioReady && engine.callId && engine.microphoneMuted")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId && engine.microphoneMuted")
         await assert_silent_frames()
         assert peer.connections[0]["closed"]
         original_media_client = await page.evaluate("engine.mediaClientId")
         await page.reload()
         await page.wait_for_function("window.engine")
         await page.evaluate(HARNESS)
-        await page.wait_for_function("engine._audioReady && engine.callId")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId")
         assert await page.evaluate("engine.microphoneMuted"), "Reloading the same owned call unexpectedly enabled its microphone"
         assert await page.evaluate("engine.mediaClientId") == original_media_client
         assert await page.evaluate("[...engine._ownedSoftphoneCalls.values()].every(value=>typeof value==='string')")
-        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        assert await page.evaluate("!engine._audioSession.mediaStream.getAudioTracks()[0].enabled")
         await wait_until(lambda: len(peer.connections) == 3 and all(item["closed"] for item in peer.connections[:-1]))
         await assert_silent_frames()
         async with context.expect_page() as opening:
@@ -543,7 +543,7 @@ def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_pla
         assert await page.locator(".audio-call-summary .call-peer").text_content() == "Peer"
         await page.screenshot(path=str(tmp_path / "audio-call-muted.png"), full_page=True)
         await page.get_by_role("button", name="Hang up call", exact=True).click()
-        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
         await wait_until(lambda: all(item["closed"] for item in peer.connections))
         assert await page.evaluate("!engine.microphoneMuted && card._videoDurationTimer === null")
         assert await page.evaluate("sessionStorage.getItem('voip_stack_owned_softphone_calls') === null")
@@ -552,11 +552,11 @@ def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_pla
         await wait_until(lambda: len(peer.attempts) == 2)
         peer.state["connected_at"] = time.time()
         await peer.broadcast("in_call")
-        await page.wait_for_function("engine._audioReady && engine.callId && !engine.microphoneMuted")
+        await page.wait_for_function("engine._audioSession.ready && engine.callId && !engine.microphoneMuted")
         assert await page.evaluate("typeof JSON.parse(sessionStorage.getItem('voip_stack_owned_softphone_calls')).desk === 'string'")
         await wait_until(lambda: len(peer.connections) == 4 and peer.connections[-1]["rx_nonzero"] >= 4)
         await page.get_by_role("button", name="Hang up call", exact=True).click()
-        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
         await page.evaluate("card.remove()")
         await wait_until(lambda: not peer.subscriptions)
         assert not errors, errors
@@ -598,7 +598,7 @@ def test_remembering_another_owned_call_preserves_active_and_held_microphone_int
         async def resume(state):
             peer.state = dict(state)
             await page.evaluate("state=>engine.resumeSession({...state,audio_mode:'full_duplex'},state.device_id,state)", state)
-            await page.wait_for_function("id=>engine._audioReady&&engine.callId===id", arg=state["call_id"])
+            await page.wait_for_function("id=>engine._audioSession.ready&&engine.callId===id", arg=state["call_id"])
 
         async def observe(record):
             initial = record["rx_frames"]
@@ -614,12 +614,12 @@ def test_remembering_another_owned_call_preserves_active_and_held_microphone_int
             await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
             await page.evaluate("""() => {
               engine.setMicrophoneMuted(true,{call_id:'call-A',endpoint_id:'desk'});
-              window.activeContext=engine._audioContext;
+              window.activeContext=engine._audioSession.audioContext;
               engine.claimSoftphoneSession('call-B','consult');
             }""")
             await peer.media_sockets[-1].send_json({"audio_direction": "sendrecv"})
             nonzero = await observe(peer.connections[-1])
-            remembered = await page.evaluate("({muted:engine.microphoneMuted,endpoint:engine.endpointId,call:engine.callId,unchangedContext:engine._audioContext===activeContext,saved:savedCalls()})")
+            remembered = await page.evaluate("({muted:engine.microphoneMuted,endpoint:engine.endpointId,call:engine.callId,unchangedContext:engine._audioSession.audioContext===activeContext,saved:savedCalls()})")
             phases.append({"phase": "remember-B-while-A-active", "new_nonzero_frames": nonzero, **remembered})
             (tmp_path / "cross-call-mute.json").write_text(json.dumps({"phases": phases, "connections": peer.connections}, indent=2))
             assert nonzero == 0 and remembered["muted"], phases
@@ -635,7 +635,7 @@ def test_remembering_another_owned_call_preserves_active_and_held_microphone_int
             await resume(first)
             await wait_until(lambda: len(peer.connections) == 3)
             assert await observe(peer.connections[-1]) == 0
-            assert await page.evaluate("engine.microphoneMuted&&!engine._mediaStream.getAudioTracks()[0].enabled")
+            assert await page.evaluate("engine.microphoneMuted&&!engine._audioSession.mediaStream.getAudioTracks()[0].enabled")
             await page.evaluate("engine.releaseSoftphoneSession('call-B','consult')")
             assert await page.evaluate("engine.microphoneMuted&&savedCalls().desk.microphone_muted&&!savedCalls().consult")
             phases.append({"phase": "A-resumed-still-muted"})
@@ -646,7 +646,7 @@ def test_remembering_another_owned_call_preserves_active_and_held_microphone_int
               await engine.close('test-complete');
             }""")
         await wait_until(lambda: all(record["closed"] for record in peer.connections))
-        assert await page.evaluate("!engine.microphoneMuted&&!engine._audioContext&&!engine.mediaCleanupPending&&capturedStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
+        assert await page.evaluate("!engine.microphoneMuted&&!engine._audioSession.audioContext&&!engine.mediaCleanupPending&&capturedStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
         assert await page.evaluate("sessionStorage.getItem('voip_stack_owned_softphone_calls')===null")
         (tmp_path / "cross-call-mute.json").write_text(json.dumps({"phases": phases, "connections": peer.connections}, indent=2))
 
@@ -668,15 +668,15 @@ def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
             await page.get_by_role("button", name="Call", exact=True).click()
             await wait_until(lambda: bool(peer.attempts))
             await peer.broadcast("in_call")
-            await page.wait_for_function("engine._audioReady && engine.callId")
+            await page.wait_for_function("engine._audioSession.ready && engine.callId")
             await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
             await page.evaluate("""() => {
-              window.firstOutputContext=engine._audioContext;
+              window.firstOutputContext=engine._audioSession.audioContext;
               window.outputRoutes=[];
               const route=AudioContext.prototype.setSinkId;
               if(typeof route!=='function')throw Error('Chromium has no native AudioContext.setSinkId');
               AudioContext.prototype.setSinkId=function(sinkId){
-                outputRoutes.push({sinkId,first:this===firstOutputContext,current:this===engine._audioContext});
+                outputRoutes.push({sinkId,first:this===firstOutputContext,current:this===engine._audioSession.audioContext});
                 return route.call(this,sinkId);
               };
               navigator.mediaDevices.selectAudioOutput=()=>new Promise(resolve=>{window.resolveOutputChoice=resolve;});
@@ -685,15 +685,15 @@ def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
             }""")
             await page.wait_for_function("typeof resolveOutputChoice === 'function'")
             await page.get_by_role("button", name="Hang up call", exact=True).click()
-            await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+            await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
             await wait_until(lambda: all(record["closed"] for record in peer.connections))
             await page.get_by_role("button", name="Call", exact=True).click()
             await wait_until(lambda: len(peer.attempts) == 2)
             await peer.broadcast("in_call")
-            await page.wait_for_function("engine._audioReady && engine.callId === 'software-call-2'")
+            await page.wait_for_function("engine._audioSession.ready && engine.callId === 'software-call-2'")
             await wait_until(lambda: len(peer.connections) == 2 and peer.connections[-1]["rx_nonzero"] >= 4)
             before = await page.evaluate("""() => {
-              window.replacementOutputContext=engine._audioContext;
+              window.replacementOutputContext=engine._audioSession.audioContext;
               return {different:replacementOutputContext!==firstOutputContext,
                 oldState:firstOutputContext.state,sinkId:replacementOutputContext.sinkId,
                 selected:engine.mediaDeviceState.selected.audiooutput,
@@ -703,7 +703,7 @@ def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
             after = await page.evaluate("""() => ({sinkId:replacementOutputContext.sinkId,
               selected:engine.mediaDeviceState.selected.audiooutput,
               active:engine.mediaDeviceState.active.audiooutput,routes:outputRoutes.slice(),
-              sameContext:engine._audioContext===replacementOutputContext,callId:engine.callId})""")
+              sameContext:engine._audioSession.audioContext===replacementOutputContext,callId:engine.callId})""")
             receipt.update(before=before, after=after, selection=selection)
             assert before["different"] and before["oldState"] == "closed"
             assert selection["status"] == "rejected" and "superseded" in selection["message"]
@@ -727,7 +727,7 @@ def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
         finally:
             await page.evaluate("async()=>{if(window.resolveOutputChoice){resolveOutputChoice({deviceId:'default'});await outputSelection;}}")
             await peer.broadcast("idle")
-            await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+            await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")
             await wait_until(lambda: all(record["closed"] for record in peer.connections))
             assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
             await page.evaluate("card.remove()")
@@ -872,7 +872,7 @@ def test_popup_minicard_after_park_preserves_browser_media_ownership(pickup):
                 await view.get_by_role("button", name="Keypad", exact=True).click()
                 await view.get_by_role("textbox", name="Number, name or SIP URI").fill("701")
                 await view.get_by_role("button", name="Call", exact=True).click()
-                await page.wait_for_function("engine.callId==='retained-call-A' && engine._audioReady")
+                await page.wait_for_function("engine.callId==='retained-call-A' && engine._audioSession.ready")
                 await wait_until(lambda: bool(peer.connections) and peer.connections[-1]["rx_nonzero"] >= 4)
                 owner = await page.evaluate("engine.mediaClientId")
                 assert peer.attempts[-1]["media_client_id"] == owner

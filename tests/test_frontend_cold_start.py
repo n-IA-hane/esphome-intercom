@@ -66,7 +66,7 @@ def prepare(page, held_name=None, failed_name=None, entry_name='voip-stack-card.
     ]),
     ('voip-stack-engine.js', 'ringtone.js', [
         'voip-stack-media-model.js', 'voip-stack-session-model.js',
-        'voip-stack-media-devices.js',
+        'voip-stack-media-devices.js', 'voip-stack-audio-session.js',
     ]),
     ('voip-stack-popup.js', 'voip-stack-engine.js', [
         'voip-stack-card-model.js', 'voip-stack-i18n.js',

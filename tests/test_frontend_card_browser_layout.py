@@ -74,7 +74,7 @@ def test_received_pcm_visibly_changes_hangup_without_moving_controls(video, tmp_
                   e._state = 'ACTIVE'; e._callId = 'pcm-call';
                   e._endpointId = 'desk'; e._deviceId = 'desk-device';
                   // Native graph runs silently, without opening a speaker.
-                  e._createAudioContext = () => new AudioContext({sinkId:{type:'none'}});
+                  e._audioSession._createAudioContext = () => new AudioContext({sinkId:{type:'none'}});
                   await e._setupAudio({audio_mode:'full_duplex'}, {
                     tx_format:'16000:s16le:1:10', rx_format:'16000:s16le:1:10', audio_direction:'recvonly'
                   });
@@ -93,8 +93,8 @@ def test_received_pcm_visibly_changes_hangup_without_moving_controls(video, tmp_
                   window.geometry = () => {
                     const button=c._els.hangupBtn;
                     const visual=button.querySelector(video ? '.hangup-icon' : '.hangup-pulse');
-                    const samples=new Float32Array(e._playbackAnalyser.fftSize);
-                    e._playbackAnalyser.getFloatTimeDomainData(samples);
+                    const samples=new Float32Array(e._audioSession.playbackAnalyser.fftSize);
+                    e._audioSession.playbackAnalyser.getFloatTimeDomainData(samples);
                     return {button:button.getBoundingClientRect().toJSON(),
                       visual:visual.getBoundingClientRect().toJSON(), transform:getComputedStyle(visual).transform,
                       level:e.audioLevel,rms:Math.sqrt(samples.reduce((s,v)=>s+v*v,0)/samples.length),
@@ -140,12 +140,12 @@ def test_received_pcm_visibly_changes_hangup_without_moving_controls(video, tmp_
                 events = page.evaluate("audioEvents")
                 stats = page.evaluate("engine.stats")
                 page.evaluate("async()=>{clearInterval(feeder);card.remove();await engine._cleanupAudio('test-end');}")
-                assert page.evaluate("engine._audioLevelFrame === 0 && engine._playbackAnalyser === null")
+                assert page.evaluate("engine._audioSession._levelFrame === 0 && engine._audioSession.playbackAnalyser === null")
                 receipt = {"browser": browser.version, "video": video, "quiet": quiet,
                            "speech": speech, "loud": loud, "reduced": reduced,
                            "silent": silent, "events": events, "stats": stats,
                            "source_sha256": {name: hashlib.sha256(source_bytes[name]).hexdigest()
-                                             for name in ("voip-stack-engine.js", "voip-stack-card.js",
+                                             for name in ("voip-stack-engine.js", "voip-stack-audio-session.js", "voip-stack-card.js",
                                                           "voip-stack-card-view.js", "voip-stack-playback-processor.js")}}
                 (tmp_path / "pcm-geometry.json").write_text(json.dumps(receipt, indent=2))
                 assert not errors

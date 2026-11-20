@@ -50,14 +50,14 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
                   const started = performance.now();
                   await engine.prepareAudioCall();
                   const preparationMs = performance.now() - started;
-                  const context = engine._preparedAudio.audioContext;
-                  const stream = engine._preparedAudio.mediaStream;
+                  const context = engine._audioSession.prepared.audioContext;
+                  const stream = engine._audioSession.prepared.mediaStream;
                   engine._callId = 'startup-audit';
                   await engine._setupAudio({audio_mode:'full_duplex'}, {
                     call_id:'startup-audit', audio_direction:'sendrecv',
                     tx_format:'48000:s16le:1:20', rx_format:'48000:s16le:1:20'
                   });
-                  const reused = engine._audioContext === context && engine._mediaStream === stream;
+                  const reused = engine._audioSession.audioContext === context && engine._audioSession.mediaStream === stream;
                   const frames = [];
                   const tap = context.createScriptProcessor(256, 1, 1);
                   let resolve;
@@ -67,7 +67,7 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
                     const first = frames.findIndex(value => Math.abs(value) > 0.001);
                     if (first >= 0 && frames.length - first >= 128) resolve(frames.slice(first, first + 128));
                   };
-                  engine._playbackNode.connect(tap);
+                  engine._audioSession.playbackNode.connect(tap);
                   tap.connect(context.destination);
                   const expected = [];
                   for (let packet=0; packet<6; packet++) {
@@ -84,7 +84,7 @@ def test_prepared_browser_renders_initial_samples_after_slow_worklet_load():
                   let timer;
                   try {
                     const actual = await Promise.race([captured, new Promise((_,reject) => {
-                      timer = setTimeout(() => reject(new Error('No rendered startup audio: '+JSON.stringify({rate:context.sampleRate,state:context.state,frames:frames.length,peak:frames.reduce((peak,value)=>Math.max(peak,Math.abs(value)),0),stats:engine._stats,format:engine._rxFormat}))), 5000);
+                      timer = setTimeout(() => reject(new Error('No rendered startup audio: '+JSON.stringify({rate:context.sampleRate,state:context.state,frames:frames.length,peak:frames.reduce((peak,value)=>Math.max(peak,Math.abs(value)),0),stats:engine._stats,format:engine._audioSession.rxFormat}))), 5000);
                     })]);
                     return {preparationMs, reused, rate:context.sampleRate,
                       maximumError:Math.max(...actual.slice(0,96).map((value,i)=>{

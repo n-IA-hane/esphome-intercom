@@ -26,6 +26,7 @@ PHONEBOOK_CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-
 ENDPOINT_DEVICE = ROOT / "custom_components" / "voip_stack" / "endpoint_device.py"
 ENGINE = CARD.with_name("voip-stack-engine.js")
 PROCESSOR = CARD.with_name("voip-stack-processor.js")
+AUDIO_SESSION = CARD.with_name("voip-stack-audio-session.js")
 
 
 def _method_body(source: str, method_name: str) -> str:
@@ -116,8 +117,8 @@ class FrontendCardContractTest(unittest.TestCase):
         devices = ENGINE.with_name("voip-stack-media-devices.js").read_text()
         self.assertIn("BrowserMediaDevices", engine)
         self.assertIn("selectAudioOutput", engine)
-        self.assertIn("context.setSinkId(selected)", engine)
-        self.assertIn("previousStream?.getTracks", engine)
+        self.assertIn("context.setSinkId(selected)", AUDIO_SESSION.read_text())
+        self.assertIn("previousStream?.getTracks", AUDIO_SESSION.read_text())
         self.assertIn("await this._disposeSenderResources(previous)", video)
         self.assertIn('localStorage', devices)
         self.assertIn('"devicechange"', devices)
@@ -131,7 +132,7 @@ class FrontendCardContractTest(unittest.TestCase):
     def test_hangup_pulse_uses_received_audio_without_fixed_button_size(self) -> None:
         engine = ENGINE.read_text()
         pulse = _method_body(self.source, "_applyHangupAudioLevel")
-        self.assertIn("createAnalyser", engine)
+        self.assertIn("createAnalyser", AUDIO_SESSION.read_text())
         self.assertIn('CustomEvent("audio-level"', engine)
         self.assertIn('"--voip-hangup-scale"', pulse)
         self.assertIn('hangupPulse.className = "hangup-pulse"', self.view_source)
@@ -395,7 +396,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("voip_microphone_anti_alias_", self.card_source)
         self.assertIn("return this._micAntiAliasEnabled", self.card_source)
         self.assertIn("microphone_anti_alias: this._microphoneAntiAliasEnabled()", self.card_source)
-        self.assertIn("antiAlias: microphoneAntiAlias", engine)
+        self.assertIn("antiAlias: microphoneAntiAlias", AUDIO_SESSION.read_text())
+        self.assertIn("this._audioSession.setup({ capture, playback, formats, microphoneAntiAlias }", engine)
         self.assertIn("microphone_anti_alias: this._microphoneAntiAlias", engine)
         self.assertIn("options?.processorOptions?.antiAlias !== false", processor)
 
@@ -704,7 +706,7 @@ class FrontendCardContractTest(unittest.TestCase):
             / "voip-stack-processor.js"
         ).read_text()
 
-        self.assertIn("this._ws.bufferedAmount >= maxBufferedBytes", engine)
+        self.assertIn("socket.bufferedAmount >= maxBufferedBytes", AUDIO_SESSION.read_text())
         self.assertIn("this._stats.tx_dropped++", engine)
         self.assertIn("if (this._ws !== ws) return", engine)
         self.assertIn("if (this._connectPromise === connectPromise)", engine)
@@ -733,7 +735,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._endpointId === endpointId", setup)
         self.assertIn("this._callId === callId", setup)
         self.assertNotIn("raw.slice(1)", engine)
-        self.assertIn("byteOffset: 1", engine)
+        self.assertNotIn("raw.slice(1)", AUDIO_SESSION.read_text())
+        self.assertIn("byteOffset: 1", AUDIO_SESSION.read_text())
         self.assertIn("new DataView(buffer, byteOffset, frameBytes)", playback)
         self.assertIn("this._dropFrames = this._maxStartFrames + 1", playback)
         self.assertRegex(playback, r"if \(underrunThisQuantum\) \{\s*this\._started = false;")
@@ -758,7 +761,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("const audioCleanup = this._cleanupAudio", engine)
         self.assertIn("await settleWithin(Promise.allSettled([", engine)
         self.assertIn("previousCleanup || Promise.resolve()", engine)
-        self.assertIn("MEDIA_CLEANUP_TIMEOUT_MS", engine)
+        self.assertIn("MEDIA_CLEANUP_TIMEOUT_MS", AUDIO_SESSION.read_text())
         self.assertIn("await this._waitForMediaCleanup()", engine)
         self.assertIn("this._mediaCleanupPromise = currentCleanup", engine)
         self.assertIn("get mediaCleanupPending()", engine)
@@ -773,8 +776,10 @@ class FrontendCardContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn('this._audioDirection = "sendrecv"', engine)
         self.assertIn("negotiated?.audio_direction", engine)
-        self.assertIn("if (!this._canSendAudio()) return", engine)
-        self.assertIn("!this._canReceiveAudio()", engine)
+        self.assertIn("this._audioSession.send(buffer, this._ws, this._canSendAudio(), this._microphoneMuted)", engine)
+        self.assertIn("!canSend", AUDIO_SESSION.read_text())
+        self.assertIn("this._audioSession.receive(event.data, this._canReceiveAudio())", engine)
+        self.assertIn("!canReceive", AUDIO_SESSION.read_text())
         self.assertIn("void this._reconcileAudioMedia(msg)", engine)
         self.assertIn("desiredAudioPaths(audioMode, audioDirection)", engine)
         self.assertIn("Audio WebSocket negotiation timed out", engine)
