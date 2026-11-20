@@ -67,7 +67,7 @@ async def test_route_request_commits_identity_before_projection(monkeypatch, tru
         runtime=runtime,
         invite=invite,
         decision=decision,
-        registered_source=False,
+        authenticated_account=False,
         caller_is_trusted_endpoint=True,
         automation_routing_enabled=True,
         trunk_invite=trunk_invite,

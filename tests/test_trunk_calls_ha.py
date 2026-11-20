@@ -17,6 +17,7 @@ from custom_components.voip_stack.runtime_data import sip_trunk, sip_trunks
 from custom_components.voip_stack.trunk_runtime import async_start_sip_trunk, async_stop_sip_trunk
 
 from .test_automation_originate_ha import lab as lab, dial, tts_fixture
+from .support.sip_invite_auth import send_authenticated_invite
 
 pytestmark = pytest.mark.ha
 
@@ -219,6 +220,75 @@ async def test_browser_phone_preference_and_explicit_override_dial_the_selected_
         assert all(client.ready for client in sip_trunks(lab.hass).values())
     finally:
         unsubscribe()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_registrar_only_phone_keeps_local_call_and_cannot_dial_or_forward_to_trunk(trunks):
+    from types import SimpleNamespace
+    from .test_automation_originate_ha import Phone
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    from .test_udp_outbound_flow_ha import PASSWORD, WirePhone, register_phone
+
+    lab = trunks
+    origin = "registered-legacy"
+    assert lab.runtime.endpoints.by_username(origin) is None
+    registrar = lab.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), SipAccount(origin, "Legacy", PASSWORD)])
+    listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    contact_transport, phone = await lab.hass.loop.create_datagram_endpoint(WirePhone, local_addr=("127.0.0.7", 0))
+    phone.contact = phone
+    audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    audio.bind(("127.0.0.8", 0))
+    local_transport, local_phone = await lab.hass.loop.create_datagram_endpoint(lambda: Phone(audio),
+        local_addr=("127.0.0.8", 0))
+    local_phone.auto_answer = False
+    local_port = local_transport.get_extra_info("sockname")[1]
+    lab.roster.append(RosterEntry("Local phone", sip_uri=f"sip:desk@127.0.0.8:{local_port}"))
+    def calling_phone():
+        return SipCallClient(local_ip="127.0.0.7", local_name="Legacy", local_uri_user=origin,
+            local_sip_port=0, local_rtp_port=35462, supported_formats=[AudioFormat(16000, frame_ms=20)],
+            username=origin, password=PASSWORD)
+
+    active = None
+    try:
+        active = calling_phone()
+        await active.invite(target="Local phone", remote_host=listener[0], remote_sip_port=listener[1], timeout=3)
+        assert active.last_sip_status_code == 403 and not local_phone.invites and not lab.calls.sessions
+        await active.close()
+        active = None
+        await register_phone(SimpleNamespace(lab=lab, registrar=registrar, listener=listener, a=phone),
+                             username=origin, outbound=False)
+        for destination in ("External", "Local phone"):
+            active = calling_phone()
+            result = await active.invite(target=destination, remote_host=listener[0], remote_sip_port=listener[1], timeout=3)
+            if destination == "External":
+                assert active.last_sip_status_code == 403
+                assert not any(target.invites for target in lab.phones)
+                await active.close()
+                active = None
+                continue
+            assert result == "ringing"
+            session = lab.calls.get_session(active.dialog_ids.call_id)
+            assert session.metadata["registration_only_caller"] == origin
+            assert not session.metadata.get("source_endpoint_id") and not session.metadata.get("inbound_trunk_id")
+            with pytest.raises(ServiceValidationError, match="External calls are disabled"):
+                await lab.calls.forward_call(call_id=session.call_id, destination="+12025550123", on_failure="resume")
+            assert session.live and len(local_phone.invites) == 1 and not any(trunk.invites for trunk in lab.phones)
+        await active.terminate()
+        async with asyncio.timeout(3):
+            while lab.calls.sessions:
+                await asyncio.sleep(.005)
+        assert not lab.runtime.rtp_port_pool.get("used")
+        assert lab.runtime.endpoints.by_username(origin) is None
+    finally:
+        if active is not None:
+            await active.close()
+        contact_transport.close()
+        local_transport.close()
+        audio.close()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
@@ -437,7 +507,8 @@ async def test_registered_sip_caller_receives_default_trunk_early_media(trunks, 
             "a=rtpmap:8 PCMA/8000\r\na=ptime:20\r\na=sendrecv\r\n").encode()
         headers = sip.dialog_headers(request_uri=target, local_uri=local, remote_uri=target,
             contact_uri=local, dialog=ids, method="INVITE", content_type="application/sdp")
-        transport.sendto(sip.build_request("INVITE", target, headers, offer), listener)
+        await send_authenticated_invite(transport, listener, sip.build_request("INVITE", target, headers, offer),
+                                        caller.receive, "early-source", PASSWORD)
         async with asyncio.timeout(2):
             while True:
                 progress, _ = await caller.receive()
@@ -594,7 +665,7 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
         prack = sip.dialog_headers(request_uri=request_uri, local_uri=local, remote_uri=target,
             contact_uri=local, dialog=replace(ids, remote_tag=remote_tag, cseq=cseq, branch="z9hG4bK-prack-" + str(cseq)),
             method="PRACK")
-        prack.append(("RAck", f"{response.header('RSeq')} 1 INVITE"))
+        prack.append(("RAck", f"{response.header('RSeq')} {ids.cseq} INVITE"))
         transport.sendto(sip.build_request("PRACK", request_uri, prack), listener)
 
     async def source_response(status, *, acknowledge=True):
@@ -624,7 +695,11 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
             "a=rtpmap:8 PCMA/8000\r\na=ptime:20\r\na=sendrecv\r\n").encode()
         invite_headers = sip.dialog_headers(request_uri=target, local_uri=local, remote_uri=target,
             contact_uri=local, dialog=ids, method="INVITE", content_type="application/sdp")
-        transport.sendto(sip.build_request("INVITE", target, invite_headers, offer), listener)
+        signed = await send_authenticated_invite(transport, listener, sip.build_request("INVITE", target, invite_headers, offer),
+                                                 caller.receive, "early-nat", PASSWORD)
+        invite_headers = signed.headers
+        ids = replace(ids, cseq=sip.parse_cseq(signed.header("CSeq")).number, branch=sip.parse_via(signed.header("Via")).branch)
+        cseq = ids.cseq
         if mode.startswith("late-"):
             first = await source_response(180, acknowledge=mode != "late-queued-final")
             assert not first.body
@@ -641,7 +716,7 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                     async with asyncio.timeout(.05):
                         while True:
                             queued, _ = await caller.receive()
-                            assert not (queued.status_code == 200 and queued.header("CSeq") == "1 INVITE")
+                            assert not (queued.status_code == 200 and queued.header("CSeq") == f"{ids.cseq} INVITE")
                 acknowledge_progress(first)
         early = await source_response(180 if mode == "forward-bare" else 183)
         packet = None
@@ -666,11 +741,11 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
         ports = (relay.left_port, relay.right_port) if relay is not None else None
         generation = session.generation
         if mode == "cancel":
-            cancel = [(name, value if name != "CSeq" else "1 CANCEL") for name, value in invite_headers
+            cancel = [(name, value if name != "CSeq" else f"{ids.cseq} CANCEL") for name, value in invite_headers
                 if name in {"Via", "From", "To", "Call-ID", "CSeq", "Max-Forwards"}]
             transport.sendto(sip.build_request("CANCEL", target, cancel), listener)
             cancelled = await source_response(487)
-            ack_headers = [(name, value if name != "CSeq" else "1 ACK") for name, value in cancel]
+            ack_headers = [(name, value if name != "CSeq" else f"{ids.cseq} ACK") for name, value in cancel]
             ack_headers = [(name, cancelled.header("To") if name == "To" else value) for name, value in ack_headers]
             transport.sendto(sip.build_request("ACK", target, ack_headers), listener)
             await asyncio.wait_for(session.terminated.wait(), 3)
@@ -856,11 +931,11 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                 assert after.ssrc == packet.ssrc and set(pcm) == {4224}
             elif mode == "forward-cancel":
                 await asyncio.wait_for(replacement.invited.wait(), 2)
-                cancel = [(name, value if name != "CSeq" else "1 CANCEL") for name, value in invite_headers
+                cancel = [(name, value if name != "CSeq" else f"{ids.cseq} CANCEL") for name, value in invite_headers
                     if name in {"Via", "From", "To", "Call-ID", "CSeq", "Max-Forwards"}]
                 transport.sendto(sip.build_request("CANCEL", target, cancel), listener)
                 cancelled = await source_response(487)
-                ack = [(name, cancelled.header("To") if name == "To" else "1 ACK" if name == "CSeq" else value)
+                ack = [(name, cancelled.header("To") if name == "To" else f"{ids.cseq} ACK" if name == "CSeq" else value)
                        for name, value in cancel]
                 transport.sendto(sip.build_request("ACK", target, ack), listener)
                 await asyncio.wait_for(session.terminated.wait(), 3)

@@ -114,21 +114,28 @@ async def agents(trunks):
             peer.transport.close()
 
 
-async def _dial_key(lab, peer, listener, target, call_id, *, from_user=None, retransmit=False, expected=200):
+async def _dial_key(lab, peer, listener, target, call_id, *, from_user=None, retransmit=False, expected=200, credentials=True):
     body = (f"v=0\r\no=- 1 1 IN IP4 {peer.address[0]}\r\ns=Queue key\r\nc=IN IP4 {peer.address[0]}\r\n"
             "t=0 0\r\nm=audio 35000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=ptime:20\r\na=sendrecv\r\n").encode()
     raw = peer.request("INVITE", target, call_id, from_user=from_user, body=body)
     peer.transport.sendto(raw, listener)
-    if retransmit:
-        peer.transport.sendto(raw, listener)
     response = await peer.response(call_id, method="INVITE")
+    if credentials:
+        from .support.sip_invite_auth import authenticated_invite_retry
+        ack, raw = authenticated_invite_retry(sip.parse_message(raw), response, peer.username, "queue-fixture-only")
+        peer.transport.sendto(ack, listener)
+        peer.transport.sendto(raw, listener)
+        if retransmit:
+            peer.transport.sendto(raw, listener)
+        response = await peer.response(call_id, method="INVITE")
     assert response.status_code == expected
     request = sip.parse_message(raw)
+    seq = sip.parse_cseq(request.header("CSeq")).number
     headers = [(key, request.header(key)) for key in ("Via", "From", "Call-ID")]
     if expected == 200:
         headers = [(key, value.replace(";rport", "-ack;rport") if key == "Via" else value)
                    for key, value in headers]
-    headers += [("To", response.header("To")), ("CSeq", "1 ACK")]
+    headers += [("To", response.header("To")), ("CSeq", f"{seq} ACK")]
     ack_uri = sip.name_addr_uri(response.header("Contact")) if expected == 200 else request.uri
     peer.transport.sendto(sip.build_request("ACK", ack_uri, headers), listener)
     if expected == 200:
@@ -175,13 +182,13 @@ async def test_queue_control_rejects_spoofed_registered_identity_wrong_source_an
     await _dial_key(lab, a, listener, "queue-login+support", "cross-agent", from_user=b.username, expected=403)
     transport, intruder = await lab.hass.loop.create_datagram_endpoint(lambda: Peer(a.username), local_addr=("127.0.0.5", 0))
     try:
-        await _dial_key(lab, intruder, listener, "queue-pause+support", "unregistered-spoof", expected=403)
+        await _dial_key(lab, intruder, listener, "queue-pause+support", "unregistered-spoof", credentials=False, expected=401)
         cfg = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
             "trunk_server": "127.0.0.5", "trunk_allowed_ips": ["127.0.0.5/32"]})
         trunk = SipTrunkClient(config=trunk_client_config(cfg), local_ip="127.0.0.1", local_sip_port=listener[1], trunk_id="spoof-test")
         lab.runtime.trunk_configs["spoof-test"] = cfg
         lab.calls.adopt_component("trunk:spoof-test", trunk, closer=trunk.stop)
-        await _dial_key(lab, intruder, listener, "queue-login+support", "trusted-trunk-spoof", expected=403)
+        await _dial_key(lab, intruder, listener, "queue-login+support", "trusted-trunk-spoof", credentials=False, expected=403)
         assert manager.agent_states["support"] == original
         assert not any(phone.invites for phone in lab.phones)
     finally:

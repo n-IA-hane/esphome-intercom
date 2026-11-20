@@ -173,13 +173,14 @@ class EndpointDialer:
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
-        if self.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+        registration_only = getattr(invite, "authenticated_username", "") and not getattr(invite, "identified_source_endpoint_id", "")
+        if self.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS) or registration_only or source_call_id:
             from .runtime_data import require_runtime_data
 
             access_runtime = require_runtime_data(self.hass)
-            if (policy.use_trunk_flow or is_any_trunk_uri(access_runtime, str(uri))) and call_external_call_denied(
+            if (policy.use_trunk_flow or is_any_trunk_uri(access_runtime, str(uri))) and (registration_only or call_external_call_denied(
                 access_runtime, invite.call_id if invite is not None else source_call_id
-            ):
+            )):
                 _LOGGER.info("External call denied for group or forward member=%s", member)
                 return None
         owns_ports = port_reservation is None

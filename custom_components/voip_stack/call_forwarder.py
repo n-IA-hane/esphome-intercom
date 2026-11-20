@@ -77,7 +77,7 @@ from .ring_group import (
 from .ring_group_fork import account_offer_outcome, build_ring_group_fork, group_leg_observer, run_owned_ring_group_fork
 from .router import RouteAction
 from .pbx_trace import trace_call
-from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied
+from .trunk_policy import registry_external_call_denied
 from .route_abort import (
     RouteAbortContext,
     RouteAbortIntent,
@@ -310,15 +310,13 @@ async def _prepare_forward_existing_call(
         )
 
     def _check_external_route(decision):
-        if not cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+        if not registry_external_call_denied(cfg, registry, call_id):
             return
         from .runtime_data import require_runtime_data
         from .trunk_policy import is_any_trunk_uri
 
         access_runtime = require_runtime_data(hass)
-        if (decision.action is RouteAction.TRUNK or is_any_trunk_uri(
-            access_runtime, decision.sip_uri,
-        )) and call_external_call_denied(access_runtime, call_id):
+        if decision.action is RouteAction.TRUNK or is_any_trunk_uri(access_runtime, decision.sip_uri):
             raise _service_error("External calls are disabled for this phone", "external_calls_disabled")
 
     def current_application():
@@ -437,7 +435,7 @@ async def _prepare_forward_existing_call(
         raise _service_error(f"call_id {call_id} is already being forwarded", "call_forwarding", call_id=call_id)
     # Only a validated forwardable source may apply policy to route selection.
     route_resolver = _route_preflight(lambda: runtime.route_resolver.for_call(call_id, trunk_id=trunk_id))
-    if cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+    if registry_external_call_denied(cfg, registry, call_id):
         # Reject before cancelling an existing ringing attempt or claiming its
         # route. The normal generation checks below still guard this await.
         try:

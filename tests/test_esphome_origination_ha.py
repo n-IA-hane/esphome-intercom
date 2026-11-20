@@ -18,7 +18,7 @@ from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack.runtime_data import sip_trunks
-from .test_trunk_calls_ha import trunks as trunks, lab as lab
+from .test_trunk_calls_ha import sip_test_account, trunks as trunks, lab as lab
 
 pytestmark = pytest.mark.ha
 
@@ -31,14 +31,15 @@ async def esp_phones(trunks, monkeypatch):
     for index in range(2):
         identity = f'esp_{index}'
         host = f'127.0.0.{index+2}'
-        endpoint = PhoneEndpoint(endpoint_id=identity, name=identity, device_id='device-'+identity,
+        endpoint = PhoneEndpoint(endpoint_id=identity, name=identity, username=identity, device_id='device-'+identity,
             kind=EndpointKind.ESPHOME, availability='available', policy=PhonePolicy(outbound_trunk_id='work'))
         runtime.runtime.endpoints.register(endpoint)
+        account = sip_test_account(runtime, identity)
         runtime.roster.append(RosterEntry(identity, address=host, metadata={'endpoint_id':identity}))
         audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         audio.bind((host, 0))
         audio.setblocking(False)
-        phone = SimpleNamespace(identity=identity, endpoint=endpoint, audio=audio, host=host, client=None,
+        phone = SimpleNamespace(identity=identity, endpoint=endpoint, account=account, audio=audio, host=host, client=None,
             tasks=[], stopped=[], delivered=[], ordinary_args=[], send_invite=True, device={
                 'endpoint_id':identity, 'device_id':endpoint.device_id, 'name':identity,
                 'route_id':identity, 'entities':{},
@@ -49,6 +50,7 @@ async def esp_phones(trunks, monkeypatch):
             if not phone.send_invite:
                 return
             client = SipCallClient(local_ip=phone.host, local_name=phone.identity, local_uri_user=phone.identity,
+                username=phone.account.username, password=phone.account.password,
                 local_sip_port=5060, local_rtp_port=phone.audio.getsockname()[1],
                 supported_formats=[AudioFormat(16000, frame_ms=20)])
             client.dialog_ids = replace(client.dialog_ids, call_id=call_id)

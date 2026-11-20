@@ -756,14 +756,17 @@ async def test_early_replaces_matches_all_tags_before_picking_up(
                 ("Replaces", f"{client.dialog_ids.call_id};to-tag={tag};from-tag={remote_tag}"
                  + (";early-only" if early_only else ""))]
             body = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 45000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=sendrecv\r\n"
-            transport.sendto(sip.build_request("INVITE", pickup_uri, headers, body), target)
+            from .support.sip_invite_auth import send_authenticated_invite
+            signed = await send_authenticated_invite(transport, target, sip.build_request("INVITE", pickup_uri, headers, body),
+                                                     peer.receive, "pickup-test", "test-only")
+            headers = signed.headers
             while True:
                 response, address = await peer.receive()
                 if response.header("Call-ID") == identity and response.is_response and response.status_code >= 200:
                     break
             assert response.status_code == (481 if index == 0 else 200)
-            ack = [(key, "1 ACK" if key == "CSeq" else response.header("To") if key == "To" else value)
-                   for key, value in headers if key not in {"Content-Type", "Require", "Replaces"}]
+            ack = [(key, "2 ACK" if key == "CSeq" else response.header("To") if key == "To" else value)
+                   for key, value in headers if key not in {"Content-Type", "Content-Length", "Require", "Replaces", "Authorization"}]
             transport.sendto(sip.build_request("ACK", "sip:HA@127.0.0.1", ack), address)
             if index == 0:
                 assert session.live and client.dialog is None
@@ -772,7 +775,7 @@ async def test_early_replaces_matches_all_tags_before_picking_up(
                 assert session.live
                 await asyncio.sleep(.01)
         assert runtime.calls.resolve_session_id("early-pickup-1") == session.call_id
-        bye = [(key, "2 BYE" if key == "CSeq" else value) for key, value in ack]
+        bye = [(key, "3 BYE" if key == "CSeq" else value) for key, value in ack]
         transport.sendto(sip.build_request("BYE", "sip:HA@127.0.0.1", bye), target)
         async with asyncio.timeout(4):
             while runtime.calls.sessions:

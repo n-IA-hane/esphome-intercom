@@ -107,6 +107,7 @@ class SipInvite:
     inbound_trunk_id: str = ""
     outbound_trunk_id: str = ""
     identified_source_endpoint_id: str = ""
+    authenticated_username: str = ""
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
     local_recv_capabilities: tuple[AudioFormat, ...] = ()
@@ -167,6 +168,7 @@ class SipInitialInvite:
     inbound_trunk_id: str = ""
     outbound_trunk_id: str = ""
     identified_source_endpoint_id: str = ""
+    authenticated_username: str = ""
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
 
@@ -1158,13 +1160,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                                  received_via_trunk=pending.identity.received_via_trunk,
                                  trunk_id=pending.identity.trunk_id,
                                  outbound_trunk_id=pending.identity.outbound_trunk_id,
-                                 identified_source_endpoint_id=pending.identity.identified_source_endpoint_id)
+                                 identified_source_endpoint_id=pending.identity.identified_source_endpoint_id,
+                                 authenticated_username=pending.identity.authenticated_username)
             if initial_invite is not None:
                 initial_invite = replace(initial_invite, **identity_fields(pending.identity),
                                          received_via_trunk=pending.identity.received_via_trunk,
                                          trunk_id=pending.identity.trunk_id,
                                          outbound_trunk_id=pending.identity.outbound_trunk_id,
-                                         identified_source_endpoint_id=pending.identity.identified_source_endpoint_id)
+                                         identified_source_endpoint_id=pending.identity.identified_source_endpoint_id,
+                                         authenticated_username=pending.identity.authenticated_username)
         signaling_invite = invite or initial_invite
         if signaling_invite is None:
             raise sip.SipError("cannot activate dialog from invalid INVITE")
@@ -2032,6 +2036,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 trunk_id=initial.trunk_id,
                 outbound_trunk_id=initial.outbound_trunk_id,
                 identified_source_endpoint_id=initial.identified_source_endpoint_id,
+                authenticated_username=initial.authenticated_username,
                 **identity_fields(initial),
                 peer_profile=initial.peer_profile,
                 caller_route=initial.caller_route,
@@ -3888,7 +3893,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                                   received_via_trunk=original.received_via_trunk,
                                   trunk_id=original.trunk_id,
                                   outbound_trunk_id=original.outbound_trunk_id,
-                                  identified_source_endpoint_id=original.identified_source_endpoint_id)
+                                  identified_source_endpoint_id=original.identified_source_endpoint_id,
+                                  authenticated_username=original.authenticated_username)
             elif self.invite_identity_resolver is not None:
                 initial = self.invite_identity_resolver(request, initial)
             policy = previous.codec_policy if previous is not None else (
@@ -4046,6 +4052,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 trunk_id=initial.trunk_id,
                 outbound_trunk_id=initial.outbound_trunk_id,
                 identified_source_endpoint_id=initial.identified_source_endpoint_id,
+                authenticated_username=initial.authenticated_username,
                 **identity_fields(initial),
                 peer_profile=peer_profile,
                 codec_policy=codec_policy,

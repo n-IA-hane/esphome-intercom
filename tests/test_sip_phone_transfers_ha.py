@@ -371,11 +371,24 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
             sip_port=port, rtp_port=media_port, device={"sip_transport": "udp"},
             tx_formats=["16000:s16le:1:20"], rx_formats=["16000:s16le:1:20"],
         )])
-    scenario = Path(__file__).parent / f"fixtures/sipp/legacy-{origin}.xml"
+    scenarios = Path(__file__).parent / "fixtures/sipp"
+    peer_args = ["-i", "127.0.0.1", "-p", str(port), "-m", "1"]
+    remote = f"127.0.0.1:{lab.runtime.transport_config['sip_port']}"
+    if origin == "caller":
+        import subprocess
+
+        # SIPp 3.x has one Digest URI override per process. REGISTER signs the
+        # registrar URI; INVITE signs the dialed user. Keep one UDP Contact.
+        await asyncio.to_thread(subprocess.run, [executable, remote, "-sf", str(scenarios / "legacy-register.xml"),
+            *peer_args, "-trace_msg", "-message_file", str(tmp_path / "legacy-register.log")],
+            cwd=tmp_path, capture_output=True, timeout=5, check=True)
+        binding, = registrar.registered_contacts("legacy")
+        assert (binding.source_host, binding.source_port) == ("127.0.0.1", port)
+    scenario = scenarios / f"legacy-{origin}.xml"
     trace = tmp_path / "legacy-sip.log"
     process = await asyncio.create_subprocess_exec(
-        executable, *([f'127.0.0.1:{lab.runtime.transport_config["sip_port"]}'] if origin == "caller" else []), "-sf", str(scenario),
-        "-i", "127.0.0.1", "-p", str(port), "-mi", "127.0.0.1", "-min_rtp_port", str(media_port), "-rtp_echo", "-m", "1",
+        executable, *([remote, "-auth_uri", "transfer_b@" + remote] if origin == "caller" else []), "-sf", str(scenario),
+        *peer_args, "-mi", "127.0.0.1", "-min_rtp_port", str(media_port), "-rtp_echo",
         "-trace_msg", "-message_file", str(trace), "-trace_err", "-error_file", str(tmp_path / "legacy-errors.log"),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=tmp_path,
     )
@@ -769,7 +782,10 @@ async def test_outside_refer_target_dialog_with_baresip_and_duplex_audio(registe
             ("From", from_header), ("To", "<sip:transfer_b@127.0.0.1>"),
             ("Call-ID", call_id), ("CSeq", "1 INVITE"),
             ("Contact", f"<sip:bedroom0@127.0.0.1:{source_port}>"), ("Content-Type", "application/sdp")]
-    source.transport.sendto(sip.build_request("INVITE", f"sip:transfer_b@127.0.0.1:{server_port}", base, offer), ("127.0.0.1", server_port))
+    request_uri = f"sip:transfer_b@127.0.0.1:{server_port}"
+    address = ("127.0.0.1", server_port)
+    raw = sip.build_request("INVITE", request_uri, base, offer)
+    source.transport.sendto(raw, address)
     async def wait_for(predicate):
         async with asyncio.timeout(8):
             while not predicate():
@@ -777,11 +793,17 @@ async def test_outside_refer_target_dialog_with_baresip_and_duplex_audio(registe
                     peer.read()
                 await asyncio.sleep(.01)
     try:
+        from .support.sip_invite_auth import authenticated_invite_retry
+        await wait_for(lambda: any(item.status_code == 401 and item.header("Call-ID") == call_id for item in source.requests))
+        challenge = next(item for item in source.requests if item.status_code == 401 and item.header("Call-ID") == call_id)
+        ack, retry = authenticated_invite_retry(sip.parse_message(raw), challenge, "bedroom0", "test-only")
+        source.transport.sendto(ack, address)
+        source.transport.sendto(retry, address)
         await wait_for(lambda: any(item.status_code == 200 and item.header("Call-ID") == call_id for item in source.requests))
         answer = next(item for item in source.requests if item.status_code == 200 and item.header("Call-ID") == call_id)
         tag = sip.extract_tag(answer.header("To"))
         ack_headers = [(key, answer.header(key)) for key in ("From", "To", "Call-ID")]
-        ack_headers += [("Via", f"SIP/2.0/UDP 127.0.0.1:{source_port};branch=z9hG4bK-controlled-ack"), ("CSeq", "1 ACK")]
+        ack_headers += [("Via", f"SIP/2.0/UDP 127.0.0.1:{source_port};branch=z9hG4bK-controlled-ack"), ("CSeq", "2 ACK")]
         source.transport.sendto(sip.build_request("ACK", f"sip:transfer_b@127.0.0.1:{server_port}", ack_headers), ("127.0.0.1", server_port))
         target = f"sip:transfer_c@127.0.0.1:{server_port}"
         refer = sip.build_request("REFER", f"sip:HA@127.0.0.1:{server_port}", [
@@ -810,7 +832,7 @@ async def test_outside_refer_target_dialog_with_baresip_and_duplex_audio(registe
         await wait_for(lambda: relay.left_tx_packets >= left + 30 and relay.right_tx_packets >= right + 30)
         if lab.calls.get_session(call_id) is not None:
             bye_headers = [(key, answer.header(key)) for key in ("From", "To", "Call-ID")]
-            bye_headers += [("Via", f"SIP/2.0/UDP 127.0.0.1:{source_port};branch=z9hG4bK-controlled-bye"), ("CSeq", "2 BYE")]
+            bye_headers += [("Via", f"SIP/2.0/UDP 127.0.0.1:{source_port};branch=z9hG4bK-controlled-bye"), ("CSeq", "3 BYE")]
             source.transport.sendto(sip.build_request("BYE", f"sip:HA@127.0.0.1:{server_port}", bye_headers), ("127.0.0.1", server_port))
         await asyncio.to_thread(registered_phones[2].hangup)
         await wait_for(lambda: not lab.calls.sessions)

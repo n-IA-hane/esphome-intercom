@@ -288,7 +288,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     def _classified_trunk_invite(invite):
         from .runtime_data import runtime_data, sip_trunks
 
-        if invite.identified_source_endpoint_id:
+        if invite.identified_source_endpoint_id or invite.authenticated_username:
             return invite
         runtime = runtime_data(hass)
         if runtime is not None and runtime.trunk_configs:
@@ -305,7 +305,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         """Bind admission to a configured trunk, owned local call or Digest account."""
         from .core.sip import make_tag
         from .core.sip_auth import parse_digest_challenge
-        from .endpoint_session import LegPhase
+        from .sip_ingress import owned_local_call_source
         from .sip_registrar import REALM
 
         try:
@@ -315,22 +315,12 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         if classified is not None and invite.received_via_trunk and classified.received_via_trunk:
             return classified
 
-        registry = _call_registry(hass)
-        local_client = registry.sip_client_for(invite.call_id)
-        session = registry.get_session(invite.call_id)
-        if local_client is not None and session is not None and session.live and not session.metadata.get("inbound_trunk_id"):
-            identity = str(session.metadata.get("source_endpoint_id") or "")
-            leg = session.legs.get(invite.call_id)
-            source = endpoint_directory(hass).get(identity) if identity else None
-            if (source is not None and source.supports_ha_client and source.active_call_id == session.call_id
-                    and session.endpoint_claims.get(identity) == "source"
-                    and leg is not None and leg.dialog is local_client and leg.role == "ha_softphone"
-                    and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
-                    and registry.get_session(session.call_id, generation=session.generation) is session
-                    and local_client.matches_local_invite_source(invite, listener_hosts={local_ip, "127.0.0.1", "::1"},
-                                                                listener_port=int(cfg["sip_port"]))):
-                return replace(invite, identified_source_endpoint_id=identity,
-                               caller_route=source.username or source.name, caller=source.name)
+        source = owned_local_call_source(invite, _call_registry(hass), endpoint_directory(hass),
+                                         listener_hosts={local_ip, "127.0.0.1", "::1"},
+                                         listener_port=int(cfg["sip_port"]))
+        if source is not None:
+            return replace(invite, identified_source_endpoint_id=source.endpoint_id,
+                           caller_route=source.username or source.name, caller=source.name)
 
         if classified is not None and classified.received_via_trunk:
             if parse_digest_challenge(request.header("Authorization")).get("realm") != REALM:
@@ -345,11 +335,13 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         if account is None:
             return SipRequestResult(401, "Unauthorized", headers=(("WWW-Authenticate", challenge),), to_tag=tag)
         source = endpoint_directory(hass).by_username(account.username)
-        if (source is None or invite.caller_uri is None
-                or invite.caller_uri.user.casefold() != account.username.casefold()):
+        if (invite.caller_uri is None or invite.caller_uri.user.casefold() != account.username.casefold()
+                or (source is None and not registrar.registered_contacts(account.username))):
             return SipRequestResult(403, "Forbidden", to_tag=make_tag())
-        return replace(invite, identified_source_endpoint_id=source.endpoint_id, caller_route=account.username,
-                       caller=source.name, caller_name=source.name, caller_number=account.username)
+        display = source.name if source is not None else account.display_name or account.username
+        return replace(invite, identified_source_endpoint_id=source.endpoint_id if source is not None else "",
+                       authenticated_username=account.username, caller_route=account.username,
+                       caller=display, caller_name=display, caller_number=account.username)
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         return _classified_trunk_invite(invite).received_via_trunk

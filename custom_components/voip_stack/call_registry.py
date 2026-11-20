@@ -241,6 +241,8 @@ class CallRuntimeApi:
         """Retain the first ingress identity while routing changes destinations."""
         session = self.get_session(call_id)
         if session is not None:
+            if getattr(invite, "authenticated_username", "") and not getattr(invite, "identified_source_endpoint_id", ""):
+                session.metadata.setdefault("registration_only_caller", invite.authenticated_username)
             for key, value in identity_fields(invite).items():
                 if value or (
                     getattr(invite, "received_via_trunk", False) and hasattr(invite, key)

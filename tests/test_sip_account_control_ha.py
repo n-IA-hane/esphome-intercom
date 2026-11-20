@@ -21,6 +21,75 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("native_override", [False, True])
+async def test_authenticated_account_opens_only_its_native_route_window(
+    trunks, registered_phones, registered, native_override,
+):
+    from homeassistant.core import callback
+    from homeassistant.helpers.trigger import TriggerConfig
+    from custom_components.voip_stack.const import CONF_AUTOMATION_ROUTING_ENABLED
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from custom_components.voip_stack.trigger import VoipCallTrigger
+    from custom_components.voip_stack.websocket_api import CALL_EVENT
+    from .test_trunk_calls_ha import sip_test_account
+
+    lab = trunks
+    lab.runtime.trunk_config[CONF_AUTOMATION_ROUTING_ENABLED] = True
+    if registered:
+        identity = "transfer_a"
+    else:
+        identity = "dial-only"
+        lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=identity, name=identity, username=identity,
+            kind=EndpointKind.SIP_ACCOUNT))
+        sip_test_account(lab, identity)
+    registrar = lab.calls.component("registrar")
+    assert bool(registrar.registered_contacts(identity)) == registered
+    route_events, native_events = [], []
+    @callback
+    def observe(event):
+        if event.data.get("route_request"):
+            route_events.append(event.data["call_id"])
+
+    unsubscribe = lab.hass.bus.async_listen(CALL_EVENT, observe)
+    detach = None
+    if native_override:
+        async def selected(payload, description, context):
+            native_events.append(payload["call"]["call_id"])
+
+        native = VoipCallTrigger(lab.hass, TriggerConfig("voip_stack.route_requested", options={"caller": identity}))
+        detach = await native.async_attach_runner(selected)
+    caller = None
+    try:
+        if registered:
+            await asyncio.to_thread(registered_phones[0].dial, "transfer_b")
+        else:
+            account = registrar.accounts[identity]
+            caller = SipCallClient(local_ip="127.0.0.9", local_name=identity, local_uri_user=identity,
+                username=identity, password=account.password, local_sip_port=0, local_rtp_port=36622,
+                supported_formats=[AudioFormat(16000, frame_ms=20)])
+            result = await caller.invite(target="transfer_b", remote_host="127.0.0.1",
+                remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=4)
+            if result == "ringing":
+                result = await caller.wait_for_final(timeout=4)
+            assert result == "in_call"
+        session, = lab.calls.sessions.values()
+        assert route_events == native_events == ([session.call_id] if native_override else [])
+        assert session.metadata.get("source_endpoint_id") == identity
+    finally:
+        if caller is None:
+            await asyncio.to_thread(registered_phones[0].hangup)
+        else:
+            await caller.close()
+        unsubscribe()
+        if detach:
+            detach()
+    await wait_until(lambda: not lab.calls.sessions)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("transport", ["UDP", "TCP"])
 @pytest.mark.parametrize("offered", [False, True])
 async def test_initial_invite_challenges_before_session_or_media(trunks, transport, offered):

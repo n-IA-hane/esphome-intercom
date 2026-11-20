@@ -70,10 +70,12 @@ EXTERNAL_CALL_BLOCKED_ENDPOINTS = "external_call_blocked_endpoints"
 
 def external_call_denied(config, *endpoint_ids, session=None) -> str:
     """Return a restricted stable phone identity, never match caller display text."""
+    metadata = getattr(session, "metadata", {}) or {}
+    if caller := metadata.get("registration_only_caller"):
+        return str(caller)
     blocked = frozenset(config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ()))
     if not blocked:
         return ""
-    metadata = getattr(session, "metadata", {}) or {}
     candidates = (*endpoint_ids, *(metadata.get("policy_endpoint_ids") or ()), *(metadata.get(key, "") for key in (
         "source_endpoint_id", "dest_endpoint_id", "endpoint_id",
     )))
@@ -83,11 +85,13 @@ def external_call_denied(config, *endpoint_ids, session=None) -> str:
 def call_external_call_denied(runtime, call_id: str, *endpoint_ids) -> str:
     """Preserve the restriction through existing call/group ownership links."""
     config = getattr(runtime, "transport_config", {}) or {}
-    if not config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
-        return ""
+    return registry_external_call_denied(config, getattr(runtime, "sip", None), call_id, *endpoint_ids)
+
+
+def registry_external_call_denied(config, calls, call_id, *endpoint_ids):
+    """Follow the existing source call to keep its original outbound policy."""
     if denied := external_call_denied(config, *endpoint_ids):
         return denied
-    calls = getattr(runtime, "sip", None)
     seen = set()
     while calls is not None and call_id and call_id not in seen:
         seen.add(call_id)

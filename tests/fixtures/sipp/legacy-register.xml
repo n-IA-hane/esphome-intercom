@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="Register the legacy UDP contact">
+  <send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+From: <sip:legacy@[remote_ip]>;tag=legacy
+To: <sip:legacy@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 1 REGISTER
+Contact: <sip:legacy@[local_ip]:[local_port]>
+Expires: 60
+Max-Forwards: 70
+Content-Length: 0
+
+]]></send>
+  <recv response="401" auth="true"/>
+  <send retrans="500"><![CDATA[
+REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+From: <sip:legacy@[remote_ip]>;tag=legacy
+To: <sip:legacy@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 2 REGISTER
+Contact: <sip:legacy@[local_ip]:[local_port]>
+Expires: 60
+Max-Forwards: 70
+[authentication username=legacy password=isolated-test-only]
+Content-Length: 0
+
+]]></send>
+  <recv response="200"/>
+
+</scenario>

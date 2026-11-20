@@ -128,7 +128,7 @@ async def test_native_100_did_dictionary_and_explicit_exceptions_from_real_wire(
         route = await request_route_override(
             runtime=SimpleNamespace(hass=hass, ha_peer_name=lambda _: "Fixture"),
             invite=invite, decision=RouteDecision(RouteAction.BRIDGE, target="Default"),
-            registered_source=False, caller_is_trusted_endpoint=True,
+            authenticated_account=False, caller_is_trusted_endpoint=True,
             automation_routing_enabled=True, trunk_invite=True,
         )
         await decisions.put((invite, route))
@@ -251,7 +251,7 @@ async def test_named_core_automation_is_attributed_to_its_public_routing_action(
         lab.calls.upsert(invite.call_id, state="connecting", owner="router")
         selected = await request_route_override(
             runtime=SimpleNamespace(hass=hass, ha_peer_name=lambda _: "PBX"), invite=invite,
-            decision=RouteDecision(RouteAction.BRIDGE, target="Default"), registered_source=False,
+            decision=RouteDecision(RouteAction.BRIDGE, target="Default"), authenticated_account=False,
             caller_is_trusted_endpoint=True, automation_routing_enabled=True, trunk_invite=True,
         )
         await selected_routes.put(selected)

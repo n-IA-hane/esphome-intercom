@@ -52,7 +52,7 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
         capabilities=frozenset({'audio', 'dtmf'} | ({'video'} if caller_video else set())))
     target = PhoneEndpoint(endpoint_id='browser:test-ringing', name='Test ringing', device_id='test-ringing-device',
         kind=EndpointKind.BROWSER, availability='available', capabilities=frozenset({'audio', 'video', 'dtmf'}))
-    picker_endpoint = PhoneEndpoint(endpoint_id='ws3-jpeg-picker', name='ws3-jpeg-picker', device_id='ws3-picker-device',
+    picker_endpoint = PhoneEndpoint(endpoint_id='ws3-jpeg-picker', name='ws3-jpeg-picker', username='ws3-jpeg-picker', device_id='ws3-picker-device',
         kind=EndpointKind.ESPHOME, availability='available', capabilities=frozenset({'audio', 'video', 'dtmf'}))
     for endpoint in (casa, target, picker_endpoint):
         lab.runtime.endpoints.register(endpoint)
@@ -73,7 +73,10 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
     audio_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio_socket.bind(('127.0.0.2', 0))
     audio_socket.setblocking(False)
-    picker = SipCallClient(local_ip='127.0.0.2', local_name='ws3-jpeg-picker', local_uri_user='ws3-jpeg-picker',
+    from tests.test_trunk_calls_ha import sip_test_account
+    account = sip_test_account(lab, picker_endpoint.endpoint_id)
+    picker = SipCallClient(local_ip='127.0.0.2', local_name='ws3-jpeg-picker', local_uri_user=account.username,
+        username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=audio_socket.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)],
         local_video_rtp_port=video_socket.getsockname()[1] if picker_video else 0,
         # Archived WS3 normal03: JPEG receive-only,320x240,10fps; no H264 offer.

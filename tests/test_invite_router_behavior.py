@@ -21,6 +21,7 @@ pytestmark = pytest.mark.ha
 
 
 def _invite() -> SipInvite:
+    """One parsed INVITE after admission has identified its account."""
     audio = RtpPcmFormat(8, "PCMA", 8000, 1)
     return SipInvite(
         source_host="192.0.2.10",
@@ -36,6 +37,7 @@ def _invite() -> SipInvite:
         recv_format=audio,
         remote_rtp_host="192.0.2.10",
         remote_rtp_port=40000,
+        identified_source_endpoint_id="source",
     )
 
 
@@ -75,18 +77,12 @@ def _patch_route_prefix(
     pending_routes: dict[str, object] | None = None,
     pending_invites: dict[str, object] | None = None,
 ) -> None:
-    monkeypatch.setattr(invite_router, "_peer_for_target", Mock(return_value=None))
     monkeypatch.setattr(
         invite_router,
         "_registered_roster_entries",
         Mock(return_value=[]),
     )
     monkeypatch.setattr(invite_router, "_roster_from_peers", Mock(return_value=[]))
-    monkeypatch.setattr(
-        invite_router,
-        "_roster_entry_for_target",
-        Mock(return_value=None),
-    )
     invites = pending_invites or {}
     registry = SimpleNamespace(
         component=lambda _name: None,
@@ -100,7 +96,7 @@ def _patch_route_prefix(
     monkeypatch.setattr(
         invite_router,
         "endpoint_directory",
-        lambda _hass: SimpleNamespace(get=Mock(return_value=None)),
+        lambda _hass: SimpleNamespace(get=Mock(return_value=SimpleNamespace(endpoint_id="source"))),
     )
     monkeypatch.setattr(
         invite_router,
@@ -111,16 +107,14 @@ def _patch_route_prefix(
 
 @pytest.mark.parametrize("invalid", [None, "trunk", "ended", "generation", "claim", "account", "leg", "flow"])
 async def test_local_browser_source_requires_current_account_generation_and_owned_client(monkeypatch, invalid):
-    from custom_components.voip_stack import call_replaces
-    from custom_components.voip_stack.sip_listener import SipInviteResult
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.sip_ingress import owned_local_call_source
 
-    _patch_route_prefix(monkeypatch)
     runtime = _runtime()
     runtime.config["sip_port"] = 5060
-    runtime.inbound_route_decision.return_value = RouteDecision(RouteAction.PAGING, target="Paging")
-    runtime.is_trunk_invite.return_value = invalid == "trunk"
     client = SimpleNamespace(matches_local_invite_source=Mock(return_value=invalid != "flow"))
-    endpoint = SimpleNamespace(supports_ha_client=True, active_call_id="another" if invalid == "account" else "call-1")
+    endpoint = PhoneEndpoint(endpoint_id="source", name="Alice", username="alice", kind=EndpointKind.BROWSER,
+        active_call_id="another" if invalid == "account" else "call-1")
     session = SimpleNamespace(call_id="call-1", live=invalid != "ended", generation=7,
         metadata={"source_endpoint_id": "source"},
         endpoint_claims={"source": "destination" if invalid == "claim" else "source"},
@@ -128,14 +122,10 @@ async def test_local_browser_source_requires_current_account_generation_and_owne
             phase=LegPhase.CLOSING if invalid == "leg" else LegPhase.INVITING)})
     registry = SimpleNamespace(component=lambda _name: None, sip_client_for=lambda _id: client,
         get_session=lambda _id, generation=None: None if generation is not None and invalid == "generation" else session)
-    monkeypatch.setattr(invite_router, "_call_registry", lambda _hass: registry)
-    monkeypatch.setattr(invite_router, "endpoint_directory", lambda _hass: SimpleNamespace(get=lambda _id: endpoint))
-    boundary = AsyncMock(return_value=SipInviteResult(481, "Call/Transaction Does Not Exist"))
-    monkeypatch.setattr(call_replaces, "prepare_replacement", boundary)
-    invite = replace(_invite(), replaces=SimpleNamespace())
-    await invite_router.route_invite(runtime, invite)
-    correlated = boundary.await_args.args[1]
-    assert correlated.identified_source_endpoint_id == ("source" if invalid is None else "")
+    invite = replace(_invite(), received_via_trunk=invalid == "trunk")
+    correlated = owned_local_call_source(invite, registry, SimpleNamespace(get=lambda _id: endpoint),
+        listener_hosts={runtime.local_ip, "127.0.0.1", "::1"}, listener_port=5060)
+    assert correlated is (endpoint if invalid is None else None)
     if invalid is None:
         client.matches_local_invite_source.assert_called_once_with(invite,
             listener_hosts={runtime.local_ip, "127.0.0.1", "::1"}, listener_port=5060)
@@ -163,12 +153,13 @@ async def test_discovery_does_not_reselect_listener_authoritative_audio(monkeypa
     known = Peer(name="Alice", host="192.0.2.10",
         sip_audio_tx_formats=("L16/16000/1/10",),
         sip_audio_rx_formats=("L16/48000/1/10",))
-    monkeypatch.setattr(invite_router, "_peer_for_target", lambda *_: known)
+    runtime = _runtime()
+    runtime.build_peer_snapshot.return_value = [known]
     authoritative = _invite()
     reject_reselection = Mock(side_effect=AssertionError("routing cannot renegotiate audio"))
     monkeypatch.setattr(invite_router.sip_sdp, "negotiate_directional", reject_reselection)
 
-    result = await invite_router.route_invite(_runtime(), authoritative)
+    result = await invite_router.route_invite(runtime, authoritative)
 
     assert result.status == 100
     reject_reselection.assert_not_called()
@@ -245,7 +236,7 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
 
 @pytest.mark.parametrize("override", [False, True])
 async def test_restricted_registered_caller_cannot_egress_after_route_override(monkeypatch, override):
-    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
     _patch_route_prefix(monkeypatch)
     runtime = _runtime()
     runtime.config["external_call_blocked_endpoints"] = ["sip:alice"]
@@ -258,8 +249,9 @@ async def test_restricted_registered_caller_cannot_egress_after_route_override(m
     runtime.ha_router_decision.return_value = route
     runtime.get_trunk_config.return_value = {"trunk_server": "provider.example"}
     runtime.trunk_enabled.return_value = True
-    caller = RosterEntry(id="alice", metadata={"endpoint_id": "sip:alice"})
-    monkeypatch.setattr(invite_router, "_roster_entry_for_target", lambda *_: caller)
+    caller = PhoneEndpoint(endpoint_id="sip:alice", username="alice", name="Alice", kind=EndpointKind.SIP_ACCOUNT)
+    monkeypatch.setattr(invite_router, "endpoint_directory",
+                        lambda _: SimpleNamespace(get=lambda identity: caller if identity == caller.endpoint_id else None))
     registry = SimpleNamespace(component=lambda _: None, artifact_items=lambda _: iter(()), get_session=lambda _: None,
                                sip_client_for=lambda _: None)
     monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
@@ -274,7 +266,7 @@ async def test_restricted_registered_caller_cannot_egress_after_route_override(m
     monkeypatch.setattr(invite_router, "sip_trunk", lambda _: SimpleNamespace(ready=True))
     bridge = AsyncMock(side_effect=AssertionError("forbidden call must not start bridge"))
     monkeypatch.setattr(invite_router, "route_sip_bridge", bridge)
-    result = await invite_router.route_invite(runtime, _invite())
+    result = await invite_router.route_invite(runtime, replace(_invite(), identified_source_endpoint_id=caller.endpoint_id))
     assert result.status == 403
     assert result.decline_reason == "external_calls_disabled"
     bridge.assert_not_awaited()

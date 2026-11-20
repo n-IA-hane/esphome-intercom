@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, external_call_denied, is_trunk_uri, trunk_available
+from .trunk_policy import external_call_denied, is_trunk_uri, trunk_available
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
@@ -109,7 +109,6 @@ async def route_invite(
     _async_build_peer_snapshot = runtime.build_peer_snapshot
     _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
     peers = await _async_build_peer_snapshot(hass)
-    caller_identity = invite.routing_caller
     application = _call_registry(hass).component("sip_application")
     gruu = dict(invite.request_uri.params).get("gr")
     local_instance = application is not None and gruu and gruu == application.gruu_id
@@ -123,12 +122,6 @@ async def route_invite(
     else:
         registered_entries = _registered_roster_entries(hass)
     roster_entries = _roster_from_peers(hass, peers, registered_entries)
-    registered_source = registrar.registration_matches_source(
-        caller_identity,
-        invite.source_host,
-        invite.source_port,
-        invite.signaling_transport,
-    )
     trunk_invite = _is_trunk_invite(invite)
     trunk_direct_preprocessed = False
     direct_fallback_target = ""
@@ -136,7 +129,8 @@ async def route_invite(
     endpoint_registry = endpoint_directory(hass)
     source_endpoint_id = "" if trunk_invite else invite.identified_source_endpoint_id
     source_endpoint = endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
-    if not trunk_invite and source_endpoint is None:
+    registration_only = invite.authenticated_username if source_endpoint is None else ""
+    if not trunk_invite and source_endpoint is None and not registration_only:
         return SipInviteResult(403, "Forbidden", decline_reason="unauthorized_caller")
     if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
         from .queue_agent import route_queue_agent_call
@@ -285,9 +279,9 @@ async def route_invite(
         runtime=runtime,
         invite=invite,
         decision=decision,
-        registered_source=registered_source,
+        authenticated_account=bool(invite.authenticated_username),
         native_override=native_override,
-        caller_is_trusted_endpoint=bool(source_endpoint or trunk_invite),
+        caller_is_trusted_endpoint=bool(source_endpoint or registration_only or trunk_invite),
         automation_routing_enabled=native_override or bool(
             _get_inbound_trunk_config(hass).get(
                 CONF_AUTOMATION_ROUTING_ENABLED,
@@ -415,9 +409,9 @@ async def route_invite(
     bridge_to_trunk = bool(
         not force_ha_softphone and decision.action is RouteAction.TRUNK and trunk_ready
     )
-    if not force_ha_softphone and runtime.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS) and external_call_denied(
+    if not force_ha_softphone and (registration_only or external_call_denied(
         runtime.config, source_endpoint_id, session=registry.get_session(invite.call_id)
-    ) and (
+    )) and (
         decision.action is RouteAction.TRUNK
         or is_trunk_uri(decision.sip_uri, trunk_cfg, getattr(trunk, "active_registrar_target", None))
     ):

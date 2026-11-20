@@ -494,32 +494,19 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             assist_branch,
         )
 
-    def test_registered_sip_callers_bypass_route_requested(self) -> None:
+    def test_authenticated_accounts_use_admission_identity_for_route_windows(self) -> None:
+        """Native HA wire coverage also checks both REGISTER and no-REGISTER cases."""
         pre_route = self.invite_router
         registered_branch = self.inbound_automation
-        self.assertIn(
-            "registered_entries = _registered_roster_entries(hass)", pre_route
-        )
-        self.assertIn(
-            "registered_source = registrar.registration_matches_source(",
-            pre_route,
-        )
-        self.assertIn(
-            "caller_identity,\n        invite.source_host,\n        invite.source_port,\n        invite.signaling_transport,",
-            pre_route,
-        )
+        self.assertNotIn("registration_matches_source(", pre_route)
+        self.assertNotIn("_peer_for_target", pre_route)
+        self.assertNotIn("_registered_sender_entry", pre_route)
+        self.assertIn("authenticated_account=bool(invite.authenticated_username)", pre_route)
         self.assertIn("or not automation_routing_enabled", registered_branch)
-        self.assertIn(
-            "caller_roster_entry = _roster_entry_for_target(caller_identity, roster_entries)",
-            pre_route,
-        )
-        self.assertIn("not caller_is_trusted_endpoint", pre_route)
-        self.assertIn("and decision.action is RouteAction.TRUNK", pre_route)
-        self.assertIn('decline_reason="unauthenticated_trunk"', pre_route)
         function = next(node for node in ast.parse(registered_branch).body
                         if isinstance(node, ast.AsyncFunctionDef) and node.name == "request_route_override")
         guard = next(node for node in function.body if isinstance(node, ast.If))
-        registered_condition = ast.parse("registered_source and not native_override", mode="eval").body
+        registered_condition = ast.parse("authenticated_account and not native_override", mode="eval").body
         self.assertTrue(any(ast.dump(node) == ast.dump(registered_condition) for node in ast.walk(guard.test)))
         self.assertTrue(any(isinstance(node, ast.Return) and isinstance(node.value, ast.Call)
                             and isinstance(node.value.func, ast.Name) and node.value.func.id == "AutomationRoute"
@@ -1515,7 +1502,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("RtpPortReservation.allocate", no_dtmf_branch)
         self.assertIn("RtpPortReservation.allocate(hass)", dtmf_branch)
 
-        preprocess = on_invite[: on_invite.index("local_client = registry.sip_client_for(invite.call_id)")]
+        preprocess = on_invite[: on_invite.index("if invite.replaces is not None:")]
         self.assertIn("trunk_direct_preprocessed = True", preprocess)
         self.assertLess(
             on_invite.index("trunk_direct_preprocessed = True"),

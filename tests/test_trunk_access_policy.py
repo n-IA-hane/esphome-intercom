@@ -122,6 +122,15 @@ def test_long_forwarding_chain_preserves_original_phone_restriction(policy):
     assert policy.call_external_call_denied(runtime, "0") == "original-phone"
 
 
+def test_forwarded_call_retains_registration_only_origin_without_other_blocked_endpoints(policy):
+    sessions = {"inner": SimpleNamespace(metadata={"source_call_id": "original"}),
+                "original": SimpleNamespace(metadata={"registration_only_caller": "legacy"})}
+    runtime = SimpleNamespace(transport_config={}, sip=SimpleNamespace(get_session=sessions.get))
+    assert policy.call_external_call_denied(runtime, "inner") == "legacy"
+    assert policy.call_external_call_denied(runtime, "original") == "legacy"
+    assert policy.call_external_call_denied(runtime, "unrelated") == ""
+
+
 @pytest.mark.parametrize("uri,config,target,expected", [
     ("sip:123@provider.example", {"trunk_server": "provider.example"}, None, True),
     ("sip:123@PROVIDER.EXAMPLE.:5070;transport=tcp", {"trunk_server": "provider.example", "trunk_port": 5070}, None, True),

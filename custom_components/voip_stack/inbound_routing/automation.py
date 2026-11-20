@@ -62,7 +62,7 @@ async def request_route_override(
     runtime: AutomationRouteRuntime,
     invite: SipInvite,
     decision: RouteDecision,
-    registered_source: bool,
+    authenticated_account: bool,
     caller_is_trusted_endpoint: bool,
     automation_routing_enabled: bool,
     trunk_invite: bool,
@@ -71,14 +71,14 @@ async def request_route_override(
     """Open one bounded automation window or keep the dialplan default."""
 
     if (
-        (registered_source and not native_override)
+        (authenticated_account and not native_override)
         or not caller_is_trusted_endpoint
         or not automation_routing_enabled
     ):
         trace_call(
             _LOGGER, invite.call_id,
             "Using the central dialplan without a routing-action window: %s",
-            "registered caller" if registered_source and not native_override
+            "authenticated SIP account" if authenticated_account and not native_override
             else "caller is not trusted for routing actions" if not caller_is_trusted_endpoint
             else "routing actions are disabled",
         )

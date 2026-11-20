@@ -11,7 +11,7 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
-from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
+from tests.test_trunk_calls_ha import sip_test_account, lab as lab, trunks as trunks
 
 pytestmark = pytest.mark.ha
 
@@ -89,7 +89,9 @@ async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, mo
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Immediate RTP caller",
+        local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(16000, frame_ms=10)],
         supported_recv_formats=[AudioFormat(16000, frame_ms=10)])
@@ -254,7 +256,9 @@ async def test_inbound_bridge_failure_releases_prebound_audio(trunks, monkeypatc
         monkeypatch.setattr(type(lab.calls), "attach_relay", reject)
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
+    account = sip_test_account(lab, "sip:bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Aborted bridge caller",
+        local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(16000, frame_ms=10)],
         supported_recv_formats=[AudioFormat(16000, frame_ms=10)])

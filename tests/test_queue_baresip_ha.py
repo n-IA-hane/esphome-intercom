@@ -237,6 +237,13 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
         return [message for outgoing, message in observed if not outgoing and message.header("Call-ID") == call_id
                 and (not method or message.method == method) and (status is None or message.status_code == status)]
 
+    def accepted_ack(call_id):
+        confirmed = {sip.parse_cseq(message.header("CSeq")).number for outgoing, message in observed
+                     if outgoing and message.header("Call-ID") == call_id and message.status_code == 200
+                     and sip.parse_cseq(message.header("CSeq")).method == "INVITE"}
+        return any(sip.parse_cseq(ack.header("CSeq")).number in confirmed
+                   for ack in received(call_id, method="ACK"))
+
     async def start(index=0, target="401"):
         previous = set(lab.calls.sessions)
         await asyncio.to_thread(peers[index].command, "/dial " + target)
@@ -276,8 +283,9 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
     async def answered(session, *, accept=False):
         if accept:
             await asyncio.to_thread(peers[1].command, "/accept")
-        await wait_until(lambda: bool(received(session.call_id, method="ACK")))
+        await wait_until(lambda: accepted_ack(session.call_id))
         await wait_for_bridge(lab, session.call_id)
+        await wait_until(lambda: lab.calls.resource_for(session.call_id, "relay") is not None)
         relay = lab.calls.resource_for(session.call_id, "relay")
         await wait_until(lambda: relay.left_tx_packets >= 15 and relay.right_tx_packets >= 15)
         result["media"].append({"call_id": session.call_id,
@@ -298,7 +306,7 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
 
     try:
         first = await start()
-        await wait_until(lambda: bool(received(first.call_id, method="ACK")))
+        await wait_until(lambda: accepted_ack(first.call_id))
         assert first.metadata["source_endpoint_id"] == "transfer_a"
         if boundary == "caller_bye_before_offer":
             assert not any(outgoing and message.method == "INVITE" for outgoing, message in observed)
@@ -366,7 +374,7 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
                 await hangup(0, first)
             else:
                 second = await start(index=2)
-                await wait_until(lambda: bool(received(second.call_id, method="ACK")))
+                await wait_until(lambda: accepted_ack(second.call_id))
                 assert [ticket.call_id for ticket in lab.manager.waiting[lab.identity]] == [first.call_id, second.call_id]
                 with pytest.raises(TimeoutError):
                     await asyncio.wait_for(second.terminated.wait(), .4)
