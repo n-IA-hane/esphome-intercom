@@ -354,33 +354,10 @@ def _rtp_contract_key(fmt: RtpPcmFormat) -> tuple[int, str, int, int, int]:
     )
 
 
-def _rtp_wire_key(fmt: RtpPcmFormat) -> tuple[str, int, int, int]:
-    return (
-        fmt.encoding.upper(),
-        fmt.sample_rate,
-        fmt.channels,
-        fmt.frame_ms,
-    )
-
-
 def _rtp_encoding_key(fmt: RtpPcmFormat) -> tuple[str, int, int]:
     """Identify one RTP encoding independently of packetization time."""
 
     return (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
-
-
-def _dedupe_rtp_formats(
-    formats: list[RtpPcmFormat] | tuple[RtpPcmFormat, ...],
-) -> list[RtpPcmFormat]:
-    seen: set[tuple[str, int, int, int]] = set()
-    out: list[RtpPcmFormat] = []
-    for fmt in formats:
-        key = _rtp_wire_key(fmt)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(fmt)
-    return out
 
 
 def _dedupe_rtp_offer_encodings(

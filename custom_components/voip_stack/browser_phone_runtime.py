@@ -52,7 +52,6 @@ from .browser_phone_data import (
     _ha_softphone_stores,
     _browser_endpoint,
     _ha_softphone_groups,
-    _sip_bridge_store,
     _MEDIA_COUNTER_KEYS,
     _CALL_SCOPED_SOFTPHONE_FIELDS,
 )
@@ -160,8 +159,6 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
         if future is not None and not future.done():
             future.cancel()
     runtime = runtime_data(hass)
-    if runtime is not None:
-        runtime.sip_bridge_state.clear()
     # HTTP views remain registered across a config-entry reload. Gate claims
     # before taking owner snapshots so a concurrent GET cannot outlive unload.
     media = runtime.media if runtime is not None else None
@@ -476,18 +473,7 @@ def _set_sip_bridge_call_state(
     **extra: Any,
 ) -> None:
     """Publish SIP bridge/B2BUA state without mutating the HA softphone session."""
-    store = _sip_bridge_store(hass)
     state = _sip_public_state(state)
-    terminal = state in {
-        CallState.IDLE.value,
-        CallState.BUSY.value,
-        CallState.DECLINED.value,
-        CallState.CANCELLED.value,
-        CallState.MEDIA_INCOMPATIBLE.value,
-        CallState.TRANSPORT_UNREACHABLE.value,
-        CallState.AUTH_REQUIRED_UNSUPPORTED.value,
-        "error",
-    }
     payload = {
         "state": state,
         "sip_state": state,
@@ -500,10 +486,6 @@ def _set_sip_bridge_call_state(
         "terminal_reason": extra.get("terminal_reason") or extra.get("reason") or "",
     }
     payload.update({k: v for k, v in extra.items() if v not in (None, "")})
-    store.update(payload)
-    if terminal:
-        store["last_terminal_call_id"] = call_id
-        store["last_terminal_dest_call_id"] = dest_call_id
     _LOGGER.info(
         "SIP bridge state=%s call_id=%s dest_call_id=%s caller=%s callee=%s target=%s reason=%s event=%s",
         state,

@@ -1395,7 +1395,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 "async_set_ha_softphone_settings", "_async_shutdown_all",
                 "_async_load_ha_softphone_store", "_async_save_ha_softphone_store")),
             *(_owner_source(BROWSER_PHONE_DATA, name) for name in (
-                "_sip_bridge_store", "_ha_softphone_dnd", "_MEDIA_COUNTER_KEYS",
+                "_ha_softphone_dnd", "_MEDIA_COUNTER_KEYS",
                 "_CALL_SCOPED_SOFTPHONE_FIELDS")),
             _owner_source(BROWSER_PHONE_PROJECTION, "_runtime_counter"),
         ])

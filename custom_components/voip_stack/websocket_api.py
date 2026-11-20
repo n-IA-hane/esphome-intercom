@@ -40,13 +40,6 @@ from .const import (
     SIP_ROUTE_REQUEST_EVENT as SIP_ROUTE_REQUEST_EVENT,
 )
 from .call_events import (
-    home_phone_name as _ha_peer_name,  # noqa: F401
-    _direction_for_local as _direction_for_local,  # noqa: F401
-    phone_projection_state as _phone_projection_state,  # noqa: F401
-    canonical_session_fields as _canonical_session_fields,  # noqa: F401
-    _call_event_type as _call_event_type,  # noqa: F401
-    json_event_value as _json_event_value,  # noqa: F401
-    fire_with_call_context as _async_fire_with_context,  # noqa: F401
     fire_call_event as _fire_call_event,  # noqa: F401
 )
 from .browser_phone_data import (
@@ -62,7 +55,6 @@ from .browser_phone_data import (
     _ha_softphone_extension as _ha_softphone_extension,
     _ha_softphone_auto_answer as _ha_softphone_auto_answer,
     _ha_softphone_send_video as _ha_softphone_send_video,
-    _sip_bridge_store as _sip_bridge_store,
     _ha_softphone_dnd as _ha_softphone_dnd,
     _endpoint_id_from_selector as _endpoint_id_from_selector,
     _MEDIA_COUNTER_KEYS as _MEDIA_COUNTER_KEYS,

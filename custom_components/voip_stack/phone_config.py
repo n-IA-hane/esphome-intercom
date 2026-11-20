@@ -156,19 +156,9 @@ def phone_subentry_by_endpoint_id(
     )
 
 
-def new_browser_endpoint_id() -> str:
-    """Compatibility allocator backed by a native HA subentry ID."""
-    return phone_endpoint_id(draft_phone_subentry({CONF_PHONE_KIND: EndpointKind.BROWSER.value}))
-
-
 def new_sip_account_endpoint_id() -> str:
     """Compatibility allocator backed by a native HA subentry ID."""
     return phone_endpoint_id(draft_phone_subentry({CONF_PHONE_KIND: EndpointKind.SIP_ACCOUNT.value}))
-
-
-def sip_account_endpoint_id(username: object) -> str:
-    """Return the identity used by pre-v3 username-keyed SIP accounts."""
-    return f"sip:{normalize_username(str(username or ''))}"
 
 
 def browser_phone_data(

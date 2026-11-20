@@ -192,10 +192,6 @@ def _ha_softphone_send_video(hass: HomeAssistant, endpoint_id: str) -> bool:
     return bool(_ha_softphone_store(hass, endpoint_id).get("send_video", False))
 
 
-def _sip_bridge_store(hass: HomeAssistant) -> dict[str, Any]:
-    return require_runtime_data(hass).sip_bridge_state
-
-
 def _ha_softphone_dnd(hass: HomeAssistant, endpoint_id: str) -> bool:
     endpoint = _endpoint_registry(hass).get(endpoint_id)
     return bool(endpoint is not None and endpoint.dnd)

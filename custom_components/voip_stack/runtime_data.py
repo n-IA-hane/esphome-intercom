@@ -101,7 +101,6 @@ class VoipStackRuntime:
     local_bridge_unsub: Any | None = None
     softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
     softphone_presence: dict[str, int] = field(default_factory=dict)
-    sip_bridge_state: dict[str, Any] = field(default_factory=dict)
     phonebook: PhonebookCoordinator | None = None
     phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
