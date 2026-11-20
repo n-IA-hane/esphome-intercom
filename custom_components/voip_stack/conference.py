@@ -39,7 +39,7 @@ from .runtime_data import (
     endpoint_directory,
     sip_endpoint_runtime,
 )
-from .sip_client import RtpPayloadEncoder
+from .core.rtp_payload import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event

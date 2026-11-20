@@ -35,7 +35,7 @@ from .dtmf import (
 from .media_ports import bind_sip_audio_socket
 from .core.sdp import RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import RtpPayloadEncoder
+from .core.rtp_payload import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 
 _LOGGER = logging.getLogger(__name__)

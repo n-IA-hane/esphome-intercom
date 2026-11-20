@@ -7,7 +7,7 @@ import logging
 
 from .core import rtp, sdp
 from .core.audio_pcm import PcmFrameConverter
-from .sip_client import RtpPayloadDecoder
+from .core.rtp_payload import RtpPayloadDecoder
 
 _LOGGER = logging.getLogger(__name__)
 

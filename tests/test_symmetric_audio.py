@@ -3,15 +3,22 @@
 import struct
 import asyncio
 from types import SimpleNamespace
+from importlib import import_module
 
 import pytest
 
 from .test_conference import rtp, sdp, sip_client
+rtp_payload = import_module(sip_client.RtpPayloadEncoder.__module__)
 
 
 PCMU = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
 PCM_RX = sdp.RtpPcmFormat(97, "PCM", 16000, 1, 20)
 PCM_TX = sdp.RtpPcmFormat(112, "PCM", 16000, 1, 20)
+
+
+def test_legacy_payload_imports_refer_to_the_same_production_codec_owners():
+    for name in ("RtpPayloadEncoder", "RtpPayloadDecoder", "pcm_to_rtp_payload", "rtp_payload_to_pcm"):
+        assert getattr(sip_client, name) is getattr(rtp_payload, name)
 
 
 def test_symmetric_encoder_follows_only_negotiated_codec_and_preserves_input():
@@ -52,7 +59,7 @@ def test_failed_encoder_change_leaves_active_contract_intact(monkeypatch):
     def unavailable(*_args, fmtp):
         assert fmtp == opus.fmtp
         raise RuntimeError("codec allocation failed")
-    monkeypatch.setattr(sip_client, "OpusEncoder", unavailable)
+    monkeypatch.setattr(rtp_payload, "OpusEncoder", unavailable)
     with pytest.raises(RuntimeError):
         encoder.follow_received(opus)
     assert encoder.fmt == PCMU

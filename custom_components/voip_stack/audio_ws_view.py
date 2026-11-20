@@ -55,7 +55,7 @@ from .media_call_lifetime import (
 from .queue_utils import drain_queue, put_drop_oldest
 from .runtime_data import conference_component, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import RtpPayloadEncoder
+from .core.rtp_payload import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 from .media_ws_session import (
     async_claimed_media_websocket,

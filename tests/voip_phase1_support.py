@@ -25,7 +25,7 @@ CORE_MODULES = {
     "audio_format", "audio_pcm", "codec_capabilities", "g711",
     "g722_codec", "opus_codec", "rtp", "sdp", "sip", "sip_auth",
     "sip_dialog", "sip_resolution", "sip_transaction", "sip_transfer",
-    "video_rtcp", "video_rtp",
+    "video_rtcp", "video_rtp", "rtp_payload",
 }
 
 
