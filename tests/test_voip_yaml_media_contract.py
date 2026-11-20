@@ -621,8 +621,17 @@ def test_shared_h264_codec_dependency_and_encoder_memory_policy() -> None:
     assert 'add_idf_sdkconfig_option("CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM", True)' in source_config
 
 
+def _renderer_method(source: str, name: str) -> str:
+    # Each out-of-line member closes at the start of a line.
+    return source.split(f"P4VideoRenderer::{name}(", 1)[1].split("\n}", 1)[0]
+
+
 def test_p4_video_workers_use_display_owned_mainloop_presentation() -> None:
-    renderer_cpp = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
+    core = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
+    jpeg = (P4_RENDERER_COMPONENT / "p4_jpeg_decoder.cpp").read_text()
+    h264 = (P4_RENDERER_COMPONENT / "p4_h264_decoder.cpp").read_text()
+    presentation = (P4_RENDERER_COMPONENT / "p4_presentation.cpp").read_text()
+    renderer_cpp = core + jpeg + h264 + presentation
     renderer_header = (P4_RENDERER_COMPONENT / "p4_video_renderer.h").read_text()
     renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
     adapter = (VOIP_COMPONENTS / "voip_stack" / "video_renderer_adapter.h").read_text()
@@ -657,26 +666,28 @@ def test_p4_video_workers_use_display_owned_mainloop_presentation() -> None:
     assert "lv_image_set_src(" not in renderer_cpp
     assert "draw_pixels_at" not in renderer_cpp
     assert "LV_EVENT_REFR_READY" in renderer_cpp
-    loop = renderer_cpp.split("void P4VideoRenderer::loop()", 1)[1].split("void P4VideoRenderer::dump_config()", 1)[0]
+    loop = _renderer_method(presentation, "loop")
     assert "generation ==" in loop
     assert loop.index("const bool page_active") < loop.index("this->present_surface_direct_(pending)")
     assert loop.index("this->present_surface_direct_(pending)") < loop.index("this->pending_surface_.compare_exchange_strong")
-    refresh = renderer_cpp.split("void P4VideoRenderer::on_display_refresh_ready_()", 1)[1].split("P4VideoRenderer::get_capabilities()", 1)[0]
+    refresh = _renderer_method(presentation, "on_display_refresh_ready_")
     assert "this->enable_loop_soon_any_context();" in refresh
     assert "draw_rgb565_transformed" not in refresh
-    worker = renderer_cpp.split("void P4VideoRenderer::rx_task_()", 1)[1].split("bool P4VideoRenderer::configure_i420_converter_", 1)[0]
+    worker = _renderer_method(core, "rx_task_")
     assert "draw_rgb565_transformed" not in worker
     assert "present_surface_direct_" not in worker
-    prepare = renderer_cpp.split("bool P4VideoRenderer::prepare(", 1)[1].split("bool P4VideoRenderer::set_active", 1)[0]
+    prepare = _renderer_method(core, "prepare")
     assert "allocate_session_resources_()" not in prepare
     assert "start_rx_task_()" not in prepare
-    assert "this->allocate_session_resources_()" in renderer_cpp.split("void P4VideoRenderer::loop()", 1)[0]
-    stop = renderer_cpp.split("void P4VideoRenderer::stop()", 1)[1].split("void P4VideoRenderer::dump_state()", 1)[0]
+    assert "this->allocate_session_resources_()" in _renderer_method(core, "setup")
+    stop = _renderer_method(core, "stop")
     assert "this->rx_session_prepared_.store(false" in stop
     assert "stop_rx_task_()" not in stop
     assert "free_codec_resources_()" not in stop
-    decode = renderer_cpp.split("bool P4VideoRenderer::decode_h264_access_unit_", 1)[1].split("void P4VideoRenderer::rx_task_()", 1)[0]
-    assert decode.index("esp_h264_dec_process(") < decode.index("cadence_.accept(output.pts)") < decode.index("this->render_i420_(")
+    decode = _renderer_method(h264, "decode_h264_access_unit_")
+    consume = _renderer_method(h264, "consume_h264_nal_")
+    assert consume.index("esp_h264_dec_process(") < consume.index("input.raw_data.buffer += input.consume")
+    assert decode.index("this->consume_h264_nal_(") < decode.index("cadence_.accept(output.pts)") < decode.index("this->render_i420_(")
     assert "this->cadence_.accept(unit.timestamp_90khz)" in adapter
     assert "h264_profile_level_id" in adapter
     assert "display_id: main_display" in h264_package
@@ -849,7 +860,10 @@ def test_p4_video_boundaries_fail_closed() -> None:
     h264_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
     h264_source = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
     renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
-    renderer = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
+    core = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
+    jpeg = (P4_RENDERER_COMPONENT / "p4_jpeg_decoder.cpp").read_text()
+    h264_decoder = (P4_RENDERER_COMPONENT / "p4_h264_decoder.cpp").read_text()
+    presentation = (P4_RENDERER_COMPONENT / "p4_presentation.cpp").read_text()
 
     assert "capability.width == this->width_" in jpeg_source
     assert "capability.height == this->height_" in jpeg_source
@@ -857,21 +871,21 @@ def test_p4_video_boundaries_fail_closed() -> None:
     assert "this->active_bitrate_.store(this->bitrate_" in h264_source
     for source in (h264_config, renderer_config):
         assert "only_on_variant(supported=[VARIANT_ESP32P4])" in source
-    submit = renderer.split("bool P4VideoRenderer::submit_frame(", 1)[1].split("bool P4VideoRenderer::start_rx_task_", 1)[0]
-    h264, jpeg = submit.split("#else", 1)
+    submit = _renderer_method(core, "submit_frame")
+    h264, jpeg_submit = submit.split("#else", 1)
     assert "access_unit.release_callback == nullptr" in h264
     rejected_queue = h264.split("if (xQueueSend", 1)[1].split("if (access_unit.key_frame)", 1)[0]
     assert "slot.access_unit = {};" in rejected_queue
     assert "release()" not in rejected_queue
     assert "access_unit.size > kMaxAccessUnitBytes" in h264
-    assert "access_unit.size > this->rx_au_capacity_" in jpeg
-    assert "memcpy(this->rx_au_, access_unit.data, access_unit.size)" in jpeg
-    assert "access_unit.release();" in jpeg
-    assert "required > this->surface_capacity_bytes_" in renderer
-    assert "width <= this->max_decode_width_" in renderer
-    assert "macroblocks_w * macroblocks_h <= kH264Level30MaxMacroblocks" in renderer
-    assert re.search(r"surface_layout_size_\[pending\]\s*==\s*this->layout_size_", renderer)
-    assert "session_generation !=" in renderer
+    assert "access_unit.size > this->rx_au_capacity_" in jpeg_submit
+    assert "memcpy(this->rx_au_, access_unit.data, access_unit.size)" in jpeg_submit
+    assert "access_unit.release();" in jpeg_submit
+    assert "required > this->surface_capacity_bytes_" in jpeg
+    assert "width <= this->max_decode_width_" in h264_decoder
+    assert "macroblocks_w * macroblocks_h <= kH264Level30MaxMacroblocks" in h264_decoder
+    assert re.search(r"surface_layout_size_\[pending\]\s*==\s*this->layout_size_", presentation)
+    assert "session_generation !=" in h264_decoder
 
 
 def test_native_full_and_audio_stack_full_have_reciprocal_pcm_formats() -> None:
