@@ -1,11 +1,14 @@
 """Independent SDP witnesses: receive budgets stay directional for every codec."""
 
 
+import importlib
+
 import pytest
 
 from tests.test_video_rtp import _load
 
 sdp = _load("sdp")
+sdp_composer = importlib.import_module("custom_components.voip_stack.core.sdp_composer")
 
 
 def remote_video(fmt, *, framerate=None, imageattr=""):
@@ -37,7 +40,7 @@ def test_peer_receive_fps_constrains_local_tx_without_lowering_local_rx(encoding
     assert contract.send.max_framerate == 10
     assert contract.recv.max_framerate == local_rx
     if role == "answerer":
-        wire = "\r\n".join(sdp._video_media_lines(40004, contract.answer, direction="sendrecv")) + "\r\n"
+        wire = "\r\n".join(sdp_composer._video_media_lines(40004, contract.answer, direction="sendrecv")) + "\r\n"
         assert f"a=framerate:{local_rx}\r\n" in wire
 
 
@@ -48,7 +51,7 @@ def test_optional_imageattr_survives_actual_sdp_parser_and_answer_wire():
     assert getattr(selected, "image_attributes", None) is not None
     contract = sdp.negotiate_video_offer_directional(remote)
     assert contract is not None
-    wire = "\r\n".join(sdp._video_media_lines(40004, contract.answer, direction="sendrecv")) + "\r\n"
+    wire = "\r\n".join(sdp_composer._video_media_lines(40004, contract.answer, direction="sendrecv")) + "\r\n"
     assert "a=imageattr:26" in wire
     assert "send [x=320,y=240" in wire
     assert "recv [x=640,y=480" in wire

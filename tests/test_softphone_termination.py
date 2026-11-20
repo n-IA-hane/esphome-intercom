@@ -104,12 +104,7 @@ def termination(monkeypatch):
             "sip_servers": Mock(return_value=[]),
         },
         "softphone_commands": {"BrowserCallCommand": object},
-        "websocket_api": {
-            "_ha_softphone_store": Mock(return_value={}),
-            "_set_ha_softphone_call_state": Mock(),
-            "_set_sip_bridge_call_state": Mock(),
-            "_sip_bridge_store": Mock(return_value={}),
-        },
+        "browser_phone_data": {"_ha_softphone_store": Mock(return_value={})},
         "local_softphone_bridge": {
             "LocalBridgeError": type("LocalBridgeError", (Exception,), {})
         },

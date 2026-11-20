@@ -91,7 +91,7 @@ class SipProfileTest(unittest.TestCase):
 
     def test_trunk_offer_includes_available_common_codec_fallbacks(self) -> None:
         with patch.object(
-            sdp,
+            codec_capabilities,
             "common_sip_codecs",
             return_value=frozenset({"OPUS", "G722"}),
         ):
@@ -116,7 +116,7 @@ class SipProfileTest(unittest.TestCase):
 
     def test_trunk_offer_does_not_advertise_unavailable_optional_codecs(self) -> None:
         with patch.object(
-            sdp,
+            codec_capabilities,
             "common_sip_codecs",
             return_value=frozenset(),
         ):
