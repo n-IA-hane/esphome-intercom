@@ -1,11 +1,20 @@
 """Independent explicit RTP offer alternatives, payload maps and receiver ptime."""
 
 from dataclasses import replace
+from importlib import import_module
 import re
 
 import pytest
 
 from .voip_phase1_support import audio_format, sdp
+
+
+def test_public_sdp_media_values_reexport_one_owner():
+    values = import_module(sdp.RtpPcmFormat.__module__)
+    for name in ("SdpError", "RtpPcmFormat", "RtpDtmfFormat", "RtpDtmfDirection",
+                 "RtpPcmDirection", "RtpVideoFormat", "RtpVideoDirection", "RemoteMediaTarget",
+                 "RtpH264Format"):
+        assert getattr(sdp, name) is getattr(values, name)
 
 
 WIDE = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)

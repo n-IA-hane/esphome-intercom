@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from . import g711, sdp
+from . import g711
+from .sdp_types import RtpPcmFormat
 from .audio_format import AudioFormat, PcmFormat
 from .g722_codec import G722Decoder, G722Encoder
 from .opus_codec import OpusDecoder, OpusEncoder
@@ -10,15 +11,15 @@ from .opus_codec import OpusDecoder, OpusEncoder
 _S24_SIGN_EXTENSION = bytes(0xFF if value & 0x80 else 0x00 for value in range(256))
 
 
-def _rtp_encoding(fmt: AudioFormat | sdp.RtpPcmFormat) -> str:
+def _rtp_encoding(fmt: AudioFormat | RtpPcmFormat) -> str:
     return getattr(fmt, "encoding", "")
 
 
-def _audio_format(fmt: AudioFormat | sdp.RtpPcmFormat) -> AudioFormat:
-    return fmt.audio_format if isinstance(fmt, sdp.RtpPcmFormat) else fmt
+def _audio_format(fmt: AudioFormat | RtpPcmFormat) -> AudioFormat:
+    return fmt.audio_format if isinstance(fmt, RtpPcmFormat) else fmt
 
 
-def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> bytes:
+def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
     if encoding == "PCM":
         if len(data) % 2:
@@ -60,7 +61,7 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> byte
     raise ValueError(f"{fmt.pcm_format.value} has no phase-1 RTP mapping")
 
 
-def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> bytes:
+def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
     if encoding == "PCM":
         if len(payload) % 2:
@@ -104,7 +105,7 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> b
 
 
 class RtpPayloadDecoder:
-    def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
+    def __init__(self, fmt: RtpPcmFormat) -> None:
         self.fmt = fmt
         pcm_format = fmt.audio_format
         self._codec = (
@@ -122,14 +123,14 @@ class RtpPayloadDecoder:
 
 
 class RtpPayloadEncoder:
-    def __init__(self, fmt: sdp.RtpPcmFormat, *, send_formats=(), match_received_codec=False) -> None:
+    def __init__(self, fmt: RtpPcmFormat, *, send_formats=(), match_received_codec=False) -> None:
         self.input_format = fmt.audio_format
         self.send_formats = tuple(send_formats) or (fmt,)
         self.match_received_codec = bool(match_received_codec)
         self._converter = None
         self._set_format(fmt)
 
-    def _set_format(self, fmt: sdp.RtpPcmFormat) -> None:
+    def _set_format(self, fmt: RtpPcmFormat) -> None:
         pcm_format = fmt.audio_format
         codec = (
             OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms, fmtp=fmt.fmtp)
@@ -141,7 +142,7 @@ class RtpPayloadEncoder:
         self.fmt = fmt
         self._codec = codec
 
-    def follow_received(self, received: sdp.RtpPcmFormat) -> bool:
+    def follow_received(self, received: RtpPcmFormat) -> bool:
         """Follow a valid received codec only through the negotiated TX mapping.
 
         Like Asterisk's symmetric-codec policy, this never assumes that a
