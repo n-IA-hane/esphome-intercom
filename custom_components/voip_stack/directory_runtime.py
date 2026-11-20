@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from .const import DOMAIN
-from .phone_directory import PhoneDirectory, public_metadata
+from .phone_directory import PhoneDirectory, public_metadata, service_directory_reference
 from .phone_endpoint import EndpointKind, EndpointAvailability, PhoneEndpoint
 from .roster import RosterEntry
 from .runtime_data import require_runtime_data, runtime_data
@@ -180,9 +180,7 @@ def compose_directory_entries(hass, peers, registered):
             identity = metadata.get("endpoint_id") or f"group:{metadata.get('group_type') or 'explicit'}:{row.id}"
         elif metadata.get("virtual_endpoint"):
             kind = "service"
-            service = str(metadata["virtual_endpoint"])
-            identity = metadata.get("endpoint_id") or (
-                "service:assist_pipeline" if service == "assist_pipeline" else f"service:{service}:{row.id}")
+            identity = service_directory_reference(row)
         elif isinstance(endpoint, PhoneEndpoint):
             from .account_runtime import account_has_ha_binding
 

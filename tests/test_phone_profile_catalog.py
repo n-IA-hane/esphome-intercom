@@ -24,6 +24,97 @@ phone_profile = _load_module("phone_profile")
 catalog_module = _load_module("phone_profile_catalog")
 
 
+@pytest.mark.parametrize("vendor", ["fanvil/x3u-pro", "snom/360"])
+def test_speed_dial_covers_the_normal_directory_routes(real_assets, vendor):
+    """A directory destination must keep its identity through real phone output."""
+    directory_module = _load_module("phone_directory")
+    roster_module = _load_module("roster")
+    router = _load_module("router")
+    from custom_components.voip_stack.core.sip import parse_sip_uri
+    rows = [
+        roster_module.RosterEntry("Family ring", name="Family ring", extension="621", ha_bridge=True,
+            metadata={"endpoint_id": "group:ring:family", "group_type": "ring", "endpoint_kind": "group"}),
+        roster_module.RosterEntry("Réunion famille", name="Réunion famille", ha_bridge=True,
+            metadata={"endpoint_id": "group:conference:family", "group_type": "conference", "endpoint_kind": "group"}),
+        roster_module.RosterEntry("queue:support", name="Support", extension="1010", ha_bridge=True,
+            metadata={"endpoint_id": "service:queue:support", "virtual_endpoint": "queue", "endpoint_kind": "service"}),
+        roster_module.RosterEntry("paging:workshop", name="Workshop", extension="622", ha_bridge=True,
+            metadata={"endpoint_id": "service:paging:workshop", "virtual_endpoint": "paging", "endpoint_kind": "service"}),
+        roster_module.RosterEntry("Assist", name="Assist", extension="777", ha_bridge=True,
+            metadata={"endpoint_id": "service:assist_pipeline", "virtual_endpoint": "assist_pipeline", "endpoint_kind": "service"}),
+        roster_module.RosterEntry("Door action", name="Door action", extension="623", ha_bridge=True,
+            metadata={"endpoint_id": "service:automation:door", "virtual_endpoint": "automation", "endpoint_kind": "service"}),
+    ]
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(endpoints=(), resolve=lambda value: None),
+                              directory=directory_module.PhoneDirectory(rows))
+    expected_actions = [router.RouteAction.GROUP, router.RouteAction.GROUP, router.RouteAction.QUEUE,
+                        router.RouteAction.PAGING, router.RouteAction.ASSIST, router.RouteAction.AUTOMATION]
+    _, profile, templates = decoded(real_assets, vendor)
+    context = context_for(real_assets, profile)
+    choices = phone_profile.programmable_dial_targets(runtime)
+    for row, action in zip(rows, expected_actions, strict=True):
+        reference = row.metadata["endpoint_id"]
+        assert choices[reference] == row.display_name
+        phone = {"lines": [{"slot": "1", "endpoint_id": "sip:desk"}], "keys": [
+            {"slot": "1", "line": "1", "function": "speed_dial", "target": reference}]}
+        context["keys"] = phone_profile.resolve_phone_keys(runtime, phone, profile, sip_lines=context["lines"])
+        key, = context["keys"]
+        assert not key["event_package"] and not key["subscription_target"]
+        rendered, _ = phone_profile.render_phone_bundle(profile, templates, context)
+        assert key["dial_target"].encode() in b"\n".join(rendered.values())
+        from urllib.parse import unquote
+        target = (parse_sip_uri(key["dial_target"]).user
+                  if key["dial_target"].startswith("sip:") else unquote(key["dial_target"]))
+        decision = router.resolve_ha_router(target, rows)
+        assert decision.action is action
+        assert decision.entry.metadata["endpoint_id"] == reference
+        phone["keys"][0]["function"] = "blf"
+        with pytest.raises(ValueError, match="invalid_phone_key_target"):
+            phone_profile.resolve_phone_keys(runtime, phone, profile, sip_lines=context["lines"])
+
+
+@pytest.mark.parametrize("snapshot_enabled", [True, False])
+def test_speed_dial_catalog_keeps_offline_phones_and_omits_disabled_phones(snapshot_enabled):
+    directory_module = _load_module("phone_directory")
+    roster_module = _load_module("roster")
+    endpoints = [SimpleNamespace(endpoint_id="sip:offline", name="Offline", availability="offline"),
+                 SimpleNamespace(endpoint_id="sip:disabled", name="Disabled", availability="unavailable")]
+    directory = directory_module.PhoneDirectory([
+        roster_module.RosterEntry("offline", name="Offline", metadata={"endpoint_id": "sip:offline", "endpoint_kind": "sip_account"}),
+        roster_module.RosterEntry("disabled", name="Disabled", enabled=snapshot_enabled,
+            metadata={"endpoint_id": "sip:disabled", "endpoint_kind": "sip_account"}),
+    ])
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(endpoints=endpoints), directory=directory)
+    assert phone_profile.programmable_dial_targets(runtime) == {"sip:offline": "Offline"}
+
+
+@pytest.mark.parametrize("collision", ["numeric_name", "duplicate_extension"])
+def test_speed_dial_uses_an_alias_that_reaches_the_selected_group(real_assets, collision):
+    directory_module = _load_module("phone_directory")
+    roster_module = _load_module("roster")
+    router = _load_module("router")
+    group = roster_module.RosterEntry("Support", name="Support", extension="7101", ha_bridge=True,
+        metadata={"endpoint_id": "group:ring:support", "group_type": "ring", "endpoint_kind": "group"})
+    other = roster_module.RosterEntry("Other", name="7101" if collision == "numeric_name" else "Other",
+        extension="7101" if collision == "duplicate_extension" else "", ha_bridge=True,
+        metadata={"endpoint_id": "service:automation:other", "virtual_endpoint": "automation", "endpoint_kind": "service"})
+    rows = [other, group]
+    wrong = router.resolve_ha_router("7101", rows)
+    assert wrong.action is router.RouteAction.REJECT or wrong.entry.metadata["endpoint_id"] != group.metadata["endpoint_id"]
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(resolve=lambda value: None), directory=directory_module.PhoneDirectory(rows))
+    _, profile, templates = decoded(real_assets, "fanvil/x3u-pro")
+    context = context_for(real_assets, profile)
+    phone = {"lines": [{"slot": "1", "endpoint_id": "sip:desk"}], "keys": [
+        {"slot": "1", "line": "1", "function": "speed_dial", "target": group.metadata["endpoint_id"]}]}
+    context["keys"] = phone_profile.resolve_phone_keys(runtime, phone, profile)
+    key, = context["keys"]
+    assert key["dial_target"] == "Support"
+    files, _ = phone_profile.render_phone_bundle(profile, templates, context)
+    assert b"Support" in b"\n".join(files.values())
+    decision = router.resolve_ha_router(key["dial_target"], rows)
+    assert decision.action is router.RouteAction.GROUP and decision.entry.metadata["endpoint_id"] == group.metadata["endpoint_id"]
+
+
 @pytest.mark.parametrize("zone", ["Europe/Rome", "UTC", ""])
 def test_clock_is_owned_only_by_the_declared_profile_mapping(zone):
     mapping = {"Europe/Rome": {"code": 4, "name": "UTC+1", "dst_type": 1, "dst_location": 13},

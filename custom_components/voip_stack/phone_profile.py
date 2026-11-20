@@ -17,6 +17,39 @@ from .core.sip import format_host_port
 DIALOG_KEY_FUNCTIONS = frozenset({"blf", "queue_login", "queue_pause", "park"})
 
 
+def programmable_dial_targets(runtime):
+    """Offer the existing callable directory without creating another inventory."""
+    from .phone_directory import contact_key_reference
+
+    endpoints = getattr(getattr(runtime, "endpoints", None), "endpoints", ())
+    disabled = {endpoint.endpoint_id for endpoint in endpoints
+                if str(getattr(endpoint, "availability", "")) == "unavailable"}
+    targets = {endpoint.endpoint_id: endpoint.name for endpoint in endpoints if endpoint.endpoint_id not in disabled}
+    directory = getattr(runtime, "directory", None)
+    for entry in directory.snapshot() if directory is not None else ():
+        reference = contact_key_reference(entry) or entry.metadata.get("endpoint_id") or entry.id
+        if entry.enabled and reference not in disabled:
+            targets[str(reference)] = entry.display_name
+        else:
+            targets.pop(str(reference), None)
+    return targets
+
+
+def _sip_user_targets(values, authority):
+    """Preserve the same escaping and complete-target budget for every local route."""
+    targets = []
+    for value in values:
+        if not value:
+            continue
+        user = quote(value, safe="+*")
+        # Snom 360 re-escapes bare dial strings; a complete URI preserves the user.
+        if authority and "%" in user:
+            user = f"sip:{user}@{authority}"
+        if user not in targets:
+            targets.append(user)
+    return targets
+
+
 def key_event_package(function):
     """One key semantic decides whether the device owns a subscription."""
     return "dialog" if function in DIALOG_KEY_FUNCTIONS else ""
@@ -71,15 +104,28 @@ def _key_target(runtime, key, endpoint_id, sip_authority):
         # A handset key sends the SIP URI user. Names containing spaces or
         # vendor delimiters must be escaped before checking the slot byte limit.
         targets = [endpoint.extension] if endpoint.extension else []
-        for value in (endpoint.sip_uri_user, endpoint.name):
-            if value:
-                user = quote(value, safe="+*")
-                # Snom 360 escapes a bare dial string again when turning it
-                # into a URI. A complete address preserves the escaped user.
-                if sip_authority and "%" in user:
-                    user = f"sip:{user}@{sip_authority}"
-                targets.append(user)
+        targets.extend(_sip_user_targets((endpoint.sip_uri_user, endpoint.name), sip_authority))
         return targets
+    if function == "speed_dial":
+        directory = getattr(runtime, "directory", None)
+        entry = directory.resolve(target) if directory is not None else None
+        if entry is not None and entry.enabled:
+            from .router import RouteAction, resolve_ha_router
+            identity = entry.metadata.get("endpoint_id") or entry.id
+            aliases = []
+            for value in (entry.extension, entry.id, entry.name):
+                if not value:
+                    continue
+                try:
+                    decision = resolve_ha_router(value, list(directory.snapshot()))
+                except ValueError:
+                    continue
+                resolved = decision.entry
+                if (decision.action is not RouteAction.REJECT and resolved is not None
+                        and (resolved.metadata.get("endpoint_id") or resolved.id) == identity):
+                    aliases.append(value)
+            if aliases:
+                return _sip_user_targets(aliases, sip_authority)
     if function == "speed_dial" and re.fullmatch(r"[+*#0-9]{1,64}", target):
         return [target]
     raise ValueError("invalid_phone_key_target")
@@ -108,8 +154,12 @@ def resolve_phone_keys(runtime, phone, profile, *, sip_lines=()):
         directory = getattr(runtime, "directory", None)
         contact = (directory.key_contact(key.get("target", ""))
                    if directory is not None and str(key.get("target", "")).casefold().startswith("contact:") else None)
+        destination = (directory.resolve(key.get("target", ""))
+                       if directory is not None and key["function"] == "speed_dial"
+                       and contact is None and endpoint is None else None)
         label = (key.get("label") or getattr(queue, "name", "") or getattr(endpoint, "name", "")
-                 or (contact.display_name if contact is not None else "") or key["function"])
+                 or (contact.display_name if contact is not None else "")
+                 or (destination.display_name if destination is not None else "") or key["function"])
         label_limit = int(cap.get("max_label_bytes", 31))
         encoded_label = label.encode("utf-8")
         if len(encoded_label) > label_limit:

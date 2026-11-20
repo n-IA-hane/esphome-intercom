@@ -11,6 +11,13 @@ _LOGGER = logging.getLogger(__name__)
 _PRIVATE_FIELDS = {"password", "auth_password", "secret", "token", "pin", "pin_hash", "authorization"}
 
 
+def service_directory_reference(entry):
+    """Use the same existing service identity in composition and draft validation."""
+    service = str(entry.metadata["virtual_endpoint"])
+    return entry.metadata.get("endpoint_id") or (
+        "service:assist_pipeline" if service == "assist_pipeline" else f"service:{service}:{entry.id}")
+
+
 def contact_key_reference(entry):
     """A configured contact is callable, but is never a phone/BLF principal."""
     if (entry.metadata.get("endpoint_kind", "contact") != "contact"

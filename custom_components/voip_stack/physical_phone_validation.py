@@ -1,5 +1,6 @@
 """Shared inventory validation, independent of native configuration forms."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from .phone_config import endpoint_from_data, endpoint_from_subentry, phone_subentries
@@ -20,7 +21,7 @@ def physical_validation_runtime(hass, entry, account_drafts=None):
     from .endpoint_registry import EndpointRegistry
     from .group_config import group_members, group_records
     from .contact_config import contact_dicts
-    from .phone_directory import PhoneDirectory
+    from .phone_directory import PhoneDirectory, contact_key_reference, service_directory_reference
     from .roster import parse_roster_json
 
     runtime = getattr(entry, "runtime_data", None)
@@ -32,7 +33,9 @@ def physical_validation_runtime(hass, entry, account_drafts=None):
     for endpoint in proposed.values():
         configured.register(endpoint)
     actual = getattr(runtime, "endpoints", None)
-    endpoints = SimpleNamespace(resolve=lambda ref: configured.resolve(ref)
+    visible = [*configured.endpoints, *(endpoint for endpoint in getattr(actual, "endpoints", ())
+                                      if endpoint.endpoint_id not in proposed)]
+    endpoints = SimpleNamespace(endpoints=tuple(visible), resolve=lambda ref: configured.resolve(ref)
         or (actual.resolve(ref) if actual is not None else None))
     queues = getattr(runtime, "queues", None)
     if queues is None:
@@ -40,8 +43,14 @@ def physical_validation_runtime(hass, entry, account_drafts=None):
                 members=frozenset(group_members(hass, entry, record)))
                 for identity, record in group_records(entry, "queue").items()}
         queues = SimpleNamespace(resolve=lambda ref: rows.get(str(ref)))
-    return SimpleNamespace(endpoints=endpoints, queues=queues,
-        directory=PhoneDirectory(parse_roster_json(contact_dicts(entry))))
+    directory = getattr(runtime, "directory", None)
+    rows = {row.metadata.get("endpoint_id") or row.id: row for row in directory.snapshot()
+            if contact_key_reference(row) is None and row.metadata.get("virtual_endpoint") != "automation"} if directory else {}
+    for contact in parse_roster_json(contact_dicts(entry)):
+        reference = (service_directory_reference(contact) if contact.metadata.get("virtual_endpoint") else
+                     contact_key_reference(contact) or contact.metadata.get("endpoint_id") or contact.id)
+        rows[reference] = replace(contact, metadata={**contact.metadata, "endpoint_id": reference})
+    return SimpleNamespace(endpoints=endpoints, queues=queues, directory=PhoneDirectory(rows.values()))
 
 
 def validate_physical_inventory(hass, entry, draft, profile, *, previous=None,
@@ -79,6 +88,10 @@ def validate_physical_inventory(hass, entry, draft, profile, *, previous=None,
                 endpoint = runtime.endpoints.resolve(target)
                 if endpoint is not None:
                     key["target"] = endpoint.endpoint_id
+                elif function == "speed_dial":
+                    destination = runtime.directory.resolve(target)
+                    if destination is not None and destination.enabled:
+                        key["target"] = destination.metadata.get("endpoint_id") or destination.id
     resolve_phone_keys(runtime, data, profile)
     from .physical_phone_provisioning import validate_slot_removal
     owner = getattr(getattr(entry, "runtime_data", None), "physical_phones", None)

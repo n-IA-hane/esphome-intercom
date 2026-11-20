@@ -23,9 +23,8 @@ from .phone_config import (
     _add_phone_subentry, endpoint_from_data, phone_subentries,
     phone_subentry_data, validate_sip_account_namespace,
 )
-from .phone_directory import contact_key_reference
 from .phone_endpoint import EndpointKind
-from .phone_profile import resolve_phone_language
+from .phone_profile import programmable_dial_targets, resolve_phone_language
 from .phone_profile_catalog import PhoneProfileCatalog
 from .physical_phone import (
     KEY_FUNCTIONS, PHYSICAL_LINE_TRANSPORTS, PHYSICAL_PHONE_SUBENTRY_TYPE, physical_phone_records,
@@ -45,16 +44,61 @@ _KEY_ORIGIN = "_original_slot"
 
 
 class _PhysicalKeyRowsSelector(ObjectSelector):
-    """Validate the original slot with the row, while exposing only editable fields."""
+    """Accept physical positions on the wire and expose only useful editor choices."""
+
+    def __init__(self, config, line_options):
+        super().__init__(config)
+        self.line_options = line_options
 
     def serialize(self):
         serialized = deepcopy(super().serialize())
-        serialized["selector"]["object"]["fields"].pop(_KEY_ORIGIN)
+        fields = serialized["selector"]["object"]["fields"]
+        del fields[_KEY_ORIGIN], fields["slot"]
+        if len(self.line_options) > 1:
+            fields["line"] = {"required": True, "selector": {"select": {
+                "options": self.line_options, "mode": "dropdown"}}}
+        else:
+            del fields["line"]
         return serialized
 
 
 def _slot(value):
     return physical_slot(value)
+
+
+def _ordered_keys(rows, anchors, caps):
+    """Map the submitted order onto existing positions and any compatible new ones."""
+    explicit = [int(key["slot"]) for key in (*rows, *anchors) if "slot" in key]
+    occupied = set(explicit)
+    if len(occupied) != len(explicit):
+        raise ValueError("invalid_phone_key")
+    if len(explicit) == len(rows) + len(anchors):
+        moved = reorder_physical_keys(rows, [row["slot"] for row in rows])
+        return canonical_physical_keys([*moved, *anchors])
+    fixed = {int(key["slot"]) for key in anchors}
+    required = occupied - fixed
+    last = max(occupied, default=0)
+    # Each prefix includes all existing positions seen so far. Prefer new positions
+    # after the last occupied key, then the earliest feasible positions in order.
+    placements = {0: (0, ())}
+    for slot in sorted(caps.get("key_slots", ()), key=lambda item: int(item["slot"])):
+        number = int(slot["slot"])
+        if number in fixed:
+            continue
+        following = {} if number in required else placements.copy()
+        functions = slot.get("functions", caps.get("functions", ()))
+        for count, (holes, positions) in placements.items():
+            if count == len(rows) or rows[count]["function"] not in functions:
+                continue
+            candidate = (holes + int(number < last and number not in required), (*positions, number))
+            if count + 1 not in following or candidate < following[count + 1]:
+                following[count + 1] = candidate
+        placements = following
+    if len(rows) not in placements or not required.issubset(placements[len(rows)][1]):
+        raise ValueError("phone_key_unsupported")
+    positions = placements[len(rows)][1]
+    assigned = [{**row, "slot": str(number)} for row, number in zip(rows, positions, strict=True)]
+    return canonical_physical_keys([*assigned, *anchors])
 
 
 def _readable_refs(names, *, reserved=None):
@@ -90,6 +134,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._language_override = False
         self._account_devices = {}
         self._target_devices = {}
+        self._queue_control_refs = {}
         self._other_accounts = {}
         self._other_targets = {}
         self._functions = {}
@@ -365,8 +410,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         if (not isinstance(raw_lines, list) or not isinstance(raw_keys, list)
                 or any(not isinstance(row, dict) for row in [*raw_lines, *raw_keys])):
             raise ValueError("invalid_phone_bindings")
-        lines, keys = [], []
-        retained, anchored, origins = [], [], set()
+        lines = []
+        ordered, anchored, origins = [], [], set()
         for raw in raw_lines:
             line = {"slot": _slot(raw.get("slot")), "transport": str(raw.get("transport") or "udp").lower()}
             if line["transport"] not in PHYSICAL_LINE_TRANSPORTS:
@@ -380,9 +425,28 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 raise ValueError("invalid_phone_bindings")
             line["endpoint_id"] = reference
             lines.append(line)
+        bound_lines = {line["slot"] for line in lines}
+        max_lines = int(self._profile["capabilities"]["max_lines"])
+        if len(bound_lines) != len(lines) or any(int(slot) > max_lines for slot in bound_lines):
+            raise ValueError("phone_line_unsupported")
         for raw in raw_keys:
             key = {name: raw[name] for name in ("function", "target", "label") if name in raw}
-            key["slot"], key["line"] = _slot(raw.get("slot")), _slot(raw.get("line", "1"))
+            origin = raw.get(_KEY_ORIGIN)
+            if _KEY_ORIGIN in raw:
+                if not isinstance(origin, str) or origin not in self._rendered_key_slots or origin in origins:
+                    raise ValueError("invalid_phone_key_order")
+                origins.add(origin)
+            slot = raw.get("slot", origin)
+            if slot is not None:
+                key["slot"] = _slot(slot)
+            line = raw.get("line")
+            if line is None and len(bound_lines) == 1:
+                line = next(iter(bound_lines))
+            if not line or _slot(line) not in bound_lines:
+                # A second SIP line may have been added in the same submission.
+                self._draft["lines"] = lines
+                raise ValueError("phone_key_line_required")
+            key["line"] = _slot(line)
             key["function"] = self._functions.get(key.get("function"), key.get("function"))
             device, other = raw.get("target_device"), key.get("target")
             if device:
@@ -391,24 +455,13 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 key["target"] = self._target_devices[device]
             elif other and key["function"] in {"blf", "speed_dial", "queue_login", "queue_pause"}:
                 key["target"] = self._other_targets.get(other, other)
-            origin = raw.get(_KEY_ORIGIN)
-            if _KEY_ORIGIN in raw:
-                if not isinstance(origin, str) or origin not in self._rendered_key_slots or origin in origins:
-                    raise ValueError("invalid_phone_key_order")
-                origins.add(origin)
-            keys.append(key)
-            if origin == key["slot"]:
-                retained.append(key)
+            if key["function"] in {"queue_login", "queue_pause"} and "target" in key:
+                key["target"] = self._queue_control_refs.get(key["target"], key["target"])
+            if slot is None or origin == key["slot"]:
+                ordered.append(key)
             else:
                 anchored.append(key)
-        if len({key["slot"] for key in keys}) != len(keys):
-            raise ValueError("invalid_phone_key")
-        if len(retained) > 1:
-            # Native dragging preserves a row's original slot. New keys and
-            # explicitly changed positions stay exactly where the editor put them.
-            moved = reorder_physical_keys(retained, [key["slot"] for key in retained])
-            keys = canonical_physical_keys([*moved, *anchored])
-        return lines, keys
+        return lines, _ordered_keys(ordered, anchored, self._profile["capabilities"])
 
     def _validation_runtime(self):
         return physical_validation_runtime(self.hass, self._get_entry(), self._accounts)
@@ -418,18 +471,26 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             previous=self._previous(), current_subentry_id=self._current.subentry_id if self._current else None,
             account_drafts=self._accounts)
 
-    def _binding_schema(self):
+    def _binding_schema(self, *, retry_keys=None):
         caps = self._profile["capabilities"]
         accounts = {**self._phone_accounts(), **self._accounts}
         self._account_devices = self._selection_devices(accounts)
         registry = getattr(getattr(self._get_entry(), "runtime_data", None), "endpoints", None)
         targets = {endpoint.endpoint_id: endpoint.name for endpoint in getattr(registry, "endpoints", ())}
         targets.update({ref: item["name"] for ref, item in accounts.items() if ref not in targets})
+        phones = set(targets)
+        runtime = self._validation_runtime()
+        dial_targets = programmable_dial_targets(runtime)
         queues = group_records(self._get_entry(), "queue")
-        self._target_devices = self._selection_devices(targets, groups=queues)
-        targets.update({ref: row["name"] for ref, row in queues.items()})
-        targets.update({contact_key_reference(contact): contact.display_name
-                        for contact in self._validation_runtime().directory.programmable_contacts()})
+        self._queue_control_refs = {row.metadata.get("endpoint_id") or row.id: row.metadata["queue_id"]
+                                    for row in runtime.directory.snapshot()
+                                    if row.enabled and row.metadata.get("virtual_endpoint") == "queue"
+                                    and row.metadata.get("queue_id")}
+        queue_dial_refs = {identity: ref for ref, identity in self._queue_control_refs.items()}
+        self._target_devices = {device: queue_dial_refs.get(ref, ref)
+                                for device, ref in self._selection_devices(targets, groups=queues).items()}
+        targets.update({queue_dial_refs.get(ref, ref): row["name"] for ref, row in queues.items()})
+        targets.update(dial_targets)
 
         account_names = {ref: item["name"] for ref, item in accounts.items()}
         unavailable = self._option_label("physical_phone_accounts", "unavailable")
@@ -441,26 +502,28 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             ref = key.get("target")
             if ref and (key["function"] in {"blf", "queue_login", "queue_pause"} or (
                     key["function"] == "speed_dial" and not re.fullmatch(r"[+*#0-9]+", ref))):
-                targets.setdefault(ref, unavailable)
+                targets.setdefault(queue_dial_refs.get(ref, ref), unavailable)
         account_device_refs = set(self._account_devices.values())
         target_device_refs = set(self._target_devices.values())
         self._other_accounts = _readable_refs(
             {ref: name for ref, name in account_names.items() if ref not in account_device_refs},
             reserved={self._option_label("physical_phone_accounts", CREATE_ACCOUNT): CREATE_ACCOUNT})
         self._other_targets = _readable_refs(
-            {ref: name for ref, name in targets.items() if ref not in target_device_refs})
+            {ref: name for ref, name in targets.items() if ref in dial_targets or ref not in target_device_refs})
         line_slots = [str(slot) for slot in range(1, int(caps["max_lines"]) + 1)]
         functions = sorted(KEY_FUNCTIONS & {function for slot in caps.get("key_slots", [])
                                           for function in slot.get("functions", caps.get("functions", []))})
         self._functions = {self._option_label("physical_phone_key_function", key): key for key in functions}
 
-        def displayed_rows(rows, field, devices, device_field, others):
+        def displayed_rows(rows, field, devices, device_field, others, aliases=None):
             display = {ref: (field, name) for name, ref in others.items()}
             display.update({ref: (device_field, device) for device, ref in devices.items()})
             rendered = []
             for row in rows:
                 data = dict(row)
                 if ref := data.pop(field, None):
+                    if aliases:
+                        ref = aliases.get(ref, ref)
                     name, value = display.get(ref, (field, ref))
                     data[name] = value
                 rendered.append(data)
@@ -469,7 +532,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
         lines = displayed_rows(self._draft.get("lines", []), "endpoint_id", self._account_devices,
                                "account_device", self._other_accounts)
         keys = displayed_rows(self._draft.get("keys", []), "target", self._target_devices,
-                              "target_device", self._other_targets)
+                              "target_device", self._other_targets, queue_dial_refs)
         account_fields = {}
         if self._account_devices:
             account_fields["account_device"] = {"selector": self._device_selector(self._account_devices)}
@@ -479,7 +542,16 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             target_fields["target_device"] = {"selector": self._device_selector(self._target_devices)}
         target_fields["target"] = {"selector": SelectSelector({"options": list(self._other_targets), "custom_value": True})}
         if len(line_slots) == 1 and len(caps.get("key_slots", [])) == 1 and len(lines) <= 1 and len(keys) <= 1:
-            return self._single_binding_schema(lines, keys, functions, queues, account_fields)
+            return self._single_binding_schema(lines, keys, functions, set(queues) | self._queue_control_refs.keys(),
+                                               account_fields, phones, dial_targets)
+        line_options = []
+        for binding in self._draft.get("lines", []):
+            ref = binding["endpoint_id"]
+            account = accounts.get(ref)
+            name = account_names.get(ref, unavailable)
+            extension = account.get("extension") if account else ""
+            label = f"{name} ({extension})" if extension and extension != name else name
+            line_options.append({"value": binding["slot"], "label": f"{label} · {binding['slot']}"})
         self._rendered_key_slots = {key["slot"] for key in keys}
         for key in keys:
             key[_KEY_ORIGIN] = key["slot"]
@@ -492,19 +564,19 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     **account_fields,
                     "transport": {"selector": SelectSelector({"options": list(PHYSICAL_LINE_TRANSPORTS)})},
                 }}),
-            vol.Required("keys", default=keys): _PhysicalKeyRowsSelector({
+            vol.Required("keys", default=keys if retry_keys is None else retry_keys): _PhysicalKeyRowsSelector({
                 "multiple": True,
                 "translation_key": "physical_phone_keys", "fields": {
                     _KEY_ORIGIN: {"selector": TextSelector()},
-                    "slot": {"required": True, "selector": SelectSelector({"options": [str(item["slot"]) for item in caps.get("key_slots", [])]})},
+                    "slot": {"selector": SelectSelector({"options": [str(item["slot"]) for item in caps.get("key_slots", [])]})},
                     "function": {"required": True, "selector": SelectSelector({"options": list(self._functions)})},
-                    "line": {"required": True, "selector": SelectSelector({"options": line_slots})},
+                    "line": {"selector": SelectSelector({"options": line_slots})},
                     **target_fields,
                     "label": {"selector": TextSelector()},
-                }}),
+                }}, line_options),
         })
 
-    def _single_binding_schema(self, lines, keys, functions, queues, account_fields):
+    def _single_binding_schema(self, lines, keys, functions, queues, account_fields, phones, dial_targets):
         # A single physical position can be edited inline with HA's normal device field.
         # Suggested values display the existing assignments and allow the user to clear them.
         line_fields = {}
@@ -532,8 +604,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             if row["function"] in {"queue_login", "queue_pause"}:
                 queue_refs.add(row.get("target"))
         other_queues = [name for name, ref in self._other_targets.items() if ref in queue_refs]
-        speed_dials = [name for name, ref in self._other_targets.items() if ref not in queue_refs]
-        other_phones = [name for name in speed_dials if not self._other_targets[name].startswith("contact:")]
+        speed_dials = [name for name, ref in self._other_targets.items() if ref in dial_targets or ref in phones]
+        other_phones = [name for name, ref in self._other_targets.items() if ref in phones and ref not in self._target_devices.values()]
         alternate_fields = {}
         for name, kinds, choices, custom, device_field in (
             ("target", ("speed_dial",), speed_dials, True, "target_device"),
@@ -575,12 +647,6 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
             try:
                 lines, keys = self._canonical_bindings(user_input)
                 self._draft.update(lines=lines, keys=keys)
-                if len(lines) > int(self._profile["capabilities"]["max_lines"]):
-                    raise ValueError("phone_line_unsupported")
-                slots = [line["slot"] for line in lines]
-                if (len(slots) != len(set(slots)) or any(int(slot) > int(self._profile["capabilities"]["max_lines"])
-                                                       for slot in slots)):
-                    raise ValueError("phone_line_unsupported")
                 if any(line.get("endpoint_id") == CREATE_ACCOUNT for line in lines):
                     return await self.async_step_account()
                 data = self._validate_phone()
@@ -596,7 +662,8 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                 return self._store_inventory(data)
         try:
             await self._load_selector_labels()
-            schema = self._binding_schema()
+            retry_keys = user_input.get("keys") if errors.get("base") == "phone_key_line_required" else None
+            schema = self._binding_schema(retry_keys=retry_keys)
         except ValueError as error:
             errors["base"] = self._error(error)
             schema = vol.Schema({})

@@ -132,6 +132,73 @@ async def test_physical_key_rows_keep_explicit_new_slots_and_reorder_managed_key
         (row["slot"], row["line"], row["label"]) for row in expected]
 
 
+@pytest.mark.parametrize("case", ["one_line", "two_lines", "no_lines", "choose_line", "free_hole",
+                                  "new_drag", "restricted_positions", "full"])
+async def test_native_add_key_uses_bound_sip_accounts_and_display_order(physical_flow, case):
+    from custom_components.voip_stack.physical_phone import normalize_physical_phone, physical_phone_data
+
+    state = physical_flow
+    caps = state.catalog.profiles["fanvil/x3u-pro"][0]["capabilities"]
+    template = caps["key_slots"][0]
+    caps["key_slots"] = [dict(template, slot=str(pos)) for pos in range(1, 5)]
+    if case == "restricted_positions":
+        caps["key_slots"][1] = dict(template, slot="2", functions=["line"])
+    caps["clear_keys"] = True
+    lines = [{"slot":"2", "endpoint_id":"sip:front", "transport":"udp"}]
+    if case in {"two_lines", "choose_line"}:
+        lines.append({"slot":"4", "endpoint_id":"sip:office", "transport":"tcp"})
+    if case == "no_lines":
+        lines = []
+    old_slots = {"free_hole":[1,4], "new_drag":[1,3], "restricted_positions":[1,4],
+                 "full":[1,2,3,4]}.get(case, [])
+    keys = [{"slot":str(slot), "line":"2", "function":"line", "label":f"Line {slot}"} for slot in old_slots]
+    original = normalize_physical_phone({**identity(), "phone_id":"public-keys", "catalog_commit":"a"*40,
+                                         "lines":lines, "keys":keys})
+    record = ConfigSubentry(subentry_type="physical_phone", title=original["name"], data=deepcopy(original),
+                            unique_id="physical_phone:public-keys")
+    state.lab.hass.config_entries.async_add_subentry(state.lab.entry, record)
+    async def open_form():
+        menu = await state.lab.hass.config_entries.subentries.async_init((state.lab.entry.entry_id, "physical_phone"),
+            context={"source":"reconfigure","subentry_id":record.subentry_id})
+        return await submit(state, menu, {"next_step_id":"bindings"})
+    form = await open_form()
+    selector = next(v for k,v in form["data_schema"].schema.items() if k.schema == "keys")
+    fields = selector.serialize()["selector"]["object"]["fields"]
+    assert "slot" not in fields and "_original_slot" not in fields
+    if len(lines) > 1:
+        options = fields["line"]["selector"]["select"]["options"]
+        assert [item["value"] for item in options] == ["2", "4"]
+        assert "Front desk" in options[0]["label"] and "Office" in options[1]["label"]
+    else:
+        assert "line" not in fields
+    raw = form["data_schema"]({})
+    key = {"function":"Speed dial", "target":"200","label":"New"}
+    if case == "two_lines":
+        key["line"] = "4"
+    if case == "new_drag":
+        raw["keys"].insert(0, key)
+    else:
+        raw["keys"].append(key)
+    result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], raw)
+    stored = physical_phone_data(state.lab.entry.subentries[record.subentry_id])
+    if case in {"no_lines","choose_line","full"}:
+        assert result["errors"] == {"base":"phone_key_unsupported" if case == "full" else "phone_key_line_required"}
+        assert stored == original
+        return
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    expected_order = (["New", "Line 1", "Line 3"] if case == "new_drag" else
+                      [*(f"Line {n}" for n in old_slots), "New"])
+    assert [r["label"] for r in stored["keys"]] == expected_order
+    expected_slots = {"new_drag":["1","3","4"], "restricted_positions":["1","2","4"],
+                      "free_hole":["1","2","4"]}.get(case, ["1"])
+    assert [r["slot"] for r in stored["keys"]] == expected_slots
+    new_key = next(r for r in stored["keys"] if r["label"]=="New")
+    assert (new_key["line"],new_key["target"]) == ("4" if case=="two_lines" else "2","200")
+    assert stored["lines"] == original["lines"]
+    reopened = await open_form()
+    assert [r["label"] for r in reopened["data_schema"]({})["keys"]] == expected_order
+
+
 async def test_admin_password_is_not_prefilled_and_explicit_username_clear_removes_credentials(physical_flow):
     from custom_components.voip_stack.physical_phone import draft_physical_subentry, normalize_physical_phone, physical_phone_data
 

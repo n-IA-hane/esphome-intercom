@@ -193,13 +193,13 @@
         "data": {
           "name": "Name",
           "mac": "MAC address",
-          "profile_id": "Phone model profile",
-          "update_profile": "Update the pinned profile",
+          "profile_id": "Telefonmodell",
+          "update_profile": "Konfigurationsanleitung für dieses Telefonmodell aktualisieren",
           "account_id": "Anderes SIP-Konto",
           "account_device": "Erstes SIP-Konto (optional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
+          "update_profile": "VoIP Stack verwendet die neueste Anleitung aus dem Katalog, um unterstützte SIP-Leitungen, Tasten und Tastenfunktionen einzurichten und Einstellungen an das Telefon zu senden. Firmware-Updates erfolgen separat.",
           "account_id": "Verwende diese Auswahl bei leerem Gerätefeld.",
           "account_device": "Lasse das Feld leer, um die Leitung später zuzuweisen."
         },
@@ -260,6 +260,9 @@
               "parking_target": "Parkposition"
             }
           }
+        },
+        "data_description": {
+          "keys": "Neue Tasten erscheinen am Ende der Liste. Ziehen Sie die Tasten an die gewünschte Position."
         }
       },
       "phone_account": {
@@ -323,6 +326,7 @@
       "invalid_phone_bindings": "Check the line and key positions and their references.",
       "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
       "invalid_phone_key": "Each key needs a unique position and an included line.",
+      "phone_key_line_required": "Richten Sie auf diesem Telefon ein SIP-Konto ein, bevor Sie eine Taste hinzufügen. Wenn mehrere Konten eingerichtet sind, wählen Sie das Konto für die Taste.",
       "invalid_phone_transport": "Choose UDP, TCP or TLS.",
       "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
       "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
@@ -331,7 +335,7 @@
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
       "phone_queue_membership_required": "The selected line must belong to that queue.",
-      "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+      "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -685,13 +689,13 @@
           "data": {
             "name": "Name",
             "mac": "MAC address",
-            "profile_id": "Phone model profile",
-            "update_profile": "Update model profile",
+            "profile_id": "Telefonmodell",
+            "update_profile": "Konfigurationsanleitung für dieses Telefonmodell aktualisieren",
             "account_id": "Anderes SIP-Konto",
             "account_device": "Erstes SIP-Konto (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
+            "update_profile": "VoIP Stack verwendet die neueste Anleitung aus dem Katalog, um unterstützte SIP-Leitungen, Tasten und Tastenfunktionen einzurichten und Einstellungen an das Telefon zu senden. Firmware-Updates erfolgen separat.",
             "account_id": "Verwende diese Auswahl bei leerem Gerätefeld.",
             "account_device": "Lasse das Feld leer, um die Leitung später zuzuweisen."
           },
@@ -754,7 +758,7 @@
             }
           },
           "data_description": {
-            "keys": "Ziehe vorhandene Tasten, um ihre Reihenfolge an den belegten Positionen zu ändern. Eine neue Taste behält die gewählte Position."
+            "keys": "Neue Tasten erscheinen am Ende der Liste. Ziehen Sie die Tasten an die gewünschte Position."
           }
         },
         "account": {
@@ -782,7 +786,7 @@
         "reconfigure": {
           "title": "Configure physical phone",
           "menu_options": {
-            "user": "Properties and profile",
+            "user": "Telefoneinstellungen und Modell",
             "bindings": "Lines and key properties"
           }
         }
@@ -801,6 +805,7 @@
         "invalid_phone_bindings": "Check the line and key positions and their references.",
         "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
         "invalid_phone_key": "Each key needs a unique position and an included line.",
+        "phone_key_line_required": "Richten Sie auf diesem Telefon ein SIP-Konto ein, bevor Sie eine Taste hinzufügen. Wenn mehrere Konten eingerichtet sind, wählen Sie das Konto für die Taste.",
         "invalid_phone_transport": "Choose UDP, TCP or TLS.",
         "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
@@ -810,7 +815,7 @@
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
         "phone_queue_membership_required": "The selected line must belong to that queue.",
-        "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+        "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -980,12 +985,13 @@
           "name": "Funktion"
         },
         "line": {
-          "name": "Line position",
-          "overview_label": "Leitung {value}"
+          "name": "SIP-Konto für diese Taste",
+          "overview_label": "SIP-Konto {value}",
+          "description": "Nur erforderlich, wenn auf diesem Telefon mehrere SIP-Konten eingerichtet sind."
         },
         "target": {
-          "name": "Anderes Ziel oder Rufnummer",
-          "description": "Verwende diese Auswahl bei leerem Gerätefeld."
+          "name": "Anderes Ziel im Telefonbuch oder Rufnummer",
+          "description": "Für die Kurzwahl wählen Sie einen Telefonbucheintrag oder geben eine Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie oben das Telefon. Zum Parken geben Sie die Parkposition ein."
         },
         "label": {
           "name": "Tastenbeschriftung (optional)"
@@ -1736,8 +1742,8 @@
       }
     },
     "refresh_phone_profiles": {
-      "name": "Refresh phone profile catalog",
-      "description": "Refresh the optional catalog. Existing phones keep their pinned revision until explicitly updated."
+      "name": "Katalog der unterstützten Telefonmodelle aktualisieren",
+      "description": "Lädt den aktuellen Modellkatalog herunter. Um die neue Anleitung auf einem bereits eingerichteten Telefon zu verwenden, öffnen Sie dessen Einstellungen und aktualisieren Sie die Anleitung für das Modell."
     },
     "rotate_phone_provisioning_token": {
       "name": "Rotate phone provisioning credential",

@@ -262,6 +262,44 @@ async def test_editor_selects_external_contact_created_through_the_contact_flow(
     assert physical_phone_data(physical_record(state))["keys"][0]["target"] == reference
 
 
+async def test_native_speed_dial_lists_the_callable_ring_group_and_provisions_its_number(physical_flow):
+    from custom_components.voip_stack.group_config import group_roster_entries, normalize_group_data
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.phone_profile import resolve_phone_keys
+    from custom_components.voip_stack.physical_phone_validation import physical_validation_runtime
+    from custom_components.voip_stack.roster import RosterEntry
+
+    state = physical_flow
+    lab = state.lab
+    group = normalize_group_data({"kind": "ring", "name": "Reception ring", "extension": "621"},
+                                 identity="cb1234")
+    lab.hass.config_entries.async_add_subentry(lab.entry, ConfigSubentry(
+        subentry_type="group", title=group["name"], unique_id="group:cb1234", data=group))
+    disabled = RosterEntry("hidden", name="Disabled group", enabled=False,
+                           metadata={"group_type": "ring", "endpoint_kind": "group"})
+    group_row, = group_roster_entries(lab.hass, lab.entry)
+    lab.runtime.directory = PhoneDirectory([group_row, disabled])
+    form = await binding_editor(state)
+    key_selector = next(v for k, v in form["data_schema"].schema.items() if k.schema == "keys")
+    choices = key_selector.serialize()["selector"]["object"]["fields"]["target"]["selector"]["select"]["options"]
+    assert "Reception ring" in choices and "Disabled group" not in choices
+    first = lab.runtime.endpoints.require("sip:front")
+    instruction = {"function": "Speed dial", "target": "Reception ring"}
+    saved = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
+        "lines": [{"slot": "2", "account_device": first.device_id, "transport": "udp"}],
+        "keys": [instruction],
+    })
+    assert saved["reason"] == "reconfigure_successful"
+    phone = physical_phone_data(physical_record(state))
+    assert phone["keys"][0]["target"] == group_row.metadata["endpoint_id"]
+    assert phone["keys"][0]["line"] == "2"
+    runtime = physical_validation_runtime(lab.hass, lab.entry)
+    resolved, = resolve_phone_keys(runtime, phone, state.catalog.profiles[PROFILE][0])
+    assert resolved["dial_target"] == "621" and resolved["subscription_target"] == ""
+    reopened = await reconfigure(state, "bindings")
+    assert reopened["data_schema"]({})["keys"][0]["target"] == "Reception ring"
+
+
 @pytest.mark.parametrize("kind,capability", [("keys", "clear_keys"), ("lines", "disable_lines")])
 async def test_removal_is_saved_only_when_the_selected_profile_can_clear_it(physical_flow, kind, capability):
     state = physical_flow
@@ -1070,15 +1108,22 @@ async def test_single_position_edits_devices_inline_and_clears_only_supported_as
 
 async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_flow):
     from homeassistant.helpers import device_registry as dr
+    from custom_components.voip_stack.call_queues import QueueDefinition, QueueManager, QueuePolicy
     from custom_components.voip_stack.group_config import normalize_group_data, sync_group_devices
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.phone_profile import resolve_phone_keys
 
     state = physical_flow
     data = normalize_group_data({"kind": "queue", "name": "Support", "extension": "700"}, identity="stable-queue")
     group = ConfigSubentry(subentry_type="group", title=data["name"], data=data, unique_id="group:stable-queue")
     state.lab.hass.config_entries.async_add_subentry(state.lab.entry, group)
     sync_group_devices(state.lab.hass, state.lab.entry)
-    queue = SimpleNamespace(queue_id=data["group_id"], name="Support", extension="700", members={"sip:front"})
-    state.lab.runtime.queues = SimpleNamespace(resolve=lambda ref: queue if ref == queue.queue_id else None)
+    queue = QueueDefinition(data["group_id"], "Support", ("sip:front",), "700")
+    manager = QueueManager(state.lab.hass, state.lab.entry)
+    manager.definitions[queue.queue_id] = queue
+    manager.policies[queue.queue_id] = QueuePolicy()
+    state.lab.runtime.queues = manager
+    state.lab.runtime.directory = PhoneDirectory(manager.roster_entries())
     queue_device = dr.async_get(state.lab.hass).async_get_device_by_identifier(
         ("voip_stack", "group:stable-queue"), state.lab.entry.entry_id)
     await submit(state, await start(state), identity(profile_id="fanvil/h2u-v2"))
@@ -1097,3 +1142,12 @@ async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_
     suggestions = {field.schema: field.description["suggested_value"] for field in section.schema.schema
                    if field.description}
     assert suggestions["queue_device"] == queue_device.id and "target_device" not in suggestions
+    alternatives = fields["target"].config["options"]
+    assert [option for option in alternatives if option.startswith("Support")] == ["Support"]
+    by_name = {"line": selected["line"], "key": {"function": "speed_dial", "target": "Support"}}
+    completed = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], by_name)
+    assert completed["reason"] == "reconfigure_successful"
+    phone = physical_phone_data(physical_record(state))
+    assert phone["keys"][0]["target"] == manager.roster_entries()[0].metadata["endpoint_id"]
+    keys = resolve_phone_keys(state.lab.runtime, phone, state.catalog.profiles["fanvil/h2u-v2"][0])
+    assert keys[0]["dial_target"] == "700" and keys[0]["subscription_target"] == ""

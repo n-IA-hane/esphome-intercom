@@ -193,13 +193,13 @@
         "data": {
           "name": "Nome",
           "mac": "Indirizzo MAC",
-          "profile_id": "Profilo del modello",
-          "update_profile": "Aggiorna il profilo fissato",
+          "profile_id": "Modello del telefono",
+          "update_profile": "Aggiorna le istruzioni di configurazione per questo modello",
           "account_id": "Altro account SIP",
           "account_device": "Primo account SIP (facoltativo)"
         },
         "data_description": {
-          "update_profile": "I telefoni esistenti mantengono la revisione del catalogo finché non la aggiorni esplicitamente o scegli un altro profilo.",
+          "update_profile": "VoIP Stack usa le istruzioni più recenti del catalogo per configurare le linee SIP, i tasti e le funzioni supportate e per inviare le impostazioni al telefono. Il firmware si aggiorna separatamente.",
           "account_id": "Usa questa scelta quando il campo del dispositivo è vuoto.",
           "account_device": "Lascia il campo vuoto per assegnare la linea in seguito."
         },
@@ -260,6 +260,9 @@
               "parking_target": "Posizione di parcheggio"
             }
           }
+        },
+        "data_description": {
+          "keys": "I nuovi tasti si aggiungono in fondo alla lista. Trascina i tasti per cambiarne l’ordine."
         }
       },
       "phone_account": {
@@ -324,6 +327,7 @@
       "invalid_phone_bindings": "Controlla le posizioni di linee e tasti e i relativi riferimenti.",
       "invalid_phone_line": "Ogni linea richiede una posizione univoca e un account SIP esistente.",
       "invalid_phone_key": "Ogni tasto richiede una posizione univoca e una linea inclusa.",
+      "phone_key_line_required": "Configura un account SIP sul telefono prima di aggiungere un tasto. Se ci sono più account, scegli quello che il tasto deve usare.",
       "invalid_phone_transport": "Scegli UDP, TCP o TLS.",
       "phone_mac_exists": "Questo indirizzo MAC appartiene già a un telefono fisico configurato.",
       "phone_profile_not_ready": "Questo profilo non è pronto per il provisioning. Scegli un altro profilo.",
@@ -332,7 +336,7 @@
       "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
       "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
       "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
-      "invalid_phone_key_target": "Scegli un telefono o un contatto di rubrica per la chiamata rapida, oppure inserisci un numero supportato. I contatti esterni non possono usare BLF.",
+      "invalid_phone_key_target": "Per la composizione rapida, scegli una destinazione chiamabile dalla rubrica o inserisci un numero supportato. Per lo stato del telefono (BLF), scegli un telefono. Per i tasti di coda o parcheggio, seleziona la funzione corrispondente.",
       "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
       "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
       "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
@@ -685,13 +689,13 @@
           "data": {
             "name": "Nome",
             "mac": "Indirizzo MAC",
-            "profile_id": "Profilo del modello",
-            "update_profile": "Aggiorna il profilo del modello",
+            "profile_id": "Modello del telefono",
+            "update_profile": "Aggiorna le istruzioni di configurazione per questo modello",
             "account_id": "Altro account SIP",
             "account_device": "Primo account SIP (facoltativo)"
           },
           "data_description": {
-            "update_profile": "I telefoni esistenti mantengono il profilo attuale finché non lo aggiorni o scegli un altro modello.",
+            "update_profile": "VoIP Stack usa le istruzioni più recenti del catalogo per configurare le linee SIP, i tasti e le funzioni supportate e per inviare le impostazioni al telefono. Il firmware si aggiorna separatamente.",
             "account_id": "Usa questa scelta quando il campo del dispositivo è vuoto.",
             "account_device": "Lascia il campo vuoto per assegnare la linea in seguito."
           },
@@ -754,7 +758,7 @@
             }
           },
           "data_description": {
-            "keys": "Trascina i tasti esistenti per cambiarne l’ordine nelle posizioni occupate. Un nuovo tasto mantiene la posizione che scegli."
+            "keys": "I nuovi tasti si aggiungono in fondo alla lista. Trascina i tasti per cambiarne l’ordine."
           }
         },
         "account": {
@@ -782,7 +786,7 @@
         "reconfigure": {
           "title": "Configura telefono fisico",
           "menu_options": {
-            "user": "Proprietà e profilo",
+            "user": "Impostazioni e modello del telefono",
             "bindings": "Linee e proprietà dei tasti"
           }
         }
@@ -801,6 +805,7 @@
         "invalid_phone_bindings": "Controlla le posizioni di linee e tasti e i relativi riferimenti.",
         "invalid_phone_line": "Ogni linea richiede una posizione univoca e un account SIP esistente.",
         "invalid_phone_key": "Ogni tasto richiede una posizione univoca e una linea inclusa.",
+        "phone_key_line_required": "Configura un account SIP sul telefono prima di aggiungere un tasto. Se ci sono più account, scegli quello che il tasto deve usare.",
         "invalid_phone_transport": "Scegli UDP, TCP o TLS.",
         "phone_mac_exists": "Questo indirizzo MAC appartiene già a un telefono fisico configurato.",
         "phone_catalog_unavailable": "Il catalogo verificato dei profili non è disponibile. Riprova più tardi.",
@@ -810,7 +815,7 @@
         "phone_sip_account_required": "Associa ogni linea a un account SIP esistente.",
         "phone_key_unsupported": "La posizione o la funzione del tasto non è supportata dal profilo selezionato.",
         "phone_queue_membership_required": "La linea selezionata deve appartenere a quella coda.",
-        "invalid_phone_key_target": "Scegli un telefono o un contatto di rubrica per la chiamata rapida, oppure inserisci un numero supportato. I contatti esterni non possono usare BLF.",
+        "invalid_phone_key_target": "Per la composizione rapida, scegli una destinazione chiamabile dalla rubrica o inserisci un numero supportato. Per lo stato del telefono (BLF), scegli un telefono. Per i tasti di coda o parcheggio, seleziona la funzione corrispondente.",
         "invalid_parking_target": "Inserisci una destinazione di parcheggio valida.",
         "phone_key_target_too_long": "Nessuna destinazione completa rientra nel limite del tasto. Scegli un interno più corto.",
         "phone_key_label_too_long": "L'etichetta supera il limite in byte del profilo. Accorciala.",
@@ -980,18 +985,19 @@
           "name": "Funzione"
         },
         "line": {
-          "name": "Posizione linea",
-          "overview_label": "Linea {value}"
+          "name": "Account SIP usato dal tasto",
+          "overview_label": "Account SIP {value}",
+          "description": "Serve solo se sul telefono sono configurati più account SIP."
         },
         "target": {
-          "name": "Altra destinazione o numero da comporre",
-          "description": "Usa questa scelta quando il campo del dispositivo è vuoto."
+          "name": "Altra destinazione di rubrica o numero",
+          "description": "Per la composizione rapida, scegli una voce della rubrica o inserisci un numero. Per lo stato del telefono (BLF), scegli il telefono nel campo sopra. Per il parcheggio, inserisci la posizione."
         },
         "label": {
           "name": "Etichetta sul tasto (facoltativa)"
         },
         "target_device": {
-          "name": "Telefono o coda di chiamata"
+          "name": "Telefono o coda"
         }
       }
     },
@@ -1736,8 +1742,8 @@
       }
     },
     "refresh_phone_profiles": {
-      "name": "Aggiorna catalogo profili telefoni",
-      "description": "Aggiorna il catalogo facoltativo. I telefoni esistenti mantengono la revisione fissata fino a un aggiornamento esplicito."
+      "name": "Aggiorna il catalogo dei modelli di telefono supportati",
+      "description": "Scarica il catalogo più recente. Per usare le nuove istruzioni su un telefono già configurato, apri le sue impostazioni e aggiorna le istruzioni per quel modello."
     },
     "rotate_phone_provisioning_token": {
       "name": "Ruota credenziale provisioning telefono",

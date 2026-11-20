@@ -193,13 +193,13 @@
         "data": {
           "name": "Name",
           "mac": "MAC address",
-          "profile_id": "Phone model profile",
-          "update_profile": "Update the pinned profile",
+          "profile_id": "Modelo do telefone",
+          "update_profile": "Atualizar as instruções de configuração deste modelo",
           "account_id": "Outra conta SIP",
           "account_device": "Primeira conta SIP (opcional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
+          "update_profile": "O VoIP Stack usa as instruções mais recentes do catálogo para configurar as linhas SIP, as teclas e as funções compatíveis e enviar as configurações ao telefone. A atualização do firmware é feita separadamente.",
           "account_id": "Use esta opção quando o campo de dispositivo estiver vazio.",
           "account_device": "Deixe o campo vazio para atribuir a linha depois."
         },
@@ -260,6 +260,9 @@
               "parking_target": "Posição de estacionamento"
             }
           }
+        },
+        "data_description": {
+          "keys": "Novas teclas aparecem no fim da lista. Arraste as teclas para mudar a ordem."
         }
       },
       "phone_account": {
@@ -324,6 +327,7 @@
       "invalid_phone_bindings": "Check the line and key positions and their references.",
       "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
       "invalid_phone_key": "Each key needs a unique position and an included line.",
+      "phone_key_line_required": "Configure uma conta SIP neste telefone antes de adicionar uma tecla. Se houver várias contas configuradas, escolha qual delas a tecla deve usar.",
       "invalid_phone_transport": "Choose UDP, TCP or TLS.",
       "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
       "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
@@ -332,7 +336,7 @@
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
       "phone_queue_membership_required": "The selected line must belong to that queue.",
-      "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+      "invalid_phone_key_target": "Para discagem rápida, escolha um destino da agenda que possa receber chamadas ou digite um número compatível. Para monitorar o estado do telefone (BLF), escolha um telefone. Para teclas de fila ou estacionamento de chamadas, selecione a função correspondente.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -685,13 +689,13 @@
           "data": {
             "name": "Name",
             "mac": "MAC address",
-            "profile_id": "Phone model profile",
-            "update_profile": "Update model profile",
+            "profile_id": "Modelo do telefone",
+            "update_profile": "Atualizar as instruções de configuração deste modelo",
             "account_id": "Outra conta SIP",
             "account_device": "Primeira conta SIP (opcional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
+            "update_profile": "O VoIP Stack usa as instruções mais recentes do catálogo para configurar as linhas SIP, as teclas e as funções compatíveis e enviar as configurações ao telefone. A atualização do firmware é feita separadamente.",
             "account_id": "Use esta opção quando o campo de dispositivo estiver vazio.",
             "account_device": "Deixe o campo vazio para atribuir a linha depois."
           },
@@ -754,7 +758,7 @@
             }
           },
           "data_description": {
-            "keys": "Arraste as teclas existentes para alterar a ordem nas posições ocupadas. Uma nova tecla mantém a posição escolhida."
+            "keys": "Novas teclas aparecem no fim da lista. Arraste as teclas para mudar a ordem."
           }
         },
         "account": {
@@ -782,7 +786,7 @@
         "reconfigure": {
           "title": "Configure physical phone",
           "menu_options": {
-            "user": "Properties and profile",
+            "user": "Configurações e modelo do telefone",
             "bindings": "Lines and key properties"
           }
         }
@@ -801,6 +805,7 @@
         "invalid_phone_bindings": "Check the line and key positions and their references.",
         "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
         "invalid_phone_key": "Each key needs a unique position and an included line.",
+        "phone_key_line_required": "Configure uma conta SIP neste telefone antes de adicionar uma tecla. Se houver várias contas configuradas, escolha qual delas a tecla deve usar.",
         "invalid_phone_transport": "Choose UDP, TCP or TLS.",
         "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
@@ -810,7 +815,7 @@
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
         "phone_queue_membership_required": "The selected line must belong to that queue.",
-        "invalid_phone_key_target": "Choose an existing phone or enter a supported speed dial number.",
+        "invalid_phone_key_target": "Para discagem rápida, escolha um destino da agenda que possa receber chamadas ou digite um número compatível. Para monitorar o estado do telefone (BLF), escolha um telefone. Para teclas de fila ou estacionamento de chamadas, selecione a função correspondente.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -980,18 +985,19 @@
           "name": "Função"
         },
         "line": {
-          "name": "Line position",
-          "overview_label": "Linha {value}"
+          "name": "Conta SIP usada por esta tecla",
+          "overview_label": "Conta SIP {value}",
+          "description": "Só é necessário escolher uma conta quando o telefone tem mais de uma conta SIP configurada."
         },
         "target": {
-          "name": "Outro destino ou número a discar",
-          "description": "Use esta opção quando o campo de dispositivo estiver vazio."
+          "name": "Outro destino da agenda ou número",
+          "description": "Para discagem rápida, escolha uma entrada da agenda ou digite um número. Para monitorar o estado do telefone (BLF), escolha o telefone no campo acima. Para estacionar uma chamada, digite a vaga."
         },
         "label": {
           "name": "Rótulo da tecla (opcional)"
         },
         "target_device": {
-          "name": "Telefone ou fila de chamadas"
+          "name": "Telefone ou fila"
         }
       }
     },
@@ -1736,8 +1742,8 @@
       }
     },
     "refresh_phone_profiles": {
-      "name": "Refresh phone profile catalog",
-      "description": "Refresh the optional catalog. Existing phones keep their pinned revision until explicitly updated."
+      "name": "Atualizar o catálogo de modelos de telefone compatíveis",
+      "description": "Baixa o catálogo de modelos mais recente. Para usar as instruções atualizadas em um telefone já configurado, abra as configurações dele e atualize as instruções do modelo."
     },
     "rotate_phone_provisioning_token": {
       "name": "Rotate phone provisioning credential",

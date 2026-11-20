@@ -17,6 +17,34 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
+async def test_phone_key_validation_uses_current_contacts_without_mutating_the_directory(managed):
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.physical_phone_validation import physical_validation_runtime
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import store_manual_roster_entries
+
+    lab = managed
+    store_manual_roster_entries(lab.hass, [RosterEntry("New action", name="New action", ha_bridge=True,
+        metadata={"virtual_endpoint": "automation", "automation_entity_id": "automation.new"})])
+    stale = PhoneDirectory([
+        RosterEntry("Removed action", name="Removed action", ha_bridge=True,
+            metadata={"endpoint_id": "service:automation:Removed action", "virtual_endpoint": "automation"}),
+        RosterEntry("Shared", name="First group", ha_bridge=True,
+            metadata={"endpoint_id": "group:ring:first", "group_type": "ring"}),
+        RosterEntry("Shared", name="Second group", ha_bridge=True,
+            metadata={"endpoint_id": "group:conference:second", "group_type": "conference"}),
+    ])
+    lab.runtime.directory = stale
+    before = stale.snapshot()
+    subentries = dict(lab.entry.subentries)
+    view = physical_validation_runtime(lab.hass, lab.entry)
+    assert view.directory.get("service:automation:Removed action") is None
+    assert view.directory.get("service:automation:New action").display_name == "New action"
+    assert view.directory.get("group:ring:first").display_name == "First group"
+    assert view.directory.get("group:conference:second").display_name == "Second group"
+    assert stale.snapshot() == before and dict(lab.entry.subentries) == subentries
+
+
 @pytest.mark.parametrize("resolution", ["rename", "remove", "ineligible"])
 async def test_live_esp_rename_collision_repair_survives_unrelated_refresh_until_resolved(managed, resolution):
     from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir

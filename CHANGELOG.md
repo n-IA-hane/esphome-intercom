@@ -2,6 +2,17 @@
 
 ## 2026.12.0-dev
 
+- Add new programmable phone keys at the end of the draggable list without a
+  manual position field. Use the sole configured SIP account automatically,
+  or choose a named account when the phone has several lines.
+- Offer the complete PBX directory for speed-dial keys, including ring groups,
+  queues, conferences, paging, Assist and automations. Preserve the destination
+  through validation and the generated Fanvil or Snom configuration. Keep BLF
+  limited to destinations that support phone-state subscriptions.
+- Clarify what updating a telephone model's configuration instructions does.
+  Use dark backgrounds in the existing call diagrams and replace the mobile
+  notification animation with a real Android Companion recording.
+
 - Edit queue membership and distribution order in one native, draggable list
   of Home Assistant phone devices. Explain the queue's ring, retry and waiting
   timers separately from each phone's personal no-answer policy.

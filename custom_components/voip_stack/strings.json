@@ -193,13 +193,13 @@
         "data": {
           "name": "Name",
           "mac": "MAC address",
-          "profile_id": "Phone model profile",
-          "update_profile": "Update the pinned profile",
+          "profile_id": "Phone model",
+          "update_profile": "Update setup instructions for this phone model",
           "account_id": "Other SIP account",
           "account_device": "First SIP account (optional)"
         },
         "data_description": {
-          "update_profile": "Existing phones keep their catalog revision until you explicitly update it or choose another profile.",
+          "update_profile": "The catalog tells VoIP Stack which SIP lines, keys and key functions this model supports and how to send settings to the phone. Firmware updates are separate.",
           "account_id": "Only choose this option when the device field is empty.",
           "account_device": "Clear the field to assign the line later."
         },
@@ -260,6 +260,9 @@
               "parking_target": "Parking slot"
             }
           }
+        },
+        "data_description": {
+          "keys": "New keys go at the end of the list. Drag keys to change their order."
         }
       },
       "phone_account": {
@@ -324,6 +327,7 @@
       "invalid_phone_bindings": "Check the line and key positions and their references.",
       "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
       "invalid_phone_key": "Each key needs a unique position and an included line.",
+      "phone_key_line_required": "Configure a SIP account on this phone before adding a key. If several accounts are configured, choose which one the key uses.",
       "invalid_phone_transport": "Choose UDP, TCP or TLS.",
       "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
       "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
@@ -332,7 +336,7 @@
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
       "phone_queue_membership_required": "The selected line must belong to that queue.",
-      "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
+      "invalid_phone_key_target": "For speed dial, choose a callable directory destination or enter a supported number. For phone status (BLF), choose a phone. For queue or parking keys, select the corresponding function.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -685,13 +689,13 @@
           "data": {
             "name": "Name",
             "mac": "MAC address",
-            "profile_id": "Phone model profile",
-            "update_profile": "Update model profile",
+            "profile_id": "Phone model",
+            "update_profile": "Update setup instructions for this phone model",
             "account_id": "Other SIP account",
             "account_device": "First SIP account (optional)"
           },
           "data_description": {
-            "update_profile": "Existing phones keep their current profile until you update it or choose another model.",
+            "update_profile": "The catalog tells VoIP Stack which SIP lines, keys and key functions this model supports and how to send settings to the phone. Firmware updates are separate.",
             "account_id": "Only choose this option when the device field is empty.",
             "account_device": "Clear the field to assign the line later."
           },
@@ -754,7 +758,7 @@
             }
           },
           "data_description": {
-            "keys": "Drag existing keys to change their order across the occupied positions. A new key keeps the position you choose."
+            "keys": "New keys go at the end of the list. Drag keys to change their order."
           }
         },
         "account": {
@@ -782,7 +786,7 @@
         "reconfigure": {
           "title": "Configure physical phone",
           "menu_options": {
-            "user": "Properties and profile",
+            "user": "Phone settings and model",
             "bindings": "Lines and key properties"
           }
         }
@@ -801,6 +805,7 @@
         "invalid_phone_bindings": "Check the line and key positions and their references.",
         "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
         "invalid_phone_key": "Each key needs a unique position and an included line.",
+        "phone_key_line_required": "Configure a SIP account on this phone before adding a key. If several accounts are configured, choose which one the key uses.",
         "invalid_phone_transport": "Choose UDP, TCP or TLS.",
         "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
@@ -810,7 +815,7 @@
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
         "phone_queue_membership_required": "The selected line must belong to that queue.",
-        "invalid_phone_key_target": "Choose an existing phone or directory contact for speed dial, or enter a supported number. External contacts cannot use BLF.",
+        "invalid_phone_key_target": "For speed dial, choose a callable directory destination or enter a supported number. For phone status (BLF), choose a phone. For queue or parking keys, select the corresponding function.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -980,18 +985,19 @@
           "name": "Function"
         },
         "line": {
-          "name": "Line position",
-          "overview_label": "Line {value}"
+          "name": "SIP account used by this key",
+          "overview_label": "SIP account {value}",
+          "description": "Only needed when this phone has more than one configured SIP account."
         },
         "target": {
-          "name": "Other destination or dial string",
-          "description": "Only choose this option when the device field is empty."
+          "name": "Other directory destination or number",
+          "description": "For speed dial, choose a directory entry or enter a number. For phone status (BLF), choose the phone above. For parking, enter the slot."
         },
         "label": {
           "name": "Key label (optional)"
         },
         "target_device": {
-          "name": "Phone or call queue"
+          "name": "Phone or queue"
         }
       }
     },
@@ -1736,8 +1742,8 @@
       }
     },
     "refresh_phone_profiles": {
-      "name": "Refresh phone profile catalog",
-      "description": "Refresh the optional catalog. Existing phones keep their pinned revision until explicitly updated."
+      "name": "Refresh catalog of supported phone models",
+      "description": "Download the latest model catalog. To use updated setup instructions on an existing phone, open its settings and update the instructions for its model."
     },
     "rotate_phone_provisioning_token": {
       "name": "Rotate phone provisioning credential",

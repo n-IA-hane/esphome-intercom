@@ -156,9 +156,20 @@ which assignment occupies each selected position. For example, if positions
 assignments. Positions 3 through 6 stay untouched. Each key keeps its label,
 function, target and associated SIP line.
 
-Choose a physical position to move a key explicitly or add a new one. These
-assignments keep their chosen positions when you save, including when you
-reuse the position of a key you just deleted.
+New keys are added at the end of this list. Their physical positions are
+assigned automatically; drag the rows to change the order. Existing managed
+positions are retained and unrelated positions are left untouched.
+
+With one configured SIP line, a key uses it automatically. When the phone has
+several lines, choose the account by name. A speed-dial key can call any enabled
+destination in the PBX directory: phones, contacts, ring groups, queues,
+conferences, paging, Assist or automations. Ordinary BLF monitors phone status;
+queue-agent controls and parking use their dedicated key functions.
+
+**Update setup instructions for this phone model** loads a newer verified
+profile for the selected model. This controls the lines, keys, functions and
+configuration-delivery methods VoIP Stack can use. It does not install telephone
+firmware. The existing configuration is validated before a profile is replaced.
 
 Removing a managed key means clearing it on the phone, not just omitting it
 from the next file. Successfully prepared configurations claim only their
