@@ -12,6 +12,16 @@ import secrets
 from typing import Any, Awaitable, Callable, Protocol
 
 from .sip_capture import capture_io, send_sip_datagram
+from .sip_listener_request import (
+    SipFollowUpRequest,
+    SipRequestResult,
+    accepts_capability_sdp,
+    dialog_extension_error,
+    is_application_request,
+    matches_cancel,
+    matches_retransmission as _same_request_transaction,
+    request_sequence,
+)
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
@@ -46,7 +56,6 @@ from .core.sip_transaction import (
     async_run_dialog_request_transaction,
     async_run_server_transaction,
     matches_invite_error_ack,
-    same_request_transaction,
 )
 from .queue_utils import put_drop_oldest
 from .dtmf import build_sip_info_dtmf_body
@@ -220,33 +229,6 @@ class UasDelayedOfferPlan:
     offer_sdp: str
     accept_answer: DelayedOfferAnswer
     rollback: Callable[[], Awaitable[None]] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SipRequestResult:
-    """Response from an ingress policy or non-call SIP application."""
-
-    status: int = 200
-    reason: str = "OK"
-    headers: tuple[tuple[str, str], ...] = ()
-    to_tag: str = ""
-    follow_up: "SipFollowUpRequest | None" = None
-    follow_up_lock: asyncio.Lock | None = None
-    follow_up_dialog: SubscriptionDialog | None = None
-    follow_up_scheduler: Callable[[], None] | None = None
-    follow_up_credentials: SipDigestCredentials | None = field(default=None, repr=False)
-    follow_up_cseq_changed: Callable[[int], None] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SipFollowUpRequest:
-    """One request sent in the dialog established by an application method."""
-
-    method: str
-    headers: tuple[tuple[str, str], ...] = ()
-    body: bytes = b""
-    content_type: str = ""
-    cseq: int = 1
 
 
 @dataclass(slots=True)
@@ -425,19 +407,6 @@ def _cseq_number(value: str) -> int:
         return 1
 
 
-def _same_request_transaction(
-    request: sip.SipMessage,
-    original: sip.SipMessage,
-    addr: tuple[str, int],
-    original_addr: tuple[str, int],
-) -> bool:
-    """Match a request retransmission while allowing a NAT port rebind."""
-
-    if addr[0] != original_addr[0]:
-        return False
-    return same_request_transaction(request, original)
-
-
 def _same_dialog_request(request: sip.SipMessage, dialog: _ActiveDialog, _addr: tuple[str, int]) -> bool:
     """Match a new in-dialog request, not an INVITE retransmission."""
     try:
@@ -551,12 +520,6 @@ def _response_contact_uri(request: sip.SipMessage, *, local_ip: str, local_sip_p
         user = "voip"
     port = int(local_sip_port or 5060)
     return str(sip.SipUri(user, local_ip, port, params=(("transport", transport.lower()),)))
-
-
-def _unsupported_method_response(method: str) -> tuple[int, str]:
-    if method in sip.KNOWN_UNSUPPORTED_METHODS:
-        return 405, "Method Not Allowed"
-    return 501, "Not Implemented"
 
 
 class ApplicationRequestRouter(Protocol):
@@ -2318,45 +2281,68 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
     async def _handle_parsed_message(self, request: sip.SipMessage, addr, *, message_size: int) -> None:
         if not request.is_request:
-            sip.mark_sip_event(self, "SIP_RESPONSE", int(request.status_code or 0), request.reason)
-            try:
-                via_values = request.header_values("Via")
-                branch = sip.parse_via(via_values[0] if via_values else "").branch
-            except (TypeError, ValueError, sip.SipError):
-                branch = ""
-            mailbox = self._client_transaction_responses.get(branch)
-            if mailbox is not None and mailbox.matches(request):
-                mailbox.deliver((request, addr))
-                return
-            _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
+            self._receive_response(request, addr)
             return
 
         _LOGGER.info("SIP RX %s %s from %s:%s", request.method, request.uri, addr[0], addr[1])
         sip.mark_sip_event(self, request.method or "SIP_REQUEST")
-        if request.method not in sip.SUPPORTED_METHODS:
-            status, reason = _unsupported_method_response(request.method or "")
-            self._send_response(request, addr, status, reason)
-            return
-        if unsupported := sip.unsupported_required_options(request):
-            sent = self._send_response(
-                request,
-                addr,
-                420,
-                "Bad Extension",
-                extra_headers=(("Unsupported", ", ".join(unsupported)),),
-            )
-            return
-        try:
-            request_cseq = sip.parse_cseq(request.header("CSeq"))
-        except (TypeError, ValueError, sip.SipError):
-            self._send_response(request, addr, 400, "Bad Request")
-            return
-        if request_cseq.method != request.method:
-            self._send_response(request, addr, 400, "Bad Request")
+        request_cseq = request_sequence(request)
+        if isinstance(request_cseq, SipRequestResult):
+            self._send_response(request, addr, request_cseq.status, request_cseq.reason, extra_headers=request_cseq.headers)
             return
         if self.request_router is not None and await self.request_router.route_owned_request(
                 request, addr, self.signaling_transport, lambda raw: self._send(raw, addr)):
             return
+        if self._handle_refer_subscription_request(request, addr, request_cseq):
+            return
+        if error := dialog_extension_error(request):
+            self._send_response(request, addr, error.status, error.reason, extra_headers=error.headers)
+            return
+
+        match request.method:
+            case "OPTIONS":
+                self._handle_options(request, addr)
+            case "REGISTER":
+                await self._handle_register(request, addr)
+            case "PRACK":
+                await self._handle_prack(request, addr, request_cseq)
+            case "INFO":
+                await self._handle_info(request, addr, request_cseq)
+            case "CANCEL":
+                await self._handle_cancel(request, addr)
+            case "BYE":
+                await self._handle_bye(request, addr)
+            case "ACK":
+                await self._handle_ack(request, addr)
+            case _ if is_application_request(request):
+                await self._handle_application_request(request, addr, request_cseq, message_size)
+            case _:
+                call_id = request.header("Call-ID")
+                dialog = self.active_dialogs.get(call_id)
+                if dialog is None and request.method == "NOTIFY":
+                    dialog = self._event_dialogs.get(call_id)
+                if dialog is not None:
+                    await self._handle_dialog_request(request, addr, request_cseq, call_id, dialog)
+                elif request.method == "UPDATE":
+                    self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+                else:
+                    await self._handle_initial_invite(request, addr, call_id)
+
+    def _receive_response(self, request, addr) -> None:
+        sip.mark_sip_event(self, "SIP_RESPONSE", int(request.status_code or 0), request.reason)
+        try:
+            via_values = request.header_values("Via")
+            branch = sip.parse_via(via_values[0] if via_values else "").branch
+        except (TypeError, ValueError, sip.SipError):
+            branch = ""
+        mailbox = self._client_transaction_responses.get(branch)
+        if mailbox is not None and mailbox.matches(request):
+            mailbox.deliver((request, addr))
+            return
+        _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
+
+    def _handle_refer_subscription_request(self, request, addr, request_cseq) -> bool:
+        """Let an existing REFER subscription consume its SUBSCRIBE or NOTIFY."""
         if request.method == "SUBSCRIBE":
             identity = request.header("Call-ID")
             dialog = self.active_dialogs.get(identity) or self._event_dialogs.get(identity)
@@ -2377,7 +2363,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         dialog.remote_target_uri = notifier.dialog.remote_target_uri
                 self._send_response(request, addr, result.status, result.reason,
                                     to_tag=result.to_tag, extra_headers=result.headers)
-                return
+                return True
         if request.method == "NOTIFY" and request.header("Call-ID") in self._outside_refer:
             subscription = self._outside_refer[request.header("Call-ID")]
             key = (request.header("Call-ID"), request_cseq.number, "NOTIFY")
@@ -2390,790 +2376,727 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 self._remember_completed(self.completed_application_requests, key,
                     (_CompletedRequest(request, addr, status, reason), result))
             self._send_response(request, addr, result.status, result.reason, to_tag=result.to_tag)
+            return True
+        return False
+
+    def _handle_options(self, request, addr) -> None:
+        # RFC 3261 11.2 defaults an absent Accept to application/sdp.
+        # Capability descriptions use zero ports and never reserve media.
+        body = sdp.build_offer_directional(self.local_ip, self.local_ip, 0,
+            self.supported_send_formats, self.supported_recv_formats,
+            include_common_codecs=True, allow_directional_payloads=True,
+            independent_audio_ptime=True) if accepts_capability_sdp(request) else ""
+        body = sdp.rewrite_sdp_origin(body, secrets.randbits(63) or 1, 0).encode() if body else b""
+        self._send_response(request, addr, 200, "OK", body=body,
+            extra_headers=(("Content-Type", "application/sdp"),) if body else ())
+
+    async def _handle_register(self, request, addr) -> None:
+        if self.on_register is not None:
+            result = await self.on_register(request, addr, self.signaling_transport)
+            raw = sip.build_uas_response(
+                request,
+                int(result.status),
+                str(result.reason),
+                top_via=_response_via_header(request, addr),
+                extra_headers=tuple(getattr(result, "headers", ()) or ()),
+            )
+            if self._send(raw, addr):
+                _LOGGER.info("SIP TX %s %s to %s:%s", result.status, result.reason, addr[0], addr[1])
+                sip.mark_sip_event(self, "SIP_RESPONSE", int(result.status), str(result.reason))
+            else:
+                _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
             return
-        try:
-            sip_transfer.request_replaces(request)
-        except sip.SipError:
-            self._send_response(request, addr, 400, "Bad Request")
+        self._send_response(request, addr, 405, "Method Not Allowed")
+
+    async def _handle_application_request(self, request, addr, request_cseq, message_size) -> None:
+        if (
+            request.method == "MESSAGE"
+            and self.signaling_transport == "UDP"
+            and message_size > 1300
+        ):
+            self._send_response(request, addr, 513, "Message Too Large")
             return
-        if request.method in {"INVITE", "UPDATE"}:
-            try:
-                sip.negotiate_uas_session_timer(request)
-            except sip.SipSessionIntervalTooSmall as err:
+        if self.on_request is None:
+            self._send_response(request, addr, 405, "Method Not Allowed")
+            return
+        request_key = (
+            request.header("Call-ID"),
+            request_cseq.number,
+            request.method,
+        )
+        completed_application = self.completed_application_requests.get(
+            request_key
+        )
+        if completed_application is not None:
+            completed_request, completed_result = completed_application
+            if _same_request_transaction(
+                request,
+                completed_request.request,
+                addr,
+                completed_request.addr,
+            ):
                 self._send_response(
                     request,
                     addr,
-                    422,
-                    "Session Interval Too Small",
-                    extra_headers=(("Min-SE", str(err.minimum)),),
+                    completed_result.status,
+                    completed_result.reason,
+                    to_tag=completed_result.to_tag,
+                    extra_headers=completed_result.headers,
                 )
-                return
-            except sip.SipError:
-                self._send_response(request, addr, 400, "Bad Request")
-                return
-        if request.method == "OPTIONS":
-            wants_sdp = False
-            for item in request.header("Accept", "application/sdp").split(","):
-                media_type, parameters = sip._split_semicolon_params(item)
-                try:
-                    quality = float(dict(parameters).get("q", "1"))
-                except (TypeError, ValueError):
-                    continue
-                wants_sdp |= media_type.strip().lower() == "application/sdp" and 0 < quality <= 1
-            # RFC 3261 11.2 defaults an absent Accept to application/sdp.
-            # Capability descriptions use zero ports and never reserve media.
-            body = sdp.build_offer_directional(self.local_ip, self.local_ip, 0,
-                self.supported_send_formats, self.supported_recv_formats,
-                include_common_codecs=True, allow_directional_payloads=True,
-                independent_audio_ptime=True) if wants_sdp else ""
-            body = sdp.rewrite_sdp_origin(body, secrets.randbits(63) or 1, 0).encode() if body else b""
-            self._send_response(request, addr, 200, "OK", body=body,
-                extra_headers=(("Content-Type", "application/sdp"),) if body else ())
-            return
-        if request.method == "REGISTER":
-            if self.on_register is not None:
-                result = await self.on_register(request, addr, self.signaling_transport)
-                raw = sip.build_uas_response(
-                    request,
-                    int(result.status),
-                    str(result.reason),
-                    top_via=_response_via_header(request, addr),
-                    extra_headers=tuple(getattr(result, "headers", ()) or ()),
+            else:
+                self._send_response(
+                    request, addr, 481, "Call/Transaction Does Not Exist"
                 )
-                if self._send(raw, addr):
-                    _LOGGER.info("SIP TX %s %s to %s:%s", result.status, result.reason, addr[0], addr[1])
-                    sip.mark_sip_event(self, "SIP_RESPONSE", int(result.status), str(result.reason))
-                else:
-                    _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
-                return
-            self._send_response(request, addr, 405, "Method Not Allowed")
             return
-        if request.method in {"MESSAGE", "PUBLISH", "SUBSCRIBE"} or (request.method == "REFER" and not sip.extract_tag(request.header("To"))):
-            if (
-                request.method == "MESSAGE"
-                and self.signaling_transport == "UDP"
-                and message_size > 1300
-            ):
-                self._send_response(request, addr, 513, "Message Too Large")
-                return
-            if self.on_request is None:
-                self._send_response(request, addr, 405, "Method Not Allowed")
-                return
-            request_key = (
-                request.header("Call-ID"),
-                request_cseq.number,
-                request.method,
+        result = await self.on_request(
+            request,
+            addr,
+            self.signaling_transport,
+            self._send_application_follow_up,
+            **({"flow_trunk_id": self.flow_trunk_id} if self.flow_trunk_id and request.method == "REFER" else {}),
+        )
+        self._remember_completed(
+            self.completed_application_requests,
+            request_key,
+            (_CompletedRequest(request, addr, result.status, result.reason), result),
+        )
+        self._send_response(
+            request,
+            addr,
+            result.status,
+            result.reason,
+            to_tag=result.to_tag,
+            extra_headers=result.headers,
+        )
+        if result.follow_up_scheduler is not None and 200 <= result.status < 300:
+            result.follow_up_scheduler()
+        elif result.follow_up is not None and 200 <= result.status < 300:
+            task = asyncio.create_task(
+                self._send_application_follow_up(request, addr, result),
+                name=f"voip-sip-{result.follow_up.method.lower()}-{request.header('Call-ID')}",
             )
-            completed_application = self.completed_application_requests.get(
-                request_key
+            self._maintenance_tasks.add(task)
+            task.add_done_callback(self._maintenance_tasks.discard)
+
+    def _replay_completed_request(self, request, addr, completed: _CompletedRequest) -> None:
+        if _same_request_transaction(request, completed.request, addr, completed.addr):
+            self._send_response(request, addr, completed.status, completed.reason)
+        else:
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+
+    async def _handle_prack(self, request, addr, request_cseq) -> None:
+        call_id = request.header("Call-ID")
+        prack_key = (call_id, request_cseq.number)
+        completed = self.completed_pracks.get(prack_key)
+        if completed is not None:
+            self._replay_completed_request(request, addr, completed)
+            return
+        reliable = self._reliable_provisionals.get(call_id)
+        try:
+            rack = sip.parse_rack(request.header("RAck"))
+            invite_cseq = sip.parse_cseq(reliable.request.header("CSeq"))
+            matches = bool(
+                reliable is not None
+                and reliable.addr[0] == addr[0]
+                and sip.extract_tag(request.header("From"))
+                == sip.extract_tag(reliable.request.header("From"))
+                and sip.extract_tag(request.header("To")) == reliable.to_tag
+                and rack
+                == sip.SipRAck(reliable.rseq, invite_cseq.number, "INVITE")
             )
-            if completed_application is not None:
-                completed_request, completed_result = completed_application
-                if _same_request_transaction(
-                    request,
-                    completed_request.request,
-                    addr,
-                    completed_request.addr,
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        completed_result.status,
-                        completed_result.reason,
-                        to_tag=completed_result.to_tag,
-                        extra_headers=completed_result.headers,
-                    )
-                else:
-                    self._send_response(
-                        request, addr, 481, "Call/Transaction Does Not Exist"
-                    )
-                return
-            result = await self.on_request(
-                request,
-                addr,
-                self.signaling_transport,
-                self._send_application_follow_up,
-                **({"flow_trunk_id": self.flow_trunk_id} if self.flow_trunk_id and request.method == "REFER" else {}),
-            )
-            self._remember_completed(
-                self.completed_application_requests,
-                request_key,
-                (_CompletedRequest(request, addr, result.status, result.reason), result),
-            )
+        except (AttributeError, TypeError, ValueError, sip.SipError):
+            matches = False
+        if not matches or reliable is None:
             self._send_response(
                 request,
                 addr,
-                result.status,
-                result.reason,
-                to_tag=result.to_tag,
-                extra_headers=result.headers,
+                481,
+                "Call/Transaction Does Not Exist",
             )
-            if result.follow_up_scheduler is not None and 200 <= result.status < 300:
-                result.follow_up_scheduler()
-            elif result.follow_up is not None and 200 <= result.status < 300:
-                task = asyncio.create_task(
-                    self._send_application_follow_up(request, addr, result),
-                    name=f"voip-sip-{result.follow_up.method.lower()}-{request.header('Call-ID')}",
-                )
-                self._maintenance_tasks.add(task)
-                task.add_done_callback(self._maintenance_tasks.discard)
             return
-        if request.method == "PRACK":
-            call_id = request.header("Call-ID")
-            prack_key = (call_id, request_cseq.number)
-            completed = self.completed_pracks.get(prack_key)
-            if completed is not None:
-                if _same_request_transaction(
-                    request,
-                    completed.request,
-                    addr,
-                    completed.addr,
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        completed.status,
-                        completed.reason,
-                    )
-                else:
-                    self._send_response(
-                        request,
-                        addr,
-                        481,
-                        "Call/Transaction Does Not Exist",
-                    )
-                return
-            reliable = self._reliable_provisionals.get(call_id)
-            try:
-                rack = sip.parse_rack(request.header("RAck"))
-                invite_cseq = sip.parse_cseq(reliable.request.header("CSeq"))
-                matches = bool(
-                    reliable is not None
-                    and reliable.addr[0] == addr[0]
-                    and sip.extract_tag(request.header("From"))
-                    == sip.extract_tag(reliable.request.header("From"))
-                    and sip.extract_tag(request.header("To")) == reliable.to_tag
-                    and rack
-                    == sip.SipRAck(reliable.rseq, invite_cseq.number, "INVITE")
-                )
-            except (AttributeError, TypeError, ValueError, sip.SipError):
-                matches = False
-            if not matches or reliable is None:
-                self._send_response(
-                    request,
-                    addr,
-                    481,
-                    "Call/Transaction Does Not Exist",
-                )
-                return
-            prack_result: SipInviteResult | None = None
-            updated = None
-            if request.body:
-                if (
-                    request.header("Content-Type").split(";", 1)[0].strip().lower()
-                    != "application/sdp"
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        415,
-                        "Unsupported Media Type",
-                        extra_headers=(("Accept", "application/sdp"),),
-                    )
-                    return
-                previous = self._parse_invite(reliable.request, reliable.addr)
-                updated = self._parse_invite(request, addr)
-                if (
-                    previous is not None
-                    and updated is not None
-                    and self.on_media_update is not None
-                ):
-                    try:
-                        prack_result = await self.on_media_update(
-                            previous,
-                            updated,
-                            "PRACK",
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        _LOGGER.exception(
-                            "SIP PRACK media update failed call_id=%s",
-                            call_id,
-                        )
-                if prack_result is None or not 200 <= prack_result.status < 300:
-                    self._reliable_provisionals.pop(call_id, None)
-                    self._cancel_reliable_provisional(reliable)
-                    self._send_response(request, addr, 488, "Not Acceptable Here")
-                    self._send_final_response_now(
-                        call_id,
-                        488,
-                        "Not Acceptable Here",
-                        decline_reason="media_incompatible",
-                    )
-                    return
-            self._reliable_provisionals.pop(call_id, None)
-            self._cancel_reliable_provisional(reliable)
-            self._remember_completed(
-                self.completed_pracks,
-                prack_key,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            sent = self._send_response(
-                request,
-                addr,
-                200,
-                "OK",
-                body=(
-                    prack_result.answer_sdp.encode()
-                    if prack_result is not None and prack_result.answer_sdp
-                    else b""
-                ),
-            )
-            if not sent:
-                if prack_result is not None and prack_result.rollback is not None:
-                    await prack_result.rollback()
-                return
-            if prack_result is not None and not await apply_remote_offer_media(
-                prack_result.commit, prack_result.rollback, prack_result.finalize
-            ):
-                _LOGGER.error("SIP PRACK commit failed call_id=%s", call_id)
-                self._send_final_response_now(
-                    call_id, 500, "Server Internal Error",
-                    decline_reason="media_update_failed",
-                )
-                return
-            if prack_result is not None and updated is not None:
-                notify_media_commit(prack_result.on_committed, updated)
-            if reliable.deferred_progress is not None:
-                progress = reliable.deferred_progress
-                self.send_final_response(call_id, progress.status, progress.reason,
-                    answer_sdp=progress.answer_sdp, decline_reason=progress.decline_reason)
-            if reliable.deferred_final is not None:
-                final = reliable.deferred_final
-                self.send_final_response(
-                    call_id,
-                    final.status,
-                    final.reason,
-                    answer_sdp=final.answer_sdp,
-                    decline_reason=final.decline_reason,
-                    connected_identity_name=final.connected_identity_name,
-                    connected_identity_user=final.connected_identity_user,
-                )
-            return
-        if request.method == "INFO":
-            call_id = request.header("Call-ID")
-            info_key = (call_id, request_cseq.number)
-            completed_info = self.completed_infos.get(info_key)
-            if completed_info is not None:
-                if _same_request_transaction(request, completed_info.request, addr, completed_info.addr):
-                    self._send_response(request, addr, completed_info.status, completed_info.reason)
-                else:
-                    self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is None or not _same_dialog_request(request, dialog, addr):
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            if self.on_info is not None:
-                await self.on_info(request, addr, self.signaling_transport)
-            self._remember_completed(
-                self.completed_infos,
-                info_key,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            dialog.cseq = max(dialog.cseq, request_cseq.number + 1)
-            self._send_response(request, addr, 200, "OK")
-            return
-        if request.method == "CANCEL":
-            call_id = request.header("Call-ID")
-            pending = self.pending_invites.get(call_id)
-            completed = self.completed_invites.get(call_id)
-            invite_transaction = pending or (completed if completed is not None and completed.cancelled else None)
-            # Match the transaction and originating host, but do not pin the
-            # source port: NATs and SIP proxies may legitimately rewrite it.
-            try:
-                incoming_cseq = sip.parse_cseq(request.header("CSeq"))
-                pending_cseq = (
-                    sip.parse_cseq(invite_transaction.request.header("CSeq"))
-                    if invite_transaction is not None
-                    else None
-                )
-                incoming_vias = request.header_values("Via")
-                incoming_branch = sip.parse_via(incoming_vias[0] if incoming_vias else "").branch
-                pending_vias = invite_transaction.request.header_values("Via") if invite_transaction is not None else []
-                pending_branch = (
-                    sip.parse_via(pending_vias[0] if pending_vias else "").branch
-                    if invite_transaction is not None
-                    else ""
-                )
-                same_transaction = (
-                    pending_cseq is not None
-                    and incoming_cseq.method == "CANCEL"
-                    and pending_cseq.method == "INVITE"
-                    and incoming_cseq.number == pending_cseq.number
-                    and bool(incoming_branch)
-                    and incoming_branch == pending_branch
-                )
-            except (TypeError, ValueError, sip.SipError):
-                same_transaction = False
-            if invite_transaction is None or invite_transaction.addr[0] != addr[0] or not same_transaction:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            if pending is None:
-                self._send_response(request, addr, 200, "OK")
-                return
-            pending.cancelled = True
-            self._cancel_pending_expiry(pending)
-            pending.status = 487
-            pending.reason = "Request Terminated"
-            pending.decline_reason = "cancelled"
-            self.pending_invites.pop(call_id, None)
-            self._remember_completed(self.completed_invites, call_id, pending)
-            self._send_response(request, addr, 200, "OK")
-            final_sent = self._send_response(
-                pending.request,
-                pending.addr,
-                487,
-                "Request Terminated",
-                to_tag=pending.to_tag,
-                decline_reason="cancelled",
-            )
-            if final_sent:
-                self._arm_invite_non2xx(call_id, pending)
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "cancelled")
-            return
-        if request.method == "BYE":
-            call_id = request.header("Call-ID")
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is None:
-                completed = self.completed_byes.get(call_id)
-                if completed is not None and _same_request_transaction(
-                    request,
-                    completed.request,
-                    addr,
-                    completed.addr,
-                ):
-                    self._send_response(request, addr, completed.status, completed.reason)
-                else:
-                    self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            same_dialog = _same_dialog_request(request, dialog, addr)
-            if not same_dialog:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            delayed = self._retire_dialog(call_id)
-            if delayed is not None:
-                await self._rollback_delayed_offer(delayed)
-            self._remember_completed(
-                self.completed_byes,
-                call_id,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            self._send_response(request, addr, 200, "OK")
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "remote_hangup")
-            return
-        if request.method == "ACK":
-            call_id = request.header("Call-ID")
-            completed = self.completed_invites.get(call_id)
+        prack_result: SipInviteResult | None = None
+        updated = None
+        if request.body:
             if (
-                completed is not None
-                and completed.status >= 300
-                and matches_invite_error_ack(request, completed.request)
+                request.header("Content-Type").split(";", 1)[0].strip().lower()
+                != "application/sdp"
             ):
-                self._cancel_invite_non2xx(completed)
-                self.completed_invites.pop(call_id, None)
-                return
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is not None and dialog.invite_2xx.acknowledge(
-                request,
-                lambda ack: _same_dialog_ack(ack, dialog, addr),
-            ):
-                if not await self._accept_delayed_offer_ack(
-                    call_id, dialog, request, addr
-                ):
-                    return
-                self._arm_connected_identity(call_id, dialog)
-            return
-        call_id = request.header("Call-ID")
-        existing_dialog = self.active_dialogs.get(call_id)
-        if existing_dialog is None and request.method == "NOTIFY":
-            existing_dialog = self._event_dialogs.get(call_id)
-        if existing_dialog is not None:
-            cached_response = self._find_dialog_response(existing_dialog, request, addr)
-            if cached_response is not None:
-                body = (
-                    cached_response.answer_sdp.encode("utf-8")
-                    if cached_response.answer_sdp
-                    else b""
-                )
-                self._send_response(
-                    request,
-                    addr,
-                    cached_response.status,
-                    cached_response.reason,
-                    body=body,
-                    to_tag=existing_dialog.to_tag,
-                )
-                return
-            if (request.method == "NOTIFY" and request_cseq.number < existing_dialog.cseq
-                    and uas_request_matches_dialog(request, existing_dialog.request, local_tag=existing_dialog.to_tag)):
-                self._send_response(request, addr, 500, "Server Internal Error",
-                                    to_tag=existing_dialog.to_tag, extra_headers=(("Retry-After", "1"),))
-                return
-            if not _same_dialog_request(request, existing_dialog, addr):
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist", to_tag=existing_dialog.to_tag)
-                return
-            if request.method == "NOTIFY":
-                subscription = existing_dialog.refer_subscription
-                if subscription is not None and subscription.dialog is not None:
-                    if subscription.dialog.key.call_id == call_id:
-                        subscription.dialog.remote_cseq = max(subscription.dialog.remote_cseq, existing_dialog.cseq - 1)
-                    status, reason = subscription.receive_dialog_notify(request)
-                else:
-                    status, reason = 481, "Subscription Does Not Exist"
-                self._send_response(request, addr, status, reason, to_tag=existing_dialog.to_tag)
-                self._remember_dialog_response(existing_dialog, request, addr, status, reason)
-                if status == 200:
-                    existing_dialog.cseq = sip.parse_cseq(request.header("CSeq")).number + 1
-                return
-            if request.method == "REFER":
-                await self._handle_dialog_refer(
-                    call_id, existing_dialog, request, addr
-                )
-                return
-            if request.method not in {"INVITE", "UPDATE"}:
-                self._send_response(request, addr, 405, "Method Not Allowed", to_tag=existing_dialog.to_tag)
-                return
-            if existing_dialog.update_in_progress:
-                # This UAS already has an inbound offer pending.  RFC 3261
-                # section 14.2 uses 500 + Retry-After for this case; 491 is for
-                # a UAS that currently owns a locally generated offer.
-                self._send_response(
-                    request,
-                    addr,
-                    500,
-                    "Server Internal Error",
-                    to_tag=existing_dialog.to_tag,
-                    extra_headers=(("Retry-After", "1"),),
-                )
-                return
-            if existing_dialog.local_offer_in_progress:
-                self._send_response(
-                    request,
-                    addr,
-                    491,
-                    "Request Pending",
-                    to_tag=existing_dialog.to_tag,
-                )
-                return
-
-            try:
-                refreshed_remote_target = sip.contact_target_uri(request)
-            except sip.SipError:
-                self._send_response(
-                    request,
-                    addr,
-                    400,
-                    "Bad Request",
-                    to_tag=existing_dialog.to_tag,
-                )
-                return
-
-            if not request.body:
-                if request.method == "INVITE":
-                    previous_invite = existing_dialog.invite or self._parse_invite(
-                        existing_dialog.request, existing_dialog.addr
-                    )
-                    if previous_invite is None or not existing_dialog.answer_sdp:
-                        self._send_response(
-                            request,
-                            addr,
-                            488,
-                            "Not Acceptable Here",
-                            to_tag=existing_dialog.to_tag,
-                        )
-                        return
-                    self._send_response(
-                        request,
-                        addr,
-                        100,
-                        "Trying",
-                        to_tag=existing_dialog.to_tag,
-                    )
-                    next_sdp_version = existing_dialog.local_sdp_session_version + 1
-                    offer_sdp = sdp.rewrite_sdp_origin(
-                        existing_dialog.answer_sdp,
-                        existing_dialog.local_sdp_session_id,
-                        next_sdp_version,
-                    )
-                    sent = self._send_response(
-                        request,
-                        addr,
-                        200,
-                        "OK",
-                        body=offer_sdp.encode(),
-                        to_tag=existing_dialog.to_tag,
-                    )
-                    if not sent:
-                        return
-                    existing_dialog.update_in_progress = True
-                    existing_dialog.delayed_offer = _PendingDelayedOffer(
-                        request=request,
-                        addr=addr,
-                        offer_sdp=offer_sdp,
-                        previous_invite=previous_invite,
-                        initial_invite=None,
-                        remote_target_uri=refreshed_remote_target,
-                    )
-                    existing_dialog.last_request = request
-                    existing_dialog.last_status = 200
-                    existing_dialog.last_reason = "OK"
-                    existing_dialog.last_response_sdp = offer_sdp
-                    existing_dialog.cseq = request_cseq.number + 1
-                    existing_dialog.local_sdp_session_version = next_sdp_version
-                    self._remember_dialog_response(
-                        existing_dialog,
-                        request,
-                        addr,
-                        200,
-                        "OK",
-                        offer_sdp,
-                    )
-                    self._arm_invite_2xx(
-                        existing_dialog,
-                        request,
-                        addr,
-                        200,
-                        "OK",
-                        offer_sdp,
-                    )
-                    return
-
-                # An offerless UPDATE is a session refresh and does not start
-                # a new offer/answer exchange.
-                sent = self._send_response(
-                    request,
-                    addr,
-                    200,
-                    "OK",
-                    to_tag=existing_dialog.to_tag,
-                )
-                if sent:
-                    existing_dialog.last_request = request
-                    existing_dialog.last_status = 200
-                    existing_dialog.last_reason = "OK"
-                    existing_dialog.last_response_sdp = ""
-                    existing_dialog.cseq = request_cseq.number + 1
-                    existing_dialog.addr = addr
-                    if refreshed_remote_target:
-                        existing_dialog.remote_target_uri = refreshed_remote_target
-                    self._accept_remote_connected_identity(existing_dialog, request)
-                    existing_dialog.renegotiations += 1
-                    self._arm_session_timer(
-                        call_id,
-                        existing_dialog,
-                        sip.negotiate_uas_session_timer(request),
-                        local_role="uas",
-                    )
-                    self._remember_dialog_response(
-                        existing_dialog,
-                        request,
-                        addr,
-                        200,
-                        "OK",
-                    )
-                return
-
-            if request.header("Content-Type").split(";", 1)[0].strip().lower() != "application/sdp":
                 self._send_response(
                     request,
                     addr,
                     415,
                     "Unsupported Media Type",
-                    to_tag=existing_dialog.to_tag,
+                    extra_headers=(("Accept", "application/sdp"),),
                 )
                 return
-            previous_invite = existing_dialog.invite or self._parse_invite(
-                existing_dialog.request, existing_dialog.addr
-            )
-            updated_invite = self._parse_invite(
-                request,
-                addr,
-                peer_profile=(
-                    previous_invite.peer_profile
-                    if previous_invite is not None
-                    else ""
-                ),
-            )
-            media_unchanged = bool(
-                previous_invite is not None
-                and updated_invite is not None
-                and _same_audio_media(previous_invite, updated_invite)
-                and _same_video_media(previous_invite, updated_invite)
-            )
-            if previous_invite is None or updated_invite is None:
-                result = SipInviteResult(488, "Not Acceptable Here")
-            elif self.on_media_update is not None:
-                existing_dialog.update_in_progress = True
-                existing_dialog.last_request = request
-                existing_dialog.last_status = 100
-                existing_dialog.last_reason = "Trying"
-                existing_dialog.last_response_sdp = ""
-                if request.method == "INVITE":
-                    self._send_response(
-                        request,
-                        addr,
-                        100,
-                        "Trying",
-                        to_tag=existing_dialog.to_tag,
-                    )
+            previous = self._parse_invite(reliable.request, reliable.addr)
+            updated = self._parse_invite(request, addr)
+            if (
+                previous is not None
+                and updated is not None
+                and self.on_media_update is not None
+            ):
                 try:
-                    result = await self.on_media_update(
-                        previous_invite,
-                        updated_invite,
-                        request.method,
+                    prack_result = await self.on_media_update(
+                        previous,
+                        updated,
+                        "PRACK",
                     )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     _LOGGER.exception(
-                        "SIP in-dialog media update failed call_id=%s method=%s",
+                        "SIP PRACK media update failed call_id=%s",
                         call_id,
-                        request.method,
                     )
-                    result = SipInviteResult(500, "Server Internal Error")
-                finally:
-                    existing_dialog.update_in_progress = False
-                if self.active_dialogs.get(call_id) is not existing_dialog:
-                    if result.rollback is not None:
-                        await result.rollback()
-                    terminated = _PendingInvite(
-                        request,
-                        addr,
-                        existing_dialog.to_tag,
-                        existing_dialog.transport,
-                        status=487,
-                        reason="Request Terminated",
-                        decline_reason="remote_hangup",
-                    )
-                    self._remember_completed(self.completed_invites, call_id, terminated)
-                    final_sent = self._send_response(
-                        request,
-                        addr,
-                        487,
-                        "Request Terminated",
-                        to_tag=existing_dialog.to_tag,
-                        decline_reason="remote_hangup",
-                    )
-                    if final_sent:
-                        self._arm_invite_non2xx(call_id, terminated)
-                    return
-            elif media_unchanged:
-                result = SipInviteResult(200, "OK", answer_sdp=existing_dialog.answer_sdp)
+            if prack_result is None or not 200 <= prack_result.status < 300:
+                self._reliable_provisionals.pop(call_id, None)
+                self._cancel_reliable_provisional(reliable)
+                self._send_response(request, addr, 488, "Not Acceptable Here")
+                self._send_final_response_now(
+                    call_id,
+                    488,
+                    "Not Acceptable Here",
+                    decline_reason="media_incompatible",
+                )
+                return
+        self._reliable_provisionals.pop(call_id, None)
+        self._cancel_reliable_provisional(reliable)
+        self._remember_completed(
+            self.completed_pracks,
+            prack_key,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        sent = self._send_response(
+            request,
+            addr,
+            200,
+            "OK",
+            body=(
+                prack_result.answer_sdp.encode()
+                if prack_result is not None and prack_result.answer_sdp
+                else b""
+            ),
+        )
+        if not sent:
+            if prack_result is not None and prack_result.rollback is not None:
+                await prack_result.rollback()
+            return
+        if prack_result is not None and not await apply_remote_offer_media(
+            prack_result.commit, prack_result.rollback, prack_result.finalize
+        ):
+            _LOGGER.error("SIP PRACK commit failed call_id=%s", call_id)
+            self._send_final_response_now(
+                call_id, 500, "Server Internal Error",
+                decline_reason="media_update_failed",
+            )
+            return
+        if prack_result is not None and updated is not None:
+            notify_media_commit(prack_result.on_committed, updated)
+        if reliable.deferred_progress is not None:
+            progress = reliable.deferred_progress
+            self.send_final_response(call_id, progress.status, progress.reason,
+                answer_sdp=progress.answer_sdp, decline_reason=progress.decline_reason)
+        if reliable.deferred_final is not None:
+            final = reliable.deferred_final
+            self.send_final_response(
+                call_id,
+                final.status,
+                final.reason,
+                answer_sdp=final.answer_sdp,
+                decline_reason=final.decline_reason,
+                connected_identity_name=final.connected_identity_name,
+                connected_identity_user=final.connected_identity_user,
+            )
+
+    async def _handle_info(self, request, addr, request_cseq) -> None:
+        call_id = request.header("Call-ID")
+        info_key = (call_id, request_cseq.number)
+        completed_info = self.completed_infos.get(info_key)
+        if completed_info is not None:
+            self._replay_completed_request(request, addr, completed_info)
+            return
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None or not _same_dialog_request(request, dialog, addr):
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        if self.on_info is not None:
+            await self.on_info(request, addr, self.signaling_transport)
+        self._remember_completed(
+            self.completed_infos,
+            info_key,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        dialog.cseq = max(dialog.cseq, request_cseq.number + 1)
+        self._send_response(request, addr, 200, "OK")
+
+    async def _handle_cancel(self, request, addr) -> None:
+        call_id = request.header("Call-ID")
+        pending = self.pending_invites.get(call_id)
+        completed = self.completed_invites.get(call_id)
+        invite_transaction = pending or (completed if completed is not None and completed.cancelled else None)
+        # Match the transaction and originating host, but do not pin the
+        # source port: NATs and SIP proxies may legitimately rewrite it.
+        if (invite_transaction is None or invite_transaction.addr[0] != addr[0]
+                or not matches_cancel(request, invite_transaction.request)):
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        if pending is None:
+            self._send_response(request, addr, 200, "OK")
+            return
+        pending.cancelled = True
+        self._cancel_pending_expiry(pending)
+        pending.status = 487
+        pending.reason = "Request Terminated"
+        pending.decline_reason = "cancelled"
+        self.pending_invites.pop(call_id, None)
+        self._remember_completed(self.completed_invites, call_id, pending)
+        self._send_response(request, addr, 200, "OK")
+        final_sent = self._send_response(
+            pending.request,
+            pending.addr,
+            487,
+            "Request Terminated",
+            to_tag=pending.to_tag,
+            decline_reason="cancelled",
+        )
+        if final_sent:
+            self._arm_invite_non2xx(call_id, pending)
+        if self.on_terminated is not None:
+            await self.on_terminated(call_id, "cancelled")
+
+    async def _handle_bye(self, request, addr) -> None:
+        call_id = request.header("Call-ID")
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None:
+            completed = self.completed_byes.get(call_id)
+            if completed is None:
+                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
             else:
-                result = SipInviteResult(488, "Not Acceptable Here")
-            status = int(result.status)
-            reason = str(result.reason)
-            answer_sdp = str(result.answer_sdp or "")
-            next_sdp_version = int(existing_dialog.local_sdp_session_version)
-            if answer_sdp:
+                self._replay_completed_request(request, addr, completed)
+            return
+        same_dialog = _same_dialog_request(request, dialog, addr)
+        if not same_dialog:
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        delayed = self._retire_dialog(call_id)
+        if delayed is not None:
+            await self._rollback_delayed_offer(delayed)
+        self._remember_completed(
+            self.completed_byes,
+            call_id,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        self._send_response(request, addr, 200, "OK")
+        if self.on_terminated is not None:
+            await self.on_terminated(call_id, "remote_hangup")
+
+    async def _handle_ack(self, request, addr) -> None:
+        call_id = request.header("Call-ID")
+        completed = self.completed_invites.get(call_id)
+        if (
+            completed is not None
+            and completed.status >= 300
+            and matches_invite_error_ack(request, completed.request)
+        ):
+            self._cancel_invite_non2xx(completed)
+            self.completed_invites.pop(call_id, None)
+            return
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is not None and dialog.invite_2xx.acknowledge(
+            request,
+            lambda ack: _same_dialog_ack(ack, dialog, addr),
+        ):
+            if not await self._accept_delayed_offer_ack(
+                call_id, dialog, request, addr
+            ):
+                return
+            self._arm_connected_identity(call_id, dialog)
+
+    async def _handle_dialog_request(self, request, addr, request_cseq, call_id, dialog) -> None:
+        cached_response = self._find_dialog_response(dialog, request, addr)
+        if cached_response is not None:
+            body = (
+                cached_response.answer_sdp.encode("utf-8")
+                if cached_response.answer_sdp
+                else b""
+            )
+            self._send_response(
+                request,
+                addr,
+                cached_response.status,
+                cached_response.reason,
+                body=body,
+                to_tag=dialog.to_tag,
+            )
+            return
+        if (request.method == "NOTIFY" and request_cseq.number < dialog.cseq
+                and uas_request_matches_dialog(request, dialog.request, local_tag=dialog.to_tag)):
+            self._send_response(request, addr, 500, "Server Internal Error",
+                                to_tag=dialog.to_tag, extra_headers=(("Retry-After", "1"),))
+            return
+        if not _same_dialog_request(request, dialog, addr):
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist", to_tag=dialog.to_tag)
+            return
+        if request.method == "NOTIFY":
+            subscription = dialog.refer_subscription
+            if subscription is not None and subscription.dialog is not None:
+                if subscription.dialog.key.call_id == call_id:
+                    subscription.dialog.remote_cseq = max(subscription.dialog.remote_cseq, dialog.cseq - 1)
+                status, reason = subscription.receive_dialog_notify(request)
+            else:
+                status, reason = 481, "Subscription Does Not Exist"
+            self._send_response(request, addr, status, reason, to_tag=dialog.to_tag)
+            self._remember_dialog_response(dialog, request, addr, status, reason)
+            if status == 200:
+                dialog.cseq = sip.parse_cseq(request.header("CSeq")).number + 1
+            return
+        if request.method == "REFER":
+            await self._handle_dialog_refer(
+                call_id, dialog, request, addr
+            )
+            return
+        if request.method not in {"INVITE", "UPDATE"}:
+            self._send_response(request, addr, 405, "Method Not Allowed", to_tag=dialog.to_tag)
+            return
+        await self._handle_dialog_offer(request, addr, request_cseq, call_id, dialog)
+
+    async def _handle_dialog_offer(self, request, addr, request_cseq, call_id, dialog) -> None:
+        if dialog.update_in_progress:
+            # This UAS already has an inbound offer pending.  RFC 3261
+            # section 14.2 uses 500 + Retry-After for this case; 491 is for
+            # a UAS that currently owns a locally generated offer.
+            self._send_response(
+                request,
+                addr,
+                500,
+                "Server Internal Error",
+                to_tag=dialog.to_tag,
+                extra_headers=(("Retry-After", "1"),),
+            )
+            return
+        if dialog.local_offer_in_progress:
+            self._send_response(
+                request,
+                addr,
+                491,
+                "Request Pending",
+                to_tag=dialog.to_tag,
+            )
+            return
+
+        try:
+            refreshed_remote_target = sip.contact_target_uri(request)
+        except sip.SipError:
+            self._send_response(
+                request,
+                addr,
+                400,
+                "Bad Request",
+                to_tag=dialog.to_tag,
+            )
+            return
+
+        if not request.body:
+            if request.method == "INVITE":
+                self._offer_in_dialog(request, addr, request_cseq, dialog, refreshed_remote_target)
+            else:
+                self._refresh_dialog(request, addr, request_cseq, call_id, dialog, refreshed_remote_target)
+            return
+
+        if request.header("Content-Type").split(";", 1)[0].strip().lower() != "application/sdp":
+            self._send_response(
+                request,
+                addr,
+                415,
+                "Unsupported Media Type",
+                to_tag=dialog.to_tag,
+            )
+            return
+        previous_invite = dialog.invite or self._parse_invite(
+            dialog.request, dialog.addr
+        )
+        updated_invite = self._parse_invite(
+            request,
+            addr,
+            peer_profile=(
+                previous_invite.peer_profile
+                if previous_invite is not None
+                else ""
+            ),
+        )
+        media_unchanged = bool(
+            previous_invite is not None
+            and updated_invite is not None
+            and _same_audio_media(previous_invite, updated_invite)
+            and _same_video_media(previous_invite, updated_invite)
+        )
+        if previous_invite is None or updated_invite is None:
+            result = SipInviteResult(488, "Not Acceptable Here")
+        elif self.on_media_update is not None:
+            dialog.update_in_progress = True
+            dialog.last_request = request
+            dialog.last_status = 100
+            dialog.last_reason = "Trying"
+            dialog.last_response_sdp = ""
+            if request.method == "INVITE":
+                self._send_response(
+                    request,
+                    addr,
+                    100,
+                    "Trying",
+                    to_tag=dialog.to_tag,
+                )
+            try:
+                result = await self.on_media_update(
+                    previous_invite,
+                    updated_invite,
+                    request.method,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP in-dialog media update failed call_id=%s method=%s",
+                    call_id,
+                    request.method,
+                )
+                result = SipInviteResult(500, "Server Internal Error")
+            finally:
+                dialog.update_in_progress = False
+            if self.active_dialogs.get(call_id) is not dialog:
+                if result.rollback is not None:
+                    await result.rollback()
+                terminated = _PendingInvite(
+                    request,
+                    addr,
+                    dialog.to_tag,
+                    dialog.transport,
+                    status=487,
+                    reason="Request Terminated",
+                    decline_reason="remote_hangup",
+                )
+                self._remember_completed(self.completed_invites, call_id, terminated)
+                final_sent = self._send_response(
+                    request,
+                    addr,
+                    487,
+                    "Request Terminated",
+                    to_tag=dialog.to_tag,
+                    decline_reason="remote_hangup",
+                )
+                if final_sent:
+                    self._arm_invite_non2xx(call_id, terminated)
+                return
+        elif media_unchanged:
+            result = SipInviteResult(200, "OK", answer_sdp=dialog.answer_sdp)
+        else:
+            result = SipInviteResult(488, "Not Acceptable Here")
+        await self._answer_dialog_offer(
+            request, addr, request_cseq, call_id, dialog, refreshed_remote_target, updated_invite, result
+        )
+
+    def _offer_in_dialog(self, request, addr, request_cseq, dialog, refreshed_remote_target) -> None:
+        previous_invite = dialog.invite or self._parse_invite(
+            dialog.request, dialog.addr
+        )
+        if previous_invite is None or not dialog.answer_sdp:
+            self._send_response(
+                request,
+                addr,
+                488,
+                "Not Acceptable Here",
+                to_tag=dialog.to_tag,
+            )
+            return
+        self._send_response(
+            request,
+            addr,
+            100,
+            "Trying",
+            to_tag=dialog.to_tag,
+        )
+        next_sdp_version = dialog.local_sdp_session_version + 1
+        offer_sdp = sdp.rewrite_sdp_origin(
+            dialog.answer_sdp,
+            dialog.local_sdp_session_id,
+            next_sdp_version,
+        )
+        sent = self._send_response(
+            request,
+            addr,
+            200,
+            "OK",
+            body=offer_sdp.encode(),
+            to_tag=dialog.to_tag,
+        )
+        if not sent:
+            return
+        dialog.update_in_progress = True
+        dialog.delayed_offer = _PendingDelayedOffer(
+            request=request,
+            addr=addr,
+            offer_sdp=offer_sdp,
+            previous_invite=previous_invite,
+            initial_invite=None,
+            remote_target_uri=refreshed_remote_target,
+        )
+        dialog.last_request = request
+        dialog.last_status = 200
+        dialog.last_reason = "OK"
+        dialog.last_response_sdp = offer_sdp
+        dialog.cseq = request_cseq.number + 1
+        dialog.local_sdp_session_version = next_sdp_version
+        self._remember_dialog_response(
+            dialog,
+            request,
+            addr,
+            200,
+            "OK",
+            offer_sdp,
+        )
+        self._arm_invite_2xx(
+            dialog,
+            request,
+            addr,
+            200,
+            "OK",
+            offer_sdp,
+        )
+
+    def _refresh_dialog(self, request, addr, request_cseq, call_id, dialog, refreshed_remote_target) -> None:
+        # An offerless UPDATE is a session refresh and does not start
+        # a new offer/answer exchange.
+        sent = self._send_response(
+            request,
+            addr,
+            200,
+            "OK",
+            to_tag=dialog.to_tag,
+        )
+        if sent:
+            dialog.last_request = request
+            dialog.last_status = 200
+            dialog.last_reason = "OK"
+            dialog.last_response_sdp = ""
+            dialog.cseq = request_cseq.number + 1
+            dialog.addr = addr
+            if refreshed_remote_target:
+                dialog.remote_target_uri = refreshed_remote_target
+            self._accept_remote_connected_identity(dialog, request)
+            dialog.renegotiations += 1
+            self._arm_session_timer(
+                call_id,
+                dialog,
+                sip.negotiate_uas_session_timer(request),
+                local_role="uas",
+            )
+            self._remember_dialog_response(
+                dialog,
+                request,
+                addr,
+                200,
+                "OK",
+            )
+
+    async def _answer_dialog_offer(self, request, addr, request_cseq, call_id, dialog, refreshed_remote_target, updated_invite, result) -> None:
+        status = int(result.status)
+        reason = str(result.reason)
+        answer_sdp = str(result.answer_sdp or "")
+        next_sdp_version = int(dialog.local_sdp_session_version)
+        if answer_sdp:
+            answer_sdp = sdp.rewrite_sdp_origin(
+                answer_sdp,
+                dialog.local_sdp_session_id,
+                next_sdp_version,
+            )
+            if sdp.sdp_description_changed(
+                dialog.answer_sdp, answer_sdp
+            ):
+                next_sdp_version += 1
                 answer_sdp = sdp.rewrite_sdp_origin(
                     answer_sdp,
-                    existing_dialog.local_sdp_session_id,
+                    dialog.local_sdp_session_id,
                     next_sdp_version,
                 )
-                if sdp.sdp_description_changed(
-                    existing_dialog.answer_sdp, answer_sdp
-                ):
-                    next_sdp_version += 1
-                    answer_sdp = sdp.rewrite_sdp_origin(
-                        answer_sdp,
-                        existing_dialog.local_sdp_session_id,
-                        next_sdp_version,
-                    )
-            if 200 <= status < 300 and not answer_sdp:
-                status = 500
-                reason = "Server Internal Error"
-            body = answer_sdp.encode("utf-8") if 200 <= status < 300 else b""
-            sent = self._send_response(
+        if 200 <= status < 300 and not answer_sdp:
+            status = 500
+            reason = "Server Internal Error"
+        body = answer_sdp.encode("utf-8") if 200 <= status < 300 else b""
+        sent = self._send_response(
+            request,
+            addr,
+            status,
+            reason,
+            body=body,
+            to_tag=dialog.to_tag,
+            decline_reason=result.decline_reason,
+        )
+        if not sent and result.rollback is not None:
+            await result.rollback()
+        if sent:
+            dialog.last_request = request
+            dialog.last_status = status
+            dialog.last_reason = reason
+            dialog.last_response_sdp = answer_sdp if 200 <= status < 300 else ""
+            dialog.cseq = request_cseq.number + 1
+            self._remember_dialog_response(
+                dialog,
                 request,
                 addr,
                 status,
                 reason,
-                body=body,
-                to_tag=existing_dialog.to_tag,
-                decline_reason=result.decline_reason,
+                answer_sdp if 200 <= status < 300 else "",
             )
-            if not sent and result.rollback is not None:
-                await result.rollback()
-            if sent:
-                existing_dialog.last_request = request
-                existing_dialog.last_status = status
-                existing_dialog.last_reason = reason
-                existing_dialog.last_response_sdp = answer_sdp if 200 <= status < 300 else ""
-                existing_dialog.cseq = request_cseq.number + 1
-                self._remember_dialog_response(
-                    existing_dialog,
+            if 200 <= status < 300 and updated_invite is not None:
+                # Arm ACK handling before an async media commit can yield.
+                # A fast UAC is allowed to ACK immediately after the 2xx.
+                self._arm_invite_2xx(
+                    dialog,
                     request,
                     addr,
                     status,
                     reason,
-                    answer_sdp if 200 <= status < 300 else "",
+                    answer_sdp,
                 )
-                if 200 <= status < 300 and updated_invite is not None:
-                    # Arm ACK handling before an async media commit can yield.
-                    # A fast UAC is allowed to ACK immediately after the 2xx.
-                    self._arm_invite_2xx(
-                        existing_dialog,
-                        request,
-                        addr,
-                        status,
-                        reason,
-                        answer_sdp,
-                    )
-                    if not await apply_remote_offer_media(
-                        result.commit, result.rollback, result.finalize
-                    ):
-                        _LOGGER.error(
-                            "SIP in-dialog media commit failed call_id=%s method=%s",
-                            call_id,
-                            request.method,
-                        )
-                        await self._terminate_dialog(call_id, "media_update_failed")
-                        return
-                    existing_dialog.addr = addr
-                    if refreshed_remote_target:
-                        existing_dialog.remote_target_uri = refreshed_remote_target
-                    self._accept_remote_connected_identity(
-                        existing_dialog,
-                        request,
-                    )
-                    existing_dialog.answer_sdp = answer_sdp
-                    existing_dialog.invite = updated_invite
-                    existing_dialog.local_sdp_session_version = next_sdp_version
-                    existing_dialog.renegotiations += 1
-                    notify_media_commit(result.on_committed, updated_invite)
-                    self._arm_session_timer(
+                if not await apply_remote_offer_media(
+                    result.commit, result.rollback, result.finalize
+                ):
+                    _LOGGER.error(
+                        "SIP in-dialog media commit failed call_id=%s method=%s",
                         call_id,
-                        existing_dialog,
-                        sip.negotiate_uas_session_timer(request),
-                        local_role="uas",
-                    )
-                    _LOGGER.info(
-                        "SIP in-dialog %s accepted call_id=%s remote_rtp=%s:%s audio_direction=%s",
                         request.method,
-                        call_id,
-                        updated_invite.remote_rtp_host,
-                        updated_invite.remote_rtp_port,
-                        updated_invite.remote_audio_direction,
                     )
-            return
-        if request.method == "UPDATE":
-            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-            return
+                    await self._terminate_dialog(call_id, "media_update_failed")
+                    return
+                dialog.addr = addr
+                if refreshed_remote_target:
+                    dialog.remote_target_uri = refreshed_remote_target
+                self._accept_remote_connected_identity(
+                    dialog,
+                    request,
+                )
+                dialog.answer_sdp = answer_sdp
+                dialog.invite = updated_invite
+                dialog.local_sdp_session_version = next_sdp_version
+                dialog.renegotiations += 1
+                notify_media_commit(result.on_committed, updated_invite)
+                self._arm_session_timer(
+                    call_id,
+                    dialog,
+                    sip.negotiate_uas_session_timer(request),
+                    local_role="uas",
+                )
+                _LOGGER.info(
+                    "SIP in-dialog %s accepted call_id=%s remote_rtp=%s:%s audio_direction=%s",
+                    request.method,
+                    call_id,
+                    updated_invite.remote_rtp_host,
+                    updated_invite.remote_rtp_port,
+                    updated_invite.remote_audio_direction,
+                )
+
+    async def _handle_initial_invite(self, request, addr, call_id) -> None:
         try:
             sip.contact_target_uri(request)
         except sip.SipError:
@@ -3197,72 +3120,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 extra_headers=(("Accept", "application/sdp"),),
             )
             return
-        call_id = request.header("Call-ID")
-        existing_pending = self.pending_invites.get(call_id)
-        if existing_pending is not None:
-            if not _same_request_transaction(request, existing_pending.request, addr, existing_pending.addr):
-                self._send_response(request, addr, 488, "Not Acceptable Here", to_tag=existing_pending.to_tag)
-                return
-            reliable = self._reliable_provisionals.get(call_id)
-            body = existing_pending.answer_sdp.encode("utf-8") if existing_pending.answer_sdp else b""
-            sent = (
-                self._transmit_reliable_provisional(reliable)
-                if reliable is not None and existing_pending.status < 200
-                else self._send_response(
-                    request,
-                    addr,
-                    existing_pending.status,
-                    existing_pending.reason,
-                    body=body,
-                    to_tag=existing_pending.to_tag,
-                    decline_reason=existing_pending.decline_reason,
-                )
-            )
-            if sent and existing_pending.status >= 200:
-                self.pending_invites.pop(call_id, None)
-                if existing_pending.status < 300:
-                    dialog = self._activate_dialog(
-                        call_id,
-                        existing_pending,
-                        request,
-                        addr,
-                    )
-                    self._remember_dialog_response(
-                        dialog,
-                        request,
-                        addr,
-                        existing_pending.status,
-                        existing_pending.reason,
-                        existing_pending.answer_sdp,
-                    )
-                    self._arm_invite_2xx(
-                        dialog,
-                        request,
-                        addr,
-                        existing_pending.status,
-                        existing_pending.reason,
-                        existing_pending.answer_sdp,
-                    )
-                else:
-                    self._remember_completed(self.completed_invites, call_id, existing_pending)
-                    self._arm_invite_non2xx(call_id, existing_pending)
+        if self._replay_initial_invite(request, addr, call_id):
             return
-        completed_invite = self.completed_invites.get(call_id)
-        if completed_invite is not None:
-            if not _same_request_transaction(request, completed_invite.request, addr, completed_invite.addr):
-                self._send_response(request, addr, 488, "Not Acceptable Here", to_tag=completed_invite.to_tag)
-                return
-            body = completed_invite.answer_sdp.encode("utf-8") if completed_invite.answer_sdp else b""
-            self._send_response(
-                request,
-                addr,
-                completed_invite.status,
-                completed_invite.reason,
-                body=body,
-                to_tag=completed_invite.to_tag,
-                decline_reason=completed_invite.decline_reason,
-            )
-            return
+
         initial_invite = self._parse_initial_invite(request, addr, authorize=True)
         if isinstance(initial_invite, SipRequestResult):
             self._send_response(request, addr, initial_invite.status, initial_invite.reason,
@@ -3322,6 +3182,78 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if delayed_plan is not None and delayed_plan.rollback is not None:
                 await delayed_plan.rollback()
             return
+        await self._finish_initial_invite(request, addr, call_id, pending, result)
+
+    def _replay_initial_invite(self, request, addr, call_id) -> bool:
+        """Answer a pending or completed server transaction before admitting a new INVITE."""
+        existing_pending = self.pending_invites.get(call_id)
+        if existing_pending is not None:
+            if not _same_request_transaction(request, existing_pending.request, addr, existing_pending.addr):
+                self._send_response(request, addr, 488, "Not Acceptable Here", to_tag=existing_pending.to_tag)
+                return True
+            reliable = self._reliable_provisionals.get(call_id)
+            body = existing_pending.answer_sdp.encode("utf-8") if existing_pending.answer_sdp else b""
+            sent = (
+                self._transmit_reliable_provisional(reliable)
+                if reliable is not None and existing_pending.status < 200
+                else self._send_response(
+                    request,
+                    addr,
+                    existing_pending.status,
+                    existing_pending.reason,
+                    body=body,
+                    to_tag=existing_pending.to_tag,
+                    decline_reason=existing_pending.decline_reason,
+                )
+            )
+            if sent and existing_pending.status >= 200:
+                self.pending_invites.pop(call_id, None)
+                if existing_pending.status < 300:
+                    dialog = self._activate_dialog(
+                        call_id,
+                        existing_pending,
+                        request,
+                        addr,
+                    )
+                    self._remember_dialog_response(
+                        dialog,
+                        request,
+                        addr,
+                        existing_pending.status,
+                        existing_pending.reason,
+                        existing_pending.answer_sdp,
+                    )
+                    self._arm_invite_2xx(
+                        dialog,
+                        request,
+                        addr,
+                        existing_pending.status,
+                        existing_pending.reason,
+                        existing_pending.answer_sdp,
+                    )
+                else:
+                    self._remember_completed(self.completed_invites, call_id, existing_pending)
+                    self._arm_invite_non2xx(call_id, existing_pending)
+            return True
+        completed_invite = self.completed_invites.get(call_id)
+        if completed_invite is not None:
+            if not _same_request_transaction(request, completed_invite.request, addr, completed_invite.addr):
+                self._send_response(request, addr, 488, "Not Acceptable Here", to_tag=completed_invite.to_tag)
+                return True
+            body = completed_invite.answer_sdp.encode("utf-8") if completed_invite.answer_sdp else b""
+            self._send_response(
+                request,
+                addr,
+                completed_invite.status,
+                completed_invite.reason,
+                body=body,
+                to_tag=completed_invite.to_tag,
+                decline_reason=completed_invite.decline_reason,
+            )
+            return True
+        return False
+
+    async def _finish_initial_invite(self, request, addr, call_id, pending, result) -> None:
         media_cleanup_owned = False
         try:
             to_tag = result.to_tag or pending.to_tag
