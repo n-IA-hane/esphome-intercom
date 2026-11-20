@@ -152,26 +152,26 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
 
 
 async def test_public_register_ack_never_exposes_stale_routing_snapshot(wire_lab, monkeypatch):
-    """Hold the newest derived refresh while an earlier one is superseded."""
+    """Observe REGISTER200 while an explicitly older refresh is still pending."""
     from custom_components.voip_stack import peer_snapshot, sip_capabilities
-    from custom_components.voip_stack.directory_runtime import routing_snapshot
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory, routing_snapshot
 
     wire = wire_lab
-    second_started, release = asyncio.Event(), asyncio.Event()
+    first_started, release = asyncio.Event(), asyncio.Event()
     calls = 0
 
     async def held_snapshots(_hass):
         nonlocal calls
         calls += 1
         if calls == 1:
-            await second_started.wait()
-        elif calls == 2:
-            second_started.set()
+            first_started.set()
             await release.wait()
         return []
 
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", held_snapshots)
     monkeypatch.setattr(sip_capabilities, "schedule_capability_probe", lambda *_args: None)
+    earlier = asyncio.create_task(async_refresh_directory(wire.lab.hass))
+    await asyncio.wait_for(first_started.wait(), 2)
     registering = asyncio.create_task(register_phone(wire, outbound=False, discover=False))
 
     def assert_current_binding():
@@ -181,17 +181,19 @@ async def test_public_register_ack_never_exposes_stale_routing_snapshot(wire_lab
         assert str(sip.SipUri("outbound-phone", *wire.a.address)) in str(row.metadata.get("sip_contacts") or row.sip_uri)
 
     try:
-        await asyncio.wait_for(second_started.wait(), 2)
         done, _ = await asyncio.wait((registering,), timeout=.1)
         if registering in done:
             await registering  # An observed public200 must already be routable.
             assert_current_binding()
-        release.set()
         await asyncio.wait_for(registering, 2)
+        assert_current_binding()
+        await async_refresh_directory(wire.lab.hass)
+        release.set()
+        assert await asyncio.wait_for(earlier, 2) is None
         assert_current_binding()
     finally:
         release.set()
-        await asyncio.gather(registering, return_exceptions=True)
+        await asyncio.gather(registering, earlier, return_exceptions=True)
 
 
 @pytest.mark.parametrize("ha_binding", [False, True])

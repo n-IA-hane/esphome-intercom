@@ -235,6 +235,19 @@ def _established(call_id: str, remote_tag: str, user: str) -> SipCallClient:
     return client
 
 
+def _dialog_registry(*clients):
+    """Observe the unstarted test dialogs through the real PBX owner."""
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+
+    calls = SipEndpointRuntime(allow_dark_sessions=True)
+    for client in clients:
+        call_id = client.dialog_ids.call_id
+        session = calls.upsert(call_id, state="in_call", owner="ha_softphone")
+        assert calls.observe_leg(call_id, call_id, role="callee", state="in_call",
+                                 sip_call_id=call_id, dialog=client, generation=session.generation)
+    return calls
+
+
 async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None:
     source = _established("source", "source-remote", "source")
     consultation = _established("consult", "consult-remote", "desk")
@@ -245,10 +258,9 @@ async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None
         return SipTransferResult(True, 200, "completed")
 
     source.refer = refer  # type: ignore[method-assign]
+    calls = _dialog_registry(source, consultation)
     runtime = SimpleNamespace(
-        sip=SimpleNamespace(
-            sip_client_for={"source": source, "consult": consultation}.get,
-        ),
+        sip=calls,
         endpoints=SimpleNamespace(resolve=lambda _value: None),
     )
 
@@ -272,6 +284,7 @@ async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None
             ),
         )
     ]
+    await calls.shutdown()
 
 
 def test_blind_transfer_preserves_secure_sip_uri() -> None:
@@ -325,8 +338,9 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
     import json
     source = _established("source", "remote", "bedroom")
     source.refer = AsyncMock(return_value=SipTransferResult(True, 200, "completed"))
+    calls = _dialog_registry(source)
     runtime = SimpleNamespace(
-        sip=SimpleNamespace(sip_client_for={"source": source}.get, component=lambda _name: None),
+        sip=calls,
         endpoints=SimpleNamespace(resolve=lambda _: None),
         directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "HA", "address": "192.0.2.1", "port": 5070,
@@ -343,6 +357,7 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
     source.refer.assert_awaited_once_with(expected)
     assert "127.0.0.2" not in expected.uri
     assert runtime.directory.snapshot() == original_directory
+    await calls.shutdown()
 
 
 def test_automation_transfer_without_extension_uses_listener_fallback():
