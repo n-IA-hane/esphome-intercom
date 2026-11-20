@@ -1,8 +1,10 @@
-"""One default-phone policy and HA-owned entity lifecycle, without live calls."""
+"""Native phone selection, entity lifetime and action translations."""
 
 from datetime import timedelta
 import asyncio
+import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -17,6 +19,32 @@ from pytest_homeassistant.common import MockConfigEntry
 from .test_managed_phones_ha import custom_integration_path as custom_integration_path, phone_lab as phone_lab
 
 pytestmark = pytest.mark.ha
+
+
+async def test_native_services_expose_all_registered_actions_in_each_language(hass):
+    from homeassistant.helpers.translation import async_get_translations
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.voip_stack import _async_register_services
+    from custom_components.voip_stack.physical_phone_services import register_physical_phone_services
+    from custom_components.voip_stack.sip_capture_service import async_register_sip_capture
+    from .test_config_hardening import _leaf_values
+
+    assert await async_setup_component(hass, "http", {})
+    await _async_register_services(hass)
+    await async_register_sip_capture(hass)
+    register_physical_phone_services(hass)
+    base = Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack"
+    source = json.loads((base / "strings.json").read_text())["services"]
+    assert set(hass.services.async_services()["voip_stack"]) == set(source)
+    for language in ("en", "it", "cs", "de", "pt-BR"):
+        document = json.loads((base / "translations" / f"{language}.json").read_text())
+        expected = {
+            f"component.voip_stack.services.{path}": value
+            for path, value in _leaf_values(document["services"]).items()
+        }
+        translated = await async_get_translations(hass, language, "services", {"voip_stack"})
+        assert translated == expected
 
 
 def platform_for(lab, domain):

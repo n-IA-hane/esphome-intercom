@@ -1677,6 +1677,1164 @@
     }
   },
   "services": {
+    "set_phone_memberships": {
+      "name": "Set phone group membership",
+      "description": "Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership requires an administrator.",
+      "fields": {
+        "phone": {
+          "name": "Phone"
+        },
+        "field": {
+          "name": "Group type"
+        },
+        "value": {
+          "name": "Group names",
+          "description": "Ring groups and queues use names. Paging groups use existing group IDs, as a list or comma-separated. Empty removes memberships without deleting groups."
+        }
+      }
+    },
+    "set_phone_queues": {
+      "name": "Set phone queues",
+      "description": "Set the queue declarations of one phone. New names create automatic queue devices.",
+      "fields": {
+        "phone": {
+          "name": "Phone"
+        },
+        "queues": {
+          "name": "Queues",
+          "description": "Comma-separated queue names, or an empty value to leave all queues."
+        }
+      }
+    },
+    "set_queue_agent_state": {
+      "name": "Set queue operator state",
+      "description": "Log a configured member in or out, or pause and resume queue assignments.",
+      "fields": {
+        "queue": {
+          "name": "Queue"
+        },
+        "phone": {
+          "name": "Phone"
+        },
+        "state": {
+          "name": "Operator state"
+        },
+        "reason": {
+          "name": "Pause reason",
+          "description": "Optional operator reason, retained until the next state change."
+        }
+      }
+    },
+    "get_queue_activity": {
+      "name": "Get queue activity",
+      "description": "Read semantic queue events from Home Assistant Recorder. Administrative access is required.",
+      "fields": {
+        "queue": {
+          "name": "Queue"
+        },
+        "since": {
+          "name": "Since",
+          "description": "ISO timestamp with timezone. Defaults to 24 hours before Until."
+        },
+        "until": {
+          "name": "Until",
+          "description": "ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days."
+        },
+        "limit": {
+          "name": "Event limit"
+        },
+        "cursor": {
+          "name": "Next page cursor",
+          "description": "Use next_cursor from the previous response, keeping the same queue and window."
+        }
+      }
+    },
+    "get_queue_metrics": {
+      "name": "Get queue metrics",
+      "description": "Read admission-cohort counts, waits and operator workload from Recorder as of Until. Recorder retention applies. Administrative access is required.",
+      "fields": {
+        "queue": {
+          "name": "Queue"
+        },
+        "since": {
+          "name": "Since",
+          "description": "ISO timestamp with timezone. Defaults to 24 hours before Until."
+        },
+        "until": {
+          "name": "Until",
+          "description": "ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days."
+        }
+      }
+    },
+    "get_queue_state": {
+      "name": "Get queue state",
+      "description": "Return the queue policy, waiting callers and current member availability.",
+      "fields": {
+        "queue": {
+          "name": "Queue"
+        },
+        "phone": {
+          "name": "Phone",
+          "description": "Optional member filter."
+        }
+      }
+    },
+    "configure_queue": {
+      "name": "Configure queue",
+      "description": "Update an existing queue. The same settings are available on its VoIP Stack device.",
+      "fields": {
+        "queue": {
+          "name": "Queue"
+        },
+        "enabled": {
+          "name": "Enabled"
+        },
+        "max_waiting": {
+          "name": "Maximum waiting callers"
+        },
+        "max_wait": {
+          "name": "Maximum wait"
+        },
+        "ring_timeout": {
+          "name": "Ring time per attempt"
+        },
+        "no_agent_wait": {
+          "name": "Wait without operators"
+        },
+        "retry_delay": {
+          "name": "Retry delay"
+        },
+        "wrap_up": {
+          "name": "Pause after a conversation"
+        },
+        "fallback": {
+          "name": "Fallback destination"
+        },
+        "hold_media": {
+          "name": "Hold audio URI"
+        },
+        "strategy": {
+          "name": "Distribution strategy"
+        },
+        "agent_order": {
+          "name": "Preferred phone order",
+          "description": "Ordered stable phone identities. Remaining queue members follow; this does not change membership."
+        },
+        "auto_pause_after": {
+          "name": "Pause after unanswered rings",
+          "description": "0 disables automatic pause. Use 3 for three consecutive unanswered ringing attempts. Busy, offline and cancellations do not count."
+        },
+        "fallback_full": {
+          "name": "Fallback for full",
+          "description": "Overrides the common fallback for this condition. Empty inherits the common destination."
+        },
+        "fallback_timeout": {
+          "name": "Fallback for timeout",
+          "description": "Overrides the common fallback for this condition. Empty inherits the common destination."
+        },
+        "fallback_no_agents": {
+          "name": "Fallback for no agents",
+          "description": "Overrides the common fallback for this condition. Empty inherits the common destination."
+        },
+        "fallback_disabled": {
+          "name": "Fallback for disabled",
+          "description": "Overrides the common fallback for this condition. Empty inherits the common destination."
+        },
+        "fallback_removed": {
+          "name": "Fallback for removed",
+          "description": "Overrides the common fallback for this condition. Empty inherits the common destination."
+        }
+      }
+    },
+    "announce": {
+      "name": "Announce",
+      "description": "Deliver one TTS message or audio file to phones or paging groups. Busy phones are skipped.",
+      "fields": {
+        "targets": {
+          "name": "Phones or paging groups",
+          "description": "Endpoint IDs, device IDs, names or paging group IDs."
+        },
+        "tts_entity_id": {
+          "name": "TTS provider"
+        },
+        "message": {
+          "name": "Message"
+        },
+        "language": {
+          "name": "Language"
+        },
+        "options": {
+          "name": "TTS options"
+        },
+        "media": {
+          "name": "Audio file",
+          "description": "Use instead of a TTS provider and message."
+        },
+        "answer_timeout": {
+          "name": "Answer window"
+        },
+        "timeout": {
+          "name": "Total time limit"
+        },
+        "wait": {
+          "name": "Wait until finished"
+        }
+      }
+    },
+    "stop_announcement": {
+      "name": "Stop announcement",
+      "description": "Stop only the identified announcement and release its recipient calls.",
+      "fields": {
+        "announcement_id": {
+          "name": "Announcement ID"
+        }
+      }
+    },
+    "purge_devices": {
+      "name": "Purge stale devices (disabled)",
+      "description": "Disabled because VoIP Stack does not own ESPHome devices and must never remove them from Home Assistant's device registry.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Optional specific VoIP ESPHome device to purge immediately."
+        },
+        "min_unavailable_hours": {
+          "name": "Minimum Hours Unavailable",
+          "description": "Only purge devices that have been unavailable for at least this many hours. Default 0 = purge immediately. Use a higher value (e.g. 1) to avoid wiping devices that are only briefly offline (OTA updates, reboots)."
+        }
+      }
+    },
+    "answer": {
+      "name": "Answer call",
+      "description": "Answer the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant or ESPHome phone device."
+        },
+        "send_video": {
+          "name": "Send video",
+          "description": "Send the browser camera when video is enabled for this phone."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Select a specific call when more than one call is ringing."
+        },
+        "accept_video": {
+          "name": "Accept video",
+          "description": "Accept offered video on a browser phone. Turn off to answer with audio only, independently of the local camera preference."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "decline": {
+      "name": "Decline call",
+      "description": "Decline the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant or ESPHome phone device."
+        },
+        "line_id": {
+          "name": "Physical phone line",
+          "description": "Optional configured line slot when selecting a managed physical SIP phone."
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "status": {
+          "name": "SIP status"
+        },
+        "reason": {
+          "name": "SIP reason"
+        },
+        "decline_reason": {
+          "name": "Automation reason"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "call": {
+      "name": "Call",
+      "description": "Call a destination from a phone, or originate a backend audio call from an Automation contact. With an Automation source, this action waits for the destination to answer. Subsequent actions use this execution's call automatically. A response variable is optional for advanced explicit selection. No browser is needed.",
+      "fields": {
+        "device_id": {
+          "name": "Calling phone",
+          "description": "Optional phone that starts the call. Omit it to use the preferred or sole compatible phone."
+        },
+        "source_automation": {
+          "name": "Calling Automation contact",
+          "description": "Name or extension of an enabled Automation contact, such as Wakeup-Caller. Use instead of Calling phone for a backend audio call. Requires administrator or automation access; no response variable is needed."
+        },
+        "trunk_id": {
+          "name": "Outgoing SIP trunk",
+          "description": "Optional line for a Home Assistant phone or backend announcement. Omit to use the phone preference or default trunk. No automatic fallback to another line."
+        },
+        "answer_timeout": {
+          "name": "Wait for answer",
+          "description": "Maximum seconds to wait for the called party to answer an Automation-originated call. Ringing and early media do not count as an answer. Failure stops the action and releases the call."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name, extension, group, number or SIP address."
+        },
+        "send_video": {
+          "name": "Send video",
+          "description": "Offer the browser camera when video is enabled for this phone."
+        },
+        "ha_bridge": {
+          "name": "Force routing through HA"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "forward": {
+      "name": "Forward call",
+      "description": "Forward the current ringing or active call to another destination.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant phone that owns the call."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name, extension, group, number or SIP address."
+        },
+        "on_failure": {
+          "name": "On failure",
+          "description": "Resume the original HA ringing call, terminate it, or return busy if the new destination fails."
+        },
+        "trunk_id": {
+          "name": "Outgoing SIP trunk",
+          "description": "Optional line for an external forwarding destination. Omit to retain the call's trunk choice or phone preference."
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_generation": {
+          "name": "Call generation",
+          "description": "Supplied automatically by native VoIP triggers. Only enter it for legacy explicit-call automations."
+        },
+        "expected_state": {
+          "name": "Expected state"
+        },
+        "expected_sequence": {
+          "name": "Expected sequence"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "transfer": {
+      "name": "Transfer call",
+      "description": "Transfer an established SIP call. A native VoIP trigger selects the call automatically.",
+      "fields": {
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name, extension or SIP address for the transfer."
+        },
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional local phone selector for an explicit call."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Only needed without a native VoIP call trigger."
+        },
+        "replaces_call_id": {
+          "name": "Consultation call ID",
+          "description": "Use the established consultation call for an attended transfer."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "set_deadline": {
+      "name": "Advanced: Set call deadline",
+      "description": "Arm an explicit calling or ringing deadline. Expiry emits an automation event but never changes routing by itself.",
+      "fields": {
+        "call_id": {
+          "name": "Call ID"
+        },
+        "phase": {
+          "name": "Phase"
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Seconds before the timeout-requested event is emitted if the call has not changed state."
+        },
+        "expected_state": {
+          "name": "Expected state",
+          "description": "Optional stale-automation guard copied from the call event."
+        },
+        "expected_sequence": {
+          "name": "Expected sequence",
+          "description": "Optional stale-automation guard copied from the call event."
+        }
+      }
+    },
+    "cancel_deadline": {
+      "name": "Advanced: Cancel call deadline",
+      "description": "Cancel a previously armed deadline without changing the call.",
+      "fields": {
+        "call_id": {
+          "name": "Call ID"
+        }
+      }
+    },
+    "route": {
+      "name": "Advanced: Apply route decision",
+      "description": "Apply an automation dial-plan decision to a pending inbound SIP route.",
+      "fields": {
+        "call_id": {
+          "name": "Call ID",
+          "description": "Pending SIP Call-ID from the route_requested Event Entity occurrence."
+        },
+        "action": {
+          "name": "Action"
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Contact ID/name, number, user@host, or sip:user@host URI for forward/bridge."
+        },
+        "status": {
+          "name": "SIP Status",
+          "description": "Optional final SIP status for decline/cancel decisions."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "SIP reason phrase."
+        },
+        "decline_reason": {
+          "name": "Decline reason",
+          "description": "Application terminal reason propagated in SIP Reason and X-Voip-Stack-Decline-Reason headers."
+        }
+      }
+    },
+    "select_inbound_destination": {
+      "name": "Select inbound call destination",
+      "description": "Send a new inbound call to a phone, group, extension or Assist. Normally only Destination is needed.",
+      "fields": {
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name, group, extension, registered phone, Assist extension, SIP URI or routable number."
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_state": {
+          "name": "Expected state"
+        },
+        "expected_sequence": {
+          "name": "Expected sequence"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "hangup": {
+      "name": "Hang up",
+      "description": "End the call on the selected phone. Omit the phone to use the preferred or sole compatible phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant or ESPHome phone device."
+        },
+        "line_id": {
+          "name": "Physical phone line",
+          "description": "Optional configured line slot when selecting a managed physical SIP phone."
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_generation": {
+          "name": "Call generation",
+          "description": "Optional advanced selection paired with call_id. A single outgoing Automation call is selected automatically."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "add_contact": {
+      "name": "Add Phonebook Contact",
+      "description": "Add or replace one manual contact in the central JSON phonebook.",
+      "fields": {
+        "type": {
+          "name": "Contact type"
+        },
+        "fallback_destination": {
+          "name": "Automation fallback",
+          "description": "Optional destination when no automation handles the call before its timeout."
+        },
+        "timeout": {
+          "name": "Automation inactivity timeout"
+        },
+        "name": {
+          "name": "Name",
+          "description": "Contact name. If ID is omitted, this is also used as the contact ID."
+        },
+        "id": {
+          "name": "Optional ID",
+          "description": "Optional stable ID. Defaults to Name."
+        },
+        "address": {
+          "name": "Optional Address",
+          "description": "Optional IP or host for a direct local SIP endpoint. Use with SIP Port and Transport when the contact is directly reachable."
+        },
+        "sip_uri": {
+          "name": "Optional SIP URI",
+          "description": "Optional complete SIP URI, for example sip:kitchen@192.168.1.50:5060;transport=udp. When omitted, HA resolves the contact by name, extension, registration or trunk number."
+        },
+        "sip_profile": {
+          "name": "SIP compatibility profile",
+          "description": "Auto keeps peer detection. Select Dahua for a static Dahua door station, without inventing a registration or User-Agent."
+        },
+        "dahua_audio": {
+          "name": "Dahua audio compatibility",
+          "description": "Requires the Dahua profile for an explicit audio choice. PCM adds proprietary PCM/16000 to the offer. Symmetric also transmits with a validated received codec when negotiated for TX. Auto retains User-Agent detection."
+        },
+        "extension": {
+          "name": "Optional Extension",
+          "description": "Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve this field before external numbers."
+        },
+        "number": {
+          "name": "Optional Number",
+          "description": "Optional external/public number used for trunk calls."
+        },
+        "ha_bridge": {
+          "name": "Optional Bridge Via HA",
+          "description": "Force HA routing even when the contact has a direct SIP endpoint."
+        },
+        "transport": {
+          "name": "Optional SIP Transport",
+          "description": "Optional signaling transport for a direct SIP endpoint. RTP remains UDP."
+        },
+        "port": {
+          "name": "Optional SIP Port",
+          "description": "Optional SIP signaling port for address-based contacts. Defaults to 5060."
+        },
+        "rtp_port": {
+          "name": "Optional RTP Port",
+          "description": "Optional RTP media port for direct local SIP endpoints. Defaults to 40000 when omitted."
+        },
+        "tx_rate": {
+          "name": "Optional TX Rate",
+          "description": "Optional manual TX sample-rate metadata. Use auto when omitted."
+        },
+        "rx_rate": {
+          "name": "Optional RX Rate",
+          "description": "Optional manual RX sample-rate metadata. Use auto when omitted."
+        },
+        "tx_formats": {
+          "name": "Optional TX Formats",
+          "description": "Optional TX RTP PCM format tokens, for example 16000:s16le:1:20."
+        },
+        "rx_formats": {
+          "name": "Optional RX Formats",
+          "description": "Optional RX RTP PCM format tokens, for example 48000:s16le:1:10."
+        },
+        "max_payload_bytes": {
+          "name": "Optional Max RTP Payload Bytes",
+          "description": "Optional RTP PCM payload limit. Default is 1200 when omitted."
+        },
+        "conference_group": {
+          "name": "Optional Conference Group",
+          "description": "Adds this contact as a member of one or more VoIP conference groups. Use a comma-separated list for multiple groups."
+        },
+        "conference_ring": {
+          "name": "Ring On Conference Start",
+          "description": "Rings this contact when another participant starts its conference group. The contact can still join manually when this is off."
+        },
+        "ring_group": {
+          "name": "Optional Ring Group",
+          "description": "Adds this contact as a member of one or more VoIP ring groups. Use a comma-separated list for multiple groups."
+        }
+      }
+    },
+    "remove_contact": {
+      "name": "Remove Phonebook Contact",
+      "description": "Remove one manual contact from the central JSON phonebook by name.",
+      "fields": {
+        "name": {
+          "name": "Name"
+        }
+      }
+    },
+    "set_contacts": {
+      "name": "Set Phonebook Contacts",
+      "description": "Replace manual contacts with a JSON roster document.",
+      "fields": {
+        "roster_json": {
+          "name": "Roster JSON"
+        }
+      }
+    },
+    "clear_contacts": {
+      "name": "Clear Phonebook Contacts",
+      "description": "Clear manual contacts from the central JSON phonebook."
+    },
+    "export_phonebook": {
+      "name": "Export Phonebook",
+      "description": "Return the current central JSON phonebook privately to the administrator."
+    },
+    "push_phonebook": {
+      "name": "Push Phonebook",
+      "description": "Push the current central JSON phonebook to all online ESP endpoints. The normal path is automatic: phonebook changes trigger a push, and HA refreshes again when an ESPHome *_set_roster_json service registers after reboot. Use this for diagnostics or manual recovery."
+    },
+    "set_external_call_access": {
+      "name": "Set external call access",
+      "description": "Allow or block new calls through the external trunk for a phone. Applies to calls routed by Home Assistant, including forwarding and transfers. All phones are allowed by default. The setting survives restarts and renaming. Existing calls and incoming or internal calls remain available. Requires an administrator or an automation.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Browser phone, registered SIP account or discovered ESPHome phone to configure."
+        },
+        "allowed": {
+          "name": "Allow external calls",
+          "description": "Turn off to block new external trunk calls from this phone. Turn on to restore access."
+        }
+      }
+    },
+    "set_dnd": {
+      "name": "Set do not disturb",
+      "description": "Enable or disable do not disturb on a Home Assistant phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone."
+        },
+        "dnd": {
+          "name": "Do not disturb"
+        }
+      }
+    },
+    "set_auto_answer": {
+      "name": "Set auto answer",
+      "description": "Enable or disable automatic answering on a Home Assistant phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone."
+        },
+        "auto_answer": {
+          "name": "Auto answer"
+        }
+      }
+    },
+    "set_send_video": {
+      "name": "Set send video",
+      "description": "Enable or disable camera transmission by default on a Home Assistant phone.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone."
+        },
+        "send_video": {
+          "name": "Send video"
+        }
+      }
+    },
+    "set_phone_settings": {
+      "name": "Configure phone routing",
+      "description": "Set persistent defaults for future calls to a browser, SIP or ESPHome phone. Omitted fields stay unchanged; an empty destination disables that rule. Explicit call-routing automation commands take precedence.",
+      "fields": {
+        "device_id": {
+          "name": "Phone"
+        },
+        "forward_to": {
+          "name": "Always forward to",
+          "description": "Phonebook name, extension or SIP address. Leave empty to disable forwarding."
+        },
+        "outbound_trunk": {
+          "name": "Preferred outgoing SIP trunk",
+          "description": "Select the line used for this phone's external calls. An explicit choice in the call action takes precedence. An empty value clears the preference."
+        },
+        "busy_to": {
+          "name": "When busy or Do not disturb",
+          "description": "Destination to try when this phone is busy or has Do not disturb enabled."
+        },
+        "unavailable_to": {
+          "name": "When unavailable",
+          "description": "Destination to try when this phone is offline. No rule is added unless configured."
+        },
+        "ringing_timeout": {
+          "name": "Ringing timeout",
+          "description": "Seconds before the no-answer action. Zero disables the limit. Omit to keep the current setting."
+        },
+        "no_answer_action": {
+          "name": "When nobody answers",
+          "description": "Required when enabling a new ringing timeout. Choose hangup, forwarding or an enabled voicemail mailbox."
+        },
+        "no_answer_to": {
+          "name": "No-answer destination",
+          "description": "Required phonebook destination or SIP URI for forwarding. For voicemail, choose a phone name or extension, or leave empty for this phone's mailbox."
+        }
+      }
+    },
+    "set_ha_softphone_settings": {
+      "name": "Configure Home Assistant phone",
+      "description": "Set the Home Assistant softphone extension, ring group, conference group ring-on-conference behavior, auto answer and default camera transmission. A manually entered group name is a valid declaration: the HA softphone endpoint publishes it to the central phonebook, which creates or updates the dynamic group like it does for ESP endpoints.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone."
+        },
+        "extension": {
+          "name": "Extension",
+          "description": "Optional extension number published by the Home Assistant softphone endpoint."
+        },
+        "ring_group": {
+          "name": "Ring Group",
+          "description": "Optional PBX-style ring group membership for the Home Assistant softphone. Use a comma-separated list for multiple groups."
+        },
+        "conference_group": {
+          "name": "Conference Group",
+          "description": "Optional conference room membership for the Home Assistant softphone. Use a comma-separated list for multiple groups."
+        },
+        "conference_ring": {
+          "name": "Ring On Conference",
+          "description": "Ring the Home Assistant softphone when another participant starts or joins the selected conference group."
+        },
+        "auto_answer": {
+          "name": "Auto answer",
+          "description": "Automatically answer incoming calls on this logical phone when an attached browser has microphone permission."
+        },
+        "send_video": {
+          "name": "Send video",
+          "description": "Send an attached browser camera by default when video is negotiated and browser permission is available."
+        }
+      }
+    },
+    "create_account": {
+      "name": "Create SIP Account",
+      "description": "Create or replace a local SIP account for a standard SIP endpoint registering to Home Assistant.",
+      "fields": {
+        "username": {
+          "name": "Username",
+          "description": "SIP username and central phonebook ID, for example MobileOffice."
+        },
+        "display_name": {
+          "name": "Optional Display Name",
+          "description": "Optional friendly name shown in the central phonebook."
+        },
+        "password": {
+          "name": "Optional Password",
+          "description": "Optional password, preserved exactly as entered and never echoed. If omitted, Home Assistant generates one and returns it only in this administrator service response."
+        },
+        "enabled": {
+          "name": "Optional Enabled"
+        },
+        "replace": {
+          "name": "Optional Replace Existing"
+        },
+        "extension": {
+          "name": "Optional Extension",
+          "description": "Optional internal extension published in the central phonebook. When set, this SIP endpoint can be called by name or by extension."
+        },
+        "conference_group": {
+          "name": "Optional Conference Group",
+          "description": "Adds this registered SIP endpoint account to one or more conference groups. Use a comma-separated list for multiple groups."
+        },
+        "conference_ring": {
+          "name": "Ring On Conference Start",
+          "description": "Rings this registered SIP endpoint when another participant starts its conference group. The endpoint can still join manually when this is off."
+        },
+        "ring_group": {
+          "name": "Optional Ring Group",
+          "description": "Adds this registered SIP endpoint account to one or more ring groups. Use a comma-separated list for multiple groups."
+        }
+      }
+    },
+    "remove_account": {
+      "name": "Remove SIP Endpoint Account",
+      "description": "Remove one local SIP account and its active registration.",
+      "fields": {
+        "username": {
+          "name": "Username"
+        }
+      }
+    },
+    "rotate_account_password": {
+      "name": "Rotate SIP Endpoint Password",
+      "description": "Generate a new password for a local SIP account, clear its active registration and return the replacement only in this administrator service response.",
+      "fields": {
+        "username": {
+          "name": "Username"
+        }
+      }
+    },
+    "enable_account": {
+      "name": "Enable SIP Endpoint Account",
+      "description": "Enable a local SIP account.",
+      "fields": {
+        "username": {
+          "name": "Username"
+        }
+      }
+    },
+    "disable_account": {
+      "name": "Disable SIP Endpoint Account",
+      "description": "Disable a local SIP account and clear its active registration.",
+      "fields": {
+        "username": {
+          "name": "Username"
+        }
+      }
+    },
+    "list_accounts": {
+      "name": "List SIP Endpoint Accounts",
+      "description": "Return configured local SIP endpoint accounts without passwords to the administrator who called this service."
+    },
+    "capture_sip": {
+      "name": "Capture SIP signaling",
+      "description": "Administrator diagnostic action. Start before a test call, then stop to obtain a temporary download URL for a Wireshark-readable PCAP. Captures this integration's SIP messages, not RTP audio or network-level packets. Authentication values are removed; phone numbers and addresses remain. Automatically stops after the selected duration or 4 MiB and deletes the capture 15 minutes after stopping. Starting again replaces the old capture.",
+      "fields": {
+        "operation": {
+          "name": "Operation"
+        },
+        "duration": {
+          "name": "Maximum duration",
+          "description": "Used when starting a capture."
+        }
+      }
+    },
+    "play_media": {
+      "name": "Play audio to the caller",
+      "description": "Play an audio file on an Automation call and wait for transmission to finish. Uses the call from its VoIP trigger or the outgoing call created in this execution. Does not hang up automatically.",
+      "fields": {
+        "media": {
+          "name": "Audio file"
+        },
+        "timeout": {
+          "name": "Maximum playback duration",
+          "description": "Includes media resolution, download, decoding and transmission. Timeout stops playback. Defaults to 120 seconds."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Optional advanced selection. Native triggers and a single outgoing Automation call select their own call automatically."
+        },
+        "expected_generation": {
+          "name": "Call generation",
+          "description": "Only needed with an explicit call_id; use the generation returned by Call."
+        },
+        "device_id": {
+          "name": "Phone for manual execution",
+          "description": "Select the phone with an Automation call when testing manually."
+        }
+      }
+    },
+    "tts_say": {
+      "name": "Speak to the caller",
+      "description": "Pronounce a message on the automation call. The call is selected by its VoIP trigger; the next action waits for the announcement.",
+      "fields": {
+        "tts_entity_id": {
+          "name": "Text-to-speech provider"
+        },
+        "message": {
+          "name": "Message"
+        },
+        "language": {
+          "name": "Language",
+          "description": "Omit to use the provider's default language."
+        },
+        "options": {
+          "name": "Provider options"
+        },
+        "timeout": {
+          "name": "Maximum announcement duration",
+          "description": "Maximum time for browser readiness, speech generation and transmission. Defaults to 120 seconds; this is not a ringing timeout."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Optional advanced selection when handling multiple calls. Native triggers and a single outgoing Automation call select their call automatically."
+        },
+        "expected_generation": {
+          "name": "Call generation",
+          "description": "Only needed with an explicit Call ID. Native triggers and a single outgoing Automation call supply it automatically."
+        },
+        "device_id": {
+          "name": "Phone for manual execution",
+          "description": "Select the phone with the automation call when testing this action without a VoIP trigger."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "wait_unanswered": {
+      "name": "Wait without answering",
+      "description": "Keep an unanswered Automation contact call ringing without answering or starting audio. The next action runs after the wait. If this is the last action, the call ends unanswered. Caller cancellation stops the wait.",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "Seconds to wait without answering, from 1 to 3600. Defaults to 60. For provider no-answer forwarding, allow more time than the provider's forwarding timer."
+        },
+        "device_id": {
+          "name": "Phone for manual execution",
+          "description": "Only needed outside a native VoIP trigger. The phone must have an unanswered call handled by an Automation contact."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "For legacy actions outside a native VoIP trigger."
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "wait_for_dtmf": {
+      "name": "Wait for keypad input",
+      "description": "Wait for digits from the caller on this automation call. The next condition can check the received digits or the timeout result.",
+      "fields": {
+        "timeout": {
+          "name": "Wait for digits",
+          "description": "Seconds to wait after the call is answered. Defaults to 10 seconds."
+        },
+        "max_digits": {
+          "name": "Number of digits",
+          "description": "Finish after this many digits. Defaults to one."
+        },
+        "terminator": {
+          "name": "End input key",
+          "description": "Defaults to #. An empty value disables the end key."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "For legacy actions outside a native call trigger."
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        },
+        "device_id": {
+          "name": "Phone for manual execution",
+          "description": "Select the phone with the automation call when testing this action without a VoIP trigger."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "set_voicemail_settings": {
+      "name": "Configure voicemail",
+      "description": "Enable a phone's mailbox independently of its forwarding rules. Omitted fields retain their settings. Disabling the mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
+      "fields": {
+        "device_id": {
+          "name": "Phone mailbox"
+        },
+        "enabled": {
+          "name": "Enable mailbox"
+        },
+        "max_seconds": {
+          "name": "Maximum message duration",
+          "description": "Seconds allowed after the recording tone. New mailboxes use 180 seconds."
+        },
+        "greeting_media": {
+          "name": "Mailbox greeting",
+          "description": "Optional audio from Home Assistant's media browser, played before the recording tone."
+        },
+        "clear_greeting": {
+          "name": "Clear the greeting",
+          "description": "Use the recording tone alone. Do not combine with a new greeting."
+        },
+        "pin": {
+          "name": "Mailbox PIN",
+          "description": "Optional 4 to 10 digits for access from another SIP account. An empty PIN disables that access."
+        }
+      }
+    },
+    "get_voicemail": {
+      "name": "Get voicemail message",
+      "description": "Return the existing message file and HA media-source ID. Uses the message from a Voicemail received trigger, or an explicitly selected mailbox and message ID. Does not copy, move or mark the message as read.",
+      "fields": {
+        "mailbox": {
+          "name": "Mailbox",
+          "description": "Optional when triggered by Voicemail received. Otherwise also provide the message ID."
+        },
+        "message_id": {
+          "name": "Message ID",
+          "description": "Optional when triggered by Voicemail received."
+        }
+      }
+    },
+    "transcribe_voicemail": {
+      "name": "Transcribe voicemail",
+      "description": "Transcribe the saved message from a Voicemail received trigger, or select a mailbox and message ID explicitly. Choose an existing HA speech-to-text entity. Returns text without changing the recording or marking it as read.",
+      "fields": {
+        "mailbox": {
+          "name": "Mailbox",
+          "description": "Optional when triggered by Voicemail received. Otherwise also provide the message ID."
+        },
+        "message_id": {
+          "name": "Message ID",
+          "description": "Optional when triggered by Voicemail received. Select a saved message, not a call ID."
+        },
+        "stt_entity_id": {
+          "name": "Speech-to-text entity"
+        },
+        "language": {
+          "name": "Language",
+          "description": "A language code supported by the selected speech-to-text provider, for example en or it."
+        },
+        "timeout": {
+          "name": "Transcription timeout"
+        }
+      }
+    },
+    "send_to_voicemail": {
+      "name": "Send call to voicemail",
+      "description": "Hand the automation's current call to an enabled phone mailbox. Recording owns the call from this point and ends it after the message. Place this after any greeting or TTS action; do not append hangup.",
+      "fields": {
+        "mailbox": {
+          "name": "Destination mailbox"
+        },
+        "skip_greeting": {
+          "name": "Skip the mailbox greeting",
+          "description": "Start with the recording tone, for example after a tts_say action."
+        },
+        "device_id": {
+          "name": "Phone owning the call"
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Explicit call selection"
+        }
+      }
+    },
+    "park": {
+      "name": "Park call",
+      "description": "Leave an established audio call in a parking slot. Another phone retrieves it by calling the slot number.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "The phone leaving the conversation. A native call trigger can select it automatically."
+        },
+        "slot": {
+          "name": "Parking slot",
+          "description": "Leave empty to use the first available configured slot."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Optional explicit call belonging to the selected phone."
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Start call recording",
+      "description": "Record both sides of an established conversation using the audio already passing through Home Assistant. Recording stops on hangup, media handoff or the configured duration limit.",
+      "fields": {
+        "device_id": {
+          "name": "Phone"
+        },
+        "max_seconds": {
+          "name": "Maximum duration"
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Stop call recording",
+      "description": "Finish this phone's recording and return its existing audio file, while the conversation continues.",
+      "fields": {
+        "device_id": {
+          "name": "Phone"
+        },
+        "call_id": {
+          "name": "Call ID"
+        },
+        "expected_generation": {
+          "name": "Call generation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
+    },
+    "get_recording": {
+      "name": "Get call recording",
+      "description": "Return the original recording's file path and Home Assistant media-source identifier without making another copy.",
+      "fields": {
+        "device_id": {
+          "name": "Phone"
+        },
+        "recording_id": {
+          "name": "Recording ID",
+          "description": "Identifier returned by Start call recording or the recording_finished event."
+        }
+      }
+    },
+    "delete_recording": {
+      "name": "Delete call recording",
+      "description": "Delete the selected conversation recording and its metadata.",
+      "fields": {
+        "device_id": {
+          "name": "Phone"
+        },
+        "recording_id": {
+          "name": "Recording ID",
+          "description": "Identifier returned by Start call recording or the recording_finished event."
+        }
+      }
+    },
     "get_phone_state": {
       "name": "Get phone state",
       "description": "Read state, calls and mailbox counters for the selected phone.",
@@ -1710,6 +2868,11 @@
         },
         "leg_id": {
           "name": "Call leg"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
         }
       }
     },
@@ -1745,6 +2908,10 @@
       "name": "Refresh catalog of supported phone models",
       "description": "Download the latest model catalog. To use updated setup instructions on an existing phone, open its settings and update the instructions for its model."
     },
+    "reload_card_associations": {
+      "name": "Reload card associations",
+      "description": "Reread saved storage and YAML dashboard configurations to update account associations. Does not reload the PBX or start polling. Administrators only."
+    },
     "rotate_phone_provisioning_token": {
       "name": "Rotate phone provisioning credential",
       "description": "Invalidate the old private download URL. Configure the new URL before the next phone download.",
@@ -1756,10 +2923,6 @@
           "name": "Physical phone ID"
         }
       }
-    },
-    "reload_card_associations": {
-      "name": "Reload card associations",
-      "description": "Reread saved storage and YAML dashboard configurations to update account associations. Does not reload the PBX or start polling. Administrators only."
     }
   }
 }

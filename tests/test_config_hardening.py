@@ -79,6 +79,35 @@ def test_translation_placeholders_match_source_strings(language: str) -> None:
     } == {path: _format_fields(value) for path, value in source.items()}
 
 
+@pytest.mark.parametrize("path", [STRINGS, *sorted(TRANSLATIONS.glob("*.json"))])
+def test_registered_service_ui_text_has_native_translations(path: Path) -> None:
+    """Cover each action and its flattened fields, including collapsed sections."""
+    descriptions = yaml.safe_load(SERVICES_YAML.read_text())
+    translated = json.loads(path.read_text())["services"]
+
+    assert set(translated) == set(descriptions)
+    for name, description in descriptions.items():
+        service = translated[name]
+        assert service["name"].strip(), name
+        assert service["description"].strip(), name
+        fields = {}
+        sections = set()
+        for key, value in (description.get("fields") or {}).items():
+            if "fields" in value:
+                sections.add(key)
+                assert service["sections"][key]["name"].strip(), f"{name}.{key}"
+                fields.update(value["fields"])
+            else:
+                fields[key] = value
+        assert set(service.get("fields", {})) == set(fields), name
+        assert set(service.get("sections", {})) == sections, name
+        for key, value in fields.items():
+            field = service["fields"][key]
+            assert field["name"].strip(), f"{name}.{key}"
+            if value.get("description"):
+                assert field["description"].strip(), f"{name}.{key}"
+
+
 def _load_disabled_trunk_data():
     """Load the pure config helper without importing Home Assistant."""
 

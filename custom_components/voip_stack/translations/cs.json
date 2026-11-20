@@ -1677,6 +1677,1164 @@
     }
   },
   "services": {
+    "set_phone_memberships": {
+      "name": "Nastavit členství telefonu ve skupinách",
+      "description": "Změní vyzváněcí skupiny, fronty nebo členství telefonu ve stávajících skupinách hlášení. Členství ve skupinách hlášení vyžaduje správce.",
+      "fields": {
+        "phone": {
+          "name": "Telefon"
+        },
+        "field": {
+          "name": "Typ skupiny"
+        },
+        "value": {
+          "name": "Názvy skupin",
+          "description": "Vyzváněcí skupiny a fronty používají názvy. Skupiny hlášení používají stávající ID jako seznam nebo hodnoty oddělené čárkami. Prázdná hodnota odebere členství bez smazání skupin."
+        }
+      }
+    },
+    "set_phone_queues": {
+      "name": "Nastavit fronty telefonu",
+      "description": "Nastaví fronty deklarované telefonem. Nové názvy automaticky vytvoří zařízení front.",
+      "fields": {
+        "phone": {
+          "name": "Telefon"
+        },
+        "queues": {
+          "name": "Fronty",
+          "description": "Názvy front oddělené čárkami nebo prázdná hodnota pro opuštění všech front."
+        }
+      }
+    },
+    "set_queue_agent_state": {
+      "name": "Nastavit stav operátora fronty",
+      "description": "Přihlásí nebo odhlásí nastaveného člena nebo pozastaví a obnoví přidělování hovorů z fronty.",
+      "fields": {
+        "queue": {
+          "name": "Fronta"
+        },
+        "phone": {
+          "name": "Telefon"
+        },
+        "state": {
+          "name": "Stav operátora"
+        },
+        "reason": {
+          "name": "Důvod pozastavení",
+          "description": "Volitelný důvod operátora, uchovaný do další změny stavu."
+        }
+      }
+    },
+    "get_queue_activity": {
+      "name": "Načíst aktivitu fronty",
+      "description": "Načte události fronty z Recorderu Home Assistantu. Vyžaduje oprávnění správce.",
+      "fields": {
+        "queue": {
+          "name": "Fronta"
+        },
+        "since": {
+          "name": "Od",
+          "description": "Datum a čas ISO s časovým pásmem. Výchozí hodnota je 24 hodin před Do."
+        },
+        "until": {
+          "name": "Do",
+          "description": "Datum a čas ISO s časovým pásmem. Výchozí hodnota je aktuální čas. Nejdelší období je 31 dní."
+        },
+        "limit": {
+          "name": "Limit událostí"
+        },
+        "cursor": {
+          "name": "Kurzor další stránky",
+          "description": "Použijte next_cursor z předchozí odpovědi a zachovejte stejnou frontu a období."
+        }
+      }
+    },
+    "get_queue_metrics": {
+      "name": "Načíst statistiky fronty",
+      "description": "Načte z Recorderu počty podle skupin přijetí, čekání a zatížení operátorů k času Do. Platí doba uchovávání Recorderu. Vyžaduje oprávnění správce.",
+      "fields": {
+        "queue": {
+          "name": "Fronta"
+        },
+        "since": {
+          "name": "Od",
+          "description": "Datum a čas ISO s časovým pásmem. Výchozí hodnota je 24 hodin před Do."
+        },
+        "until": {
+          "name": "Do",
+          "description": "Datum a čas ISO s časovým pásmem. Výchozí hodnota je aktuální čas. Nejdelší období je 31 dní."
+        }
+      }
+    },
+    "get_queue_state": {
+      "name": "Načíst stav fronty",
+      "description": "Vrátí pravidla fronty, čekající volající a aktuální dostupnost členů.",
+      "fields": {
+        "queue": {
+          "name": "Fronta"
+        },
+        "phone": {
+          "name": "Telefon",
+          "description": "Volitelný filtr podle člena."
+        }
+      }
+    },
+    "configure_queue": {
+      "name": "Nastavit frontu",
+      "description": "Aktualizuje stávající frontu. Stejná nastavení jsou dostupná na odpovídajícím zařízení VoIP Stack.",
+      "fields": {
+        "queue": {
+          "name": "Fronta"
+        },
+        "enabled": {
+          "name": "Povoleno"
+        },
+        "max_waiting": {
+          "name": "Nejvyšší počet čekajících volajících"
+        },
+        "max_wait": {
+          "name": "Nejdelší čekání"
+        },
+        "ring_timeout": {
+          "name": "Doba vyzvánění na pokus"
+        },
+        "no_agent_wait": {
+          "name": "Čekání bez operátorů"
+        },
+        "retry_delay": {
+          "name": "Prodleva mezi pokusy"
+        },
+        "wrap_up": {
+          "name": "Pauza po rozhovoru"
+        },
+        "fallback": {
+          "name": "Náhradní cíl"
+        },
+        "hold_media": {
+          "name": "URI zvuku při čekání"
+        },
+        "strategy": {
+          "name": "Způsob rozdělování hovorů"
+        },
+        "agent_order": {
+          "name": "Upřednostněné pořadí telefonů",
+          "description": "Seřazené stabilní identifikátory telefonů. Ostatní členové fronty následují za nimi; členství se nemění."
+        },
+        "auto_pause_after": {
+          "name": "Pozastavit po nezodpovězených vyzváněních",
+          "description": "0 vypíná automatické pozastavení. Hodnota 3 znamená tři po sobě jdoucí pokusy o vyzvánění bez odpovědi. Obsazeno, offline a zrušení se nezapočítávají."
+        },
+        "fallback_full": {
+          "name": "Náhradní cíl při naplnění",
+          "description": "Pro tuto podmínku přepíše společný náhradní cíl. Prázdná hodnota převezme společný cíl."
+        },
+        "fallback_timeout": {
+          "name": "Náhradní cíl při vypršení času",
+          "description": "Pro tuto podmínku přepíše společný náhradní cíl. Prázdná hodnota převezme společný cíl."
+        },
+        "fallback_no_agents": {
+          "name": "Náhradní cíl bez operátorů",
+          "description": "Pro tuto podmínku přepíše společný náhradní cíl. Prázdná hodnota převezme společný cíl."
+        },
+        "fallback_disabled": {
+          "name": "Náhradní cíl při zakázání",
+          "description": "Pro tuto podmínku přepíše společný náhradní cíl. Prázdná hodnota převezme společný cíl."
+        },
+        "fallback_removed": {
+          "name": "Náhradní cíl při odebrání",
+          "description": "Pro tuto podmínku přepíše společný náhradní cíl. Prázdná hodnota převezme společný cíl."
+        }
+      }
+    },
+    "announce": {
+      "name": "Odeslat hlášení",
+      "description": "Doručí jednu hlasovou zprávu ze syntézy řeči nebo zvukový soubor telefonům či skupinám hlášení. Obsazené telefony přeskočí.",
+      "fields": {
+        "targets": {
+          "name": "Telefony nebo skupiny hlášení",
+          "description": "ID koncových bodů, ID zařízení, názvy nebo ID skupin hlášení."
+        },
+        "tts_entity_id": {
+          "name": "Poskytovatel syntézy řeči"
+        },
+        "message": {
+          "name": "Zpráva"
+        },
+        "language": {
+          "name": "Jazyk"
+        },
+        "options": {
+          "name": "Možnosti syntézy řeči"
+        },
+        "media": {
+          "name": "Zvukový soubor",
+          "description": "Použijte místo poskytovatele syntézy řeči a zprávy."
+        },
+        "answer_timeout": {
+          "name": "Doba na přijetí"
+        },
+        "timeout": {
+          "name": "Celkový časový limit"
+        },
+        "wait": {
+          "name": "Počkat na dokončení"
+        }
+      }
+    },
+    "stop_announcement": {
+      "name": "Zastavit hlášení",
+      "description": "Zastaví pouze určené hlášení a uvolní hovory jeho příjemcům.",
+      "fields": {
+        "announcement_id": {
+          "name": "ID hlášení"
+        }
+      }
+    },
+    "purge_devices": {
+      "name": "Odstranit zastaralá zařízení (zakázáno)",
+      "description": "Zakázáno, protože VoIP Stack nevlastní zařízení ESPHome a nikdy je nesmí odstranit z registru zařízení Home Assistantu.",
+      "fields": {
+        "device_id": {
+          "name": "Zařízení",
+          "description": "Volitelné konkrétní zařízení VoIP ESPHome k okamžitému odstranění."
+        },
+        "min_unavailable_hours": {
+          "name": "Nejkratší nedostupnost v hodinách",
+          "description": "Odstraní pouze zařízení nedostupná alespoň tento počet hodin. Výchozí 0 znamená okamžité odstranění. Vyšší hodnota, například 1, zabrání odstranění zařízení krátce offline při aktualizacích OTA nebo restartech."
+        }
+      }
+    },
+    "answer": {
+      "name": "Přijmout hovor",
+      "description": "Přijme vyzvánějící hovor na vybraném telefonu. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelné zařízení telefonu Home Assistant nebo ESPHome."
+        },
+        "send_video": {
+          "name": "Odesílat video",
+          "description": "Odesílá kameru prohlížeče, když je pro tento telefon povoleno video."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Vyberte konkrétní hovor, pokud vyzvání více hovorů."
+        },
+        "accept_video": {
+          "name": "Přijmout video",
+          "description": "Přijímá nabídnuté video na telefonu v prohlížeči. Vypnutím přijmete pouze zvuk nezávisle na nastavení místní kamery."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "decline": {
+      "name": "Odmítnout hovor",
+      "description": "Odmítne vyzvánějící hovor na vybraném telefonu. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelné zařízení telefonu Home Assistant nebo ESPHome."
+        },
+        "line_id": {
+          "name": "Linka fyzického telefonu",
+          "description": "Volitelná nastavená pozice linky při výběru spravovaného fyzického telefonu SIP."
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "status": {
+          "name": "Stav SIP"
+        },
+        "reason": {
+          "name": "Důvod SIP"
+        },
+        "decline_reason": {
+          "name": "Důvod automatizace"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "call": {
+      "name": "Hovor",
+      "description": "Zavolá na cíl z telefonu nebo zahájí zvukový hovor z backendu pomocí kontaktu Automatizace. Se zdrojem Automatizace čeká tato akce na přijetí cílem. Následující akce automaticky použijí hovor tohoto běhu. Proměnná odpovědi je volitelná pro pokročilý výslovný výběr. Prohlížeč není potřeba.",
+      "fields": {
+        "device_id": {
+          "name": "Volající telefon",
+          "description": "Volitelný telefon zahajující hovor. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon."
+        },
+        "source_automation": {
+          "name": "Volající kontakt Automatizace",
+          "description": "Název nebo klapka povoleného kontaktu Automatizace, například Wakeup-Caller. Použijte místo volajícího telefonu pro zvukový hovor z backendu. Vyžaduje oprávnění správce nebo automatizace; proměnná odpovědi není potřeba."
+        },
+        "trunk_id": {
+          "name": "Odchozí SIP trunk",
+          "description": "Volitelná linka pro telefon Home Assistant nebo hlášení z backendu. Bez výběru použije nastavení telefonu nebo výchozí trunk. Nepřepíná automaticky na jinou linku."
+        },
+        "answer_timeout": {
+          "name": "Čekat na přijetí",
+          "description": "Nejdelší čekání na přijetí hovoru zahájeného Automatizací v sekundách. Vyzvánění ani časná média se nepovažují za přijetí. Selhání zastaví akci a uvolní hovor."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Název v seznamu, klapka, skupina, číslo nebo adresa SIP."
+        },
+        "send_video": {
+          "name": "Odesílat video",
+          "description": "Nabídne kameru prohlížeče, když je pro tento telefon povoleno video."
+        },
+        "ha_bridge": {
+          "name": "Vynutit směrování přes HA"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "forward": {
+      "name": "Přesměrovat hovor",
+      "description": "Přesměruje aktuální vyzvánějící nebo aktivní hovor na jiný cíl.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný telefon Home Assistant, který vlastní hovor."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Název v seznamu, klapka, skupina, číslo nebo adresa SIP."
+        },
+        "on_failure": {
+          "name": "Při selhání",
+          "description": "Při selhání nového cíle obnoví původní vyzvánění v HA, ukončí hovor nebo vrátí obsazeno."
+        },
+        "trunk_id": {
+          "name": "Odchozí SIP trunk",
+          "description": "Volitelná linka pro externí cíl přesměrování. Bez výběru zachová trunk hovoru nebo nastavení telefonu."
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_generation": {
+          "name": "Generace hovoru",
+          "description": "Automaticky doplněno nativními spouštěči VoIP. Vyplňte pouze pro starší automatizace s výslovným výběrem hovoru."
+        },
+        "expected_state": {
+          "name": "Očekávaný stav"
+        },
+        "expected_sequence": {
+          "name": "Očekávaná sekvence"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "transfer": {
+      "name": "Přepojit hovor",
+      "description": "Přepojí navázaný hovor SIP. Nativní spouštěč VoIP vybere hovor automaticky.",
+      "fields": {
+        "destination": {
+          "name": "Cíl",
+          "description": "Název v seznamu, klapka nebo adresa SIP pro přepojení."
+        },
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný výběr místního telefonu pro výslovně určený hovor."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Potřeba pouze bez nativního spouštěče hovoru VoIP."
+        },
+        "replaces_call_id": {
+          "name": "ID konzultačního hovoru",
+          "description": "Použijte navázaný konzultační hovor pro přepojení s konzultací."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "set_deadline": {
+      "name": "Pokročilé: nastavit lhůtu hovoru",
+      "description": "Nastaví výslovnou lhůtu pro vytáčení nebo vyzvánění. Vypršení vyšle událost automatizace, ale samo nezmění směrování.",
+      "fields": {
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "phase": {
+          "name": "Fáze"
+        },
+        "timeout": {
+          "name": "Časový limit",
+          "description": "Počet sekund do vyslání události timeout-requested, pokud se stav hovoru nezmění."
+        },
+        "expected_state": {
+          "name": "Očekávaný stav",
+          "description": "Volitelná ochrana proti zastaralé automatizaci převzatá z události hovoru."
+        },
+        "expected_sequence": {
+          "name": "Očekávaná sekvence",
+          "description": "Volitelná ochrana proti zastaralé automatizaci převzatá z události hovoru."
+        }
+      }
+    },
+    "cancel_deadline": {
+      "name": "Pokročilé: zrušit lhůtu hovoru",
+      "description": "Zruší dříve nastavenou lhůtu bez změny hovoru.",
+      "fields": {
+        "call_id": {
+          "name": "ID hovoru"
+        }
+      }
+    },
+    "route": {
+      "name": "Pokročilé: použít rozhodnutí směrování",
+      "description": "Použije rozhodnutí vytáčecího plánu automatizace na čekající příchozí trasu SIP.",
+      "fields": {
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Čekající SIP Call-ID z výskytu route_requested v entitě události."
+        },
+        "action": {
+          "name": "Akce"
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "ID nebo název kontaktu, číslo, user@host nebo URI sip:user@host pro přesměrování či propojení."
+        },
+        "status": {
+          "name": "Stav SIP",
+          "description": "Volitelný konečný stav SIP pro rozhodnutí o odmítnutí nebo zrušení."
+        },
+        "reason": {
+          "name": "Důvod",
+          "description": "Text důvodu SIP."
+        },
+        "decline_reason": {
+          "name": "Důvod odmítnutí",
+          "description": "Konečný důvod aplikace předaný v hlavičkách SIP Reason a X-Voip-Stack-Decline-Reason."
+        }
+      }
+    },
+    "select_inbound_destination": {
+      "name": "Vybrat cíl příchozího hovoru",
+      "description": "Odešle nový příchozí hovor na telefon, skupinu, klapku nebo Assist. Obvykle stačí Cíl.",
+      "fields": {
+        "destination": {
+          "name": "Cíl",
+          "description": "Název v telefonním seznamu, skupina, klapka, registrovaný telefon, klapka Assist, URI SIP nebo směrovatelné číslo."
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_state": {
+          "name": "Očekávaný stav"
+        },
+        "expected_sequence": {
+          "name": "Očekávaná sekvence"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "hangup": {
+      "name": "Zavěsit",
+      "description": "Ukončí hovor na vybraném telefonu. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelné zařízení telefonu Home Assistant nebo ESPHome."
+        },
+        "line_id": {
+          "name": "Linka fyzického telefonu",
+          "description": "Volitelná nastavená pozice linky při výběru spravovaného fyzického telefonu SIP."
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_generation": {
+          "name": "Generace hovoru",
+          "description": "Volitelný pokročilý výběr spárovaný s call_id. Jediný odchozí hovor Automatizace se vybere automaticky."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "add_contact": {
+      "name": "Přidat kontakt do telefonního seznamu",
+      "description": "Přidá nebo nahradí jeden ruční kontakt v centrálním telefonním seznamu JSON.",
+      "fields": {
+        "type": {
+          "name": "Typ kontaktu"
+        },
+        "fallback_destination": {
+          "name": "Náhradní cíl automatizace",
+          "description": "Volitelný cíl, pokud žádná automatizace nezpracuje hovor před vypršením času."
+        },
+        "timeout": {
+          "name": "Časový limit nečinnosti automatizace"
+        },
+        "name": {
+          "name": "Název",
+          "description": "Název kontaktu. Pokud ID chybí, použije se také jako ID kontaktu."
+        },
+        "id": {
+          "name": "Volitelné ID",
+          "description": "Volitelné stabilní ID. Výchozí hodnotou je název."
+        },
+        "address": {
+          "name": "Volitelná adresa",
+          "description": "Volitelná IP adresa nebo hostitel pro přímý místní koncový bod SIP. Pokud je kontakt přímo dostupný, použijte s portem SIP a přenosem."
+        },
+        "sip_uri": {
+          "name": "Volitelné URI SIP",
+          "description": "Volitelné úplné URI SIP, například sip:kitchen@192.168.1.50:5060;transport=udp. Bez něj HA vyhledá kontakt podle názvu, klapky, registrace nebo čísla trunku."
+        },
+        "sip_profile": {
+          "name": "Profil kompatibility SIP",
+          "description": "Auto zachová rozpoznávání protistrany. Pro statickou dveřní stanici Dahua vyberte Dahua bez vytváření fiktivní registrace nebo User-Agentu."
+        },
+        "dahua_audio": {
+          "name": "Kompatibilita zvuku Dahua",
+          "description": "Výslovná volba zvuku vyžaduje profil Dahua. PCM přidá do nabídky proprietární PCM/16000. Symetrický režim také vysílá ověřeným přijatým kodekem, pokud je sjednán pro TX. Auto zachová detekci podle User-Agentu."
+        },
+        "extension": {
+          "name": "Volitelná klapka",
+          "description": "Volitelný místní nebo interní alias vytáčecího plánu, například 101. Příchozí DTMF a interní volající vyhodnotí toto pole před externími čísly."
+        },
+        "number": {
+          "name": "Volitelné číslo",
+          "description": "Volitelné externí nebo veřejné číslo používané pro hovory přes trunk."
+        },
+        "ha_bridge": {
+          "name": "Volitelné propojení přes HA",
+          "description": "Vynutí směrování přes HA, i když má kontakt přímý koncový bod SIP."
+        },
+        "transport": {
+          "name": "Volitelný přenos SIP",
+          "description": "Volitelný přenos signalizace pro přímý koncový bod SIP. RTP nadále používá UDP."
+        },
+        "port": {
+          "name": "Volitelný port SIP",
+          "description": "Volitelný port signalizace SIP pro kontakty určené adresou. Výchozí hodnota je 5060."
+        },
+        "rtp_port": {
+          "name": "Volitelný port RTP",
+          "description": "Volitelný port médií RTP pro přímé místní koncové body SIP. Při vynechání je výchozí hodnota 40000."
+        },
+        "tx_rate": {
+          "name": "Volitelná frekvence TX",
+          "description": "Volitelná metadata ruční vzorkovací frekvence TX. Při vynechání se použije auto."
+        },
+        "rx_rate": {
+          "name": "Volitelná frekvence RX",
+          "description": "Volitelná metadata ruční vzorkovací frekvence RX. Při vynechání se použije auto."
+        },
+        "tx_formats": {
+          "name": "Volitelné formáty TX",
+          "description": "Volitelné řetězce formátu vysílaného RTP PCM, například 16000:s16le:1:20."
+        },
+        "rx_formats": {
+          "name": "Volitelné formáty RX",
+          "description": "Volitelné řetězce formátu přijímaného RTP PCM, například 48000:s16le:1:10."
+        },
+        "max_payload_bytes": {
+          "name": "Volitelný nejvyšší počet bajtů dat RTP",
+          "description": "Volitelný limit dat RTP PCM. Při vynechání je výchozí hodnota 1200."
+        },
+        "conference_group": {
+          "name": "Volitelná konferenční skupina",
+          "description": "Přidá tento kontakt do jedné nebo více konferenčních skupin VoIP. Více skupin zadejte jako seznam oddělený čárkami."
+        },
+        "conference_ring": {
+          "name": "Vyzvánět při zahájení konference",
+          "description": "Zazvoní na tento kontakt, když jiný účastník zahájí jeho konferenční skupinu. Při vypnutí se kontakt stále může připojit ručně."
+        },
+        "ring_group": {
+          "name": "Volitelná vyzváněcí skupina",
+          "description": "Přidá tento kontakt do jedné nebo více vyzváněcích skupin VoIP. Více skupin zadejte jako seznam oddělený čárkami."
+        }
+      }
+    },
+    "remove_contact": {
+      "name": "Odebrat kontakt z telefonního seznamu",
+      "description": "Odebere podle názvu jeden ruční kontakt z centrálního telefonního seznamu JSON.",
+      "fields": {
+        "name": {
+          "name": "Název"
+        }
+      }
+    },
+    "set_contacts": {
+      "name": "Nastavit kontakty telefonního seznamu",
+      "description": "Nahradí ruční kontakty dokumentem telefonního seznamu JSON.",
+      "fields": {
+        "roster_json": {
+          "name": "Telefonní seznam JSON"
+        }
+      }
+    },
+    "clear_contacts": {
+      "name": "Vymazat kontakty telefonního seznamu",
+      "description": "Vymaže ruční kontakty z centrálního telefonního seznamu JSON."
+    },
+    "export_phonebook": {
+      "name": "Exportovat telefonní seznam",
+      "description": "Soukromě vrátí aktuální centrální telefonní seznam JSON správci."
+    },
+    "push_phonebook": {
+      "name": "Odeslat telefonní seznam zařízením",
+      "description": "Odešle aktuální centrální telefonní seznam JSON všem online koncovým bodům ESP. Běžný postup je automatický: změny seznamu zahájí odeslání a HA jej zopakuje, když se po restartu zaregistruje služba ESPHome *_set_roster_json. Použijte pro diagnostiku nebo ruční obnovu."
+    },
+    "set_external_call_access": {
+      "name": "Nastavit přístup k externím hovorům",
+      "description": "Povolí nebo zablokuje nové hovory telefonu přes externí trunk. Platí pro hovory směrované Home Assistantem včetně přesměrování a přepojení. Všechny telefony mají přístup ve výchozím stavu povolen. Nastavení přežije restarty a přejmenování. Stávající, příchozí a interní hovory zůstávají dostupné. Vyžaduje správce nebo automatizaci.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Telefon v prohlížeči, registrovaný účet SIP nebo nalezený telefon ESPHome, který chcete nastavit."
+        },
+        "allowed": {
+          "name": "Povolit externí hovory",
+          "description": "Vypnutím zablokujete nové hovory z tohoto telefonu přes externí trunk. Zapnutím obnovíte přístup."
+        }
+      }
+    },
+    "set_dnd": {
+      "name": "Nastavit nerušit",
+      "description": "Zapne nebo vypne režim nerušit na telefonu Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný telefon Home Assistant. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon."
+        },
+        "dnd": {
+          "name": "Nerušit"
+        }
+      }
+    },
+    "set_auto_answer": {
+      "name": "Nastavit automatické přijetí",
+      "description": "Zapne nebo vypne automatické přijímání na telefonu Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný telefon Home Assistant. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon."
+        },
+        "auto_answer": {
+          "name": "Automatický příjem"
+        }
+      }
+    },
+    "set_send_video": {
+      "name": "Nastavit odesílání videa",
+      "description": "Zapne nebo vypne výchozí přenos kamery na telefonu Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný telefon Home Assistant. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon."
+        },
+        "send_video": {
+          "name": "Odesílat video"
+        }
+      }
+    },
+    "set_phone_settings": {
+      "name": "Nastavit směrování telefonu",
+      "description": "Nastaví trvalé výchozí hodnoty pro budoucí hovory na telefon v prohlížeči, SIP nebo ESPHome. Vynechaná pole se nezmění; prázdný cíl vypne dané pravidlo. Výslovné příkazy směrování v automatizaci mají přednost.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "forward_to": {
+          "name": "Vždy přesměrovat na",
+          "description": "Název v seznamu, klapka nebo adresa SIP. Prázdnou hodnotou přesměrování vypnete."
+        },
+        "outbound_trunk": {
+          "name": "Upřednostněný odchozí SIP trunk",
+          "description": "Vyberte linku pro externí hovory tohoto telefonu. Výslovná volba v akci volání má přednost. Prázdná hodnota předvolbu vymaže."
+        },
+        "busy_to": {
+          "name": "Při obsazení nebo režimu nerušit",
+          "description": "Cíl, který se zkusí, pokud je telefon obsazený nebo má zapnutý režim nerušit."
+        },
+        "unavailable_to": {
+          "name": "Při nedostupnosti",
+          "description": "Cíl, který se zkusí, pokud je telefon offline. Bez nastavení se žádné pravidlo nepřidá."
+        },
+        "ringing_timeout": {
+          "name": "Časový limit vyzvánění",
+          "description": "Sekundy před akcí při nepřijetí. Nula vypne limit. Vynecháním zachováte aktuální nastavení."
+        },
+        "no_answer_action": {
+          "name": "Když nikdo nepřijme",
+          "description": "Povinné při zapnutí nového limitu vyzvánění. Vyberte zavěšení, přesměrování nebo povolenou hlasovou schránku."
+        },
+        "no_answer_to": {
+          "name": "Cíl při nepřijetí",
+          "description": "Pro přesměrování je nutný cíl z telefonního seznamu nebo URI SIP. Pro hlasovou schránku vyberte název telefonu nebo klapku, nebo ponechte prázdné pro schránku tohoto telefonu."
+        }
+      }
+    },
+    "set_ha_softphone_settings": {
+      "name": "Nastavit telefon Home Assistant",
+      "description": "Nastaví klapku, vyzváněcí skupinu, vyzvánění při konferenci, automatické přijetí a výchozí přenos kamery telefonu Home Assistant. Ručně zadaný název skupiny je platná deklarace: koncový bod ji zveřejní v centrálním seznamu, který vytvoří nebo aktualizuje dynamickou skupinu stejně jako u koncových bodů ESP.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Volitelný telefon Home Assistant. Bez výběru použije upřednostněný nebo jediný kompatibilní telefon."
+        },
+        "extension": {
+          "name": "Klapka",
+          "description": "Volitelné číslo klapky zveřejněné koncovým bodem telefonu Home Assistant."
+        },
+        "ring_group": {
+          "name": "Vyzváněcí skupina",
+          "description": "Volitelné členství telefonu Home Assistant ve vyzváněcích skupinách ústředny. Více skupin zadejte jako seznam oddělený čárkami."
+        },
+        "conference_group": {
+          "name": "Konferenční skupina",
+          "description": "Volitelné členství telefonu Home Assistant v konferenčních místnostech. Více skupin zadejte jako seznam oddělený čárkami."
+        },
+        "conference_ring": {
+          "name": "Vyzvánět při konferenci",
+          "description": "Zazvoní na telefon Home Assistant, když jiný účastník zahájí vybranou konferenční skupinu nebo se do ní připojí."
+        },
+        "auto_answer": {
+          "name": "Automatický příjem",
+          "description": "Automaticky přijme příchozí hovory na tomto logickém telefonu, když má připojený prohlížeč oprávnění k mikrofonu."
+        },
+        "send_video": {
+          "name": "Odesílat video",
+          "description": "Ve výchozím stavu odesílá kameru připojeného prohlížeče, pokud je video sjednáno a prohlížeč má oprávnění."
+        }
+      }
+    },
+    "create_account": {
+      "name": "Vytvořit účet SIP",
+      "description": "Vytvoří nebo nahradí místní účet SIP pro standardní koncový bod SIP registrující se k Home Assistantu.",
+      "fields": {
+        "username": {
+          "name": "Uživatelské jméno",
+          "description": "Uživatelské jméno SIP a ID v centrálním telefonním seznamu, například MobileOffice."
+        },
+        "display_name": {
+          "name": "Volitelný zobrazovaný název",
+          "description": "Volitelný srozumitelný název zobrazený v centrálním telefonním seznamu."
+        },
+        "password": {
+          "name": "Volitelné heslo",
+          "description": "Volitelné heslo, uchované přesně podle zadání a nikdy neopakované. Pokud chybí, Home Assistant heslo vygeneruje a vrátí pouze v odpovědi této služby pro správce."
+        },
+        "enabled": {
+          "name": "Volitelné povolení"
+        },
+        "replace": {
+          "name": "Volitelné nahrazení stávajícího"
+        },
+        "extension": {
+          "name": "Volitelná klapka",
+          "description": "Volitelná interní klapka zveřejněná v centrálním telefonním seznamu. Pokud je nastavena, lze tento koncový bod SIP volat podle názvu nebo klapky."
+        },
+        "conference_group": {
+          "name": "Volitelná konferenční skupina",
+          "description": "Přidá tento registrovaný účet SIP do jedné nebo více konferenčních skupin. Více skupin zadejte jako seznam oddělený čárkami."
+        },
+        "conference_ring": {
+          "name": "Vyzvánět při zahájení konference",
+          "description": "Zazvoní na tento registrovaný koncový bod SIP, když jiný účastník zahájí jeho konferenční skupinu. Při vypnutí se koncový bod stále může připojit ručně."
+        },
+        "ring_group": {
+          "name": "Volitelná vyzváněcí skupina",
+          "description": "Přidá tento registrovaný účet SIP do jedné nebo více vyzváněcích skupin. Více skupin zadejte jako seznam oddělený čárkami."
+        }
+      }
+    },
+    "remove_account": {
+      "name": "Odebrat účet SIP",
+      "description": "Odebere jeden místní účet SIP a jeho aktivní registraci.",
+      "fields": {
+        "username": {
+          "name": "Uživatelské jméno"
+        }
+      }
+    },
+    "rotate_account_password": {
+      "name": "Změnit heslo účtu SIP",
+      "description": "Vygeneruje nové heslo místního účtu SIP, vymaže jeho aktivní registraci a vrátí nové heslo pouze v odpovědi této služby pro správce.",
+      "fields": {
+        "username": {
+          "name": "Uživatelské jméno"
+        }
+      }
+    },
+    "enable_account": {
+      "name": "Povolit účet SIP",
+      "description": "Povolí místní účet SIP.",
+      "fields": {
+        "username": {
+          "name": "Uživatelské jméno"
+        }
+      }
+    },
+    "disable_account": {
+      "name": "Zakázat účet SIP",
+      "description": "Zakáže místní účet SIP a vymaže jeho aktivní registraci.",
+      "fields": {
+        "username": {
+          "name": "Uživatelské jméno"
+        }
+      }
+    },
+    "list_accounts": {
+      "name": "Vypsat účty SIP",
+      "description": "Vrátí nastavené místní účty SIP bez hesel správci, který tuto službu zavolal."
+    },
+    "capture_sip": {
+      "name": "Zachytit signalizaci SIP",
+      "description": "Diagnostická akce správce. Spusťte před zkušebním hovorem a zastavte pro získání dočasné adresy URL ke stažení PCAP čitelného ve Wiresharku. Zachycuje zprávy SIP této integrace, nikoli zvuk RTP nebo síťové pakety. Ověřovací údaje se odstraní; telefonní čísla a adresy zůstanou. Automaticky skončí po zvolené době nebo při 4 MiB a záznam smaže 15 minut po zastavení. Opětovné spuštění nahradí předchozí záznam.",
+      "fields": {
+        "operation": {
+          "name": "Operace"
+        },
+        "duration": {
+          "name": "Nejdelší doba trvání",
+          "description": "Používá se při zahájení zachytávání."
+        }
+      }
+    },
+    "play_media": {
+      "name": "Přehrát zvuk volajícímu",
+      "description": "Přehraje zvukový soubor v hovoru Automatizace a počká na dokončení přenosu. Použije hovor ze spouštěče VoIP nebo odchozí hovor vytvořený v tomto běhu. Automaticky nezavěsí.",
+      "fields": {
+        "media": {
+          "name": "Zvukový soubor"
+        },
+        "timeout": {
+          "name": "Nejdelší doba přehrávání",
+          "description": "Zahrnuje vyhledání média, stažení, dekódování a přenos. Časový limit zastaví přehrávání. Výchozí hodnota je 120 sekund."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Volitelný pokročilý výběr. Nativní spouštěče a jediný odchozí hovor Automatizace automaticky vyberou svůj hovor."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru",
+          "description": "Potřeba pouze s výslovným call_id; použijte generaci vrácenou akcí Volat."
+        },
+        "device_id": {
+          "name": "Telefon pro ruční spuštění",
+          "description": "Při ruční zkoušce vyberte telefon s hovorem Automatizace."
+        }
+      }
+    },
+    "tts_say": {
+      "name": "Promluvit k volajícímu",
+      "description": "Vysloví zprávu v hovoru automatizace. Hovor vybere jeho spouštěč VoIP; následující akce počká na hlášení.",
+      "fields": {
+        "tts_entity_id": {
+          "name": "Poskytovatel syntézy řeči"
+        },
+        "message": {
+          "name": "Zpráva"
+        },
+        "language": {
+          "name": "Jazyk",
+          "description": "Vynecháním použijete výchozí jazyk poskytovatele."
+        },
+        "options": {
+          "name": "Možnosti poskytovatele"
+        },
+        "timeout": {
+          "name": "Nejdelší doba hlášení",
+          "description": "Nejdelší doba na připravenost prohlížeče, vytvoření řeči a přenos. Výchozí hodnota je 120 sekund; nejde o limit vyzvánění."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Volitelný pokročilý výběr při zpracování více hovorů. Nativní spouštěče a jediný odchozí hovor Automatizace automaticky vyberou svůj hovor."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru",
+          "description": "Potřeba pouze s výslovným ID hovoru. Nativní spouštěče a jediný odchozí hovor Automatizace jej doplní automaticky."
+        },
+        "device_id": {
+          "name": "Telefon pro ruční spuštění",
+          "description": "Při zkoušení této akce bez spouštěče VoIP vyberte telefon s hovorem automatizace."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "wait_unanswered": {
+      "name": "Čekat bez přijetí",
+      "description": "Ponechá nepřijatý hovor kontaktu Automatizace vyzvánět bez přijetí a spuštění zvuku. Následující akce začne po čekání. Pokud jde o poslední akci, hovor skončí nepřijatý. Zrušení volajícím ukončí čekání.",
+      "fields": {
+        "duration": {
+          "name": "Doba trvání",
+          "description": "Počet sekund čekání bez přijetí od 1 do 3600. Výchozí hodnota je 60. Pro přesměrování při nepřijetí u poskytovatele nastavte delší dobu, než je časovač přesměrování poskytovatele."
+        },
+        "device_id": {
+          "name": "Telefon pro ruční spuštění",
+          "description": "Potřeba pouze mimo nativní spouštěč VoIP. Telefon musí mít nepřijatý hovor zpracovávaný kontaktem Automatizace."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Pro starší akce mimo nativní spouštěč VoIP."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "wait_for_dtmf": {
+      "name": "Čekat na vstup z klávesnice",
+      "description": "Čeká na číslice volajícího v tomto hovoru automatizace. Následující podmínka může ověřit přijaté číslice nebo vypršení času.",
+      "fields": {
+        "timeout": {
+          "name": "Čekání na číslice",
+          "description": "Sekundy čekání po přijetí hovoru. Výchozí hodnota je 10 sekund."
+        },
+        "max_digits": {
+          "name": "Počet číslic",
+          "description": "Ukončí po tomto počtu číslic. Výchozí hodnota je jedna."
+        },
+        "terminator": {
+          "name": "Ukončovací klávesa",
+          "description": "Výchozí hodnota je #. Prázdná hodnota vypne ukončovací klávesu."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Pro starší akce mimo nativní spouštěč hovoru."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        },
+        "device_id": {
+          "name": "Telefon pro ruční spuštění",
+          "description": "Při zkoušení této akce bez spouštěče VoIP vyberte telefon s hovorem automatizace."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "set_voicemail_settings": {
+      "name": "Nastavit hlasovou schránku",
+      "description": "Povolí schránku telefonu nezávisle na pravidlech přesměrování. Vynechaná pole si zachovají nastavení. Zakázání schránky trvale smaže její zprávy, soubory, PIN a nastavení. Opětovné povolení vytvoří prázdnou schránku.",
+      "fields": {
+        "device_id": {
+          "name": "Hlasová schránka telefonu"
+        },
+        "enabled": {
+          "name": "Povolit schránku"
+        },
+        "max_seconds": {
+          "name": "Nejdelší doba zprávy",
+          "description": "Počet sekund povolených po tónu nahrávání. Nové schránky používají 180 sekund."
+        },
+        "greeting_media": {
+          "name": "Uvítání schránky",
+          "description": "Volitelný zvuk z prohlížeče médií Home Assistantu, přehrávaný před tónem nahrávání."
+        },
+        "clear_greeting": {
+          "name": "Smazat uvítání",
+          "description": "Použije pouze tón nahrávání. Nekombinujte s novým uvítáním."
+        },
+        "pin": {
+          "name": "PIN schránky",
+          "description": "Volitelných 4 až 10 číslic pro přístup z jiného účtu SIP. Prázdný PIN tento přístup zakáže."
+        }
+      }
+    },
+    "get_voicemail": {
+      "name": "Načíst hlasovou zprávu",
+      "description": "Vrátí stávající soubor zprávy a ID media-source v HA. Použije zprávu ze spouštěče Přijata hlasová zpráva nebo výslovně vybranou schránku a ID zprávy. Zprávu nekopíruje, nepřesouvá ani neoznačí jako přečtenou.",
+      "fields": {
+        "mailbox": {
+          "name": "Hlasová schránka",
+          "description": "Volitelné při spuštění událostí Přijata hlasová zpráva. Jinak doplňte také ID zprávy."
+        },
+        "message_id": {
+          "name": "ID zprávy",
+          "description": "Volitelné při spuštění událostí Přijata hlasová zpráva."
+        }
+      }
+    },
+    "transcribe_voicemail": {
+      "name": "Přepsat hlasovou zprávu",
+      "description": "Přepíše uloženou zprávu ze spouštěče Přijata hlasová zpráva nebo použije výslovně vybranou schránku a ID zprávy. Vyberte stávající entitu rozpoznávání řeči v HA. Vrátí text bez změny nahrávky nebo označení zprávy jako přečtené.",
+      "fields": {
+        "mailbox": {
+          "name": "Hlasová schránka",
+          "description": "Volitelné při spuštění událostí Přijata hlasová zpráva. Jinak doplňte také ID zprávy."
+        },
+        "message_id": {
+          "name": "ID zprávy",
+          "description": "Volitelné při spuštění událostí Přijata hlasová zpráva. Vyberte uloženou zprávu, nikoli ID hovoru."
+        },
+        "stt_entity_id": {
+          "name": "Entita rozpoznávání řeči"
+        },
+        "language": {
+          "name": "Jazyk",
+          "description": "Kód jazyka podporovaný vybraným poskytovatelem rozpoznávání řeči, například en nebo it."
+        },
+        "timeout": {
+          "name": "Časový limit přepisu"
+        }
+      }
+    },
+    "send_to_voicemail": {
+      "name": "Odeslat hovor do hlasové schránky",
+      "description": "Předá aktuální hovor automatizace povolené schránce telefonu. Od této chvíle spravuje hovor nahrávání a po zprávě jej ukončí. Tuto akci umístěte za uvítání nebo syntézu řeči; nepřidávejte zavěšení.",
+      "fields": {
+        "mailbox": {
+          "name": "Cílová schránka"
+        },
+        "skip_greeting": {
+          "name": "Přeskočit uvítání schránky",
+          "description": "Začne tónem nahrávání, například po akci tts_say."
+        },
+        "device_id": {
+          "name": "Telefon vlastnící hovor"
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Výslovný výběr hovoru"
+        }
+      }
+    },
+    "park": {
+      "name": "Zaparkovat hovor",
+      "description": "Ponechá navázaný zvukový hovor na parkovací pozici. Jiný telefon jej vyzvedne zavoláním na číslo pozice.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Telefon opouštějící rozhovor. Nativní spouštěč hovoru jej může vybrat automaticky."
+        },
+        "slot": {
+          "name": "Parkovací pozice",
+          "description": "Ponechte prázdné pro použití první dostupné nastavené pozice."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Volitelný výslovný hovor patřící vybranému telefonu."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Spustit nahrávání hovoru",
+      "description": "Nahraje obě strany navázaného rozhovoru pomocí zvuku, který již prochází přes Home Assistant. Nahrávání skončí při zavěšení, předání médií nebo po nastaveném časovém limitu.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "max_seconds": {
+          "name": "Nejdelší doba trvání"
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Zastavit nahrávání hovoru",
+      "description": "Dokončí nahrávání tohoto telefonu a vrátí jeho stávající zvukový soubor, zatímco rozhovor pokračuje.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "call_id": {
+          "name": "ID hovoru"
+        },
+        "expected_generation": {
+          "name": "Generace hovoru"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
+    },
+    "get_recording": {
+      "name": "Načíst nahrávku hovoru",
+      "description": "Vrátí původní cestu k souboru nahrávky a identifikátor media-source Home Assistantu bez vytvoření další kopie.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "recording_id": {
+          "name": "ID nahrávky",
+          "description": "Identifikátor vrácený akcí Spustit nahrávání hovoru nebo událostí recording_finished."
+        }
+      }
+    },
+    "delete_recording": {
+      "name": "Smazat nahrávku hovoru",
+      "description": "Smaže vybranou nahrávku rozhovoru a její metadata.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "recording_id": {
+          "name": "ID nahrávky",
+          "description": "Identifikátor vrácený akcí Spustit nahrávání hovoru nebo událostí recording_finished."
+        }
+      }
+    },
     "get_phone_state": {
       "name": "Získat stav telefonu",
       "description": "Načíst stav, hovory a počty zpráv ve schránce vybraného telefonu.",
@@ -1711,33 +2869,38 @@
         "leg_id": {
           "name": "Větev hovoru"
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
       }
     },
     "provision_phone": {
-      "name": "Prepare phone provisioning",
-      "description": "Prepare the current configuration for download. A served file does not confirm that the phone applied it.",
+      "name": "Připravit konfiguraci telefonu",
+      "description": "Připraví aktuální konfiguraci ke stažení. Poskytnutí souboru nepotvrzuje, že jej telefon použil.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Fyzický telefon"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID fyzického telefonu"
         }
       }
     },
     "get_phone_provisioning_state": {
-      "name": "Get phone provisioning state",
-      "description": "Read prepared and downloaded revisions. Only an administrator can explicitly request the private provisioning URL.",
+      "name": "Načíst stav konfigurace telefonu",
+      "description": "Načte připravené a stažené verze. Soukromou adresu URL konfigurace si může výslovně vyžádat pouze správce.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Fyzický telefon"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID fyzického telefonu"
         },
         "include_url": {
-          "name": "Include private provisioning URL",
-          "description": "The URL contains a device credential. Keep it private."
+          "name": "Zahrnout soukromou adresu URL konfigurace",
+          "description": "Adresa URL obsahuje přihlašovací údaj zařízení. Uchovejte ji v soukromí."
         }
       }
     },
@@ -1745,21 +2908,21 @@
       "name": "Aktualizovat katalog podporovaných modelů telefonů",
       "description": "Stáhne aktuální katalog modelů. Chcete-li nové pokyny použít u již nastaveného telefonu, otevřete jeho nastavení a aktualizujte pokyny pro daný model."
     },
-    "rotate_phone_provisioning_token": {
-      "name": "Rotate phone provisioning credential",
-      "description": "Invalidate the old private download URL. Configure the new URL before the next phone download.",
-      "fields": {
-        "device_id": {
-          "name": "Physical phone"
-        },
-        "phone_id": {
-          "name": "Physical phone ID"
-        }
-      }
-    },
     "reload_card_associations": {
       "name": "Znovu načíst přiřazení karet",
       "description": "Znovu načte konfigurace panelů uložené v úložišti a YAML a aktualizuje přiřazení účtů. Nenačítá znovu PBX ani nespouští pravidelné dotazování. Pouze pro správce."
+    },
+    "rotate_phone_provisioning_token": {
+      "name": "Změnit přihlašovací údaj konfigurace telefonu",
+      "description": "Zneplatní starou soukromou adresu URL ke stažení. Před dalším stahováním telefonem nastavte novou adresu URL.",
+      "fields": {
+        "device_id": {
+          "name": "Fyzický telefon"
+        },
+        "phone_id": {
+          "name": "ID fyzického telefonu"
+        }
+      }
     }
   }
 }

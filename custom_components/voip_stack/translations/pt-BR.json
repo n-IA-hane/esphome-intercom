@@ -1677,6 +1677,1164 @@
     }
   },
   "services": {
+    "set_phone_memberships": {
+      "name": "Definir participação do telefone em grupos",
+      "description": "Altera os grupos de toque, filas ou a participação em grupos de anúncios existentes de um telefone. A participação em anúncios exige um administrador.",
+      "fields": {
+        "phone": {
+          "name": "Telefone"
+        },
+        "field": {
+          "name": "Tipo de grupo"
+        },
+        "value": {
+          "name": "Nomes dos grupos",
+          "description": "Grupos de toque e filas usam nomes. Grupos de anúncios usam IDs existentes, em uma lista ou separados por vírgulas. Um valor vazio remove as participações sem excluir os grupos."
+        }
+      }
+    },
+    "set_phone_queues": {
+      "name": "Definir filas do telefone",
+      "description": "Define as filas declaradas por um telefone. Novos nomes criam dispositivos de fila automaticamente.",
+      "fields": {
+        "phone": {
+          "name": "Telefone"
+        },
+        "queues": {
+          "name": "Filas",
+          "description": "Nomes das filas separados por vírgulas ou um valor vazio para sair de todas as filas."
+        }
+      }
+    },
+    "set_queue_agent_state": {
+      "name": "Definir estado do operador da fila",
+      "description": "Conecta ou desconecta um membro configurado, ou pausa e retoma a atribuição de chamadas da fila.",
+      "fields": {
+        "queue": {
+          "name": "Fila"
+        },
+        "phone": {
+          "name": "Telefone"
+        },
+        "state": {
+          "name": "Estado do operador"
+        },
+        "reason": {
+          "name": "Motivo da pausa",
+          "description": "Motivo opcional do operador, mantido até a próxima mudança de estado."
+        }
+      }
+    },
+    "get_queue_activity": {
+      "name": "Obter atividade da fila",
+      "description": "Lê os eventos da fila no Recorder do Home Assistant. Exige acesso administrativo.",
+      "fields": {
+        "queue": {
+          "name": "Fila"
+        },
+        "since": {
+          "name": "Desde",
+          "description": "Data e hora ISO com fuso horário. O padrão é 24 horas antes de Até."
+        },
+        "until": {
+          "name": "Até",
+          "description": "Data e hora ISO com fuso horário. O padrão é o horário atual. A janela máxima é de 31 dias."
+        },
+        "limit": {
+          "name": "Limite de eventos"
+        },
+        "cursor": {
+          "name": "Cursor da próxima página",
+          "description": "Use next_cursor da resposta anterior, mantendo a mesma fila e janela."
+        }
+      }
+    },
+    "get_queue_metrics": {
+      "name": "Obter métricas da fila",
+      "description": "Lê no Recorder as contagens por grupo de entrada, esperas e carga dos operadores até Até. Aplica-se o período de retenção do Recorder. Exige acesso administrativo.",
+      "fields": {
+        "queue": {
+          "name": "Fila"
+        },
+        "since": {
+          "name": "Desde",
+          "description": "Data e hora ISO com fuso horário. O padrão é 24 horas antes de Até."
+        },
+        "until": {
+          "name": "Até",
+          "description": "Data e hora ISO com fuso horário. O padrão é o horário atual. A janela máxima é de 31 dias."
+        }
+      }
+    },
+    "get_queue_state": {
+      "name": "Obter estado da fila",
+      "description": "Retorna as regras da fila, os chamadores em espera e a disponibilidade atual dos membros.",
+      "fields": {
+        "queue": {
+          "name": "Fila"
+        },
+        "phone": {
+          "name": "Telefone",
+          "description": "Filtro opcional por membro."
+        }
+      }
+    },
+    "configure_queue": {
+      "name": "Configurar fila",
+      "description": "Atualiza uma fila existente. As mesmas configurações estão disponíveis no dispositivo VoIP Stack correspondente.",
+      "fields": {
+        "queue": {
+          "name": "Fila"
+        },
+        "enabled": {
+          "name": "Ativado"
+        },
+        "max_waiting": {
+          "name": "Máximo de chamadores em espera"
+        },
+        "max_wait": {
+          "name": "Espera máxima"
+        },
+        "ring_timeout": {
+          "name": "Tempo de toque por tentativa"
+        },
+        "no_agent_wait": {
+          "name": "Espera sem operadores"
+        },
+        "retry_delay": {
+          "name": "Intervalo entre tentativas"
+        },
+        "wrap_up": {
+          "name": "Pausa após uma conversa"
+        },
+        "fallback": {
+          "name": "Destino alternativo"
+        },
+        "hold_media": {
+          "name": "URI do áudio de espera"
+        },
+        "strategy": {
+          "name": "Estratégia de distribuição"
+        },
+        "agent_order": {
+          "name": "Ordem preferida dos telefones",
+          "description": "Identificadores estáveis dos telefones em ordem. Os demais membros da fila vêm depois; isso não altera a participação."
+        },
+        "auto_pause_after": {
+          "name": "Pausar após toques sem resposta",
+          "description": "0 desativa a pausa automática. Use 3 para três tentativas consecutivas de toque sem resposta. Ocupado, offline e cancelamentos não contam."
+        },
+        "fallback_full": {
+          "name": "Alternativa para fila cheia",
+          "description": "Substitui o destino alternativo comum nesta condição. Um valor vazio herda o destino comum."
+        },
+        "fallback_timeout": {
+          "name": "Alternativa para tempo esgotado",
+          "description": "Substitui o destino alternativo comum nesta condição. Um valor vazio herda o destino comum."
+        },
+        "fallback_no_agents": {
+          "name": "Alternativa sem operadores",
+          "description": "Substitui o destino alternativo comum nesta condição. Um valor vazio herda o destino comum."
+        },
+        "fallback_disabled": {
+          "name": "Alternativa para fila desativada",
+          "description": "Substitui o destino alternativo comum nesta condição. Um valor vazio herda o destino comum."
+        },
+        "fallback_removed": {
+          "name": "Alternativa para fila removida",
+          "description": "Substitui o destino alternativo comum nesta condição. Um valor vazio herda o destino comum."
+        }
+      }
+    },
+    "announce": {
+      "name": "Enviar anúncio",
+      "description": "Envia uma mensagem de voz sintetizada ou um arquivo de áudio a telefones ou grupos de anúncios. Telefones ocupados são ignorados.",
+      "fields": {
+        "targets": {
+          "name": "Telefones ou grupos de anúncios",
+          "description": "IDs de endpoints, IDs de dispositivos, nomes ou IDs de grupos de anúncios."
+        },
+        "tts_entity_id": {
+          "name": "Provedor de síntese de voz"
+        },
+        "message": {
+          "name": "Mensagem"
+        },
+        "language": {
+          "name": "Idioma"
+        },
+        "options": {
+          "name": "Opções de síntese de voz"
+        },
+        "media": {
+          "name": "Arquivo de áudio",
+          "description": "Use no lugar do provedor de síntese de voz e da mensagem."
+        },
+        "answer_timeout": {
+          "name": "Prazo para atender"
+        },
+        "timeout": {
+          "name": "Limite total de tempo"
+        },
+        "wait": {
+          "name": "Aguardar conclusão"
+        }
+      }
+    },
+    "stop_announcement": {
+      "name": "Parar anúncio",
+      "description": "Interrompe apenas o anúncio identificado e libera as chamadas dos destinatários.",
+      "fields": {
+        "announcement_id": {
+          "name": "ID do anúncio"
+        }
+      }
+    },
+    "purge_devices": {
+      "name": "Remover dispositivos obsoletos (desativado)",
+      "description": "Desativado porque o VoIP Stack não é proprietário dos dispositivos ESPHome e nunca deve removê-los do registro de dispositivos do Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Dispositivo",
+          "description": "Dispositivo VoIP ESPHome específico e opcional para remoção imediata."
+        },
+        "min_unavailable_hours": {
+          "name": "Horas mínimas de indisponibilidade",
+          "description": "Remove apenas dispositivos indisponíveis por pelo menos este número de horas. Padrão 0: remoção imediata. Use um valor maior, como 1, para evitar remover dispositivos offline apenas brevemente durante atualizações OTA ou reinicializações."
+        }
+      }
+    },
+    "answer": {
+      "name": "Atender chamada",
+      "description": "Atende a chamada que está tocando no telefone selecionado. Sem seleção, usa o telefone preferido ou o único compatível.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Dispositivo de telefone Home Assistant ou ESPHome opcional."
+        },
+        "send_video": {
+          "name": "Enviar vídeo",
+          "description": "Envia a câmera do navegador quando o vídeo está ativado para este telefone."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Selecione uma chamada específica quando houver mais de uma chamada tocando."
+        },
+        "accept_video": {
+          "name": "Aceitar vídeo",
+          "description": "Aceita o vídeo oferecido em um telefone do navegador. Desative para atender somente com áudio, independentemente da preferência da câmera local."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "decline": {
+      "name": "Recusar chamada",
+      "description": "Recusa a chamada que está tocando no telefone selecionado. Sem seleção, usa o telefone preferido ou o único compatível.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Dispositivo de telefone Home Assistant ou ESPHome opcional."
+        },
+        "line_id": {
+          "name": "Linha do telefone físico",
+          "description": "Posição opcional de uma linha configurada ao selecionar um telefone SIP físico gerenciado."
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "status": {
+          "name": "Estado SIP"
+        },
+        "reason": {
+          "name": "Motivo SIP"
+        },
+        "decline_reason": {
+          "name": "Motivo da automação"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "call": {
+      "name": "Chamada",
+      "description": "Chama um destino a partir de um telefone ou inicia uma chamada de áudio no backend usando um contato Automação. Com uma origem Automação, esta ação aguarda o atendimento do destino. As ações seguintes usam automaticamente a chamada desta execução. Uma variável de resposta é opcional para seleção explícita avançada. Não é necessário navegador.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone chamador",
+          "description": "Telefone opcional que inicia a chamada. Sem seleção, usa o telefone preferido ou o único compatível."
+        },
+        "source_automation": {
+          "name": "Contato Automação chamador",
+          "description": "Nome ou ramal de um contato Automação ativado, como Wakeup-Caller. Use no lugar de Telefone chamador para uma chamada de áudio no backend. Exige acesso como administrador ou automação; não precisa de variável de resposta."
+        },
+        "trunk_id": {
+          "name": "Tronco SIP de saída",
+          "description": "Linha opcional para um telefone Home Assistant ou anúncio no backend. Sem seleção, usa a preferência do telefone ou o tronco padrão. Não muda automaticamente para outra linha."
+        },
+        "answer_timeout": {
+          "name": "Aguardar atendimento",
+          "description": "Máximo de segundos para aguardar o atendimento de uma chamada iniciada por Automação. Toque e mídia antecipada não contam como atendimento. Uma falha interrompe a ação e libera a chamada."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda, ramal, grupo, número ou endereço SIP."
+        },
+        "send_video": {
+          "name": "Enviar vídeo",
+          "description": "Oferece a câmera do navegador quando o vídeo está ativado para este telefone."
+        },
+        "ha_bridge": {
+          "name": "Forçar roteamento pelo HA"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "forward": {
+      "name": "Encaminhar chamada",
+      "description": "Encaminha a chamada atual, tocando ou ativa, para outro destino.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone Home Assistant opcional que é proprietário da chamada."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda, ramal, grupo, número ou endereço SIP."
+        },
+        "on_failure": {
+          "name": "Em caso de falha",
+          "description": "Retoma o toque original no HA, encerra a chamada ou retorna ocupado se o novo destino falhar."
+        },
+        "trunk_id": {
+          "name": "Tronco SIP de saída",
+          "description": "Linha opcional para um destino externo de encaminhamento. Sem seleção, mantém o tronco da chamada ou a preferência do telefone."
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_generation": {
+          "name": "Geração da chamada",
+          "description": "Fornecido automaticamente pelos gatilhos VoIP nativos. Informe apenas em automações antigas com seleção explícita da chamada."
+        },
+        "expected_state": {
+          "name": "Estado esperado"
+        },
+        "expected_sequence": {
+          "name": "Sequência esperada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "transfer": {
+      "name": "Transferir chamada",
+      "description": "Transfere uma chamada SIP estabelecida. Um gatilho VoIP nativo seleciona a chamada automaticamente.",
+      "fields": {
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda, ramal ou endereço SIP para a transferência."
+        },
+        "device_id": {
+          "name": "Telefone",
+          "description": "Seletor opcional do telefone local para uma chamada explícita."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Necessário apenas sem um gatilho nativo de chamada VoIP."
+        },
+        "replaces_call_id": {
+          "name": "ID da chamada de consulta",
+          "description": "Use a chamada de consulta estabelecida para uma transferência assistida."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "set_deadline": {
+      "name": "Avançado: definir prazo da chamada",
+      "description": "Define um prazo explícito para uma chamada em discagem ou tocando. O vencimento emite um evento de automação, mas não altera o roteamento por conta própria.",
+      "fields": {
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "phase": {
+          "name": "Fase"
+        },
+        "timeout": {
+          "name": "Tempo limite",
+          "description": "Segundos até a emissão do evento timeout-requested se a chamada não tiver mudado de estado."
+        },
+        "expected_state": {
+          "name": "Estado esperado",
+          "description": "Proteção opcional contra automações obsoletas, copiada do evento da chamada."
+        },
+        "expected_sequence": {
+          "name": "Sequência esperada",
+          "description": "Proteção opcional contra automações obsoletas, copiada do evento da chamada."
+        }
+      }
+    },
+    "cancel_deadline": {
+      "name": "Avançado: cancelar prazo da chamada",
+      "description": "Cancela um prazo definido anteriormente sem alterar a chamada.",
+      "fields": {
+        "call_id": {
+          "name": "ID da chamada"
+        }
+      }
+    },
+    "route": {
+      "name": "Avançado: aplicar decisão de rota",
+      "description": "Aplica uma decisão do plano de discagem da automação a uma rota SIP de entrada pendente.",
+      "fields": {
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Call-ID SIP pendente da ocorrência route_requested da entidade de evento."
+        },
+        "action": {
+          "name": "Ação"
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "ID ou nome do contato, número, user@host ou URI sip:user@host para encaminhar ou conectar."
+        },
+        "status": {
+          "name": "Estado SIP",
+          "description": "Estado SIP final opcional para decisões de recusa ou cancelamento."
+        },
+        "reason": {
+          "name": "Motivo",
+          "description": "Frase do motivo SIP."
+        },
+        "decline_reason": {
+          "name": "Motivo da recusa",
+          "description": "Motivo final da aplicação propagado nos cabeçalhos SIP Reason e X-Voip-Stack-Decline-Reason."
+        }
+      }
+    },
+    "select_inbound_destination": {
+      "name": "Selecionar destino da chamada recebida",
+      "description": "Envia uma nova chamada recebida para um telefone, grupo, ramal ou Assist. Normalmente basta o Destino.",
+      "fields": {
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda, grupo, ramal, telefone registrado, ramal do Assist, URI SIP ou número roteável."
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_state": {
+          "name": "Estado esperado"
+        },
+        "expected_sequence": {
+          "name": "Sequência esperada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "hangup": {
+      "name": "Desligar",
+      "description": "Encerra a chamada no telefone selecionado. Sem seleção, usa o telefone preferido ou o único compatível.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Dispositivo de telefone Home Assistant ou ESPHome opcional."
+        },
+        "line_id": {
+          "name": "Linha do telefone físico",
+          "description": "Posição opcional de uma linha configurada ao selecionar um telefone SIP físico gerenciado."
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_generation": {
+          "name": "Geração da chamada",
+          "description": "Seleção avançada opcional combinada com call_id. Uma única chamada Automação de saída é selecionada automaticamente."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "add_contact": {
+      "name": "Adicionar contato à agenda",
+      "description": "Adiciona ou substitui um contato manual na agenda JSON central.",
+      "fields": {
+        "type": {
+          "name": "Tipo de contato"
+        },
+        "fallback_destination": {
+          "name": "Destino alternativo da automação",
+          "description": "Destino opcional quando nenhuma automação trata a chamada antes do tempo limite."
+        },
+        "timeout": {
+          "name": "Tempo limite de inatividade da automação"
+        },
+        "name": {
+          "name": "Nome",
+          "description": "Nome do contato. Se o ID for omitido, também será usado como ID do contato."
+        },
+        "id": {
+          "name": "ID opcional",
+          "description": "ID estável opcional. O padrão é Nome."
+        },
+        "address": {
+          "name": "Endereço opcional",
+          "description": "IP ou host opcional para um endpoint SIP local direto. Use com Porta SIP e Transporte quando o contato for diretamente acessível."
+        },
+        "sip_uri": {
+          "name": "URI SIP opcional",
+          "description": "URI SIP completo opcional, por exemplo sip:kitchen@192.168.1.50:5060;transport=udp. Quando omitido, o HA resolve o contato por nome, ramal, registro ou número do tronco."
+        },
+        "sip_profile": {
+          "name": "Perfil de compatibilidade SIP",
+          "description": "Auto mantém a detecção do dispositivo remoto. Selecione Dahua para uma estação de porta Dahua estática, sem inventar registro ou User-Agent."
+        },
+        "dahua_audio": {
+          "name": "Compatibilidade de áudio Dahua",
+          "description": "Exige o perfil Dahua para uma escolha explícita de áudio. PCM adiciona PCM/16000 proprietário à oferta. Simétrico também transmite com um codec recebido e validado quando negociado para TX. Auto mantém a detecção por User-Agent."
+        },
+        "extension": {
+          "name": "Ramal opcional",
+          "description": "Alias local ou interno opcional do plano de discagem, como 101. DTMF de entrada e chamadores internos resolvem este campo antes dos números externos."
+        },
+        "number": {
+          "name": "Número opcional",
+          "description": "Número externo ou público opcional usado em chamadas pelo tronco."
+        },
+        "ha_bridge": {
+          "name": "Conexão pelo HA opcional",
+          "description": "Força o roteamento pelo HA mesmo quando o contato tem um endpoint SIP direto."
+        },
+        "transport": {
+          "name": "Transporte SIP opcional",
+          "description": "Transporte opcional de sinalização para um endpoint SIP direto. RTP continua usando UDP."
+        },
+        "port": {
+          "name": "Porta SIP opcional",
+          "description": "Porta opcional de sinalização SIP para contatos por endereço. O padrão é 5060."
+        },
+        "rtp_port": {
+          "name": "Porta RTP opcional",
+          "description": "Porta opcional de mídia RTP para endpoints SIP locais diretos. O padrão é 40000 quando omitida."
+        },
+        "tx_rate": {
+          "name": "Taxa TX opcional",
+          "description": "Metadado opcional da taxa de amostragem TX manual. Use auto quando omitido."
+        },
+        "rx_rate": {
+          "name": "Taxa RX opcional",
+          "description": "Metadado opcional da taxa de amostragem RX manual. Use auto quando omitido."
+        },
+        "tx_formats": {
+          "name": "Formatos TX opcionais",
+          "description": "Tokens opcionais de formato PCM RTP de transmissão, por exemplo 16000:s16le:1:20."
+        },
+        "rx_formats": {
+          "name": "Formatos RX opcionais",
+          "description": "Tokens opcionais de formato PCM RTP de recepção, por exemplo 48000:s16le:1:10."
+        },
+        "max_payload_bytes": {
+          "name": "Máximo de bytes da carga RTP opcional",
+          "description": "Limite opcional da carga PCM RTP. O padrão é 1200 quando omitido."
+        },
+        "conference_group": {
+          "name": "Grupo de conferência opcional",
+          "description": "Adiciona este contato como membro de um ou mais grupos de conferência VoIP. Use uma lista separada por vírgulas para vários grupos."
+        },
+        "conference_ring": {
+          "name": "Tocar ao iniciar conferência",
+          "description": "Faz este contato tocar quando outro participante inicia seu grupo de conferência. O contato ainda pode entrar manualmente quando desativado."
+        },
+        "ring_group": {
+          "name": "Grupo de toque opcional",
+          "description": "Adiciona este contato como membro de um ou mais grupos de toque VoIP. Use uma lista separada por vírgulas para vários grupos."
+        }
+      }
+    },
+    "remove_contact": {
+      "name": "Remover contato da agenda",
+      "description": "Remove um contato manual da agenda JSON central pelo nome.",
+      "fields": {
+        "name": {
+          "name": "Nome"
+        }
+      }
+    },
+    "set_contacts": {
+      "name": "Definir contatos da agenda",
+      "description": "Substitui os contatos manuais por um documento de agenda JSON.",
+      "fields": {
+        "roster_json": {
+          "name": "Agenda JSON"
+        }
+      }
+    },
+    "clear_contacts": {
+      "name": "Limpar contatos da agenda",
+      "description": "Limpa os contatos manuais da agenda JSON central."
+    },
+    "export_phonebook": {
+      "name": "Exportar agenda",
+      "description": "Retorna a agenda JSON central atual de forma privada ao administrador."
+    },
+    "push_phonebook": {
+      "name": "Enviar agenda aos dispositivos",
+      "description": "Envia a agenda JSON central atual a todos os endpoints ESP online. O caminho normal é automático: mudanças na agenda iniciam o envio, e o HA o repete quando um serviço ESPHome *_set_roster_json se registra após reiniciar. Use para diagnóstico ou recuperação manual."
+    },
+    "set_external_call_access": {
+      "name": "Definir acesso a chamadas externas",
+      "description": "Permite ou bloqueia novas chamadas de um telefone pelo tronco externo. Aplica-se às chamadas roteadas pelo Home Assistant, incluindo encaminhamentos e transferências. Todos os telefones são permitidos por padrão. A configuração persiste após reinicializações e mudanças de nome. Chamadas existentes, recebidas e internas continuam disponíveis. Exige um administrador ou uma automação.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone do navegador, conta SIP registrada ou telefone ESPHome descoberto a configurar."
+        },
+        "allowed": {
+          "name": "Permitir chamadas externas",
+          "description": "Desative para bloquear novas chamadas deste telefone pelo tronco externo. Ative para restaurar o acesso."
+        }
+      }
+    },
+    "set_dnd": {
+      "name": "Definir não perturbe",
+      "description": "Ativa ou desativa não perturbe em um telefone Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone Home Assistant opcional. Sem seleção, usa o telefone preferido ou o único compatível."
+        },
+        "dnd": {
+          "name": "Não perturbe"
+        }
+      }
+    },
+    "set_auto_answer": {
+      "name": "Definir atendimento automático",
+      "description": "Ativa ou desativa o atendimento automático em um telefone Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone Home Assistant opcional. Sem seleção, usa o telefone preferido ou o único compatível."
+        },
+        "auto_answer": {
+          "name": "Atendimento automático"
+        }
+      }
+    },
+    "set_send_video": {
+      "name": "Definir envio de vídeo",
+      "description": "Ativa ou desativa o envio da câmera por padrão em um telefone Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone Home Assistant opcional. Sem seleção, usa o telefone preferido ou o único compatível."
+        },
+        "send_video": {
+          "name": "Enviar vídeo"
+        }
+      }
+    },
+    "set_phone_settings": {
+      "name": "Configurar roteamento do telefone",
+      "description": "Define padrões persistentes para chamadas futuras a um telefone do navegador, SIP ou ESPHome. Campos omitidos permanecem inalterados; um destino vazio desativa a regra. Comandos explícitos de roteamento nas automações têm prioridade.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone"
+        },
+        "forward_to": {
+          "name": "Sempre encaminhar para",
+          "description": "Nome na agenda, ramal ou endereço SIP. Deixe vazio para desativar o encaminhamento."
+        },
+        "outbound_trunk": {
+          "name": "Tronco SIP de saída preferido",
+          "description": "Selecione a linha usada nas chamadas externas deste telefone. Uma escolha explícita na ação de chamada tem prioridade. Um valor vazio remove a preferência."
+        },
+        "busy_to": {
+          "name": "Quando ocupado ou com não perturbe",
+          "description": "Destino a tentar quando este telefone estiver ocupado ou com não perturbe ativado."
+        },
+        "unavailable_to": {
+          "name": "Quando indisponível",
+          "description": "Destino a tentar quando este telefone estiver offline. Nenhuma regra é adicionada sem configuração."
+        },
+        "ringing_timeout": {
+          "name": "Tempo limite de toque",
+          "description": "Segundos antes da ação por falta de resposta. Zero desativa o limite. Omita para manter a configuração atual."
+        },
+        "no_answer_action": {
+          "name": "Quando ninguém atende",
+          "description": "Obrigatório ao ativar um novo limite de toque. Escolha desligar, encaminhar ou uma caixa postal ativada."
+        },
+        "no_answer_to": {
+          "name": "Destino por falta de resposta",
+          "description": "Destino da agenda ou URI SIP obrigatório para encaminhamento. Para correio de voz, escolha o nome ou ramal de um telefone, ou deixe vazio para a caixa deste telefone."
+        }
+      }
+    },
+    "set_ha_softphone_settings": {
+      "name": "Configurar telefone Home Assistant",
+      "description": "Define ramal, grupo de toque, comportamento de toque em conferência, atendimento automático e envio padrão da câmera do telefone Home Assistant. Um nome de grupo inserido manualmente é uma declaração válida: o endpoint publica o grupo na agenda central, que cria ou atualiza o grupo dinâmico como faz para endpoints ESP.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone Home Assistant opcional. Sem seleção, usa o telefone preferido ou o único compatível."
+        },
+        "extension": {
+          "name": "Ramal",
+          "description": "Número de ramal opcional publicado pelo endpoint do telefone Home Assistant."
+        },
+        "ring_group": {
+          "name": "Grupo de toque",
+          "description": "Participação opcional em grupos de toque do PBX para o telefone Home Assistant. Use uma lista separada por vírgulas para vários grupos."
+        },
+        "conference_group": {
+          "name": "Grupo de conferência",
+          "description": "Participação opcional em salas de conferência para o telefone Home Assistant. Use uma lista separada por vírgulas para vários grupos."
+        },
+        "conference_ring": {
+          "name": "Tocar na conferência",
+          "description": "Faz o telefone Home Assistant tocar quando outro participante inicia ou entra no grupo de conferência selecionado."
+        },
+        "auto_answer": {
+          "name": "Atendimento automático",
+          "description": "Atende automaticamente chamadas recebidas neste telefone lógico quando um navegador conectado tem permissão para usar o microfone."
+        },
+        "send_video": {
+          "name": "Enviar vídeo",
+          "description": "Envia a câmera de um navegador conectado por padrão quando o vídeo é negociado e há permissão do navegador."
+        }
+      }
+    },
+    "create_account": {
+      "name": "Criar conta SIP",
+      "description": "Cria ou substitui uma conta SIP local para um endpoint SIP padrão que se registra no Home Assistant.",
+      "fields": {
+        "username": {
+          "name": "Nome de usuário",
+          "description": "Nome de usuário SIP e ID na agenda central, por exemplo MobileOffice."
+        },
+        "display_name": {
+          "name": "Nome de exibição opcional",
+          "description": "Nome amigável opcional mostrado na agenda central."
+        },
+        "password": {
+          "name": "Senha opcional",
+          "description": "Senha opcional, preservada exatamente como informada e nunca repetida. Se omitida, o Home Assistant gera uma e a retorna apenas na resposta deste serviço administrativo."
+        },
+        "enabled": {
+          "name": "Ativação opcional"
+        },
+        "replace": {
+          "name": "Substituição opcional de existente"
+        },
+        "extension": {
+          "name": "Ramal opcional",
+          "description": "Ramal interno opcional publicado na agenda central. Quando definido, este endpoint SIP pode ser chamado por nome ou ramal."
+        },
+        "conference_group": {
+          "name": "Grupo de conferência opcional",
+          "description": "Adiciona esta conta de endpoint SIP registrado a um ou mais grupos de conferência. Use uma lista separada por vírgulas para vários grupos."
+        },
+        "conference_ring": {
+          "name": "Tocar ao iniciar conferência",
+          "description": "Faz este endpoint SIP registrado tocar quando outro participante inicia seu grupo de conferência. O endpoint ainda pode entrar manualmente quando desativado."
+        },
+        "ring_group": {
+          "name": "Grupo de toque opcional",
+          "description": "Adiciona esta conta de endpoint SIP registrado a um ou mais grupos de toque. Use uma lista separada por vírgulas para vários grupos."
+        }
+      }
+    },
+    "remove_account": {
+      "name": "Remover conta SIP",
+      "description": "Remove uma conta SIP local e seu registro ativo.",
+      "fields": {
+        "username": {
+          "name": "Nome de usuário"
+        }
+      }
+    },
+    "rotate_account_password": {
+      "name": "Trocar senha da conta SIP",
+      "description": "Gera uma nova senha para uma conta SIP local, remove seu registro ativo e retorna a nova senha apenas na resposta deste serviço administrativo.",
+      "fields": {
+        "username": {
+          "name": "Nome de usuário"
+        }
+      }
+    },
+    "enable_account": {
+      "name": "Ativar conta SIP",
+      "description": "Ativa uma conta SIP local.",
+      "fields": {
+        "username": {
+          "name": "Nome de usuário"
+        }
+      }
+    },
+    "disable_account": {
+      "name": "Desativar conta SIP",
+      "description": "Desativa uma conta SIP local e remove seu registro ativo.",
+      "fields": {
+        "username": {
+          "name": "Nome de usuário"
+        }
+      }
+    },
+    "list_accounts": {
+      "name": "Listar contas SIP",
+      "description": "Retorna as contas SIP locais configuradas sem senhas ao administrador que chamou este serviço."
+    },
+    "capture_sip": {
+      "name": "Capturar sinalização SIP",
+      "description": "Ação administrativa de diagnóstico. Inicie antes de uma chamada de teste e pare para obter um URL temporário para baixar um PCAP legível no Wireshark. Captura mensagens SIP desta integração, não áudio RTP ou pacotes da rede. Valores de autenticação são removidos; números de telefone e endereços permanecem. Para automaticamente após a duração selecionada ou 4 MiB e exclui a captura 15 minutos após parar. Iniciar novamente substitui a captura anterior.",
+      "fields": {
+        "operation": {
+          "name": "Operação"
+        },
+        "duration": {
+          "name": "Duração máxima",
+          "description": "Usado ao iniciar uma captura."
+        }
+      }
+    },
+    "play_media": {
+      "name": "Reproduzir áudio para o chamador",
+      "description": "Reproduz um arquivo de áudio em uma chamada Automação e aguarda a conclusão da transmissão. Usa a chamada do gatilho VoIP ou a chamada de saída criada nesta execução. Não desliga automaticamente.",
+      "fields": {
+        "media": {
+          "name": "Arquivo de áudio"
+        },
+        "timeout": {
+          "name": "Duração máxima da reprodução",
+          "description": "Inclui resolução da mídia, download, decodificação e transmissão. O tempo limite interrompe a reprodução. O padrão é 120 segundos."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Seleção avançada opcional. Gatilhos nativos e uma única chamada Automação de saída selecionam sua própria chamada automaticamente."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada",
+          "description": "Necessário apenas com um call_id explícito; use a geração retornada por Chamar."
+        },
+        "device_id": {
+          "name": "Telefone para execução manual",
+          "description": "Selecione o telefone com uma chamada Automação ao testar manualmente."
+        }
+      }
+    },
+    "tts_say": {
+      "name": "Falar com o chamador",
+      "description": "Pronuncia uma mensagem na chamada da automação. A chamada é selecionada pelo gatilho VoIP; a ação seguinte aguarda o anúncio.",
+      "fields": {
+        "tts_entity_id": {
+          "name": "Provedor de síntese de voz"
+        },
+        "message": {
+          "name": "Mensagem"
+        },
+        "language": {
+          "name": "Idioma",
+          "description": "Omita para usar o idioma padrão do provedor."
+        },
+        "options": {
+          "name": "Opções do provedor"
+        },
+        "timeout": {
+          "name": "Duração máxima do anúncio",
+          "description": "Tempo máximo para o navegador ficar pronto, gerar a fala e transmitir. O padrão é 120 segundos; este não é um tempo limite de toque."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Seleção avançada opcional ao tratar várias chamadas. Gatilhos nativos e uma única chamada Automação de saída selecionam sua chamada automaticamente."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada",
+          "description": "Necessário apenas com um ID de chamada explícito. Gatilhos nativos e uma única chamada Automação de saída o fornecem automaticamente."
+        },
+        "device_id": {
+          "name": "Telefone para execução manual",
+          "description": "Selecione o telefone com a chamada da automação ao testar esta ação sem um gatilho VoIP."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "wait_unanswered": {
+      "name": "Aguardar sem atender",
+      "description": "Mantém uma chamada não atendida para um contato Automação tocando sem atender ou iniciar áudio. A próxima ação é executada após a espera. Se esta for a última ação, a chamada termina sem atendimento. O cancelamento pelo chamador interrompe a espera.",
+      "fields": {
+        "duration": {
+          "name": "Duração",
+          "description": "Segundos de espera sem atender, de 1 a 3600. O padrão é 60. Para encaminhamento por falta de resposta da operadora, permita mais tempo que o temporizador de encaminhamento da operadora."
+        },
+        "device_id": {
+          "name": "Telefone para execução manual",
+          "description": "Necessário apenas fora de um gatilho VoIP nativo. O telefone deve ter uma chamada não atendida tratada por um contato Automação."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Para ações antigas fora de um gatilho VoIP nativo."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "wait_for_dtmf": {
+      "name": "Aguardar entrada pelo teclado",
+      "description": "Aguarda dígitos do chamador nesta chamada da automação. A próxima condição pode verificar os dígitos recebidos ou o resultado de tempo esgotado.",
+      "fields": {
+        "timeout": {
+          "name": "Espera pelos dígitos",
+          "description": "Segundos de espera após o atendimento da chamada. O padrão é 10 segundos."
+        },
+        "max_digits": {
+          "name": "Número de dígitos",
+          "description": "Conclui após esta quantidade de dígitos. O padrão é um."
+        },
+        "terminator": {
+          "name": "Tecla de fim de entrada",
+          "description": "O padrão é #. Um valor vazio desativa a tecla de fim."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Para ações antigas fora de um gatilho nativo de chamada."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        },
+        "device_id": {
+          "name": "Telefone para execução manual",
+          "description": "Selecione o telefone com a chamada da automação ao testar esta ação sem um gatilho VoIP."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "set_voicemail_settings": {
+      "name": "Configurar correio de voz",
+      "description": "Ativa a caixa postal de um telefone independentemente das regras de encaminhamento. Campos omitidos mantêm suas configurações. Desativar a caixa exclui permanentemente suas mensagens, arquivos, PIN e configurações. Ativá-la novamente cria uma caixa vazia.",
+      "fields": {
+        "device_id": {
+          "name": "Caixa postal do telefone"
+        },
+        "enabled": {
+          "name": "Ativar caixa postal"
+        },
+        "max_seconds": {
+          "name": "Duração máxima da mensagem",
+          "description": "Segundos permitidos após o tom de gravação. Novas caixas usam 180 segundos."
+        },
+        "greeting_media": {
+          "name": "Saudação da caixa postal",
+          "description": "Áudio opcional do navegador de mídia do Home Assistant, reproduzido antes do tom de gravação."
+        },
+        "clear_greeting": {
+          "name": "Remover saudação",
+          "description": "Usa apenas o tom de gravação. Não combine com uma nova saudação."
+        },
+        "pin": {
+          "name": "PIN da caixa postal",
+          "description": "De 4 a 10 dígitos opcionais para acesso a partir de outra conta SIP. Um PIN vazio desativa esse acesso."
+        }
+      }
+    },
+    "get_voicemail": {
+      "name": "Obter mensagem de voz",
+      "description": "Retorna o arquivo da mensagem existente e seu ID media-source no HA. Usa a mensagem de um gatilho Mensagem de voz recebida ou uma caixa postal e um ID de mensagem selecionados explicitamente. Não copia, move ou marca a mensagem como lida.",
+      "fields": {
+        "mailbox": {
+          "name": "Caixa postal",
+          "description": "Opcional com o gatilho Mensagem de voz recebida. Caso contrário, forneça também o ID da mensagem."
+        },
+        "message_id": {
+          "name": "ID da mensagem",
+          "description": "Opcional com o gatilho Mensagem de voz recebida."
+        }
+      }
+    },
+    "transcribe_voicemail": {
+      "name": "Transcrever mensagem de voz",
+      "description": "Transcreve a mensagem salva de um gatilho Mensagem de voz recebida, ou usa uma caixa postal e um ID de mensagem selecionados explicitamente. Escolha uma entidade existente de reconhecimento de fala do HA. Retorna texto sem alterar a gravação ou marcá-la como lida.",
+      "fields": {
+        "mailbox": {
+          "name": "Caixa postal",
+          "description": "Opcional com o gatilho Mensagem de voz recebida. Caso contrário, forneça também o ID da mensagem."
+        },
+        "message_id": {
+          "name": "ID da mensagem",
+          "description": "Opcional com o gatilho Mensagem de voz recebida. Selecione uma mensagem salva, não um ID de chamada."
+        },
+        "stt_entity_id": {
+          "name": "Entidade de reconhecimento de fala"
+        },
+        "language": {
+          "name": "Idioma",
+          "description": "Código de idioma compatível com o provedor de reconhecimento de fala selecionado, por exemplo en ou it."
+        },
+        "timeout": {
+          "name": "Tempo limite da transcrição"
+        }
+      }
+    },
+    "send_to_voicemail": {
+      "name": "Enviar chamada ao correio de voz",
+      "description": "Entrega a chamada atual da automação à caixa postal ativada de um telefone. A gravação controla a chamada a partir deste ponto e a encerra após a mensagem. Coloque esta ação após qualquer saudação ou síntese de voz; não acrescente desligamento.",
+      "fields": {
+        "mailbox": {
+          "name": "Caixa postal de destino"
+        },
+        "skip_greeting": {
+          "name": "Pular saudação da caixa postal",
+          "description": "Começa pelo tom de gravação, por exemplo após uma ação tts_say."
+        },
+        "device_id": {
+          "name": "Telefone proprietário da chamada"
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Seleção explícita da chamada"
+        }
+      }
+    },
+    "park": {
+      "name": "Estacionar chamada",
+      "description": "Deixa uma chamada de áudio estabelecida em uma posição de estacionamento. Outro telefone a recupera chamando o número da posição.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone que deixa a conversa. Um gatilho nativo de chamada pode selecioná-lo automaticamente."
+        },
+        "slot": {
+          "name": "Posição de estacionamento",
+          "description": "Deixe vazio para usar a primeira posição configurada disponível."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Chamada explícita opcional pertencente ao telefone selecionado."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Iniciar gravação da chamada",
+      "description": "Grava os dois lados de uma conversa estabelecida usando o áudio que já passa pelo Home Assistant. A gravação para ao desligar, transferir a mídia ou atingir o limite de duração configurado.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone"
+        },
+        "max_seconds": {
+          "name": "Duração máxima"
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Parar gravação da chamada",
+      "description": "Finaliza a gravação deste telefone e retorna seu arquivo de áudio existente, enquanto a conversa continua.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone"
+        },
+        "call_id": {
+          "name": "ID da chamada"
+        },
+        "expected_generation": {
+          "name": "Geração da chamada"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
+    },
+    "get_recording": {
+      "name": "Obter gravação da chamada",
+      "description": "Retorna o caminho do arquivo da gravação original e o identificador media-source do Home Assistant sem criar outra cópia.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone"
+        },
+        "recording_id": {
+          "name": "ID da gravação",
+          "description": "Identificador retornado por Iniciar gravação da chamada ou pelo evento recording_finished."
+        }
+      }
+    },
+    "delete_recording": {
+      "name": "Excluir gravação da chamada",
+      "description": "Exclui a gravação da conversa selecionada e seus metadados.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone"
+        },
+        "recording_id": {
+          "name": "ID da gravação",
+          "description": "Identificador retornado por Iniciar gravação da chamada ou pelo evento recording_finished."
+        }
+      }
+    },
     "get_phone_state": {
       "name": "Obter estado do telefone",
       "description": "Consultar o estado, as chamadas e os contadores da caixa postal do telefone selecionado.",
@@ -1697,7 +2855,7 @@
           "name": "Telefone tocando"
         },
         "slot": {
-          "name": "Vaga de estacionamento"
+          "name": "Posição de estacionamento"
         },
         "answer_timeout": {
           "name": "Aguardar atendimento"
@@ -1711,33 +2869,38 @@
         "leg_id": {
           "name": "Ramo da chamada"
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
       }
     },
     "provision_phone": {
-      "name": "Prepare phone provisioning",
-      "description": "Prepare the current configuration for download. A served file does not confirm that the phone applied it.",
+      "name": "Preparar configuração do telefone",
+      "description": "Prepara a configuração atual para download. O fornecimento de um arquivo não confirma que o telefone o aplicou.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Telefone físico"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID do telefone físico"
         }
       }
     },
     "get_phone_provisioning_state": {
-      "name": "Get phone provisioning state",
-      "description": "Read prepared and downloaded revisions. Only an administrator can explicitly request the private provisioning URL.",
+      "name": "Obter estado da configuração do telefone",
+      "description": "Lê as revisões preparadas e baixadas. Somente um administrador pode solicitar explicitamente o URL privado da configuração.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Telefone físico"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID do telefone físico"
         },
         "include_url": {
-          "name": "Include private provisioning URL",
-          "description": "The URL contains a device credential. Keep it private."
+          "name": "Incluir URL privado da configuração",
+          "description": "O URL contém uma credencial do dispositivo. Mantenha-o privado."
         }
       }
     },
@@ -1745,21 +2908,21 @@
       "name": "Atualizar o catálogo de modelos de telefone compatíveis",
       "description": "Baixa o catálogo de modelos mais recente. Para usar as instruções atualizadas em um telefone já configurado, abra as configurações dele e atualize as instruções do modelo."
     },
-    "rotate_phone_provisioning_token": {
-      "name": "Rotate phone provisioning credential",
-      "description": "Invalidate the old private download URL. Configure the new URL before the next phone download.",
-      "fields": {
-        "device_id": {
-          "name": "Physical phone"
-        },
-        "phone_id": {
-          "name": "Physical phone ID"
-        }
-      }
-    },
     "reload_card_associations": {
       "name": "Reler associações dos cartões",
       "description": "Relê as configurações dos painéis salvas em armazenamento e YAML para atualizar as associações às contas. Não recarrega o PBX nem inicia consultas periódicas. Somente administradores."
+    },
+    "rotate_phone_provisioning_token": {
+      "name": "Trocar credencial da configuração do telefone",
+      "description": "Invalida o URL privado de download anterior. Configure o novo URL antes do próximo download pelo telefone.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone físico"
+        },
+        "phone_id": {
+          "name": "ID do telefone físico"
+        }
+      }
     }
   }
 }

@@ -1677,6 +1677,1164 @@
     }
   },
   "services": {
+    "set_phone_memberships": {
+      "name": "Gruppenmitgliedschaften eines Telefons festlegen",
+      "description": "Ändert die Rufgruppen, Warteschlangen oder Mitgliedschaften in bestehenden Durchsagegruppen eines Telefons. Für Änderungen an Durchsagegruppen sind Administratorrechte erforderlich.",
+      "fields": {
+        "phone": {
+          "name": "Telefon"
+        },
+        "field": {
+          "name": "Gruppentyp"
+        },
+        "value": {
+          "name": "Gruppennamen",
+          "description": "Geben Sie Rufgruppen und Warteschlangen mit ihren Namen an. Verwenden Sie für Durchsagegruppen die vorhandenen Gruppen-IDs als Liste oder durch Kommas getrennt. Ein leerer Wert entfernt die Mitgliedschaften und behält die Gruppen bei."
+        }
+      }
+    },
+    "set_phone_queues": {
+      "name": "Warteschlangen eines Telefons festlegen",
+      "description": "Legt fest, welchen Warteschlangen ein Telefon angehört. Für neue Namen werden automatisch Warteschlangengeräte angelegt.",
+      "fields": {
+        "phone": {
+          "name": "Telefon"
+        },
+        "queues": {
+          "name": "Warteschlangen",
+          "description": "Durch Kommas getrennte Namen der Warteschlangen. Lassen Sie das Feld leer, um alle Warteschlangen zu verlassen."
+        }
+      }
+    },
+    "set_queue_agent_state": {
+      "name": "Agentenstatus in der Warteschlange festlegen",
+      "description": "Meldet ein konfiguriertes Mitglied an oder ab. Die Zuteilung von Anrufen kann auch pausiert und fortgesetzt werden.",
+      "fields": {
+        "queue": {
+          "name": "Warteschlange"
+        },
+        "phone": {
+          "name": "Telefon"
+        },
+        "state": {
+          "name": "Agentenstatus"
+        },
+        "reason": {
+          "name": "Grund für die Pause",
+          "description": "Optionaler Grund für die Pause des Agenten. Er bleibt bis zur nächsten Statusänderung gespeichert."
+        }
+      }
+    },
+    "get_queue_activity": {
+      "name": "Aktivität der Warteschlange abrufen",
+      "description": "Liest Warteschlangenereignisse wie Eintritt, Anrufangebot und Austritt aus dem Recorder von Home Assistant. Administratorrechte erforderlich.",
+      "fields": {
+        "queue": {
+          "name": "Warteschlange"
+        },
+        "since": {
+          "name": "Von",
+          "description": "ISO-Zeitstempel mit Zeitzone. Standardmäßig 24 Stunden vor dem unter \"Bis\" angegebenen Zeitpunkt."
+        },
+        "until": {
+          "name": "Bis",
+          "description": "ISO-Zeitstempel mit Zeitzone. Standardmäßig die aktuelle Uhrzeit. Der Zeitraum darf höchstens 31 Tage umfassen."
+        },
+        "limit": {
+          "name": "Maximale Anzahl von Ereignissen"
+        },
+        "cursor": {
+          "name": "Cursor für die nächste Seite",
+          "description": "Verwenden Sie next_cursor aus der vorherigen Antwort und behalten Sie dieselbe Warteschlange und denselben Zeitraum bei."
+        }
+      }
+    },
+    "get_queue_metrics": {
+      "name": "Warteschlangenstatistik abrufen",
+      "description": "Liest für die im gewählten Zeitraum aufgenommenen Anrufe die Anzahl, Wartezeiten und Auslastung der Agenten aus dem Recorder. Maßgeblich ist der Stand zum Zeitpunkt \"Bis\". Es gilt die Aufbewahrungsfrist des Recorders. Administratorrechte erforderlich.",
+      "fields": {
+        "queue": {
+          "name": "Warteschlange"
+        },
+        "since": {
+          "name": "Von",
+          "description": "ISO-Zeitstempel mit Zeitzone. Standardmäßig 24 Stunden vor dem unter \"Bis\" angegebenen Zeitpunkt."
+        },
+        "until": {
+          "name": "Bis",
+          "description": "ISO-Zeitstempel mit Zeitzone. Standardmäßig die aktuelle Uhrzeit. Der Zeitraum darf höchstens 31 Tage umfassen."
+        }
+      }
+    },
+    "get_queue_state": {
+      "name": "Warteschlangenstatus abrufen",
+      "description": "Gibt die Einstellungen der Warteschlange, die wartenden Anrufer und die aktuelle Verfügbarkeit der Mitglieder zurück.",
+      "fields": {
+        "queue": {
+          "name": "Warteschlange"
+        },
+        "phone": {
+          "name": "Telefon",
+          "description": "Optionaler Filter nach Mitglied."
+        }
+      }
+    },
+    "configure_queue": {
+      "name": "Warteschlange konfigurieren",
+      "description": "Aktualisiert eine bestehende Warteschlange. Dieselben Einstellungen sind auf ihrem VoIP-Stack-Gerät verfügbar.",
+      "fields": {
+        "queue": {
+          "name": "Warteschlange"
+        },
+        "enabled": {
+          "name": "Aktiviert"
+        },
+        "max_waiting": {
+          "name": "Maximale Anzahl wartender Anrufer"
+        },
+        "max_wait": {
+          "name": "Maximale Wartezeit"
+        },
+        "ring_timeout": {
+          "name": "Klingeldauer pro Versuch"
+        },
+        "no_agent_wait": {
+          "name": "Wartezeit ohne Agenten"
+        },
+        "retry_delay": {
+          "name": "Pause zwischen Versuchen"
+        },
+        "wrap_up": {
+          "name": "Nachbearbeitungszeit nach einem Gespräch"
+        },
+        "fallback": {
+          "name": "Ausweichziel"
+        },
+        "hold_media": {
+          "name": "URI der Wartemusik"
+        },
+        "strategy": {
+          "name": "Verteilstrategie"
+        },
+        "agent_order": {
+          "name": "Bevorzugte Reihenfolge der Telefone",
+          "description": "Geordnete Liste der dauerhaften Telefon-IDs. Die übrigen Mitglieder der Warteschlange folgen danach. Die Mitgliedschaft bleibt erhalten."
+        },
+        "auto_pause_after": {
+          "name": "Nach unbeantworteten Rufversuchen pausieren",
+          "description": "Bei 0 ist die automatische Pause ausgeschaltet. Mit 3 wird ein Agent nach drei aufeinanderfolgenden unbeantworteten Rufversuchen pausiert. Besetzte oder nicht erreichbare Telefone sowie abgebrochene Versuche zählen nicht."
+        },
+        "fallback_full": {
+          "name": "Ausweichziel bei voller Warteschlange",
+          "description": "Ersetzt für diesen Fall das allgemeine Ausweichziel. Ein leeres Feld übernimmt das allgemeine Ziel."
+        },
+        "fallback_timeout": {
+          "name": "Ausweichziel nach Ablauf der Wartezeit",
+          "description": "Ersetzt für diesen Fall das allgemeine Ausweichziel. Ein leeres Feld übernimmt das allgemeine Ziel."
+        },
+        "fallback_no_agents": {
+          "name": "Ausweichziel ohne Agenten",
+          "description": "Ersetzt für diesen Fall das allgemeine Ausweichziel. Ein leeres Feld übernimmt das allgemeine Ziel."
+        },
+        "fallback_disabled": {
+          "name": "Ausweichziel bei deaktivierter Warteschlange",
+          "description": "Ersetzt für diesen Fall das allgemeine Ausweichziel. Ein leeres Feld übernimmt das allgemeine Ziel."
+        },
+        "fallback_removed": {
+          "name": "Ausweichziel bei entfernter Warteschlange",
+          "description": "Ersetzt für diesen Fall das allgemeine Ausweichziel. Ein leeres Feld übernimmt das allgemeine Ziel."
+        }
+      }
+    },
+    "announce": {
+      "name": "Durchsage starten",
+      "description": "Gibt eine Sprachausgabe oder Audiodatei auf Telefonen oder in Durchsagegruppen wieder. Besetzte Telefone werden übersprungen.",
+      "fields": {
+        "targets": {
+          "name": "Telefone oder Durchsagegruppen",
+          "description": "Endpunkt-IDs, Geräte-IDs, Namen oder IDs von Durchsagegruppen."
+        },
+        "tts_entity_id": {
+          "name": "Anbieter für Sprachausgabe"
+        },
+        "message": {
+          "name": "Nachricht"
+        },
+        "language": {
+          "name": "Sprache"
+        },
+        "options": {
+          "name": "Optionen für die Sprachausgabe"
+        },
+        "media": {
+          "name": "Audiodatei",
+          "description": "Als Alternative zu einem Anbieter für Sprachausgabe und einem Nachrichtentext verwenden."
+        },
+        "answer_timeout": {
+          "name": "Zeitfenster zur Rufannahme"
+        },
+        "timeout": {
+          "name": "Maximale Gesamtdauer"
+        },
+        "wait": {
+          "name": "Auf das Ende warten"
+        }
+      }
+    },
+    "stop_announcement": {
+      "name": "Durchsage beenden",
+      "description": "Beendet die angegebene Durchsage und gibt die zugehörigen Verbindungen zu den Empfängern frei.",
+      "fields": {
+        "announcement_id": {
+          "name": "Durchsage-ID"
+        }
+      }
+    },
+    "purge_devices": {
+      "name": "Veraltete Geräte entfernen (deaktiviert)",
+      "description": "Deaktiviert, da die ESPHome-Geräte von ESPHome verwaltet werden. VoIP Stack darf sie nicht aus der Geräteregistrierung von Home Assistant entfernen.",
+      "fields": {
+        "device_id": {
+          "name": "Gerät",
+          "description": "Optional ein bestimmtes ESPHome-VoIP-Gerät, das sofort entfernt werden soll."
+        },
+        "min_unavailable_hours": {
+          "name": "Mindestdauer der Nichterreichbarkeit in Stunden",
+          "description": "Nur Geräte entfernen, die seit mindestens so vielen Stunden nicht erreichbar sind. Der Standardwert 0 bedeutet sofortiges Entfernen. Ein höherer Wert (z. B. 1) schützt Geräte, die bei einem OTA-Update oder Neustart nur kurz offline sind."
+        }
+      }
+    },
+    "answer": {
+      "name": "Anruf annehmen",
+      "description": "Nimmt den klingelnden Anruf am ausgewählten Telefon an. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Telefon aus Home Assistant oder ESPHome."
+        },
+        "send_video": {
+          "name": "Video senden",
+          "description": "Sendet das Bild der Browserkamera, wenn Video für dieses Telefon aktiviert ist."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Wählen Sie einen bestimmten Anruf aus, wenn mehrere Anrufe klingeln."
+        },
+        "accept_video": {
+          "name": "Video annehmen",
+          "description": "Nimmt angebotenes Video auf einem Browsertelefon an. Schalten Sie diese Option für einen reinen Audioanruf aus. Die Einstellung für die eigene Kamera ist davon unabhängig."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "decline": {
+      "name": "Anruf ablehnen",
+      "description": "Lehnt den klingelnden Anruf am ausgewählten Telefon ab. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Telefon aus Home Assistant oder ESPHome."
+        },
+        "line_id": {
+          "name": "Leitung des Tischtelefons",
+          "description": "Optionaler konfigurierter Leitungsplatz bei Auswahl eines verwalteten SIP-Telefons."
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "status": {
+          "name": "SIP-Status"
+        },
+        "reason": {
+          "name": "SIP-Begründung"
+        },
+        "decline_reason": {
+          "name": "Begründung der Automation"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "call": {
+      "name": "Anruf",
+      "description": "Ruft ein Ziel von einem Telefon aus an oder startet einen serverseitigen Audioanruf von einem Automationskontakt. Bei einem Automationskontakt wartet die Aktion, bis die Gegenstelle abnimmt. Nachfolgende Aktionen verwenden automatisch den Anruf dieses Durchlaufs. Für die explizite Auswahl kann eine Antwortvariable verwendet werden. Ein Browser ist nicht erforderlich.",
+      "fields": {
+        "device_id": {
+          "name": "Anrufendes Telefon",
+          "description": "Optional das Telefon, das den Anruf startet. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
+        },
+        "source_automation": {
+          "name": "Anrufender Automationskontakt",
+          "description": "Name oder Nebenstelle eines aktivierten Automationskontakts, z. B. Wakeup-Caller. Für einen serverseitigen Audioanruf anstelle von \"Anrufendes Telefon\" verwenden. Administrator- oder Automationsberechtigung erforderlich. Eine Antwortvariable ist nicht nötig."
+        },
+        "trunk_id": {
+          "name": "Abgehender SIP-Trunk",
+          "description": "Optionale Leitung für ein Home-Assistant-Telefon oder eine serverseitige Durchsage. Ohne Auswahl wird die bevorzugte Leitung des Telefons oder der Standard-Trunk verwendet. Es erfolgt kein automatischer Wechsel auf eine andere Leitung."
+        },
+        "answer_timeout": {
+          "name": "Auf Antwort warten",
+          "description": "Maximale Wartezeit in Sekunden, bis der Angerufene einen von einer Automation gestarteten Anruf annimmt. Klingeln und frühe Medien zählen nicht als Annahme. Bei einem Fehlschlag endet die Aktion und der Anruf wird freigegeben."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname, Nebenstelle, Gruppe, Rufnummer oder SIP-Adresse."
+        },
+        "send_video": {
+          "name": "Video senden",
+          "description": "Bietet das Bild der Browserkamera an, wenn Video für dieses Telefon aktiviert ist."
+        },
+        "ha_bridge": {
+          "name": "Anruf über Home Assistant leiten"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "forward": {
+      "name": "Anruf weiterleiten",
+      "description": "Leitet den aktuellen klingelnden oder bereits angenommenen Anruf an ein anderes Ziel weiter.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optional das Home-Assistant-Telefon, zu dem der Anruf gehört."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname, Nebenstelle, Gruppe, Rufnummer oder SIP-Adresse."
+        },
+        "on_failure": {
+          "name": "Bei Fehlschlag",
+          "description": "Wenn die Weiterleitung zum neuen Ziel fehlschlägt, kann der ursprüngliche Anruf in Home Assistant weiterklingeln, beendet oder mit Besetzt beantwortet werden."
+        },
+        "trunk_id": {
+          "name": "Abgehender SIP-Trunk",
+          "description": "Optionale Leitung für eine externe Weiterleitung. Ohne Auswahl bleibt der Trunk des Anrufs oder die bevorzugte Leitung des Telefons erhalten."
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration",
+          "description": "Wird von nativen VoIP-Auslösern automatisch angegeben. Nur bei älteren Automationen eintragen, die den Anruf ausdrücklich auswählen."
+        },
+        "expected_state": {
+          "name": "Erwarteter Status"
+        },
+        "expected_sequence": {
+          "name": "Erwartete Sequenznummer"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "transfer": {
+      "name": "Gespräch vermitteln",
+      "description": "Vermittelt ein bestehendes SIP-Gespräch. Ein nativer VoIP-Auslöser wählt den Anruf automatisch aus.",
+      "fields": {
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname, Nebenstelle oder SIP-Adresse für die Vermittlung."
+        },
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optional das lokale Telefon, wenn ein Anruf explizit ausgewählt wird."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Nur erforderlich, wenn kein nativer VoIP-Anrufauslöser verwendet wird."
+        },
+        "replaces_call_id": {
+          "name": "Anruf-ID des Rückfragegesprächs",
+          "description": "Verwendet das bestehende Rückfragegespräch zum Vermitteln mit Rückfrage."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "set_deadline": {
+      "name": "Erweitert: Zeitlimit für einen Anruf festlegen",
+      "description": "Setzt ein Zeitlimit für den Rufaufbau oder das Klingeln. Der Ablauf löst ein Automationsereignis aus. Eine Weiterleitung erfolgt erst durch eine entsprechende Automation.",
+      "fields": {
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "phase": {
+          "name": "Anrufphase"
+        },
+        "timeout": {
+          "name": "Zeitlimit",
+          "description": "Sekunden bis zum Ereignis für das abgelaufene Zeitlimit, sofern der Anruf seinen Status nicht geändert hat."
+        },
+        "expected_state": {
+          "name": "Erwarteter Status",
+          "description": "Optionale Absicherung gegen veraltete Automationsaktionen. Den Wert aus dem Anrufereignis übernehmen."
+        },
+        "expected_sequence": {
+          "name": "Erwartete Sequenznummer",
+          "description": "Optionale Absicherung gegen veraltete Automationsaktionen. Den Wert aus dem Anrufereignis übernehmen."
+        }
+      }
+    },
+    "cancel_deadline": {
+      "name": "Erweitert: Zeitlimit für einen Anruf aufheben",
+      "description": "Hebt ein zuvor gesetztes Zeitlimit auf. Der Anruf läuft weiter.",
+      "fields": {
+        "call_id": {
+          "name": "Anruf-ID"
+        }
+      }
+    },
+    "route": {
+      "name": "Erweitert: Routingentscheidung anwenden",
+      "description": "Wendet die Wahlplanentscheidung einer Automation auf einen eingehenden SIP-Anruf an, dessen Ziel noch aussteht.",
+      "fields": {
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "SIP-Call-ID des wartenden Anrufs aus dem Ereignis route_requested der Ereignisentität."
+        },
+        "action": {
+          "name": "Aktion"
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Kontakt-ID, Kontaktname, Rufnummer, user@host oder eine URI im Format sip:user@host als Ziel für forward oder bridge."
+        },
+        "status": {
+          "name": "SIP-Statuscode",
+          "description": "Optionaler abschließender SIP-Statuscode für die Entscheidungen decline oder cancel."
+        },
+        "reason": {
+          "name": "Grund",
+          "description": "Begründungstext der SIP-Antwort."
+        },
+        "decline_reason": {
+          "name": "Ablehnungsgrund",
+          "description": "Von der Anwendung gemeldeter Beendigungsgrund. Er wird in den SIP-Headern Reason und X-Voip-Stack-Decline-Reason übertragen."
+        }
+      }
+    },
+    "select_inbound_destination": {
+      "name": "Ziel für eingehenden Anruf auswählen",
+      "description": "Leitet einen neuen eingehenden Anruf an ein Telefon, eine Gruppe, eine Nebenstelle oder Assist. In der Regel genügt die Angabe des Ziels.",
+      "fields": {
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname, Gruppe, Nebenstelle, registriertes Telefon, Assist-Nebenstelle, SIP-URI oder erreichbare Rufnummer."
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_state": {
+          "name": "Erwarteter Status"
+        },
+        "expected_sequence": {
+          "name": "Erwartete Sequenznummer"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "hangup": {
+      "name": "Auflegen",
+      "description": "Beendet den Anruf am ausgewählten Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Telefon aus Home Assistant oder ESPHome."
+        },
+        "line_id": {
+          "name": "Leitung des Tischtelefons",
+          "description": "Optionaler konfigurierter Leitungsplatz bei Auswahl eines verwalteten SIP-Telefons."
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration",
+          "description": "Optionale erweiterte Auswahl in Verbindung mit call_id. Ein einzelner ausgehender Anruf einer Automation wird automatisch ausgewählt."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "add_contact": {
+      "name": "Telefonbuchkontakt hinzufügen",
+      "description": "Fügt einen manuellen Kontakt zum zentralen JSON-Telefonbuch hinzu oder ersetzt ihn.",
+      "fields": {
+        "type": {
+          "name": "Kontakttyp"
+        },
+        "fallback_destination": {
+          "name": "Ausweichziel für die Automation",
+          "description": "Optionales Ziel, falls vor Ablauf der Frist keine Automation den Anruf übernimmt."
+        },
+        "timeout": {
+          "name": "Zeitlimit bei inaktiver Automation"
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name des Kontakts. Ohne Angabe einer ID wird der Name auch als Kontakt-ID verwendet."
+        },
+        "id": {
+          "name": "Optionale ID",
+          "description": "Optionale dauerhafte ID. Standardmäßig wird der Name verwendet."
+        },
+        "address": {
+          "name": "Optionale Adresse",
+          "description": "Optionale IP-Adresse oder Hostname eines direkt erreichbaren lokalen SIP-Endpunkts. Zusammen mit SIP-Port und Transport verwenden."
+        },
+        "sip_uri": {
+          "name": "Optionale SIP-URI",
+          "description": "Optionale vollständige SIP-URI, zum Beispiel sip:kitchen@192.168.1.50:5060;transport=udp. Ohne Angabe ermittelt Home Assistant das Ziel anhand von Name, Nebenstelle, Registrierung oder Rufnummer am Trunk."
+        },
+        "sip_profile": {
+          "name": "SIP-Kompatibilitätsprofil",
+          "description": "Bei \"Auto\" wird die Gegenstelle automatisch erkannt. Für eine statische Dahua-Türstation \"Dahua\" auswählen. Eine SIP-Registrierung oder eine User-Agent-Angabe ist dafür nicht erforderlich."
+        },
+        "dahua_audio": {
+          "name": "Dahua-Audiokompatibilität",
+          "description": "Eine ausdrückliche Audioauswahl setzt das Dahua-Profil voraus. \"PCM\" fügt dem Angebot das herstellerspezifische PCM/16000 hinzu. \"Symmetric\" erlaubt das Senden mit einem bestätigten Empfangscodec, sofern dieser auch für die Senderichtung ausgehandelt wurde. Bei \"Auto\" bleibt die Erkennung anhand des User-Agent aktiv."
+        },
+        "extension": {
+          "name": "Optionale Nebenstelle",
+          "description": "Optionale lokale Nebenstelle im Wahlplan, etwa 101. Bei eingehenden DTMF-Eingaben und internen Anrufen werden passende Nebenstellen vor externen Rufnummern berücksichtigt."
+        },
+        "number": {
+          "name": "Optionale Rufnummer",
+          "description": "Optionale externe oder öffentliche Rufnummer für Anrufe über einen SIP-Trunk."
+        },
+        "ha_bridge": {
+          "name": "Optional über Home Assistant vermitteln",
+          "description": "Erzwingt die Vermittlung über Home Assistant auch dann, wenn der Kontakt direkt über SIP erreichbar ist."
+        },
+        "transport": {
+          "name": "Optionaler SIP-Transport",
+          "description": "Optionales Transportprotokoll für die Signalisierung mit einem direkten SIP-Endpunkt. RTP verwendet weiterhin UDP."
+        },
+        "port": {
+          "name": "Optionaler SIP-Port",
+          "description": "Optionaler SIP-Signalisierungsport für Kontakte mit angegebener Adresse. Standardwert ist 5060."
+        },
+        "rtp_port": {
+          "name": "Optionaler RTP-Port",
+          "description": "Optionaler RTP-Medienport für direkte lokale SIP-Endpunkte. Standardwert ist 40000."
+        },
+        "tx_rate": {
+          "name": "Optionale Abtastrate beim Senden",
+          "description": "Optionale manuelle Angabe der Abtastrate für die Senderichtung. Ohne Angabe gilt die automatische Auswahl."
+        },
+        "rx_rate": {
+          "name": "Optionale Abtastrate beim Empfang",
+          "description": "Optionale manuelle Angabe der Abtastrate für die Empfangsrichtung. Ohne Angabe gilt die automatische Auswahl."
+        },
+        "tx_formats": {
+          "name": "Optionale Sendeformate",
+          "description": "Optionale RTP-PCM-Formatkennungen für die Senderichtung, zum Beispiel 16000:s16le:1:20."
+        },
+        "rx_formats": {
+          "name": "Optionale Empfangsformate",
+          "description": "Optionale RTP-PCM-Formatkennungen für die Empfangsrichtung, zum Beispiel 48000:s16le:1:10."
+        },
+        "max_payload_bytes": {
+          "name": "Optionale maximale RTP-Nutzlast in Byte",
+          "description": "Optionale Obergrenze für die RTP-PCM-Nutzlast. Ohne Angabe gilt der Standardwert 1200."
+        },
+        "conference_group": {
+          "name": "Optionale Konferenzgruppe",
+          "description": "Fügt den Kontakt einer oder mehreren VoIP-Konferenzgruppen hinzu. Trennen Sie mehrere Gruppennamen durch Kommas."
+        },
+        "conference_ring": {
+          "name": "Bei Konferenzbeginn klingeln",
+          "description": "Lässt diesen Kontakt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Kontakt der Konferenz weiterhin manuell beitreten."
+        },
+        "ring_group": {
+          "name": "Optionale Rufgruppe",
+          "description": "Fügt den Kontakt einer oder mehreren VoIP-Rufgruppen hinzu. Trennen Sie mehrere Gruppennamen durch Kommas."
+        }
+      }
+    },
+    "remove_contact": {
+      "name": "Telefonbuchkontakt entfernen",
+      "description": "Entfernt einen manuellen Kontakt anhand seines Namens aus dem zentralen JSON-Telefonbuch.",
+      "fields": {
+        "name": {
+          "name": "Name"
+        }
+      }
+    },
+    "set_contacts": {
+      "name": "Telefonbuchkontakte festlegen",
+      "description": "Ersetzt die manuellen Kontakte durch die Einträge eines JSON-Telefonbuchs.",
+      "fields": {
+        "roster_json": {
+          "name": "Telefonbuch im JSON-Format"
+        }
+      }
+    },
+    "clear_contacts": {
+      "name": "Telefonbuchkontakte leeren",
+      "description": "Entfernt alle manuellen Kontakte aus dem zentralen JSON-Telefonbuch."
+    },
+    "export_phonebook": {
+      "name": "Telefonbuch exportieren",
+      "description": "Gibt das aktuelle zentrale JSON-Telefonbuch ausschließlich an den Administrator zurück."
+    },
+    "push_phonebook": {
+      "name": "Telefonbuch an Telefone senden",
+      "description": "Sendet das aktuelle zentrale JSON-Telefonbuch an alle erreichbaren ESP-Endpunkte. Normalerweise erfolgt der Abgleich automatisch bei einer Änderung am Telefonbuch sowie nach einem Neustart, sobald ein ESPHome-Dienst mit der Endung *_set_roster_json wieder registriert ist. Diese Aktion dient der Diagnose oder dem manuellen Wiederherstellen des Abgleichs."
+    },
+    "set_external_call_access": {
+      "name": "Zugriff auf externe Anrufe festlegen",
+      "description": "Erlaubt oder sperrt für ein Telefon neue Anrufe über den externen Trunk. Dies gilt auch für Weiterleitungen und Vermittlungen durch Home Assistant. Standardmäßig sind alle Telefone freigeschaltet. Die Einstellung bleibt nach Neustarts und Umbenennungen erhalten. Laufende, eingehende und interne Anrufe bleiben verfügbar. Administrator- oder Automationsberechtigung erforderlich.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Browsertelefon, registriertes SIP-Konto oder erkanntes ESPHome-Telefon, für das die Einstellung gelten soll."
+        },
+        "allowed": {
+          "name": "Externe Anrufe erlauben",
+          "description": "Ausschalten, um neue externe Anrufe dieses Telefons über den Trunk zu sperren. Einschalten, um den Zugriff wieder freizugeben."
+        }
+      }
+    },
+    "set_dnd": {
+      "name": "Nicht stören einstellen",
+      "description": "Schaltet den Modus \"Nicht stören\" auf einem Home-Assistant-Telefon ein oder aus.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
+        },
+        "dnd": {
+          "name": "Nicht stören"
+        }
+      }
+    },
+    "set_auto_answer": {
+      "name": "Automatische Rufannahme einstellen",
+      "description": "Schaltet die automatische Rufannahme auf einem Home-Assistant-Telefon ein oder aus.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
+        },
+        "auto_answer": {
+          "name": "Automatische Antwort"
+        }
+      }
+    },
+    "set_send_video": {
+      "name": "Kamerabild standardmäßig senden",
+      "description": "Legt fest, ob ein Home-Assistant-Telefon standardmäßig das Kamerabild überträgt.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
+        },
+        "send_video": {
+          "name": "Video senden"
+        }
+      }
+    },
+    "set_phone_settings": {
+      "name": "Anrufregeln des Telefons konfigurieren",
+      "description": "Legt dauerhafte Regeln für künftige Anrufe an ein Browser-, SIP- oder ESPHome-Telefon fest. Nicht angegebene Felder behalten ihren bisherigen Wert. Ein leeres Ziel schaltet die jeweilige Regel aus. Explizite Routingbefehle einer Automation haben Vorrang.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "forward_to": {
+          "name": "Immer weiterleiten an",
+          "description": "Telefonbuchname, Nebenstelle oder SIP-Adresse. Lassen Sie das Feld leer, um die Weiterleitung auszuschalten."
+        },
+        "outbound_trunk": {
+          "name": "Bevorzugter ausgehender SIP-Trunk",
+          "description": "Wählt die Leitung für externe Anrufe dieses Telefons. Eine ausdrücklich in der Anrufaktion gewählte Leitung hat Vorrang. Ein leerer Wert hebt die Voreinstellung auf."
+        },
+        "busy_to": {
+          "name": "Bei besetzt oder \"Nicht stören\"",
+          "description": "Ziel für den nächsten Versuch, wenn das Telefon besetzt ist oder \"Nicht stören\" aktiviert hat."
+        },
+        "unavailable_to": {
+          "name": "Bei Nichterreichbarkeit",
+          "description": "Ziel für den nächsten Versuch, wenn dieses Telefon offline ist. Die Regel gilt erst, wenn ein Ziel konfiguriert wurde."
+        },
+        "ringing_timeout": {
+          "name": "Klingeldauer bis zur Aktion",
+          "description": "Sekunden bis zur Aktion bei ausbleibender Antwort. Mit 0 wird das Zeitlimit ausgeschaltet. Ohne Angabe bleibt die aktuelle Einstellung erhalten."
+        },
+        "no_answer_action": {
+          "name": "Wenn niemand abnimmt",
+          "description": "Beim Aktivieren eines neuen Klingelzeitlimits erforderlich. Wählen Sie Auflegen, Weiterleiten oder eine aktivierte Sprachmailbox."
+        },
+        "no_answer_to": {
+          "name": "Ziel bei ausbleibender Antwort",
+          "description": "Zum Weiterleiten sind ein Telefonbuchziel oder eine SIP-URI erforderlich. Für die Voicemail einen Telefonnamen oder eine Nebenstelle auswählen. Ein leeres Feld verwendet die Mailbox dieses Telefons."
+        }
+      }
+    },
+    "set_ha_softphone_settings": {
+      "name": "Home-Assistant-Telefon konfigurieren",
+      "description": "Legt Nebenstelle, Rufgruppen, Konferenzgruppen, Klingeln bei Konferenzen, automatische Rufannahme und standardmäßige Kameraübertragung des Home-Assistant-Softphones fest. Sie können einen Gruppennamen direkt eingeben. Das Softphone veröffentlicht ihn im zentralen Telefonbuch. Dadurch wird die dynamische Gruppe wie bei ESP-Endpunkten angelegt oder aktualisiert.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
+        },
+        "extension": {
+          "name": "Nebenstelle",
+          "description": "Optionale Nebenstellennummer, die das Home-Assistant-Softphone veröffentlicht."
+        },
+        "ring_group": {
+          "name": "Rufgruppe",
+          "description": "Optionale Mitgliedschaft des Home-Assistant-Softphones in Rufgruppen der Telefonanlage. Trennen Sie mehrere Gruppen durch Kommas."
+        },
+        "conference_group": {
+          "name": "Konferenzgruppe",
+          "description": "Optionale Mitgliedschaft des Home-Assistant-Softphones in Konferenzräumen. Trennen Sie mehrere Gruppen durch Kommas."
+        },
+        "conference_ring": {
+          "name": "Bei Konferenz klingeln",
+          "description": "Lässt das Home-Assistant-Softphone klingeln, wenn ein anderer Teilnehmer die ausgewählte Konferenzgruppe startet oder ihr beitritt."
+        },
+        "auto_answer": {
+          "name": "Automatische Antwort",
+          "description": "Nimmt eingehende Anrufe auf diesem logischen Telefon automatisch an, wenn ein verbundener Browser das Mikrofon verwenden darf."
+        },
+        "send_video": {
+          "name": "Video senden",
+          "description": "Sendet standardmäßig das Kamerabild des verbundenen Browsers, wenn Video ausgehandelt wurde und der Browser die Kameraberechtigung hat."
+        }
+      }
+    },
+    "create_account": {
+      "name": "SIP-Konto erstellen",
+      "description": "Erstellt oder ersetzt ein lokales SIP-Konto für einen standardkonformen SIP-Endpunkt, der sich bei Home Assistant registriert.",
+      "fields": {
+        "username": {
+          "name": "Benutzername",
+          "description": "SIP-Benutzername und ID im zentralen Telefonbuch, zum Beispiel MobileOffice."
+        },
+        "display_name": {
+          "name": "Optionaler Anzeigename",
+          "description": "Optionaler lesbarer Name für die Anzeige im zentralen Telefonbuch."
+        },
+        "password": {
+          "name": "Optionales Passwort",
+          "description": "Ein eingegebenes Passwort wird unverändert übernommen und nicht wieder angezeigt. Ohne Angabe erzeugt Home Assistant ein Passwort und gibt es ausschließlich in der Antwort auf diesen administrativen Dienstaufruf zurück."
+        },
+        "enabled": {
+          "name": "Aktiviert (optional)"
+        },
+        "replace": {
+          "name": "Vorhandenes Konto ersetzen (optional)"
+        },
+        "extension": {
+          "name": "Optionale Nebenstelle",
+          "description": "Optionale interne Nebenstelle für das zentrale Telefonbuch. Ist sie gesetzt, kann der SIP-Endpunkt über seinen Namen oder seine Nebenstelle angerufen werden."
+        },
+        "conference_group": {
+          "name": "Optionale Konferenzgruppe",
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Konferenzgruppen hinzu. Trennen Sie mehrere Gruppen durch Kommas."
+        },
+        "conference_ring": {
+          "name": "Bei Konferenzbeginn klingeln",
+          "description": "Lässt diesen registrierten SIP-Endpunkt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Endpunkt der Konferenz weiterhin manuell beitreten."
+        },
+        "ring_group": {
+          "name": "Optionale Rufgruppe",
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzu. Trennen Sie mehrere Gruppen durch Kommas."
+        }
+      }
+    },
+    "remove_account": {
+      "name": "SIP-Konto eines Endpunkts entfernen",
+      "description": "Entfernt ein lokales SIP-Konto und seine aktive Registrierung.",
+      "fields": {
+        "username": {
+          "name": "Benutzername"
+        }
+      }
+    },
+    "rotate_account_password": {
+      "name": "Passwort eines SIP-Endpunkts erneuern",
+      "description": "Erzeugt ein neues Passwort für ein lokales SIP-Konto und löscht dessen aktive Registrierung. Das neue Passwort wird ausschließlich in der Antwort auf diesen administrativen Dienstaufruf zurückgegeben.",
+      "fields": {
+        "username": {
+          "name": "Benutzername"
+        }
+      }
+    },
+    "enable_account": {
+      "name": "SIP-Konto eines Endpunkts aktivieren",
+      "description": "Aktiviert ein lokales SIP-Konto.",
+      "fields": {
+        "username": {
+          "name": "Benutzername"
+        }
+      }
+    },
+    "disable_account": {
+      "name": "SIP-Konto eines Endpunkts deaktivieren",
+      "description": "Deaktiviert ein lokales SIP-Konto und löscht dessen aktive Registrierung.",
+      "fields": {
+        "username": {
+          "name": "Benutzername"
+        }
+      }
+    },
+    "list_accounts": {
+      "name": "SIP-Konten der Endpunkte auflisten",
+      "description": "Gibt dem aufrufenden Administrator die konfigurierten lokalen SIP-Konten ohne Passwörter zurück."
+    },
+    "capture_sip": {
+      "name": "SIP-Signalisierung mitschneiden",
+      "description": "Diagnoseaktion für Administratoren. Starten Sie den Mitschnitt vor dem Testanruf. Beim Beenden erhalten Sie eine temporäre Download-URL für eine in Wireshark lesbare PCAP-Datei. Erfasst werden die SIP-Nachrichten dieser Integration. RTP-Audio und Pakete der Netzwerkschicht sind ausgenommen. Authentifizierungsdaten werden entfernt, Telefonnummern und Adressen bleiben sichtbar. Der Mitschnitt stoppt nach der gewählten Dauer oder bei 4 MiB und wird 15 Minuten nach dem Ende gelöscht. Ein erneuter Start ersetzt den vorherigen Mitschnitt.",
+      "fields": {
+        "operation": {
+          "name": "Vorgang"
+        },
+        "duration": {
+          "name": "Maximale Dauer",
+          "description": "Gilt beim Starten eines Mitschnitts."
+        }
+      }
+    },
+    "play_media": {
+      "name": "Audiodatei für den Anrufer abspielen",
+      "description": "Spielt bei einem Automationsanruf eine Audiodatei ab und wartet, bis die Übertragung abgeschlossen ist. Verwendet den Anruf aus dem VoIP-Auslöser oder den in diesem Durchlauf gestarteten ausgehenden Anruf. Die Verbindung bleibt anschließend bestehen.",
+      "fields": {
+        "media": {
+          "name": "Audiodatei"
+        },
+        "timeout": {
+          "name": "Maximale Wiedergabedauer",
+          "description": "Umfasst das Ermitteln der Medienquelle, den Download, die Dekodierung und die Übertragung. Nach Ablauf wird die Wiedergabe beendet. Standardwert ist 120 Sekunden."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Optionale erweiterte Anrufauswahl. Native Auslöser und ein einzelner ausgehender Automationsanruf wählen ihren jeweiligen Anruf automatisch."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration",
+          "description": "Nur bei einer expliziten call_id erforderlich. Verwenden Sie die von der Aktion \"Anruf\" zurückgegebene Generation."
+        },
+        "device_id": {
+          "name": "Telefon für die manuelle Ausführung",
+          "description": "Wählen Sie beim manuellen Testen das Telefon mit dem Automationsanruf aus."
+        }
+      }
+    },
+    "tts_say": {
+      "name": "Nachricht für den Anrufer sprechen",
+      "description": "Spricht einen Text im Automationsanruf. Der VoIP-Auslöser bestimmt den Anruf. Die nächste Aktion wartet, bis die Ansage beendet ist.",
+      "fields": {
+        "tts_entity_id": {
+          "name": "Anbieter für Text-zu-Sprache"
+        },
+        "message": {
+          "name": "Nachricht"
+        },
+        "language": {
+          "name": "Sprache",
+          "description": "Ohne Angabe wird die Standardsprache des Anbieters verwendet."
+        },
+        "options": {
+          "name": "Anbieteroptionen"
+        },
+        "timeout": {
+          "name": "Maximale Ansagedauer",
+          "description": "Maximale Zeit für die Bereitschaft des Browsers, die Spracherzeugung und die Übertragung. Standardwert ist 120 Sekunden. Für das Klingeln gilt ein separates Zeitlimit."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Optionale erweiterte Auswahl bei mehreren Anrufen. Native Auslöser und ein einzelner ausgehender Automationsanruf wählen ihren jeweiligen Anruf automatisch."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration",
+          "description": "Nur bei einer ausdrücklich angegebenen Anruf-ID erforderlich. Native Auslöser und ein einzelner ausgehender Automationsanruf liefern den Wert automatisch."
+        },
+        "device_id": {
+          "name": "Telefon für die manuelle Ausführung",
+          "description": "Wählen Sie das Telefon mit dem Automationsanruf, wenn Sie diese Aktion ohne VoIP-Auslöser testen."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "wait_unanswered": {
+      "name": "Ohne Rufannahme warten",
+      "description": "Lässt einen unbeantworteten Anruf bei einem Automationskontakt weiterklingeln. Währenddessen werden weder der Anruf angenommen noch Audiodaten übertragen. Die nächste Aktion beginnt nach der Wartezeit. Ist dies die letzte Aktion, endet der Anruf unbeantwortet. Legt der Anrufer auf, endet die Wartezeit.",
+      "fields": {
+        "duration": {
+          "name": "Dauer",
+          "description": "Wartezeit bis zur nächsten Aktion ohne Rufannahme, in Sekunden von 1 bis 3600. Standardwert ist 60. Für die Rufumleitung des Anbieters bei ausbleibender Antwort muss diese Wartezeit länger als dessen Umleitungsfrist sein."
+        },
+        "device_id": {
+          "name": "Telefon für die manuelle Ausführung",
+          "description": "Nur außerhalb eines nativen VoIP-Auslösers erforderlich. Am Telefon muss ein unbeantworteter Anruf vorliegen, für den ein Automationskontakt zuständig ist."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Für ältere Aktionen außerhalb eines nativen VoIP-Auslösers."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "wait_for_dtmf": {
+      "name": "Auf Tasteneingabe warten",
+      "description": "Wartet bei diesem Automationsanruf auf Ziffern des Anrufers. Die folgende Bedingung kann die empfangenen Ziffern auswerten oder prüfen, ob die Wartezeit abgelaufen ist.",
+      "fields": {
+        "timeout": {
+          "name": "Auf Ziffern warten",
+          "description": "Wartezeit nach der Rufannahme in Sekunden. Standardwert ist 10 Sekunden."
+        },
+        "max_digits": {
+          "name": "Anzahl der Ziffern",
+          "description": "Beendet die Eingabe nach dieser Anzahl von Ziffern. Standardwert ist eine Ziffer."
+        },
+        "terminator": {
+          "name": "Taste zum Beenden der Eingabe",
+          "description": "Standardmäßig #. Ein leeres Feld deaktiviert die Abschlusstaste."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Für ältere Aktionen außerhalb eines nativen Anrufauslösers."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        },
+        "device_id": {
+          "name": "Telefon für die manuelle Ausführung",
+          "description": "Wählen Sie das Telefon mit dem Automationsanruf, wenn Sie diese Aktion ohne VoIP-Auslöser testen."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "set_voicemail_settings": {
+      "name": "Voicemail konfigurieren",
+      "description": "Aktiviert die Mailbox eines Telefons unabhängig von dessen Weiterleitungsregeln. Nicht angegebene Felder behalten ihren Wert. Beim Deaktivieren werden Nachrichten, Dateien, PIN und Einstellungen dieser Mailbox endgültig gelöscht. Durch erneutes Aktivieren entsteht eine leere Mailbox.",
+      "fields": {
+        "device_id": {
+          "name": "Mailbox des Telefons"
+        },
+        "enabled": {
+          "name": "Mailbox aktivieren"
+        },
+        "max_seconds": {
+          "name": "Maximale Nachrichtendauer",
+          "description": "Verfügbare Aufnahmezeit in Sekunden nach dem Signalton. Für neue Mailboxen gelten 180 Sekunden."
+        },
+        "greeting_media": {
+          "name": "Mailboxansage",
+          "description": "Optionale Audiodatei aus der Medienübersicht von Home Assistant. Sie wird vor dem Aufnahmesignal abgespielt."
+        },
+        "clear_greeting": {
+          "name": "Ansage entfernen",
+          "description": "Verwendet ausschließlich das Aufnahmesignal. Nicht zusammen mit einer neuen Ansage auswählen."
+        },
+        "pin": {
+          "name": "Mailbox-PIN",
+          "description": "Optionale PIN mit 4 bis 10 Ziffern für den Zugriff von einem anderen SIP-Konto. Eine leere PIN deaktiviert diesen Zugriff."
+        }
+      }
+    },
+    "get_voicemail": {
+      "name": "Voicemail-Nachricht abrufen",
+      "description": "Gibt die vorhandene Nachrichtendatei und die Medienquellen-ID von Home Assistant zurück. Verwendet die Nachricht aus dem Auslöser \"Voicemail empfangen\" oder die ausdrücklich gewählte Mailbox und Nachrichten-ID. Die Nachricht wird weder kopiert noch verschoben oder als gelesen markiert.",
+      "fields": {
+        "mailbox": {
+          "name": "Anrufbeantworter",
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Geben Sie andernfalls auch die Nachrichten-ID an."
+        },
+        "message_id": {
+          "name": "Nachrichten-ID",
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional."
+        }
+      }
+    },
+    "transcribe_voicemail": {
+      "name": "Voicemail transkribieren",
+      "description": "Wandelt die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text um. Alternativ können Mailbox und Nachrichten-ID explizit gewählt werden. Wählen Sie eine bestehende Entität für Spracherkennung in Home Assistant. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
+      "fields": {
+        "mailbox": {
+          "name": "Anrufbeantworter",
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Geben Sie andernfalls auch die Nachrichten-ID an."
+        },
+        "message_id": {
+          "name": "Nachrichten-ID",
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Wählen Sie die gespeicherte Nachricht anhand ihrer Nachrichten-ID aus."
+        },
+        "stt_entity_id": {
+          "name": "Entität für Spracherkennung"
+        },
+        "language": {
+          "name": "Sprache",
+          "description": "Ein vom ausgewählten Spracherkennungsanbieter unterstützter Sprachcode, zum Beispiel en oder it."
+        },
+        "timeout": {
+          "name": "Zeitlimit für die Transkription"
+        }
+      }
+    },
+    "send_to_voicemail": {
+      "name": "Anruf an die Mailbox weiterleiten",
+      "description": "Übergibt den aktuellen Anruf der Automation an eine aktivierte Telefonmailbox. Die Mailbox übernimmt die Aufnahme und beendet den Anruf nach der Nachricht. Fügen Sie diese Aktion nach einer etwaigen Begrüßung oder Sprachausgabe ein. Fügen Sie anschließend keine Aktion zum Auflegen hinzu.",
+      "fields": {
+        "mailbox": {
+          "name": "Zielmailbox"
+        },
+        "skip_greeting": {
+          "name": "Mailboxansage überspringen",
+          "description": "Beginnt mit dem Aufnahmesignal, beispielsweise nach einer Aktion tts_say."
+        },
+        "device_id": {
+          "name": "Zum Anruf gehörendes Telefon"
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Anruf explizit auswählen"
+        }
+      }
+    },
+    "park": {
+      "name": "Anruf parken",
+      "description": "Parkt ein bestehendes Audiogespräch auf einem Parkplatz der Telefonanlage. Ein anderes Telefon kann das Gespräch übernehmen, indem es die Parkplatznummer wählt.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Das Telefon, das das Gespräch verlässt. Ein nativer Anrufauslöser kann es automatisch auswählen."
+        },
+        "slot": {
+          "name": "Parkplatz",
+          "description": "Lassen Sie das Feld leer, um den ersten freien konfigurierten Parkplatz zu verwenden."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Optional die ID eines ausdrücklich ausgewählten Anrufs, der zum angegebenen Telefon gehört."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Gesprächsaufzeichnung starten",
+      "description": "Zeichnet beide Seiten eines bestehenden Gesprächs mit den Audiodaten auf, die bereits durch Home Assistant fließen. Die Aufzeichnung endet beim Auflegen, bei der Übergabe der Medienverbindung oder nach Ablauf der festgelegten Höchstdauer.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "max_seconds": {
+          "name": "Maximale Dauer"
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Gesprächsaufzeichnung beenden",
+      "description": "Beendet die Aufzeichnung auf diesem Telefon und gibt die vorhandene Audiodatei zurück. Das Gespräch läuft weiter.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "call_id": {
+          "name": "Anruf-ID"
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
+    },
+    "get_recording": {
+      "name": "Gesprächsaufzeichnung abrufen",
+      "description": "Gibt den ursprünglichen Dateipfad und die Medienquellen-ID von Home Assistant zurück. Es wird keine weitere Kopie erstellt.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "recording_id": {
+          "name": "Aufzeichnungs-ID",
+          "description": "Von der Aktion \"Gesprächsaufzeichnung starten\" oder dem Ereignis recording_finished zurückgegebene ID."
+        }
+      }
+    },
+    "delete_recording": {
+      "name": "Gesprächsaufzeichnung löschen",
+      "description": "Löscht die ausgewählte Gesprächsaufzeichnung und die zugehörigen Metadaten.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon"
+        },
+        "recording_id": {
+          "name": "Aufzeichnungs-ID",
+          "description": "Von der Aktion \"Gesprächsaufzeichnung starten\" oder dem Ereignis recording_finished zurückgegebene ID."
+        }
+      }
+    },
     "get_phone_state": {
       "name": "Telefonstatus abrufen",
       "description": "Status, Anrufe und Mailbox-Zähler des ausgewählten Telefons lesen.",
@@ -1711,33 +2869,38 @@
         "leg_id": {
           "name": "Anrufzweig"
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
       }
     },
     "provision_phone": {
-      "name": "Prepare phone provisioning",
-      "description": "Prepare the current configuration for download. A served file does not confirm that the phone applied it.",
+      "name": "Telefonkonfiguration zur Bereitstellung vorbereiten",
+      "description": "Bereitet die aktuelle Konfiguration zum Herunterladen vor. Ob das Telefon die ausgelieferte Datei angewendet hat, muss am Gerät überprüft werden.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Tischtelefon"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID des Tischtelefons"
         }
       }
     },
     "get_phone_provisioning_state": {
-      "name": "Get phone provisioning state",
-      "description": "Read prepared and downloaded revisions. Only an administrator can explicitly request the private provisioning URL.",
+      "name": "Bereitstellungsstatus des Tischtelefons abrufen",
+      "description": "Zeigt die vorbereitete und die heruntergeladene Konfigurationsversion an. Nur Administratoren können die private Bereitstellungs-URL ausdrücklich anfordern.",
       "fields": {
         "device_id": {
-          "name": "Physical phone"
+          "name": "Tischtelefon"
         },
         "phone_id": {
-          "name": "Physical phone ID"
+          "name": "ID des Tischtelefons"
         },
         "include_url": {
-          "name": "Include private provisioning URL",
-          "description": "The URL contains a device credential. Keep it private."
+          "name": "Private Bereitstellungs-URL mit ausgeben",
+          "description": "Die URL enthält Zugangsdaten für das Gerät. Behandeln Sie sie vertraulich."
         }
       }
     },
@@ -1745,21 +2908,21 @@
       "name": "Katalog der unterstützten Telefonmodelle aktualisieren",
       "description": "Lädt den aktuellen Modellkatalog herunter. Um die neue Anleitung auf einem bereits eingerichteten Telefon zu verwenden, öffnen Sie dessen Einstellungen und aktualisieren Sie die Anleitung für das Modell."
     },
-    "rotate_phone_provisioning_token": {
-      "name": "Rotate phone provisioning credential",
-      "description": "Invalidate the old private download URL. Configure the new URL before the next phone download.",
-      "fields": {
-        "device_id": {
-          "name": "Physical phone"
-        },
-        "phone_id": {
-          "name": "Physical phone ID"
-        }
-      }
-    },
     "reload_card_associations": {
       "name": "Kartenzuordnungen neu einlesen",
       "description": "Liest gespeicherte Dashboard-Konfigurationen aus dem Speicher und YAML erneut ein und aktualisiert Kontozuordnungen. Lädt die PBX nicht neu und startet keine regelmäßigen Abfragen. Nur für Administratoren."
+    },
+    "rotate_phone_provisioning_token": {
+      "name": "Zugangsdaten für die Telefonbereitstellung erneuern",
+      "description": "Macht die bisherige private Download-URL ungültig. Richten Sie die neue URL ein, bevor das Telefon die Konfiguration erneut herunterlädt.",
+      "fields": {
+        "device_id": {
+          "name": "Tischtelefon"
+        },
+        "phone_id": {
+          "name": "ID des Tischtelefons"
+        }
+      }
     }
   }
 }
