@@ -18,6 +18,9 @@ from .config import transport_config
 from .const import CONF_REGISTRAR_ENABLED
 from .device_resolver import entity_role, slugify_route_id
 from .endpoint_device import account_device_info
+from .esphome_native import (
+    ProvisioningActions, connected, connection_is_current, connection_scope, device_info, runtime_for_entry,
+)
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_registry import EndpointCollisionError
 from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
@@ -223,14 +226,12 @@ class EspHomeProvisioner:
             registrar.enabled = bool(transport_config(self.hass).get(CONF_REGISTRAR_ENABLED)
                                      or active_managed_accounts(self.hass, self.entry))
 
-    def _current(self, phone, native, client, services, revision):
+    def _current(self, phone, actions, revision):
         origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
         device = dr.async_get(self.hass).async_get(phone.device_id)
         return (self._owned() and revision == self._revision
                 and not self.is_removed(phone.origin_entry_id, phone.device_id)
-                and origin is not None and getattr(origin, "runtime_data", None) is native
-                and native.client is client and native.services is services
-                and native.available and client.is_connected
+                and origin is not None and actions.current(origin)
                 and device is not None and origin.entry_id == device.config_entry_id
                 and managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is True)
 
@@ -244,7 +245,7 @@ class EspHomeProvisioner:
         return username
 
     def _phone(self, origin, device, native, previous):
-        info = native.device_info
+        info = device_info(native)
         if previous is not None and (previous.mac != normalize_mac(info.mac_address)
                                      or previous.origin_entry_id != origin.entry_id):
             raise ValueError("Managed physical ownership changed")
@@ -280,14 +281,14 @@ class EspHomeProvisioner:
                 if field in {"queues", "ring_group"}:
                     record = {**phone.record(), **updates}
                     change = self._membership_changes.pop((device.id, field), None)
-                    scope = (native, native.client)
+                    scope = connection_scope(native)
                     live = (change is not None and all(left is right for left, right in zip(change[0], scope))
                             and change[1] == record["membership_observed"].get(field)
                             and change[2] == membership_text(field, value))
                     updates.update(observe_native_membership(record, field, value, allow_change=live))
                 else:
                     updates[field] = value.casefold() in {"on", "true", "1"} if role == "voip_conference_ring" else value
-        self._membership_scopes[device.id] = (native, native.client)
+        self._membership_scopes[device.id] = connection_scope(native)
         return replace(phone, **updates)
 
     def _sync_account_device(self, phone, row):
@@ -368,8 +369,8 @@ class EspHomeProvisioner:
             for origin in self.hass.config_entries.async_entries("esphome"):
                 if origin.entry_id in self._removed_origins:
                     continue
-                native = getattr(origin, "runtime_data", None)
-                if not getattr(native, "available", False) or not getattr(getattr(native, "client", None), "is_connected", False):
+                native = runtime_for_entry(origin)
+                if not connected(native):
                     continue
                 for device in dr.async_entries_for_config_entry(devices, origin.entry_id):
                     if self.is_removed(origin.entry_id, device.id):
@@ -449,7 +450,7 @@ class EspHomeProvisioner:
             # action phase above may have enrolled or renamed the first phone.
             for phone in records.values():
                 origin = self.hass.config_entries.async_get_entry(phone.origin_entry_id)
-                native = getattr(origin, "runtime_data", None)
+                native = runtime_for_entry(origin)
                 if phone.active and native is not None:
                     await self._deliver_directory_refresh(phone, native)
 
@@ -467,8 +468,8 @@ class EspHomeProvisioner:
                     or origin.entry_id in self._removed_origins):
                 legacy.pop(endpoint_id, None)
                 continue
-            native = getattr(origin, "runtime_data", None)
-            if not getattr(native, "available", False) or not getattr(getattr(native, "client", None), "is_connected", False):
+            native = runtime_for_entry(origin)
+            if not connected(native):
                 continue
             record = dict(saved)
             for entity in er.async_entries_for_device(er.async_get(self.hass), device_id):
@@ -478,7 +479,7 @@ class EspHomeProvisioner:
                         or state is None or state.state in {"unknown", "unavailable"}):
                     continue
                 change = self._membership_changes.pop((device_id, field), None)
-                scope = (native, native.client)
+                scope = connection_scope(native)
                 live = (change is not None and all(left is right for left, right in zip(change[0], scope))
                         and change[1] == record.get("membership_observed", {}).get(field)
                         and change[2] == membership_text(field, state.state))
@@ -486,7 +487,7 @@ class EspHomeProvisioner:
             if isinstance(record.get("queues"), tuple):
                 record["queues"] = list(record["queues"])
             legacy[endpoint_id] = record
-            self._membership_scopes[device_id] = (native, native.client)
+            self._membership_scopes[device_id] = connection_scope(native)
             deliveries.append((device_id, record, native))
             endpoint = self.runtime.endpoints.get(endpoint_id)
             if endpoint is not None:
@@ -503,7 +504,7 @@ class EspHomeProvisioner:
 
     async def _deliver_memberships(self, device_id, record, native):
         """Deliver desired text through ESPHome's existing HA entity owner."""
-        revision, client = self._revision, native.client
+        revision, connection = self._revision, connection_scope(native)
         for entity in er.async_entries_for_device(er.async_get(self.hass), device_id):
             field = _ROLES.get(entity_role(entity))
             pending = normalize_membership_tracking(record.get("membership_pending"))
@@ -512,10 +513,10 @@ class EspHomeProvisioner:
             state = self.hass.states.get(entity.entity_id)
             if state is None or state.state in {"unknown", "unavailable"}:
                 continue
-            if (not self._owned() or revision != self._revision or native.client is not client
-                    or not native.available or not client.is_connected):
+            if (not self._owned() or revision != self._revision or not connection_is_current(connection)
+                    or not connected(native)):
                 return
-            signature = (id(native), id(client), pending[field], record.get("membership_observed", {}).get(field))
+            signature = (*map(id, connection), pending[field], record.get("membership_observed", {}).get(field))
             key = (device_id, field)
             if self._membership_delivered.get(key) == signature:
                 continue
@@ -525,17 +526,17 @@ class EspHomeProvisioner:
             except Exception as error:
                 _LOGGER.warning("Phone membership delivery pending for %s (%s)", device_id, type(error).__name__)
                 return
-            if not self._owned() or revision != self._revision or native.client is not client:
+            if not self._owned() or revision != self._revision or not connection_is_current(connection):
                 return
             self._membership_delivered[key] = signature
 
     async def _deliver(self, phone, native):
-        revision, client, services = self._revision, native.client, native.services
-        if not self._current(phone, native, client, services, revision):
+        revision, session = self._revision, ProvisioningActions.capture(native)
+        if not self._current(phone, session, revision):
             return
         cfg = transport_config(self.hass)
         host = cfg.get("advertise_host") or await network.async_get_source_ip(self.hass, target_ip=phone.api_host)
-        if not self._current(phone, native, client, services, revision):
+        if not self._current(phone, session, revision):
             return
         register = managed_registration_action(native)
         actions = [("set_ha_display_name", {"name": phone.display_name}),
@@ -546,13 +547,12 @@ class EspHomeProvisioner:
         directory_data = self._directory_data(host)
         if directory_data is not None:
             actions.append(("configure_directory", directory_data))
-        scope = (native, client, services)
         previous_scope, delivered = self._delivered.get(phone.device_id, (None, {}))
-        if previous_scope is None or any(left is not right for left, right in zip(previous_scope, scope)):
+        if not session.same_owner(previous_scope):
             delivered = {}
-        by_name = {service.name: service for service in services.values()}
+        by_name = session.by_name()
         for action, data in actions:
-            if not self._current(phone, native, client, services, revision):
+            if not self._current(phone, session, revision):
                 return
             if action not in by_name:
                 continue
@@ -561,11 +561,11 @@ class EspHomeProvisioner:
                 continue
             if action == "set_account":
                 delivered.pop(register, None)
-            await client.execute_service(by_name[action], data)
-            if not self._current(phone, native, client, services, revision):
+            await session.execute(by_name[action], data)
+            if not self._current(phone, session, revision):
                 return
             delivered[action] = signature
-            self._delivered[phone.device_id] = (scope, delivered)
+            self._delivered[phone.device_id] = (session, delivered)
 
     def _directory_data(self, host):
         config = self._directory_config
@@ -576,19 +576,18 @@ class EspHomeProvisioner:
             account_id=MANAGED_ACCOUNT_ID, tls=config["tls"], enabled=config["enabled"])
 
     async def _deliver_directory_refresh(self, phone, native):
-        revision, client, services = self._revision, native.client, native.services
-        if not self._current(phone, native, client, services, revision):
+        revision, session = self._revision, ProvisioningActions.capture(native)
+        if not self._current(phone, session, revision):
             return
-        by_name = {service.name: service for service in services.values()}
+        by_name = session.by_name()
         if not {"configure_directory", "refresh_ldap_directory"} <= by_name.keys():
             return  # A manually configured provider is not managed by HA.
-        scope = (native, client, services)
         previous_scope, delivered = self._delivered.get(phone.device_id, (None, {}))
-        if previous_scope is None or any(left is not right for left, right in zip(previous_scope, scope)):
+        if not session.same_owner(previous_scope):
             return  # The configuration phase must reach this API owner first.
         cfg = transport_config(self.hass)
         host = cfg.get("advertise_host") or await network.async_get_source_ip(self.hass, target_ip=phone.api_host)
-        if not self._current(phone, native, client, services, revision):
+        if not self._current(phone, session, revision):
             return
         data = self._directory_data(host)
         if data is None or delivered.get("configure_directory") != hashlib.sha256(json.dumps(data, sort_keys=True).encode()).digest():
@@ -598,12 +597,12 @@ class EspHomeProvisioner:
                 and directory is not None and not directory.closed and "refresh_ldap_directory" in by_name):
             generation = directory.generation
             signature = hashlib.sha256(f"{self._directory_epoch}:{generation}".encode()).digest()
-            if delivered.get("refresh_ldap_directory") != signature and self._current(phone, native, client, services, revision):
-                await client.execute_service(by_name["refresh_ldap_directory"], {})
-                if (self._current(phone, native, client, services, revision)
+            if delivered.get("refresh_ldap_directory") != signature and self._current(phone, session, revision):
+                await session.execute(by_name["refresh_ldap_directory"], {})
+                if (self._current(phone, session, revision)
                         and self.runtime.directory is directory and directory.generation == generation and not directory.closed):
                     delivered["refresh_ldap_directory"] = signature
-                    self._delivered[phone.device_id] = (scope, delivered)
+                    self._delivered[phone.device_id] = (session, delivered)
 
     async def _purge_endpoint(self, endpoint_id, username):
         from .endpoint_termination import EndpointTerminationHandler

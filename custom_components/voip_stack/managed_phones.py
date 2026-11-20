@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 import re
 
+from .esphome_native import action_names, device_info, normalize_mac, verified_action_names
 from .sip_registrar import SipAccount, validate_managed_username
 from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
@@ -17,7 +18,7 @@ REGISTER_BY_FRIENDLY_NAME = "register_ha_account_by_friendly_name"
 
 def managed_registration_action(native) -> str:
     """New firmware advertises the configured name source in its native action."""
-    actions = {service.name for service in native.services.values()}
+    actions = action_names(native)
     if REGISTER_BY_NODE in actions:
         return REGISTER_BY_NODE
     if REGISTER_BY_FRIENDLY_NAME in actions:
@@ -41,7 +42,7 @@ def check_native_username(action, username):
 
 
 def managed_device_username(native) -> str:
-    info = native.device_info
+    info = device_info(native)
     action = managed_registration_action(native)
     username = info.name if action == REGISTER_BY_NODE else info.friendly_name or info.name
     # Legacy DeviceInfo has both effective names but lacks the YAML flag.
@@ -55,14 +56,6 @@ def managed_device_username(native) -> str:
         raise ManagedNameError("esphome_account_name") from exc
     check_native_username(action, username)
     return username
-
-
-def normalize_mac(value: object) -> str:
-    """Accept only a complete MAC, independently of its presentation."""
-    mac = str(value or "").replace(":", "").replace("-", "").casefold()
-    if re.fullmatch(r"[0-9a-f]{12}", mac) is None:
-        raise ValueError("Managed phones require a complete MAC")
-    return mac
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,20 +190,8 @@ def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
     ESPHome retains this inventory on disconnect. A replacement API owner with
     an incomplete inventory cannot silently reactivate a suspended credential.
     """
-    native = getattr(origin, "runtime_data", None)
-    complete = getattr(native, "first_connect_done", None)
-    info = getattr(native, "device_info", None)
-    if complete is None or not complete.is_set() or info is None:
-        return None
-    try:
-        if normalize_mac(info.mac_address) != normalize_mac(mac):
-            return None
-    except ValueError:
-        return None
-    services = getattr(native, "services", None)
-    if not isinstance(services, Mapping):
-        return None
-    return MANAGED_ACTIONS <= {service.name for service in services.values()}
+    actions = verified_action_names(origin, mac)
+    return MANAGED_ACTIONS <= actions if actions is not None else None
 
 
 def active_managed_accounts(hass, entry) -> list[SipAccount]:

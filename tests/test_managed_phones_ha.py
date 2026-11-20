@@ -1218,3 +1218,55 @@ async def test_managed_register_uses_generated_secret_on_real_udp_then_legacy_re
     finally:
         peer.close()
         await server.stop()
+
+
+async def test_public_esphome_action_follows_registered_owner_and_emits_service_data(managed):
+    import probatio
+    from homeassistant.components.esphome.manager import _async_register_service
+    from custom_components.voip_stack.esphome_actions import async_call_action
+
+    lab = managed
+    original = lab.native.runtime_data
+    original.device_info = replace(original.device_info, name="phone-node")
+    advertised = original.services[1]
+    replacement_advertisement = replace(advertised, key=101)
+    assert advertised.name == "set_ha_display_name"
+    replacement_calls = []
+
+    async def receive_replacement(service, data):
+        replacement_calls.append((service, dict(data)))
+
+    # The name in the public service registry can be registered by another
+    # entry. Provisioning holds the MAC-verified entry and its native records.
+    replacement = replace(
+        original,
+        entry_id="replacement",
+        services={101: replacement_advertisement},
+        client=SimpleNamespace(is_connected=True, execute_service=receive_replacement),
+        device_info=replace(original.device_info, mac_address="84:C7:BB:00:00:02"),
+    )
+    device = {"route_id": "phone_node"}
+    _async_register_service(lab.hass, original, original.device_info, advertised)
+    with pytest.raises(probatio.Invalid):
+        await async_call_action(lab.hass, device, advertised.name, {})
+    lab.gate.entered, lab.gate.release = asyncio.Event(), asyncio.Event()
+    first = asyncio.create_task(async_call_action(lab.hass, device, advertised.name, {"name": "First label"}))
+    await asyncio.wait_for(lab.gate.entered.wait(), 1)
+    _async_register_service(lab.hass, replacement, replacement.device_info, replacement_advertisement)
+    lab.gate.release.set()
+    await first
+    await async_call_action(lab.hass, device, advertised.name, {"name": "Second label"})
+    await lab.hass.async_block_till_done()
+
+    assert lab.sent == [(advertised.name, {"name": "First label"})]
+    assert replacement_calls == [(replacement_advertisement, {"name": "Second label"})]
+    assert [event["service_data"] for event in lab.events] == [
+        {"name": "First label"}, {"name": "Second label"}
+    ]
+    await lab.controller.async_sync()
+    assert [name for name, _data in lab.sent[1:]] == [
+        "set_ha_display_name", "set_account", "register_account"
+    ]
+    assert replacement_calls == [(replacement_advertisement, {"name": "Second label"})]
+    await lab.hass.async_block_till_done()
+    assert len(lab.events) == 2
