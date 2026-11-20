@@ -52,7 +52,7 @@ class TransferResult:
 
 @dataclass(frozen=True, slots=True)
 class ForwardPlan:
-    """Chosen destination and its input snapshot; live permissions are rechecked."""
+    """Admitted destination snapshot; session ownership is rechecked at commit."""
 
     destination: str
     decision: RouteDecision

@@ -123,6 +123,8 @@ core owns its participants, media resources and termination.
 | Forwarding | `call_forwarder.py`, `forward_plan.py`, `forward_operation.py`, `forward_group.py` | The existing call session owns one forward task, staged media, rollback and cleanup. |
 | Call events | `call_events.py`, `const.py` | Call owners publish through the native HA event bus with the existing call context. |
 | Directory delivery | `phonebook_coordinator.py` | The coordinator observes the entry-owned directory and sends updates. The sensor exposes its projection. |
+| Saved dashboard associations | `ha_bindings.py`, `lovelace_adapter.py` | `HaCardBindings` owns the persistent client index. The adapter reads saved Lovelace exports, including hidden views and disconnected browsers. |
+| ESPHome account provisioning | `esphome_provisioning.py`, `esphome_native.py` | The provisioner checks its revision and borrows the MAC-verified native connection and action inventory. Ordinary user commands use public HA services. |
 | Browser audio | `voip-stack-engine.js`, `voip-stack-audio-session.js` | The engine owns the call and socket; `BrowserAudioSession` owns the physical audio graph, tracks and worklets. |
 | Browser video | `voip-stack-video.js`, `voip-stack-video-sender.js`, `voip-stack-video-receiver.js` | One parent owns the socket and common generation. Sender and receiver own camera/encoder and decoder/presentation resources respectively. |
 
