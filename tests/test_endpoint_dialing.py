@@ -1,5 +1,6 @@
 """Behavioral tests for the canonical outbound SIP leg builder."""
 
+from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -357,7 +358,7 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
     """Registration must not decide codec support for an otherwise unknown SIP peer."""
     from custom_components.voip_stack.core import sdp
 
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
     dialer, created, _ = _dialer(monkeypatch)
     peer = Peer(name="Manual SIP", host="192.0.2.60", endpoint_kind="sip_account")
     leg = dialer.prepare_outbound_leg(

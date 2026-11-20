@@ -1,5 +1,6 @@
 """Public audio frame contracts retain every sample across legal RTP quanta."""
 
+from importlib import import_module
 from dataclasses import replace
 import json
 import struct
@@ -63,7 +64,7 @@ def test_explicit_maxptime_still_rejects_an_oversized_l16_packet():
 def test_generic_offer_quantum_and_maxptime_are_receivable_for_every_codec(
     monkeypatch, tmp_path, encoding, rate, receive_preference_ms,
 ):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
     formats = list(audio_format.HA_SIP_PCM_FORMATS)
     receive_formats = sorted(formats, key=lambda fmt: fmt.frame_ms != receive_preference_ms)
     offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,

@@ -1,6 +1,7 @@
 """Receiver packet-time hints never invent lower or upper packet-size bounds."""
 from pathlib import Path
 
+from importlib import import_module
 import pytest
 
 from .voip_phase1_support import audio_format, sdp
@@ -33,7 +34,7 @@ def test_recorded_answer_accepts_declared_tx10_below_receiver_preference20(bound
 ])
 def test_only_explicit_receiver_bounds_constrain_declared_packet_time(ptime, minimum, maximum, local_ms, accepted):
     receiver = sdp.RtpPcmFormat(96, "L16", 16000, 1, ptime, min_frame_ms=minimum, max_frame_ms=maximum)
-    selected = sdp._rtp_compatible_audio(receiver, audio_format.AudioFormat(16000, frame_ms=local_ms))
+    selected = import_module(sdp.audio_offer_formats.__module__)._rtp_compatible_audio(receiver, audio_format.AudioFormat(16000, frame_ms=local_ms))
     assert (selected is not None) is accepted
     if selected is not None:
         assert selected.frame_ms == local_ms
@@ -51,7 +52,7 @@ def test_requested_packet_time_is_preferred_when_declared_in_same_mapping():
 
 def test_hint_does_not_override_rtp_mapping_or_udp_payload_budget():
     local = audio_format.AudioFormat(16000, frame_ms=10)
-    assert sdp._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 32000, 1, 20), local) is None
-    assert sdp._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 16000, 2, 20), local) is None
+    assert import_module(sdp.audio_offer_formats.__module__)._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 32000, 1, 20), local) is None
+    assert import_module(sdp.audio_offer_formats.__module__)._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 16000, 2, 20), local) is None
     unsafe = audio_format.AudioFormat(48000, frame_ms=20)
-    assert sdp._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 48000, 1, 20), unsafe) is None
+    assert import_module(sdp.audio_offer_formats.__module__)._rtp_compatible_audio(sdp.RtpPcmFormat(96, "L16", 48000, 1, 20), unsafe) is None

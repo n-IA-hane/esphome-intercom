@@ -1,6 +1,6 @@
 """Independent explicit RTP offer alternatives, payload maps and receiver ptime."""
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from importlib import import_module
 import re
 
@@ -15,6 +15,46 @@ def test_public_sdp_media_values_reexport_one_owner():
                  "RtpPcmDirection", "RtpVideoFormat", "RtpVideoDirection", "RemoteMediaTarget",
                  "RtpH264Format"):
         assert getattr(sdp, name) is getattr(values, name)
+
+
+def test_one_audio_negotiation_decodes_its_remote_document_once():
+    calls = []
+
+    class WireSdp(bytes):
+        def decode(self, *args, **kwargs):
+            calls.append(True)
+            return super().decode(*args, **kwargs)
+
+    remote = WireSdp(
+        b"v=0\r\no=- 0 0 IN IP4 192.0.2.2\r\ns=call\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+        b"m=audio 40000 RTP/AVP 96\r\na=rtpmap:96 L16/16000/1\r\na=ptime:20\r\n"
+    )
+    local = [audio_format.AudioFormat(16000, frame_ms=20)]
+    negotiated = sdp.negotiate_directional(remote, local, local)
+    assert negotiated is not None
+    assert negotiated.send.sample_rate == negotiated.recv.sample_rate == 16000
+    assert len(calls) == 1
+
+
+
+def test_document_keeps_raw_text_and_rejected_sections_without_binding_a_parse_mode():
+    raw = (
+        b"v=0\r\nc=IN IP4 192.0.2.2\r\n\r\n"
+        b"m=audio 0 RTP/AVP 96\r\na=rtpmap:96 L16/16000/1\r\na=ptime:0\r\n"
+        b"m=audio 42000 RTP/AVP 8\r\n"
+    )
+    document = sdp.SdpDocument.parse(raw)
+    assert document.text == raw.decode()
+    assert [line for line in document.lines if line.startswith("m=")] == [
+        "m=audio 0 RTP/AVP 96",
+        "m=audio 42000 RTP/AVP 8",
+    ]
+    assert sdp.parse_sdp(document, capabilities=True)["media_port"] == 0
+    assert sdp.parse_sdp(document)["media_port"] == 42000
+    assert sdp.SdpDocument.parse(document) is document
+    with pytest.raises(FrozenInstanceError):
+        document.text = "changed"
+    assert not sdp.SdpDocument.parse(b"")
 
 
 WIDE = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
@@ -56,7 +96,7 @@ def answer_pcmu():
 
 @pytest.mark.parametrize("shared_explicit", [False, True])
 def test_common_alternatives_preserve_d1_and_authoritative_receiver_ptime(monkeypatch, shared_explicit):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset())
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset())
     body = offer(all_formats=(WIDE, NARROW) if shared_explicit else None)
     maps = wire_maps(body)
     assert list(maps)[:2] == [96, 97]
@@ -77,7 +117,7 @@ def test_common_alternatives_preserve_d1_and_authoritative_receiver_ptime(monkey
 
 
 def test_d1_answer_keeps_ha_send48_receive16_without_endpoint_identity(monkeypatch):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset())
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset())
     body = offer()
     peer = ("v=0\r\no=- 2 1 IN IP4 192.0.2.2\r\ns=ordinary D1 phone\r\n"
             "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 41000 RTP/AVP 96 97\r\n"
@@ -187,7 +227,7 @@ def test_ordinary_g722_has_one_codec_and_independent_receiver_packet_times(peer_
 
 
 def test_ordinary_g722_answer_keeps_explicit_receive_preference(monkeypatch):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"G722"}))
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"G722"}))
     send = [audio_format.AudioFormat(16000, frame_ms=10)]
     receive = [audio_format.AudioFormat(16000, frame_ms=ms) for ms in (20, 10)]
     local_offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,
@@ -206,7 +246,8 @@ def test_ordinary_g722_answer_keeps_explicit_receive_preference(monkeypatch):
 def test_false_flags_do_not_expand_or_change_explicit_mapping(monkeypatch, shared_explicit):
     def forbidden(*args, **kwargs):
         raise AssertionError("False flags must not enter codec expansion")
-    monkeypatch.setattr(sdp, "_common_codec_offer_formats", forbidden)
+    for operation in (sdp.build_offer_directional, sdp.audio_offer_formats):
+        monkeypatch.setattr(import_module(operation.__module__), "_common_codec_offer_formats", forbidden)
     body = offer(common=False, all_formats=(WIDE, NARROW) if shared_explicit else None)
     assert wire_maps(body) == {96: "L16/48000/1", 97: "L16/16000/1", 98: "telephone-event/8000"}
     assert "a=ptime:10\r\n" in body and "PCMU" not in body and "OPUS" not in body
@@ -214,7 +255,7 @@ def test_false_flags_do_not_expand_or_change_explicit_mapping(monkeypatch, share
 
 
 def test_opus98_collision_moves_only_the_new_alternative(monkeypatch):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS"}))
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"OPUS"}))
     wide = replace(WIDE, payload_type=98)
     body = offer(send=(wide,))
     maps = wire_maps(body)
@@ -229,7 +270,7 @@ def test_opus98_collision_moves_only_the_new_alternative(monkeypatch):
 
 @pytest.mark.parametrize("available", [frozenset(), frozenset({"OPUS", "G722"})])
 def test_unavailable_or_non_bidirectional_codecs_are_not_advertised(monkeypatch, available):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: available)
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: available)
     # Only16k/10 is common PCM:48k exists only on TX,8k exists nowhere.
     body = offer(local_send=[WIDE.audio_format, NARROW.audio_format], local_recv=[NARROW.audio_format])
     maps = wire_maps(body)
@@ -240,7 +281,7 @@ def test_unavailable_or_non_bidirectional_codecs_are_not_advertised(monkeypatch,
 
 @pytest.mark.parametrize("direction,has_pcmu,explicit_pt", [("sendonly", True, 96), ("recvonly", False, 97)])
 def test_one_way_alternatives_use_only_the_active_local_direction(monkeypatch, direction, has_pcmu, explicit_pt):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset())
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset())
     pcm8 = audio_format.AudioFormat(8000, audio_format.PcmFormat.S16LE, 1, 20)
     body = offer(direction=direction, local_send=[WIDE.audio_format, pcm8], local_recv=[NARROW.audio_format])
     maps = wire_maps(body)
@@ -251,7 +292,7 @@ def test_one_way_alternatives_use_only_the_active_local_direction(monkeypatch, d
 
 
 def test_existing_codec_at_another_ptime_retains_its_pt_and_fmtp(monkeypatch):
-    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS"}))
+    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"OPUS"}))
     opus20 = sdp.RtpPcmFormat(110, "OPUS", 48000, 2, 20, fmtp="stereo=0;maxaveragebitrate=24000")
     body = offer(send=(WIDE, opus20), recv=(NARROW, opus20))
     maps = wire_maps(body)

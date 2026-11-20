@@ -46,14 +46,8 @@ class RtpPcmFormat:
                 16000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
             )
         if self.encoding == "OPUS":
-            return AudioFormat(
-                48000, PcmFormat.S16LE, 1, self.frame_ms or 20
-            )
-        pcm = (
-            PcmFormat.S16LE
-            if self.encoding in {"L16", "PCM"}
-            else PcmFormat.S24LE
-        )
+            return AudioFormat(48000, PcmFormat.S16LE, 1, self.frame_ms or 20)
+        pcm = PcmFormat.S16LE if self.encoding in {"L16", "PCM"} else PcmFormat.S24LE
         return AudioFormat(self.sample_rate, pcm, self.channels, self.frame_ms)
 
     @property
@@ -226,9 +220,7 @@ class RemoteMediaTarget:
             rtcp_host=rtcp_host,
             rtcp_port=rtcp_port,
             rtcp_mux=(
-                bool(section.get("rtcp_mux"))
-                if rtcp_mux is None
-                else bool(rtcp_mux)
+                bool(section.get("rtcp_mux")) if rtcp_mux is None else bool(rtcp_mux)
             ),
             payload_types=tuple(
                 int(item) for item in section.get("payload_order") or ()
@@ -249,3 +241,6 @@ class RemoteMediaTarget:
 
 
 RtpH264Format = RtpVideoFormat
+
+
+MAX_RTP_OFFER_FORMATS = 11

@@ -540,7 +540,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         sdp.validate_sdp_answer(offer, answer)
 
-        _session, _direction, sections = sdp._parse_media_sections(answer)
+        _session, _direction, sections = sdp.parse_media_sections(answer)
         self.assertEqual([item["media"] for item in sections], ["audio", "video"])
         cases = {
             "missing": "\r\n".join(
