@@ -18,6 +18,14 @@
 
 Changes since stable 2026.10.1.
 
+### Browser camera on Safari, iOS and Firefox
+
+- Send the browser camera from Safari, every iOS browser (WebKit) and Firefox.
+  These browsers lack `MediaStreamTrackProcessor`, so sending failed with
+  "Browser cannot capture negotiated SIP video". A hidden `<video>` element
+  now supplies the frames, keeping the upright orientation and the correct
+  aspect ratio on iPhone. Chromium keeps its native path.
+
 ### ESP32-S3 camera video calls
 
 - ESP32-S3 devices can transmit native ESPHome JPEG camera video during SIP
