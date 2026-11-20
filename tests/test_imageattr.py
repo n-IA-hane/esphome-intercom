@@ -10,6 +10,7 @@ import pytest
 from tests.test_video_rtp import _load
 
 sdp = _load("sdp")
+sdp_composer = importlib.import_module("custom_components.voip_stack.core.sdp_composer")
 constraints_payload = importlib.import_module("custom_components.voip_stack.core.imageattr").constraints_payload
 
 
@@ -82,11 +83,11 @@ def test_specific_wildcard_direction_overrides_bounded_default():
 
 def test_default_offer_and_legacy_answer_are_independent():
     jpeg = next(f for f in sdp.DEFAULT_VIDEO_FORMATS if f.encoding == "JPEG")
-    lines = sdp._video_media_lines_many(40002, (jpeg,), direction="sendrecv")
+    lines = sdp_composer._video_media_lines_many(40002, (jpeg,), direction="sendrecv")
     assert "a=imageattr:26 send * recv *" in lines
     legacy = sdp.negotiate_video_offer_directional(video_sdp())
     assert legacy is not None and legacy.answer.image_attributes is None
-    assert not any("imageattr" in x for x in sdp._video_media_lines(40002, legacy.answer, direction="sendrecv"))
+    assert not any("imageattr" in x for x in sdp_composer._video_media_lines(40002, legacy.answer, direction="sendrecv"))
     outgoing = sdp.negotiate_video_answer_directional(video_sdp(), jpeg)
     assert outgoing.send.image_attributes is None and outgoing.recv.image_attributes is None
     unsolicited = sdp.negotiate_video_answer_directional(video_sdp("a=imageattr:26 recv [x=160,y=120]\r\n"),

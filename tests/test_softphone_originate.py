@@ -221,11 +221,9 @@ def softphone_originate(monkeypatch):
             "uri_transport": Mock(),
         },
         "softphone_commands": {"bind_service_call_controller": Mock()},
-        "websocket_api": {
-            "_fire_call_event": Mock(),
-            "_ha_softphone_store": Mock(return_value={}),
-            "_set_ha_softphone_call_state": Mock(),
-        },
+        "call_events": {"fire_call_event": Mock()},
+        "browser_phone_data": {"_ha_softphone_store": Mock(return_value={})},
+        "browser_phone_runtime": {"_set_ha_softphone_call_state": Mock()},
         "roster": {"parse_roster_json": Mock(return_value=[])},
         "sip": {"parse_sip_uri": Mock()},
         "sip_client": {"SIP_TIMER_B": 32.0, "SipCallClient": object},
@@ -243,7 +241,7 @@ def softphone_originate(monkeypatch):
     call_projection = sys.modules[f"{package_name}.call_projection"]
 
     def publish_phone_projection(hass, session, endpoint_id, **details) -> bool:
-        sys.modules[f"{package_name}.websocket_api"]._set_ha_softphone_call_state(
+        sys.modules[f"{package_name}.browser_phone_runtime"]._set_ha_softphone_call_state(
             hass,
             session.state,
             endpoint_id=endpoint_id,

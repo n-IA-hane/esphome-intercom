@@ -153,6 +153,8 @@ def _load_module():
 
     _module("const", HA_SOFTPHONE_DEVICE_ID="ha-device")
     _module("endpoint_registry", EndpointBusyError=_BusyError)
+    _module("endpoint_lifecycle", call_registry=lambda hass: hass.registry)
+    _module("runtime_data", endpoint_directory=lambda hass: hass.runtime.endpoints)
     call_projection = _module("call_projection")
 
     def publish_phone_projection(_hass, session, endpoint_id, **details) -> bool:
@@ -168,6 +170,10 @@ def _load_module():
         )
         return True
 
+    def observe_phone_leg_projection(_hass, _registry, session, endpoint_id, state, **values):
+        state_updates.append({"state": state, "endpoint_id": endpoint_id, "call_id": session.call_id, **values})
+
+    call_projection.observe_phone_leg_projection = observe_phone_leg_projection
     call_projection.publish_phone_projection = publish_phone_projection
     _module(
         "endpoint_session",
@@ -215,12 +221,6 @@ def _load_module():
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
     )
     _module("sip_listener", SipInviteResult=_Result)
-    _module(
-        "websocket_api",
-        _set_ha_softphone_call_state=lambda _hass, state, **values: (
-            state_updates.append({"state": state, **values})
-        ),
-    )
 
     spec = importlib.util.spec_from_file_location(
         f"{PACKAGE}.inbound_routing.softphone",

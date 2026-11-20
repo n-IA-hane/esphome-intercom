@@ -116,7 +116,7 @@ class FrontendCardContractTest(unittest.TestCase):
 
     def test_browser_media_controls_are_session_owned_and_available_in_call(self) -> None:
         engine = ENGINE.read_text()
-        video = ENGINE.with_name("voip-stack-video.js").read_text()
+        video = VIDEO_SENDER.read_text()
         devices = ENGINE.with_name("voip-stack-media-devices.js").read_text()
         self.assertIn("BrowserMediaDevices", engine)
         self.assertIn("selectAudioOutput", engine)

@@ -146,11 +146,8 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
     _module("core.sip_dialog", PreparedDialogIdentity=identity)
     _module("sip_listener", SipInvite=object, SipInviteResult=SipInviteResult)
     _module("sip_video_relay")
-    _module(
-        "websocket_api",
-        _fire_call_event=lambda *_args, **_kwargs: None,
-        _ha_softphone_store=lambda *_args, **_kwargs: {},
-    )
+    _module("call_events", fire_call_event=lambda *_args, **_kwargs: None)
+    _module("browser_phone_data", _ha_softphone_store=lambda *_args, **_kwargs: {})
 
     spec = importlib.util.spec_from_file_location(
         f"{PACKAGE}.media_renegotiation", SOURCE

@@ -28,7 +28,7 @@ def test_publishing_and_reading_events_cannot_commit_a_call():
     forbidden = {'transition', 'upsert', 'observe_leg', 'observe_external_state',
                  'ensure_session', 'release_endpoint_claim', 'apply_observation'}
     targets = {'call_registry.py': 'event_fields', 'call_projection.py': 'publish_call_projection',
-               'websocket_api.py': '_fire_call_event'}
+               'call_events.py': 'fire_call_event'}
     for file, function in targets.items():
         tree = ast.parse((ROOT / file).read_text())
         body = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == function)

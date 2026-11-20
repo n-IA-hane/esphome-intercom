@@ -64,7 +64,7 @@ def _load_esphome_actions(get_devices: AsyncMock):
                 "endpoint_registry"
             )
         ),
-        f"{PKG_NAME}.websocket_api": types.SimpleNamespace(
+        f"{PKG_NAME}.esphome_phone_inventory": types.SimpleNamespace(
             _get_voip_devices=get_devices
         ),
     }

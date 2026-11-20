@@ -27,6 +27,7 @@ def _load_dtmf_events(monkeypatch):
     automation.canonical_call_origin = lambda origin, _route: origin or "extension"
     const = types.ModuleType("custom_components.voip_stack.const")
     const.DOMAIN = "voip_stack"
+    const.SIP_DTMF_EVENT = "voip_stack.dtmf"
     dtmf = types.ModuleType("custom_components.voip_stack.dtmf")
     dtmf.parse_sip_info_digit = lambda _content_type, body: body.decode("ascii").strip()
     lifecycle = types.ModuleType("custom_components.voip_stack.endpoint_lifecycle")
@@ -36,8 +37,6 @@ def _load_dtmf_events(monkeypatch):
     runtime_data = types.ModuleType("custom_components.voip_stack.runtime_data")
     runtime_data.call_runtime_artifacts = lambda hass: hass.artifacts
     runtime_data.sip_endpoint_manager = lambda _hass: None
-    websocket = types.ModuleType("custom_components.voip_stack.websocket_api")
-    websocket.SIP_DTMF_EVENT = "voip_stack.dtmf"
     for name, module in {
         "homeassistant": homeassistant,
         "homeassistant.core": homeassistant_core,
@@ -49,7 +48,6 @@ def _load_dtmf_events(monkeypatch):
         "custom_components.voip_stack.endpoint_lifecycle": lifecycle,
         "custom_components.voip_stack.fsm": fsm,
         "custom_components.voip_stack.runtime_data": runtime_data,
-        "custom_components.voip_stack.websocket_api": websocket,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
     module_name = "custom_components.voip_stack.dtmf_events"
