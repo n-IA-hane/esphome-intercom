@@ -25,7 +25,7 @@ CORE_MODULES = {
     "audio_format", "audio_pcm", "codec_capabilities", "g711",
     "g722_codec", "opus_codec", "rtp", "sdp", "sip", "sip_auth",
     "sip_dialog", "sip_resolution", "sip_transaction", "sip_transfer",
-    "video_rtcp", "video_rtp", "rtp_payload",
+    "video_rtcp", "video_rtp", "rtp_payload", "sdp_types",
 }
 
 
@@ -108,6 +108,14 @@ sip_endpoint = _load_intercom_module("sip_endpoint")
 dtmf = _load_intercom_module("dtmf")
 
 
+def _alias_canonical_media_core(package_name):
+    """Keep one set of production media values beneath isolated HA adapters."""
+    canonical = f"{PKG_NAME}.core"
+    for name, module in tuple(sys.modules.items()):
+        if name == canonical or name.startswith(canonical + "."):
+            sys.modules[package_name + name[len(PKG_NAME):]] = module
+
+
 def _load_audio_ws_runtime_module():
     """Load audio_ws_view with minimal HA adapters and real media primitives."""
 
@@ -134,6 +142,7 @@ def _load_audio_ws_runtime_module():
     }
     for name, module in dependencies.items():
         sys.modules[f"{package_name}.{name}"] = module
+    _alias_canonical_media_core(package_name)
 
     websocket_api = types.ModuleType(f"{package_name}.websocket_api")
     websocket_api.CALL_EVENT = "voip_stack_call_event"
@@ -200,6 +209,7 @@ def _load_video_ws_runtime_module():
     package = types.ModuleType(package_name)
     package.__path__ = [str(PKG_DIR)]
     sys.modules[package_name] = package
+    _alias_canonical_media_core(package_name)
     websocket_api = types.ModuleType(f"{package_name}.websocket_api")
     websocket_api.CALL_EVENT = "voip_stack_call_event"
     websocket_api._ha_softphone_store = (

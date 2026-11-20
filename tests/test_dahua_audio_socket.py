@@ -43,6 +43,13 @@ class _Browser:
         return message
 
 
+def test_media_view_uses_the_canonical_codec_and_format_types():
+    view = _load_audio_ws_runtime_module()
+    assert view.RtpPayloadEncoder is sip_client.RtpPayloadEncoder
+    selected = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+    assert view.RtpPayloadEncoder(selected).encode(b"\x34\x12" * 320) == b"\x12\x34" * 320
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("frame_ms", [2.5, 15, 32, 40])
 async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(monkeypatch, frame_ms):
