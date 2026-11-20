@@ -684,14 +684,6 @@
         ]
       },
       {
-        "path": "docs/images/physical-phone-reorder.png",
-        "sha256": "e3ae4dd129391aa8c21703b663a26f9c62a35a87731b7247a40ae0549393bb4e",
-        "dimensions": [
-          580,
-          844
-        ]
-      },
-      {
         "path": "docs/images/physical-phone-properties.png",
         "sha256": "0392c4857b6a3df0da31bd1502817317147247cb47d38b6d1f7b47d6201a7c8a",
         "dimensions": [
