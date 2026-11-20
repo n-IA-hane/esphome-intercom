@@ -20,6 +20,7 @@ codex.md
 /.pytest_cache/
 /.ruff_cache/
 /.test-deps/
+/test-results/
 /.coverage
 /.coverage.*
 /.hypothesis/

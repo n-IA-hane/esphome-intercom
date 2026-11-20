@@ -26,6 +26,17 @@ Tests stop at the first failure by default. Use `--keep-going` only when an
 independent failure inventory is useful. Use `--seed N` to reproduce generated
 state-machine cases.
 
+`software-full` runs serially by default. CI splits it into the shards planned
+by `scripts/software_shards.py`: each test file belongs to exactly one shard,
+balanced with the measured durations in `scripts/software_shard_durations.json`,
+and the `software` gate proves that the shards cover the unsharded selection
+exactly once. A file without a measured duration is still assigned. Refresh the
+table from the CI JUnit reports with `scripts/software_shards.py
+update-durations`. `--shard I/N` runs one shard. `--parallel-shards N` runs all
+of them at once on Linux, each in its own network namespace and temporary
+directory because the suite binds fixed SIP and RTP ports. Reports go to
+`--shard-results` (default `test-results`) and scratch data to `--shard-work`.
+
 `software-full` includes the Node runtime tests and excludes the real-browser
 cases. `browser` runs all Chromium regressions, including microphone/camera
 selection and the first audio samples after a slow worklet download. Install

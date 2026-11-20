@@ -7,6 +7,11 @@ HA_PYTHON=${HA_PYTHON:-}
 MODE=fast
 KEEP_GOING=0
 SEED=
+SHARD=
+SHARD_MANIFEST=
+PARALLEL_SHARDS=
+SHARD_RESULTS=
+SHARD_WORK=
 
 usage() {
   printf '%s\n' \
@@ -15,6 +20,17 @@ usage() {
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
     "  --seed N      set PYTHONHASHSEED and the Hypothesis seed" \
+    "  --shard I/N   software-full only: run deterministic shard I of N" \
+    "  --shard-manifest PATH" \
+    "                write the full selection and the shard's node IDs" \
+    "  --parallel-shards N" \
+    "                software-full only: run all N shards at once, each in" \
+    "                its own network namespace and temporary directory" \
+    "  --shard-results DIR" \
+    "                reports of --parallel-shards (default: test-results)" \
+    "  --shard-work DIR" \
+    "                scratch of --parallel-shards, on persistent disk" \
+    "                (default: \${TMPDIR:-/var/tmp}/software-shards)" \
     "  -h, --help    show this help"
 }
 
@@ -34,6 +50,17 @@ while [[ $# -gt 0 ]]; do
       SEED=$2
       shift 2
       ;;
+    --shard|--shard-manifest|--parallel-shards|--shard-results|--shard-work)
+      [[ $# -ge 2 ]] || { printf 'Missing value for %s\n' "$1" >&2; exit 2; }
+      case "$1" in
+        --shard) SHARD=$2 ;;
+        --shard-manifest) SHARD_MANIFEST=$2 ;;
+        --parallel-shards) PARALLEL_SHARDS=$2 ;;
+        --shard-results) SHARD_RESULTS=$2 ;;
+        --shard-work) SHARD_WORK=$2 ;;
+      esac
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -45,6 +72,24 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n $SHARD$SHARD_MANIFEST$PARALLEL_SHARDS$SHARD_RESULTS$SHARD_WORK ]]; then
+  [[ $MODE == software-full ]] || {
+    printf '%s\n' "Shard options apply only to software-full" >&2; exit 2;
+  }
+  [[ -z $PARALLEL_SHARDS || -z $SHARD$SHARD_MANIFEST ]] || {
+    printf '%s\n' "--parallel-shards cannot be combined with --shard" >&2; exit 2;
+  }
+  [[ -n $PARALLEL_SHARDS || -z $SHARD_RESULTS$SHARD_WORK ]] || {
+    printf '%s\n' "--shard-results and --shard-work need --parallel-shards" >&2; exit 2;
+  }
+  [[ -z $SHARD || $SHARD =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] || {
+    printf '%s\n' "Shard must be INDEX/COUNT" >&2; exit 2;
+  }
+  [[ -z $PARALLEL_SHARDS || $PARALLEL_SHARDS =~ ^[1-9][0-9]*$ ]] || {
+    printf '%s\n' "Parallel shard count must be numeric" >&2; exit 2;
+  }
+fi
 
 if [[ -z $PYTHON ]]; then
   if [[ -x "$ROOT/.venv/bin/python" ]]; then
@@ -445,6 +490,18 @@ PY
 esac
 
 pytest_args+=("${common_pytest_args[@]}")
+if [[ -n $SHARD$SHARD_MANIFEST ]]; then
+  pytest_args+=(-p scripts.software_shards_plugin)
+  [[ -z $SHARD ]] || pytest_args+=(--shard "$SHARD")
+  [[ -z $SHARD_MANIFEST ]] || pytest_args+=(--shard-manifest "$SHARD_MANIFEST")
+fi
 printf 'suite=%s yaml_paths=%s fail_fast=%s seed=%s\n' \
   "$MODE" "$path_mode" "$((1 - KEEP_GOING))" "${SEED:-automatic}"
+if [[ -n $PARALLEL_SHARDS ]]; then
+  # Fixed SIP and RTP ports forbid sharing one network stack between shards.
+  exec "$PYTHON" scripts/software_shards.py run --count "$PARALLEL_SHARDS" \
+    --results-dir "${SHARD_RESULTS:-test-results}" \
+    --work-dir "${SHARD_WORK:-${TMPDIR:-/var/tmp}/software-shards}" \
+    -- "$PYTHON" -m pytest "${pytest_args[@]}"
+fi
 exec "$PYTHON" -m pytest "${pytest_args[@]}"

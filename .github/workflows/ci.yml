@@ -59,10 +59,20 @@ jobs:
           path: coordinated-sources.json
           if-no-files-found: error
 
+  # One shard per runner: the suite binds fixed SIP and RTP ports, so shards
+  # must not share a network stack. scripts/software_shards.py owns the plan.
+  # The shard list here and SOFTWARE_SHARDS must agree; the "software" gate
+  # below fails when a shard is missing or a test runs zero or two times.
   software:
     needs: coordinated-sources
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      SOFTWARE_SHARDS: "4"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Configure bounded official APT mirrors
@@ -78,7 +88,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coordinated-sources
+          name: coordinated-sources-software-shard-${{ matrix.shard }}
           path: test-results/coordinated-sources.json
           if-no-files-found: error
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -95,22 +105,77 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common tshark
       - name: Check Python code and test fixtures
         run: python -m ruff check custom_components/voip_stack scripts tests tools/esp_profile.py
-      - name: Run software suite
+      - name: Record the unsharded software selection
         env:
-          PYTEST_ADDOPTS: --junitxml=test-results/software.xml -ra -vv
+          PYTEST_ADDOPTS: --collect-only -p no:cacheprovider
           VOIP_PHONE_PROFILE_CATALOG_PATH: ${{ github.workspace }}/../voip-stack-phone-profiles
           AUDIO_STACK_REPO: ${{ github.workspace }}/../esphome-audio-stack
           AUDIO_LIBS_REPO: ${{ github.workspace }}/.test-deps/esp-audio-libs
           MIPI_COMPONENTS_SOURCE: ${{ github.workspace }}/esphome/components
-        run: PYTHON=python scripts/test_suite.sh software-full --keep-going
+        run: |
+          set -o pipefail
+          PYTHON=python scripts/test_suite.sh software-full --keep-going \
+            | tee "test-results/software-selection-${{ matrix.shard }}.txt" | tail -n 3
+      - name: Run software suite shard
+        env:
+          PYTEST_ADDOPTS: --junitxml=test-results/software-shard-${{ matrix.shard }}-of-${{ env.SOFTWARE_SHARDS }}.xml -ra -vv
+          VOIP_PHONE_PROFILE_CATALOG_PATH: ${{ github.workspace }}/../voip-stack-phone-profiles
+          AUDIO_STACK_REPO: ${{ github.workspace }}/../esphome-audio-stack
+          AUDIO_LIBS_REPO: ${{ github.workspace }}/.test-deps/esp-audio-libs
+          MIPI_COMPONENTS_SOURCE: ${{ github.workspace }}/esphome/components
+        run: >-
+          PYTHON=python scripts/test_suite.sh software-full --keep-going
+          --shard "${{ matrix.shard }}/$SOFTWARE_SHARDS"
+          --shard-manifest "test-results/software-shard-${{ matrix.shard }}-of-$SOFTWARE_SHARDS.json"
       - name: Require executed software tests
-        run: python scripts/check_test_results.py test-results/software.xml
+        run: python scripts/check_test_results.py "test-results/software-shard-${{ matrix.shard }}-of-$SOFTWARE_SHARDS.xml"
+      - name: Preserve software test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: software-results-shard-${{ matrix.shard }}
+          path: |
+            test-results/software-shard-*
+            test-results/software-selection-*
+          if-no-files-found: error
+
+  # Keeps the single "software" check that the release verifier requires.
+  software-suite:
+    name: software
+    needs: software
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOFTWARE_SHARDS: "4"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Collect shard results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: software-results-shard-*
+          path: test-results
+          merge-multiple: true
+      - name: Require every shard to have succeeded
+        env:
+          SHARD_RESULT: ${{ needs.software.result }}
+        run: test "$SHARD_RESULT" = success
+      - name: Require the shards to cover the unsharded selection exactly once
+        run: |
+          selections=()
+          for shard in $(seq 1 "$SOFTWARE_SHARDS"); do
+            selections+=(--selection "test-results/software-selection-$shard.txt")
+          done
+          python3 scripts/software_shards.py verify --count "$SOFTWARE_SHARDS" \
+            --results-dir test-results "${selections[@]}"
+      - name: Require executed software tests
+        run: python3 scripts/check_test_results.py test-results/software-shard-*.xml
       - name: Preserve software test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: software-results
-          path: test-results/software.xml
+          path: test-results
           if-no-files-found: error
 
   mipi-driver-host:
