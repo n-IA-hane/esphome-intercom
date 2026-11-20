@@ -1,4 +1,9 @@
 const CS = {
+  "Hang up": "Zavěsit",
+  "Transfer call": "Přepojit hovor",
+  "Cancel transfer": "Zrušit přepojení",
+  "Mute microphone": "Ztlumit mikrofon",
+  "Unmute microphone": "Zapnout mikrofon",
   "Phone provisioning": "Nastavení telefonu",
   "Provisioning URL": "Adresa pro nastavení",
   "Copy provisioning URL": "Kopírovat adresu pro nastavení",
@@ -9,6 +14,8 @@ const CS = {
 };
 
 const PT_BR = {
+  "Mute microphone": "Silenciar microfone",
+  "Unmute microphone": "Ativar microfone",
   "Phone provisioning": "Provisionamento do telefone",
   "Provisioning URL": "URL de provisionamento",
   "Copy provisioning URL": "Copiar URL de provisionamento",
@@ -178,6 +185,8 @@ const PT_BR = {
 };
 
 const DE = {
+  "Mute microphone": "Mikrofon stummschalten",
+  "Unmute microphone": "Mikrofon einschalten",
   "Phone provisioning": "Telefonprovisionierung",
   "Provisioning URL": "Provisionierungs-URL",
   "Copy provisioning URL": "Provisionierungs-URL kopieren",
@@ -347,6 +356,13 @@ const DE = {
 };
 
 const IT = {
+  "Calling {name}...": "Chiamata a {name}...",
+  "In Call: {name}": "In chiamata con {name}",
+  "Call with {name} ended.": "Chiamata con {name} terminata.",
+  "Transfer call": "Trasferisci chiamata",
+  "Cancel transfer": "Annulla trasferimento",
+  "Mute microphone": "Disattiva microfono",
+  "Unmute microphone": "Riattiva microfono",
   "Phone provisioning": "Provisioning del telefono",
   "Provisioning URL": "URL di provisioning",
   "Copy provisioning URL": "Copia URL di provisioning",
@@ -407,6 +423,12 @@ const IT = {
   "The HA frontend context provider is unavailable.": "Il contesto del frontend Home Assistant non è disponibile.",
 };
 
+const IT_DYNAMIC_MESSAGES = [
+  [/^Calling (.+)\.\.\.$/, "Calling {name}..."],
+  [/^In Call: (.+)$/, "In Call: {name}"],
+  [/^Call with (.+) ended\.$/, "Call with {name} ended."],
+];
+
 export function voipStackLanguage(hass) {
   return String(hass?.language || hass?.locale?.language || "en").toLowerCase();
 }
@@ -424,7 +446,14 @@ export function voipStackTranslate(hass, text) {
   if (language === "cs" || language.startsWith("cs-")) return CS[value] || value;
   if (!dictionary) return value;
   if (dictionary[value]) return dictionary[value];
-  if (dictionary === IT) return value;
+  if (dictionary === IT) {
+    for (const [pattern, message] of IT_DYNAMIC_MESSAGES) {
+      const match = value.match(pattern);
+      // Names remain literal data, including replacement tokens and SIP text.
+      if (match) return dictionary[message].replace("{name}", () => match[1]);
+    }
+    return value;
+  }
   const reason = value.match(/^Reason: (.+)$/);
   if (reason) {
     const label = language.startsWith("de") ? "Grund" : "Motivo";

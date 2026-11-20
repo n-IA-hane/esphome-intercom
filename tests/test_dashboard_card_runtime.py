@@ -108,6 +108,7 @@ ENGINE_STUB = """
 const engine=new EventTarget();
 Object.assign(engine,{actions:[],phoneSubscribers:new Set(),ownerSubscribers:new Set(),active:false,callId:'',endpointId:'',closed:0,mediaClientId:'dashboard-test-client-1234',
  configure(){},
+ canMuteMicrophone(){return false},
  subscribePhoneStates(cb){this.phoneSubscribers.add(cb);if(window.fixture)queueMicrotask(()=>cb(window.fixture));return()=>this.phoneSubscribers.delete(cb)},
  subscribeSoftphoneState(cb,selector){this.ownerSubscribers.add(cb);this.ownerSelectors=(this.ownerSelectors||[]).concat(selector);return()=>this.ownerSubscribers.delete(cb)},
  async dashboardStartCall(owner,target){this.actions.push(['call',owner.device_id,target.name])},
@@ -394,16 +395,22 @@ def test_dashboard_media_conflict_keeps_other_owner_call_and_shows_error(dashboa
 
 
 @pytest.mark.browser_real
-def test_dashboard_semantic_colors_remain_distinct_under_muted_ha_theme(dashboard_page):
+def test_dashboard_semantic_colors_remain_distinct_under_muted_ha_theme(dashboard_page, tmp_path):
     page = dashboard_page
     page.evaluate("document.documentElement.style.setProperty('--info-color','#777');document.documentElement.style.setProperty('--error-color','#777')")
     ringing = page.locator(".tile[data-key='endpoint:kitchen']")
     busy = page.locator(".tile[data-key='endpoint:office']")
+    idle = page.locator(".tile[data-key='endpoint:reception']")
+    page.locator("voip-stack-dashboard-card").screenshot(path=str(tmp_path / "dashboard-colors.png"))
     assert ringing.evaluate("node=>getComputedStyle(node).borderTopColor") == "rgb(22, 140, 255)"
-    assert busy.evaluate("node=>getComputedStyle(node).borderTopColor") == "rgb(238, 50, 73)"
+    assert busy.evaluate("node=>getComputedStyle(node).backgroundImage") == "none"
+    assert busy.evaluate("node=>getComputedStyle(node).backgroundColor") == idle.evaluate("node=>getComputedStyle(node).backgroundColor")
+    assert busy.locator(".tile-status").evaluate("node=>getComputedStyle(node).color") == "rgb(238, 50, 73)"
     page.evaluate("card.style.setProperty('--voip-dashboard-ringing-color','#8b2cf5')")
     # The tile transitions its border color; observe the final computed value.
     page.wait_for_function("getComputedStyle(card.shadowRoot.querySelector('.tile[data-key=\"endpoint:kitchen\"]')).borderTopColor==='rgb(139, 44, 245)'")
+    page.evaluate("card.style.setProperty('--voip-dashboard-busy-color','#49d2a7')")
+    assert busy.locator(".tile-status").evaluate("node=>getComputedStyle(node).color") == "rgb(73, 210, 167)"
 
 
 @pytest.mark.browser_real

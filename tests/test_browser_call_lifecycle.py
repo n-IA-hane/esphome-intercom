@@ -115,6 +115,7 @@ class SoftwareCallPeer:
         self.controls = set()
         self.subscriptions = {}
         self.connections = []
+        self.media_sockets = []
         self.attempts = []
         self.reject_starts = 0
         self.delay_calling_event = False
@@ -206,6 +207,7 @@ class SoftwareCallPeer:
             return web.Response(status=409)
         socket = web.WebSocketResponse()
         await socket.prepare(request)
+        self.media_sockets.append(socket)
         record = {"client_id": client_id, "call_id": self.state["call_id"], "tx_frames": 0,
                   "rx_frames": 0, "rx_nonzero": 0, "closed": False}
         self.connections.append(record)
@@ -435,6 +437,218 @@ def test_failed_start_keeps_phone_and_redials_with_fresh_browser_media(tmp_path)
             "originate_requests": peer.attempts, "pcm_connections": peer.connections,
             "scope": "Native Chromium media with a controlled service refusal, not HA or physical media qualification",
         }, indent=2))
+
+    asyncio.run(browser_session(check, peer=peer))
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.timeout(45)
+def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_playback(tmp_path):
+    import json
+    import time
+    pytest.importorskip("playwright.async_api")
+    peer = SoftwareCallPeer()
+
+    async def check(context, base):
+        page = await open_engine(context, base)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        await page.evaluate(HARNESS)
+        await page.wait_for_function("card._softphoneSnapshot?.endpoint_id === 'desk'")
+        await page.get_by_role("button", name="Call", exact=True).click()
+        await wait_until(lambda: bool(peer.attempts))
+        peer.state.update(connected_at=time.time() - 12, peer_name="Peer", callee="Peer", direction="outgoing")
+        await peer.broadcast("in_call")
+        await page.wait_for_function("engine._audioReady && engine.callId")
+        await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
+        await page.screenshot(path=str(tmp_path / "audio-call.png"), full_page=True)
+        mute = page.get_by_role("button", name="Mute microphone", exact=True)
+        assert await mute.count() == 1, "The active browser call has no microphone mute control"
+        await page.evaluate("""() => {
+          window.playbackProbe=engine._audioContext.createAnalyser();playbackProbe.fftSize=2048;
+          engine._playbackNode.connect(playbackProbe);
+          window.playbackPower=()=>{
+            const data=new Float32Array(playbackProbe.fftSize);playbackProbe.getFloatTimeDomainData(data);
+            return Math.sqrt(data.reduce((sum,value)=>sum+value*value,0)/data.length);
+          };
+        }""")
+        await mute.click()
+        await page.wait_for_function("engine.microphoneMuted && !engine._mediaStream.getAudioTracks()[0].enabled")
+        assert await page.get_by_role("button", name="Unmute microphone", exact=True).get_attribute("aria-pressed") == "true"
+        await page.wait_for_function("playbackPower() > .02")
+        muted_playback = await page.evaluate("playbackPower()")
+
+        async def assert_silent_frames():
+            record = peer.connections[-1]
+            before = record["rx_frames"]
+            await wait_until(lambda: record["rx_frames"] >= before + 5)
+            nonzero = record["rx_nonzero"]
+            before = record["rx_frames"]
+            await wait_until(lambda: record["rx_frames"] >= before + 10)
+            assert record["rx_nonzero"] == nonzero, record
+
+        await assert_silent_frames()
+        assert not await page.evaluate("engine.setMicrophoneMuted(false,{call_id:'wrong-call',endpoint_id:'desk'})")
+        assert await page.evaluate("engine.microphoneMuted")
+        await page.evaluate("window.firstCard=card;mountCard()")
+        await page.wait_for_function("card._softphoneSnapshot?.state === 'in_call'")
+        assert await page.get_by_role("button", name="Unmute microphone", exact=True).count() == 2
+        await page.get_by_role("button", name="Unmute microphone", exact=True).last.click()
+        assert await page.get_by_role("button", name="Mute microphone", exact=True).count() == 2
+        await page.get_by_role("button", name="Mute microphone", exact=True).first.click()
+        assert await page.get_by_role("button", name="Unmute microphone", exact=True).count() == 2
+        await page.evaluate("firstCard.remove()")
+        assert await page.evaluate("firstCard._videoDurationTimer === null")
+        await page.evaluate("engine.setMediaDevice('audioinput','')")
+        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        await assert_silent_frames()
+        await peer.media_sockets[-1].send_json({"audio_direction": "recvonly"})
+        await page.wait_for_function("engine._audioDirection === 'recvonly' && !engine._captureNode && engine._audioReady")
+        assert await page.evaluate("engine.microphoneMuted")
+        await peer.media_sockets[-1].send_json({"audio_direction": "sendrecv"})
+        await page.wait_for_function("engine._audioDirection === 'sendrecv' && !!engine._captureNode && engine._audioReady")
+        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        await assert_silent_frames()
+        assert len(peer.connections) == 1
+        await peer.media_sockets[-1].close()
+        await wait_until(lambda: len(peer.connections) == 2)
+        await page.wait_for_function("engine._audioReady && engine.callId && engine.microphoneMuted")
+        await assert_silent_frames()
+        assert peer.connections[0]["closed"]
+        original_media_client = await page.evaluate("engine.mediaClientId")
+        await page.reload()
+        await page.wait_for_function("window.engine")
+        await page.evaluate(HARNESS)
+        await page.wait_for_function("engine._audioReady && engine.callId")
+        assert await page.evaluate("engine.microphoneMuted"), "Reloading the same owned call unexpectedly enabled its microphone"
+        assert await page.evaluate("engine.mediaClientId") == original_media_client
+        assert await page.evaluate("[...engine._ownedSoftphoneCalls.values()].every(value=>typeof value==='string')")
+        assert await page.evaluate("!engine._mediaStream.getAudioTracks()[0].enabled")
+        await wait_until(lambda: len(peer.connections) == 3 and all(item["closed"] for item in peer.connections[:-1]))
+        await assert_silent_frames()
+        async with context.expect_page() as opening:
+            await page.evaluate("url=>window.open(url,'_blank')", base)
+        observer = await opening.value
+        await observer.wait_for_function("window.engine")
+        await observer.evaluate(HARNESS)
+        await observer.wait_for_function("card._softphoneSnapshot?.state === 'in_call'")
+        assert await observer.get_by_role("button", name="Mute microphone", exact=True).count() == 0
+        assert not await observer.evaluate("engine.setMicrophoneMuted(false,{call_id:card._softphoneSnapshot.call_id,endpoint_id:'desk'})")
+        assert await observer.evaluate("gumCalls.length") == 0
+        await observer.close()
+        duration = page.locator(".audio-call-summary .call-duration")
+        assert await duration.is_visible()
+        previous_duration = await duration.text_content()
+        await page.wait_for_function("previous=>card.shadowRoot.querySelector('.audio-call-summary .call-duration').textContent !== previous", arg=previous_duration)
+        assert await page.locator(".audio-call-summary .call-peer").text_content() == "Peer"
+        await page.screenshot(path=str(tmp_path / "audio-call-muted.png"), full_page=True)
+        await page.get_by_role("button", name="Hang up call", exact=True).click()
+        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await wait_until(lambda: all(item["closed"] for item in peer.connections))
+        assert await page.evaluate("!engine.microphoneMuted && card._videoDurationTimer === null")
+        assert await page.evaluate("sessionStorage.getItem('voip_stack_owned_softphone_calls') === null")
+        assert await page.evaluate("gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
+        await page.get_by_role("button", name="Call", exact=True).click()
+        await wait_until(lambda: len(peer.attempts) == 2)
+        peer.state["connected_at"] = time.time()
+        await peer.broadcast("in_call")
+        await page.wait_for_function("engine._audioReady && engine.callId && !engine.microphoneMuted")
+        assert await page.evaluate("typeof JSON.parse(sessionStorage.getItem('voip_stack_owned_softphone_calls')).desk === 'string'")
+        await wait_until(lambda: len(peer.connections) == 4 and peer.connections[-1]["rx_nonzero"] >= 4)
+        await page.get_by_role("button", name="Hang up call", exact=True).click()
+        await page.wait_for_function("!engine._ws && !engine._audioContext && !engine.mediaCleanupPending")
+        await page.evaluate("card.remove()")
+        await wait_until(lambda: not peer.subscriptions)
+        assert not errors, errors
+        (tmp_path / "microphone-mute.json").write_text(json.dumps({
+            "muted_playback_rms": muted_playback, "pcm_connections": peer.connections,
+            "browser_errors": errors, "scope": "Real Chromium with controlled PCM peers; no SIP or physical-device qualification",
+        }, indent=2))
+
+    asyncio.run(browser_session(check, peer=peer))
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+def test_remembering_another_owned_call_preserves_active_and_held_microphone_intent(tmp_path):
+    import json
+    pytest.importorskip("playwright.async_api")
+    peer = SoftwareCallPeer()
+    first = {**peer.state, "state": "in_call", "endpoint_id": "desk", "device_id": "desk-device", "call_id": "call-A"}
+    second = {**first, "endpoint_id": "consult", "device_id": "consult-device", "call_id": "call-B"}
+
+    async def check(context, base):
+        page = await open_engine(context, base)
+        peer.owner = await page.evaluate("engine.mediaClientId")
+        peer.state = dict(first)
+        await page.evaluate("""() => {
+          window.capturedStreams=[];
+          const capture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+          navigator.mediaDevices.getUserMedia=async options=>{
+            const stream=await capture(options);capturedStreams.push(stream);return stream;
+          };
+          engine.configure({callWS:async request=>{
+            const result=await(await fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(request)})).json();
+            if(result.error)throw Error(result.error);return result;
+          }});
+          window.savedCalls=()=>JSON.parse(sessionStorage.getItem('voip_stack_owned_softphone_calls')||'{}');
+        }""")
+        phases = []
+
+        async def resume(state):
+            peer.state = dict(state)
+            await page.evaluate("state=>engine.resumeSession({...state,audio_mode:'full_duplex'},state.device_id,state)", state)
+            await page.wait_for_function("id=>engine._audioReady&&engine.callId===id", arg=state["call_id"])
+
+        async def observe(record):
+            initial = record["rx_frames"]
+            await wait_until(lambda: record["rx_frames"] >= initial + 5)
+            nonzero = record["rx_nonzero"]
+            initial = record["rx_frames"]
+            await wait_until(lambda: record["rx_frames"] >= initial + 10)
+            return record["rx_nonzero"] - nonzero
+
+        try:
+            await page.evaluate("engine.claimSoftphoneSession('call-A','desk')")
+            await resume(first)
+            await wait_until(lambda: peer.connections and peer.connections[-1]["rx_nonzero"] >= 4)
+            await page.evaluate("""() => {
+              engine.setMicrophoneMuted(true,{call_id:'call-A',endpoint_id:'desk'});
+              window.activeContext=engine._audioContext;
+              engine.claimSoftphoneSession('call-B','consult');
+            }""")
+            await peer.media_sockets[-1].send_json({"audio_direction": "sendrecv"})
+            nonzero = await observe(peer.connections[-1])
+            remembered = await page.evaluate("({muted:engine.microphoneMuted,endpoint:engine.endpointId,call:engine.callId,unchangedContext:engine._audioContext===activeContext,saved:savedCalls()})")
+            phases.append({"phase": "remember-B-while-A-active", "new_nonzero_frames": nonzero, **remembered})
+            (tmp_path / "cross-call-mute.json").write_text(json.dumps({"phases": phases, "connections": peer.connections}, indent=2))
+            assert nonzero == 0 and remembered["muted"], phases
+            assert remembered["unchangedContext"] and len(peer.connections) == 1
+            assert remembered["endpoint"] == "desk" and remembered["call"] == "call-A"
+            assert remembered["saved"]["desk"] == {"call_id": "call-A", "microphone_muted": True}
+            assert remembered["saved"]["consult"] == "call-B"
+            await resume(second)
+            await wait_until(lambda: len(peer.connections) == 2 and peer.connections[-1]["rx_nonzero"] >= 4)
+            assert not await page.evaluate("engine.microphoneMuted")
+            assert await page.evaluate("savedCalls().desk.microphone_muted")
+            phases.append({"phase": "B-new-call-unmuted", "nonzero_frames": peer.connections[-1]["rx_nonzero"]})
+            await resume(first)
+            await wait_until(lambda: len(peer.connections) == 3)
+            assert await observe(peer.connections[-1]) == 0
+            assert await page.evaluate("engine.microphoneMuted&&!engine._mediaStream.getAudioTracks()[0].enabled")
+            await page.evaluate("engine.releaseSoftphoneSession('call-B','consult')")
+            assert await page.evaluate("engine.microphoneMuted&&savedCalls().desk.microphone_muted&&!savedCalls().consult")
+            phases.append({"phase": "A-resumed-still-muted"})
+        finally:
+            await page.evaluate("""async()=>{
+              engine.releaseSoftphoneSession('call-A','desk');
+              engine.releaseSoftphoneSession('call-B','consult');
+              await engine.close('test-complete');
+            }""")
+        await wait_until(lambda: all(record["closed"] for record in peer.connections))
+        assert await page.evaluate("!engine.microphoneMuted&&!engine._audioContext&&!engine.mediaCleanupPending&&capturedStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))")
+        assert await page.evaluate("sessionStorage.getItem('voip_stack_owned_softphone_calls')===null")
+        (tmp_path / "cross-call-mute.json").write_text(json.dumps({"phases": phases, "connections": peer.connections}, indent=2))
 
     asyncio.run(browser_session(check, peer=peer))
 

@@ -77,6 +77,60 @@ def test_italian_card_commands_match_dashboard_labels(card_page):
     expect(page.get_by_role("button", name="Riaggancia chiamata", exact=True)).to_be_visible()
 
 
+@pytest.mark.parametrize("detail", ["version", "labels"])
+def test_audio_call_details_keep_runtime_labels_and_version_in_options(card_page, detail, tmp_path):
+    from playwright.sync_api import expect
+
+    page = card_page
+    page.evaluate("""() => {
+      document.body.style.cssText='margin:12px;background:#142234;font-family:Arial';
+      document.documentElement.style.cssText='--primary-text-color:#eef3fa;--secondary-text-color:#acb8ca;--ha-card-background:rgba(20,31,44,.6);--divider-color:rgba(190,210,230,.22)';
+      card._softphoneStateLoaded=true;
+      card._softphoneSnapshot={...card._softphoneSnapshot,state:'in_call',call_id:'audio-details',
+        peer_name:'Cucina',connected_at:Date.now()/1000-12};card._render();
+    }""")
+    page.locator("voip-stack-card").screenshot(path=str(tmp_path / "audio-details.png"))
+    expect(page.locator(".audio-call-summary .call-peer")).to_have_text("Cucina")
+    expect(page.locator(".audio-call-summary .call-peer")).to_be_visible()
+    expect(page.locator(".audio-call-summary .call-duration")).to_be_visible()
+    if detail == "version":
+        expect(page.locator(".version")).not_to_be_visible()
+        page.get_by_role("button", name="Opzioni", exact=True).click()
+        expect(page.locator(".version")).to_be_visible()
+    else:
+        expect(page.get_by_role("button", name="Tastierino", exact=True).locator(".settings-label")).to_be_visible()
+        expect(page.get_by_role("button", name="Opzioni", exact=True).locator(".settings-label")).to_be_visible()
+    page.evaluate("""() => {
+      card.config.mode='esp_mirror';card._hass.states['sensor.desk_state'].state='in_call';
+      card._mirroredCallId='physical-call';card._render();
+    }""")
+    expect(page.locator(".microphone-control")).not_to_be_visible()
+    page.locator("voip-stack-card").screenshot(path=str(tmp_path / "mirror-details.png"))
+    page.evaluate("card._hass.states['sensor.desk_state'].state='unavailable';card._render()")
+    expect(page.locator(".audio-call-summary")).not_to_be_visible()
+
+
+@pytest.mark.parametrize(("phase", "identity", "expected"), [
+    ("calling", "Answer", "Chiamata a Answer..."),
+    ("in_call", "Reception@Hotel", "In chiamata con Reception@Hotel"),
+    ("ended", "*42 $& {name}", "Chiamata con *42 $& {name} terminata."),
+])
+def test_italian_call_messages_preserve_literal_counterparty_names(card_page, phase, identity, expected):
+    from playwright.sync_api import expect
+
+    page = card_page
+    page.evaluate("""({phase,identity}) => {
+      card._softphoneStateLoaded=true;
+      card._softphoneSnapshot={...card._softphoneSnapshot,state:phase==='ended'?'idle':phase,
+        call_id:'literal-name',direction:'outgoing',peer_name:identity,callee:identity};
+      if(phase==='ended')card._captureEndReason('terminal','remote_hangup','remote',identity);
+      card._render();
+    }""", {"phase": phase, "identity": identity})
+    expect(page.get_by_role("status")).to_have_text(expected)
+    if phase == "in_call":
+        expect(page.locator(".audio-call-summary .call-peer")).to_have_text(identity)
+
+
 @pytest.mark.parametrize("mode", ["ha_softphone", "esp_mirror", "ha_transfer"])
 def test_keypad_activation_retains_button_focus_and_tab_order(card_page, mode):
     from playwright.sync_api import expect

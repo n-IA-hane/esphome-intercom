@@ -158,7 +158,6 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active .status,
       .video-active .status-reason,
       .video-active .stats,
-      .video-active .version { color: white; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
       ha-card.card.video-active > .button-container {
         position: absolute;
         left: 0;
@@ -174,7 +173,6 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active .destination-row,
       .video-active .status,
       .video-active .status-reason,
-      .video-active .version { display: none; }
       .header { font-size: 1.2em; font-weight: 500; margin-bottom: var(--voip-fluid-space, 16px); color: var(--primary-text-color); text-align: center; }
       .header[hidden] { display: none; }
 
@@ -426,7 +424,10 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active .stats { display: none; }
       .error { color: #f44336; font-size: 0.85em; text-align: center; margin-top: 8px; }
       .settings-btn {
-        display: block;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
         margin: 10px auto 0;
         border: 1px solid var(--divider-color, #ccc);
         border-radius: 6px;
@@ -439,11 +440,25 @@ export function buildMainCardSkeleton(cardVersion) {
       .settings-btn[hidden] { display: none; }
       .runtime-controls {
         display: flex;
+        flex-wrap: wrap;
         justify-content: center;
         gap: 8px;
         margin-top: 10px;
       }
       .runtime-controls[hidden] { display: none; }
+      .audio-call-summary {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 12px;
+        padding: 10px 0;
+        color: var(--primary-text-color, inherit);
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+      .audio-call-summary .call-peer { min-width: 0; overflow-wrap: anywhere; }
+      .audio-call-summary .call-duration { flex: none; font-variant-numeric: tabular-nums; }
+      .audio-call-summary[hidden] { display: none; }
       .card > .phone-activity {
         position: absolute;
         top: 0;
@@ -484,13 +499,16 @@ export function buildMainCardSkeleton(cardVersion) {
         text-align: left;
       }
       .settings-panel[hidden] { display: none; }
-      .runtime-controls .settings-label { display: none; }
+      .runtime-controls .settings-label { display: inline; }
+      .runtime-controls .microphone-control .settings-label { display: inline; }
+      .microphone-control[aria-pressed="true"] { color: var(--warning-color, #e9b542); }
       .settings-label-icon {
         display: inline-flex;
         vertical-align: middle;
         --mdc-icon-size: 23px;
       }
       .video-active:not(.settings-open) .runtime-controls {
+        flex-wrap: nowrap;
         position: absolute;
         z-index: 4;
         right: 8px;
@@ -663,7 +681,7 @@ export function buildMainCardSkeleton(cardVersion) {
       .layout-short .offline-icon ha-icon { --mdc-icon-size: 32px; }
       .layout-short .runtime-controls { margin-top: 4px; }
       .layout-narrow .button-container { gap: 8px; }
-      .version { font-size: 0.65em; color: #999; text-align: right; margin-top: 8px; }
+      .version { font-size: 0.75em; color: var(--secondary-text-color, #999); text-align: right; margin-top: 8px; }
     `;
     root.appendChild(style);
 
@@ -772,6 +790,16 @@ export function buildMainCardSkeleton(cardVersion) {
     offlinePanel.appendChild(offlineTitle);
     card.appendChild(offlinePanel);
 
+    const audioCallSummary = document.createElement("div");
+    audioCallSummary.className = "audio-call-summary";
+    audioCallSummary.hidden = true;
+    const audioCallPeer = document.createElement("span");
+    audioCallPeer.className = "call-peer";
+    const audioCallDuration = document.createElement("span");
+    audioCallDuration.className = "call-duration";
+    audioCallSummary.append(audioCallPeer, audioCallDuration);
+    card.appendChild(audioCallSummary);
+
     // Button container with all four action buttons + a placeholder.
     // Visibility toggled in _render via [hidden].
     const buttonContainer = document.createElement("div");
@@ -794,7 +822,7 @@ export function buildMainCardSkeleton(cardVersion) {
     hangupBtn.appendChild(hangupPulse);
     const hangupLabel = document.createElement("span");
     hangupLabel.className = "hangup-label";
-    hangupLabel.textContent = translate("Hangup");
+    hangupLabel.textContent = translate("Hang up");
     const hangupIcon = document.createElement("span");
     hangupIcon.className = "hangup-icon";
     const hangupHaIcon = document.createElement("ha-icon");
@@ -857,6 +885,18 @@ export function buildMainCardSkeleton(cardVersion) {
     const runtimeControls = document.createElement("div");
     runtimeControls.className = "runtime-controls";
 
+    const microphoneBtn = document.createElement("button");
+    microphoneBtn.type = "button";
+    microphoneBtn.className = "settings-btn microphone-control";
+    microphoneBtn.hidden = true;
+    const microphoneLabel = document.createElement("span");
+    microphoneLabel.className = "settings-label";
+    const microphoneIcon = document.createElement("ha-icon");
+    microphoneIcon.className = "settings-label-icon";
+    microphoneBtn.append(microphoneIcon, microphoneLabel);
+    microphoneBtn.setAttribute("aria-pressed", "false");
+    runtimeControls.appendChild(microphoneBtn);
+
     const keypadBtn = document.createElement("button");
     keypadBtn.type = "button";
     keypadBtn.className = "settings-btn";
@@ -913,7 +953,10 @@ export function buildMainCardSkeleton(cardVersion) {
       const image = document.createElement("ha-icon");
       image.className = "settings-label-icon";
       image.setAttribute("icon", icon);
-      button.appendChild(image);
+      const copy = document.createElement("span");
+      copy.className = "settings-label";
+      copy.textContent = translate(label);
+      button.append(image, copy);
       button.title = translate(label);
       button.setAttribute("aria-label", translate(label));
       button.hidden = true;
@@ -1243,7 +1286,7 @@ export function buildMainCardSkeleton(cardVersion) {
     const version = document.createElement("div");
     version.className = "version";
     version.textContent = "v" + cardVersion;
-    card.appendChild(version);
+    settingsPanel.appendChild(version);
 
     root.appendChild(card);
 
@@ -1254,6 +1297,8 @@ export function buildMainCardSkeleton(cardVersion) {
       keypadPanel, keypadInput, keypadKeys, keypadGrid,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
+      audioCallSummary, audioCallPeer, audioCallDuration, microphoneBtn, microphoneLabel, microphoneIcon,
+      transferLabel: transferBtn.querySelector(".settings-label"),
       runtimeControls, keypadBtn, keypadLabel, keypadIcon, settingsBtn, settingsPanel, popupSettings, voicemailBtn, voicemailPanel, parkBtn, transferBtn, transferHangupBtn, parkingNotice, phoneActivity, recordBtn,
       routingPanel, routingControls, ringingControls, trunkRow, trunkSelect,
       autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
@@ -1289,7 +1334,6 @@ export function buildUnconfiguredCardSkeleton(cardVersion) {
       .header { font-size: 1.2em; font-weight: 500; margin-bottom: 16px; color: var(--primary-text-color); text-align: center; }
       .header[hidden] { display: none; }
       .unconfigured { text-align: center; color: var(--secondary-text-color); padding: 20px; font-style: italic; }
-      .version { font-size: 0.65em; color: #999; text-align: right; margin-top: 8px; }
     `;
     root.appendChild(style);
 
@@ -1307,11 +1351,6 @@ export function buildUnconfiguredCardSkeleton(cardVersion) {
     unconfigured.className = "unconfigured";
     unconfigured.textContent = translate("Please configure the card to select an VoIP device.");
     card.appendChild(unconfigured);
-
-    const version = document.createElement("div");
-    version.className = "version";
-    version.textContent = "v" + cardVersion;
-    card.appendChild(version);
 
     root.appendChild(card);
 

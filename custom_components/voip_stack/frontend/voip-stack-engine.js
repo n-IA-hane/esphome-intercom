@@ -145,6 +145,7 @@ class VoipStackEngine extends EventTarget {
     this._audioMode = "full_duplex";
     this._microphoneAntiAlias = true;
     this._audioDirection = "sendrecv";
+    this._microphoneMuted = false;
     this._txFormat = null;
     this._rxFormat = null;
     this._lastSessionPayload = null;
@@ -227,6 +228,7 @@ class VoipStackEngine extends EventTarget {
       const stored = JSON.parse(sessionStorage.getItem(SOFTPHONE_MEDIA_SESSIONS_KEY) || "{}");
       this._ownedSoftphoneCalls = new Map(
         Object.entries(stored)
+          .map(([endpointId, value]) => [endpointId, typeof value === "object" ? value?.call_id : value])
           .filter(([endpointId, callId]) => endpointId && callId)
           .map(([endpointId, callId]) => [String(endpointId), String(callId)]),
       );
@@ -547,9 +549,38 @@ class VoipStackEngine extends EventTarget {
     return this._mediaCleanupPromise !== null;
   }
 
+  get microphoneMuted() {
+    return this._microphoneMuted;
+  }
+
+  canMuteMicrophone(callId, endpointId) {
+    return this.ownsSoftphoneSession(callId, endpointId) &&
+      this._callId === String(callId || "") && this._endpointId === String(endpointId || "");
+  }
+
+  setMicrophoneMuted(muted, { call_id: callId, endpoint_id: endpointId } = {}) {
+    if (!this.canMuteMicrophone(callId, endpointId)) return false;
+    const next = Boolean(muted);
+    if (next !== this._microphoneMuted) {
+      this._microphoneMuted = next;
+      this._applyMicrophoneEnabled();
+      this._persistOwnedSoftphoneCalls();
+      this._emit();
+    }
+    return true;
+  }
+
   _persistOwnedSoftphoneCalls() {
     try {
-      const entries = Object.fromEntries(this._ownedSoftphoneCalls);
+      let previous;
+      try { previous = JSON.parse(sessionStorage.getItem(SOFTPHONE_MEDIA_SESSIONS_KEY) || "{}"); } catch (_) {}
+      const entries = Object.fromEntries([...this._ownedSoftphoneCalls].map(([endpointId, callId]) => {
+        const current = endpointId === this._endpointId && callId === this._callId;
+        const saved = previous?.[endpointId];
+        const muted = current ? this._microphoneMuted :
+          saved?.call_id === callId && saved?.microphone_muted === true;
+        return [endpointId, muted ? { call_id: callId, microphone_muted: true } : callId];
+      }));
       if (Object.keys(entries).length) {
         sessionStorage.setItem(SOFTPHONE_MEDIA_SESSIONS_KEY, JSON.stringify(entries));
       } else {
@@ -618,6 +649,7 @@ class VoipStackEngine extends EventTarget {
     if (!wanted || wanted === this._ownedSoftphoneCalls.get(endpoint)) {
       const owned = this._ownedSoftphoneCalls.has(endpoint);
       this._ownedSoftphoneCalls.delete(endpoint);
+      if (endpoint === this._endpointId || !this._ownedSoftphoneCalls.size) this._microphoneMuted = false;
       if (owned && this._preparedAudio?.endpointId === endpoint) {
         void this._discardPreparedAudio();
       }
@@ -1072,6 +1104,7 @@ class VoipStackEngine extends EventTarget {
       throw new Error("No microphone audio track is available.");
     }
     const settings = track.getSettings?.() || {};
+    this._applyMicrophoneEnabled(stream);
     if (
       generation !== this._microphoneSwitchGeneration ||
       context !== this._audioContext ||
@@ -1896,6 +1929,8 @@ class VoipStackEngine extends EventTarget {
       return this._connectPromise;
     }
     const connectGeneration = ++this._connectGeneration;
+    const sameOwnedCall = this.ownsSoftphoneSession(wantedCallId, wantedEndpointId) &&
+      this._endpointId === wantedEndpointId && this._callId === wantedCallId;
     await this.close("switch", true, true);
     if (connectGeneration !== this._connectGeneration) {
       throw new Error("Audio WebSocket superseded before connect");
@@ -1903,6 +1938,15 @@ class VoipStackEngine extends EventTarget {
     this._deviceId = deviceId;
     this._endpointId = wantedEndpointId;
     this._callId = wantedCallId;
+    if (!sameOwnedCall) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(SOFTPHONE_MEDIA_SESSIONS_KEY) || "{}")[wantedEndpointId];
+        this._microphoneMuted = this.ownsSoftphoneSession(wantedCallId, wantedEndpointId) &&
+          saved?.call_id === wantedCallId && saved?.microphone_muted === true;
+      } catch (_) {
+        this._microphoneMuted = false;
+      }
+    }
     this._lastSessionPayload = null;
     const wsUrl = await this._wsUrl(deviceId, wantedCallId, wantedEndpointId);
     if (
@@ -2067,7 +2111,9 @@ class VoipStackEngine extends EventTarget {
     }
     const frame = this._audioFrameBuffer;
     frame[0] = WS_AUDIO;
-    frame.set(bytes, 1);
+    // Keep the PCM clock while silencing frames queued before the user muted.
+    if (this._microphoneMuted) frame.fill(0, 1);
+    else frame.set(bytes, 1);
     this._ws.send(frame);
     this._stats.sent++;
     if ((this._stats.sent & 31) === 0) this._emit();
@@ -2381,18 +2427,24 @@ class VoipStackEngine extends EventTarget {
     const nextDirection = normaliseAudioDirection(value);
     let changed = nextDirection !== this._audioDirection;
     this._audioDirection = nextDirection;
-    const enabled = this._canSendAudio();
-    for (const track of this._mediaStream?.getAudioTracks?.() || []) {
-      if (track.enabled !== enabled) {
-        track.enabled = enabled;
-        changed = true;
-      }
-    }
+    changed = this._applyMicrophoneEnabled() || changed;
     // Engine state listeners reconcile the authoritative call snapshot. An
     // unconditional event here made an unchanged reconciliation call itself
     // synchronously until Chrome exhausted the JavaScript stack, most often
     // while Hangup was cleaning up an active media pipeline.
     if (changed) this._emit();
+  }
+
+  _applyMicrophoneEnabled(stream = this._mediaStream) {
+    const enabled = this._canSendAudio() && !this._microphoneMuted;
+    let changed = false;
+    for (const track of stream?.getAudioTracks?.() || []) {
+      if (track.enabled !== enabled) {
+        track.enabled = enabled;
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   async _setupAudioOrAbort(deviceId, deviceInfo, reply, attachKey = "", endpointId = "") {
@@ -2788,7 +2840,13 @@ class VoipStackEngine extends EventTarget {
     const currentCleanup = new Promise((resolve) => { finishCleanup = resolve; });
     this._mediaCleanupPromise = currentCleanup;
     try {
-      if (!preserveConnect) this._connectGeneration++;
+      if (!preserveConnect) {
+        this._connectGeneration++;
+        if (_reason !== "pagehide" || !this.ownsSoftphoneSession(this._callId, this._endpointId)) {
+          this._microphoneMuted = false;
+          this._persistOwnedSoftphoneCalls();
+        }
+      }
       this._videoAttachGeneration++;
       this._videoAttachPromise = null;
       this._videoAttachCallId = "";

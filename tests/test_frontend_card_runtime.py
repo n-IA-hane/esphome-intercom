@@ -106,6 +106,7 @@ const engine = {{
   clearRingtoneRequest() {{}},
   setRingtoneRequest() {{}},
   statsText() {{ return ""; }},
+  canMuteMicrophone() {{ return false; }},
   ownsSoftphoneSession(callId, endpointId = "default") {{
     return this.ownedSoftphoneCalls.get(endpointId) === callId;
   }},
@@ -409,6 +410,8 @@ assert.equal(cardModel.mirroredEndpointPeerLabel({{
 
 function elements() {{
   const names = [
+    "audioCallSummary", "audioCallPeer", "audioCallDuration",
+    "microphoneBtn", "microphoneLabel", "microphoneIcon",
     "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
     "declineBtn", "destRow", "destSelect", "destValue", "destValueWrap",
     "dndCheckbox", "dndRow", "err", "hangupBtn", "hangupDuration",

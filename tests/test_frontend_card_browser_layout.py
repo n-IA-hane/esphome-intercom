@@ -404,6 +404,10 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
                 e.hangupDuration.textContent='01:23:45';
                 e.parkBtn.hidden=!park;
                 e.parkBtn.querySelector('.settings-label').textContent='Anruf parken';
+                e.microphoneBtn.hidden=false;
+                e.microphoneBtn.setAttribute('aria-label','Mute microphone');
+                e.microphoneLabel.textContent='Mute microphone';
+                e.microphoneIcon.setAttribute('icon','mdi:microphone');
                 e.recordBtn.hidden=true;
                 e.transferBtn.hidden=false;
                 e.voicemailBtn.hidden=true;
@@ -428,7 +432,7 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
             boxes = page.evaluate("""() => {
                 const e=elements;
                 return Object.fromEntries(['card','hangupBtn','hangupDuration','keypadBtn',
-                    'settingsBtn','parkBtn','recordBtn','voicemailBtn','transferBtn']
+                    'settingsBtn','parkBtn','recordBtn','voicemailBtn','transferBtn','microphoneBtn']
                     .filter(key=>!e[key].hidden)
                     .map(key=>[key,e[key].getBoundingClientRect().toJSON()]));
             }""")
@@ -634,10 +638,42 @@ def test_activity_lists_leave_call_buttons_unchanged(width, ringing, tmp_path):
                 for field in ("x", "y", "width", "height"):
                     assert abs(box[field] - after[key][field]) < .5, (key, field)
             rows = page.evaluate("[...owner.shadowRoot.querySelectorAll('.phone-activity li')].map(e=>e.getBoundingClientRect().toJSON())")
+            diagnostics = page.evaluate("""() => {
+                const controls=window.controls();
+                const lists=[elements.parkingNotice,elements.phoneActivity].map(list=>({
+                    className:list.className,box:list.getBoundingClientRect().toJSON(),
+                    overflow:getComputedStyle(list).overflow,scrollHeight:list.scrollHeight,
+                    clientHeight:list.clientHeight,scrollTop:list.scrollTop}));
+                const intersections=[];
+                for(const row of owner.shadowRoot.querySelectorAll('.phone-activity li')) {
+                    const r=row.getBoundingClientRect();
+                    for(const [name,b] of Object.entries(controls)) {
+                        const left=Math.max(r.left,b.left),right=Math.min(r.right,b.right);
+                        const top=Math.max(r.top,b.top),bottom=Math.min(r.bottom,b.bottom);
+                        if(right<=left||bottom<=top)continue;
+                        const hit=owner.shadowRoot.elementFromPoint((left+right)/2,(top+bottom)/2);
+                        intersections.push({name,hitTag:hit?.tagName,hitClass:hit?.className,
+                            expectedButton:hit?.closest('button')===elements[name],
+                            listBox:row.parentElement.getBoundingClientRect().toJSON()});
+                    }
+                }
+                return {controls,lists,intersections};
+            }""")
+            (tmp_path / "activity-geometry.json").write_text(json.dumps(diagnostics, indent=2))
+            page.screenshot(path=str(tmp_path / "activity-before-assert.png"), full_page=True)
             assert len(rows) == 4
-            for row in rows:
+            visible_rows = page.evaluate("""() => [...owner.shadowRoot.querySelectorAll('.phone-activity li')]
+                .map(row=>{
+                    const box=row.getBoundingClientRect(),list=row.parentElement;
+                    const clip=list.getBoundingClientRect();
+                    const left=clip.left+list.clientLeft,top=clip.top+list.clientTop;
+                    return {left:Math.max(box.left,left),right:Math.min(box.right,left+list.clientWidth),
+                        top:Math.max(box.top,top),bottom:Math.min(box.bottom,top+list.clientHeight)};
+                }).filter(box=>box.right>box.left&&box.bottom>box.top)""")
+            for row in visible_rows:
                 for button in after.values():
                     assert min(row['right'], button['right']) <= max(row['left'], button['left']) or min(row['bottom'], button['bottom']) <= max(row['top'], button['top'])
+            assert all(item["expectedButton"] for item in diagnostics["intersections"]), diagnostics
             assert page.evaluate("getComputedStyle(elements.phoneActivity.firstElementChild).flexDirection") == "row-reverse"
             assert page.evaluate("getComputedStyle(elements.phoneActivity.firstElementChild.firstElementChild).direction") == "ltr"
             # Lists are bounded by the call controls, never the diagnostics/footer.

@@ -739,6 +739,7 @@ class VoipStackCard extends HTMLElement {
   }
 
   _syncVideoDurationTimer(active) {
+    active = active && this.isConnected;
     if (active && !this._videoDurationTimer) {
       this._videoDurationTimer = setInterval(() => this._render(), 1000);
     } else if (!active && this._videoDurationTimer) {
@@ -1863,6 +1864,9 @@ class VoipStackCard extends HTMLElement {
       els.answerBtn.hidden = true;
       els.declineBtn.hidden = true;
       els.hangupBtn.hidden = true;
+      els.audioCallSummary.hidden = true;
+      els.microphoneBtn.hidden = true;
+      this._syncVideoDurationTimer(false);
       els.callBtn.hidden = true;
       els.placeholderBtn.hidden = true;
       els.autoAnswerRow.hidden = true;
@@ -1991,7 +1995,14 @@ class VoipStackCard extends HTMLElement {
     els.card.classList.toggle("video-active", visualMediaVisible);
     els.videoCanvas.hidden = !videoVisible;
     els.videoShade.hidden = !visualMediaVisible;
-    this._syncVideoDurationTimer(visualMediaVisible);
+    const connectedAt = Number(this._softphoneSnapshot?.connected_at || 0);
+    this._syncVideoDurationTimer(showHangup && connectedAt > 0);
+    const activePeer = (!softphoneMode && this._mirroredConnectedPeer) || caller || destination || this._t("Active call");
+    const callDuration = this._formatVideoCallDuration();
+    els.audioCallSummary.hidden = visualMediaVisible || !showHangup;
+    els.audioCallPeer.textContent = activePeer;
+    els.audioCallDuration.textContent = callDuration;
+    els.audioCallDuration.hidden = !connectedAt || espState !== "in_call";
     if (els.hangupPeer) {
       const normalizedState = espState.toLowerCase();
       els.hangupState.textContent = this._stopping
@@ -2005,8 +2016,8 @@ class VoipStackCard extends HTMLElement {
               : normalizedState === "terminating"
                 ? "Ending"
             : "In call";
-      els.hangupPeer.textContent = caller || destination || "Active call";
-      els.hangupDuration.textContent = this._formatVideoCallDuration();
+      els.hangupPeer.textContent = activePeer;
+      els.hangupDuration.textContent = callDuration;
     }
     const keypadOpen = this._keypadOpen();
     const inCallDtmf = !transferring && softphoneMode &&
@@ -2069,6 +2080,7 @@ class VoipStackCard extends HTMLElement {
       els.transferBtn.setAttribute("aria-pressed", String(transferring));
       els.transferBtn.title = this._t(transferring ? "Cancel transfer" : "Transfer call");
       els.transferBtn.setAttribute("aria-label", els.transferBtn.title);
+      if (els.transferLabel) els.transferLabel.textContent = els.transferBtn.title;
       els.transferHangupBtn.hidden = !transferring;
       els.transferHangupBtn.disabled = !canControl || this._stopping;
     }
@@ -2092,6 +2104,18 @@ class VoipStackCard extends HTMLElement {
     els.card.classList.toggle("dashboard-inline-options", !!this._dashboardEmbedded && showSettingsPanel);
     const canUseKeypad = transferring || softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
+    const canMuteMicrophone = softphoneMode && voipStackEngine.canMuteMicrophone(
+      this._sessionCallId(), this._getSoftphoneEndpointId(),
+    );
+    const microphoneMuted = canMuteMicrophone && voipStackEngine.microphoneMuted;
+    const microphoneLabel = this._t(microphoneMuted ? "Unmute microphone" : "Mute microphone");
+    els.microphoneBtn.hidden = !canMuteMicrophone || espState !== "in_call";
+    els.microphoneBtn.disabled = !canControl || this._stopping;
+    els.microphoneBtn.setAttribute("aria-pressed", String(microphoneMuted));
+    els.microphoneBtn.setAttribute("aria-label", microphoneLabel);
+    els.microphoneBtn.title = microphoneLabel;
+    els.microphoneLabel.textContent = microphoneLabel;
+    els.microphoneIcon.setAttribute("icon", microphoneMuted ? "mdi:microphone-off" : "mdi:microphone");
     els.keypadBtn.hidden = !(
       (showCall || transferring || inCallDtmf) && showRuntimeOptions && canUseKeypad
     );
@@ -2394,6 +2418,10 @@ class VoipStackCard extends HTMLElement {
     if (els.transferBtn) els.transferBtn.onclick = () => this._toggleTransfer();
     if (els.transferHangupBtn) els.transferHangupBtn.onclick = () => this._hangup();
     if (els.parkBtn) els.parkBtn.onclick = () => this._parkCall();
+    els.microphoneBtn.onclick = () => voipStackEngine.setMicrophoneMuted(
+      !voipStackEngine.microphoneMuted,
+      { call_id: this._sessionCallId(), endpoint_id: this._getSoftphoneEndpointId() },
+    );
     if (els.recordBtn) els.recordBtn.onclick = () => this._toggleRecording();
     if (els.voicemailBtn) els.voicemailBtn.onclick = async () => {
       this._mailboxOpen = !this._mailboxOpen;
