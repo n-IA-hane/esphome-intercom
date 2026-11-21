@@ -99,20 +99,32 @@ class PayloadMap:
         by_mapping = {mapping: number for number, mapping in used.items()}
         receive: dict[int, RtpMapping] = {}
         wanted = list(dict.fromkeys(mappings))
-        # First pass: numbers that are not negotiable (already used in this session, static).
-        for mapping in wanted:
-            number = by_mapping.get(mapping, PREFERRED_PAYLOADS.get(mapping))
-            if number is None:
-                preferred = (preferences or {}).get(mapping)
-                if preferred is not None and FIRST_DYNAMIC <= preferred <= LAST_DYNAMIC:
-                    number = preferred
-            if number is None:
-                number = video_static_rtp_payload(mapping)
-            if number is None and mapping == (TELEPHONE_EVENT, 8000, 1):
-                number = TELEPHONE_EVENT_8000
+        def reserve(mapping, number):
             if number is not None and used.get(number, mapping) == mapping:
                 receive[number] = used[number] = mapping
                 by_mapping[mapping] = number
+
+        # Historical meanings and RFC static assignments cannot be displaced.
+        static_numbers = {mapping: number for number, mapping in STATIC_RTPMAP.items()}
+        for mapping in wanted:
+            number = by_mapping.get(mapping, static_numbers.get(mapping))
+            if number is None:
+                number = video_static_rtp_payload(mapping)
+            reserve(mapping, number)
+        # Explicit local numbers outrank conventional defaults, regardless of
+        # the order in which an automatic alternative enters the catalog.
+        for mapping in wanted:
+            if mapping not in by_mapping:
+                preferred = (preferences or {}).get(mapping)
+                if preferred is not None and FIRST_DYNAMIC <= preferred <= LAST_DYNAMIC:
+                    reserve(mapping, preferred)
+        for mapping in wanted:
+            if mapping in by_mapping:
+                continue
+            number = PREFERRED_PAYLOADS.get(mapping)
+            if number is None and mapping == (TELEPHONE_EVENT, 8000, 1):
+                number = TELEPHONE_EVENT_8000
+            reserve(mapping, number)
         # Second pass: dynamic numbers for everything else, never one that meant something else.
         for mapping in wanted:
             if mapping in by_mapping:

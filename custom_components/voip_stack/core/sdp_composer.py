@@ -483,8 +483,11 @@ def _write_offer_plan(plan, origin_ip, media_ip, media_port, *, audio_direction,
     flows = dict(plan.flows)
     for fmt in plan.formats:
         lines.append(f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}")
-        if fmt.encoding == "OPUS":
-            lines.append(f"a=fmtp:{fmt.payload_type} stereo=0;sprop-stereo=0;maxaveragebitrate=28000")
+        parameters = str(fmt.fmtp or "").strip()
+        if not parameters and fmt.encoding == "OPUS":
+            parameters = "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+        if parameters:
+            lines.append(f"a=fmtp:{fmt.payload_type} {parameters}")
         if directional and audio_direction == "sendrecv" and fmt.payload_type in flows:
             lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flows[fmt.payload_type]}")
     for event in plan.events:
