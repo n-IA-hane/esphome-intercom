@@ -12,7 +12,7 @@ import pytest
 from custom_components import voip_stack
 from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
 from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
-from custom_components.voip_stack.core import sip
+from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
@@ -95,7 +95,8 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
                             return
                         receive = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
                         _send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
-                        assert b"a=ptime:20\r\n" in message.body
+                        offered_audio = sdp.parse_sdp(message.body)
+                        assert offered_audio["ptime"] > 0 and offered_audio["maxptime"] >= 20
                         assert b"a=x-voip-stack-flow:" not in message.body
                         video_offer = message.body.partition(b"m=video")[2]
                         video = (("m=video 35002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=recvonly\r\n"
@@ -168,7 +169,10 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
             client = lab.calls.sip_client_for(call_id)
             assert client.dialog is not None and client.dialog.local_video_direction == "inactive"
             assert client.dialog.send_format.sample_rate == 16000 and client.dialog.recv_format.sample_rate == 16000
-            assert client.dialog.send_format.frame_ms == client.dialog.recv_format.frame_ms == 20
+            assert client.dialog.send_format.frame_ms == 20
+            initial_offer = next(request for request, _address in requests
+                                 if request.method == "INVITE" and request.header("Call-ID") == call_id)
+            assert client.dialog.recv_format.frame_ms == sdp.parse_sdp(initial_offer.body)["ptime"]
             audio_port = client.local_rtp_port
             audio_formats = (client.dialog.send_format, client.dialog.recv_format)
             if cycle == 0:

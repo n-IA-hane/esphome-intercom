@@ -11,7 +11,7 @@ import pytest
 from custom_components import voip_stack
 from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
 from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
-from custom_components.voip_stack.core import sip
+from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
@@ -170,9 +170,11 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
                 assert client.dialog.send_format.encoding == client.dialog.recv_format.encoding == "PCMU"
                 assert client.dialog.send_format.sample_rate == client.dialog.recv_format.sample_rate == 8000
                 assert client.dialog.send_format.frame_ms == 20
-                # The local receive recommendation remains 10 ms when no
-                # usable discovery exists, independently of peer RX20.
-                assert client.dialog.recv_format.frame_ms == (20 if profile == "standard" else 10)
+                # CC-2: our receiver retains its own wire recommendation,
+                # independently of the peer's 20 ms receive recommendation.
+                initial_offer = next(request for request, _address in requests
+                                     if request.method == "INVITE" and request.header("Call-ID") == call_id)
+                assert client.dialog.recv_format.frame_ms == sdp.parse_sdp(initial_offer.body)["ptime"]
             await action("hangup", call_id=call_id)
             assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
             assert not peer_errors

@@ -1,6 +1,5 @@
 """Behavioral tests for the canonical outbound SIP leg builder."""
 
-from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -357,8 +356,10 @@ def test_failed_external_leg_keeps_caller_owned_reservation(
 def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
     """Registration must not decide codec support for an otherwise unknown SIP peer."""
     from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.core.codec_capabilities import codec_available
+    from custom_components.voip_stack.sip_client import SipCallClient
 
-    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
+    assert codec_available("OPUS") and codec_available("G722")
     dialer, created, _ = _dialer(monkeypatch)
     peer = Peer(name="Manual SIP", host="192.0.2.60", endpoint_kind="sip_account")
     leg = dialer.prepare_outbound_leg(
@@ -368,11 +369,9 @@ def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
     )
     assert leg is not None
     assert created["include_common_codecs"] is True
-    offer = sdp.build_offer_directional(
-        "192.0.2.1", "192.0.2.1", 12000,
-        created["supported_send_formats"], created["supported_recv_formats"],
-        include_common_codecs=created["include_common_codecs"],
-    )
+    client = SipCallClient(**created)
+    client._prepare_initial_offer(delayed_offer=False, audio_direction="sendrecv")
+    offer = client._local_sdp_body
     formats = sdp.offered_pcm_formats(offer)
     assert any(f.encoding == "OPUS" and f.frame_ms == 10 for f in formats)
     assert any(f.encoding == "L16" and f.sample_rate == 32000 and f.frame_ms == 10 for f in formats)

@@ -121,8 +121,10 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             # The actual caller explicitly limits receive packets to 10 ms.
             # SipCallClient otherwise omits redundant maxptime in D1 offers.
             if b"a=maxptime:" not in caller._pending_invite_body:
-                caller._pending_invite_body = caller._pending_invite_body.replace(
-                    b"a=ptime:10\r\n", b"a=ptime:10\r\na=maxptime:10\r\n")
+                caller._pending_invite_body = re.sub(
+                    rb"a=ptime:[^\r\n]+\r\n", b"a=ptime:10\r\na=maxptime:10\r\n",
+                    caller._pending_invite_body)
+                assert b"a=maxptime:10\r\n" in caller._pending_invite_body
                 caller._local_sdp_body = caller._pending_invite_body.decode()
             return build_request()
 
