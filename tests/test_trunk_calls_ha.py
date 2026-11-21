@@ -224,13 +224,16 @@ async def test_browser_phone_preference_and_explicit_override_dial_the_selected_
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_registrar_only_phone_keeps_local_call_and_cannot_dial_or_forward_to_trunk(trunks):
+    import pytest_socket
     from types import SimpleNamespace
     from .test_automation_originate_ha import Phone
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.sip_client import SipCallClient
     from custom_components.voip_stack.sip_registrar import SipAccount
     from .test_udp_outbound_flow_ha import PASSWORD, WirePhone, register_phone
+    from custom_components.voip_stack.sip_tcp_io import read_sip_stream_message
 
+    pytest_socket.socket_allow_hosts(["127.0.0.1", "127.0.0.7", "127.0.0.8"], allow_unix_socket=True)
     lab = trunks
     origin = "registered-legacy"
     assert lab.runtime.endpoints.by_username(origin) is None
@@ -247,6 +250,33 @@ async def test_registrar_only_phone_keeps_local_call_and_cannot_dial_or_forward_
     local_phone.auto_answer = False
     local_port = local_transport.get_extra_info("sockname")[1]
     lab.roster.append(RosterEntry("Local phone", sip_uri=f"sip:desk@127.0.0.8:{local_port}"))
+    handlers, writers = set(), set()
+
+    async def tcp_phone(reader, writer):
+        handlers.add(asyncio.current_task())
+        writers.add(writer)
+        try:
+            while raw := await read_sip_stream_message(reader):
+                if raw == b"\r\n":
+                    continue
+                # One independent phone model serves both transport profiles.
+                # Its synchronous response goes back on the requesting stream.
+                local_phone.transport = SimpleNamespace(
+                    sendto=lambda data, _address: writer.write(data),
+                    get_extra_info=local_transport.get_extra_info,
+                )
+                try:
+                    local_phone.datagram_received(raw, writer.get_extra_info("peername"))
+                finally:
+                    local_phone.transport = local_transport
+                await writer.drain()
+        finally:
+            writers.discard(writer)
+            handlers.discard(asyncio.current_task())
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(tcp_phone, "127.0.0.8", local_port)
     def calling_phone():
         return SipCallClient(local_ip="127.0.0.7", local_name="Legacy", local_uri_user=origin,
             local_sip_port=0, local_rtp_port=35462, supported_formats=[AudioFormat(16000, frame_ms=20)],
@@ -286,6 +316,11 @@ async def test_registrar_only_phone_keeps_local_call_and_cannot_dial_or_forward_
     finally:
         if active is not None:
             await active.close()
+        server.close()
+        await server.wait_closed()
+        for writer in tuple(writers):
+            writer.close()
+        await asyncio.gather(*tuple(handlers), return_exceptions=True)
         contact_transport.close()
         local_transport.close()
         audio.close()
