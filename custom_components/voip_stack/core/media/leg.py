@@ -154,7 +154,15 @@ def _same_payload(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
         right.payload_type, right.encoding, right.sample_rate, right.channels)
 
 
-def _local_receiver(fmt: RtpPcmFormat, packet_ms: float) -> RtpPcmFormat:
+def _receive_maximum(fmt: RtpPcmFormat, policy: LegPolicy) -> float:
+    maximum = (policy.capabilities or HA_AUDIO_CAPABILITIES).max_receive_packet_ms(fmt)
+    fixed = _fixed_times(fmt, policy.receive_capabilities)
+    if fixed is not None:
+        return min(maximum, max(fixed.explicit, default=0))
+    return maximum
+
+
+def _local_receiver(fmt: RtpPcmFormat, packet_ms: float, policy: LegPolicy) -> RtpPcmFormat:
     """Describe this side's receiver for one mapping (R1, R2, P6).
 
     The packet time is the one this side asks for. The maximum is what the receiver really
@@ -162,7 +170,7 @@ def _local_receiver(fmt: RtpPcmFormat, packet_ms: float) -> RtpPcmFormat:
     an answer they would tell the peer its own limits as if they were ours.
     """
     asked = replace(fmt, frame_ms=packet_ms, min_frame_ms=0, max_frame_ms=0, fmtp="")
-    return replace(asked, max_frame_ms=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(asked))
+    return replace(asked, max_frame_ms=_receive_maximum(asked, policy))
 
 
 def _dtmf(remote_sdp, selected: RtpPcmFormat) -> RtpDtmfFormat | None:
@@ -273,7 +281,7 @@ def answer_offer(
         trace.append(f"{transmit.rule} send {transmit.packet_ms} ms"
                      + (" below the stated minimum" if transmit.below_minimum else ""))
         trace.append(f"R1 ask {asked.packet_ms} ms")
-        receiver = _local_receiver(receive_from, asked.packet_ms)
+        receiver = _local_receiver(receive_from, asked.packet_ms, policy)
         auxiliary = receive_auxiliary_formats(remote_sdp, receiver, policy)
         return LegContract(
             send=replace(candidate, frame_ms=transmit.packet_ms),
@@ -312,6 +320,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     else:
         # RFC 3264 6.1: the offerer should send with the first format of the answer.
         send_candidates = answered
+    receive_mappings = {_mapping(item) for item in (peer_sends if directional else answered)}
     for candidate in send_candidates:
         transmit = _choose_local_time(candidate, policy, ReceiverBounds(
             ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
@@ -336,14 +345,16 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
             send=replace(candidate, frame_ms=transmit.packet_ms),
             # P3: packets arrive on the number of the offer, whatever number the answer used.
             receive=replace(own, frame_ms=asked.packet_ms,
-                max_frame_ms=own.max_frame_ms or HA_AUDIO_CAPABILITIES.max_receive_packet_ms(own)),
+                max_frame_ms=own.max_frame_ms or _receive_maximum(own, policy)),
             dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
             trace=tuple(trace),
             receive_accept=tuple(
-                replace(local[_mapping(fmt)], frame_ms=received.packet_ms)
-                for fmt in (peer_sends if directional else answered)
-                if (received := _choose_local_time(local[_mapping(fmt)], policy,
-                    ReceiverBounds(ptime=local[_mapping(fmt)].frame_ms), receive=True)) is not None)
+                replace(fmt, frame_ms=received.packet_ms,
+                        max_frame_ms=fmt.max_frame_ms or _receive_maximum(fmt, policy))
+                for mapping, fmt in local.items()
+                if mapping in receive_mappings
+                and (received := _choose_local_time(fmt, policy,
+                    ReceiverBounds(ptime=fmt.frame_ms), receive=True)) is not None)
                 + receive_auxiliary_formats(answer_sdp, replace(own, frame_ms=asked.packet_ms), policy,
                                             own_description=local_offer_sdp),
         )

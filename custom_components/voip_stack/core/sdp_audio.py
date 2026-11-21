@@ -857,7 +857,7 @@ def negotiate_directional(
                     if established is not None else None)
         contract = negotiator.answer_offer(remote_sdp, local_send_preferred, local_recv_preferred,
             capabilities=local_capabilities, codec_policy=codec_policy,
-            dahua=allow_dahua_pcm, established=previous)
+            dahua=allow_dahua_pcm, established=previous, receive_capabilities=local_recv_capabilities)
         return negotiator.as_direction(contract, remote_sdp)
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(

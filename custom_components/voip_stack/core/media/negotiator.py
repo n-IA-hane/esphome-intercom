@@ -6,6 +6,8 @@ This module owns no registrations, tasks or media resources.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..sdp_parser import local_direction_for_offer, parse_sdp
 from ..sdp_types import RtpPcmDirection
 from ..codec_policy import DEFAULT_AUDIO_CODECS
@@ -37,10 +39,13 @@ def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabili
 
 
 def answer_offer(remote_sdp, send_formats, receive_formats, *, codec_policy=None,
-                 capabilities=None, dahua=False, established: LegContract | None = None):
+                 capabilities=None, dahua=False, established: LegContract | None = None,
+                 receive_capabilities=None):
     """Choose one local answer from actual local capabilities and a remote offer."""
-    return leg.answer_offer(remote_sdp, policy_for_leg(send_formats, receive_formats,
-        codec_policy=codec_policy, capabilities=capabilities), dahua=dahua, established=established)
+    policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities)
+    if receive_capabilities is not None:
+        policy = replace(policy, receive_capabilities=tuple(receive_capabilities))
+    return leg.answer_offer(remote_sdp, policy, dahua=dahua, established=established)
 
 
 def apply_answer(local_offer_sdp, remote_sdp, send_formats, receive_formats, *,
