@@ -29,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 # Retiring notifiers retain their slot until their transaction is released.
 MAX_EVENT_USAGES_PER_SUBSCRIBER = 132
 MAX_EVENT_USAGES = 512
+MAX_DIALOG_SUBSCRIPTION_EXPIRES = 60
 
 
 @dataclass(slots=True)
@@ -480,6 +481,8 @@ class SipApplicationMethods:
                 _uri_from_header(request.header("From"))
             ).user
             expires = _publication_expires(request.header("Expires"))
+            if event == "dialog":
+                expires = min(expires, MAX_DIALOG_SUBSCRIPTION_EXPIRES)
             from .dialog_info import subscription_filter
 
             dialog_filter = subscription_filter(request.header("Event")) if event == "dialog" else ("", "", "")

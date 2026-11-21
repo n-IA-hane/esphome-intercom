@@ -88,7 +88,8 @@ async def test_blf_tracks_ringing_answer_multiple_calls_and_final_idle(lab, blf)
 async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscription(lab, blf):
     methods, notifications, send = blf
     first = await methods.handle(subscribe(expires=7200), ("127.0.0.3", 5060), "UDP", send)
-    assert dict(first.headers)["Expires"] == "3600"
+    # The dialog-only lease contract caps full-snapshot recovery at 60 seconds.
+    assert dict(first.headers)["Expires"] == "60"
     first.follow_up_scheduler()
     await asyncio.wait_for(notifications.get(), 1)
     refreshed = await methods.handle(subscribe(tag=first.to_tag, event="DIALOG", cseq=2), ("127.0.0.3", 5060), "UDP", send)

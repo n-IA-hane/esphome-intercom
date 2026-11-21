@@ -26,6 +26,17 @@ creates a fresh SUBSCRIBE and receives a complete current snapshot. No idle
 state is inferred from missing packets, and subscriptions do not become
 immortal after transport loss.
 
+Dialog subscriptions now grant at most 60 seconds, honoring any shorter
+request. This is a declared lease contract change under RFC 6665, using the
+existing expiry task for each usage. Presence and mailbox leases are unchanged.
+Normal events are still delivered immediately; an ESP renewing at 80 percent
+requests a full snapshot after about 48 seconds instead of 48 minutes for the
+previous 3600-second grant. If that peer is unreachable, its last confirmed
+60-second lease expires to unknown. Silence alone is not treated as a fault.
+The 12/128-watch fixtures execute two renewal cycles, retain one timer per
+usage, and prove an unchanged authenticated REGISTER refresh does not schedule
+duplicate snapshots or grow the notifier owner set.
+
 The preserved negative witness is a peer that reads a complete NOTIFY and
 closes before its response. The previous sender delivered the same request
 twice; the corrected sender delivers it once and a new subscription recovers
