@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 
-from .const import DOMAIN
 from .phone_directory import PhoneDirectory, public_metadata, service_directory_reference
 from .phone_endpoint import EndpointKind, EndpointAvailability, PhoneEndpoint
 from .roster import RosterEntry
@@ -45,74 +44,6 @@ def routing_snapshot(runtime):
                                         "local_ha": bound and not bool(row.metadata.get("sip_contacts"))})
         result.append(row)
     return result
-
-
-def restore_esp_identities(hass, runtime):
-    """Rebuild physical identities from their existing HA owners, even offline."""
-    from homeassistant.helpers import device_registry as dr, entity_registry as er
-    from .device_resolver import entity_role
-    from .endpoint_device import account_device_id_for_endpoint
-    from .managed_phones import managed_records
-    from .phone_config import esphome_phone_policy
-    from .store import config_entry
-    from .endpoint_registry import EndpointCollisionError
-    from .repairs import ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX, async_sync_esphome_endpoint_collision_issue
-    from homeassistant.helpers import issue_registry as ir
-
-    entry = config_entry(hass)
-    records = managed_records(entry) if entry is not None else {}
-    entities = er.async_get(hass)
-    devices = dr.async_get(hass)
-    eligible_devices = set()
-    owned_devices = (device for origin in hass.config_entries.async_entries("esphome")
-                     for device in dr.async_entries_for_config_entry(devices, origin.entry_id))
-    for device in owned_devices:
-        origin = hass.config_entries.async_get_entry(device.config_entry_id)
-        if origin is None or origin.domain != "esphome":
-            continue
-        provisioner = runtime.phone_provisioning
-        if provisioner is not None and provisioner.is_removed(origin.entry_id, device.id):
-            continue
-        phone = records.get(device.id)
-        native_entities = [entity for entity in er.async_entries_for_device(entities, device.id)
-                           if entity.platform == "esphome"]
-        roles = {entity_role(entity): entity for entity in native_entities}
-        if "voip_state" not in roles:
-            continue
-        eligible_devices.add(device.id)
-        if runtime.endpoints.by_device_id(device.id) is not None:
-            # No attempt was made to apply its desired name/aliases here.
-            # Only the provisioner's successful sync can clear that conflict.
-            continue
-        fields = {}
-        for role, field in (("voip_extension", "extension"), ("voip_ring_groups", "ring_group"),
-                            ("voip_conference_groups", "conference_group"), ("voip_conference_ring", "conference_ring")):
-            state = hass.states.get(roles[role].entity_id) if role in roles else None
-            fallback = getattr(phone, field, False if field == "conference_ring" else "")
-            value = state.state if state is not None and state.state not in {"unknown", "unavailable"} else fallback
-            fields[field] = str(value).casefold() in {"on", "true", "1"} if field == "conference_ring" else str(value)
-        endpoint_id = phone.endpoint_id if phone is not None else f"esphome:{device.id}"
-        candidate = PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
-            account_device_id=account_device_id_for_endpoint(hass, entry, endpoint_id) if phone else "",
-            name=(device.name_by_user or (phone.display_name if phone is not None else "")
-                  or device.name or origin.title or (phone.username if phone is not None else "ESPHome")),
-            username=phone.username if phone is not None else str(origin.data.get("device_name") or ""),
-            kind=EndpointKind.ESPHOME, entity_ids=frozenset(entity.entity_id for entity in native_entities),
-            availability=EndpointAvailability.OFFLINE, capabilities=frozenset({"audio", "dtmf"}),
-            policy=esphome_phone_policy(entry, endpoint_id), **fields)
-        try:
-            runtime.endpoints.register(candidate)
-        except EndpointCollisionError as error:
-            async_sync_esphome_endpoint_collision_issue(hass, device.id, name=candidate.name, error=error)
-        else:
-            async_sync_esphome_endpoint_collision_issue(hass, device.id)
-    # The issue registry owns diagnostics. Reconcile its derived rows after
-    # every restore, clearing only removed or no-longer-phone devices here.
-    for domain, issue_id in tuple(ir.async_get(hass).issues):
-        if domain == DOMAIN and issue_id.startswith(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX):
-            device_id = issue_id.removeprefix(ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX)
-            if device_id not in eligible_devices:
-                async_sync_esphome_endpoint_collision_issue(hass, device_id)
 
 
 def _endpoint_entry(endpoint):
@@ -217,6 +148,8 @@ async def async_refresh_directory(hass, *, peers=None, registered=None, prepare_
     if directory.closed:
         return None
     generation = directory.begin_refresh()
+    from .esphome_phone_inventory import restore_esp_identities
+
     restore_esp_identities(hass, runtime)
     if peers is None:
         peers = await async_build_peer_snapshot(hass)

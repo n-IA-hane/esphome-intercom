@@ -27,7 +27,8 @@ from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
     ManagedNameError, ManagedPhone, active_managed_accounts, check_native_username, managed_device_username,
     managed_account_subentries, managed_phone_mode, managed_records, managed_registration_action,
     migrate_managed_accounts, normalize_mac, save_managed_account)
-from .phone_endpoint import EndpointKind, PhoneEndpoint
+from .phone_endpoint import EndpointKind
+from .esphome_phone_inventory import sync_managed_phone_endpoint
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
     normalize_membership_tracking, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
@@ -394,17 +395,7 @@ class EspHomeProvisioner:
                                 endpoint_id=phone.endpoint_id, conflicting_endpoint_id="configured SIP account")
                         registry = self.runtime.endpoints
                         old = registry.get(phone.endpoint_id)
-                        if old is not None and (old.device_id != device.id or old.kind is not EndpointKind.ESPHOME):
-                            raise EndpointCollisionError(field="endpoint_id", value=phone.endpoint_id,
-                                endpoint_id=phone.endpoint_id, conflicting_endpoint_id=old.endpoint_id)
-                        fields = dict(name=phone.display_name, username=phone.username, extension=phone.extension,
-                            ring_group=phone.ring_group, conference_group=phone.conference_group,
-                            conference_ring=phone.conference_ring, queues=phone.queues)
-                        if old is None:
-                            registry.register(PhoneEndpoint(endpoint_id=phone.endpoint_id, device_id=device.id,
-                                kind=EndpointKind.ESPHOME, capabilities=frozenset({"audio", "dtmf"}), **fields))
-                        else:
-                            registry.update(phone.endpoint_id, **fields)
+                        sync_managed_phone_endpoint(registry, phone)
                         changed |= previous != phone or old is None
                         records[device.id] = phone
                         if phone != previous:

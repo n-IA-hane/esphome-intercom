@@ -15,7 +15,9 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .runtime_data import endpoint_directory
-from .esphome_phone_inventory import _get_voip_devices
+from .esphome_phone_inventory import (
+    _get_voip_devices, device_is_phonebook_available, device_transport,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,26 +42,6 @@ def device_entity_state(hass: HomeAssistant, device: dict, key: str) -> str:
     return "" if value.lower() in ("unknown", "unavailable") else value
 
 
-def device_is_phonebook_available(hass: HomeAssistant, device: dict) -> bool:
-    """Return whether an ESP should be advertised to other VoIP peers."""
-    if device.get("managed"):
-        return bool(device.get("registered"))
-    entities = device.get("entities") or {}
-    state_entity = entities.get("voip_state")
-    if not state_entity:
-        return False
-    state = hass.states.get(state_entity)
-    return state is not None and str(state.state).strip().lower() not in {
-        "", "unknown", "unavailable",
-    } and bool(device.get("sip_port") and device_transport(device))
-
-
-def device_transport(device: dict) -> str:
-    """Read the endpoint-declared SIP signaling transport."""
-    value = str(device.get("sip_transport") or "").lower()
-    return value if value in ("udp", "tcp", "tls") else ""
-
-
 async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
     """Snapshot online ESPHome phones with an explicitly resolved SIP route."""
     devices = await _get_voip_devices(hass)
@@ -70,7 +52,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
         host = device.get("host") or ""
         if not name or not host:
             continue
-        if not device_is_phonebook_available(hass, device):
+        if device.get("availability") != EndpointAvailability.AVAILABLE.value:
             _LOGGER.debug("Skipping offline VoIP peer from phonebook: %s", name or host)
             continue
         sip_transport = device_transport(device)

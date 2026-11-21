@@ -392,7 +392,9 @@ class SipEndpointParseTest(unittest.TestCase):
             device_resolver.dr.async_get = old_dr_async_get
 
         self.assertEqual(len(devices), 1)
-        self.assertEqual(devices[0]["name"], "Waveshare S3 Audio")
+        # Transport sensors update routing data; the native HA name stays owned
+        # by ESPHome (also covered with real registries in state discovery).
+        self.assertEqual(devices[0]["name"], "WS3")
         self.assertEqual(devices[0]["sip_uri_user"], "waveshare-s3")
         self.assertEqual(devices[0]["extension"], "999")
         self.assertEqual(devices[0]["conference_group"], "CG Casa")

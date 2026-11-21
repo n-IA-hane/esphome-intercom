@@ -165,6 +165,7 @@ async def test_card_directory_availability_requires_route_and_current_state(phon
     routed, = await _get_voip_devices(lab.hass)
     assert routed["endpoint_id"] == endpoint_id
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.AVAILABLE
+
     state_id = routed["entities"]["voip_state"]
     lab.hass.states.async_set(state_id, "unavailable")
     offline, = await _get_voip_devices(lab.hass)
@@ -173,3 +174,51 @@ async def test_card_directory_availability_requires_route_and_current_state(phon
     lab.hass.states.async_set(state_id, "idle")
     await _get_voip_devices(lab.hass)
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.AVAILABLE
+
+
+async def test_observation_cannot_reassign_a_configured_physical_owner(phone_lab, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import esphome_phone_inventory as inventory
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+
+    lab = phone_lab
+    identity = "esphome:existing-owner"
+    owner = lab.runtime.endpoints.register(PhoneEndpoint(identity, "Existing owner", "esphome",
+        device_id="other-native-device", username="existing_owner"))
+    monkeypatch.setattr("custom_components.voip_stack.device_resolver.get_resolver", lambda hass:
+        SimpleNamespace(list_devices=AsyncMock(return_value=[{
+            "endpoint_id": identity, "device_id": lab.device.id, "name": "New observation",
+        }])))
+    assert await inventory._get_voip_devices(lab.hass) == []
+    assert lab.runtime.endpoints.get(identity) == owner
+    assert lab.runtime.endpoints.by_device_id(lab.device.id) is None
+
+
+async def test_peer_projection_uses_inventory_availability_once(phone_lab, monkeypatch):
+    from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.store import store_manual_roster_entries
+
+    lab = phone_lab
+    store_manual_roster_entries(lab.hass, [RosterEntry("direct-phone", name="Entrance",
+        sip_uri="sip:phone_node@127.0.0.2:5077;transport=tcp",
+        metadata={"device_id": lab.device.id})])
+    def duplicate_calculation(*args):
+        raise AssertionError("Peer projection must use inventory availability")
+    monkeypatch.setattr(peer_snapshot, "device_is_phonebook_available", duplicate_calculation)
+    peer, = await peer_snapshot.async_build_peer_snapshot(lab.hass)
+    endpoint = lab.runtime.endpoints.get(peer.endpoint_id)
+    assert peer.device["availability"] == endpoint.availability.value == "available"
+
+
+async def test_legacy_endpoint_label_does_not_replace_native_friendly_name(phone_lab):
+    from custom_components.voip_stack.device_resolver import VoipDeviceResolver
+
+    lab = phone_lab
+    sensor = er.async_get(lab.hass).async_get_or_create("sensor", "esphome",
+        "84c7bb000001-voip_endpoint", config_entry=lab.native, device_id=lab.device.id)
+    lab.hass.states.async_set(sensor.entity_id,
+        "Old label | 127.0.0.2 | 5060 | 40000 | full_duplex | 16000:s16le:1:20 | 16000:s16le:1:20 | sip_tcp")
+    device, = await VoipDeviceResolver(lab.hass).list_devices()
+    assert device["name"] == "Ingresso"

@@ -433,8 +433,8 @@ class VoipDeviceResolver:
 
             out.append({
                 "device_id": device_id,
-                "name": (getattr(device, "name_by_user", None) or endpoint.get("name") or
-                         device.name or getattr(info, "friendly_name", "") or node_name or device_id),
+                "name": (getattr(device, "name_by_user", None) or device.name or
+                         getattr(info, "friendly_name", "") or node_name or endpoint.get("name") or "ESPHome phone"),
                 "sip_uri_user": sip_uri_user,
                 "route_id": route_id,
                 "host": endpoint.get("host") or str(origin.data.get("host") or ""),
