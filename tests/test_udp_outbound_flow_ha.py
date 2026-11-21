@@ -296,7 +296,7 @@ async def test_browser_call_displays_the_party_on_the_sip_dialog(
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
-    phone = PhoneEndpoint(endpoint_id="Banco@Hotel", device_id="cb3c03b0289b4348aa939d83c9324dfd",
+    phone = PhoneEndpoint(endpoint_id="sip:outbound-phone", device_id="cb3c03b0289b4348aa939d83c9324dfd",
         kind=EndpointKind.SIP_ACCOUNT, username="outbound-phone", name=name, extension="204")
     source = PhoneEndpoint(endpoint_id="browser-account", device_id="5b8d0533e81d442e9c46e40b043406ad",
         kind=EndpointKind.SIP_ACCOUNT, username="browser-account-user", name="Banco@Hotel",
