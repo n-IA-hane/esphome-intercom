@@ -23,7 +23,7 @@ from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
 from tests.test_sip_capabilities_ha import wait_until
 
-pytestmark = [pytest.mark.ha, pytest.mark.skipif(not os.environ.get("VOIP_TEST_SIPP_COMMAND"),
+pytestmark = [pytest.mark.ha, pytest.mark.live, pytest.mark.skipif(not os.environ.get("VOIP_TEST_SIPP_COMMAND"),
     reason="Independent PCAP playback requires an explicitly configured SIPp with raw socket access")]
 
 

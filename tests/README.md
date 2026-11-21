@@ -110,3 +110,40 @@ events and bounded waits over fixed sleeps.
 Static source checks are appropriate only for rules that are static by nature,
 such as forbidden dependencies, public file layout or compile-time gating.
 Do not use them as substitutes for calling production code.
+
+## Independent community SIP peers
+
+The Dahua and Hikvision packetization witnesses and H.264 panel direction test
+are a dedicated local peer lane. They are marked `ha` and `live`, since SIPp
+PCAP playback and tcpdump need raw sockets. Ordinary native HA runs select
+`not live`; deselection of these cases does not qualify interoperability.
+Keep all three modules in the HA test inventory so the fake-HA process never
+imports their native fixtures. The small Dahua offer-seed tests remain in the
+ordinary native HA lane.
+
+Run the independent lane explicitly on Linux with a matching native HA test
+interpreter, SIPp with PCAP support, baresip with `avcodec`/`fakevideo`, FFmpeg,
+tcpdump, tshark and capinfos installed:
+
+```bash
+HA_PYTHON=/absolute/path/to/native-ha/bin/python \
+  scripts/run_community_peer_tests.sh \
+  /absolute/path/to/private-evidence \
+  /absolute/path/on/persistent-disk/peer-work
+```
+
+The script requires noninteractive sudo for a private network namespace,
+SIPp playback and capture. It fails preflight when those privileges or tools
+are unavailable. It enables only loopback inside that namespace, returns
+pytest to the invoking user, and grants no capabilities globally. Evidence
+and persistent scratch must be outside the source checkout; pytest and its
+files retain the invoking user's ownership. Root-owned packet captures stay
+inside the private evidence directory. Existing result files are not reused.
+
+A completed lane requires all twelve test cases, no skips, decoded tones in
+both directions, FFmpeg-decoded video frames and zero call resources after
+hangup. The runner checks JUnit with `check_test_results.py` and verifies each
+packet capture with capinfos. It neither contacts deployed HA instances nor
+calls or flashes physical devices. A direct pytest invocation without the
+explicit peer command skips the privileged cases with a reason; that invocation
+is not a completed independent-peer gate.

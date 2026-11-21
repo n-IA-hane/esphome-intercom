@@ -17,7 +17,7 @@ from tests.test_sip_phone_transfers_ha import (
 from tests.test_sip_capabilities_ha import wait_until
 from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
 
-pytestmark = [pytest.mark.ha, pytest.mark.skipif(not os.environ.get("VOIP_TEST_SIPP_COMMAND"),
+pytestmark = [pytest.mark.ha, pytest.mark.live, pytest.mark.skipif(not os.environ.get("VOIP_TEST_SIPP_COMMAND"),
     reason="Independent video wire capture requires explicit laboratory raw socket access")]
 
 
