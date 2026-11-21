@@ -163,6 +163,8 @@ async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_pe
 
 
 def test_blind_transfer_routes_from_directory_when_sensor_projection_is_absent():
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.phone_directory import PhoneDirectory
     from custom_components.voip_stack.roster import RosterEntry
 
@@ -171,8 +173,11 @@ def test_blind_transfer_routes_from_directory_when_sensor_projection_is_absent()
         def extra_state_attributes(self):
             raise AssertionError("A display sensor cannot own routing")
 
+    # A resolve-only fake omits the endpoint model's get contract.
+    endpoints = EndpointRegistry()
+    endpoints.register(PhoneEndpoint("another-phone", "Other phone", "sip_account", username="other"))
     runtime = SimpleNamespace(
-        endpoints=SimpleNamespace(resolve=lambda _: None),
+        endpoints=endpoints,
         directory=PhoneDirectory([
             RosterEntry("room-speaker", name="Room speaker", address="192.0.2.30", port=5070,
                         extension="321", metadata={"sip_transport": "udp"}),
