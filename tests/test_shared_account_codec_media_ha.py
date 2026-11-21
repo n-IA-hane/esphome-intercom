@@ -36,6 +36,7 @@ from tests.support.shared_codec_peer import (
 )
 
 pytestmark = [pytest.mark.ha, pytest.mark.browser_real]
+REQUIRED_CODECS = frozenset({"PCMU", "PCMA", "G722", "L16", "L24", "PCM", "OPUS"})
 
 
 async def until(predicate, seconds=5):
@@ -86,7 +87,17 @@ def measure_browser(stats, call_id, direction, frequency):
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 30}], indirect=True)
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            case,
+            id=case.name,
+            marks=() if case.name in REQUIRED_CODECS else pytest.mark.diagnostic_reference,
+        )
+        for case in CASES
+    ],
+)
 async def test_shared_account_codec_winner_media_and_reuse(
     canonical_browser,
     hass_ws_client,

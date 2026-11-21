@@ -20,6 +20,7 @@ Assistant API tests use the matching environment in
 ./scripts/test_suite.sh ha
 ./scripts/test_suite.sh js-runtime
 ./scripts/test_suite.sh browser
+./scripts/test_suite.sh browser-ha
 ```
 
 Tests stop at the first failure by default. Use `--keep-going` only when an
@@ -38,10 +39,46 @@ directory because the suite binds fixed SIP and RTP ports. Reports go to
 `--shard-results` (default `test-results`) and scratch data to `--shard-work`.
 
 `software-full` includes the Node runtime tests and excludes the real-browser
-cases. `browser` runs all Chromium regressions, including microphone/camera
+cases. `browser` runs frontend Chromium regressions, including microphone/camera
 selection and the first audio samples after a slow worklet download. Install
 `requirements-browser-test.txt`, Chromium and FFmpeg for that suite. Missing
 browser dependencies fail its preflight instead of silently skipping tests.
+`browser-ha` runs coupled native HA and Chromium regressions from the same HA
+file inventory as `ha`. Keep `HA_PYTHON` installed from
+`requirements-ha-test.txt`; set `VOIP_BROWSER_PYTHON` explicitly to the separate
+interpreter installed from `requirements-browser-test.txt`. Playwright runs in
+that external process and is not installed into the native HA environment.
+Both browser modes run in CI's `browser-presentation` job with separate JUnit
+reports. The ordinary `ha` and `coverage` modes exclude `browser_real` and
+`diagnostic_reference` cases.
+
+```bash
+PYTHON=/path/to/browser-venv/bin/python \
+HA_PYTHON=/path/to/native-ha-venv/bin/python \
+VOIP_BROWSER_PYTHON=/path/to/browser-venv/bin/python \
+  ./scripts/test_suite.sh browser-ha --keep-going
+```
+
+The coupled default codec matrix requires PCMU, PCMA, G722, L16, L24, PCM and
+OPUS. Its G726-16/24/32/40 and G723 parameters are marked
+`diagnostic_reference`, as is the independent G726 ITU corpus check. To select
+all twelve codec cases and the private reference check explicitly, use the
+native HA interpreter with the optional backends, FFmpeg and verified corpus
+available:
+
+```bash
+VOIP_BROWSER_PYTHON=/path/to/browser-venv/bin/python \
+VOIP_CODEC_REFERENCE_DIR=/path/to/verified-codec-corpus \
+  "$HA_PYTHON" -m pytest \
+  tests/test_shared_account_codec_media_ha.py \
+  tests/test_g726_named_rtp_oracle_ha.py \
+  -m "ha and not live" --junitxml=test-results/codec-reference.xml -ra
+python scripts/check_test_results.py test-results/codec-reference.xml
+```
+
+Missing optional backends or corpus remain explicit skips and do not qualify
+that reference run. G726-40 also retains its independent decoder oracle gap;
+availability of its production backend alone cannot complete this matrix.
 `js-runtime` selects the Node tests without launching Chromium.
 The real JPEG normalization and codec-to-codec RTP regressions run in the HA
 environment, where their runtime dependency and FFmpeg are installed. Their

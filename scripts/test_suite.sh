@@ -15,7 +15,7 @@ SHARD_WORK=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|software-full|editorial|calls|peer|coverage|ha|js-runtime|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|software-full|editorial|calls|peer|coverage|ha|js-runtime|browser|browser-ha|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -141,6 +141,7 @@ ha_tests=(
   tests/test_complete_offer_contracts_ha.py
   tests/test_fanvil_blf_pickup_wire_ha.py
   tests/test_trunk_voicemail_ha.py
+  tests/test_trunk_direct_pending_ha.py
   tests/test_assist_core_boundary_ha.py
   tests/test_media_account_authorization_ha.py
   tests/test_queue_select_ha.py
@@ -196,6 +197,8 @@ ha_tests=(
   tests/test_trunk_transfer_access.py
   tests/test_automation_call.py
   tests/test_voicemail_ha.py
+  tests/test_group_mailbox_ownership_ha.py
+  tests/test_voicemail_transfer_ha.py
   tests/test_mwi_unregister_ha.py
   tests/test_call_ivr_ha.py
   tests/test_voicemail_baresip_ha.py
@@ -255,6 +258,13 @@ ha_tests=(
   tests/test_account_logbook_ha.py
   tests/test_shared_account_fork_ha.py
   tests/test_shared_account_policy_ha.py
+  tests/test_shared_account_projection_ha.py
+  tests/test_shared_account_codec_media_ha.py
+  tests/test_shared_account_fork_invalid_media_ha.py
+  tests/test_shared_account_mixed_defaults_ha.py
+  tests/test_shared_account_fidelity_ha.py
+  tests/test_explicit_linear_codec_offers_ha.py
+  tests/test_g726_named_rtp_oracle_ha.py
   tests/test_canonical_account_parking_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_bridge_independent_ptime_ha.py
@@ -407,6 +417,48 @@ PY
       -q --tb=short -m browser_real
     )
     ;;
+  browser-ha)
+    resolve_ha_python
+    [[ -n ${VOIP_BROWSER_PYTHON:-} ]] || {
+      printf '%s\n' "Set VOIP_BROWSER_PYTHON to the browser lane's Playwright interpreter" >&2
+      exit 2
+    }
+    if [[ $VOIP_BROWSER_PYTHON != */* ]]; then
+      VOIP_BROWSER_PYTHON=$(command -v "$VOIP_BROWSER_PYTHON" || true)
+    fi
+    [[ -x $VOIP_BROWSER_PYTHON ]] || {
+      printf 'Browser test Python not found: %s\n' "$VOIP_BROWSER_PYTHON" >&2
+      exit 2
+    }
+    export VOIP_BROWSER_PYTHON
+    "$VOIP_BROWSER_PYTHON" - <<'PY'
+import importlib.util
+import shutil
+import sys
+
+missing = [name for name in ('chromium', 'ffmpeg') if shutil.which(name) is None]
+missing += [name for name in ('playwright',) if importlib.util.find_spec(name) is None]
+if missing:
+    sys.exit('Coupled browser suite requires: ' + ', '.join(missing) +
+             '. Install requirements-browser-test.txt, Chromium and FFmpeg in the browser lane.')
+PY
+    "$HA_PYTHON" - <<'PY'
+import importlib.util
+import sys
+
+missing = [name for name in ('homeassistant', 'pytest_homeassistant')
+           if importlib.util.find_spec(name) is None]
+if missing:
+    sys.exit('Coupled browser suite requires native HA dependencies: ' + ', '.join(missing) +
+             '. Install requirements-ha-test.txt in HA_PYTHON.')
+PY
+    PYTHON=$HA_PYTHON
+    pytest_args=(
+      "${ha_tests[@]}"
+      -m "ha and browser_real and not live and not diagnostic_reference"
+      -q --tb=short
+    )
+    ;;
   peer)
     peer_tests=(
       tests/test_sip_protocol.py
@@ -446,12 +498,12 @@ PY
       -q
       --tb=short
       "${ha_ignores[@]}"
-      -m "not architecture and not ha and not live and not mutation"
+      -m "not architecture and not ha and not live and not mutation and not browser_real and not diagnostic_reference"
       "${coverage_args[@]}"
     )
     ha_args=(
       "${ha_tests[@]}"
-      -m "not live"
+      -m "not live and not browser_real and not diagnostic_reference"
       -q
       --tb=short
       "${coverage_args[@]}"
@@ -483,7 +535,7 @@ PY
     PYTHON=$HA_PYTHON
     pytest_args=(
       "${ha_tests[@]}"
-      -m "not live"
+      -m "not live and not browser_real and not diagnostic_reference"
       -q
       --tb=short
     )

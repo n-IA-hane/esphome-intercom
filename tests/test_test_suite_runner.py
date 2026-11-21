@@ -40,6 +40,7 @@ def test_help_exposes_fail_fast_override_and_reproducible_seed() -> None:
     assert "mutation" in result.stdout
     assert "editorial" in result.stdout
     assert "calls" in result.stdout
+    assert "browser-ha" in result.stdout
 
 
 def test_invalid_seed_fails_before_test_collection() -> None:
@@ -71,7 +72,7 @@ def test_mutation_is_refused_in_the_primary_checkout(tmp_path: Path) -> None:
     assert "disposable git worktree" in result.stderr
 
 
-def _record_suite_arguments(tmp_path: Path, mode: str, *options: str) -> list[str]:
+def _record_suite_call(tmp_path: Path, mode: str, *options: str) -> dict:
     """Exercise the public runner without launching pytest recursively."""
     recorder = tmp_path / "python"
     recorded = tmp_path / "arguments.json"
@@ -79,12 +80,20 @@ def _record_suite_arguments(tmp_path: Path, mode: str, *options: str) -> list[st
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
         "if sys.argv[1:3] == ['-m', 'pytest']:\n"
-        "    open(os.environ['RECORDED_ARGS'], 'w').write(json.dumps(sys.argv[3:]))\n"
+        "    call = dict(arguments=sys.argv[3:], python=sys.argv[0], "
+        "browser_python=os.environ.get('VOIP_BROWSER_PYTHON'))\n"
+        "    open(os.environ['RECORDED_ARGS'], 'w').write(json.dumps(call))\n"
     )
     recorder.chmod(0o755)
+    ha_python = tmp_path / "ha-python"
+    browser_python = tmp_path / "browser-python"
+    for interpreter in (ha_python, browser_python):
+        if not interpreter.exists():
+            interpreter.symlink_to(recorder)
     result = subprocess.run(
         [str(RUNNER), mode, *options], cwd=ROOT, capture_output=True, text=True,
-        env={**os.environ, "PYTHON": str(recorder), "HA_PYTHON": str(recorder),
+        env={**os.environ, "PYTHON": str(recorder), "HA_PYTHON": str(ha_python),
+             "VOIP_BROWSER_PYTHON": str(browser_python),
              "RECORDED_ARGS": str(recorded)},
         timeout=10,
     )
@@ -92,7 +101,11 @@ def _record_suite_arguments(tmp_path: Path, mode: str, *options: str) -> list[st
     return json.loads(recorded.read_text())
 
 
-@pytest.mark.parametrize("mode", ["software-full", "ha", "browser", "peer", "editorial", "calls"])
+def _record_suite_arguments(tmp_path: Path, mode: str, *options: str) -> list[str]:
+    return _record_suite_call(tmp_path, mode, *options)["arguments"]
+
+
+@pytest.mark.parametrize("mode", ["software-full", "ha", "browser", "browser-ha", "peer", "editorial", "calls"])
 def test_direct_suites_forward_reproduction_options(tmp_path: Path, mode: str) -> None:
     arguments = _record_suite_arguments(tmp_path, mode, "--seed", "123", "--keep-going")
     assert "--hypothesis-seed" in arguments
@@ -137,6 +150,39 @@ def test_logical_browser_regression_uses_the_ha_interpreter(tmp_path: Path) -> N
     assert target in _record_suite_arguments(tmp_path, "ha")
     for mode in ("fast", "software-full"):
         assert f"--ignore={target}" in _record_suite_arguments(tmp_path, mode)
+
+
+def test_coupled_browser_suite_keeps_native_ha_and_external_driver_separate(tmp_path: Path) -> None:
+    call = _record_suite_call(tmp_path, "browser-ha")
+    assert call["python"] == str(tmp_path / "ha-python")
+    assert call["browser_python"] == str(tmp_path / "browser-python")
+    arguments = call["arguments"]
+    assert arguments[arguments.index("-m") + 1] == (
+        "ha and browser_real and not live and not diagnostic_reference"
+    )
+    # Reuse the canonical inventory, including modules that mix HA-only and
+    # function-level browser marks. Mark selection owns the phase boundary.
+    ha_arguments = _record_suite_arguments(tmp_path, "ha")
+    assert {value for value in arguments if value.startswith("tests/")} == {
+        value for value in ha_arguments if value.startswith("tests/")
+    }
+    assert "tests/test_shared_account_fidelity_ha.py" in arguments
+    assert "tests/test_shared_account_codec_media_ha.py" in arguments
+    assert ha_arguments[ha_arguments.index("-m") + 1] == (
+        "not live and not browser_real and not diagnostic_reference"
+    )
+
+
+@pytest.mark.parametrize("browser_python", ["", "/missing/browser-python"])
+def test_coupled_browser_suite_requires_an_explicit_driver(
+    monkeypatch, browser_python: str
+) -> None:
+    monkeypatch.setenv("PYTHON", sys.executable)
+    monkeypatch.setenv("HA_PYTHON", sys.executable)
+    monkeypatch.setenv("VOIP_BROWSER_PYTHON", browser_python)
+    result = _run("browser-ha")
+    assert result.returncode == 2
+    assert "VOIP_BROWSER_PYTHON" in result.stderr or "Browser test Python not found" in result.stderr
 
 
 def test_ha_regressions_are_assigned_to_the_ha_interpreter(tmp_path: Path) -> None:

@@ -314,7 +314,7 @@ jobs:
 
   browser-presentation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Configure bounded official APT mirrors
@@ -322,7 +322,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
+          # Native HA fixtures need CPython >=3.14.4 for autospec annotations.
+          check-latest: true
       - run: python -m pip install -r requirements-browser-test.txt
+      - name: Install native Home Assistant test dependencies separately
+        run: |
+          python -m pip install uv==0.13.7
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/ha-browser-tests"
+          uv pip install --python "$RUNNER_TEMP/ha-browser-tests/bin/python" -r requirements-ha-test.txt
+          echo "HA_PYTHON=$RUNNER_TEMP/ha-browser-tests/bin/python" >> "$GITHUB_ENV"
+          echo "VOIP_BROWSER_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
       - name: Install browser and media fixtures
         run: |
           sudo apt-get update
@@ -345,12 +354,20 @@ jobs:
         run: PYTHON=python scripts/test_suite.sh browser --keep-going
       - name: Require executed browser tests
         run: python scripts/check_test_results.py test-results/browser.xml
+      - name: Check shared-account calls with native HA and real Chromium
+        env:
+          PYTEST_ADDOPTS: --junitxml=test-results/browser-ha.xml -ra -vv -o faulthandler_timeout=15
+        run: PYTHON=python scripts/test_suite.sh browser-ha --keep-going
+      - name: Require executed native HA browser tests
+        run: python scripts/check_test_results.py test-results/browser-ha.xml
       - name: Preserve browser test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: browser-results
-          path: test-results/browser.xml
+          path: |
+            test-results/browser.xml
+            test-results/browser-ha.xml
           if-no-files-found: error
 
   assist-media-host:
