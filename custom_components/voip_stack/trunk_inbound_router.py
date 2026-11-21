@@ -300,11 +300,15 @@ async def async_route_trunk_invite(
             initial_selection=True, on_failure="terminate",
             trunk_id=selected_trunk_id or getattr(decision, "trunk_id", ""))
         return
-    if explicit_account and decision.action in {RouteAction.GROUP, RouteAction.VOICEMAIL}:
+    if explicit_account and decision.action in {
+        RouteAction.FORWARD, RouteAction.GROUP, RouteAction.VOICEMAIL,
+    }:
+        # The shared account owner publishes its destination while it rings,
+        # so its existing no-answer deadline also applies to a trunk caller.
         await runtime.forward_existing_call(
             call_id=invite.call_id, destination=destination, initial_selection=True,
-            on_failure="terminate" if decision.action is RouteAction.VOICEMAIL else "resume",
-            _resolved_decision=decision,
+            on_failure="resume" if decision.action is RouteAction.GROUP else "terminate",
+            _resolved_decision=decision if decision.action is not RouteAction.FORWARD else None,
         )
         return
     if decision.action is RouteAction.AUTOMATION:

@@ -34,9 +34,11 @@ PROVIDER_HOST = "127.0.0.42"
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
 @pytest.mark.parametrize(("policy", "rtp_digits", "select_digits"), [
     ("always", True, True), ("unavailable", False, True),
     ("unavailable", True, False), ("always", False, False),
+    ("no_answer", True, True), ("no_answer", False, False),
 ])
 async def test_trunk_account_policy_deposits_caller_audio_twice(
     trunks, registered_phones, tmp_path, monkeypatch, policy, rtp_digits, select_digits,
@@ -48,19 +50,23 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
     hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
         "enabled": True, "tts_entity_id": "tts.test", "language": "en",
     }})
-    mailbox_id = "transfer_b" if policy == "always" else "kitchen"
+    mailbox_id = "transfer_b" if policy in {"always", "no_answer"} else "kitchen"
     hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Kitchen", unique_id=f"phone:{mailbox_id}",
         data={"name": "Kitchen", "endpoint_id": mailbox_id, "username": mailbox_id,
               "kind": "sip_account", "voicemail": {"enabled": True, "max_seconds": 5}},
     ))
     endpoints = runtime.runtime.endpoints
-    if policy == "always":
+    if policy in {"always", "no_answer"}:
         assert runtime.calls.component("registrar").registered_contacts(mailbox_id)
     else:
         endpoints.register(PhoneEndpoint(mailbox_id, "Kitchen", EndpointKind.SIP_ACCOUNT, username=mailbox_id))
     endpoints.update(mailbox_id, name="Kitchen", extension="4",
-                     policy=PhonePolicy.from_data({policy: {"kind": "voicemail", "target": mailbox_id}}))
+                     policy=PhonePolicy.from_data({policy: {"kind": "voicemail", "target": mailbox_id},
+                                                   **({"ringing_timeout": 1} if policy == "no_answer" else {})}))
+    if policy == "no_answer":
+        from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
+        setup_phone_policy_events(hass, entry)
     config = normalized_trunk_config({
         "trunk_enabled": True, "trunk_register": False, "trunk_server": PROVIDER_HOST,
         "trunk_allowed_ips": [f"{PROVIDER_HOST}/32"], "trunk_inbound_mode": "dtmf", "trunk_dtmf_enabled": True,
@@ -158,4 +164,8 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                 while runtime.calls.sessions:
                     await asyncio.sleep(.01)
             assert resources(runtime)["call_scoped_quiescent"]
-            assert "Incoming call" not in registered_phones[1].read()
+            if policy == "no_answer":
+                assert "Incoming call" in registered_phones[1].read()
+                assert "Call established" not in registered_phones[1].read()
+            else:
+                assert "Incoming call" not in registered_phones[1].read()
