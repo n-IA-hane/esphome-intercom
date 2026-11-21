@@ -325,7 +325,9 @@ async def test_browser_call_displays_the_party_on_the_sip_dialog(
     identity = invite.header("Call-ID")
     assert sip.name_addr_display_name(invite.header("To")) == dialed
     assert lab.calls.get_session(identity).callee == dialed
-    assert snapshot()["peer_name"] == dialed
+    # The configured label is presentation; the typed SIP target stays intact.
+    assert snapshot()["peer_name"] == name
+    assert snapshot()["dialed_target"] == dialed
     target_uri = sip.name_addr_uri(invite.header("To"))
     response_headers = tuple((key, f'"Reception" <{target_uri}>' if key == "To" else value)
         for key, value in invite.headers)
