@@ -10,6 +10,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .call_projection import publish_bridge_projection, publish_phone_projection
+from .counterpart_display import counterpart_display
 from .pbx_runtime import SipEndpointRuntime
 from .endpoint_session import (
     EndpointCallSession,
@@ -21,6 +22,7 @@ from .endpoint_session import (
 from .fsm import TerminalReason
 from .runtime_data import (
     require_runtime_data,
+    runtime_data,
 )
 from .session_cleanup import async_wait_for_cleanup
 
@@ -35,6 +37,8 @@ def project_session_termination(
     """Project one terminal session without taking lifecycle ownership."""
 
     metadata = session.metadata
+    runtime = runtime_data(hass)
+    directory = runtime.directory if runtime is not None else None
     phone_endpoint_ids = {
         str(metadata.get("endpoint_id") or "").strip(),
         *(
@@ -64,14 +68,14 @@ def project_session_termination(
         "origin": "remote" if remote else "self",
         "last_sip_event": event,
     }
-    for key in ("connected_party", "target_device_id", "sip_uri"):
+    for key in ("connected_party", "connected_uri", "target_device_id", "sip_uri"):
         if value := str(metadata.get(key) or ""):
             common[key] = value
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
     for endpoint_id in phone_endpoint_ids:
         details = dict(staged_phone.get(endpoint_id) or {})
-        peer_name = str(
+        peer_name = counterpart_display(
             details.pop("peer_name", "")
             or (
                 (metadata.get("connected_party") or session.callee)
@@ -84,7 +88,10 @@ def project_session_termination(
                 else session.caller
                 if remote
                 else session.callee
-            )
+            ),
+            fallback=session.callee if endpoint_id == metadata.get("source_endpoint_id") else session.caller,
+            directory=directory,
+            updated=bool(metadata.get("connected_uri") and endpoint_id == metadata.get("source_endpoint_id")),
         )
         direction = str(
             details.pop("direction", "") or metadata.get("direction") or ""
@@ -105,7 +112,8 @@ def project_session_termination(
             hass,
             session,
             intent=intent,
-            peer_name=session.callee,
+            peer_name=counterpart_display(metadata.get("connected_party"), fallback=session.callee,
+                                          directory=directory, updated=bool(metadata.get("connected_uri"))),
             target=session.callee,
             terminal_reason=intent.reason,
             route_kind=session.route_kind,

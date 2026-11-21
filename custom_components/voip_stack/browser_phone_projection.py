@@ -13,6 +13,7 @@ from .const import (
     CONF_VIDEO_TRANSCODING,
 )
 from .endpoint_lifecycle import call_registry
+from .counterpart_display import counterpart_display
 from .fsm import (
     CallState,
     sip_phone_state,
@@ -326,6 +327,9 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         peer_name = caller
     elif store.get("state") == CallState.IN_CALL.value and connected_party:
         peer_name = connected_party
+    peer_name = counterpart_display(peer_name, fallback=callee if direction == "outgoing" else caller,
+                                    name=store.get("peer_name", ""), directory=require_runtime_data(hass).directory,
+                                    updated=bool(store.get("connected_uri") or store.get("last_terminal_peer_name")))
     dialed_target = store.get("dialed_target", "") or store.get(
         "last_terminal_dialed_target", ""
     )

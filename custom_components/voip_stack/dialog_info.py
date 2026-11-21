@@ -6,6 +6,7 @@ import re
 from xml.etree import ElementTree
 
 from .core import sip
+from .counterpart_display import counterpart_display
 from .endpoint_session import LegPhase
 
 
@@ -93,10 +94,12 @@ def snapshot_all(runtime):
                 or ""
             )
             peer = runtime.endpoints.get(peer_id) if peer_id else None
-            peer_name = str(
-                (session.metadata.get("connected_party") or session.callee)
-                if source
-                else session.caller
+            peer_name = counterpart_display(
+                session.metadata.get("connected_party") if source else session.caller,
+                fallback=session.callee if source else session.caller,
+                endpoint=peer,
+                directory=runtime.directory,
+                updated=bool(source and session.metadata.get("connected_uri")),
             )
             for leg in matching or (None,):
                 wire_id = (

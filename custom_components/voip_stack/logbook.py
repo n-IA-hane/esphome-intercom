@@ -18,6 +18,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from .const import DOMAIN, SIP_CALL_ENDED_EVENT, QUEUE_EVENT
 
 from .entity_identity import shared_entity_ids
+from .counterpart_display import counterpart_display
 
 
 def _party(data: Mapping[str, Any], *keys: str) -> str:
@@ -27,13 +28,7 @@ def _party(data: Mapping[str, Any], *keys: str) -> str:
         value = str(data.get(key) or "").strip()
         if not value:
             continue
-        lower = value.lower()
-        if lower.startswith(("sip:", "sips:")):
-            value = value.split(":", 1)[1].split(";", 1)[0]
-            # A Logbook party is a human-facing identity, not a routable URI.
-            # Keeping the user part is both clearer and less topology-revealing.
-            value = value.split("@", 1)[0]
-        return value
+        return counterpart_display(value)
     return ""
 
 
@@ -118,7 +113,10 @@ def account_call_details(data, endpoint_id="", row=None):
     else:
         direction = ""
     if direction == "outgoing":
-        peer = _party(data, "connected_party", "answered_by") or _party(row, "peer_name", "peer_user")
+        peer = counterpart_display(_party(data, "connected_party", "answered_by"),
+                                  fallback=_party(data, "callee", "dialed_target", "called_number"),
+                                  name=_party(row, "peer_name", "peer_user"), updated=bool(data.get("connected_uri")))
+        peer = peer or _party(row, "peer_name", "peer_user")
         peer = peer or _party(data, "callee", "dialed_target", "called_number", "peer_name")
     elif direction == "incoming":
         peer = _party(data, "caller") or _party(row, "peer_name", "peer_user")

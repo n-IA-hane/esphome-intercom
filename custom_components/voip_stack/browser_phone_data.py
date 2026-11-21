@@ -64,6 +64,7 @@ _CALL_SCOPED_SOFTPHONE_FIELDS = (
     "peer_name",
     "dialed_target",
     "connected_party",
+    "connected_uri",
     "answered_by",
     "direction",
     "role",

@@ -13,6 +13,7 @@ from homeassistant.core import (
 )
 
 from .endpoint_lifecycle import call_registry
+from .counterpart_display import counterpart_display
 from .fsm import (
     CallState,
     TerminalReason,
@@ -322,7 +323,7 @@ def _set_ha_softphone_call_state(
     previous_call_id = str(store.get("call_id") or "")
     call_id = call_id or previous_call_id
     if previous_call_id and call_id != previous_call_id:
-        for key in ("caller", "callee", "direction", "peer_name", "connected_party", "answered_by", "dialed_target"):
+        for key in ("caller", "callee", "direction", "peer_name", "connected_party", "connected_uri", "answered_by", "dialed_target"):
             store.pop(key, None)
 
     peer_name = peer_name or extra.get("connected_party") or extra.get("answered_by")
@@ -336,6 +337,18 @@ def _set_ha_softphone_call_state(
     elif terminal and call_id and call_id == store.get("last_terminal_call_id"):
         peer_name = store.get("last_terminal_peer_name", "")
 
+    selected_direction = direction or str(store.get("direction", ""))
+    runtime = require_runtime_data(hass)
+    session = runtime.sip.get_session(call_id) if runtime.sip is not None else None
+    metadata = session.metadata if session is not None else {}
+    peer_id = metadata.get("dest_endpoint_id") or metadata.get("target_endpoint_id") if selected_direction == "outgoing" else metadata.get("source_endpoint_id")
+    peer_name = counterpart_display(
+        peer_name,
+        fallback=(callee or store.get("callee")) if selected_direction == "outgoing" else (caller or store.get("caller")),
+        endpoint=runtime.endpoints.get(str(peer_id or "")),
+        directory=runtime.directory,
+        updated=bool(extra.get("connected_uri") or metadata.get("connected_uri") or store.get("connected_uri")),
+    )
     canonical = _canonical_session_fields(
         state=state,
         local_name=local_name,
@@ -497,7 +510,7 @@ def _set_sip_bridge_call_state(
         "dest_call_id": dest_call_id,
         "caller": caller,
         "callee": callee,
-        "peer_name": peer_name or target or callee,
+        "peer_name": counterpart_display(peer_name, fallback=target or callee),
         "target": target or callee,
         "terminal_reason": extra.get("terminal_reason") or extra.get("reason") or "",
     }

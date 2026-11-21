@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping
 
 from homeassistant.core import HomeAssistant
 
+from .counterpart_display import counterpart_display
 from .endpoint_session import (
     CallToken,
     EndpointCallSession,
@@ -117,7 +118,14 @@ class CallStatePublisher:
                 self.hass, session, endpoint_id,
                 leg_id=leg_id if leg is not None else "",
                 direction="outgoing" if source else "incoming",
-                peer_name=(session.metadata.get("connected_party") or session.callee) if source else session.caller,
+                peer_name=counterpart_display(
+                    session.metadata.get("connected_party") if source else session.caller,
+                    fallback=session.callee if source else session.caller,
+                    endpoint=runtime.endpoints.get(str(session.metadata.get(
+                        "dest_endpoint_id" if source else "source_endpoint_id") or session.metadata.get("target_endpoint_id") or "")),
+                    directory=runtime.directory,
+                    updated=bool(source and session.metadata.get("connected_uri")),
+                ),
                 event_type="state_changed",
             )
         presentation = session.metadata.get(_BRIDGE_PRESENTATION)
@@ -300,6 +308,10 @@ def publish_call_projection(
     if publisher is not None:
         publisher.acknowledge(session, event.scope, event.endpoint_id)
     metadata = session.metadata
+    if metadata.get("dialed_target"):
+        details.setdefault("dialed_target", metadata["dialed_target"])
+    if metadata.get("connected_uri"):
+        details.setdefault("connected_uri", metadata["connected_uri"])
     if event.scope == "phone":
         from .browser_phone_runtime import _set_ha_softphone_call_state
 

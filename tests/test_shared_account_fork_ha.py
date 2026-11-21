@@ -202,6 +202,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
     shared_account, hass_ws_client, record_property, tmp_path,
 ):
     runtime, caller, peers = shared_account
+    runtime.runtime.endpoints.update("casa", name="Home reception")
     observer = await open_browser_ws(runtime, hass_ws_client)
     try:
         target = f'sip:221@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}'
@@ -220,6 +221,8 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         # wait for the very account projection this regression must verify.
         session = runtime.calls.get_session(call_id)
         assert session is not None
+        await wait_for(lambda: "connected_party" in session.metadata)
+        assert session.metadata["connected_party"] == "Home reception"
         phone = await public_phone(runtime)
         snapshot = await browser_snapshot(observer)
         evidence = {"call_id": session.call_id, "owner": session.owner, "session_state": session.state,

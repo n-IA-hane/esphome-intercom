@@ -11,6 +11,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .call_projection import publish_phone_projection
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
+from .counterpart_display import counterpart_display
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import (
     SipTerminationDisposition,
@@ -188,9 +189,9 @@ async def async_track_outbound_sip_client(
             )
             final = "error"
         public_final = sip_public_state(final)
-        connected_party = str(
-            getattr(client, "connected_party", "") or target
-        ).strip()
+        connected_party = counterpart_display(
+            getattr(client, "connected_party", ""), fallback=target, endpoint=target_endpoint,
+        )
         if registry.sip_client_for(client.dialog_ids.call_id) is not client:
             # Hangup/replacement already revoked this watcher. A queued final
             # response must never resurrect a detached call in the HA store.
