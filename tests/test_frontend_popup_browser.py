@@ -863,6 +863,24 @@ def test_disabled_popup_does_not_block_scoped_notification_on_mounted_card(popup
     assert page.evaluate("__voipStackPopup.binding.enabled") is False
 
 
+def test_call_duration_tick_does_not_render_the_whole_card(popup_page):
+    page = popup_page
+    enable(page)
+    incoming(page)
+    page.evaluate("push({state:'in_call',call_id:'incoming-A',connected_at:Date.now()/1000-12,media_owner:'other'})")
+    page.wait_for_function("!__voipStackPopup.dialog._phone._els.hangupBtn.hidden")
+    initial = page.evaluate("""() => {
+      const card=__voipStackPopup.dialog._phone;
+      window.durationRenders=0;
+      const render=card._render;
+      card._render=function(){durationRenders++;return render.call(this);};
+      return card._els.hangupDuration.textContent;
+    }""")
+    page.wait_for_function("__voipStackPopup.dialog._phone._els.hangupDuration.textContent !== " + repr(initial))
+    assert page.evaluate("durationRenders") == 0
+    assert page.evaluate("__voipStackPopup.dialog._phone._els.audioCallDuration.textContent") == page.evaluate("__voipStackPopup.dialog._phone._els.hangupDuration.textContent")
+
+
 def test_rx_animation_has_fixed_hitbox_and_rejects_stale_call(popup_page):
     page = popup_page
     enable(page)

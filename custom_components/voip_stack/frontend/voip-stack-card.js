@@ -743,7 +743,7 @@ class VoipStackCard extends HTMLElement {
   _syncVideoDurationTimer(active) {
     active = active && this.isConnected;
     if (active && !this._videoDurationTimer) {
-      this._videoDurationTimer = setInterval(() => this._render(), 1000);
+      this._videoDurationTimer = setInterval(() => this._updateCallDuration(), 1000);
     } else if (!active && this._videoDurationTimer) {
       clearInterval(this._videoDurationTimer);
       this._videoDurationTimer = null;
@@ -752,6 +752,13 @@ class VoipStackCard extends HTMLElement {
 
   _formatVideoCallDuration() {
     return formatCallDuration(this._softphoneSnapshot?.connected_at);
+  }
+
+  _updateCallDuration() {
+    const duration = this._formatVideoCallDuration();
+    for (const element of [this._els?.audioCallDuration, this._els?.hangupDuration]) {
+      if (element) element.textContent = duration;
+    }
   }
 
   _clearEndReason(doRender = true) {
