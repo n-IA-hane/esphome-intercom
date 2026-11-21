@@ -300,7 +300,10 @@ class SipCallClient:
         video_rtcp_socket: socket.socket | None = None,
         target_resolver: SipServerResolver | None = None,
         tls_context: ssl.SSLContext | None = None,
+        call_id: str | None = None,
     ) -> None:
+        if call_id is not None and (not call_id or any(ord(char) < 33 or ord(char) == 127 for char in call_id)):
+            raise ValueError("Call-ID must be a nonempty SIP header value without whitespace")
         self.local_ip = local_ip
         self.media_ip = local_ip
         self.media_endpoints = {}
@@ -397,7 +400,8 @@ class SipCallClient:
         self.queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=128)
         self._deferred_signaling: list[tuple[sip.SipMessage, tuple[str, int]]] = []
         self._reliable_rseq: dict[tuple[str, int], int] = {}
-        self.dialog_ids = sip.SipDialogIds(call_id=sip.make_call_id("ha"), local_tag=sip.make_tag())
+        self.dialog_ids = sip.SipDialogIds(call_id=call_id if call_id is not None else sip.make_call_id("ha"),
+                                         local_tag=sip.make_tag())
         self._dialog_changed = asyncio.Event()
         self.dialog = None
         self.early_dialogs: dict[str, SipDialog | None] = {}
