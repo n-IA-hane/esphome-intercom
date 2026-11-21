@@ -55,6 +55,13 @@ assert.equal(unconfigured.owner,null);
 assert.equal(unconfigured.internals.length,1);
 assert.equal(phonePresentation({{state:'in_call',calls:[{{id:'one',held:true}},{{id:'two',state:'confirmed'}}]}}).attended,false);
 assert.equal(phonePresentation({{state:'idle',availability:'offline'}}).visual,'offline');
+for (const phase of ['calling','connecting','remote_ringing','ringing']) {{
+  const phone={{state:phase,calls:[{{id:'outbound',state:'early',direction:'outgoing'}}]}};
+  assert.equal(phonePresentation(phone,{{contactTile:true}}).visual,'calling');
+}}
+assert.equal(phonePresentation({{state:'calling'}}).visual,'busy');
+assert.equal(phonePresentation(ringing,{{contactTile:true}}).visual,'ringing');
+assert.equal(phonePresentation({{state:'in_call'}},{{contactTile:true}}).visual,'busy');
 assert.deepEqual([300,400,800,1200,1600].map(dashboardColumnCount),[1,2,3,4,5]);
 assert.equal(store.apply({{kind:'error',error:'disconnected'}}),true);
 assert.equal(store.ready,false);
@@ -401,16 +408,44 @@ def test_dashboard_semantic_colors_remain_distinct_under_muted_ha_theme(dashboar
     ringing = page.locator(".tile[data-key='endpoint:kitchen']")
     busy = page.locator(".tile[data-key='endpoint:office']")
     idle = page.locator(".tile[data-key='endpoint:reception']")
+    calling = page.locator(".tile[data-key='endpoint:bedroom']")
+    page.evaluate("""() => {
+      const owner = {...fixture.phones.find(phone => phone.endpoint_id === 'studio'), state:'idle', calls:[]};
+      const caller = {...fixture.phones.find(phone => phone.endpoint_id === 'bedroom'),
+        state:'remote_ringing', calls:[{id:'outbound',state:'early',direction:'outgoing',peer_name:'Kitchen'}]};
+      engine.push({kind:'delta', revision:1, phones:[owner, caller], removed:[]});
+    }""")
+    assert ringing.get_by_role("button", name="Pick up: Kitchen").is_enabled()
+
+    def assert_tile_gradient(tile, color, start, end):
+        # An independent CSS gradient supplies Chromium's canonical color serialization.
+        assert tile.evaluate("""(node, [color, start, end]) => {
+          const probe = document.createElement('div');
+          node.append(probe);
+          probe.style.backgroundImage = `linear-gradient(130deg,
+            color-mix(in srgb, ${color} ${start}%, transparent),
+            color-mix(in srgb, ${color} ${end}%, transparent))`;
+          const expected = getComputedStyle(probe).backgroundImage;
+          probe.remove();
+          return expected !== 'none' && getComputedStyle(node).backgroundImage === expected;
+        }""", [color, start, end])
+
     page.locator("voip-stack-dashboard-card").screenshot(path=str(tmp_path / "dashboard-colors.png"))
     assert ringing.evaluate("node=>getComputedStyle(node).borderTopColor") == "rgb(22, 140, 255)"
-    assert busy.evaluate("node=>getComputedStyle(node).backgroundImage") == "none"
-    assert busy.evaluate("node=>getComputedStyle(node).backgroundColor") == idle.evaluate("node=>getComputedStyle(node).backgroundColor")
-    assert busy.locator(".tile-status").evaluate("node=>getComputedStyle(node).color") == "rgb(238, 50, 73)"
-    page.evaluate("card.style.setProperty('--voip-dashboard-ringing-color','#8b2cf5')")
-    # The tile transitions its border color; observe the final computed value.
-    page.wait_for_function("getComputedStyle(card.shadowRoot.querySelector('.tile[data-key=\"endpoint:kitchen\"]')).borderTopColor==='rgb(139, 44, 245)'")
-    page.evaluate("card.style.setProperty('--voip-dashboard-busy-color','#49d2a7')")
-    assert busy.locator(".tile-status").evaluate("node=>getComputedStyle(node).color") == "rgb(73, 210, 167)"
+    assert busy.evaluate("node=>getComputedStyle(node).borderTopColor") == "rgb(238, 50, 73)"
+    assert calling.evaluate("node=>getComputedStyle(node).borderTopColor") == "rgb(255, 152, 0)"
+    assert_tile_gradient(ringing, "#168cff", 36, 17)
+    assert_tile_gradient(busy, "#ee3249", 37, 17)
+    assert_tile_gradient(calling, "#ff9800", 37, 17)
+    assert idle.evaluate("node=>getComputedStyle(node).backgroundImage") == "none"
+    page.evaluate("""() => {
+      card.style.setProperty('--voip-dashboard-ringing-color', '#8b2cf5');
+      card.style.setProperty('--voip-dashboard-busy-color', '#49d2a7');
+      card.style.setProperty('--voip-dashboard-calling-color', '#ffb000');
+    }""")
+    assert_tile_gradient(ringing, "#8b2cf5", 36, 17)
+    assert_tile_gradient(busy, "#49d2a7", 37, 17)
+    assert_tile_gradient(calling, "#ffb000", 37, 17)
 
 
 @pytest.mark.browser_real

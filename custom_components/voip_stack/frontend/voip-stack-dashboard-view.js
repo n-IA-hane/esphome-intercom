@@ -20,6 +20,7 @@ const STYLES = `
     --dash-muted:var(--secondary-text-color,#a9b5c5);
     --dash-line:var(--divider-color,rgba(190,208,230,.22));
     --dash-blue:var(--voip-dashboard-ringing-color,#168cff); --dash-red:var(--voip-dashboard-busy-color,#ee3249);
+    --dash-orange:var(--voip-dashboard-calling-color,#ff9800);
     --dash-columns:4; color:var(--dash-ink); }
   * { box-sizing:border-box; }
   [hidden] { display:none!important; }
@@ -83,7 +84,8 @@ const STYLES = `
     border-radius:14px; background:color-mix(in srgb,var(--dash-ink) 5%,transparent);
     transition:border-color .15s ease,background-color .15s ease; }
   .tile.ringing { border-color:var(--dash-blue); background:linear-gradient(130deg,color-mix(in srgb,var(--dash-blue) 36%,transparent),color-mix(in srgb,var(--dash-blue) 17%,transparent)); }
-  .tile.busy .tile-status { color:var(--dash-red); font-weight:600; }
+  .tile.calling { border-color:var(--dash-orange); background:linear-gradient(130deg,color-mix(in srgb,var(--dash-orange) 37%,transparent),color-mix(in srgb,var(--dash-orange) 17%,transparent)); }
+  .tile.busy { border-color:var(--dash-red); background:linear-gradient(130deg,color-mix(in srgb,var(--dash-red) 37%,transparent),color-mix(in srgb,var(--dash-red) 17%,transparent)); }
   .tile.offline { color:var(--dash-muted); background:color-mix(in srgb,var(--dash-ink) 2%,transparent); }
   .tile.stale { opacity:.65; }
   .tile.contact { min-height:94px; }
@@ -97,7 +99,8 @@ const STYLES = `
     width:20px; height:20px; border-radius:50%; background:var(--dash-surface); color:var(--success-color,#53df64); }
   .tile-icon .availability-icon.offline { color:var(--dash-muted); }
   .tile.ringing .tile-icon { background:color-mix(in srgb,var(--dash-blue) 52%,transparent); }
-  .tile.busy .tile-icon { color:var(--dash-red); background:color-mix(in srgb,var(--dash-red) 15%,transparent); }
+  .tile.calling .tile-icon { background:color-mix(in srgb,var(--dash-orange) 50%,transparent); }
+  .tile.busy .tile-icon { background:color-mix(in srgb,var(--dash-red) 50%,transparent); }
   .tile.offline .tile-icon { opacity:.5; }
   .tile-name-copy { min-width:0; flex:1; }
   .tile-name { display:block; font-size:16px; font-weight:650; line-height:1.2; overflow-wrap:anywhere; }

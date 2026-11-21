@@ -146,14 +146,20 @@ export function primaryDashboardCall(phone) {
     calls.find((call) => call.state === "confirmed" && !call.held) || calls[0] || null;
 }
 
-export function phonePresentation(phone) {
+export function phonePresentation(phone, { contactTile = false } = {}) {
   let state = String(phone?.state || "unknown").toLowerCase();
   const unknownLabel = SERVICE_TYPES.has(dashboardTypeFor(phone)) ? "" : "Unknown";
   const calls = distinctCalls(phone);
   const primary = primaryDashboardCall(phone);
   if (state === "ringing" && primary && phoneCallPresentation(primary).outgoing) state = "calling";
+  if (contactTile && ["incoming", "connecting", "remote_ringing"].includes(state)) {
+    const direction = primary?.direction || phone?.direction;
+    if (state === "incoming" || primary?.pickup_available) state = "ringing";
+    else if (direction === "outgoing" || (state === "remote_ringing" && !direction)) state = "calling";
+  }
   const unavailable = ["offline", "unavailable"].includes(String(phone?.availability || "")) && !ACTIVE_STATES.has(state);
-  const visual = state === "ringing" ? "ringing" : ACTIVE_STATES.has(state) ? "busy" : unavailable || state === "unavailable" ? "offline" : "idle";
+  const visual = state === "ringing" ? "ringing" : contactTile && state === "calling" ? "calling" :
+    ACTIVE_STATES.has(state) ? "busy" : unavailable || state === "unavailable" ? "offline" : "idle";
   let label = "Available";
   if (phone?.kind === "contact") label = "";
   else if (visual === "offline") label = "Offline";

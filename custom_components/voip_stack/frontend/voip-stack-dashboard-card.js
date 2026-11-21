@@ -353,7 +353,7 @@ class VoipStackDashboardCard extends HTMLElement {
   }
 
   _renderTile(tile, phone, owner) {
-    const state = phonePresentation(phone);
+    const state = phonePresentation(phone, { contactTile: true });
     tile.root.className = `tile ${state.visual}${phone.owner ? " owner" : ""}${phone.kind === "contact" ? " contact" : ""}${phone.dnd ? " dnd" : ""}${this._store.ready ? "" : " stale"}`;
     tile.name.textContent = phone.name || ""; tile.extension.textContent = phone.extension || phone.number || "";
     tile.extension.hidden = !tile.extension.textContent;
@@ -371,7 +371,7 @@ class VoipStackDashboardCard extends HTMLElement {
     tile.ringingBell.hidden = state.visual !== "ringing" || !!phone.owner;
     tile.status.hidden = phone.kind === "contact";
     tile.statusCopy.textContent = `${this._t(state.label)}${state.peer && state.visual !== "idle" && state.visual !== "offline" ? `${state.label === "In call with" ? " " : ": "}${state.peer}` : ""}`;
-    tile.dot.hidden = state.visual === "ringing" || state.visual === "busy";
+    tile.dot.hidden = ["ringing", "calling", "busy"].includes(state.visual);
     tile.held.hidden = !state.held.length && !phone.dnd;
     tile.held.querySelector("ha-icon").setAttribute("icon", state.held.length ? "mdi:pause-circle" : "mdi:minus-circle");
     tile.heldCopy.textContent = state.held.length ? state.held.map((call) => `${call.peer_name || ""} ${this._t("On hold").toLowerCase()}`.trim()).join(", ") : "DND";
