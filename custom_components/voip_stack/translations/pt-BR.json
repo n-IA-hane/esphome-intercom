@@ -2181,6 +2181,10 @@
         },
         "expected_sequence": {
           "name": "Sequência esperada"
+        },
+        "trunk_id": {
+          "name": "Tronco SIP de saída",
+          "description": "Linha de saída configurada opcional para este destino."
         }
       },
       "sections": {

@@ -2181,6 +2181,10 @@
         },
         "expected_sequence": {
           "name": "Expected sequence"
+        },
+        "trunk_id": {
+          "name": "Outgoing SIP trunk",
+          "description": "Optional configured outgoing line for this destination."
         }
       },
       "sections": {

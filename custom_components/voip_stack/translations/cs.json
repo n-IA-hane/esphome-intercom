@@ -2181,6 +2181,10 @@
         },
         "expected_sequence": {
           "name": "Očekávaná sekvence"
+        },
+        "trunk_id": {
+          "name": "Odchozí SIP trunk",
+          "description": "Volitelná nakonfigurovaná odchozí linka pro tento cíl."
         }
       },
       "sections": {

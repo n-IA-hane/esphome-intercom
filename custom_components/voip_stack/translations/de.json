@@ -2181,6 +2181,10 @@
         },
         "expected_sequence": {
           "name": "Erwartete Sequenznummer"
+        },
+        "trunk_id": {
+          "name": "Abgehender SIP-Trunk",
+          "description": "Optionale konfigurierte abgehende Leitung für dieses Ziel."
         }
       },
       "sections": {

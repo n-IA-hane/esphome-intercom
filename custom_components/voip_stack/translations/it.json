@@ -2181,6 +2181,10 @@
         },
         "expected_sequence": {
           "name": "Sequenza attesa"
+        },
+        "trunk_id": {
+          "name": "Trunk SIP in uscita",
+          "description": "Linea in uscita configurata facoltativa per questa destinazione."
         }
       },
       "sections": {
