@@ -37,6 +37,16 @@ The 12/128-watch fixtures execute two renewal cycles, retain one timer per
 usage, and prove an unchanged authenticated REGISTER refresh does not schedule
 duplicate snapshots or grow the notifier owner set.
 
+The same selected-flow distinction applies to complete INVITE requests.
+`SipCallClient._prepare_invite_request_transport` retains an explicit UDP
+Outbound next hop instead of releasing its borrowed call lease to open TCP.
+Ordinary Contacts and trunk sockets keep the standard size upgrade and
+connection-opening fallback. A pinned request above the 65507-byte UDP limit
+returns an explicit transport error. Normal call cleanup releases that usage,
+leaving another call's lease and the authenticated listener in place. Native
+wire tests cover one authenticated INVITE above 1300 bytes, preparation
+cancellation, stale binding rejection, hard-limit refusal and final lease counts.
+
 The preserved negative witness is a peer that reads a complete NOTIFY and
 closes before its response. The previous sender delivered the same request
 twice; the corrected sender delivers it once and a new subscription recovers

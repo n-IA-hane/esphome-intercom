@@ -7,6 +7,8 @@ import ssl
 import logging
 
 SIP_UDP_SAFE_REQUEST_BYTES = 1300
+# IPv4 UDP payload: 65535 bytes minus the IP and UDP headers.
+SIP_UDP_MAX_REQUEST_BYTES = 65507
 
 
 async def default_tls_context() -> ssl.SSLContext:
