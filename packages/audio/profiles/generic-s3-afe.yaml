@@ -34,6 +34,7 @@ esp_afe:
   fetch_task_core: 1
   fetch_task_priority: 5
   fetch_task_stack_size: 3072
+  feed_buf_in_psram: false
   feed_ring_in_psram: true
   fetch_ring_in_psram: false
 microphone:

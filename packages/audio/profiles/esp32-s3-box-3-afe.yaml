@@ -42,6 +42,7 @@ esp_afe:
   task_priority: 5
   feed_task_core: 0
   fetch_task_core: 1
+  feed_buf_in_psram: true
   feed_ring_in_psram: true
   fetch_ring_in_psram: true
 microphone:
