@@ -12,6 +12,7 @@ from .directory_runtime import routing_snapshot
 from .trunk_policy import external_call_denied, is_any_trunk_uri, trunk_available
 from .peer_media_profile import resolve_peer_media_profile
 from .call_projection import publish_phone_projection
+from .codec_settings import effective_codec_policy
 from .counterpart_display import connected_display_name, counterpart_display
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
@@ -487,6 +488,8 @@ async def async_originate_browser_call(
     uri = parse_sip_uri(route_uri)
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
     peer_profile = resolve_peer_media_profile(entry_metadata)
+    codec_policy = effective_codec_policy(hass, endpoint_id=endpoint_id,
+                                          trunk_id=trunk_selection.identity if use_trunk else None)
     remote_tx_formats = _roster_entry_formats(
         route.entry, "tx_formats"
     ) or _device_formats(dest_device, "tx_formats")
@@ -533,6 +536,7 @@ async def async_originate_browser_call(
     target_video_enabled = target_video_contract != ""
     video_capable = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
+        and codec_policy.video != ()
         and (not use_trunk or bool(trunk_cfg.get("trunk_video_codecs", ["H264"])))
         and source_video_enabled
         and target_video_enabled
@@ -622,6 +626,7 @@ async def async_originate_browser_call(
         _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name
     )
     client = SipCallClient(
+        codec_policy=codec_policy,
         local_ip=local_ip,
         local_name=provider_identity,
         local_uri_user=(

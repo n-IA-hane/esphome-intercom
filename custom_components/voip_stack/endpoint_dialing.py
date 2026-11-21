@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
+from .codec_settings import effective_codec_policy
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
@@ -173,6 +174,10 @@ class EndpointDialer:
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
+        target_endpoint = self.route_resolver.logical_endpoint(member, peers, roster_entries)
+        codec_policy = effective_codec_policy(self.hass,
+            endpoint_id=endpoint_id_override or (target_endpoint.endpoint_id if target_endpoint is not None else ""),
+            trunk_id=policy.trunk_id if policy.use_trunk_flow else None)
         registration_only = getattr(invite, "authenticated_username", "") and not getattr(invite, "identified_source_endpoint_id", "")
         if self.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS) or registration_only or source_call_id:
             from .runtime_data import require_runtime_data
@@ -238,17 +243,12 @@ class EndpointDialer:
                 )
                 sip_send_formats = list(rtp_audio_profile.send_formats)
                 sip_recv_formats = list(rtp_audio_profile.recv_formats)
-            target_endpoint = self.route_resolver.logical_endpoint(
-                member,
-                peers,
-                roster_entries,
-            )
             target_video_codec = peer_video_codec(peer_target, member_entry)
             video_failure_reason = ""
             trunk = (
                 sip_trunk(self.hass, policy.trunk_id) if policy.trunk_id else sip_trunk(self.hass)
             ) if policy.use_trunk_flow else None
-            trunk_allows_video = trunk is None or trunk.config.video_codecs != ()
+            trunk_allows_video = codec_policy.video != () and (trunk is None or trunk.config.video_codecs != ())
             if (
                 invite is not None
                 and invite.video_format is not None
@@ -291,6 +291,7 @@ class EndpointDialer:
                         err,
                     )
             client = SipCallClient(
+                codec_policy=codec_policy,
                 local_ip=self.local_ip,
                 local_name=local_name,
                 local_uri_user=(

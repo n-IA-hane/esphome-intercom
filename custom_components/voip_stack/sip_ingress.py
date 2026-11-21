@@ -191,13 +191,18 @@ class SipIngressPolicy:
         return replace(classified, caller=name) if name else classified
 
     def codec_policy_for_invite(self, initial: SipInitialInvite) -> CodecPolicy:
-        from .config import trunk_config
+        from .codec_settings import effective_codec_policy
         from .core.codec_policy import CodecPolicy
         try:
             classified = self.classify(initial)
         except ValueError:
             return CodecPolicy()  # The routing boundary rejects ambiguous sources.
-        if not classified.received_via_trunk:
-            return CodecPolicy()
-        config = trunk_config(self.hass, trunk_id=classified.trunk_id) if classified.trunk_id else trunk_config(self.hass)
-        return CodecPolicy.from_config(config)
+        if classified.received_via_trunk:
+            return effective_codec_policy(self.hass, trunk_id=classified.trunk_id or "")
+        endpoint_id = classified.identified_source_endpoint_id
+        if not endpoint_id and classified.authenticated_username:
+            from .runtime_data import endpoint_directory
+
+            endpoint = endpoint_directory(self.hass).by_username(classified.authenticated_username)
+            endpoint_id = endpoint.endpoint_id if endpoint is not None else ""
+        return effective_codec_policy(self.hass, endpoint_id=endpoint_id)
