@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ..sdp_parser import local_direction_for_offer, parse_sdp
 from ..sdp_types import RtpPcmDirection
+from ..codec_policy import DEFAULT_AUDIO_CODECS
 from . import leg
 from .capability import PeerEvidence
 from .payload_map import PayloadMap
@@ -22,11 +23,12 @@ def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabili
     send = tuple(send_formats)
     receive = tuple(receive_formats)
     enabled = getattr(codec_policy, "audio", None)
+    allowed = DEFAULT_AUDIO_CODECS if enabled is None else enabled
     return leg.LegPolicy(
         send_rank=tuple(dict.fromkeys((item.sample_rate, item.channels) for item in send)),
         receive_rank=tuple(dict.fromkeys((item.sample_rate, item.channels) for item in receive)),
         budget=getattr(capabilities, "transmit_payload_bytes", 1200),
-        encodings=frozenset(enabled) if enabled is not None else None,
+        encodings=frozenset(allowed),
         codec_order=tuple(enabled) if enabled is not None and getattr(codec_policy, "audio_ordered", True) else (),
         send_capabilities=send if capabilities is None else None,
         receive_capabilities=receive if capabilities is None else None,

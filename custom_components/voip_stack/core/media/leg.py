@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 
 from ..audio_capabilities import HA_AUDIO_CAPABILITIES
 from ..audio_format import AudioFormat, MAX_SAMPLE_RATE, PcmFormat
-from ..codec_capabilities import common_sip_codecs
+from ..codec_capabilities import codec_available
 from ..sdp_audio import offered_dtmf_formats, offered_pcm_formats
 from ..sdp_parser import parse_audio_flow_attributes, parse_sdp, supports_independent_audio_ptime
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
@@ -76,7 +76,7 @@ def _geometry(fmt: RtpPcmFormat) -> Geometry:
     return (spec.decoded_rate or fmt.sample_rate, spec.decoded_channels or fmt.channels)
 
 
-def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool) -> bool:
+def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, receive=True) -> bool:
     """S1: enabled by policy, with a working adapter, and a mapping the adapter implements."""
     name = fmt.encoding
     if name not in CODECS or (policy.encodings is not None and name not in policy.encodings):
@@ -85,14 +85,23 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool) -> bool:
         return False
     if not 1 <= fmt.sample_rate <= MAX_SAMPLE_RATE or fmt.channels not in (1, 2):
         return False
+    if not send and not receive:
+        return False
+    if (send and not codec_available(name)) or (receive and not codec_available(name, receive=True)):
+        return False
     if name == "OPUS":
-        return "OPUS" in common_sip_codecs() and (fmt.sample_rate, fmt.channels) == (48000, 2)
+        return (fmt.sample_rate, fmt.channels) == (48000, 2)
     if name == "G722":
-        return "G722" in common_sip_codecs() and (fmt.sample_rate, fmt.channels) == (8000, 1)
+        return (fmt.sample_rate, fmt.channels) == (8000, 1)
     if name in {"PCMA", "PCMU"}:
         return fmt.sample_rate == 8000
     if name == "PCM":
         return dahua and (fmt.sample_rate, fmt.channels) == (16000, 1)
+    if CODECS[name].pyav_decoder:
+        spec = CODECS[name]
+        return (fmt.sample_rate, fmt.channels) == (
+            spec.conventional_clock_rate or spec.static_clock_rate or spec.decoded_rate,
+            spec.conventional_channels if spec.conventional_clock_rate else 1)
     return fmt.channels in (1, 2)
 
 
@@ -168,14 +177,16 @@ def answer_offer(
     limits of the peer always reach the sender.
     """
     trace: list[str] = []
-    offered = [fmt for fmt in offered_pcm_formats(remote_sdp, allow_dahua_pcm=dahua)
-               if _usable(fmt, policy, dahua=dahua)]
-    if not offered:
-        return Refusal("no offered codec is enabled and available", tuple(trace))
     remote_direction = parse_sdp(remote_sdp)["direction"]
     needs_send = remote_direction != "sendonly"
     needs_receive = remote_direction != "recvonly"
     flows = parse_audio_flow_attributes(remote_sdp)
+    offered = [fmt for fmt in offered_pcm_formats(remote_sdp, allow_dahua_pcm=dahua)
+               if _usable(fmt, policy, dahua=dahua,
+                   send=needs_send and flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"},
+                   receive=needs_receive and flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"})]
+    if not offered:
+        return Refusal("no offered codec is enabled and available", tuple(trace))
     peer_receives = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
     peer_sends = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
     directional = bool(flows) and bool(peer_receives) and bool(peer_sends)

@@ -7,6 +7,7 @@ from dataclasses import replace
 from . import codec_capabilities
 from .audio_format import PACKET_MS_PREFERENCE, UDP_SAFE_PAYLOAD_BYTES, AudioFormat, PcmFormat
 from .sdp_document import SdpDocument
+from .media.codecs import CODECS
 from .sdp_parser import (
     STATIC_RTPMAP as _STATIC_RTPMAP,
 )
@@ -47,7 +48,7 @@ def parse_rtp_audio_capability(token: str, payload_type: int = 96) -> RtpPcmForm
     if len(parts) != 4:
         raise SdpError(f"invalid RTP audio capability {token!r}")
     encoding = parts[0].upper()
-    if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
+    if encoding not in CODECS or CODECS[encoding].auxiliary:
         raise SdpError(f"unsupported RTP audio encoding {encoding!r}")
     try:
         rate, channels = map(int, parts[1:3])
@@ -641,7 +642,7 @@ def offered_pcm_formats(
                 or channels != 1
             ):
                 continue
-        elif encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
+        elif encoding not in CODECS or CODECS[encoding].auxiliary:
             continue
         out.append(
             RtpPcmFormat(
