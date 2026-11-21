@@ -263,7 +263,7 @@ class LdapDirectoryServer:
                 continue
             attributes = {"objectclass": (b"top", b"organizationalRole", b"uidObject", b"labeledURIObject"),
                           "uid": (identity.encode(),), "cn": (entry.display_name.encode(),), "ou": (kind.encode(),)}
-            numbers = tuple(dict.fromkeys(value.encode() for value in (entry.extension, entry.number) if value))
+            numbers = tuple(value.encode() for value in self.directory.dial_users(entry, (entry.extension, entry.number)))
             if numbers:
                 attributes["telephonenumber"] = numbers
             uri = self.uri_for(entry) if self.uri_for is not None else entry.sip_uri

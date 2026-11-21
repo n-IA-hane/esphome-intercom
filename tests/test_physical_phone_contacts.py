@@ -33,22 +33,62 @@ PROFILE = {"capabilities": {"functions": ["speed_dial", "blf"], "key_slots": [
     {"slot": "1", "functions": ["speed_dial", "blf"], "max_value_bytes": 31, "max_label_bytes": 31}]}}
 
 
-def test_external_directory_key_is_stable_and_follows_the_current_contact():
+def test_external_directory_key_provisions_the_current_public_number():
     from dataclasses import replace
     entry = contact()
     current = runtime(entry)
     key, = profile_module.resolve_phone_keys(current, phone(), PROFILE)
-    expected = "contact+" + sha256(b"contact:customer-one").hexdigest()[:20]
-    assert key["dial_target"] == expected and len(expected) == 28
+    assert key["dial_target"] == "003905512345"
     assert key["label"] == "Customer" and key["event_package"] == ""
     changed = replace(entry, name="Renamed customer", number="0000123456")
     current.directory.replace([changed])
     updated, = profile_module.resolve_phone_keys(current, phone(), PROFILE)
-    assert updated["dial_target"] == expected and updated["label"] == "Renamed customer"
-    decision = router.resolve_ha_router(expected, list(current.directory.snapshot()), trunk_ready=True)
+    assert updated["dial_target"] == "0000123456" and updated["label"] == "Renamed customer"
+    decision = router.resolve_ha_router(updated["dial_target"], list(current.directory.snapshot()), trunk_ready=True)
     assert decision.action is router.RouteAction.TRUNK and decision.target == "0000123456"
     custom, = profile_module.resolve_phone_keys(current, phone(label="My label"), PROFILE)
     assert custom["label"] == "My label"
+
+
+def test_sip_contact_key_dials_its_pbx_extension_or_public_name():
+    from dataclasses import replace
+
+    entry = contact(sip_uri="sip:operator@external.example", extension="230")
+    current = runtime(entry)
+    key, = profile_module.resolve_phone_keys(current, phone(), PROFILE)
+    assert key["dial_target"] == "230"
+    current.directory.replace([replace(entry, name="Customer desk", extension="")])
+    key, = profile_module.resolve_phone_keys(current, phone(), PROFILE)
+    assert key["dial_target"] == "Customer%20desk"
+    decision = router.resolve_ha_router("Customer desk", list(current.directory.snapshot()))
+    assert decision.action is router.RouteAction.FORWARD and decision.sip_uri == entry.sip_uri
+
+
+def test_legacy_contact_with_a_number_shadowed_by_a_group_uses_its_name():
+    entry = contact()
+    current = runtime(entry)
+    group = RosterEntry(id="Office", extension=entry.number, metadata={"group_type": "ring"})
+    assert next(current.directory.dial_users(entry)) == entry.number
+    current.directory.upsert(group)
+    key, = profile_module.resolve_phone_keys(current, phone(), PROFILE)
+    assert key["dial_target"] == "Customer"
+    assert router.resolve_ha_router(key["dial_target"], [group, entry], trunk_ready=True).entry == entry
+    current.directory.remove(group.id)
+    assert next(current.directory.dial_users(entry)) == entry.number
+
+
+def test_queue_key_uses_the_public_name_within_the_slot_budget():
+    current = runtime(contact())
+    queue = SimpleNamespace(queue_id="q1", name="Support desk", extension="", members={"sip:line"})
+    current.queues = SimpleNamespace(resolve=lambda ref: queue)
+    config = phone(function="queue_login")
+    config["keys"][0]["target"] = queue.queue_id
+    profile = {"capabilities": {"key_slots": [{"slot": "1", "functions": ["queue_login"], "max_value_bytes": 31}]}}
+    key, = profile_module.resolve_phone_keys(current, config, profile)
+    assert key["dial_target"] == key["subscription_target"] == "queue-login+Support%20desk"
+    queue.name = "Very long reception desk name"
+    with pytest.raises(ValueError, match="phone_key_target_too_long"):
+        profile_module.resolve_phone_keys(current, config, profile)
 
 
 def test_external_directory_reference_is_not_a_blf_principal():

@@ -80,26 +80,22 @@ def resolve_phone_language(profile, requested):
 
 def _key_target(runtime, key, endpoint_id, sip_authority):
     function, target = key["function"], key.get("target", "")
-    if str(target).casefold().startswith("contact:"):
-        from .phone_directory import contact_dial_target
-        directory = getattr(runtime, "directory", None)
-        entry = directory.key_contact(target) if directory is not None else None
-        if function != "speed_dial" or entry is None:
-            raise ValueError("invalid_phone_key_target")
-        return [contact_dial_target(entry)]
+    contact_reference = str(target).casefold().startswith("contact:")
+    if contact_reference and function != "speed_dial":
+        raise ValueError("invalid_phone_key_target")
     if function in {"queue_login", "queue_pause"}:
         queue = runtime.queues.resolve(target) if runtime.queues else None
         if queue is None or endpoint_id not in queue.members:
             raise ValueError("phone_queue_membership_required")
         prefix = "queue-login+" if function == "queue_login" else "queue-pause+"
-        return [(prefix + part) for part in (queue.extension, queue.name, queue.queue_id) if part]
+        return _sip_user_targets((prefix + part for part in (queue.extension, queue.name) if part), sip_authority)
     if function in {"park", "park_call"}:
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", target):
             raise ValueError("invalid_parking_target")
         return [target]
     if function in {"line", "directory"}:
         return [""]
-    endpoint = runtime.endpoints.resolve(target)
+    endpoint = None if contact_reference else runtime.endpoints.resolve(target)
     if endpoint is not None:
         # A handset key sends the SIP URI user. Names containing spaces or
         # vendor delimiters must be escaped before checking the slot byte limit.
@@ -108,24 +104,14 @@ def _key_target(runtime, key, endpoint_id, sip_authority):
         return targets
     if function == "speed_dial":
         directory = getattr(runtime, "directory", None)
-        entry = directory.resolve(target) if directory is not None else None
+        entry = None
+        if directory is not None:
+            entry = directory.key_contact(target) if contact_reference else directory.resolve(target)
         if entry is not None and entry.enabled:
-            from .router import RouteAction, resolve_ha_router
-            identity = entry.metadata.get("endpoint_id") or entry.id
-            aliases = []
-            for value in (entry.extension, entry.id, entry.name):
-                if not value:
-                    continue
-                try:
-                    decision = resolve_ha_router(value, list(directory.snapshot()))
-                except ValueError:
-                    continue
-                resolved = decision.entry
-                if (decision.action is not RouteAction.REJECT and resolved is not None
-                        and (resolved.metadata.get("endpoint_id") or resolved.id) == identity):
-                    aliases.append(value)
+            aliases = _sip_user_targets(directory.dial_users(entry), sip_authority)
             if aliases:
-                return _sip_user_targets(aliases, sip_authority)
+                return aliases
+            raise ValueError("invalid_phone_key_target")
     if function == "speed_dial" and re.fullmatch(r"[+*#0-9]{1,64}", target):
         return [target]
     raise ValueError("invalid_phone_key_target")

@@ -273,6 +273,26 @@ async def test_raw_fragmented_bind_root_dse_and_authorization(server):
     await writer.wait_closed()
 
 
+async def test_ldap_numbers_identify_the_selected_record_even_with_a_legacy_collision(server):
+    server.directory.upsert(RosterEntry("customer", name="Customer", number="101"))
+    server.directory.upsert(RosterEntry("night", name="Night desk", extension="708",
+        metadata={"endpoint_kind": "sip_account", "endpoint_id": "account:night"}))
+    reader, writer = await connected(server)
+    try:
+        for message_id, number, expected in ((2, b"101", b"Kitchen"), (3, b"708", b"Night desk")):
+            writer.write(search(message_id, filter=equality("telephoneNumber", number), attributes=("cn",)))
+            await writer.drain()
+            frames = await collect(reader, message_id)
+            assert len(frames) == 2 and expected in frames[0] and response(frames[-1])[2] == 0
+        writer.write(search(4, filter=equality("cn", b"Customer"), attributes=("cn", "telephoneNumber")))
+        await writer.drain()
+        frames = await collect(reader, 4)
+        assert len(frames) == 2 and b"Customer" in frames[0] and b"telephonenumber" not in frames[0]
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
 async def test_invalid_bind_removes_previous_authorization(server):
     reader, writer = await connected(server)
     writer.write(bind(2, password=b"wrong"))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
@@ -28,6 +30,56 @@ FORMAT_TEXT = vol.All(cv.string, vol.Length(max=128))
 FORMAT_LIST = vol.All([FORMAT_TEXT], vol.Length(max=32))
 PORT = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
 SAMPLE_RATE = vol.All(vol.Coerce(int), vol.Range(min=8000, max=192000))
+
+
+async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -> None:
+    """Populate native action selectors with public account and dial strings."""
+    if not hass.services.has_service(DOMAIN, "call") or directory is None or directory.closed:
+        return
+    from homeassistant.helpers.service import async_get_all_descriptions, async_set_service_schema
+    from homeassistant.const import EVENT_SERVICE_REGISTERED
+    from .runtime_data import runtime_data
+
+    generation = directory.generation
+    rows = directory.snapshot()
+    descriptions = (await async_get_all_descriptions(hass)).get(DOMAIN, {})
+    runtime = runtime_data(hass)
+    if (runtime is None or runtime.directory is not directory or directory.closed
+            or directory.generation != generation):
+        return
+    phone_kinds = {"sip_account", "esphome", "ha_softphone", "browser"}
+    phone_names = {row.name for row in rows if row.name and row.metadata.get("endpoint_kind") in phone_kinds}
+    destinations = {row.name or row.extension or row.number or row.sip_uri
+                    for row in rows if row.enabled and (row.name or row.extension or row.number or row.sip_uri)}
+    phone_options = sorted(phone_names, key=str.casefold)
+    destination_options = sorted(destinations, key=str.casefold)
+    physical_actions = {"purge_devices", "provision_phone", "get_phone_provisioning_state",
+                        "rotate_phone_provisioning_token"}
+
+    def populate(fields):
+        for key, field in fields.items():
+            if "fields" in field:
+                populate(field["fields"])
+            if key in {"device_id", "phone", "target_device_id"}:
+                options = phone_options
+            elif key in {"destination", "fallback_destination", "return_destination"}:
+                options = destination_options
+            else:
+                continue
+            field["selector"] = {"select": {"options": options, "custom_value": True, "mode": "dropdown"}}
+
+    changed = False
+    for name, description in descriptions.items():
+        if name in physical_actions:
+            continue
+        updated = deepcopy(description)
+        populate(updated.get("fields", {}))
+        if updated != description:
+            async_set_service_schema(hass, DOMAIN, name, updated)
+            changed = True
+    if changed:
+        # The native frontend refreshes its cached action descriptions on this event.
+        hass.bus.async_fire(EVENT_SERVICE_REGISTERED, {"domain": DOMAIN, "service": "call"})
 
 
 def _activity_limit(value):

@@ -1,6 +1,7 @@
 """A programmed directory reference reaches the normal SIP/trunk permission path."""
 
 import asyncio
+from hashlib import sha256
 import re
 import socket
 import struct
@@ -14,7 +15,8 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("allowed", [True, False])
-async def test_programmed_contact_alias_uses_current_route_permissions_and_duplex_media(trunks, allowed):
+@pytest.mark.parametrize("previously_provisioned", [False, True])
+async def test_programmed_contact_uses_current_route_permissions_and_duplex_media(trunks, allowed, previously_provisioned):
     from custom_components.voip_stack.core import rtp
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.phone_directory import PhoneDirectory
@@ -40,6 +42,9 @@ async def test_programmed_contact_alias_uses_current_route_permissions_and_duple
     phone = {"lines": [{"slot": "1", "endpoint_id": "source"}], "keys": [{"slot": "1",
         "line": "1", "function": "speed_dial", "target": "contact:customer", "label": ""}]}
     key, = resolve_phone_keys(state.runtime, phone, profile)
+    assert key["dial_target"] == entry.number
+    legacy_user = "contact+" + sha256(b"contact:customer").hexdigest()[:20]
+    dial_target = legacy_user if previously_provisioned else key["dial_target"]
     if not allowed:
         state.runtime.transport_config["external_call_blocked_endpoints"] = ["source"]
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -54,7 +59,7 @@ async def test_programmed_contact_alias_uses_current_route_permissions_and_duple
     client.local_sip_port = client.transport.get_extra_info("sockname")[1]
     session = None
     try:
-        result = await client.invite(target=key["dial_target"], remote_host="127.0.0.1",
+        result = await client.invite(target=dial_target, remote_host="127.0.0.1",
             remote_sip_port=state.runtime.transport_config["sip_port"], timeout=3)
         if result == "ringing":
             result = await client.wait_for_final(timeout=3)

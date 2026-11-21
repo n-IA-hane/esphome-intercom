@@ -28,10 +28,10 @@ def contact_key_reference(entry):
 
 
 def contact_dial_target(entry):
+    """Recognize the SIP user written by older physical phone provisioning."""
     reference = contact_key_reference(entry)
     if reference is None:
         raise ValueError("invalid_phone_key_target")
-    # A bounded SIP user keeps the stable directory identity on small DSS keys.
     return "contact+" + sha256(reference.casefold().encode()).hexdigest()[:20]
 
 
@@ -50,6 +50,7 @@ class PhoneDirectory:
 
     def __init__(self, entries=()):
         self._entries = {}
+        self._public_aliases = None
         self._subscribers = set()
         self.generation = 0
         self._refresh_generation = 0
@@ -83,6 +84,36 @@ class PhoneDirectory:
             raise ValueError("invalid_phone_key_target")
         return self._copy(matches[0]) if matches and matches[0].enabled else None
 
+    def dial_users(self, entry, values=None):
+        """Return public SIP users that the PBX routes to this directory record."""
+        from .router import RouteAction, RouteReason, resolve_ha_router
+
+        contact = contact_key_reference(entry) is not None
+        if values is None:
+            first = entry.number if contact and not (entry.sip_uri or entry.address) else entry.extension
+            values = (first, entry.display_name)
+        for value in dict.fromkeys(filter(None, values)):
+            try:
+                route = resolve_ha_router(value, self._matching_rows(normalize_roster_key(value)), trunk_ready=contact)
+            except ValueError:
+                continue
+            if route.entry == entry and (
+                route.action is not RouteAction.REJECT or route.reason is RouteReason.TARGET_UNREACHABLE
+            ):
+                yield value
+
+    def _matching_rows(self, key):
+        # Project aliases once per directory generation so an LDAP search can
+        # check every number without rescanning the entire phonebook for each.
+        if self._public_aliases is None:
+            aliases = {}
+            for row in self._entries.values():
+                values = (row.id, row.name, row.extension, row.number)
+                for alias in {normalize_roster_key(value) for value in values if value}:
+                    aliases.setdefault(alias, []).append(row)
+            self._public_aliases = aliases
+        return self._public_aliases.get(key, ())
+
     def get(self, identity) -> RosterEntry | None:
         entry = self._entries.get(self._key(identity))
         return self._copy(entry) if entry is not None else None
@@ -92,8 +123,7 @@ class PhoneDirectory:
         if direct is not None:
             return direct
         key = normalize_roster_key(str(target or ""))
-        matches = [entry for entry in self._entries.values() if entry.enabled and key and key in {
-            normalize_roster_key(value) for value in (entry.id, entry.name, entry.extension, entry.number) if value}]
+        matches = [entry for entry in self._matching_rows(key) if entry.enabled] if key else []
         if len(matches) > 1:
             raise RosterError("Ambiguous directory destination")
         return self._copy(matches[0]) if matches else None
@@ -146,6 +176,7 @@ class PhoneDirectory:
         return lambda: self._subscribers.discard(callback)
 
     def _changed(self):
+        self._public_aliases = None
         self.generation += 1
         for subscriber in tuple(self._subscribers):
             try:
@@ -157,4 +188,5 @@ class PhoneDirectory:
         self.closed = True
         self._refresh_generation += 1
         self._entries.clear()
+        self._public_aliases = None
         self._subscribers.clear()

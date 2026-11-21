@@ -6,10 +6,10 @@ set_phone_memberships:
       name: Phone
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     field:
       name: Group type
       required: true
@@ -37,7 +37,10 @@ set_phone_queues:
       name: Phone
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     queues:
       name: Queues
       description: Comma-separated queue names, or an empty value to leave all queues.
@@ -58,7 +61,10 @@ set_queue_agent_state:
       name: Phone
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     state:
       name: Operator state
       required: true
@@ -140,8 +146,10 @@ get_queue_state:
       name: Phone
       description: Optional member filter.
       selector:
-        text:
-
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
 configure_queue:
   name: Configure queue
   description: Update an existing queue. The same settings are available on its VoIP Stack device.
@@ -329,10 +337,10 @@ answer:
       description: Optional Home Assistant or ESPHome phone device.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     send_video:
       name: Send video
       description: Send the browser camera when video is enabled for this phone.
@@ -369,10 +377,10 @@ decline:
       description: Optional Home Assistant or ESPHome phone device.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     advanced:
       name: Advanced options
       description: Select a specific call or customize its SIP rejection.
@@ -424,10 +432,10 @@ call:
       description: Optional phone that starts the call. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     source_automation:
       name: Calling Automation contact
       description: >-
@@ -462,7 +470,10 @@ call:
       description: Phonebook name, extension, group, number or SIP address.
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     send_video:
       name: Send video
       description: Offer the browser camera when video is enabled for this phone.
@@ -491,15 +502,19 @@ forward:
       description: Optional Home Assistant phone that owns the call.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     destination:
       name: Destination
       description: Phonebook name, extension, group, number or SIP address.
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     on_failure:
       name: On failure
       description: Resume the original HA ringing call, terminate it, or return busy if the new destination fails.
@@ -560,7 +575,10 @@ transfer:
       name: Destination
       description: Phonebook name, extension or SIP address for the transfer.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     advanced:
       name: Advanced options
       collapsed: true
@@ -569,9 +587,10 @@ transfer:
           name: Phone
           description: Optional local phone selector for an explicit call.
           selector:
-            device:
-              filter:
-                - integration: voip_stack
+            select:
+              options: []
+              custom_value: true
+              mode: dropdown
         call_id:
           name: Call ID
           description: Only needed without a native VoIP call trigger.
@@ -667,7 +686,10 @@ route:
       description: Contact ID/name, number, user@host, or sip:user@host URI for forward/bridge.
       required: false
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     status:
       name: SIP Status
       description: Optional final SIP status for decline/cancel decisions.
@@ -701,7 +723,10 @@ select_inbound_destination:
       description: Phonebook name, group, extension, registered phone, Assist extension, SIP URI or routable number.
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     advanced:
       name: Advanced options
       description: Select one of several simultaneous route requests or reject stale decisions.
@@ -736,10 +761,10 @@ hangup:
       description: Optional Home Assistant or ESPHome phone device.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     advanced:
       name: Advanced options
       description: Select a specific concurrent call.
@@ -780,7 +805,10 @@ add_contact:
       name: Automation fallback
       description: Optional destination when no automation handles the call before its timeout.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     timeout:
       name: Automation inactivity timeout
       default: 30
@@ -992,10 +1020,10 @@ set_external_call_access:
       description: Browser phone, registered SIP account or discovered ESPHome phone to configure.
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     allowed:
       name: Allow external calls
       description: Turn off to block new external trunk calls from this phone. Turn on to restore access.
@@ -1012,9 +1040,10 @@ set_dnd:
       description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     dnd:
       name: Do not disturb
       required: true
@@ -1030,9 +1059,10 @@ set_auto_answer:
       description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     auto_answer:
       name: Auto answer
       required: true
@@ -1048,9 +1078,10 @@ set_send_video:
       description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     send_video:
       name: Send video
       required: true
@@ -1068,10 +1099,10 @@ set_phone_settings:
       name: Phone
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     forward_to:
       name: Always forward to
       description: Phonebook name, extension or SIP address. Leave empty to disable forwarding.
@@ -1133,9 +1164,10 @@ set_ha_softphone_settings:
       description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
-        device:
-          filter:
-            - integration: voip_stack
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     extension:
       name: Extension
       description: Optional extension number published by the Home Assistant softphone endpoint.
@@ -1351,11 +1383,10 @@ play_media:
       name: Phone for manual execution
       description: Select the phone with an Automation call when testing manually.
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
-
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
 tts_say:
   name: Speak to the caller
   description: Pronounce a message on the automation call. The call is selected by
@@ -1416,12 +1447,10 @@ tts_say:
           description: Select the phone with the automation call when testing this
             action without a VoIP trigger.
           selector:
-            device:
-              filter:
-              - integration: voip_stack
-              - integration: esphome
-
-
+            select:
+              options: []
+              custom_value: true
+              mode: dropdown
 wait_unanswered:
   name: Wait without answering
   description: Keep an unanswered Automation contact call ringing without answering
@@ -1450,10 +1479,10 @@ wait_unanswered:
           description: Only needed outside a native VoIP trigger. The phone must
             have an unanswered call handled by an Automation contact.
           selector:
-            device:
-              filter:
-              - integration: voip_stack
-              - integration: esphome
+            select:
+              options: []
+              custom_value: true
+              mode: dropdown
         call_id:
           name: Call ID
           description: For legacy actions outside a native VoIP trigger.
@@ -1520,11 +1549,10 @@ wait_for_dtmf:
           description: Select the phone with the automation call when testing this
             action without a VoIP trigger.
           selector:
-            device:
-              filter:
-              - integration: voip_stack
-              - integration: esphome
-
+            select:
+              options: []
+              custom_value: true
+              mode: dropdown
 set_voicemail_settings:
   name: Configure voicemail
   description: >-
@@ -1537,13 +1565,10 @@ set_voicemail_settings:
       name: Phone mailbox
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
-              model: SIP account
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     enabled:
       name: Enable mailbox
       selector:
@@ -1675,10 +1700,10 @@ send_to_voicemail:
         device_id:
           name: Phone owning the call
           selector:
-            device:
-              filter:
-                - integration: voip_stack
-                  model: Home Assistant softphone
+            select:
+              options: []
+              custom_value: true
+              mode: dropdown
         call_id:
           name: Call ID
           selector:
@@ -1698,10 +1723,10 @@ park:
       name: Phone
       description: The phone leaving the conversation. A native call trigger can select it automatically.
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     slot:
       name: Parking slot
       description: Leave empty to use the first available configured slot.
@@ -1730,10 +1755,10 @@ start_recording:
     device_id:
       name: Phone
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     max_seconds:
       name: Maximum duration
       default: 3600
@@ -1765,10 +1790,10 @@ stop_recording:
     device_id:
       name: Phone
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     advanced:
       name: Advanced options
       collapsed: true
@@ -1792,10 +1817,10 @@ get_recording:
       name: Phone
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
@@ -1811,10 +1836,10 @@ delete_recording:
       name: Phone
       required: true
       selector:
-        device:
-          filter:
-            - integration: voip_stack
-            - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
@@ -1830,14 +1855,10 @@ get_phone_state:
       name: Phone
       required: true
       selector:
-        device:
-          filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
-
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
 pickup:
   name: Pick up call
   description: Recover a ringing phone or parking slot on the selected phone.
@@ -1846,23 +1867,17 @@ pickup:
       name: Recovering phone
       required: true
       selector:
-        device:
-          filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     target_device_id:
       name: Ringing phone
       selector:
-        device:
-          filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     slot:
       name: Parking slot
       selector:

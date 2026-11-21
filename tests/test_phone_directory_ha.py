@@ -290,6 +290,15 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
         assert directory.resolve("200").metadata["endpoint_id"] == "sip-qa"
         assert directory.get(phone.endpoint_id).id == phone.username
         assert directory_uri(lab.hass, directory.get(phone.endpoint_id)) == f"sip:{phone.username}@127.0.0.1:5060"
+        assert directory_uri(lab.hass, directory.resolve("External")) == "sip:12345@127.0.0.1:5060"
+        door = RosterEntry("stored-door", name="Door desk", sip_uri="sip:bell@door.example.org")
+        directory.upsert(door)
+        assert directory_uri(lab.hass, door) == "sip:Door%20desk@127.0.0.1:5060"
+        directory.upsert(RosterEntry("Other group", extension="12345", metadata={"group_type": "ring"}))
+        assert directory_uri(lab.hass, directory.resolve("External")) == "sip:External@127.0.0.1:5060"
+        queue = RosterEntry("queue:q-private", name="Support", metadata={"virtual_endpoint": "queue"})
+        directory.upsert(queue)
+        assert directory_uri(lab.hass, queue) == "sip:Support@127.0.0.1:5060"
         public = json.dumps(payload)
         assert phone.password not in public
         assert "synthetic-phone-secret" not in public and "synthetic-contact-secret" not in public

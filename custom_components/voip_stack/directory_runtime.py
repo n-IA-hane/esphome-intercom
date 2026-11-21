@@ -242,7 +242,14 @@ async def async_refresh_directory(hass, *, peers=None, registered=None, prepare_
 def directory_uri(hass, row):
     """Return a canonical PBX address while retaining the row's call policy."""
     from .core.sip import SipUri
+    from .phone_directory import contact_key_reference
 
     runtime = require_runtime_data(hass)
     host = runtime.transport_config.get("advertise_host") or getattr(runtime.directory, "advertise_host", "")
-    return str(SipUri(row.id, host, int(runtime.transport_config["sip_port"]))) if host else row.sip_uri
+    if not host:
+        return ""
+    if contact_key_reference(row) or row.metadata.get("virtual_endpoint") or row.metadata.get("group_type"):
+        user = next(runtime.directory.dial_users(row), "")
+    else:
+        user = row.id  # The composed phone row carries its public SIP username.
+    return str(SipUri(user, host, int(runtime.transport_config["sip_port"]))) if user else ""

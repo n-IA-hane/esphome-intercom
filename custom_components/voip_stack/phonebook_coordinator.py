@@ -244,6 +244,11 @@ class PhonebookCoordinator:
         changed = self.phonebook != phonebook or self.roster_json != roster_json
         if changed:
             self.phonebook, self.roster_json, self.count = phonebook, roster_json, len(rows)
+            from .services import async_update_phone_service_selectors
+
+            await async_update_phone_service_selectors(self.hass, self.runtime.directory)
+            if not self._current():
+                return
             async_dispatcher_send(self.hass, PHONEBOOK_UPDATED, self)
         if not self._delivery_ready:
             return
