@@ -326,10 +326,15 @@ def _set_ha_softphone_call_state(
         for key in ("caller", "callee", "direction", "peer_name", "connected_party", "connected_uri", "connected_display_name", "caller_name", "answered_by", "dialed_target"):
             store.pop(key, None)
 
+    selected_direction = direction or str(store.get("direction", ""))
     peer_name = peer_name or extra.get("connected_party") or extra.get("answered_by")
     if peer_name:
         # A new explicit identity supersedes older display aliases for this call.
         for key in ("connected_party", "answered_by", "connected_display_name", "caller_name"):
+            if key == "caller_name" and selected_direction == "incoming":
+                if caller and store.get("caller") and caller != store["caller"] and not extra.get(key):
+                    store.pop(key, None)
+                continue
             if not extra.get(key) and store.get(key) != peer_name:
                 store.pop(key, None)
     elif call_id and call_id == previous_call_id:
@@ -337,14 +342,16 @@ def _set_ha_softphone_call_state(
     elif terminal and call_id and call_id == store.get("last_terminal_call_id"):
         peer_name = store.get("last_terminal_peer_name", "")
 
-    selected_direction = direction or str(store.get("direction", ""))
     runtime = require_runtime_data(hass)
     session = runtime.sip.get_session(call_id) if runtime.sip is not None else None
     metadata = session.metadata if session is not None else {}
     peer_id = metadata.get("dest_endpoint_id") or metadata.get("target_endpoint_id") if selected_direction == "outgoing" else metadata.get("source_endpoint_id")
     name_key = "connected_display_name" if selected_direction == "outgoing" else "caller_name"
     display_name = extra.get(name_key) or metadata.get(name_key) or store.get(name_key) or ""
-    if peer_name and display_name != peer_name:
+    if selected_direction == "incoming":
+        if caller and store.get("caller") and caller != store["caller"] and not extra.get(name_key):
+            display_name = ""
+    elif peer_name and display_name != peer_name:
         display_name = ""
     peer_name = counterpart_display(
         peer_name,
@@ -353,6 +360,9 @@ def _set_ha_softphone_call_state(
         directory=runtime.directory,
         updated=bool(extra.get("connected_uri") or metadata.get("connected_uri") or store.get("connected_uri")),
         display_name=display_name,
+        direction=selected_direction, caller=caller or store.get("caller", ""),
+        callee=callee or store.get("callee", ""),
+        connected_party=extra.get("connected_party") or store.get("connected_party", ""),
     )
     canonical = _canonical_session_fields(
         state=state,

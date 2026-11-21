@@ -330,7 +330,8 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     peer_name = counterpart_display(peer_name, fallback=callee if direction == "outgoing" else caller,
                                     name=store.get("peer_name", ""), directory=require_runtime_data(hass).directory,
                                     updated=bool(store.get("connected_uri") or store.get("last_terminal_peer_name")),
-                                    display_name=store.get("connected_display_name" if direction == "outgoing" else "caller_name", ""))
+                                    display_name=store.get("connected_display_name" if direction == "outgoing" else "caller_name", ""),
+                                    direction=direction, caller=caller, callee=callee, connected_party=connected_party)
     dialed_target = store.get("dialed_target", "") or store.get(
         "last_terminal_dialed_target", ""
     )

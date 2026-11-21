@@ -1,6 +1,7 @@
 """The dialed route and the displayed connected identity have separate contracts."""
 
 import asyncio
+import json
 from dataclasses import replace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,7 @@ from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 
 from .test_automation_originate_ha import lab as lab
 from .test_trunk_calls_ha import trunks as trunks
+from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 
 pytestmark = pytest.mark.ha
 
@@ -164,3 +166,100 @@ async def test_incoming_trunk_display_preserves_real_names_and_resolves_e164_ech
     assert invite.received_via_trunk and invite.caller_number == number and invite.caller_name == display
     assert counterpart_display(invite.caller, fallback=invite.caller_number,
         display_name=invite.caller_name, directory=lab.runtime.directory) == expected
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("remote_name", ["n-IA-hane", "Remote reception"])
+async def test_incoming_caller_name_survives_public_forward_to_another_phone(
+    trunks, registered_phones, remote_name, tmp_path,
+):
+    from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
+    from custom_components.voip_stack.config import normalized_trunk_config
+    from custom_components.voip_stack.phone_endpoint import EndpointKind
+    from custom_components.voip_stack.sip_trunk import SipTrunkClient
+    from custom_components.voip_stack.trunk_runtime import trunk_client_config
+
+    lab = trunks
+    browser = PhoneEndpoint("casa", "Casa", EndpointKind.BROWSER,
+        device_id="browser-casa", availability="available")
+    lab.runtime.endpoints.register(browser)
+    lab.roster.append(RosterEntry("Casa", metadata={"local_ha": True, "endpoint_id": "casa"}))
+    lab.runtime.endpoints.update("transfer_b", name="Waveshare P4 Touch")
+    for index, entry in enumerate(lab.roster):
+        if entry.id == "transfer_b":
+            lab.roster[index] = replace(entry, name="Waveshare P4 Touch")
+    # Explicit SIP display must win even when another contact uses that alias.
+    lab.roster.append(RosterEntry(remote_name, name="Unrelated directory alias"))
+    lab.runtime.directory.replace(lab.roster)
+    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+        "trunk_server": "127.0.0.2", "trunk_allowed_ips": ["127.0.0.2/32"],
+        "trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Casa"})
+    lab.runtime.trunk_configs["identity"] = config
+    work = SipTrunkClient(config=trunk_client_config(config), local_ip="127.0.0.1",
+        local_sip_port=listener[1], trunk_id="identity")
+    lab.calls.adopt_component("trunk:identity", work, closer=work.stop)
+    uri = f"sip:Casa@127.0.0.1:{listener[1]};line={work.contact_line}"
+    call_id = "incoming-forward-" + remote_name.replace(" ", "-")
+    messages = []
+    final = asyncio.Queue()
+
+    class Caller(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, raw, address):
+            response = sip.parse_message(raw)
+            messages.append(response)
+            if response.status_code and response.status_code >= 200:
+                final.put_nowait(response)
+                if response.header("CSeq") == "1 INVITE" and response.status_code == 200:
+                    self.transport.sendto(sip.build_request("ACK", uri,
+                        [(key, response.header(key)) for key in ("Via", "From", "To", "Call-ID")]
+                        + [("CSeq", "1 ACK")]), address)
+
+    transport, caller = await lab.hass.loop.create_datagram_endpoint(Caller, local_addr=("127.0.0.2", 0))
+    source_port = transport.get_extra_info("sockname")[1]
+    headers = [("Via", f"SIP/2.0/UDP 127.0.0.2:{source_port};branch=z9hG4bK-incoming-forward;rport"),
+        ("From", f'"{remote_name}" <sip:external@provider.example>;tag=external'),
+        ("To", "<sip:Casa@127.0.0.1>"), ("Call-ID", call_id), ("CSeq", "1 INVITE"),
+        ("Contact", f"<sip:external@127.0.0.2:{source_port}>"), ("Content-Type", "application/sdp")]
+    offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Incoming caller\r\n"
+        "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 110\r\n"
+        "a=rtpmap:110 L16/16000/1\r\na=ptime:20\r\na=sendrecv\r\n")
+    try:
+        transport.sendto(sip.build_request("INVITE", uri, headers, offer.encode()), listener)
+        async with asyncio.timeout(3):
+            while _ha_softphone_state(lab.hass, "casa")["state"] != "ringing":
+                await asyncio.sleep(.01)
+        ringing = _ha_softphone_state(lab.hass, "casa")
+        assert ringing["caller"] == ringing["peer_name"] == remote_name
+        await lab.hass.services.async_call("voip_stack", "forward", {
+            "device_id": browser.device_id, "call_id": call_id,
+            "destination": "Waveshare P4 Touch",
+        }, blocking=True)
+        response = await asyncio.wait_for(final.get(), 3)
+        assert response.status_code == 200
+        async with asyncio.timeout(3):
+            while lab.calls.get_session(call_id).state != "in_call":
+                await asyncio.sleep(.01)
+        connected = _ha_softphone_state(lab.hass, "casa")
+        assert connected["caller"] == connected["peer_name"] == remote_name
+        assert "Call established" in registered_phones[1].read()
+        dialog = [(key, response.header(key)) for key in ("Via", "From", "To", "Call-ID")]
+        transport.sendto(sip.build_request("BYE", uri, [*dialog, ("CSeq", "2 BYE")]), listener)
+        bye = await asyncio.wait_for(final.get(), 3)
+        assert bye.status_code == 200 and bye.header("CSeq") == "2 BYE"
+        async with asyncio.timeout(3):
+            while lab.calls.sessions:
+                await asyncio.sleep(.01)
+        terminal = _ha_softphone_state(lab.hass, "casa")
+        assert terminal["peer_name"] == remote_name
+        assert not lab.runtime.rtp_port_pool.get("used") and not lab.calls.endpoint_claims_snapshot()
+        (tmp_path / "incoming-forward-identity.json").write_text(json.dumps({
+            "caller": remote_name, "ringing": ringing, "connected": connected,
+            "terminal": terminal, "statuses": [message.status_code for message in messages],
+        }, indent=2) + "\n")
+    finally:
+        transport.close()

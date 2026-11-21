@@ -22,7 +22,8 @@ def connected_display_name(client):
     return display
 
 
-def counterpart_display(value="", *, fallback="", name="", display_name="", endpoint=None, entry=None, directory=None, updated=False):
+def counterpart_display(value="", *, fallback="", name="", display_name="", endpoint=None, entry=None,
+                        directory=None, updated=False, direction="", caller="", callee="", connected_party=""):
     """Prefer connected identity, resolving only known user/number echoes.
 
     An explicit new party must never inherit the requested party's name.
@@ -37,6 +38,15 @@ def counterpart_display(value="", *, fallback="", name="", display_name="", endp
                 return value
         return value
 
+    if direction == "incoming" and label(caller):
+        # Forwarded/answered-by identity belongs to the local destination.
+        # Keep a cached caller label only when it is not that other party.
+        cached_name = label(name) or label(value)
+        if cached_name in {label(callee), label(connected_party)} and cached_name != label(caller):
+            cached_name = ""
+        name = cached_name
+        value = display_name or caller
+        fallback = caller
     raw_value = str(value or fallback or "").strip()
     value = label(value) or label(fallback)
     display_name = str(display_name or "").strip()
