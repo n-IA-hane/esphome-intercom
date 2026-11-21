@@ -150,6 +150,23 @@ def build_offer_directional(
 ) -> str:
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
+    from .media import negotiator
+    from .media.shadow import engine_mode
+    if engine_mode() == "active":
+        try:
+            plan = negotiator.create_offer(send_formats, recv_formats, codec_policy=codec_policy,
+                capabilities=local_capabilities, audio_rtp_formats=audio_rtp_formats,
+                send_rtp_formats=send_rtp_formats, recv_rtp_formats=recv_rtp_formats,
+                common=include_common_codecs, dahua=include_dahua_pcm,
+                directional=allow_directional_payloads, independent=independent_audio_ptime,
+                direction=audio_direction)
+        except ValueError as error:
+            raise SdpError(str(error)) from error
+        return _write_offer_plan(plan, origin_ip, media_ip, media_port, audio_direction=audio_direction,
+            audio_rtcp=audio_rtcp, directional=allow_directional_payloads,
+            independent=independent_audio_ptime, video_port=video_port,
+            video_formats=video_formats or (() if video_format is None else (video_format,)),
+            video_direction=video_direction, codec_policy=codec_policy)
     receive_capabilities = recv_formats
     legacy_frame_ms = None
     if (
@@ -453,6 +470,38 @@ def build_offer_directional(
                 int(video_port), offered_video, direction=video_direction
             )
         )
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _write_offer_plan(plan, origin_ip, media_ip, media_port, *, audio_direction, audio_rtcp,
+                      directional, independent, video_port, video_formats, video_direction, codec_policy):
+    """Serialize decisions already owned by the negotiator, without choosing codecs."""
+    lines = ["v=0", _origin_line(origin_ip), "s=VoIP Stack", _connection_line(media_ip), "t=0 0",
+             f"m=audio {int(media_port)} RTP/AVP " + " ".join(str(number) for number, _mapping in plan.payloads)]
+    if not audio_rtcp:
+        lines.extend(("b=RS:0", "b=RR:0"))
+    flows = dict(plan.flows)
+    for fmt in plan.formats:
+        lines.append(f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}")
+        if fmt.encoding == "OPUS":
+            lines.append(f"a=fmtp:{fmt.payload_type} stereo=0;sprop-stereo=0;maxaveragebitrate=28000")
+        if directional and audio_direction == "sendrecv" and fmt.payload_type in flows:
+            lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flows[fmt.payload_type]}")
+    for event in plan.events:
+        lines.extend((f"a=rtpmap:{event.payload_type} telephone-event/{event.sample_rate}",
+                      f"a=fmtp:{event.payload_type} {_format_dtmf_events(event.events)}"))
+    if directional:
+        lines.append("a=x-voip-stack-independent-ptime:1")
+    if plan.packet_ms:
+        lines.append(f"a=ptime:{plan.packet_ms:g}")
+    if plan.maximum_ms and (not directional or independent):
+        lines.append(f"a=maxptime:{plan.maximum_ms:g}")
+    lines.append(f"a={audio_direction}")
+    video = _unique_video_payloads(video_formats)
+    if codec_policy is not None:
+        video = codec_policy.video_formats(video)
+    if video:
+        lines.extend(_video_media_lines_many(int(video_port), video, direction=video_direction))
     return "\r\n".join(lines) + "\r\n"
 
 

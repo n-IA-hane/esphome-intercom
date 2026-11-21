@@ -315,6 +315,12 @@ class OfferPlan:
     payloads: tuple[tuple[int, RtpMapping], ...]
     packet_ms: float
     trace: tuple[str, ...] = field(default=())
+    formats: tuple[RtpPcmFormat, ...] = ()
+    send_formats: tuple[RtpPcmFormat, ...] = ()
+    receive_formats: tuple[RtpPcmFormat, ...] = ()
+    events: tuple[RtpDtmfFormat, ...] = ()
+    flows: tuple[tuple[int, str], ...] = ()
+    maximum_ms: float = 0
 
     @property
     def audio(self) -> tuple[RtpMapping, ...]:

@@ -90,7 +90,8 @@ class PayloadMap:
             send_history=_extended(self.send_history, send, "remote receive"))
 
     @classmethod
-    def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None) -> PayloadMap:
+    def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None,
+                  *, preferences: Mapping[RtpMapping, int] | None = None) -> PayloadMap:
         """Number the mappings of a local offer (P2)."""
         from ..sdp_video import video_static_rtp_payload
         history = dict(previous.receive_history) if previous else {}
@@ -101,6 +102,10 @@ class PayloadMap:
         # First pass: numbers that are not negotiable (already used in this session, static).
         for mapping in wanted:
             number = by_mapping.get(mapping, PREFERRED_PAYLOADS.get(mapping))
+            if number is None:
+                preferred = (preferences or {}).get(mapping)
+                if preferred is not None and FIRST_DYNAMIC <= preferred <= LAST_DYNAMIC:
+                    number = preferred
             if number is None:
                 number = video_static_rtp_payload(mapping)
             if number is None and mapping == (TELEPHONE_EVENT, 8000, 1):

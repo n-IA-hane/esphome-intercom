@@ -55,15 +55,17 @@ def renegotiate(remote_sdp, previous: LegContract, send_formats, receive_formats
     return answer_offer(remote_sdp, send_formats, receive_formats, established=previous, **options)
 
 
-def create_offer(send_formats, receive_formats, evidence: PeerEvidence, *, codec_policy=None,
-                 capabilities=None, previous: PayloadMap | None = None) -> OfferPlan | None:
-    """Build a reduced plan when fresh, binding-specific evidence is complete.
-
-    None requests a complete offer from the serializer. It never means that the
-    peer has no formats, and it never authorizes widening a fixed capability.
-    """
+def create_offer(send_formats, receive_formats, evidence: PeerEvidence | None = None, *, codec_policy=None,
+                 capabilities=None, previous: PayloadMap | None = None, **options) -> OfferPlan:
+    """Plan a complete offer, or reduce it from complete binding evidence."""
     policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities)
-    return leg.create_offer_for_declared_peer(policy, evidence, previous=previous)
+    if evidence is not None and evidence.complete:
+        reduced = leg.create_offer_for_declared_peer(policy, evidence, previous=previous)
+        if reduced is not None:
+            return reduced
+    from .offers import create_complete_offer
+    return create_complete_offer(policy, send_formats, receive_formats, capabilities=capabilities,
+                                 previous=previous, **options)
 
 
 def as_direction(result, remote_sdp) -> RtpPcmDirection | None:
