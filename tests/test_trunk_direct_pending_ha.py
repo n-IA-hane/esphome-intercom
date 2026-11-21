@@ -41,8 +41,10 @@ async def _register_target(lab, target, monkeypatch, username="bedroom0"):
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("end", ["cancel", "timeout", "answer", "busy", "decline", "failure"])
-@pytest.mark.parametrize("target_kind", ["contact", "account"])
+@pytest.mark.parametrize(("target_kind", "end"), [
+    (kind, end) for kind in ("contact", "account")
+    for end in ("cancel", "timeout", "answer", "busy", "decline", "failure")
+] + [("mobility", "answer")])
 async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(trunks, monkeypatch, end, target_kind):
     lab = trunks
     target = lab.phones[0]
@@ -62,6 +64,34 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
     if target_kind == "account":
         await _register_target(lab, target, monkeypatch)
         destination = "bedroom0"
+    elif target_kind == "mobility":
+        from homeassistant.config_entries import ConfigSubentry
+        from custom_components.voip_stack.contact_config import contact_dicts
+        from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+        from custom_components.voip_stack.phone_policy import PhonePolicy
+        from custom_components.voip_stack.sip_registrar import SipAccount
+
+        destination = "Unregistered office line"
+        policy = {"unavailable": {"kind": "contact", "target": "External"}}
+        entry = config_entry(lab.hass)
+        replace_contacts(lab.hass, entry, [*contact_dicts(entry), {
+            "id": "External", "name": "External", "number": "12345",
+        }])
+        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+            subentry_type="phone", title=destination, unique_id="phone:away",
+            data={"endpoint_id": "away", "name": destination, "username": "away",
+                  "kind": "sip_account", "call_policy": policy},
+        ))
+        lab.runtime.endpoints.register(PhoneEndpoint(
+            "away", destination, EndpointKind.SIP_ACCOUNT, username="away",
+            policy=PhonePolicy.from_data(policy),
+        ))
+        registrar = lab.calls.component("registrar")
+        registrar.enabled = True
+        registrar.update_accounts([
+            *registrar.accounts.values(), SipAccount("away", destination, "fixture-only"),
+        ])
+        assert not registrar.registered_contacts("away")
     listener = ('127.0.0.1', lab.runtime.transport_config['sip_port'])
     config = normalized_trunk_config({'trunk_enabled': True, 'trunk_register': False,
         'trunk_server': '127.0.0.42', 'trunk_allowed_ips': ['127.0.0.42/32'],
@@ -90,7 +120,13 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
             await asyncio.wait_for(target.invited.wait(), 3)
             session = lab.calls.get_session(client.dialog_ids.call_id)
             invite = target.invites[-1]
-            assert sip.parse_sip_uri(invite.uri).user == ('bedroom0' if target_kind == 'account' else 'external-contact')
+            expected_target = {"account": "bedroom0", "contact": "external-contact", "mobility": "12345"}[target_kind]
+            assert sip.parse_sip_uri(invite.uri).user == expected_target
+            if target_kind == "mobility":
+                assert session.metadata["policy_endpoint_ids"] == ("away",)
+                assert session.metadata["outbound_trunk_id"] == "home"
+                assert not registrar.registered_contacts("away")
+                assert not lab.phones[1].invites
             if end == 'answer':
                 assert await client.wait_for_final(timeout=3) == 'in_call'
                 readers.append(asyncio.create_task(client.wait_for_dialog_termination()))
