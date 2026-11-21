@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -282,6 +283,7 @@ def websocket_subscribe_ha_softphone_state(
     unsubscribers = []
     released = False
     publishes_presence = False
+    last_payload = None
 
     @callback
     def unsubscribe() -> None:
@@ -329,7 +331,7 @@ def websocket_subscribe_ha_softphone_state(
 
     @callback
     def emit(state=None):
-        nonlocal publishes_presence
+        nonlocal publishes_presence, last_payload
         if not readable():
             return
         payload = _client_phone_state(hass, connection, requested_endpoint, state)
@@ -337,7 +339,9 @@ def websocket_subscribe_ha_softphone_state(
         if presence != publishes_presence:
             publishes_presence = presence
             _update_browser_presence(hass, requested_endpoint, 1 if presence else -1, publish=False)
-        connection.send_event(msg_id, payload)
+        if payload != last_payload:
+            connection.send_event(msg_id, payload)
+            last_payload = deepcopy(payload)
 
     @callback
     def forward_state(event: Event) -> None:
@@ -351,7 +355,7 @@ def websocket_subscribe_ha_softphone_state(
         terminal = access.terminal_reason(update)
         if terminal:
             close(terminal)
-        elif readable() and update.access_event is not None:
+        elif readable() and (update.access_event is not None or requested_endpoint in update.call_endpoints):
             emit()
 
     @callback

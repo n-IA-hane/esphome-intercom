@@ -1,0 +1,126 @@
+"""Committed browser-leg ownership changes reach the existing account stream."""
+
+from copy import deepcopy
+
+import pytest
+
+from custom_components.voip_stack import websocket_api
+from custom_components.voip_stack.browser_phone_runtime import (
+    _set_ha_softphone_call_state,
+)
+from custom_components.voip_stack.phone_endpoint import EndpointKind
+from custom_components.voip_stack.phone_state import phone_state_observer, phone_states
+from tests.test_phone_state_ha import phones as phones
+
+pytestmark = pytest.mark.ha
+
+
+class Connection:
+    def __init__(self, user):
+        self.user = user
+        self.events = []
+        self.subscriptions = {}
+
+    def send_event(self, identity, payload):
+        self.events.append(deepcopy(payload))
+
+    def send_result(self, identity):
+        pass
+
+
+async def test_closing_losing_browser_updates_stream_without_republishing_sip_dialog(
+    hass, phones, hass_admin_user
+):
+    calls = phones.calls
+    from homeassistant.helpers import entity_registry as er
+
+    er.async_get(hass).async_get_or_create(
+        "event", "voip_stack", "voip_stack_call_event"
+    )
+    entity = er.async_get(hass).async_get_or_create(
+        "sensor", "voip_stack", "kitchen_access"
+    )
+    phones.endpoints.update(
+        "kitchen", kind=EndpointKind.SIP_ACCOUNT, entity_ids={entity.entity_id}
+    )
+    connection = Connection(hass_admin_user)
+    websocket_api.websocket_subscribe_ha_softphone_state(
+        hass, connection, {"id": 1, "endpoint_id": "kitchen"}
+    )
+    observer = phone_state_observer(hass)
+    dialog_updates = []
+    detach_dialog = observer.subscribe(dialog_updates.append, kind="dialog")
+    try:
+        with calls.state_operation():
+            session = calls.upsert(
+                "shared",
+                state="ringing",
+                owner="router",
+                caller="Office",
+                callee="Kitchen",
+                source_endpoint_id="office",
+                dest_endpoint_id="kitchen",
+            )
+            calls.claim_endpoint(session.call_id, "kitchen", role="destination")
+            calls.observe_leg(
+                session.call_id,
+                "browser:kitchen",
+                role="ha_softphone",
+                endpoint_id="kitchen",
+                state="ringing",
+            )
+        _set_ha_softphone_call_state(
+            hass,
+            "ringing",
+            endpoint_id="kitchen",
+            call_id=session.call_id,
+            caller="Office",
+            callee="Kitchen",
+            direction="incoming",
+        )
+        calls.observe_leg(
+            session.call_id,
+            "independent-sip",
+            role="callee",
+            endpoint_id="kitchen",
+            state="in_call",
+        )
+        await hass.async_block_till_done()
+        before = phone_states(hass)["kitchen"]
+        assert before["state"] == "in_call"
+        assert connection.events[-1]["state"] == "ringing"
+        assert connection.events[-1]["can_attach_media"]
+        dialog_count = len(dialog_updates)
+        calls.observe_leg(
+            session.call_id,
+            "browser:kitchen",
+            role="ha_softphone",
+            endpoint_id="kitchen",
+            state="cancelled",
+        )
+        await hass.async_block_till_done()
+        assert phone_states(hass)["kitchen"] == before
+        assert len(dialog_updates) == dialog_count, (
+            "HA media ownership is not a changed SIP dialog"
+        )
+        assert connection.events[-1]["state"] == "in_call"
+        assert not connection.events[-1]["can_attach_media"]
+        assert connection.events[-1]["sequence"] == session.event_context.sequence
+        assert connection.events[-1]["revision"] == session.revision
+        previous = deepcopy(connection.events)
+        observer.refresh()
+        assert connection.events == previous, (
+            "Unchanged snapshots must remain suppressed"
+        )
+        from custom_components.voip_stack.browser_phone_runtime import (
+            _publish_ha_softphone_state,
+        )
+
+        _publish_ha_softphone_state(hass, endpoint_id="kitchen")
+        await hass.async_block_till_done()
+        assert connection.events == previous, (
+            "Identical HA cache publication must remain suppressed"
+        )
+    finally:
+        connection.subscriptions[1]()
+        detach_dialog()

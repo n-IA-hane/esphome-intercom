@@ -26,6 +26,7 @@ class PhoneProjectionUpdate:
     removed: tuple[str, ...] = ()
     access_event: object = None
     closed: bool = False
+    call_endpoints: tuple[str, ...] = ()
 
 
 def phone_state_dto(phone, *, peer_readable):
@@ -198,7 +199,9 @@ class PhoneStateObserver:
             event_type="call_commit",
             data=self._call_fields(runtime.sip, snapshot),
             context=runtime.sip.ha_context(snapshot.call_id),
-        ))
+        ), call_endpoints=tuple(sorted(set(snapshot.participants) | {
+            leg.endpoint_id for leg in snapshot.legs if leg.endpoint_id
+        })))
 
     @staticmethod
     def _call_fields(registry, snapshot):
@@ -285,7 +288,7 @@ class PhoneStateObserver:
                 _LOGGER.exception("Phone state observer failed")
 
     @callback
-    def refresh(self, event=None, *, dialogs=None):
+    def refresh(self, event=None, *, dialogs=None, call_endpoints=()):
         from .dialog_info import activity_snapshot
         from .const import CALL_EVENT
         from .parking import PARKING_CHANGED
@@ -337,8 +340,13 @@ class PhoneStateObserver:
                 PHONE_STATE_CHANGED, deepcopy(payload), context=phone_context
             )
             self._deliver(self.listeners, payload, phone_context)
-        if changed or removed:
-            self._deliver(self.projection_listeners, PhoneProjectionUpdate(changed, tuple(removed)))
+        if changed or removed or call_endpoints:
+            # Closing a losing HA leg changes its account's media/control view
+            # even when the SIP dialog DTO was already confirmed. Keep those
+            # commit endpoints on this projection path; dialog/presence streams
+            # retain their existing change suppression.
+            self._deliver(self.projection_listeners, PhoneProjectionUpdate(
+                changed, tuple(removed), call_endpoints=call_endpoints))
         if previous != current or previous_dialogs != dialogs:
             self._deliver(self.dialog_listeners, dialogs)
         if previous_activity != activity:
