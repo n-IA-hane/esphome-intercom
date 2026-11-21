@@ -142,7 +142,21 @@ def test_logical_browser_regression_uses_the_ha_interpreter(tmp_path: Path) -> N
 def test_ha_regressions_are_assigned_to_the_ha_interpreter(tmp_path: Path) -> None:
     """A new HA witness must not disappear from CI or run against stub modules."""
     targets = {str(path.relative_to(ROOT)) for path in (ROOT / "tests").glob("*_ha.py")}
-    ha_arguments = set(_record_suite_arguments(tmp_path, "ha"))
+    for path in (ROOT / "tests").glob("test_*.py"):
+        for node in ast.parse(path.read_text()).body:
+            if (isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "pytestmark"
+                            for target in node.targets)
+                    and any(isinstance(mark, ast.Attribute) and mark.attr == "ha"
+                            and isinstance(mark.value, ast.Attribute) and mark.value.attr == "mark"
+                            and isinstance(mark.value.value, ast.Name) and mark.value.value.id == "pytest"
+                            for mark in ast.walk(node.value))):
+                targets.add(str(path.relative_to(ROOT)))
+    recorded = _record_suite_arguments(tmp_path, "ha")
+    selected = [value for value in recorded if value.startswith("tests/")]
+    assert len(selected) == len(set(selected)), "HA files must be assigned exactly once"
+    assert all((ROOT / value).is_file() for value in selected)
+    ha_arguments = set(recorded)
     assert targets <= ha_arguments
     for mode in ("fast", "software-full"):
         arguments = set(_record_suite_arguments(tmp_path, mode))

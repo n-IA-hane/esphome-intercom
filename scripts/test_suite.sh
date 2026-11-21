@@ -305,6 +305,22 @@ ha_tests=(
   tests/test_imageattr_ws.py
   tests/test_video_transcoder_cadence.py
   tests/test_video_direction_generation_ha.py
+  tests/test_cn_negotiation_edges.py
+  tests/test_cn_negotiation_ha.py
+  tests/test_codec_policy_forms_ha.py
+  tests/test_codec_settings_ha.py
+  tests/test_counterpart_display_ha.py
+  tests/test_dialog_payload_lifetime_ha.py
+  tests/test_dialog_subscription_lease_ha.py
+  tests/test_directory_consumers_ha.py
+  tests/test_dtmf_media_commit_ha.py
+  tests/test_large_outbound_invite_ha.py
+  tests/test_media_bridge_plan_ha.py
+  tests/test_notify_tcp_recovery_ha.py
+  tests/test_one_way_answer_ha.py
+  tests/test_pbx_route_gate_ha.py
+  tests/test_sdp_attribute_isolation_ha.py
+  tests/test_trunk_routing.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do
