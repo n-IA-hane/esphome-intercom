@@ -280,7 +280,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("debug_capture = _DebugAudioCapture(", refresh)
 
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         self.assertIn("attach_browser_dialog_updates(hass, client, endpoint_id, source_device_id)", outbound)
         updates = (SOFTPHONE_ORIGINATE.parent / "browser_dialog_updates.py").read_text()
@@ -524,8 +524,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_initial_outbound_state_precedes_final_response_watcher(self) -> None:
         """A queued 200 OK must not be overwritten by the earlier 180 result."""
 
+        wrapper = _function_body(self.softphone_originate, "async_originate_browser_call")
+        self.assertIn("return await _async_originate_browser_call(", wrapper)
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         initial_result = outbound.index(
             'if public_result == CallState.REMOTE_RINGING.value or result == "ringing":'
@@ -538,7 +540,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         """The card must not recover the physical peer from SIP display text."""
 
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         self.assertIn('getattr(target_endpoint, "device_id", "")', outbound)
         self.assertIn('entry_metadata.get("device_id")', outbound)
@@ -588,7 +590,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self,
     ) -> None:
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         claims = outbound.rsplit("registry = _call_registry(hass)", 1)[1].split(
             "_bind_service_call_controller", 1
@@ -618,7 +620,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("await client.close()", immediate_failure)
 
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         invite_error = outbound.split(
             "except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.",
@@ -680,7 +682,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             self.outbound_lifecycle,
             "async_track_outbound_sip_client",
         )
-        self.assertIn('getattr(client, "connected_party", "") or target', outbound)
+        self.assertIn("connected_party = counterpart_display(", outbound)
+        self.assertIn('getattr(client, "connected_party", ""), fallback=target', outbound)
+        self.assertIn("display_name=connected_display_name(client)", outbound)
         self.assertIn("peer_name=connected_party", outbound)
         self.assertIn("connected_party=connected_party", outbound)
 
@@ -822,7 +826,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_outbound_softphone_accepts_live_peer_media_updates(self) -> None:
         outbound = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         self.assertIn("attach_browser_dialog_updates(hass, client, endpoint_id, source_device_id)", outbound)
         outbound = (SOFTPHONE_ORIGINATE.parent / "browser_dialog_updates.py").read_text()
@@ -882,7 +886,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self,
     ) -> None:
         call_service = _function_body(
-            self.softphone_originate, "async_originate_browser_call"
+            self.softphone_originate, "_async_originate_browser_call"
         )
         conference_branch = call_service.split('if group_type == "conference":', 1)[
             1
