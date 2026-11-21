@@ -29,7 +29,7 @@ class RtpPcmFormat:
         spec = CODECS.get(self.encoding)
         if spec is None:
             raise SdpError(f"unsupported RTP PCM encoding {self.encoding}")
-        return 8 * (spec.octets_per_sample or 0)
+        return spec.bits_per_sample or 0
 
     @property
     def audio_format(self) -> AudioFormat:
@@ -75,8 +75,8 @@ class RtpDtmfFormat:
 class RtpDtmfDirection:
     """Directional RFC 4733 payload mappings for one negotiated dialog."""
 
-    send: RtpDtmfFormat
-    recv: RtpDtmfFormat
+    send: RtpDtmfFormat | None
+    recv: RtpDtmfFormat | None
 
 
 @dataclass(frozen=True, slots=True)

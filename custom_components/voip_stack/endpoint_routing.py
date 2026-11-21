@@ -192,8 +192,19 @@ def sip_target_offer_common_audio(
     entry,
     device: dict | None = None,
 ) -> bool:
-    """Keep backend codec alternatives available for authoritative SIP SDP."""
-    return True
+    """Keep a complete offer unless this Contact declared its full fixed set."""
+    from .core.media.shadow import engine_mode
+    return not (engine_mode() == "active" and _binding_audio_evidence(peer, entry, device).complete)
+
+
+def _binding_audio_evidence(peer, entry, device=None):
+    from .core.media.capability import PeerEvidence
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    return PeerEvidence.from_tokens(
+        _rtp_capability_tokens(peer, entry, "tx", device),
+        _rtp_capability_tokens(peer, entry, "rx", device),
+        complete=bool(metadata.get("sip_capabilities_known") and metadata.get("sip_audio_capabilities_complete")),
+    )
 
 
 def sip_target_rtp_audio_profile(
@@ -223,6 +234,12 @@ def sip_target_rtp_audio_profile(
         list(HA_SIP_PCM_RX_FORMATS), hints=_rtp_audio_hints(remote_tx_tokens, legacy_tx),
         receive=True,
     ), shared_payloads)
+    from .core.media.capability import constrain_formats
+    from .core.media.shadow import engine_mode
+    evidence = _binding_audio_evidence(peer, entry, device)
+    if engine_mode() == "active" and evidence.complete:
+        send_rtp = constrain_formats(send_rtp, evidence.receives)
+        recv_rtp = constrain_formats(recv_rtp, evidence.sends)
     return SipAudioCapabilityProfile.from_rtp(
         send_rtp_formats=send_rtp,
         recv_rtp_formats=recv_rtp,

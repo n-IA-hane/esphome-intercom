@@ -758,6 +758,10 @@ def options_capabilities(body: str | bytes) -> dict:
         "sip_audio_rx_formats": tokens(False),
         "sdp_features": features,
     }
+    if (independent
+            and any(line.startswith("a=x-voip-stack-audio-tx:") for line in audio.splitlines())
+            and any(line.startswith("a=x-voip-stack-audio-rx:") for line in audio.splitlines())):
+        result["sip_audio_capabilities_complete"] = True
     sends = any(permits(fmt, True) for fmt in formats)
     receives = any(permits(fmt, False) for fmt in formats)
     if sends or receives:
@@ -784,6 +788,10 @@ def options_capabilities(body: str | bytes) -> dict:
         video = None
     if video is not None:
         result["sip_video_codec"] = video.encoding.lower()
+    elif result.get("sip_audio_capabilities_complete"):
+        # This versioned firmware catalog is complete, including media types.
+        # Missing native API metadata alone never establishes audio-only.
+        result["sip_video_codec"] = ""
     return result
 
 
@@ -802,6 +810,17 @@ def build_answer_directional(
     audio_direction: str | None = None,
     video_direction: str | None = None,
 ) -> str:
+    from .media.shadow import engine_mode
+    from .sdp_audio import dtmf_format_for_clock
+
+    event_formats = (dtmf,) if dtmf is not None and dtmf.events else ()
+    if event_formats and remote_sdp and engine_mode() == "active":
+        event_formats = tuple(dict.fromkeys(
+            replace(item, events=item.events & dtmf.events)
+            for clock in (send.sample_rate, recv.sample_rate)
+            if (item := dtmf_format_for_clock(remote_sdp, clock)) is not None
+            and item.events & dtmf.events
+        ))
     remote_audio = parse_sdp(remote_sdp) if remote_sdp else None
     if audio_direction is None:
         audio_direction = (
@@ -842,12 +861,9 @@ def build_answer_directional(
             else [recv, send]
         )
     payload_values = [str(fmt.payload_type) for fmt in selected]
-    if (
-        dtmf is not None
-        and dtmf.events
-        and str(dtmf.payload_type) not in payload_values
-    ):
-        payload_values.append(str(dtmf.payload_type))
+    for event in event_formats:
+        if str(event.payload_type) not in payload_values:
+            payload_values.append(str(event.payload_type))
     payloads = " ".join(payload_values)
     audio_lines = [f"m=audio {int(media_port)} RTP/AVP {payloads}"]
     if not audio_rtcp:
@@ -872,12 +888,12 @@ def build_answer_directional(
                 else "recv"
             )
             audio_lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flow}")
-    if dtmf is not None and dtmf.events:
+    for event in event_formats:
         audio_lines.append(
-            f"a=rtpmap:{dtmf.payload_type} telephone-event/{dtmf.sample_rate}"
+            f"a=rtpmap:{event.payload_type} telephone-event/{event.sample_rate}"
         )
         audio_lines.append(
-            f"a=fmtp:{dtmf.payload_type} {_format_dtmf_events(dtmf.events)}"
+            f"a=fmtp:{event.payload_type} {_format_dtmf_events(event.events)}"
         )
     if directional_payloads:
         audio_lines.append("a=x-voip-stack-independent-ptime:1")

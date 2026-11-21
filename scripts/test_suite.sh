@@ -257,6 +257,8 @@ ha_tests=(
   tests/test_media_codec_registry_ha.py
   tests/test_media_static_payloads_ha.py
   tests/test_media_negotiator_api_ha.py
+  tests/test_media_active_entrypoints_ha.py
+  tests/test_media_reduced_binding_offer_ha.py
   tests/test_codec_policy_rows_ha.py
   tests/test_media_packet_time_ha.py
   tests/test_media_payload_map_ha.py

@@ -113,7 +113,7 @@ def legacy_answer_offer(step: Step) -> dict:
         return {"outcome": "error", "error": type(error).__name__}
     if invite is None:
         return {"outcome": "reject"}
-    dtmf = sdp.first_offered_dtmf_format(invite.remote_sdp)
+    dtmf = invite.send_dtmf_format
     video = invite.video_answer_format or invite.local_video_format
     try:
         answer = sdp.build_answer_directional(

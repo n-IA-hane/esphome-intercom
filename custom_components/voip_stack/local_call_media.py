@@ -126,6 +126,9 @@ def source_dtmf_formats(source):
 
     if isinstance(source, LocalAudioContract):
         return (RtpDtmfFormat(source.dtmf_payload_type, source.dtmf_clock_rate, source.dtmf_events),) if source.dtmf_payload_type is not None else ()
+    from .core.media.shadow import engine_mode
+    if engine_mode() == "active" and isinstance(source, SipInvite):
+        return (source.recv_dtmf_format,) if source.recv_dtmf_format is not None else ()
     return tuple(offered_dtmf_formats(source.remote_sdp))
 
 
@@ -387,17 +390,9 @@ class LocalCallMedia:
             packet = rtp.parse_packet(data)
             if self.on_dtmf is not None:
                 if self._dtmf_sdp != self.invite.remote_sdp:
-                    from .core.sdp import offered_dtmf_formats
                     from .dtmf import RtpDtmfDecoder
 
-                    if isinstance(self.invite, LocalAudioContract):
-                        from .core.sdp import RtpDtmfFormat
-                        formats = [RtpDtmfFormat(
-                            self.invite.dtmf_payload_type, self.invite.dtmf_clock_rate,
-                            self.invite.dtmf_events,
-                        )] if self.invite.dtmf_payload_type is not None else []
-                    else:
-                        formats = offered_dtmf_formats(self.invite.remote_sdp)
+                    formats = source_dtmf_formats(self.invite)
                     self._dtmf_sdp = self.invite.remote_sdp
                     self._dtmf_decoder = RtpDtmfDecoder(formats[0].payload_type) if formats else None
                     self._dtmf_events = formats[0].events if formats else frozenset()

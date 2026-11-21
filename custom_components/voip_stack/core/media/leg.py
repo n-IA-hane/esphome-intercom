@@ -81,6 +81,8 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool) -> bool:
     name = fmt.encoding
     if name not in CODECS or (policy.encodings is not None and name not in policy.encodings):
         return False
+    if CODECS[name].auxiliary:
+        return False
     if not 1 <= fmt.sample_rate <= MAX_SAMPLE_RATE or fmt.channels not in (1, 2):
         return False
     if name == "OPUS":
@@ -120,7 +122,7 @@ def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBou
     return choose_transmit_packet_ms(
         spec, fmt.sample_rate, fmt.channels,
         producible=fixed if fixed is not None else (OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION),
-        default_ms=default_ms or policy.default_packet_ms, receiver=bounds,
+        default_ms=default_ms or spec.assumed_packet_ms or policy.default_packet_ms, receiver=bounds,
         budget=HA_AUDIO_CAPABILITIES.receive_payload_bytes if receive_only else policy.budget,
     )
 
@@ -284,10 +286,11 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
 
 def _answered_dtmf(local_offer_sdp, answer_sdp, selected: RtpPcmFormat) -> RtpDtmfFormat | None:
     """P5 for an answer: a clock both descriptions list, the clock of the codec first."""
-    offered = {item.sample_rate for item in offered_dtmf_formats(local_offer_sdp)}
-    answered = [item for item in offered_dtmf_formats(answer_sdp) if item.sample_rate in offered]
+    offered = {item.sample_rate: item for item in offered_dtmf_formats(local_offer_sdp)}
+    answered = [replace(item, events=item.events & offered[item.sample_rate].events)
+                for item in offered_dtmf_formats(answer_sdp) if item.sample_rate in offered]
     for clock in (selected.sample_rate, 8000):
-        match = next((item for item in answered if item.sample_rate == clock), None)
+        match = next((item for item in answered if item.sample_rate == clock and item.events), None)
         if match is not None:
             return match
     return None

@@ -28,6 +28,7 @@ from .sdp_audio import (
     audio_format_to_rtp as audio_format_to_rtp,
     audio_offer_formats as audio_offer_formats,
     first_offered_dtmf_format as first_offered_dtmf_format,
+    dtmf_format_for_clock as dtmf_format_for_clock,
     has_directional_audio_flow_attributes as has_directional_audio_flow_attributes,
     is_rtp_pcm_mappable as is_rtp_pcm_mappable,
     negotiate_answer_directional as negotiate_answer_directional,

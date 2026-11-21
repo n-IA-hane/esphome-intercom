@@ -150,8 +150,7 @@ def prepare_trunk_preanswer(
         provisional=True,
     )
     expires_at = time.time() + (float(dtmf_timeout_ms) / 1000.0)
-    dtmf_formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    dtmf_format = dtmf_formats[0] if dtmf_formats else None
+    dtmf_format = invite.recv_dtmf_format
     # RFC 4733 works in provisional early media. SIP INFO is an in-dialog
     # compatibility transport, so only its branch receives an immediate 2xx.
     confirm_for_sip_info = dtmf_format is None

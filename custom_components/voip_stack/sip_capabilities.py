@@ -2,10 +2,43 @@
 
 from __future__ import annotations
 
-
+import asyncio
 from .core import sdp
 from .endpoint_lifecycle import create_runtime_task
 from .runtime_data import require_runtime_data, sip_endpoint_manager, sip_registrar
+
+
+async def wait_for_target_capabilities(hass, target, *, timeout=0.5):
+    """Wait within one shared budget without taking ownership of registrar probes."""
+    runtime = require_runtime_data(hass)
+    directory = runtime.directory
+    registrar = sip_registrar(hass)
+    if directory is None or registrar is None or timeout <= 0:
+        return
+    try:
+        row = directory.resolve(str(target))
+    except ValueError:
+        # The routing owner reports ambiguous destinations with its own error.
+        return
+    if row is None:
+        return
+    rows = [row]
+    for member in row.metadata.get("members", ()):
+        try:
+            candidate = directory.resolve_reference(member)
+        except ValueError:
+            continue
+        if candidate is not None:
+            rows.append(candidate)
+    users = {item.id.casefold() for item in rows if registrar.registered_contacts(item.id)}
+    for username in users:
+        schedule_capability_probe(hass, username)
+    pending = {task for (username, _generation), task in runtime.capability_probes.items()
+               if username in users and not task.done()}
+    if pending:
+        completed, _ = await asyncio.wait(pending, timeout=min(float(timeout), 0.5))
+        if completed:
+            await asyncio.gather(*completed, return_exceptions=True)
 
 
 def schedule_capability_probe(hass, username):

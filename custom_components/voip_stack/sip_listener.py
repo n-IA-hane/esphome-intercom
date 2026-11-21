@@ -128,6 +128,19 @@ class SipInvite:
         return self.recv_format
 
     @property
+    def recv_dtmf_format(self) -> sdp.RtpDtmfFormat | None:
+        """The event clock follows the peer's transmitted audio on this leg."""
+        from .core.media.shadow import engine_mode
+        return (sdp.dtmf_format_for_clock(self.remote_sdp, self.recv_format.sample_rate)
+                if engine_mode() == "active" else sdp.first_offered_dtmf_format(self.remote_sdp))
+
+    @property
+    def send_dtmf_format(self) -> sdp.RtpDtmfFormat | None:
+        from .core.media.shadow import engine_mode
+        return (sdp.dtmf_format_for_clock(self.remote_sdp, self.send_format.sample_rate)
+                if engine_mode() == "active" else sdp.first_offered_dtmf_format(self.remote_sdp))
+
+    @property
     def send_video_format(self) -> sdp.RtpVideoFormat | None:
         return self.video_format
 

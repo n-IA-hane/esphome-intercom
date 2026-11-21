@@ -226,6 +226,8 @@ async def async_originate_browser_call(
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
         trunk_available(trunk)
     )
+    from .sip_capabilities import wait_for_target_capabilities
+    await wait_for_target_capabilities(hass, target)
     try:
         contacts = routing_snapshot(require_runtime_data(hass))
     except ValueError as error:

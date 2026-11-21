@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 # Which engine an entry point uses. "legacy": the engine in production, nothing else runs.
 # "shadow": production decides, the new engine is computed beside it and differences are logged.
 # The default costs nothing. The environment variable lets one installation collect real calls.
-ENGINE_MODES = ("legacy", "shadow")
+ENGINE_MODES = ("legacy", "shadow", "active")
 _engine_mode = os.environ.get("VOIP_STACK_MEDIA_ENGINE", "legacy")
 
 

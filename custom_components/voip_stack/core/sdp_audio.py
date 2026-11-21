@@ -723,9 +723,23 @@ def first_offered_dtmf_format(
     return formats[0] if formats else None
 
 
+def dtmf_format_for_clock(remote_sdp: str | bytes, clock_rate: int) -> RtpDtmfFormat | None:
+    """P5: prefer the active audio clock, then a negotiated 8000 Hz alternative."""
+    formats = offered_dtmf_formats(remote_sdp)
+    for clock in dict.fromkeys((clock_rate, 8000)):
+        for fmt in formats:
+            if fmt.sample_rate == clock and fmt.events:
+                return fmt
+    return None
+
+
 def negotiate_dtmf_answer_directional(
     remote_sdp: str | bytes,
     local_offer_sdp: str | bytes,
+    *,
+    send_clock_rate: int | None = None,
+    receive_clock_rate: int | None = None,
+    audio: RtpPcmDirection | None = None,
 ) -> RtpDtmfDirection | None:
     """Return directional RFC 4733 mappings selected by an SDP answer.
 
@@ -737,6 +751,22 @@ def negotiate_dtmf_answer_directional(
 
     answered = offered_dtmf_formats(remote_sdp)
     offered = offered_dtmf_formats(local_offer_sdp)
+    if audio is not None:
+        from .media.shadow import engine_mode
+        if engine_mode() == "active":
+            send_clock_rate, receive_clock_rate = audio.send.sample_rate, audio.recv.sample_rate
+    if send_clock_rate is not None or receive_clock_rate is not None:
+        def selected(clock, receive):
+            for wanted in dict.fromkeys((clock, 8000)):
+                for answer in answered:
+                    for offer in offered:
+                        if answer.sample_rate == offer.sample_rate == wanted and (events := answer.events & offer.events):
+                            chosen = offer if receive else answer
+                            return replace(chosen, events=events)
+            return None
+        send = selected(send_clock_rate, False)
+        recv = selected(receive_clock_rate, True)
+        return RtpDtmfDirection(send, recv) if send is not None or recv is not None else None
     for answer_format in answered:
         for offer_format in offered:
             if answer_format.sample_rate == offer_format.sample_rate:
@@ -814,7 +844,18 @@ def negotiate_directional(
     codec_policy=None,
     local_recv_capabilities: tuple[AudioFormat, ...] | None = None,
     local_capabilities=None,
+    established: RtpPcmDirection | None = None,
 ) -> RtpPcmDirection | None:
+    from .media import negotiator
+    from .media.shadow import engine_mode
+
+    if engine_mode() == "active":
+        previous = (negotiator.LegContract(established.send, established.recv, None)
+                    if established is not None else None)
+        contract = negotiator.answer_offer(remote_sdp, local_send_preferred, local_recv_preferred,
+            capabilities=local_capabilities, codec_policy=codec_policy,
+            dahua=allow_dahua_pcm, established=previous)
+        return negotiator.as_direction(contract, remote_sdp)
     remote_sdp = SdpDocument.parse(remote_sdp)
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
@@ -886,8 +927,18 @@ def negotiate_answer_directional(
     local_offer_sdp: str | bytes | None = None,
     allow_dahua_pcm: bool = False,
     local_capabilities=None,
+    codec_policy=None,
 ) -> RtpPcmDirection | None:
     """Negotiate one standards-compliant media contract from an SDP answer."""
+
+    from .media import negotiator
+    from .media.shadow import engine_mode
+
+    if engine_mode() == "active" and local_offer_sdp is not None:
+        contract = negotiator.apply_answer(local_offer_sdp, remote_sdp,
+            local_send_preferred, local_recv_preferred, capabilities=local_capabilities,
+            codec_policy=codec_policy, dahua=allow_dahua_pcm)
+        return negotiator.as_direction(contract, remote_sdp)
 
     remote_sdp = SdpDocument.parse(remote_sdp)
     parsed = parse_sdp(remote_sdp)

@@ -491,5 +491,5 @@ async def route_invite(
         resolved_callee=resolved_callee,
         source_endpoint=source_endpoint,
         target_endpoint=target_endpoint or preferred_browser_phone(hass),
-        dtmf_format=sip_sdp.first_offered_dtmf_format(invite.remote_sdp),
+        dtmf_format=invite.recv_dtmf_format,
     )

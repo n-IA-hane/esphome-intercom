@@ -1449,6 +1449,7 @@ class SipCallClient:
                     allow_dahua_pcm=self.include_dahua_pcm,
                     codec_policy=self.codec_policy,
                     local_capabilities=HA_AUDIO_CAPABILITIES,
+                    established=sdp.RtpPcmDirection(current.send_format, current.recv_format),
                 )
             )
             if selected is None:
@@ -1521,11 +1522,19 @@ class SipCallClient:
             dtmf_formats = sdp.offered_dtmf_formats(request.body)
             dtmf_direction = (
                 sdp.negotiate_dtmf_answer_directional(
-                    request.body, local_offer_sdp
+                    request.body, local_offer_sdp, audio=selected
                 )
                 if local_offer_sdp
                 else None
             )
+            from .core.media.shadow import engine_mode
+            if dtmf_direction is not None:
+                dtmf_recv, dtmf_send = dtmf_direction.recv, dtmf_direction.send
+            elif engine_mode() == "active":
+                dtmf_recv = sdp.dtmf_format_for_clock(request.body, selected.recv.sample_rate)
+                dtmf_send = sdp.dtmf_format_for_clock(request.body, selected.send.sample_rate)
+            else:
+                dtmf_recv = dtmf_send = next(iter(dtmf_formats), None)
             answer = local_offer_sdp or sdp.build_answer_directional(
                 self.local_ip,
                 self.media_ip,
@@ -1565,48 +1574,12 @@ class SipCallClient:
                 match_received_codec=self.match_received_codec,
                 recv_payload_history=recv_payload_history,
                 remote_target_uri=remote_target,
-                dtmf_payload_type=(
-                    dtmf_direction.recv.payload_type
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].payload_type
-                    if dtmf_formats
-                    else None
-                ),
-                dtmf_clock_rate=(
-                    dtmf_direction.recv.sample_rate
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].sample_rate
-                    if dtmf_formats
-                    else 8000
-                ),
-                dtmf_events=(
-                    dtmf_direction.recv.events
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].events
-                    if dtmf_formats
-                    else frozenset()
-                ),
-                send_dtmf_payload_type=(
-                    dtmf_direction.send.payload_type
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].payload_type
-                    if dtmf_formats
-                    else None
-                ),
-                send_dtmf_clock_rate=(
-                    dtmf_direction.send.sample_rate
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].sample_rate
-                    if dtmf_formats
-                    else None
-                ),
-                send_dtmf_events=(
-                    dtmf_direction.send.events
-                    if dtmf_direction is not None
-                    else dtmf_formats[0].events
-                    if dtmf_formats
-                    else None
-                ),
+                dtmf_payload_type=dtmf_recv.payload_type if dtmf_recv else None,
+                dtmf_clock_rate=dtmf_recv.sample_rate if dtmf_recv else 8000,
+                dtmf_events=dtmf_recv.events if dtmf_recv else frozenset(),
+                send_dtmf_payload_type=dtmf_send.payload_type if dtmf_send else None,
+                send_dtmf_clock_rate=dtmf_send.sample_rate if dtmf_send else None,
+                send_dtmf_events=dtmf_send.events if dtmf_send else frozenset(),
                 remote_audio_direction=str(parsed["direction"]),
                 local_audio_direction=sdp.local_direction_for_offer(
                     parsed["direction"],
@@ -3639,6 +3612,7 @@ class SipCallClient:
             dtmf_pair = sdp.negotiate_dtmf_answer_directional(
                 answer.body,
                 offer,
+                audio=audio,
             )
             dtmf_recv = dtmf_pair.recv if dtmf_pair is not None else None
             dtmf_send = dtmf_pair.send if dtmf_pair is not None else None
@@ -4301,7 +4275,7 @@ class SipCallClient:
         remote_video = sdp.parse_video_sdp(msg.body) if video_answer is not None else None
         answered_dtmf_formats = sdp.offered_dtmf_formats(msg.body)
         dtmf_direction = (
-            sdp.negotiate_dtmf_answer_directional(msg.body, self._local_sdp_body)
+            sdp.negotiate_dtmf_answer_directional(msg.body, self._local_sdp_body, audio=selected)
             if self._local_sdp_body
             else None
         )

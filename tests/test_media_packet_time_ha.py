@@ -86,6 +86,23 @@ def test_payload_size_needs_whole_samples():
     assert payload_octets(CODECS["OPUS"], 48000, 2, 2.5) == 0
 
 
+def test_exact_decimal_packet_times_are_not_confused_with_binary_float_noise():
+    assert payload_octets(CODECS["L16"], 5000, 1, 2.6) == 26
+
+
+@pytest.mark.parametrize("name,octets", [("G726-16", 40), ("G726-24", 60), ("G726-32", 80), ("G726-40", 100)])
+def test_g726_packets_contain_whole_codewords_and_octets(name, octets):
+    assert payload_octets(CODECS[name], 8000, 1, 20) == octets
+    if CODECS[name].sample_quantum > 4:
+        assert payload_octets(CODECS[name], 8000, 1, 2.5) is None
+
+
+def test_g723_packet_time_is_a_multiple_of_its_real_codec_frame():
+    assert payload_octets(CODECS["G723"], 8000, 1, 20) is None
+    assert payload_octets(CODECS["G723"], 8000, 1, 30) == 24
+    assert payload_octets(CODECS["G723"], 8000, 1, 60) == 48
+
+
 def test_a_requested_duration_is_never_rounded_to_make_it_fit():
     """20.0001 ms is not a whole number of samples at 8 kHz: the request is not honoured."""
     choice = choose("PCMA", 8000, ptime=20.0001)

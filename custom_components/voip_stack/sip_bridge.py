@@ -394,7 +394,8 @@ def invite_rtp_peer(
 ) -> RtpPeer:
     """Build one inbound peer, retaining an offered established audio mapping."""
 
-    dtmf = sdp.first_offered_dtmf_format(invite.remote_sdp)
+    dtmf = invite.recv_dtmf_format
+    send_dtmf = invite.send_dtmf_format
     updated = RtpPeer(
         host=invite.remote_rtp_host,
         port=invite.remote_rtp_port,
@@ -408,6 +409,9 @@ def invite_rtp_peer(
         dtmf_payload_type=(dtmf.payload_type if dtmf is not None else None),
         dtmf_clock_rate=(dtmf.sample_rate if dtmf is not None else 8000),
         dtmf_events=(dtmf.events if dtmf is not None else frozenset()),
+        send_dtmf_payload_type=send_dtmf.payload_type if send_dtmf is not None else None,
+        send_dtmf_clock_rate=send_dtmf.sample_rate if send_dtmf is not None else None,
+        send_dtmf_events=send_dtmf.events if send_dtmf is not None else frozenset(),
         can_send=invite.remote_audio_direction in {"sendonly", "sendrecv"},
         can_receive=(
             invite.remote_audio_direction in {"recvonly", "sendrecv"}

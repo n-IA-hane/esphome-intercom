@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from math import lcm
 
 from .codecs import CodecSpec
 
@@ -62,7 +63,7 @@ MINIMUM_SEND_MS = 1
 
 def _samples(clock_rate: int, packet_ms: float) -> Fraction:
     """Exact number of samples in a packet. No rounding: 20.0001 ms is not 20 ms."""
-    return Fraction(clock_rate) * Fraction(packet_ms) / 1000
+    return Fraction(clock_rate) * Fraction(str(packet_ms)) / 1000
 
 
 def _plain(value: Fraction) -> float:
@@ -74,12 +75,18 @@ def payload_octets(spec: CodecSpec, clock_rate: int, channels: int, packet_ms: f
 
     A codec without a fixed sample size (Opus) has no size to check and returns 0.
     """
+    if spec.frame_duration_ms is not None:
+        frames = Fraction(str(packet_ms)) / spec.frame_duration_ms
+        if frames <= 0 or frames.denominator != 1:
+            return None
+        return int(frames) * (spec.max_frame_octets or 0)
     if spec.octets_per_sample is None:
         return 0
     samples = _samples(clock_rate, packet_ms)
-    if samples.denominator != 1 or samples <= 0:
+    if samples.denominator != 1 or samples <= 0 or int(samples) % spec.sample_quantum:
         return None
-    return int(samples) * channels * spec.octets_per_sample
+    octets = samples * channels * Fraction(str(spec.octets_per_sample))
+    return int(octets) if octets.denominator == 1 else None
 
 
 def _decimal_quantum(clock_rate: int) -> int:
@@ -123,9 +130,9 @@ def choose_transmit_packet_ms(
         if producible.fixed or not sized:
             return None
         limit_ms = min(producible.maximum_ms, receiver.maxptime or producible.maximum_ms)
-        samples = min(budget // (channels * spec.octets_per_sample),
-                      int(Fraction(clock_rate) * Fraction(limit_ms) / 1000))
-        quantum = _decimal_quantum(clock_rate)
+        samples = min(int(Fraction(budget) / (channels * Fraction(str(spec.octets_per_sample)))),
+                      int(Fraction(clock_rate) * Fraction(str(limit_ms)) / 1000))
+        quantum = lcm(_decimal_quantum(clock_rate), spec.sample_quantum)
         samples -= samples % quantum
         if samples <= 0:
             return None

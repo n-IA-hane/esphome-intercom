@@ -8,6 +8,7 @@ from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABI
 from custom_components.voip_stack.core.audio_format import AudioFormat, PcmFormat
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.media import leg, negotiator
+from tests.media_corpus_support import POLICIES, _describe, load_steps, mismatches
 
 pytestmark = pytest.mark.ha
 
@@ -72,3 +73,19 @@ def test_an_answer_cannot_replace_the_bounds_advertised_in_the_offer():
         capabilities=HA_AUDIO_CAPABILITIES)
     assert (result.send.payload_type, result.send.frame_ms) == (97, 10)
     assert (result.receive.payload_type, result.receive.frame_ms, result.receive.max_frame_ms) == (96, 20, 20)
+
+
+@pytest.mark.parametrize("step", load_steps(), ids=lambda step: step.name)
+def test_public_api_meets_the_same_captured_contracts_as_the_leg_engine(step):
+    send, receive = POLICIES[step.policy]
+    options = {"capabilities": HA_AUDIO_CAPABILITIES, "dahua": step.profile == "dahua_pcm"}
+    result = (negotiator.answer_offer(step.sdp, send, receive, **options) if step.op == "answer_offer"
+        else negotiator.apply_answer(step.local_offer, step.sdp, send, receive, **options))
+    if isinstance(result, negotiator.Refusal):
+        actual = {"outcome": "reject"}
+    else:
+        actual = {"outcome": "accept", "send": _describe(result.send), "recv": _describe(result.receive),
+            "dtmf": {"clock": result.dtmf.sample_rate, "payload": result.dtmf.payload_type} if result.dtmf else None,
+            "recv_accept": sorted(_describe(item)["codec"] for item in result.receive_accept) or None}
+    expected = {key: value for key, value in step.expect.items() if not key.startswith("answer_")}
+    assert not mismatches(expected, actual), mismatches(expected, actual)
