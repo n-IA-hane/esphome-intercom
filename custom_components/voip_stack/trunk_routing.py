@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 
-from .call_scope import set_pending_route, take_pending_route
+from .routing_automation import request_route_window
 from .const import CONF_TRUNK_INBOUND_DEFAULT_TARGET
 from .fsm import CallState
 from .pbx_trace import trace_call
@@ -40,64 +38,25 @@ async def async_request_inbound_destination(
 ) -> dict:
     """Expose one bounded automation decision and always release its future."""
 
-    future = asyncio.get_running_loop().create_future()
-    from .call_projection import publish_bridge_projection
-
-    now = time.time()
-    expires_at = now + float(timeout)
     fallback = trunk_default_target(trunk_config)
-    session = registry.transition(
-        invite.call_id,
-        state=CallState.CONNECTING.value,
-        callee=fallback,
-        expected_generation=session.generation,
-    )
+    session = registry.transition(invite.call_id, state=CallState.CONNECTING.value,
+        callee=fallback, expected_generation=session.generation)
     if session is None:
         return {}
-    set_pending_route(
-        hass,
-        invite.call_id,
-        {
-            "future": future,
-            "invite": invite,
-            "created_at": now,
-            "expires_at": expires_at,
-            "decision_deadline": expires_at,
-            "fallback_destination": fallback,
-        },
-    )
-    trace_call(
-        _LOGGER, invite.call_id,
+    trace_call(_LOGGER, invite.call_id,
         "Trunk %s waits for a routing action for %ss; fallback is %s",
-        trunk_config.get("name") or getattr(invite, "trunk_id", "") or "default",
-        float(timeout), fallback,
-    )
-    publish_bridge_projection(
-        hass,
-        session,
-        peer_name=invite.caller,
-        direction="incoming",
-        ingress="trunk",
-        origin="trunk",
-        route_kind="trunk",
-        scope="sip_trunk",
-        phase="route_decision",
-        route_request=True,
-        default_destination=fallback,
-        fallback_destination=fallback,
-        expires_at=expires_at,
-        decision_deadline=expires_at,
-        decision_timeout_ms=int(float(timeout) * 1000),
-        source_host=invite.source_host,
-    )
-    try:
-        decision = await asyncio.wait_for(future, timeout=float(timeout))
-        action = str((decision or {}).get("action") or "default").strip().lower()
-        if action == "default":
+        trunk_config.get("name") or getattr(invite, "trunk_id", "") or "default", float(timeout), fallback)
+    decision = await request_route_window(hass, session, invite=invite, timeout=timeout, stage="dtmf_fallback",
+        peer_name=invite.caller, direction="incoming", ingress="trunk", origin="trunk",
+        route_kind="trunk", scope="sip_trunk", default_destination=fallback,
+        fallback_destination=fallback, source_host=invite.source_host)
+    action = str(decision.get("action") or "default").strip().lower()
+    if action == "default":
+        if decision:
             trace_call(_LOGGER, invite.call_id, "Routing action keeps trunk fallback %s", fallback)
-        return dict(decision or {}) if action != "default" else {}
-    except TimeoutError:
-        trace_call(_LOGGER, invite.call_id, "No routing action before the deadline; using trunk fallback %s", fallback)
+        else:
+            trace_call(_LOGGER, invite.call_id, "No routing action before the deadline; using trunk fallback %s", fallback)
+        if decision.get("trunk_id"):
+            return {"action": "default", "trunk_id": decision["trunk_id"]}
         return {}
-    finally:
-        take_pending_route(hass, invite.call_id)
+    return decision

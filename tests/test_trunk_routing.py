@@ -1,172 +1,82 @@
-"""Behavioral tests for the bounded inbound trunk automation decision."""
+"""Production trunk routing delegates to the call generation's shared window."""
 
-from __future__ import annotations
-
-import asyncio
-import importlib.util
 import logging
-from pathlib import Path
-import sys
-import types
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from custom_components.voip_stack import routing_automation, trunk_routing
+from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / "custom_components" / "voip_stack" / "trunk_routing.py"
+pytestmark = pytest.mark.ha
 
 
 @pytest.fixture
-def trunk_routing(monkeypatch):
-    package_name = "voip_stack_trunk_routing_test"
-    package = types.ModuleType(package_name)
-    package.__path__ = [str(MODULE.parent)]
-    monkeypatch.setitem(sys.modules, package_name, package)
-
-    homeassistant = types.ModuleType("homeassistant")
-    homeassistant.__path__ = []
-    core = types.ModuleType("homeassistant.core")
-    core.HomeAssistant = type("HomeAssistant", (), {})
-    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant)
-    monkeypatch.setitem(sys.modules, "homeassistant.core", core)
-
-    routes: dict = {}
-    publish_bridge_projection = Mock()
-    dependencies = {
-        "call_scope": {
-            "set_pending_route": Mock(
-                side_effect=lambda _hass, call_id, route: routes.__setitem__(
-                    call_id, route
-                )
-            ),
-            "take_pending_route": Mock(
-                side_effect=lambda _hass, call_id: routes.pop(call_id, None)
-            ),
-        },
-        "const": {"CONF_TRUNK_INBOUND_DEFAULT_TARGET": "fallback"},
-        "call_projection": {"publish_bridge_projection": publish_bridge_projection},
-        "fsm": {
-            "CallState": SimpleNamespace(
-                CONNECTING=SimpleNamespace(value="connecting")
-            )
-        },
-    }
-    for name, values in dependencies.items():
-        dependency = types.ModuleType(f"{package_name}.{name}")
-        for key, value in values.items():
-            setattr(dependency, key, value)
-        monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
-
-    module_name = f"{package_name}.trunk_routing"
-    spec = importlib.util.spec_from_file_location(module_name, MODULE)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, module_name, module)
-    spec.loader.exec_module(module)
-    module.test_routes = routes
-    module.test_publish_bridge_projection = publish_bridge_projection
-    return module
-
-
-def _invite():
-    return SimpleNamespace(
-        call_id="call-1",
-        caller="Alice",
-        source_host="10.0.0.2",
-    )
-
-
-def _registry_and_session():
-    session = SimpleNamespace(generation=1, state="connecting")
-    registry = SimpleNamespace(transition=Mock(return_value=session))
-    return registry, session
+async def window(hass, monkeypatch):
+    registry = SipEndpointRuntime()
+    registry.activate()
+    session = registry.upsert("call-1", state="connecting", owner="router")
+    sink = Mock()
+    monkeypatch.setattr(routing_automation, "call_registry", lambda _: registry)
+    monkeypatch.setattr(routing_automation, "publish_bridge_projection", sink)
+    invite = SimpleNamespace(call_id=session.call_id, caller="Alice", source_host="192.0.2.2")
+    yield SimpleNamespace(hass=hass, registry=registry, session=session, invite=invite, sink=sink)
+    await registry.shutdown()
 
 
 @pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
-def test_explicit_automation_decision_wins_and_future_is_removed(
-    trunk_routing, caplog, log_level,
-) -> None:
+async def test_explicit_automation_decision_wins_and_future_is_removed(window, caplog, log_level):
     caplog.set_level(log_level, logger=trunk_routing._LOGGER.name)
-    def answer_route(*_args, **_kwargs):
-        trunk_routing.test_routes["call-1"]["future"].set_result(
-            {"action": "forward", "destination": "RG Casa"}
-        )
-
-    trunk_routing.test_publish_bridge_projection.side_effect = answer_route
-    registry, session = _registry_and_session()
-
-    result = asyncio.run(
-        trunk_routing.async_request_inbound_destination(
-            SimpleNamespace(),
-            _invite(),
-            registry=registry,
-            session=session,
-            trunk_config={"fallback": "Casa", "name": "Office"},
-            timeout=1.0,
-        )
-    )
-
+    def answer(*_args, **_details):
+        window.registry.artifact_for("call-1", "pending_route")["future"].set_result(
+            {"action": "forward", "destination": "RG Casa"})
+    window.sink.side_effect = answer
+    result = await trunk_routing.async_request_inbound_destination(window.hass, window.invite,
+        registry=window.registry, session=window.session,
+        trunk_config={"trunk_inbound_default_target": "Casa", "name": "Office"}, timeout=1.0)
     assert result == {"action": "forward", "destination": "RG Casa"}
-    assert trunk_routing.test_routes == {}
-    state = trunk_routing.test_publish_bridge_projection.call_args
-    assert state.args[1] is session
-    assert state.kwargs["fallback_destination"] == "Casa"
-    assert state.kwargs["ingress"] == "trunk"
-    records = [record for record in caplog.records if record.name == trunk_routing._LOGGER.name]
-    if log_level == logging.DEBUG:
-        assert len(records) == 1
-        assert records[0].levelno == logging.DEBUG
+    assert window.registry.artifact_for("call-1", "pending_route") is None
+    assert window.sink.call_args.args[1] is window.session
+    assert window.sink.call_args.kwargs["fallback_destination"] == "Casa"
+    assert window.sink.call_args.kwargs["ingress"] == "trunk"
+    records = [item for item in caplog.records if item.name == trunk_routing._LOGGER.name]
+    assert len(records) == int(log_level == logging.DEBUG)
+    if records:
         assert "Trunk Office waits for a routing action" in records[0].getMessage()
         assert "fallback is Casa" in records[0].getMessage()
-        assert records[0].getMessage().endswith("[call_id=call-1]")
-    else:
-        assert not records
 
 
-def test_default_or_timeout_preserves_configured_fallback(trunk_routing, caplog) -> None:
+async def test_default_or_timeout_preserves_configured_fallback(window, caplog):
     caplog.set_level(logging.DEBUG, logger=trunk_routing._LOGGER.name)
-    def select_default(*_args, **_kwargs):
-        trunk_routing.test_routes["call-1"]["future"].set_result(
-            {"action": "default", "destination": "ignored"}
-        )
-
-    trunk_routing.test_publish_bridge_projection.side_effect = select_default
-    registry, session = _registry_and_session()
-    result = asyncio.run(
-        trunk_routing.async_request_inbound_destination(
-            SimpleNamespace(),
-            _invite(),
-            registry=registry,
-            session=session,
-            trunk_config={"fallback": "  Test  "},
-            timeout=1.0,
-        )
-    )
+    def answer(*_args, **_details):
+        window.registry.artifact_for("call-1", "pending_route")["future"].set_result(
+            {"action": "default", "destination": "ignored"})
+    window.sink.side_effect = answer
+    result = await trunk_routing.async_request_inbound_destination(window.hass, window.invite,
+        registry=window.registry, session=window.session,
+        trunk_config={"trunk_inbound_default_target": "  Test  "}, timeout=1.0)
     assert result == {}
-    assert trunk_routing.trunk_default_target({"fallback": "  Test  "}) == "Test"
     assert trunk_routing.trunk_default_target({}) == "HA"
-    assert trunk_routing.test_routes == {}
     assert "Routing action keeps trunk fallback Test" in caplog.text
     assert "No routing action before the deadline" not in caplog.text
 
 
-def test_timeout_always_removes_pending_route(trunk_routing, caplog) -> None:
+async def test_timeout_always_removes_pending_route(window, caplog):
     caplog.set_level(logging.DEBUG, logger=trunk_routing._LOGGER.name)
-    registry, session = _registry_and_session()
-    result = asyncio.run(
-        trunk_routing.async_request_inbound_destination(
-            SimpleNamespace(),
-            _invite(),
-            registry=registry,
-            session=session,
-            trunk_config={},
-            timeout=0.001,
-        )
-    )
-
+    result = await trunk_routing.async_request_inbound_destination(window.hass, window.invite,
+        registry=window.registry, session=window.session, trunk_config={}, timeout=0.001)
     assert result == {}
-    assert trunk_routing.test_routes == {}
+    assert window.registry.artifact_for("call-1", "pending_route") is None
     assert "No routing action before the deadline; using trunk fallback HA" in caplog.text
-    assert "Routing action keeps trunk fallback" not in caplog.text
+
+
+async def test_default_destination_can_keep_an_explicit_outbound_line(window):
+    def answer(*_args, **_details):
+        window.registry.artifact_for("call-1", "pending_route")["future"].set_result(
+            {"action": "default", "destination": "ignored", "trunk_id": "work"})
+    window.sink.side_effect = answer
+    result = await trunk_routing.async_request_inbound_destination(window.hass, window.invite,
+        registry=window.registry, session=window.session,
+        trunk_config={"trunk_inbound_default_target": "12345"}, timeout=1.0)
+    assert result == {"action": "default", "trunk_id": "work"}

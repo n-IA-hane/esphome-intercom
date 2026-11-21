@@ -183,12 +183,13 @@ def _logical_endpoint_for_route(hass: HomeAssistant, route):
     return endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
 
 
-async def async_originate_browser_call(
+async def _async_originate_browser_call(
     call: ServiceCall,
     *,
     endpoint_id: str,
     browser_endpoint,
     force_ha_bridge: bool = False,
+    routing_scope: dict,
 ) -> None:
     """Originate a standards SIP call from one Home Assistant browser phone."""
     from .core.sip import SipUri, parse_sip_uri, sip_default_port
@@ -238,6 +239,55 @@ async def async_originate_browser_call(
         trunk_id=trunk_selection.identity).route
     route = resolve_route(target, contacts)
     dialed_target = target
+    routing_call_id = None
+    explicit_route = False
+    from .automation_routing import RouteRequest, has_native_route_window
+
+    identity = RouteRequest("", local_name, target,
+        caller_number=str(getattr(browser_endpoint, "extension", "") or getattr(browser_endpoint, "username", "") or local_name),
+        caller_name=local_name, called_number=str(getattr(route.entry, "number", "") or target),
+        outbound_trunk_id=trunk_selection.identity)
+    if has_native_route_window(hass, identity, route):
+        from .core.sip import make_call_id
+
+        identity = replace(identity, call_id=make_call_id("ha"))
+        from types import SimpleNamespace
+        from .inbound_routing.automation import request_route_override
+
+        if getattr(browser_endpoint, "active_call_id", ""):
+            raise _service_error("this phone already has an active call", "phone_busy", phone=local_name)
+        registry = _call_registry(hass)
+        session = registry.upsert(identity.call_id, state=CallState.CONNECTING.value, owner="router",
+            caller=local_name, callee=target, route_kind=route.action.value,
+            endpoint_id=endpoint_id, source_endpoint_id=endpoint_id, session_device_id=source_device_id,
+            caller_number=identity.caller_number, caller_name=local_name, called_number=identity.called_number,
+            direction="outgoing", ingress="extension", dialed_target=dialed_target,
+            outbound_trunk_id=trunk_selection.identity)
+        routing_scope["session"] = session
+        _bind_service_call_controller(registry, session.call_id, call)
+        override = await request_route_override(runtime=SimpleNamespace(hass=hass, ha_peer_name=lambda _: local_name),
+            invite=identity, decision=route, authenticated_account=True, caller_is_trusted_endpoint=True,
+            automation_routing_enabled=True, trunk_invite=False, native_override=True)
+        if override.action in {"decline", "busy", "cancel"}:
+            raise _service_error("The routing automation declined this call", "phone_unavailable", phone=target)
+        if override.trunk_id:
+            trunk_selection = select_call_trunk(hass, requested=override.trunk_id, endpoint_id=endpoint_id)
+            trunk, trunk_cfg = trunk_selection.client, trunk_selection.config
+            trunk_ready = _trunk_enabled(trunk_cfg) and bool(trunk_available(trunk))
+            resolve_route = EndpointRouteResolver(hass, str(cfg.get("advertise_host") or ""),
+                int(cfg.get("sip_port") or 5060), source_endpoint_id=endpoint_id,
+                trunk_id=trunk_selection.identity).route
+        if override.action in {"forward", "bridge"} and override.destination:
+            target = override.destination
+            explicit_route = True
+        elif override.action == "answer_ha" and override.endpoint_id:
+            selected = endpoint_directory(hass).get(override.endpoint_id)
+            if selected is None:
+                raise _service_error("The selected phone is unavailable", "phone_unavailable", phone=target)
+            target = selected.name
+            explicit_route = True
+        route = resolve_route(target, contacts)
+        routing_call_id = session.call_id
     from .inbound_routing.targets import resolve_phone_target
 
     resolved = resolve_phone_target(
@@ -245,6 +295,7 @@ async def async_originate_browser_call(
         endpoint_registry=endpoint_directory(hass),
         roster_entries=contacts,
         route_resolver=resolve_route,
+        call_id=routing_call_id or "", apply_policy=not explicit_route,
     )
     if resolved.failure is not None:
         raise _service_error(
@@ -286,6 +337,7 @@ async def async_originate_browser_call(
                 ),
                 caller_owner_id=str(call.data.get("media_client_id") or ""),
                 context=getattr(call, "context", None),
+                **({"call_id": routing_call_id} if routing_call_id else {}),
                 **({"policy_endpoint_ids": policy_endpoint_ids} if policy_endpoint_ids else {}),
                 **({"outbound_trunk_id": trunk_selection.identity} if trunk_selection.identity else {}),
             )
@@ -378,6 +430,7 @@ async def async_originate_browser_call(
                 context=getattr(call, "context", None),
                 endpoint_id=endpoint_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
+                **({"call_id": routing_call_id} if routing_call_id else {}),
                 request_video=_local_video_capable(browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
@@ -395,6 +448,7 @@ async def async_originate_browser_call(
             joined = manager.start_ha_softphone(
                 room_name,
                 endpoint_id=endpoint_id,
+                **({"call_id": routing_call_id} if routing_call_id else {}),
             )
             if joined is None:
                 raise _service_error(
@@ -627,6 +681,7 @@ async def async_originate_browser_call(
         _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name
     )
     client = SipCallClient(
+        **({"call_id": routing_call_id} if routing_call_id else {}),
         codec_policy=codec_policy,
         local_ip=local_ip,
         local_name=provider_identity,
@@ -926,3 +981,17 @@ async def async_originate_browser_call(
         video_failure_reason=video_failure_reason,
     )
     _LOGGER.info("SIP call target=%s uri=%s result=%s", target, route_uri, result)
+
+
+async def async_originate_browser_call(call, *, endpoint_id, browser_endpoint, force_ha_bridge=False):
+    """Retire the existing pre-call owner when routing cannot reach a call leg."""
+    routing_scope = {}
+    try:
+        return await _async_originate_browser_call(call, endpoint_id=endpoint_id,
+            browser_endpoint=browser_endpoint, force_ha_bridge=force_ha_bridge, routing_scope=routing_scope)
+    except BaseException:
+        session = routing_scope.get("session")
+        if session is not None and session.live:
+            await EndpointTerminationHandler(call.hass).terminate_reason(
+                session.call_id, TerminalReason.CANCELLED.value, TerminationInitiator.ROUTING)
+        raise

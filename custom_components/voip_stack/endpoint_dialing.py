@@ -55,6 +55,7 @@ class OutboundLegPolicy:
     """Policy differences applied by the common outbound-leg builder."""
 
     local_uri_user: str = ""
+    call_id: str = ""
     local_identity_uri: str = ""
     auth_username: str = ""
     username: str = ""
@@ -291,6 +292,7 @@ class EndpointDialer:
                         err,
                     )
             client = SipCallClient(
+                **({"call_id": policy.call_id} if policy.call_id else {}),
                 codec_policy=codec_policy,
                 local_ip=self.local_ip,
                 local_name=local_name,

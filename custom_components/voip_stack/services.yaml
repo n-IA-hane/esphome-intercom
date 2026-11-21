@@ -722,6 +722,14 @@ select_inbound_destination:
       description: Select one of several simultaneous route requests or reject stale decisions.
       collapsed: true
       fields:
+        trunk_id:
+          name: Outgoing SIP trunk
+          description: Optional configured outgoing line for this destination.
+          selector:
+            device:
+              filter:
+                - integration: voip_stack
+                  model: SIP trunk
         call_id:
           name: Call ID
           required: false

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
+from dataclasses import replace
 
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
@@ -101,8 +102,8 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
     return await async_originate_application_call(call)
 
 
-async def async_originate_application_call(
-    call: ServiceCall, *, source=None, answer_mode="", audio_direction="sendrecv",
+async def _async_originate_application_call(
+    call: ServiceCall, *, source=None, answer_mode="", audio_direction="sendrecv", routing_scope,
 ) -> dict:
     """Share the existing application originate owner with server-side paging."""
     await async_require_service_admin(call.hass, call)
@@ -133,9 +134,44 @@ async def async_originate_application_call(
         return ha_router_decision(hass, target, roster, trunk_id=trunk_selection.identity)
 
     initial_route = resolve_route(destination, entries)
+    routing_call_id = None
+    explicit_route = False
+    from .automation_routing import RouteRequest, has_native_route_window
+
+    identity = RouteRequest("", source.display_name, destination,
+        caller_number=source.extension or source.id, caller_name=source.display_name,
+        called_number=str(getattr(initial_route.entry, "number", "") or destination),
+        outbound_trunk_id=trunk_selection.identity)
+    if has_native_route_window(hass, identity, initial_route):
+        from .core.sip import make_call_id
+
+        identity = replace(identity, call_id=make_call_id("ha"))
+        from types import SimpleNamespace
+        from .inbound_routing.automation import request_route_override
+
+        routing_session = registry.upsert(identity.call_id, state=CallState.CONNECTING.value, owner="router",
+            caller=source.display_name, callee=destination, route_kind=initial_route.action.value,
+            caller_number=identity.caller_number, caller_name=identity.caller_name,
+            source_automation=source.id, direction="outgoing", ingress="extension",
+            outbound_trunk_id=trunk_selection.identity)
+        routing_scope["session"] = routing_session
+        registry.bind_controller(routing_session.call_id, context=call.context)
+        override = await request_route_override(runtime=SimpleNamespace(hass=hass, ha_peer_name=lambda _: source.display_name),
+            invite=identity, decision=initial_route, authenticated_account=True, caller_is_trusted_endpoint=True,
+            automation_routing_enabled=True, trunk_invite=False, native_override=True)
+        if override.action in {"decline", "busy", "cancel"}:
+            raise ServiceValidationError("The routing automation declined this call")
+        if override.trunk_id:
+            trunk_selection = select_call_trunk(hass, requested=override.trunk_id)
+        if override.action in {"forward", "bridge"} and override.destination:
+            destination = override.destination
+            explicit_route = True
+        initial_route = resolve_route(destination, entries)
+        routing_call_id = routing_session.call_id
     resolved = resolve_phone_target(
         decision=initial_route, endpoint_registry=runtime.endpoints,
         roster_entries=entries, route_resolver=resolve_route,
+        call_id=routing_call_id or "", apply_policy=not explicit_route,
     )
     if resolved.failure is not None:
         raise ServiceValidationError(f"Phone routing failed: {resolved.failure.decline_reason}")
@@ -148,7 +184,7 @@ async def async_originate_application_call(
         route_resolver=resolver, sip_uri_transport=uri_transport,
         enable_reused_tcp_connection=enable_reused_tcp_connection,
     )
-    def prepare(target):
+    def prepare(target, *, initial=False):
         if dialer.browser_leg_for_member(target, peers, entries) is not None:
             raise ServiceValidationError("Outgoing automation calls currently require a SIP or ESPHome destination")
         uri, _, _ = dialer.sip_uri_for_member(target, peers, entries)
@@ -176,6 +212,7 @@ async def async_originate_application_call(
             local_name=source.display_name, local_rtp_port_index=0,
             uri_override=str(uri),
             policy=OutboundLegPolicy(
+                call_id=routing_call_id if initial and routing_call_id else "",
                 local_uri_user=trunk_leg_identity(cfg, source.extension or source.id) if use_trunk else source.extension or source.id,
                 local_identity_uri=trunk_identity_uri(cfg) if use_trunk else "",
                 username=cfg.get("trunk_username", "") if use_trunk else "",
@@ -192,7 +229,7 @@ async def async_originate_application_call(
         return candidate
 
     try:
-        attempt = prepare(destination)
+        attempt = prepare(destination, initial=True)
     except OSError as error:
         raise ServiceValidationError("The destination RTP port is unavailable") from error
     client = attempt.client
@@ -378,4 +415,17 @@ async def async_originate_application_call(
             raise ServiceValidationError("The destination did not answer before the answer timeout") from err
         if isinstance(err, asyncio.CancelledError) and not asyncio.current_task().cancelling():
             raise ServiceValidationError("The destination ended while preparing call audio") from err
+        raise
+
+
+async def async_originate_application_call(call, *, source=None, answer_mode="", audio_direction="sendrecv"):
+    """Close the existing pre-call session if an application route cannot start."""
+    routing_scope = {}
+    try:
+        return await _async_originate_application_call(call, source=source, answer_mode=answer_mode,
+            audio_direction=audio_direction, routing_scope=routing_scope)
+    except BaseException:
+        session = routing_scope.get("session")
+        if session is not None and session.live:
+            await call_registry(call.hass).request_termination(session.call_id, TerminationIntent("cancelled"))
         raise

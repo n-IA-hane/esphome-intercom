@@ -144,6 +144,7 @@ def prepare_trunk_preanswer(
         "video_failure_reason": video_failure_reason,
     }
     registry.set_pending_invite(invite.call_id, invite)
+    session.artifacts.caller_invite = invite
     registry.attach_media(
         invite.call_id,
         preanswered_media,

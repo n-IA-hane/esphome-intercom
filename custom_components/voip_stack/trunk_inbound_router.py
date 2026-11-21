@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -73,6 +73,7 @@ from .sip_runtime import (
     uri_transport,
 )
 from .trunk_dtmf import collect_trunk_dtmf
+from .routing_automation import SIP_ROUTE_DECISION_TIMEOUT
 from .trunk_routing import async_request_inbound_destination, trunk_default_target
 from .automation_routing import has_native_route_window
 from .pbx_trace import trace_call
@@ -82,7 +83,6 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(__name__)
-SIP_ROUTE_DECISION_TIMEOUT = 1.5
 MAX_TRUNK_INFO_DIGITS = 16
 
 
@@ -190,6 +190,13 @@ async def async_route_trunk_invite(
         return
 
     automation_action = str(automation_decision.get("action") or "").strip().lower()
+    selected_trunk_id = str(automation_decision.get("trunk_id") or "")
+    route_resolver = runtime.route_resolver
+    if selected_trunk_id:
+        invite = replace(invite, outbound_trunk_id=selected_trunk_id)
+        session.update_metadata(outbound_trunk_id=selected_trunk_id)
+        route_resolver = EndpointRouteResolver(hass, runtime.local_ip, int(cfg["sip_port"]),
+            trunk_id=selected_trunk_id)
     if automation_action in {"forward", "bridge"}:
         automation_destination = str(
             automation_decision.get("destination") or ""
@@ -199,7 +206,7 @@ async def async_route_trunk_invite(
         # than invoking the in-call forwarding primitive, which requires an
         # already assigned Home Assistant phone owner.
         destination = automation_destination
-        automation_route = runtime.route_resolver.route(destination, roster_entries)
+        automation_route = route_resolver.route(destination, roster_entries)
         if automation_route.action is RouteAction.GROUP:
             trace_call(_LOGGER, invite.call_id, "Routing action selects group %s", destination)
             await runtime.forward_existing_call(
@@ -234,13 +241,16 @@ async def async_route_trunk_invite(
     )
     if explicit_account:
         resolution = resolve_inbound_target(
-            invite=invite, decision=runtime.route_resolver.route(requested, roster_entries),
+            invite=invite, decision=route_resolver.route(requested, roster_entries),
             endpoint_registry=endpoint_directory(hass) if selected.metadata.get("endpoint_id") else None,
             roster_entries=roster_entries,
-            route_resolver=runtime.route_resolver.route,
+            route_resolver=route_resolver.route,
             apply_policy=automation_action not in {"forward", "bridge"},
         )
         decision = resolution.decision
+        if resolution.forwarded_endpoint_ids:
+            session.update_metadata(policy_endpoint_ids=tuple(sorted({
+                *session.metadata.get("policy_endpoint_ids", ()), *resolution.forwarded_endpoint_ids})))
         failure = resolution.failure
         if failure is None and decision.action is not RouteAction.REJECT:
             failure = validate_target_endpoint(invite=invite, endpoint=resolution.endpoint)
@@ -252,6 +262,8 @@ async def async_route_trunk_invite(
             )
             return
         decision = account_dial_decision(hass, decision)
+    elif selected_trunk_id:
+        decision = route_resolver.route(requested, roster_entries)
     else:
         decision = route_inbound_trunk(
             CallContext(
@@ -283,6 +295,11 @@ async def async_route_trunk_invite(
         decision.action.value, decision.reason,
     )
 
+    if decision.action is RouteAction.TRUNK:
+        await runtime.forward_existing_call(call_id=invite.call_id, destination=destination,
+            initial_selection=True, on_failure="terminate",
+            trunk_id=selected_trunk_id or getattr(decision, "trunk_id", ""))
+        return
     if explicit_account and decision.action in {RouteAction.GROUP, RouteAction.VOICEMAIL}:
         await runtime.forward_existing_call(
             call_id=invite.call_id, destination=destination, initial_selection=True,
@@ -364,7 +381,7 @@ async def async_route_trunk_invite(
         return
 
     if not explicit_account:
-        decision = runtime.route_resolver.route(destination, roster_entries)
+        decision = route_resolver.route(destination, roster_entries)
     if decision.action is RouteAction.ANSWER_HA:
         target_endpoint = runtime.route_resolver.logical_endpoint(
             decision.target or destination,

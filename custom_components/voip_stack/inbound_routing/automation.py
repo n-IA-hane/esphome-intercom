@@ -1,17 +1,14 @@
-"""Bounded Home Assistant automation window for inbound SIP routing."""
+"""Adapt inbound SIP and logical origination to the shared PBX route window."""
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import logging
-import time
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from ..call_projection import publish_bridge_projection
-from ..call_scope import set_pending_route, take_pending_route
+from ..routing_automation import SIP_ROUTE_DECISION_TIMEOUT, request_route_window
 from ..endpoint_lifecycle import call_registry
 from ..fsm import CallState, TerminalReason
 from ..pbx_trace import trace_call
@@ -22,7 +19,6 @@ if TYPE_CHECKING:
     from ..sip_listener import SipInvite
 
 _LOGGER = logging.getLogger(__name__)
-SIP_ROUTE_DECISION_TIMEOUT = 1.5
 
 
 class AutomationRouteRuntime(Protocol):
@@ -42,6 +38,7 @@ class AutomationRoute:
     reason: str = ""
     decline_reason: str = ""
     endpoint_id: str = ""
+    trunk_id: str = ""
 
     @classmethod
     def from_payload(cls, payload: object) -> AutomationRoute:
@@ -54,6 +51,7 @@ class AutomationRoute:
             reason=str(payload.get("reason") or "").strip(),
             decline_reason=str(payload.get("decline_reason") or "").strip(),
             endpoint_id=str(payload.get("endpoint_id") or "").strip(),
+            trunk_id=str(payload.get("trunk_id") or "").strip(),
         )
 
 
@@ -85,88 +83,39 @@ async def request_route_override(
         return AutomationRoute()
 
     hass = runtime.hass
-    loop = asyncio.get_running_loop()
-    future: asyncio.Future = loop.create_future()
-    expires_at = time.time() + SIP_ROUTE_DECISION_TIMEOUT
     registry = call_registry(hass)
     session = registry.upsert(
-        invite.call_id,
-        state=CallState.CONNECTING.value,
-        caller=invite.caller,
-        callee=decision.target or invite.target,
+        invite.call_id, state=CallState.CONNECTING.value,
+        caller=invite.caller, callee=decision.target or invite.target,
         route_kind=decision.action.value,
     )
     if session is None:
         return AutomationRoute()
-    set_pending_route(hass, invite.call_id, {
-        "future": future,
-        "invite": invite,
-        "decision": decision,
-        "created_at": time.time(),
-        "expires_at": expires_at,
-        "decision_deadline": expires_at,
-        "fallback_destination": decision.target,
-    })
-    trace_call(
-        _LOGGER, invite.call_id,
-        "Waiting for a routing action for %ss; dialplan destination is %s",
-        SIP_ROUTE_DECISION_TIMEOUT, decision.target or invite.target,
-    )
-    publish_bridge_projection(
-        hass,
-        session,
-        peer_name=invite.caller, local_name=runtime.ha_peer_name(hass),
-        selected_tx_format=invite.send_format.audio_format.wire_token(),
-        selected_rx_format=invite.recv_format.audio_format.wire_token(),
-        selected_tx_rtp_format=invite.send_format.wire_token(),
-        selected_rx_rtp_format=invite.recv_format.wire_token(),
-        audio_mode="full_duplex",
-        route_kind=decision.action.value,
-        sip_uri=decision.sip_uri,
-        sip_status_code=100,
-        last_sip_event="INVITE",
-        direction="incoming",
-        ingress="trunk" if trunk_invite else "extension",
-        origin="trunk" if trunk_invite else "extension",
-        route_request=True,
-        phase="route_decision",
-        source_host=invite.source_host,
-        caller_route=invite.routing_caller,
-        target_route=invite.routing_target,
-        dialed_target=invite.routing_target,
-        called_extension=(
-            invite.routing_target if trunk_invite
-            else str(getattr(decision.entry, "extension", "") or invite.routing_target)
-        ),
-        target=decision.target,
-        default_destination=decision.target,
-        fallback_destination=decision.target,
-        expires_at=expires_at,
-        decision_deadline=expires_at,
-        decision_timeout_ms=int(SIP_ROUTE_DECISION_TIMEOUT * 1000),
-        rtp_format=(
-            f"{invite.selected_format.encoding}/"
-            f"{invite.selected_format.sample_rate}/"
-            f"{invite.selected_format.channels}"
-        ),
-    )
-    try:
-        payload = await asyncio.wait_for(
-            future,
-            timeout=SIP_ROUTE_DECISION_TIMEOUT,
-        )
-    except asyncio.TimeoutError:
-        trace_call(
-            _LOGGER, invite.call_id,
-            "No routing action before the deadline; keeping dialplan destination %s",
-            decision.target or invite.target,
-        )
-        payload = {}
+    from ..automation_routing import RouteRequest, route_window_snapshot
+
+    logical = isinstance(invite, RouteRequest)
+    presentation = route_window_snapshot(invite, decision, trunk_invite=trunk_invite)
+    presentation.update(peer_name=invite.caller, local_name=runtime.ha_peer_name(hass),
+        route_kind=decision.action.value, sip_uri=decision.sip_uri,
+        direction="outgoing" if logical else "incoming",
+        origin=presentation["ingress"], source_host=invite.source_host,
+        caller_route=invite.routing_caller, target_route=invite.routing_target,
+        dialed_target=invite.routing_target, target=decision.target,
+        default_destination=decision.target, fallback_destination=decision.target)
+    if logical:
+        from ..counterpart_display import counterpart_display
+
+        presentation["peer_name"] = counterpart_display(fallback=invite.target, entry=decision.entry)
     else:
-        if str((payload or {}).get("action") or "default").strip().lower() == "default":
-            trace_call(_LOGGER, invite.call_id, "Routing action keeps dialplan destination %s", decision.target or invite.target)
-    finally:
-        take_pending_route(hass, invite.call_id)
+        presentation.update(sip_status_code=100, last_sip_event="INVITE")
+    if getattr(invite, "send_format", None) is not None:
+        presentation.update(
+            selected_tx_format=invite.send_format.audio_format.wire_token(),
+            selected_rx_format=invite.recv_format.audio_format.wire_token(),
+            selected_tx_rtp_format=invite.send_format.wire_token(),
+            selected_rx_rtp_format=invite.recv_format.wire_token(), audio_mode="full_duplex",
+            rtp_format=f"{invite.selected_format.encoding}/{invite.selected_format.sample_rate}/{invite.selected_format.channels}")
+    payload = await request_route_window(hass, session, invite=invite, decision=decision, **presentation)
     return AutomationRoute.from_payload(payload)
 
 

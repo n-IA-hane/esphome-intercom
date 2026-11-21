@@ -82,6 +82,7 @@ class EndpointGroupCalls:
         enable_caller_video_send: bool = False,
         policy_endpoint_ids: tuple[str, ...] = (),
         outbound_trunk_id: str = "",
+        call_id: str = "",
     ) -> str:
         browser_endpoint = browser_phone(self.hass, endpoint_id)
         if browser_endpoint is None:
@@ -94,7 +95,7 @@ class EndpointGroupCalls:
         # A timestamp is not a dialog identifier: two phones can start in the
         # same millisecond.  Use cryptographic entropy just like the normal SIP
         # client path so concurrent HA callers cannot alias one registry entry.
-        call_id = f"ha-{secrets.token_hex(16)}"
+        call_id = call_id or f"ha-{secrets.token_hex(16)}"
         invite = _group_origin_invite(
             call_id, group_name, local_name, self.local_ip, int(self.config["sip_port"])
         )

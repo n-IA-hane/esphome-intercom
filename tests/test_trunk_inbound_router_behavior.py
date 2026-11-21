@@ -43,6 +43,7 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
         sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA",
     )
     invite = SimpleNamespace(
+        outbound_trunk_id="",
         trunk_id="",
         call_id="esp-trunk-108", caller="ESP", routing_caller="ESP",
         target="12345", routing_target="12345", source_host="192.0.2.20",

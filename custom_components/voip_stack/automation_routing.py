@@ -3,6 +3,29 @@
 from __future__ import annotations
 
 from typing import Any
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class RouteRequest:
+    """Logical outgoing facts available before there is any SIP/media leg."""
+
+    call_id: str
+    caller: str
+    target: str
+    caller_number: str = ""
+    caller_name: str = ""
+    called_number: str = ""
+    outbound_trunk_id: str = ""
+    source_host: str = ""
+
+    @property
+    def routing_caller(self):
+        return self.caller_number or self.caller
+
+    @property
+    def routing_target(self):
+        return self.target
 
 
 CALL_EVENT_SCHEMA_VERSION = 2

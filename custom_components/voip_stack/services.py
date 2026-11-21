@@ -236,6 +236,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
                 ["answer_ha", "decline", "busy", "forward", "bridge", "default", "cancel"]
             ),
             vol.Optional("destination"): URI_TEXT,
+            vol.Optional("trunk_id"): IDENTIFIER_TEXT,
             vol.Optional("status", default=0): SIP_FAILURE_STATUS_OR_DEFAULT,
             vol.Optional("reason", default=""): REASON_TEXT,
             vol.Optional("decline_reason", default=""): REASON_TEXT,
@@ -248,6 +249,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         {
             vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Required("destination"): URI_TEXT,
+            vol.Optional("trunk_id"): IDENTIFIER_TEXT,
             vol.Optional("expected_state", default=""): IDENTIFIER_TEXT,
             vol.Optional("expected_sequence", default=0): SEQUENCE,
         },

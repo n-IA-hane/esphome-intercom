@@ -1101,6 +1101,7 @@ class ConferenceManager:
         room_name: str,
         *,
         endpoint_id: str = "",
+        call_id: str = "",
     ) -> tuple[str, asyncio.Queue[bytes]] | None:
         if self._closing or self._closed:
             return None
@@ -1110,7 +1111,7 @@ class ConferenceManager:
             room = ConferenceRoom(self.hass, name=room_key, local_ip=self.local_ip)
             self.rooms[room_key] = room
         try:
-            joined = self.join_ha_softphone(room_key, endpoint_id=endpoint_id)
+            joined = self.join_ha_softphone(room_key, endpoint_id=endpoint_id, call_id=call_id)
         except BaseException:
             if not room.legs and self.rooms.get(room_key) is room:
                 self.rooms.pop(room_key, None)

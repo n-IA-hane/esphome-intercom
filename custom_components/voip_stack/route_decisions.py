@@ -105,6 +105,11 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             call_id=call_id,
         )
     endpoint_id = str(data.get("endpoint_id") or "").strip()
+    selected_trunk_id = ""
+    if data.get("trunk_id"):
+        from .trunk_selection import resolve_trunk_selector
+
+        selected_trunk_id = resolve_trunk_selector(hass, str(data["trunk_id"]))
     ring_endpoint_ids = tuple(
         str(value or "").strip()
         for value in (route.get("ring_group_endpoint_ids") or ())
@@ -171,6 +176,10 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
                 }
             )
         return
+    if selected_trunk_id:
+        session = registry.get_session(call_id)
+        if session is not None:
+            session.update_metadata(outbound_trunk_id=selected_trunk_id)
     registry.record_route(
         call_id,
         action=action,
@@ -200,7 +209,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             "send_video": bool(data.get("send_video", False)),
             **({"accept_video": bool(data["accept_video"])} if "accept_video" in data else {}),
             **({"on_failure": data["on_failure"]} if "on_failure" in data else {}),
-            **({"trunk_id": data["trunk_id"]} if "trunk_id" in data else {}),
+            **({"trunk_id": selected_trunk_id} if selected_trunk_id else {}),
         }
     )
     invite = route.get("invite")
@@ -208,6 +217,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     if (
         action == "answer_ha"
         and invite is not None
+        and getattr(invite, "send_format", None) is not None
         and not route.get("defer_answer_projection", False)
     ):
         if session is not None:
@@ -228,7 +238,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             sip_status_code=180,
             last_sip_event="SIP_RESPONSE",
             )
-    elif action in {"forward", "bridge"} and invite is not None:
+    elif action in {"forward", "bridge"} and getattr(invite, "send_format", None) is not None:
         if session is not None:
             publish_bridge_projection(
                 hass,

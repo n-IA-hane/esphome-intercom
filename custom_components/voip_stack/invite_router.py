@@ -214,56 +214,6 @@ async def route_invite(
                 "Trunk destination %s has no phonebook match; configured fallback is %s",
                 invite.routing_target, direct_fallback_target,
             )
-    if not trunk_direct_preprocessed and (
-        decision.action.is_local_application or decision.action is RouteAction.GROUP
-    ):
-        trace_call(
-            _LOGGER, invite.call_id,
-            "Dialplan selects %s for target %s; action=%s, reason=%s",
-            decision.entry.display_name if decision.entry is not None else decision.target,
-            invite.routing_target, decision.action.value, decision.reason,
-        )
-    if not trunk_direct_preprocessed and decision.action is RouteAction.PARKING:
-        from .parking import route_parking_call
-        return await route_parking_call(runtime, invite, decision, registry, source_endpoint)
-    if not trunk_direct_preprocessed and decision.action is RouteAction.VOICEMAIL:
-        from .voicemail import route_voicemail_call
-        return await route_voicemail_call(runtime, invite, decision, registry, source_endpoint)
-    if not trunk_direct_preprocessed and decision.action is RouteAction.AUTOMATION:
-        from .automation_call import route_automation_call
-        return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
-    if not trunk_direct_preprocessed and decision.action in {RouteAction.QUEUE, RouteAction.PAGING}:
-        from .queue_call import route_queue_call
-        from .paging import route_paging_call
-        handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
-        return await handler(runtime, invite, decision, registry, source_endpoint)
-    if not trunk_direct_preprocessed and decision.action is RouteAction.ASSIST:
-        called_extension = (
-            str(decision.entry.extension or invite.routing_target)
-            if decision.entry is not None
-            else invite.routing_target
-        )
-        return await route_local_assist(
-            runtime=runtime,
-            invite=invite,
-            decision=decision,
-            roster_entries=roster_entries,
-            source_endpoint=source_endpoint,
-            registry=registry,
-            source="sip",
-            called_extension=called_extension,
-        )
-    if not trunk_direct_preprocessed and decision.action is RouteAction.GROUP:
-        return await route_local_group(
-            runtime=runtime,
-            invite=invite,
-            decision=decision,
-            peers=peers,
-            roster_entries=roster_entries,
-            source_endpoint=source_endpoint,
-            source_endpoint_id=source_endpoint_id,
-            registry=registry,
-        )
     if trunk_invite:
         trunk_result = prepare_trunk_preanswer(
             runtime=runtime,
@@ -298,6 +248,13 @@ async def route_invite(
         return rejected
     route_action = automation_route.action
     route_destination = automation_route.destination
+    if getattr(automation_route, "trunk_id", ""):
+        from .endpoint_routing import EndpointRouteResolver
+
+        invite = replace(invite, outbound_trunk_id=automation_route.trunk_id)
+        _ha_router_decision = EndpointRouteResolver(hass, local_ip, int(runtime.config.get("sip_port") or 5060),
+            source_endpoint_id=source_endpoint_id, trunk_id=automation_route.trunk_id).route
+        decision = _ha_router_decision(route_destination or decision.target, roster_entries)
 
     if route_action in {"forward", "bridge"} and route_destination:
         decision = _ha_router_decision(route_destination, roster_entries)
