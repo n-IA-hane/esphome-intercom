@@ -1008,7 +1008,42 @@ class ForwardOperation:
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
             reason = str(err or TerminalReason.TRANSPORT_UNREACHABLE.value)
+            sip_status = (
+                self.client.last_sip_status_code
+                if self.plan.initial_selection
+                and self.source.native_caller
+                and not source_dialog_is_answered(self.preanswered)
+                and self.client is not None
+                and 300 <= self.client.last_sip_status_code <= 699
+                else 0
+            )
+            failure_endpoint = failure_destination = None
+            if (
+                self.plan.initial_selection
+                and self.source.native_caller
+                and self.plan.decision.action is RouteAction.FORWARD
+                and self.client is not None
+            ):
+                from .phone_policy_runtime import phone_failure_destination
+
+                metadata = self.plan.decision.entry.metadata if self.plan.decision.entry else {}
+                failure_endpoint = endpoint_directory(self.runtime.hass).get(
+                    str(metadata.get("endpoint_id") or "")
+                )
+                failure_destination = phone_failure_destination(
+                    failure_endpoint, self.client.last_sip_status_code
+                )
             await self.cleanup_failed_route(reason)
+            if failure_destination is not None:
+                from .phone_policy_runtime import dispatch_phone_failure
+
+                if dispatch_phone_failure(
+                    self.runtime.hass, session, failure_endpoint, failure_destination
+                ):
+                    # The same session owns the next route. Return without an
+                    # await so finally releases this attempt's forward claim
+                    # before the new route task starts.
+                    return TransferResult("ringing", destination, reason)
             resumed = await async_abort_route(
                 self.abort,
                 RouteAbortIntent(
@@ -1018,6 +1053,7 @@ class ForwardOperation:
                     and self.source.local.committed
                     and application is None
                     else self.plan.on_failure,
+                    sip_status=sip_status,
                 ),
             )
             trace_call(

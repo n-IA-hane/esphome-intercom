@@ -42,7 +42,7 @@ async def _register_target(lab, target, monkeypatch, username="bedroom0"):
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("end", ["cancel", "timeout", "answer", "busy", "decline", "failure"])
-@pytest.mark.parametrize("target_kind", ["contact"])
+@pytest.mark.parametrize("target_kind", ["contact", "account"])
 async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(trunks, monkeypatch, end, target_kind):
     lab = trunks
     target = lab.phones[0]
@@ -160,7 +160,7 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("status", [486, 603, 503])
-@pytest.mark.parametrize("target_kind", ["contact"])
+@pytest.mark.parametrize("target_kind", ["contact", "account"])
 async def test_answered_ivr_contact_failure_sends_bye_and_reuses_the_next_call(
     trunks, monkeypatch, unused_udp_port_factory, tmp_path, status, target_kind,
 ):

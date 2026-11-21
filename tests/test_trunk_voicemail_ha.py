@@ -39,9 +39,11 @@ PROVIDER_HOST = "127.0.0.42"
     ("always", True, True), ("unavailable", False, True),
     ("unavailable", True, False), ("always", False, False),
     ("no_answer", True, True), ("no_answer", False, False),
+    ("busy_response", True, False), ("busy_response", False, False),
+    ("unavailable_response", True, False), ("unavailable_response", False, False),
 ])
 async def test_trunk_account_policy_deposits_caller_audio_twice(
-    trunks, registered_phones, tmp_path, monkeypatch, policy, rtp_digits, select_digits,
+    trunks, registered_phones, tmp_path, monkeypatch, caplog, policy, rtp_digits, select_digits,
 ):
     runtime, hass = trunks, trunks.hass
     listener = ("127.0.0.1", runtime.runtime.transport_config["sip_port"])
@@ -50,19 +52,29 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
     hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
         "enabled": True, "tts_entity_id": "tts.test", "language": "en",
     }})
-    mailbox_id = "transfer_b" if policy in {"always", "no_answer"} else "kitchen"
+    peer_failure = policy in {"busy_response", "unavailable_response"}
+    peer = runtime.phones[0]
+    if peer_failure:
+        from .test_trunk_direct_pending_ha import _register_target
+        mailbox_id = "reactive-target"
+        runtime.runtime.endpoints.register(PhoneEndpoint(mailbox_id, "Kitchen", EndpointKind.SIP_ACCOUNT, username=mailbox_id))
+        await _register_target(runtime, peer, monkeypatch, username=mailbox_id)
+        peer.final_status = 486 if policy == "busy_response" else 503
+    else:
+        mailbox_id = "transfer_b" if policy in {"always", "no_answer"} else "kitchen"
     hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Kitchen", unique_id=f"phone:{mailbox_id}",
         data={"name": "Kitchen", "endpoint_id": mailbox_id, "username": mailbox_id,
               "kind": "sip_account", "voicemail": {"enabled": True, "max_seconds": 5}},
     ))
     endpoints = runtime.runtime.endpoints
-    if policy in {"always", "no_answer"}:
+    if policy in {"always", "no_answer"} or peer_failure:
         assert runtime.calls.component("registrar").registered_contacts(mailbox_id)
     else:
         endpoints.register(PhoneEndpoint(mailbox_id, "Kitchen", EndpointKind.SIP_ACCOUNT, username=mailbox_id))
+    effective_policy = "unavailable" if policy == "unavailable_response" else "busy" if policy == "busy_response" else policy
     endpoints.update(mailbox_id, name="Kitchen", extension="4",
-                     policy=PhonePolicy.from_data({policy: {"kind": "voicemail", "target": mailbox_id},
+                     policy=PhonePolicy.from_data({effective_policy: {"kind": "voicemail", "target": mailbox_id},
                                                    **({"ringing_timeout": 1} if policy == "no_answer" else {})}))
     if policy == "no_answer":
         from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
@@ -105,6 +117,8 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                + "a=ptime:20\r\na=sendrecv\r\n").encode()
 
         for attempt in range(2):
+            peer_offset = len(registered_phones[1].read())
+            log_offset = len(caplog.records)
             recording.clear()
             call_id = f"mailbox-trunk-{attempt}"
             to = f"<{destination}>"
@@ -145,6 +159,8 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                 target = (listener[0], int(re.search(rb"m=audio (\d+)", final.body)[1]))
             await asyncio.wait_for(recording.wait(), 4)
             assert runtime.calls.get_session(call_id).owner == "voicemail"
+            if peer_failure:
+                assert any(f"SIP RX {peer.final_status} " in record.getMessage() for record in caplog.records[log_offset:])
             tone = np.rint(8000 * np.sin(2 * np.pi * 450 * np.arange(320) / 16000)).astype(">i2")
             for n in range(24):
                 packet = rtp.RtpPacket(96, 10 + n, 5000 + 320 * n, 701 + attempt, tone.tobytes())
@@ -164,7 +180,9 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                 while runtime.calls.sessions:
                     await asyncio.sleep(.01)
             assert resources(runtime)["call_scoped_quiescent"]
-            if policy == "no_answer":
+            if peer_failure:
+                assert len(peer.invites) == attempt + 1 and not peer.answered.is_set()
+            elif policy == "no_answer":
                 assert "Incoming call" in registered_phones[1].read()
                 assert "Call established" not in registered_phones[1].read()
             else:
