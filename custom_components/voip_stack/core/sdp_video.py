@@ -725,6 +725,11 @@ def video_static_rtp_mapping(payload_type: int) -> tuple[str, int, int] | None:
     encoding, clock = value.split("/", 1)
     return encoding, int(clock), 1
 
+
+def video_static_rtp_payload(mapping: tuple[str, int, int]) -> int | None:
+    """Return the same registry's preferred static number for an offered codec."""
+    return next((number for number in _STATIC_VIDEO_RTPMAP if video_static_rtp_mapping(number) == mapping), None)
+
 _VIDEO_ENCODING_ALIASES = {
     "H264": "H264",
     "H265": "H265",

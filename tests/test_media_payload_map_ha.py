@@ -125,5 +125,6 @@ def test_direct_snapshot_has_one_consistent_active_and_retired_meaning():
 
 def test_static_video_identity_uses_the_same_parser_registry_fact():
     assert PayloadMap(receive={26: ("JPEG", 90000, 1)}).receive_mapping(26) == ("JPEG", 90000, 1)
+    assert PayloadMap.for_offer([("JPEG", 90000, 1)]).receive == {26: ("JPEG", 90000, 1)}
     with pytest.raises(PayloadConflict):
         PayloadMap(send={26: ("H264", 90000, 1)})
