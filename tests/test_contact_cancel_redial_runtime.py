@@ -1,10 +1,11 @@
 """An unanswered call retains its SIP owner only until terminal completion."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-VOIP = ROOT.parent / "esphome-voip-stack"
+VOIP = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack"))
 
 
 def test_offline_peer_cancel_timeout_releases_transport_for_redial(tmp_path, monkeypatch):

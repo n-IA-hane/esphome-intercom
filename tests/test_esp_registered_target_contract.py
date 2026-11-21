@@ -7,6 +7,7 @@ so this joins HA's actual URI builder to the ESP's actual registration engine.
 """
 
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -15,7 +16,7 @@ import pytest
 from tests.test_video_rtp import _load
 
 ROOT = Path(__file__).resolve().parents[1]
-VOIP = ROOT.parent / "esphome-voip-stack"
+VOIP = Path(os.environ.get("VOIP_STACK_REPO", ROOT.parent / "esphome-voip-stack"))
 SOURCE = VOIP / "esphome/components/voip_stack"
 
 peer_module = _load("peer")

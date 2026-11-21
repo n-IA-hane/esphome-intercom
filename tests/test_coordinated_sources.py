@@ -146,7 +146,8 @@ def test_component_jobs_consume_the_single_resolved_source_set():
 def test_ci_component_refs_cover_incremental_preview_tags(owner):
     root = Path(__file__).resolve().parents[1]
     if owner == "renderer":
-        root = Path(os.environ.get("VIDEO_RENDERER_SOURCE", root.parent / "esphome-video-renderer"))
+        root = Path(os.environ.get("ESP_VIDEO_RENDERER_REPO",
+                    os.environ.get("VIDEO_RENDERER_SOURCE", root.parent / "esphome-video-renderer")))
     workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
     expressions = [step['env']['COMPONENT_REF'][3:-2].strip()
                    for job in workflow['jobs'].values() for step in job.get('steps', [])
