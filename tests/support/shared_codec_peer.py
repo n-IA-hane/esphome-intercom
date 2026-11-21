@@ -163,6 +163,31 @@ def audio_sdp(case, port, payload=None):
     ).encode()
 
 
+def mixed_default_sdp(port):
+    """An independent generic UA advertises the standard default codec set."""
+    mappings = (
+        (0, "PCMU", 8000, 1),
+        (8, "PCMA", 8000, 1),
+        (9, "G722", 8000, 1),
+        (110, "L16", 48000, 1),
+        (111, "L24", 16000, 1),
+        (113, "OPUS", 48000, 2),
+    )
+    body = (
+        "v=0\r\no=- 702 1 IN IP4 127.0.0.1\r\ns=Independent mixed-codec peer\r\n"
+        "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+        f"m=audio {port} RTP/AVP {' '.join(str(row[0]) for row in mappings)}\r\n"
+    )
+    body += "".join(
+        f"a=rtpmap:{pt} {name}/{rate}/{channels}\r\n"
+        for pt, name, rate, channels in mappings
+    )
+    return (
+        body
+        + "a=fmtp:113 stereo=0;sprop-stereo=0\r\na=ptime:20\r\na=maxptime:20\r\na=sendrecv\r\n"
+    ).encode()
+
+
 def audio_target(body, case):
     text = body.decode() if isinstance(body, bytes) else body
     port = int(re.search(r"^m=audio (\d+)", text, re.MULTILINE)[1])

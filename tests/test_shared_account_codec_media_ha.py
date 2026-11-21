@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.voip_stack.core.codec_capabilities import codec_directions
+from custom_components.voip_stack.codec_settings import effective_codec_policy
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.store import config_entry
@@ -29,6 +30,7 @@ from tests.support.shared_codec_peer import (
     check_wire,
     decode_named_rtp,
     measure_tone,
+    mixed_default_sdp,
     parse_packet,
     payload_duration_ms,
 )
@@ -92,6 +94,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
     tmp_path,
     socket_enabled,
     case,
+    mixed_defaults=False,
 ):
     """Real REGISTER, fork, card, external codec and RTP in three consecutive calls."""
     directions = codec_directions(case.name)
@@ -104,9 +107,27 @@ async def test_shared_account_codec_winner_media_and_reuse(
     lab = canonical_browser
     entry = config_entry(lab.hass)
     # Each optional codec is explicitly enabled for this isolated test only.
-    lab.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "audio_codecs": [case.name], "video_codecs": []}
-    )
+    data = {**entry.data, "video_codecs": []}
+    if mixed_defaults:
+        data.pop("audio_codecs", None)
+    else:
+        data["audio_codecs"] = [case.name]
+    lab.hass.config_entries.async_update_entry(entry, data=data)
+    assert "audio_codecs" not in lab.browser_subentry.data
+    effective = effective_codec_policy(lab.hass, endpoint_id="casa")
+    if mixed_defaults:
+        assert set(effective.audio) == {
+            "PCMU",
+            "PCMA",
+            "G722",
+            "OPUS",
+            "L16",
+            "L24",
+            "PCM",
+        }
+        assert not effective.audio_ordered
+    else:
+        assert effective.audio == (case.name,)
     lab.runtime.endpoints.update("casa", name="Home reception")
     registrar = lab.calls.component("registrar")
     shared = lab.browser_subentry.data
@@ -123,6 +144,8 @@ async def test_shared_account_codec_winner_media_and_reuse(
     )
     caller = CodecPeer(case, "transfer_a", "isolated-test-only")
     callee = CodecPeer(case, shared["username"], shared["password"])
+    if mixed_defaults:
+        callee.options_body = mixed_default_sdp(0)
     peers = (caller, callee)
     card = Card()
 
@@ -132,7 +155,11 @@ async def test_shared_account_codec_winner_media_and_reuse(
     evidence = {
         "codec": case.name,
         "backend_directions": directions,
-        "isolated_enabled_policy": [case.name],
+        "isolated_enabled_policy": list(effective.audio),
+        "config_entry_audio_policy": entry.data.get("audio_codecs", "absent/default"),
+        "account_audio_policy": shared.get("audio_codecs", "absent/inherited"),
+        "effective_audio_policy": effective.audio,
+        "mixed_default_offer": mixed_defaults,
         "peer_encoder": "external FFmpeg",
         "peer_decoder": "external FFmpeg named RTP demuxer",
         "calls": [],
@@ -144,6 +171,13 @@ async def test_shared_account_codec_winner_media_and_reuse(
             )
             await peer.register(lab.runtime.transport_config["sip_port"])
         assert len(registrar.registered_contacts(shared["username"])) == 1
+        binding = registrar.registered_contacts(shared["username"])[0]
+        capabilities = binding.capabilities or {}
+        evidence["sip_discovery"] = {
+            "wire_options_sdp": callee.options_body.decode(),
+            "derived_rx_formats": capabilities.get("sip_audio_rx_formats"),
+            "derived_tx_formats": capabilities.get("sip_audio_tx_formats"),
+        }
         await card.start(lab, hass_ws_client, tmp_path / "chromium", hass_admin_user)
         assert lab.runtime.sip is lab.calls
         observer = lab.calls.component("phone_state")
@@ -183,6 +217,15 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 peer.drain_media()
             await caller.dial(lab.runtime.transport_config["sip_port"])
             await asyncio.wait_for(callee.ringing.wait(), 5)
+            if mixed_defaults:
+                import re
+
+                actual_names = set(
+                    re.findall(rb"a=rtpmap:\d+ ([^/\s]+)", callee.offers[-1])
+                )
+                assert {b"PCMU", b"G722", b"OPUS"} <= actual_names, callee.offers[
+                    -1
+                ].decode()
             await card.command("wait-answer")
             phone = await public_phone(lab)
             assert phone["state"] == "ringing"
@@ -262,6 +305,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 "call_id": call_id,
                 "caller_sdp": caller.receive_sdp.decode(),
                 "ha_answer": caller.remote_sdp.decode(),
+                "fork_sip_offer": callee.offers[-1].decode(),
                 "browser": stats,
                 "wire_to_caller": check_wire(case, caller.received),
                 # The1200B limit is HA's output builder budget. This external

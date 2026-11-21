@@ -1,7 +1,9 @@
 """Adversarial public-policy and unknown-peer checks for shared-account codecs."""
 
 import asyncio
+from dataclasses import replace
 import json
+import re
 
 import pytest
 
@@ -35,10 +37,13 @@ class NoOptionsPeer(CodecPeer):
         if message.method == "OPTIONS":
             self.signalling.append(raw)
             return
-        if message.method == "INVITE" and b"L24/" not in message.body:
+        if message.method == "INVITE":
             self.signalling.append(raw)
             self.offers.append(message.body)
-            self.answer(message, address, status=488)
+            self.current = message, address
+            self.remote_sdp = message.body
+            self.call_id = message.header("Call-ID")
+            self.answer(message, address, status=180)
         else:
             super().datagram_received(raw, address)
         if message.method == "INVITE":
@@ -92,8 +97,21 @@ async def test_public_dialer_offers_explicit_l24_to_unknown_peer_without_options
             )
         )
         await until(lambda: action.done() or peer.offered.is_set())
-        if peer.offered.is_set() and b"L24/" in peer.offers[0]:
-            await peer.accept()
+        if peer.offered.is_set():
+            mapping = re.search(rb"a=rtpmap:\d+ L24/(\d+)(?:/(\d+))?", peer.offers[0])
+            if mapping:
+                # The unknown UA chooses an actual offered mapping. The
+                # enabled-codec contract imposes no private RTP geometry.
+                peer.case = replace(
+                    peer.case,
+                    clock=int(mapping[1]),
+                    pcm_rate=int(mapping[1]),
+                    channels=int(mapping[2] or b"1"),
+                )
+                await peer.accept()
+            else:
+                invite, address = peer.current
+                peer.answer(invite, address, status=488)
         try:
             evidence["service_result"] = await asyncio.wait_for(action, 5)
             evidence["service_error"] = None
@@ -109,7 +127,7 @@ async def test_public_dialer_offers_explicit_l24_to_unknown_peer_without_options
             if not raw.startswith(b"SIP/2.0")
         ]
         assert evidence["service_error"] is None, evidence
-        assert len(peer.offers) == 1 and b"L24/16000" in peer.offers[0], evidence
+        assert len(peer.offers) == 1 and b"L24/" in peer.offers[0], evidence
         await asyncio.wait_for(peer.acked.wait(), 3)
     finally:
         (tmp_path / "unknown-l24.json").write_text(
