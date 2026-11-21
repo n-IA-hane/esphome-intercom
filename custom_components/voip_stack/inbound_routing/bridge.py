@@ -160,6 +160,11 @@ async def route_sip_bridge(
     hass = runtime.hass
     cfg = runtime.config
     local_ip = runtime.local_ip
+    from ..codec_settings import effective_codec_policy
+
+    codec_policy = effective_codec_policy(hass,
+        endpoint_id=target_endpoint.endpoint_id if target_endpoint is not None else "",
+        trunk_id=(getattr(decision, "trunk_id", "") or invite.outbound_trunk_id or "") if bridge_to_trunk else None)
     decision_uri, peer_target = _resolve_bridge_uri(
         decision=decision,
         invite=invite,
@@ -244,6 +249,7 @@ async def route_sip_bridge(
     target_video_codec = peer_video_codec(peer_target, decision.entry)
     if (
         bool(cfg.get(CONF_SIP_VIDEO, False))
+        and codec_policy.video != ()
         and (not bridge_to_trunk or bool(trunk_config.get("trunk_video_codecs", ["H264"])))
         and invite.video_format is not None
         and target_video_codec != ""
@@ -294,6 +300,7 @@ async def route_sip_bridge(
         return SipInviteResult(487, "Request Terminated", to_tag="")
 
     client = SipCallClient(
+        codec_policy=codec_policy,
         local_ip=local_ip,
         local_name=invite.caller or runtime.ha_peer_name(hass),
         local_uri_user=(

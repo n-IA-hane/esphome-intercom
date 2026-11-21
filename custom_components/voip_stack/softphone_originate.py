@@ -488,7 +488,8 @@ async def async_originate_browser_call(
     uri = parse_sip_uri(route_uri)
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
     peer_profile = resolve_peer_media_profile(entry_metadata)
-    codec_policy = effective_codec_policy(hass, endpoint_id=endpoint_id,
+    codec_policy = effective_codec_policy(hass, endpoint_id=str(getattr(target_endpoint, "endpoint_id", "") or ""),
+                                          fallback_endpoint_id=endpoint_id,
                                           trunk_id=trunk_selection.identity if use_trunk else None)
     remote_tx_formats = _roster_entry_formats(
         route.entry, "tx_formats"

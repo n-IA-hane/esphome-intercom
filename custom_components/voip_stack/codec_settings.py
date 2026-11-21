@@ -3,7 +3,7 @@
 from .core.codec_policy import CodecPolicy
 
 
-def effective_codec_policy(hass, *, endpoint_id="", trunk_id=None):
+def effective_codec_policy(hass, *, endpoint_id="", fallback_endpoint_id="", trunk_id=None):
     """Inherit each medium from the parent entry without storing a copy."""
     entry = None
     if getattr(hass, "config_entries", None) is not None:
@@ -15,10 +15,12 @@ def effective_codec_policy(hass, *, endpoint_id="", trunk_id=None):
         from .config import trunk_config
 
         return CodecPolicy.from_config(trunk_config(hass, trunk_id=trunk_id or None), parent)
-    if entry is not None and endpoint_id:
+    if entry is not None:
         from .phone_config import phone_subentry_by_endpoint_id
 
-        account = phone_subentry_by_endpoint_id(entry, endpoint_id)
-        if account is not None:
-            return CodecPolicy.from_config(account.data, parent, prefix="")
+        for identity in (endpoint_id, fallback_endpoint_id):
+            if identity:
+                account = phone_subentry_by_endpoint_id(entry, identity)
+                if account is not None:
+                    return CodecPolicy.from_config(account.data, parent, prefix="")
     return parent

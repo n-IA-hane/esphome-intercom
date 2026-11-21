@@ -14,6 +14,8 @@ from custom_components.voip_stack.sip_ingress import SipIngressPolicy
 from custom_components.voip_stack.store import config_entry
 
 from .test_automation_originate_ha import lab as lab
+from .test_trunk_calls_ha import trunks as trunks
+from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 
 pytestmark = pytest.mark.ha
 
@@ -44,13 +46,19 @@ async def test_registered_ingress_inherits_global_and_account_codec_rows(lab, ac
     assert entry.data["audio_codecs"][1]["enabled"] is False
 
 
-@pytest.mark.parametrize("account_audio,expected", [(None, "PCMU"), (["PCMA"], "PCMA")])
-async def test_browser_outbound_sdp_uses_effective_account_codec_policy(lab, monkeypatch, account_audio, expected):
+@pytest.mark.parametrize("account_audio,destination_audio,expected", [
+    (None, None, "PCMU"), (["PCMA"], None, "PCMA"), (["PCMA"], ["L16"], "L16"),
+])
+async def test_browser_outbound_sdp_uses_effective_account_codec_policy(lab, monkeypatch, account_audio, destination_audio, expected):
     from custom_components.voip_stack import softphone_originate
     from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
     from custom_components.voip_stack.roster import dump_roster_json
 
-    configure(lab, account_audio)
+    entry = configure(lab, account_audio)
+    if destination_audio is not None:
+        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title="Bedroom",
+            data={"endpoint_id": "sip:bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
+                  "audio_codecs": destination_audio}, unique_id="phone:sip:bedroom0"))
     source = PhoneEndpoint("codec-browser", "Codec browser", "browser", device_id="codec-browser-device")
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
@@ -121,3 +129,54 @@ async def test_sip_target_leg_uses_destination_account_codec_policy(lab, monkeyp
     assert {item.encoding for item in sdp.offered_pcm_formats(peer.invites[-1].body)} == {"PCMA"}
     await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=context)
     assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"l16": ("transfer_b",)}], indirect=True)
+async def test_registered_pcma_source_reaches_l16_destination_without_policy_intersection(trunks, registered_phones, tmp_path):
+    import wave
+    import numpy as np
+    from .test_sip_phone_transfers_ha import assert_peer_audio_tones
+
+    lab = trunks
+    entry = config_entry(lab.hass)
+    for identity, codec in (("transfer_a", "PCMA"), ("transfer_b", "L16")):
+        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title=identity,
+            data={"endpoint_id": identity, "username": identity, "name": identity, "kind": "sip_account",
+                  "audio_codecs": [codec]}, unique_id="phone:" + identity))
+    caller, target, _other = registered_phones
+    try:
+        await asyncio.to_thread(caller.dial, "transfer_b")
+        session, = lab.calls.sessions.values()
+        source = lab.calls.artifact_for(session.call_id, "caller_invite")
+        destination = lab.calls.sip_client_for(lab.calls.bridge_link_for(session.call_id))
+        assert source.send_format.encoding == source.recv_format.encoding == "PCMA"
+        assert destination.dialog.send_format.encoding == destination.dialog.recv_format.encoding == "L16"
+        target_shape = (destination.dialog.send_format.sample_rate, destination.dialog.send_format.channels)
+        relay = lab.calls.resource_for(session.call_id, "relay")
+        async with asyncio.timeout(3):
+            while min(relay.left_tx_packets, relay.right_tx_packets) < 30:
+                await asyncio.sleep(.01)
+    finally:
+        await asyncio.to_thread(caller.hangup)
+        async with asyncio.timeout(3):
+            while lab.calls.sessions:
+                await asyncio.sleep(.01)
+    for peer in (caller, target):
+        await asyncio.to_thread(peer.close)
+    assert_peer_audio_tones(tmp_path, (("transfer_a", 550),))
+    recordings = list((tmp_path / "transfer_b").glob("*-dec.wav"))
+    assert recordings
+    for path in recordings:
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getsampwidth() == 2
+            assert (audio.getframerate(), audio.getnchannels()) == target_shape
+            samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2").reshape(-1, audio.getnchannels())
+        samples = samples[-target_shape[0] // 2:]
+        assert len(samples) >= target_shape[0] // 4
+        times = np.arange(len(samples)) / target_shape[0]
+        for channel in samples.T:
+            powers = {frequency: abs(np.dot(channel, np.exp(2j * np.pi * frequency * times)))
+                      for frequency in (450, 550, 650)}
+            assert max(powers, key=powers.get) == 450 and powers[450] > 10000
+    assert not lab.runtime.rtp_port_pool.get("used")
