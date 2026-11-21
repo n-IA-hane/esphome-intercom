@@ -64,6 +64,8 @@ class LegContract:
     trace: tuple[str, ...] = field(default=())
     # S5: every mapping accepted on receive, numbered as this side declared them.
     receive_accept: tuple[RtpPcmFormat, ...] = field(default=())
+    # S5: feasible peer receive mappings, numbered as the peer declared them.
+    send_accept: tuple[RtpPcmFormat, ...] = field(default=())
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +350,12 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                 max_frame_ms=own.max_frame_ms or _receive_maximum(own, policy)),
             dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
             trace=tuple(trace),
+            send_accept=tuple(
+                replace(fmt, frame_ms=sent.packet_ms)
+                for fmt in (peer_receives if directional else answered)
+                if needs_send and (sent := _choose_local_time(fmt, policy,
+                    ReceiverBounds(ptime=fmt.frame_ms, maxptime=fmt.max_frame_ms,
+                                   minimum=fmt.min_frame_ms))) is not None),
             receive_accept=tuple(
                 replace(fmt, frame_ms=received.packet_ms,
                         max_frame_ms=fmt.max_frame_ms or _receive_maximum(fmt, policy))

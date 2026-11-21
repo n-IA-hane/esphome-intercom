@@ -87,4 +87,5 @@ def as_direction(result, remote_sdp) -> RtpPcmDirection | None:
     receives = result.receive_accept or (result.receive,)
     return RtpPcmDirection(result.send, result.receive,
         recv_formats=receives if direction in {"recvonly", "sendrecv"} else (),
-        send_formats=(result.send,) if direction in {"sendonly", "sendrecv"} else ())
+        send_formats=(result.send_accept or (result.send,))
+        if direction in {"sendonly", "sendrecv"} else ())
