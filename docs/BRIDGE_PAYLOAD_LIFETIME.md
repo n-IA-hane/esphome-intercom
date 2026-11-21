@@ -60,11 +60,36 @@ The DTMF relay and browser media adapter capture one digit's payload, event
 set, clock, SSRC and timestamp under their existing send locks. Attribute
 updates do not split its initial report or three final reports; the next
 digit reads the newer negotiated mapping. No scheduler or session owner was
-added. Peer replacement, relay stop, browser close and media-generation change
-still interrupt a retired source before it emits another packet.
+added. Relay stop, browser close and actual source retirement interrupt a
+retired source before it emits another packet. A same-dialog re-INVITE is an
+ordered commit, not source retirement.
 
 Independent UDP witnesses first observed mixed PT101/PT110 in the relay and
 PT100/PT110 in the browser during one digit. The corrected paths retain the
 old mapping through the terminal repeats, then send the next digit with the
 new payload and clock. The 40 ms terminal duration is 320 ticks at 8 kHz and 1920
 ticks at 48 kHz, independently decoded from actual packet bytes.
+
+The real bridge commit and transfer owners acquire the relay's existing DTMF
+locks before publishing negotiated peers or splicing transports. Multiple
+relays use a deterministic identity order, then left/right, so concurrent
+transfers cannot invert the lock order. The browser applies its next codec and
+DTMF generation behind its existing digit lock; requested but unapplied
+session state cannot invalidate an active digit. TX and RX DTMF contracts are
+published by the same session-update owner.
+
+The barrier accepts the caller's absolute deadline and preserves outer timeout
+or cancellation. It never starts a new SIP transaction deadline. Call closure
+wakes pending acquisitions and all paths release locks in `finally`. Existing
+transaction owners retain failure/compensation decisions. Owners that do not
+expose a deadline continue to supply cancellation through their existing call
+lifecycle; the barrier does not infer or reset a timeout for them.
+
+Production API witnesses prepare an actual 48 kHz re-INVITE during an 8 kHz
+digit. The binder/browser wait for all three 320-tick final reports, commit the
+new contract, then send the next digit with PT126 and three 1920-tick final
+reports. This failed on the previous production candidate, which replaced a
+relay peer immediately or treated a requested browser generation as applied.
+Cancellation and an expiring outer deadline leave the original peer intact;
+closure emits no later packets. The real transfer API also waits for terminal
+reports before attempting its existing atomic owner commit and compensation.

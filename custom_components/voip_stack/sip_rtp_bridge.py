@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
@@ -228,6 +229,48 @@ class _RelayProtocol(asyncio.DatagramProtocol):
         self.relay.handle_packet(self.side, data, addr)
 
 
+@asynccontextmanager
+async def audio_reconfiguration_guard(*owners, deadline: float | None = None):
+    """Finish current digits before a media owner commits or splices a leg.
+
+    Ordering is global relay identity, then left/right. Cancellation and an
+    optional absolute deadline belong to the caller; this guard never renews
+    a SIP deadline. A relay's existing stop owner wakes pending acquisitions.
+    """
+    acquired = []
+    relays = sorted({id(owner): owner for owner in owners if isinstance(owner, SipRtpRelay)}.values(), key=id)
+    try:
+        async with asyncio.timeout_at(deadline):
+            for relay in relays:
+                if relay._stop_requested or relay._released:
+                    raise RuntimeError("RTP relay closed before media commit")
+                for side in ("left", "right"):
+                    lock = relay._dtmf_locks[side]
+                    taking = asyncio.create_task(lock.acquire(), name="voip-media-dtmf-barrier")
+                    stopping = asyncio.create_task(relay._stop_signal.wait(), name="voip-media-relay-stop")
+                    retained = False
+                    try:
+                        await asyncio.wait((taking, stopping), return_when=asyncio.FIRST_COMPLETED)
+                        if relay._stop_requested or relay._released or stopping.done():
+                            raise RuntimeError("RTP relay closed while waiting for media commit")
+                        await taking
+                        acquired.append(lock)
+                        retained = True
+                    finally:
+                        for task in (taking, stopping):
+                            if not task.done():
+                                task.cancel()
+                        try:
+                            await async_wait_for_cleanup(asyncio.gather(taking, stopping, return_exceptions=True))
+                        finally:
+                            if not retained and taking.done() and not taking.cancelled() and taking.result():
+                                lock.release()
+            yield
+    finally:
+        for lock in reversed(acquired):
+            lock.release()
+
+
 class SipRtpRelay:
     """Bidirectional RTP relay with explicit peer ownership.
 
@@ -303,7 +346,8 @@ class SipRtpRelay:
         source._on_release = destination._on_release = None
         setattr(source, f"{source_side}_transport", None)
         setattr(destination, f"{destination_side}_transport", None)
-        source._stop_requested = destination._stop_requested = True
+        source._request_stop()
+        destination._request_stop()
         for relay in (source, destination):
             for side in ("left", "right"):
                 relay._cancel_comfort_noise(side)
@@ -342,6 +386,7 @@ class SipRtpRelay:
         self._stop_requested = False
         self._cn_timers: dict[str, asyncio.TimerHandle] = {}
         self._cn_generations = {"left": 0, "right": 0}
+        self._stop_signal = asyncio.Event()
         self._dtmf_tasks: set[asyncio.Task[None]] = set()
         self._dtmf_locks = {"left": asyncio.Lock(), "right": asyncio.Lock()}
         self.video_relay: Any | None = None
@@ -538,6 +583,7 @@ class SipRtpRelay:
             peer.sequence = current.sequence
             peer.timestamp = current.timestamp
             peer.ssrc = current.ssrc
+            peer.clock_rate = current.clock_rate
             peer.rx_ssrc = None
             peer.dtmf_sequence = current.dtmf_sequence
             peer.dtmf_timestamp = current.dtmf_timestamp
@@ -560,6 +606,10 @@ class SipRtpRelay:
                 self._capture_formats[side] = peer.audio_format
 
         return _commit
+
+    def media_reconfiguration_guard(self, *, deadline: float | None = None):
+        """Serialize a negotiated commit with this owner's active digits."""
+        return audio_reconfiguration_guard(self, deadline=deadline)
 
     def reconfigure_peer(self, side: str, peer: RtpPeer) -> None:
         """Atomically apply a negotiated RTP peer update to one dialog leg."""
@@ -749,9 +799,13 @@ class SipRtpRelay:
     def _rtp_socket(port: int) -> socket.socket:
         return bind_sip_audio_socket(port)
 
+    def _request_stop(self) -> None:
+        self._stop_requested = True
+        self._stop_signal.set()
+
     async def stop(self) -> None:
         async with self._lifecycle_lock:
-            self._stop_requested = True
+            self._request_stop()
             task = self._stop_task
             if task is None:
                 task = asyncio.create_task(
@@ -916,6 +970,7 @@ class SipRtpRelay:
 
         if self._on_release is not None and not self._released:
             self._released = True
+            self._stop_signal.set()
             self._on_release((self.left_port, self.right_port))
 
     def attach_video_relay(self, relay: Any) -> None:

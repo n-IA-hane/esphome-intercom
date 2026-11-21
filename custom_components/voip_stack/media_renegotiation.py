@@ -11,6 +11,7 @@ re-INVITE fails.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import replace
 import logging
 
@@ -334,39 +335,40 @@ async def _prepare_bridge_video_contract_change(
 
         async def commit() -> None:
             nonlocal committed
-            if (
-                not registry.is_generation_current(
-                    updated.call_id, call_generation
-                )
-                or registry.resource_for(updated.call_id, "relay") is not relay
-                or registry.sip_client_for(dest_call_id) is not client
-                or relay.left is not previous_left
-                or relay.right is not previous_right
-                or relay.video_relay is not current_video_relay
-                or (
-                    retaining_video
-                    and (
-                        current_video_relay.left is not previous_video_left
-                        or current_video_relay.right is not previous_video_right
+            async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                if (
+                    not registry.is_generation_current(
+                        updated.call_id, call_generation
                     )
-                )
-            ):
-                raise RuntimeError("SIP bridge media owner changed before commit")
-            if not client.commit_prepared_reinvite(
-                destination_dialog, candidate
-            ):
-                raise RuntimeError("SIP destination re-INVITE owner changed")
-            if adding_video:
-                relay.attach_video_relay(staged_video_relay)
-            elif removing_video:
-                relay.video_relay = None
-            commit_left()
-            commit_right()
-            if commit_video_left is not None:
-                commit_video_left()
-            if commit_video_right is not None:
-                commit_video_right()
-            committed = True
+                    or registry.resource_for(updated.call_id, "relay") is not relay
+                    or registry.sip_client_for(dest_call_id) is not client
+                    or relay.left is not previous_left
+                    or relay.right is not previous_right
+                    or relay.video_relay is not current_video_relay
+                    or (
+                        retaining_video
+                        and (
+                            current_video_relay.left is not previous_video_left
+                            or current_video_relay.right is not previous_video_right
+                        )
+                    )
+                ):
+                    raise RuntimeError("SIP bridge media owner changed before commit")
+                if not client.commit_prepared_reinvite(
+                    destination_dialog, candidate
+                ):
+                    raise RuntimeError("SIP destination re-INVITE owner changed")
+                if adding_video:
+                    relay.attach_video_relay(staged_video_relay)
+                elif removing_video:
+                    relay.video_relay = None
+                commit_left()
+                commit_right()
+                if commit_video_left is not None:
+                    commit_video_left()
+                if commit_video_right is not None:
+                    commit_video_right()
+                committed = True
 
         async def finalize() -> None:
             nonlocal finalized
@@ -386,13 +388,17 @@ async def _prepare_bridge_video_contract_change(
                         and registry.resource_for(updated.call_id, "relay") is relay):
                     restored = await client.restore_prepared_reinvite(destination_dialog, candidate)
                     if restored is not None:
-                        if committed:
-                            relay.prepare_peer_reconfiguration("left", previous_left)()
-                        relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(restored))()
-                        relay.video_relay = current_video_relay
-                        if retaining_video and committed:
-                            current_video_relay.prepare_peer_reconfiguration("left", previous_video_left)()
-                            current_video_relay.prepare_peer_reconfiguration("right", previous_video_right)()
+                        async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                            if (not registry.is_generation_current(updated.call_id, call_generation)
+                                    or registry.resource_for(updated.call_id, "relay") is not relay):
+                                return
+                            if committed:
+                                relay.prepare_peer_reconfiguration("left", previous_left)()
+                            relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(restored))()
+                            relay.video_relay = current_video_relay
+                            if retaining_video and committed:
+                                current_video_relay.prepare_peer_reconfiguration("left", previous_video_left)()
+                                current_video_relay.prepare_peer_reconfiguration("right", previous_video_right)()
                 else:
                     client.abort_prepared_reinvite(destination_dialog, candidate)
             finally:
@@ -1045,30 +1051,34 @@ async def async_prepare_media_update(
 
     async def _commit_relay_update() -> None:
         nonlocal audio_committed, video_committed
-        _require_relay_current()
-        if commit_video_generation is not None:
-            await commit_video_generation()
-            video_committed = True
-            _require_relay_current(video_committed=True)
-        elif commit_video is not None:
-            commit_video()
-            video_committed = True
-        commit_audio()
-        audio_committed = True
+        async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+            _require_relay_current()
+            if commit_video_generation is not None:
+                await commit_video_generation()
+                video_committed = True
+                _require_relay_current(video_committed=True)
+            elif commit_video is not None:
+                commit_video()
+                video_committed = True
+            commit_audio()
+            audio_committed = True
 
     async def _rollback_relay_update() -> None:
         nonlocal audio_committed, video_committed
         if rollback_video_generation is not None:
             await rollback_video_generation()
-        if (not registry.is_generation_current(call_id, call_generation)
-                or registry.resource_for(call_id, "relay") is not relay):
+        if not audio_committed and not video_committed:
             return
-        if video_committed and rollback_video_generation is None and getattr(video_relay, side) is next_video_peer:
-            video_relay.prepare_peer_reconfiguration(side, previous_video_peer)()
-            video_committed = False
-        if audio_committed and getattr(relay, side) is next_audio_peer:
-            relay.prepare_peer_reconfiguration(side, previous_audio_peer)()
-            audio_committed = False
+        async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+            if (not registry.is_generation_current(call_id, call_generation)
+                    or registry.resource_for(call_id, "relay") is not relay):
+                return
+            if video_committed and rollback_video_generation is None and getattr(video_relay, side) is next_video_peer:
+                video_relay.prepare_peer_reconfiguration(side, previous_video_peer)()
+                video_committed = False
+            if audio_committed and getattr(relay, side) is next_audio_peer:
+                relay.prepare_peer_reconfiguration(side, previous_audio_peer)()
+                audio_committed = False
 
     return SipInviteResult(
         200, "OK", answer_sdp=answer, commit=_commit_relay_update, rollback=_rollback_relay_update

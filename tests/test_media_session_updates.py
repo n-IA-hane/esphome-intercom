@@ -32,6 +32,9 @@ def test_audio_update_commits_full_contract_before_waking_owner() -> None:
         remote_rtp_port="41000",
         local_audio_direction="recvonly",
         remote_audio_connection_held=True,
+        send_dtmf_payload_type=126,
+        send_dtmf_clock_rate=48000,
+        send_dtmf_events=frozenset({6}),
     )
 
     commit_audio_session_update(
@@ -51,6 +54,9 @@ def test_audio_update_commits_full_contract_before_waking_owner() -> None:
     assert session.remote_audio_connection_held is True
     assert session.dtmf_payload_type == 101
     assert session.dtmf_events == frozenset({0, 1, 2})
+    assert session.send_dtmf_payload_type == 126
+    assert session.send_dtmf_clock_rate == 48000
+    assert session.send_dtmf_events == frozenset({6})
     assert session.media_generation == 5
     assert update_event.is_set()
 

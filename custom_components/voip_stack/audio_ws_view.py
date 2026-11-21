@@ -28,7 +28,7 @@ from .call_projection import publish_esp_media_route
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS, MAX_PCM_FRAME_BYTES
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, OPUS_ENCODER_FRAME_MS
-from .core.sdp import RtpPcmFormat
+from .core.sdp import RtpDtmfFormat, RtpPcmFormat
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
     DEBUG_CAPTURE_MAX_PENDING_WRITES,
@@ -857,6 +857,13 @@ async def _run_audio_session(
     }
     incoming = BrowserAudioReceiver(session.remote_rtp_host, session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
+
+    def sender_dtmf_contract():
+        return (RtpDtmfFormat(session.send_dtmf_payload_type, int(session.send_dtmf_clock_rate),
+                             frozenset(session.send_dtmf_events))
+                if session.send_dtmf_payload_type is not None else None)
+
+    applied_dtmf_contract = sender_dtmf_contract()
     last_counter_event = 0.0
     ws_send_lock = asyncio.Lock()
     media_state_lock = asyncio.Lock()
@@ -948,13 +955,16 @@ async def _run_audio_session(
         return payload
 
     async def refresh_media_state(generation: int) -> None:
-        nonlocal applied_media_generation
+        nonlocal applied_media_generation, applied_dtmf_contract
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
         if generation == applied_media_generation:
             return
-        async with media_state_lock:
+        async with media_state_lock, dtmf_send_lock:
+            if closed.is_set():
+                return
+            generation = int(session.media_generation)
             if generation == applied_media_generation:
                 return
             # Build the complete codec/timing generation before publishing any
@@ -985,6 +995,7 @@ async def _run_audio_session(
                     rx_format=session.recv_format,
                     tx_format=session.send_format,
                 )
+            applied_dtmf_contract = sender_dtmf_contract()
             applied_media_generation = generation
             publish_esp_media_route(hass, session.call_id, browser_media_route())
 
@@ -1125,16 +1136,21 @@ async def _run_audio_session(
 
             nonlocal sequence, timestamp, ssrc, dtmf_source
             event = telephone_event_code(digit)
+            await refresh_media_state(int(session.media_generation))
             async with dtmf_send_lock:
                 async with rtp_send_lock:
                     # Capture one negotiated contract together with its media
                     # generation. A later digit can use a later mapping.
-                    event_payload_type = session.send_dtmf_payload_type
-                    event_set = frozenset(session.send_dtmf_events)
-                    event_generation = session.media_generation
+                    # Requested state may change before its browser owner can
+                    # apply it. Only the applied generation can retire a digit.
+                    contract = (sender_dtmf_contract() if session.media_generation == applied_media_generation
+                                else applied_dtmf_contract)
+                    event_payload_type = contract.payload_type if contract is not None else None
+                    event_set = contract.events if contract is not None else frozenset()
+                    event_generation = applied_media_generation
                     rtp_event = event is not None and event_payload_type is not None and event in event_set
                     if rtp_event:
-                        event_rate = max(1, int(session.send_dtmf_clock_rate))
+                        event_rate = max(1, int(contract.sample_rate))
                         audio_rate = rtp_encoder.fmt.rtp_clock_rate
                         if rtp_source.use_clock_rate(audio_rate):
                             sequence, timestamp, ssrc = rtp_source.sequence, rtp_source.timestamp, rtp_source.ssrc
@@ -1156,7 +1172,7 @@ async def _run_audio_session(
                 async def emit(duration: int, marker: bool, end: bool) -> bool:
                     nonlocal sequence
                     async with rtp_send_lock:
-                        if closed.is_set() or session.media_generation != event_generation:
+                        if closed.is_set() or applied_media_generation != event_generation:
                             return False
                         packet = rtp.build_packet(
                             rtp.RtpPacket(

@@ -56,7 +56,7 @@ def adopt_relay_for_application(hass, relay, side, contract, reservation, on_com
     media.video_relay, relay.video_relay = video, None
     setattr(relay, f"{side}_transport", None)
     relay._on_release = None
-    relay._stop_requested = True
+    relay._request_stop()
     return media
 
 

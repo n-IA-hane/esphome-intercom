@@ -262,8 +262,33 @@ class AudioSpliceTest(unittest.IsolatedAsyncioTestCase):
                 protocols = left.get_protocol(), right.get_protocol()
                 try:
                     with patch.object(calls, failure, side_effect=RuntimeError("injected handoff failure")):
-                        with self.assertRaisesRegex(RuntimeError, "injected handoff failure"):
-                            await try_local_audio_transfer(hass, runtime, grant, None)
+                        if failure == "upsert":
+                            with self.assertRaisesRegex(RuntimeError, "injected handoff failure"):
+                                await try_local_audio_transfer(hass, runtime, grant, None)
+                        else:
+                            first.right.send_dtmf_payload_type = 101
+                            first.right.send_dtmf_clock_rate = 8000
+                            digit = asyncio.create_task(first._send_dtmf_event("right", first.right, "5", duration_ms=40))
+                            async with asyncio.timeout(1):
+                                while not left.sent:
+                                    await asyncio.sleep(0)
+                            transfer = asyncio.create_task(try_local_audio_transfer(hass, runtime, grant, None))
+                            try:
+                                await asyncio.sleep(0)
+                                self.assertFalse(transfer.done())
+                                self.assertIs(calls.resource_for("original", "relay"), first)
+                                await asyncio.wait_for(digit, 1)
+                                terminal = [rtp.parse_packet(raw) for raw, _address in left.sent
+                                            if raw[13] & 128]
+                                self.assertEqual(len(terminal), 3)
+                                self.assertEqual({packet.payload_type for packet in terminal}, {101})
+                                self.assertEqual([struct.unpack("!H", packet.payload[2:])[0] for packet in terminal], [320]*3)
+                                with self.assertRaisesRegex(RuntimeError, "injected handoff failure"):
+                                    await transfer
+                            finally:
+                                for task in (digit, transfer):
+                                    task.cancel()
+                                await asyncio.gather(digit, transfer, return_exceptions=True)
                     self.assertIs(first.right_transport, left)
                     self.assertIs(second.right_transport, right)
                     self.assertEqual((left.get_protocol(), right.get_protocol()), protocols)

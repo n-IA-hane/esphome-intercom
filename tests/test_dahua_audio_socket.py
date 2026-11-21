@@ -372,7 +372,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                 while len([item for item in events if item.payload[1] & 128]) < 3:
                     raw, _address = await loop.sock_recvfrom(remote, 2048)
                     packet = rtp.parse_packet(raw)
-                    if packet.payload_type in {initial_dtmf_payload, 110} and len(packet.payload) == 4:
+                    if packet.payload_type in {initial_dtmf_payload, 110, 126} and len(packet.payload) == 4:
                         events.append(packet)
                         if len(events) == 1:
                             if dtmf_interrupt:
@@ -387,19 +387,23 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                                             break
                                     with pytest.raises(TimeoutError):
                                         await asyncio.wait_for(loop.sock_recvfrom(remote, 2048), .05)
-                                else:
-                                    session.media_generation += 1
-                                    session.update_event.set()
-                                    deadline = loop.time() + .1
-                                    while loop.time() < deadline:
-                                        try:
-                                            raw, _address = await asyncio.wait_for(loop.sock_recvfrom(remote, 2048),
-                                                                                 deadline-loop.time())
-                                        except TimeoutError:
-                                            break
-                                        assert rtp.parse_packet(raw).payload_type != initial_dtmf_payload
                                 return tuple(decoded_frames)
-                            if dtmf_reconfigure:
+                            if dtmf_reconfigure == "dialog":
+                                # Use the production offer negotiator and the
+                                # browser session's actual committed-update API.
+                                body = (f"v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio {remote_port} RTP/AVP 110 126\r\n"
+                                        "a=rtpmap:110 L16/48000/1\r\na=rtpmap:126 telephone-event/48000\r\n"
+                                        "a=fmtp:126 6\r\na=ptime:10\r\na=sendrecv\r\n")
+                                reoffer = sip.parse_message(sip.build_request("INVITE", "sip:Browser@127.0.0.1",
+                                    [("Content-Type", "application/sdp"), ("Contact", "<sip:door@127.0.0.1>")], body.encode()))
+                                candidate, _ = client._answer_remote_offer(reoffer)
+                                assert candidate is not None
+                                browser.ready.clear()
+                                _load_intercom_module("media_session_updates").commit_audio_session_update(
+                                    session, candidate, dtmf_payload_type=candidate.dtmf_payload_type,
+                                    dtmf_events=candidate.dtmf_events)
+                                assert session.media_generation == 1
+                            elif dtmf_reconfigure:
                                 session.send_dtmf_payload_type = 110
                                 session.send_dtmf_clock_rate = 48000
                                 session.send_dtmf_events = frozenset({6})
@@ -410,6 +414,9 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             assert events[0].ssrc != outgoing_packets[-1].ssrc
             assert all(struct.unpack("!H", item.payload[2:])[0] == 320 for item in events[-3:])
             if dtmf_reconfigure:
+                if dtmf_reconfigure == "dialog":
+                    await asyncio.wait_for(browser.ready.wait(), 1)
+                    assert browser.json[-1]["type"] == "media_update"
                 await browser.messages.put(SimpleNamespace(type=WSMsgType.TEXT,
                     data=json.dumps({"type": "dtmf", "digit": "6", "duration_ms": 40})))
                 following = []
@@ -417,9 +424,11 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                     while len([item for item in following if item.payload[1] & 128]) < 3:
                         raw, _address = await loop.sock_recvfrom(remote, 2048)
                         packet = rtp.parse_packet(raw)
-                        if packet.payload_type == 110:
+                        if packet.payload_type == (126 if dtmf_reconfigure == "dialog" else 110):
                             following.append(packet)
                 assert all(struct.unpack("!H", item.payload[2:])[0] == 1920 for item in following[-3:])
+                if dtmf_reconfigure == "dialog":
+                    return tuple(decoded_frames)
             # Once the key press has finished, the next valid PCMU packet may
             # change TX back. RFC 7160 starts a new source for the new clock.
             await send(0, 41, 6560, b"\xff" * 160)
@@ -502,9 +511,13 @@ async def test_browser_digit_keeps_old_mapping_when_attributes_change_mid_event(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interruption", ["generation", "close"])
-async def test_browser_digit_stops_on_media_generation_or_socket_close(monkeypatch, interruption):
-    await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, dtmf_interrupt=interruption)
+async def test_browser_digit_stops_on_socket_close(monkeypatch):
+    await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, dtmf_interrupt="close")
+
+
+@pytest.mark.asyncio
+async def test_browser_reinvite_applies_after_digit_then_next_digit_uses_new_clock(monkeypatch):
+    await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, dtmf_reconfigure="dialog")
 
 
 async def test_immediate_sip_answer_preserves_audio_until_browser_is_ready(monkeypatch):

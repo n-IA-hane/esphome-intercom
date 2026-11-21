@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any
@@ -200,11 +201,12 @@ class BridgeMediaUpdateBinder:
                     raise RuntimeError("bridge media ownership changed before commit")
 
             async def commit():
-                require_current()
-                if commit_video is not None:
-                    await commit_video()
-                    require_current(video_committed=True)
-                commit_peer()
+                async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                    require_current()
+                    if commit_video is not None:
+                        await commit_video()
+                        require_current(video_committed=True)
+                    commit_peer()
 
             def published(actual):
                 if (registry.is_generation_current(source_call_id, generation)
@@ -578,35 +580,36 @@ class BridgeMediaUpdateBinder:
                     raise RuntimeError("SIP bridge media owner changed before commit")
 
             async def commit() -> None:
-                require_current()
-                if commit_video_generation is not None:
-                    await commit_video_generation()
-                    require_current(video_committed=True)
-                commit_audio()
-                if adding_video:
-                    relay.attach_video_relay(video_relay)
-                if removing_video:
-                    relay.video_relay = None
-                    await video_relay.stop()
-                from .call_projection import publish_esp_media_route
+                async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                    require_current()
+                    if commit_video_generation is not None:
+                        await commit_video_generation()
+                        require_current(video_committed=True)
+                    commit_audio()
+                    if adding_video:
+                        relay.attach_video_relay(video_relay)
+                    if removing_video:
+                        relay.video_relay = None
+                        await video_relay.stop()
+                    from .call_projection import publish_esp_media_route
 
-                publish_esp_media_route(self.hass, source_call_id, relay.media_route)
-                _LOGGER.info(
-                    "SIP bridge outbound %s committed source_call_id=%s "
-                    "dest_call_id=%s remote_rtp=%s:%s audio_direction=%s "
-                    "video_direction=%s",
-                    method,
-                    source_call_id,
-                    client.dialog_ids.call_id,
-                    updated.remote_rtp_host,
-                    updated.remote_rtp_port,
-                    updated.remote_audio_direction,
-                    (
-                        updated_video.direction
-                        if updated_video is not None
-                        else "inactive"
-                    ),
-                )
+                    publish_esp_media_route(self.hass, source_call_id, relay.media_route)
+                    _LOGGER.info(
+                        "SIP bridge outbound %s committed source_call_id=%s "
+                        "dest_call_id=%s remote_rtp=%s:%s audio_direction=%s "
+                        "video_direction=%s",
+                        method,
+                        source_call_id,
+                        client.dialog_ids.call_id,
+                        updated.remote_rtp_host,
+                        updated.remote_rtp_port,
+                        updated.remote_audio_direction,
+                        (
+                            updated_video.direction
+                            if updated_video is not None
+                            else "inactive"
+                        ),
+                    )
 
             async def rollback() -> None:
                 if rollback_video_generation is not None:

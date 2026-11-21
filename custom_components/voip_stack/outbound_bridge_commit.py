@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import dataclass
 import secrets
 from typing import TYPE_CHECKING, Any
@@ -221,7 +222,12 @@ async def async_commit_outbound_bridge(
                 raise RuntimeError("early bridge media owner changed")
             relay_adopted = True
             from .sip_bridge import dialog_rtp_peer
-            relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(client.dialog))()
+            async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                _require_current()
+                data.retained_media.validate(registry)
+                if client.dialog is None:
+                    raise RuntimeError("early bridge dialog closed before media commit")
+                relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(client.dialog))()
             relay._on_release = _release_ports
         elif data.prepared_media is not None:
             relay = data.prepared_media.commit()

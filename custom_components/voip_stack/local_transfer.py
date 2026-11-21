@@ -12,7 +12,7 @@ from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_session import CleanupStage, LegPhase, SessionHandoff, TerminationIntent
 from .media_ports import RtpPortReservation
 from .session_cleanup import async_wait_for_cleanup
-from .sip_rtp_bridge import SipRtpRelay
+from .sip_rtp_bridge import SipRtpRelay, audio_reconfiguration_guard
 from .softphone_termination import async_terminate_sip_bridge_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,15 +130,16 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
                                  caller=goal.caller, callee=consultation.callee, client=client, source_client=source_client)
 
     try:
-        with SessionHandoff(calls, original, consultation, goal) as handoff:
-            handoff.preserve(old_leg, "phase", "endpoint_id")
-            for value in (client, source_client, referrer):
-                if value is not None:
-                    handoff.preserve(value, "on_refer", "on_media_update", "on_info_dtmf")
-            relay = SipRtpRelay.splice_audio(
-                source_relay, "left" if from_callee else "right", destination_relay, "right",
-                merge_reservations=merge_reservations, commit_owner=commit_owner,
-            )
+        async with audio_reconfiguration_guard(source_relay, destination_relay):
+            with SessionHandoff(calls, original, consultation, goal) as handoff:
+                handoff.preserve(old_leg, "phase", "endpoint_id")
+                for value in (client, source_client, referrer):
+                    if value is not None:
+                        handoff.preserve(value, "on_refer", "on_media_update", "on_info_dtmf")
+                relay = SipRtpRelay.splice_audio(
+                    source_relay, "left" if from_callee else "right", destination_relay, "right",
+                    merge_reservations=merge_reservations, commit_owner=commit_owner,
+                )
     except BaseException:
         for task in watchers:
             task.cancel()

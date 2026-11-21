@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -495,7 +496,9 @@ async def route_sip_bridge(
                 await relay.start()
                 require_current()
             elif update is not None:
-                update()
+                async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                    require_current()
+                    update()
             answer = build_answer_directional(local_ip, local_ip, source_relay_port,
                 invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp))
@@ -518,8 +521,11 @@ async def route_sip_bridge(
                     early_relay = None
             elif (registry.is_generation_current(invite.call_id, call_generation)
                     and registry.resource_for(invite.call_id, "relay") is relay
-                    and owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):
-                relay.prepare_peer_reconfiguration("right", prior_peer)()
+                    and owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))
+                    and relay.right is not prior_peer):
+                async with getattr(relay, "media_reconfiguration_guard", nullcontext)():
+                    require_current()
+                    relay.prepare_peer_reconfiguration("right", prior_peer)()
 
         return PreparedDialogMediaUpdate(commit, rollback)
 

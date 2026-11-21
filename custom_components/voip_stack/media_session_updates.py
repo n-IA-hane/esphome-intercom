@@ -41,6 +41,15 @@ def commit_audio_session_update(
     )
     session.dtmf_payload_type = dtmf_payload_type
     session.dtmf_events = frozenset(dtmf_events)
+    # SipInvite exposes the negotiated value; SipDialog stores its directional
+    # projection. Publish TX with RX in this same session-owned generation.
+    send_dtmf = getattr(negotiated, "send_dtmf_format", None)
+    session.send_dtmf_payload_type = (send_dtmf.payload_type if send_dtmf is not None
+                                    else getattr(negotiated, "send_dtmf_payload_type", None))
+    session.send_dtmf_clock_rate = (send_dtmf.sample_rate if send_dtmf is not None
+                                  else getattr(negotiated, "send_dtmf_clock_rate", None) or 8000)
+    session.send_dtmf_events = (send_dtmf.events if send_dtmf is not None
+                              else frozenset(getattr(negotiated, "send_dtmf_events", None) or ()))
     session.media_generation += 1
     session.update_event.set()
 
