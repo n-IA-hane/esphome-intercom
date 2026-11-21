@@ -216,6 +216,7 @@ async def test_sip_group_gate_runs_before_any_member_offer(trunks, registered_ph
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_dtmf_fallback_native_cid_did_and_selected_line_reach_the_outbound_client(trunks, unused_udp_port_factory, tmp_path, caplog):
     import socket
+    import struct
     import json
     from custom_components.voip_stack.const import CALL_EVENT
     from custom_components.voip_stack.config import normalized_trunk_config
@@ -243,6 +244,9 @@ async def test_dtmf_fallback_native_cid_did_and_selected_line_reach_the_outbound
     signaling = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     signaling.bind(("127.0.0.42", 0))
     signaling.setblocking(False)
+    media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    media.bind(("127.0.0.42", 0))
+    media.setblocking(False)
     responses = asyncio.Queue()
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
 
@@ -253,7 +257,7 @@ async def test_dtmf_fallback_native_cid_did_and_selected_line_reach_the_outbound
 
     receiver = asyncio.create_task(receive())
     caller = SipCallClient(local_ip="127.0.0.42", local_name="Provider caller", local_uri_user="351987654",
-        local_sip_port=signaling.getsockname()[1], local_rtp_port=unused_udp_port_factory(),
+        local_sip_port=signaling.getsockname()[1], local_rtp_port=media.getsockname()[1],
         supported_formats=[AudioFormat(16000, frame_ms=20)])
     caller.use_reused_signaling_flow(send=lambda raw: bool(signaling.sendto(raw, listener)),
                                      responses=responses, close=signaling.close)
@@ -270,8 +274,39 @@ async def test_dtmf_fallback_native_cid_did_and_selected_line_reach_the_outbound
         assert result == "in_call"
         assert lab.phones[1].invites and not lab.phones[0].invites
         assert lab.calls.get_session(caller.dialog_ids.call_id).metadata["outbound_trunk_id"] == "work"
+
+        # The same CID/trunk/weekday selection must carry caller and peer
+        # samples, rather than only constructing the expected outbound INVITE.
+        from custom_components.voip_stack.core import rtp
+        import re
+
+        peer = lab.phones[1]
+        forward = struct.pack("!320h", *([2100] * 320))
+        await lab.hass.loop.sock_sendto(media, rtp.build_packet(rtp.RtpPacket(
+            caller.dialog.send_format.payload_type, 0, 0, 901, forward,
+        )), (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
+        accumulated = bytearray()
+        async with asyncio.timeout(2):
+            while len(accumulated) < len(forward):
+                packet = rtp.parse_packet((await peer.audio.get())[0])
+                if any(packet.payload):
+                    accumulated.extend(packet.payload)
+        assert bytes(accumulated) == forward
+        reverse = struct.pack("!320h", *([-3100] * 320))
+        peer_port = int(re.search(rb"m=audio (\d+)", peer.invites[-1].body)[1])
+        await lab.hass.loop.sock_sendto(peer.rtp_socket, rtp.build_packet(rtp.RtpPacket(
+            peer.payload_type, 0, 0, 902, reverse,
+        )), ("127.0.0.1", peer_port))
+        accumulated.clear()
+        async with asyncio.timeout(2):
+            while len(accumulated) < len(reverse):
+                packet = rtp.parse_packet(await lab.hass.loop.sock_recv(media, 4096))
+                if any(packet.payload):
+                    accumulated.extend(packet.payload)
+        assert bytes(accumulated) == reverse
     finally:
         await caller.close()
+        media.close()
         receiver.cancel()
         await asyncio.gather(receiver, return_exceptions=True)
         async with asyncio.timeout(3):
