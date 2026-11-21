@@ -206,6 +206,9 @@ def softphone_originate(monkeypatch):
             "sip_registrar": lambda hass: hass.data.get("voip_stack", {}).get(
                 "sip_registrar"
             ),
+            "sip_endpoint_manager": lambda hass: hass.data.get("voip_stack", {}).get(
+                "sip_endpoint_manager"
+            ),
             "sip_trunk": lambda hass: hass.data.get("voip_stack", {}).get(
                 "sip_trunk"
             ),
