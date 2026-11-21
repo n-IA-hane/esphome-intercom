@@ -132,6 +132,12 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_media_contract_expectations_ha.py
+  tests/test_replacement_grant_owner_ha.py
+  tests/test_dahua_offer_payload_seed_ha.py
+  tests/test_community_independent_peer_ha.py
+  tests/test_hikvision_independent_peer_ha.py
+  tests/test_community_video_baresip_ha.py
   tests/test_complete_offer_contracts_ha.py
   tests/test_fanvil_blf_pickup_wire_ha.py
   tests/test_trunk_voicemail_ha.py
@@ -444,6 +450,7 @@ PY
     )
     ha_args=(
       "${ha_tests[@]}"
+      -m "not live"
       -q
       --tb=short
       "${coverage_args[@]}"
@@ -475,6 +482,7 @@ PY
     PYTHON=$HA_PYTHON
     pytest_args=(
       "${ha_tests[@]}"
+      -m "not live"
       -q
       --tb=short
     )
