@@ -255,6 +255,7 @@ ha_tests=(
   tests/test_audio_negotiation_matrix_ha.py
   tests/test_media_corpus_ha.py
   tests/test_media_codec_registry_ha.py
+  tests/test_media_static_payloads_ha.py
   tests/test_media_packet_time_ha.py
   tests/test_media_payload_map_ha.py
   tests/test_media_leg_corpus_ha.py

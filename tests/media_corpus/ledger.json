@@ -213,7 +213,8 @@
   "field": "outcome",
   "prior": "reject",
   "intended": "accept",
-  "cc": "CC-12"
+  "cc": "CC-12",
+  "implemented": true
  },
  {
   "step": "softphone-baresip-offers-l16-48000-2-10-430#0",

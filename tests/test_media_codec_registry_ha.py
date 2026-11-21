@@ -21,7 +21,10 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack"
 
 
 def test_static_payloads_match_rfc_3551_table_4():
-    assert STATIC_RTPMAP == {0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1)}
+    assert STATIC_RTPMAP == {
+        0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1),
+        10: ("L16", 44100, 2), 11: ("L16", 44100, 1),
+    }
 
 
 def test_g722_keeps_its_8_khz_clock_and_16_khz_audio():

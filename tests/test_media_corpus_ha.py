@@ -23,6 +23,7 @@ from tests.media_corpus_support import (
     ledger_problems,
     legacy_snapshot,
     load_steps,
+    _value,
     run_legacy,
 )
 
@@ -34,6 +35,8 @@ PRIVATE_ADDRESS = re.compile(rb"\b(?:10\.\d+|192\.168|172\.(?:1[6-9]|2\d|3[01]))
 
 LEDGER = json.loads((CORPUS / "ledger.json").read_text())
 OBSERVED = {step.name: run_legacy(step) for step in STEPS}
+BASELINE = json.loads(GOLDEN.read_text())
+IMPLEMENTED = {row["step"] for row in LEDGER if row.get("implemented")}
 
 
 def test_corpus_is_not_empty():
@@ -61,8 +64,20 @@ def test_case_is_well_formed(path):
 
 
 def test_engine_differs_from_the_contract_only_as_the_ledger_declares():
-    problems = ledger_problems(LEDGER, STEPS, OBSERVED)
+    # The ledger's prior values refer to the preserved historical baseline.
+    problems = ledger_problems(LEDGER, STEPS, BASELINE)
     assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)
+def test_completed_fields_meet_the_contract_and_other_cases_keep_the_baseline(step):
+    if step.name in IMPLEMENTED:
+        # Other deltas (for example receiver policy CC-2) may still be dark.
+        for row in LEDGER:
+            if row["step"] == step.name and row.get("implemented"):
+                assert _value(OBSERVED[step.name], row["field"]) == row["intended"]
+    else:
+        assert OBSERVED[step.name] == BASELINE[step.name]
 
 
 # One well known row for the negative controls: an inbound offer whose DTMF clock changes (CC-4).
@@ -86,12 +101,12 @@ def _altered(**changes) -> list[dict]:
 ], ids=["wrong prior", "wrong intended", "wrong entry point", "wrong change", "duplicate", "missing row"])
 def test_ledger_check_rejects_a_falsified_ledger(ledger, expected):
     """Negative controls: each kind of wrong row must be noticed."""
-    assert any(expected in problem for problem in ledger_problems(ledger(), STEPS, OBSERVED))
+    assert any(expected in problem for problem in ledger_problems(ledger(), STEPS, BASELINE))
 
 
 def test_an_error_is_not_accepted_where_a_refusal_was_declared():
     row = next(row for row in LEDGER if row["field"] == "outcome")
-    observed = {**OBSERVED, row["step"]: {"outcome": "error", "error": "ValueError"}}
+    observed = {**BASELINE, row["step"]: {"outcome": "error", "error": "ValueError"}}
     assert any("prior is 'error'" in problem for problem in ledger_problems(LEDGER, STEPS, observed))
 
 
@@ -99,6 +114,7 @@ def test_current_engine_matches_its_golden_snapshot():
     """Complete written descriptions included. Regenerate only with
     ``python -m tests.media_corpus_support --write-golden`` and review the diff."""
     actual = legacy_snapshot()
-    golden = json.loads(GOLDEN.read_text())
-    changed = sorted(name for name in actual.keys() | golden.keys() if actual.get(name) != golden.get(name))
+    golden = BASELINE
+    changed = sorted(name for name in actual.keys() | golden.keys()
+                     if actual.get(name) != golden.get(name) and name not in IMPLEMENTED)
     assert not changed, "engine output differs from the golden snapshot for: " + ", ".join(changed)

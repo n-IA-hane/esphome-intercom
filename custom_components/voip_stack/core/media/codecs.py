@@ -37,6 +37,9 @@ class CodecSpec:
     decodes_to_24_bit: bool = False
     # Packet time assumed when a mapping states none. None: the mapping must state it.
     assumed_packet_ms: int | None = None
+    # Additional static assignments when one codec has more than one geometry.
+    # Each tuple is (payload number, RTP clock rate, channel count).
+    static_mappings: tuple[tuple[int, int, int], ...] = ()
 
 
 CODECS: dict[str, CodecSpec] = {
@@ -47,7 +50,7 @@ CODECS: dict[str, CodecSpec] = {
         # G.722 carries 16 kHz audio on an 8 kHz RTP clock (RFC 3551 4.5.2).
         CodecSpec("G722", 1, static_payload=9, static_clock_rate=8000, decoded_rate=16000,
                   assumed_packet_ms=20),
-        CodecSpec("L16", 2),
+        CodecSpec("L16", 2, static_mappings=((10, 44100, 2), (11, 44100, 1))),
         CodecSpec("L24", 3, decodes_to_24_bit=True),
         # Dahua door stations label signed 16 bit little endian samples as
         # PCM/16000. It is gated by a profile during negotiation; on the wire
@@ -70,9 +73,13 @@ OCTETS_PER_SAMPLE: dict[str, int] = {
 # Static payload number -> (encoding, clock rate, channels), for descriptions
 # that list a static number without an rtpmap line.
 STATIC_RTPMAP: dict[int, tuple[str, int, int]] = {
-    spec.static_payload: (spec.name, spec.static_clock_rate, spec.static_channels)
+    number: (spec.name, clock, channels)
     for spec in CODECS.values()
-    if spec.static_payload is not None
+    for number, clock, channels in (
+        *(((spec.static_payload, spec.static_clock_rate, spec.static_channels),)
+          if spec.static_payload is not None else ()),
+        *spec.static_mappings,
+    )
 }
 
 # (encoding, clock rate, channels) -> payload number proposed in local offers.

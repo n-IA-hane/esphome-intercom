@@ -19,7 +19,7 @@ STEPS = load_steps()
 LEDGER = json.loads((CORPUS / "ledger.json").read_text())
 LEGACY = json.loads(GOLDEN.read_text())
 # Declared changes this engine does not implement yet. Their cases keep failing on purpose.
-NOT_YET = {"CC-12": "static payload numbers 10 and 11"}
+NOT_YET = {}
 COMPARED = ("outcome", "send.codec", "send.ptime", "send.payload", "recv.codec", "recv.ptime",
             "recv.payload", "dtmf.clock", "dtmf.payload")
 
