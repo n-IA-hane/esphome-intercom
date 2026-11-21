@@ -2404,6 +2404,12 @@ class VoipStackCard extends HTMLElement {
     card.classList.toggle("layout-narrow", width < 350);
     card.classList.toggle("layout-compact", height < 360);
     card.classList.toggle("layout-short", height < 285);
+    // Size containment preserves the auto-row fallback without making a
+    // constrained video surface taller than its allocated Lovelace slot.
+    const cardStyle = getComputedStyle(card);
+    const verticalInsets = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
+      .reduce((total, key) => total + (parseFloat(cardStyle[key]) || 0), 0);
+    card.style.setProperty("--voip-video-intrinsic-height", `${Math.max(0, 280 - verticalInsets)}px`);
     this._layoutPhoneActivity();
   }
 

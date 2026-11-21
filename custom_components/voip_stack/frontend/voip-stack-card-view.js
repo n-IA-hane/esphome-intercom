@@ -152,6 +152,12 @@ export function buildMainCardSkeleton(cardVersion) {
        * media/control layers do not provide intrinsic height, so retain the
        * configured 100% height and only use 280px as the auto-row fallback. */
       .card.video-active { overflow: hidden; background: #000; min-height: 280px; }
+      @supports (contain-intrinsic-block-size: 280px) {
+        .card.video-active {
+          min-height: 0; contain: size;
+          contain-intrinsic-block-size: var(--voip-video-intrinsic-height, 280px);
+        }
+      }
       .video-active .header,
       .video-active .destination-label,
       .video-active .destination-value,

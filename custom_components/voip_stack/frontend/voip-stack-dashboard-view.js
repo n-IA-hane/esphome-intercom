@@ -38,6 +38,7 @@ const STYLES = `
   .header-tools .action ha-icon { display:flex; align-items:center; justify-content:center;
     width:21px; height:21px; line-height:1; }
   :host ha-card.video-mode .dashboard-header,:host ha-card.video-mode .notice { display:none; }
+  @supports (contain-intrinsic-block-size:280px) { ha-card.video-mode { min-height:0; } }
   .dashboard-header { flex:none; display:flex; align-items:center; gap:20px; padding:18px 22px;
     border-bottom:1px solid var(--dash-line); background:color-mix(in srgb,var(--dash-ink) 3%,transparent); }
   .identity { display:flex; align-items:center; gap:14px; min-width:0; flex:1 1 34%; }
