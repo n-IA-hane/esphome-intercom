@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 # "shadow": production decides, the new engine is computed beside it and differences are logged.
 # The default costs nothing. The environment variable lets one installation collect real calls.
 ENGINE_MODES = ("legacy", "shadow", "active")
-_engine_mode = os.environ.get("VOIP_STACK_MEDIA_ENGINE", "legacy")
+_engine_mode = os.environ.get("VOIP_STACK_MEDIA_ENGINE", "active")
 
 
 def set_engine_mode(mode: str) -> None:
@@ -31,7 +31,7 @@ def set_engine_mode(mode: str) -> None:
 
 
 def engine_mode() -> str:
-    return _engine_mode if _engine_mode in ENGINE_MODES else "legacy"
+    return _engine_mode if _engine_mode in ENGINE_MODES else "active"
 
 
 def _field(fmt, name: str):

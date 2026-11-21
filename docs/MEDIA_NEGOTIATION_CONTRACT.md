@@ -1,9 +1,10 @@
 # Media negotiation contract
 
-Status: implementation in progress after two adversarial reviews (section 9). The pure leg
-engine is covered by the corpus; production entry points still use the legacy negotiator.
-CC-12 is implemented in the shared codec registry. Once migration is complete this document
-replaces `AUDIO_NEGOTIATION.md`.
+Status: the leg engine and complete outgoing offer planner are connected to the production
+SDP entry points and enabled by default in the local consolidation candidate. The candidate
+is not promoted until its frozen software and device qualification completes. Legacy and
+shadow are temporary comparison lanes. Once migration is complete this document replaces
+`AUDIO_NEGOTIATION.md`.
 
 This is the single written contract for how VoIP Stack negotiates audio codecs, sample rates,
 packet times, payload numbers, DTMF and media direction on every SIP leg, in the Home Assistant
