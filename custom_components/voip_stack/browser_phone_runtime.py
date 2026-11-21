@@ -319,6 +319,23 @@ def _set_ha_softphone_call_state(
         CallState.AUTH_REQUIRED_UNSUPPORTED.value,
         "error",
     }
+    previous_call_id = str(store.get("call_id") or "")
+    call_id = call_id or previous_call_id
+    if previous_call_id and call_id != previous_call_id:
+        for key in ("caller", "callee", "direction", "peer_name", "connected_party", "answered_by", "dialed_target"):
+            store.pop(key, None)
+
+    peer_name = peer_name or extra.get("connected_party") or extra.get("answered_by")
+    if peer_name:
+        # A new explicit identity supersedes older display aliases for this call.
+        for key in ("connected_party", "answered_by"):
+            if not extra.get(key) and store.get(key) != peer_name:
+                store.pop(key, None)
+    elif call_id and call_id == previous_call_id:
+        peer_name = store.get("peer_name", "")
+    elif terminal and call_id and call_id == store.get("last_terminal_call_id"):
+        peer_name = store.get("last_terminal_peer_name", "")
+
     canonical = _canonical_session_fields(
         state=state,
         local_name=local_name,
@@ -326,10 +343,9 @@ def _set_ha_softphone_call_state(
         caller=caller or str(store.get("caller", "")),
         callee=callee or str(store.get("callee", "")),
         direction=direction or str(store.get("direction", "")),
-        call_id=call_id or str(store.get("call_id", "")),
+        call_id=call_id,
     )
     state = canonical["state"]
-    previous_call_id = str(store.get("call_id") or "")
     next_call_id = str(canonical.get("call_id") or "")
     previous_state = str(store.get("state") or "").strip().lower()
     if state == CallState.IN_CALL.value:

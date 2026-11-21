@@ -336,3 +336,46 @@ async def test_failed_browser_contract_send_immediately_closes_pending_media(bro
             await lab.calls.terminate_call_wait(session.call_id, reason="local_hangup")
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_terminal_state_keeps_the_name_of_the_peer_the_call_already_had(browser_lab):
+    """The card showed "Call with 54da57...06 has ended": after answer the callee of an outgoing
+    call is the internal id of the dialed endpoint, and the terminal update carried no name."""
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state, _set_ha_softphone_call_state
+
+    lab, phone, _job = browser_lab
+    endpoint_id, name = "54da57478a40e69420df7586730f6706", "Waveshare P4 Touch"
+    common = {"endpoint_id": phone.endpoint_id, "call_id": "ha-outgoing", "direction": "outgoing", "caller": phone.name}
+    _set_ha_softphone_call_state(lab.hass, "calling", callee=name, peer_name=name, **common)
+    _set_ha_softphone_call_state(lab.hass, "in_call", callee=endpoint_id, peer_name=name, **common)
+    _set_ha_softphone_call_state(lab.hass, "idle", callee=endpoint_id, reason="local_hangup", **common)
+    snapshot = _ha_softphone_state(lab.hass, phone.endpoint_id)
+    assert (snapshot["state"], snapshot["peer_name"]) == ("idle", name)
+    # A different call must not inherit that name.
+    _set_ha_softphone_call_state(lab.hass, "idle", endpoint_id=phone.endpoint_id, call_id="ha-other",
+                                direction="outgoing", caller=phone.name, callee="unknown-target", reason="busy")
+    assert _ha_softphone_state(lab.hass, phone.endpoint_id)["peer_name"] == "unknown-target"
+
+
+async def test_partial_phone_updates_accept_new_identity_and_isolate_a_replacement_call(browser_lab):
+    from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
+    from custom_components.voip_stack.browser_phone_runtime import _set_ha_softphone_call_state
+
+    lab, phone, _job = browser_lab
+    scope = {"endpoint_id": phone.endpoint_id, "direction": "outgoing", "caller": phone.name}
+
+    def update(identity, state, **values):
+        _set_ha_softphone_call_state(lab.hass, state, call_id=identity, **scope, **values)
+        return _ha_softphone_state(lab.hass, phone.endpoint_id)
+
+    update("first", "calling", callee="Casa")
+    assert update("first", "in_call", connected_party="Mario Rossi")["peer_name"] == "Mario Rossi"
+    assert update("first", "in_call", connected_party="Reception")["peer_name"] == "Reception"
+    assert update("first", "in_call", peer_name="Operator")["peer_name"] == "Operator"
+    assert update("first", "in_call")["peer_name"] == "Operator"
+    assert update("first", "in_call", connected_party="Reception")["peer_name"] == "Reception"
+
+    second = update("second", "in_call", callee="204")
+    assert (second["peer_name"], second["connected_party"]) == ("204", "")
+    assert update("second", "idle", connected_party="Kitchen")["peer_name"] == "Kitchen"
+    assert update("second", "idle")["peer_name"] == "Kitchen"

@@ -353,6 +353,27 @@ async def test_esp_observation_cannot_release_a_pbx_owned_phone(hass, phones, mo
         remove()
 
 
+async def test_released_caller_leg_keeps_the_connected_party(hass, phones):
+    from custom_components.voip_stack.endpoint_lifecycle import call_registry
+    from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
+
+    calls = call_registry(hass)
+    with calls.state_operation():
+        session = calls.upsert("outgoing", state="in_call", owner="ha_softphone", caller="Office",
+                               callee="Casa", connected_party="Mario Rossi",
+                               source_endpoint_id="office", endpoint_id="office")
+        calls.claim_endpoint(session.call_id, "office", role="source")
+    await hass.async_block_till_done()
+    assert _ha_softphone_state(hass, "office")["peer_name"] == "Mario Rossi"
+
+    calls.release_endpoint_claim(session.call_id, "office")
+    await hass.async_block_till_done()
+    terminal = _ha_softphone_state(hass, "office")
+    assert (terminal["terminal_reason"], terminal["callee"], terminal["peer_name"]) == (
+        "forwarded", "Casa", "Mario Rossi",
+    )
+
+
 async def test_registry_commit_updates_card_and_releases_losing_browser_without_manual_events(hass, phones):
     from custom_components.voip_stack.endpoint_lifecycle import call_registry
     from custom_components.voip_stack.websocket_api import _ha_softphone_state
