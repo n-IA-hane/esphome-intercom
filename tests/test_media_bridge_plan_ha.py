@@ -3,7 +3,8 @@
 import pytest
 
 from custom_components.voip_stack.core import sdp
-from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
+from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
+from custom_components.voip_stack.core.audio_format import AudioFormat, HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.media.bridge import AudioOperation, plan_audio_flow, plan_caller_audio
 
@@ -61,3 +62,19 @@ def test_callee_codec_never_widens_the_callers_policy():
     callee = sdp.RtpPcmDirection(fmt(8000, codec="PCMA"), fmt(8000, codec="PCMA"))
     plan = plan_caller_audio(body, caller, callee, codec_policy=CodecPolicy(audio=("L16",)))
     assert plan.caller.send.encoding == plan.caller.recv.encoding == "L16"
+
+
+def test_admitted_generic_caller_survives_no_feasible_bridge_optimization():
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96\r\n"
+            "a=rtpmap:96 L16/32000/1\r\na=ptime:10\r\na=sendrecv\r\n").encode()
+    send_preferences = (AudioFormat(48000, frame_ms=10),)
+    receive_preferences = (AudioFormat(16000, frame_ms=20),)
+    caller = sdp.negotiate_directional(body, list(send_preferences), list(receive_preferences),
+                                     local_capabilities=HA_AUDIO_CAPABILITIES)
+    assert caller is not None and caller.send.sample_rate == 32000
+    assert caller.send.audio_format not in send_preferences
+    pcma = fmt(8000, pt=8, codec="PCMA")
+    plan = plan_caller_audio(body, caller, sdp.RtpPcmDirection(pcma, pcma),
+                             send_capabilities=send_preferences,
+                             receive_capabilities=receive_preferences)
+    assert plan.caller is caller

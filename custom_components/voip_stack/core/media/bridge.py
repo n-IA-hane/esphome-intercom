@@ -5,9 +5,10 @@ from enum import StrEnum
 
 from .. import sdp
 from ..audio_capabilities import HA_AUDIO_CAPABILITIES
-from ..audio_format import AudioFormat
+from ..audio_format import AudioFormat, PcmFormat
 from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
+from .codecs import CODECS
 
 
 class AudioOperation(StrEnum):
@@ -34,8 +35,14 @@ class BridgeAudioPlan:
 
 
 def _pcm_shape(fmt):
-    pcm = fmt.audio_format
-    return pcm.sample_rate, pcm.pcm_format, pcm.channels
+    # Geometry does not require a duration. Constructing an AudioFormat here
+    # would reject a fractional-sample packet that is only being compared.
+    spec = CODECS.get(fmt.encoding)
+    if spec is None:
+        return fmt.sample_rate, PcmFormat.S24LE, fmt.channels
+    return (spec.decoded_rate or fmt.sample_rate,
+            PcmFormat.S24LE if spec.decodes_to_24_bit else PcmFormat.S16LE,
+            spec.decoded_channels or fmt.channels)
 
 
 def plan_audio_flow(source: RtpPcmFormat, target: RtpPcmFormat) -> AudioFlowPlan:
@@ -84,17 +91,20 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
     preferred = callee.recv.audio_format
     send_formats = [preferred, caller.send.audio_format]
     if send_capabilities:
-        shape = (preferred.sample_rate, preferred.pcm_format, preferred.channels)
+        # These bounds apply to a bridge optimization, not to admission of
+        # the caller's already valid contract. Try every declared alternative
+        # if the callee's preferred geometry cannot meet the receiver bounds.
         send_formats = [fmt for fmt in dict.fromkeys((preferred, *send_capabilities))
-            if fmt in send_capabilities and (fmt.sample_rate, fmt.pcm_format, fmt.channels) == shape]
-        if caller.send.audio_format in send_capabilities:
-            send_formats.append(caller.send.audio_format)
+            if fmt in send_capabilities]
     recv_formats = (callee.send.audio_format, caller.recv.audio_format)
     if _pcm_shape(callee.send) == _pcm_shape(caller.recv):
         recv_formats = recv_formats[::-1]
     selected = sdp.negotiate_directional(remote_sdp, list(dict.fromkeys(send_formats)),
         list(dict.fromkeys(recv_formats)), allow_dahua_pcm=dahua, codec_policy=codec_policy,
-        local_recv_capabilities=receive_capabilities or None, local_capabilities=HA_AUDIO_CAPABILITIES)
+        local_recv_capabilities=receive_capabilities or None,
+        # The active leg engine treats this invocation's explicit alternatives
+        # as fixed. The generic HA backend remains dynamic for initial calls.
+        local_capabilities=None if send_capabilities else HA_AUDIO_CAPABILITIES)
     if selected is None:
         trace.append("B2 no feasible alternative inside the caller's offer and policy")
         return result(caller)
