@@ -3,13 +3,16 @@
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import secrets
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.sip_registrar import SipAccount
 from tools.ha_softphone_matrix import BareSip
 from .test_canonical_account_calls_ha import (
@@ -33,18 +36,39 @@ async def shared_account(canonical_browser, registered_phones, tmp_path):
     registrar.update_accounts([*registrar.accounts.values(), SipAccount(username, data["name"], password,
         extension=str(data.get("extension") or ""))])
     peers = []
+    sip_ports = set()
     try:
         original = (tmp_path / "transfer_b" / "config").read_text()
         for index in range(2):
             config = tmp_path / f"shared-contact-{index}"
             config.mkdir(mode=0o700)
-            (config / "config").write_text(original.replace(str(tmp_path / "transfer_b"), str(config)))
+            # Each copied UA owns a distinct UDP/TCP listener. The source
+            # transfer_b still owns the explicit sip_listen in its config.
+            for _ in range(128):
+                sip_port = 31000 + secrets.randbelow(1000)
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
+                        udp.bind(("127.0.0.1", sip_port))
+                        tcp.bind(("127.0.0.1", sip_port))
+                except OSError:
+                    continue
+                break
+            else:
+                raise RuntimeError("No free UDP/TCP port in the registered phone range")
+            content = original.replace(str(tmp_path / "transfer_b"), str(config))
+            content = "\n".join(line for line in content.splitlines()
+                                if line.split(maxsplit=1)[:1] != ["sip_listen"])
+            (config / "config").write_text(content + f"\nsip_listen 127.0.0.1:{sip_port}\n")
             accounts = config / "accounts"
             accounts.write_text(f'<sip:{username}@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}>'
                 f';auth_user={username};auth_pass={password};regint=60;answermode=manual\n')
             accounts.chmod(0o600)
             peers.append(await asyncio.to_thread(BareSip, config))
+            sip_ports.add(sip_port)
         assert len(registrar.registered_contacts(username)) == 2
+        assert len(sip_ports) == 2
+        assert {sip.parse_sip_uri(contact.contact_uri).port
+                for contact in registrar.registered_contacts(username)} == sip_ports
         assert runtime.runtime.ha_bindings.has_binding("casa")
         yield runtime, registered_phones[0], peers
     finally:
