@@ -3931,7 +3931,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 )
             )
             if not local_offer_sdp:
-                # Reports only: the new engine never changes what is answered here.
+                # The optional shadow comparison cannot change the decision
+                # already made by the selected negotiation engine above.
                 shadow_inbound_offer(
                     request.header("Call-ID"), request.body, selected,
                     dahua=peer_profile == "dahua", codec_policy=codec_policy)
