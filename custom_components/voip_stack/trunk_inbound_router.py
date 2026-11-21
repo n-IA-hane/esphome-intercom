@@ -637,7 +637,7 @@ async def async_route_trunk_invite(
         await terminate_source(
             terminal_reason,
             status=client.last_sip_status_code or 480,
-            answered=True,
+            answered=bool((preanswered or {}).get("final_response_sent", True)),
         )
         return
     _LOGGER.info(

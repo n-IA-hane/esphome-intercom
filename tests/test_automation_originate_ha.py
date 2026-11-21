@@ -74,7 +74,8 @@ class Phone(asyncio.DatagramProtocol):
         if body:
             port = self.transport.get_extra_info("sockname")[1]
             headers += [("Content-Type", "application/sdp"), ("Contact", f"<sip:bedroom@127.0.0.1:{port}>")]
-        reason = {180: "Ringing", 200: "OK", 486: "Busy Here", 487: "Request Terminated"}[status]
+        reason = {180: "Ringing", 200: "OK", 486: "Busy Here", 487: "Request Terminated",
+                  503: "Service Unavailable", 603: "Decline"}[status]
         self.transport.sendto(sip.build_response(status, reason, headers, body), address)
 
     def answer(self):

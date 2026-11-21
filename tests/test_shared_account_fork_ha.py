@@ -72,7 +72,7 @@ async def assert_no_active_calls(peers):
 
 
 @asynccontextmanager
-async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback):
+async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback, *, calls=1):
     """Originate from an independent provider at the trusted trunk IP."""
     from custom_components.voip_stack import trunk_dtmf
     from custom_components.voip_stack.config import normalized_trunk_config
@@ -98,7 +98,7 @@ async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, f
     caller = await asyncio.create_subprocess_exec(
         executable, "-sn", "uac", f"127.0.0.1:{port}", "-s", "450", "-i", "127.0.0.2",
         "-p", str(unused_udp_port_factory()), "-mi", "127.0.0.2", "-mp", str(unused_udp_port_factory()),
-        "-d", "1200", "-m", "1", "-nostdin", "-timeout", "12s", "-timeout_error",
+        "-d", "1200", "-m", str(calls), "-l", "1", "-nostdin", "-timeout", "12s", "-timeout_error",
         "-trace_msg", "-message_file", str(tmp_path / "trunk-sip.log"), cwd=tmp_path, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
     try:
