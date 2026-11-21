@@ -49,3 +49,19 @@ def test_internal_references_are_explicit_and_do_not_shadow_public_aliases():
 def test_one_destination_can_own_several_matching_public_aliases():
     row = roster.RosterEntry("204", name="204", extension="204", number="204")
     assert PhoneDirectory([row]).resolve("204") == row
+
+
+def test_internal_extension_precedes_only_an_external_contacts_number():
+    internal = roster.RosterEntry("Office", extension="101", address="192.0.2.10")
+    external = roster.RosterEntry("Reception", name="External reception", number="101")
+    directory = PhoneDirectory([internal, external])
+    assert directory.resolve("101") == internal
+    assert roster.find_entry([internal, external], "101") == internal
+    assert directory.resolve("Reception") == external
+    assert router.resolve_ha_router("Reception", [internal, external], trunk_ready=True).target == "101"
+
+
+def test_extension_does_not_override_another_accounts_explicit_public_name():
+    rows = [roster.RosterEntry("Office", extension="101"), roster.RosterEntry("101", name="Other account")]
+    with pytest.raises(roster.RosterError, match="Ambiguous"):
+        PhoneDirectory(rows).resolve("101")

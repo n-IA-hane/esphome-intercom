@@ -131,11 +131,11 @@ class PhoneDirectory:
         if not raw:
             return None
 
-        def aliases(entry, *, internal):
+        def aliases(entry, *, internal, contact_number=True):
             values = [entry.id, entry.name]
             if include_extension:
                 values.append(entry.extension)
-            if include_number:
+            if include_number and contact_number:
                 values.append(getattr(entry, "number", ""))
             if internal and include_internal_ids:
                 metadata = getattr(entry, "metadata", {})
@@ -150,6 +150,15 @@ class PhoneDirectory:
                 if wanted and any(normalize(value) == wanted for value in aliases(entry, internal=internal)):
                     identity = str(getattr(entry, "metadata", {}).get("endpoint_id") or entry.id).casefold()
                     matches[identity] = entry
+            if len(matches) > 1 and raw.isdecimal() and any(
+                str(entry.extension).strip() == raw for entry in matches.values()
+            ):
+                # An internal extension wins over a contact's external number.
+                # Another account that explicitly owns the same public name
+                # remains ambiguous; never choose the first destination.
+                matches = {identity: entry for identity, entry in matches.items()
+                           if any(normalize(value) == wanted
+                                  for value in aliases(entry, internal=internal, contact_number=False))}
             if len(matches) > 1:
                 raise RosterError("Ambiguous directory destination")
             if matches:
