@@ -300,3 +300,27 @@ def create_offer_for_declared_peer(
         packet_ms=packet_ms,
         trace=(f"X4 narrowed to {len(ordered)} declared mappings", f"R3 ask {packet_ms} ms from {heard.mapping[0]}/{heard.mapping[1]}"),
     )
+
+
+def write_offer(plan: OfferPlan, address: str, port: int, *, directional: bool, maxptime: float,
+                session_id: int = 0) -> str:
+    """Serialize an offer plan as a complete session description.
+
+    ``directional`` adds the attributes of profile esp_directional_v1 exactly as the current
+    writer does, every payload marked sendrecv: changing those roles needs proof on devices.
+    """
+    lines = ["v=0", f"o=- {int(session_id)} 0 IN IP4 {address}", "s=VoIP Stack", f"c=IN IP4 {address}", "t=0 0",
+             f"m=audio {int(port)} RTP/AVP " + " ".join(str(number) for number, _ in plan.payloads)]
+    for number, (name, clock, channels) in plan.payloads:
+        if name == TELEPHONE_EVENT:
+            lines += [f"a=rtpmap:{number} telephone-event/{clock}", f"a=fmtp:{number} 0-15"]
+            continue
+        lines.append(f"a=rtpmap:{number} {name}/{clock}/{channels}")
+        if name == "OPUS":
+            lines.append(f"a=fmtp:{number} stereo=0;sprop-stereo=0;maxaveragebitrate=28000")
+        if directional:
+            lines.append(f"a=x-voip-stack-flow:{number} sendrecv")
+    if directional:
+        lines.append("a=x-voip-stack-independent-ptime:1")
+    lines += [f"a=ptime:{plan.packet_ms:g}", f"a=maxptime:{maxptime:g}", "a=sendrecv"]
+    return "\r\n".join(lines) + "\r\n"
