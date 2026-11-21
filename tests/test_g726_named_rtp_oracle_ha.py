@@ -14,7 +14,7 @@ import pytest
 from custom_components.voip_stack.core.g726_codec import G726Encoder
 from tests.support.shared_codec_peer import CASES, audio_sdp, decode_named_rtp
 
-pytestmark = pytest.mark.ha
+pytestmark = [pytest.mark.ha, pytest.mark.diagnostic_reference]
 
 
 def itu_values(path):

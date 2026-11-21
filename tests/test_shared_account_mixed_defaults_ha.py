@@ -14,7 +14,7 @@ from tests.test_shared_account_codec_media_ha import (
     test_shared_account_codec_winner_media_and_reuse as exercise_shared_account,
 )
 
-pytestmark = pytest.mark.ha
+pytestmark = [pytest.mark.ha, pytest.mark.browser_real]
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

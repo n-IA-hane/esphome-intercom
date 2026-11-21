@@ -35,7 +35,7 @@ from tests.support.shared_codec_peer import (
     payload_duration_ms,
 )
 
-pytestmark = pytest.mark.ha
+pytestmark = [pytest.mark.ha, pytest.mark.browser_real]
 
 
 async def until(predicate, seconds=5):

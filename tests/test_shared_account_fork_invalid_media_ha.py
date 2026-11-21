@@ -30,7 +30,7 @@ from tests.test_shared_account_codec_media_ha import (
     measure_browser,
 )
 
-pytestmark = pytest.mark.ha
+pytestmark = [pytest.mark.ha, pytest.mark.browser_real]
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

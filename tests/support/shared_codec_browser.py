@@ -24,7 +24,14 @@ class Card:
         self.requests = set()
         self.process = self.server = None
 
-    async def start(self, lab, hass_ws_client, directory, identity):
+    async def start(
+        self, lab, hass_ws_client, directory, identity, *, browser_python=None
+    ):
+        browser_python = browser_python or os.environ.get("VOIP_BROWSER_PYTHON")
+        if not browser_python:
+            raise RuntimeError(
+                "Set VOIP_BROWSER_PYTHON to the browser lane's Playwright interpreter"
+            )
         directory.mkdir(parents=True, exist_ok=True)
         self.directory = directory
         self.controls = []
@@ -122,7 +129,7 @@ class Card:
             writer.writeframes(tone_pcm(48000, 650))
         driver = Path(__file__).with_name("shared_codec_chromium.py")
         self.process = await asyncio.create_subprocess_exec(
-            os.environ.get("PYTHON", "/home/codex/esphome-intercom/.venv/bin/python"),
+            browser_python,
             str(driver),
             str(self.server.make_url("/")),
             str(wav),
