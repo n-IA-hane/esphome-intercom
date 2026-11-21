@@ -4,6 +4,9 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import shutil
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -199,7 +202,7 @@ async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 6}], indirect=True)
 async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only(
-    shared_account, hass_ws_client, record_property, tmp_path,
+    shared_account, hass_ws_client, record_property, tmp_path, hass_read_only_user,
 ):
     runtime, caller, peers = shared_account
     runtime.runtime.endpoints.update("casa", name="Home reception")
@@ -243,6 +246,16 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         assert phone["state"] == "in_call", evidence
         assert snapshot["state"] == "in_call", evidence
         assert snapshot["can_attach_media"] is False, evidence
+        assert snapshot["can_control"] is True, evidence
+        from custom_components.voip_stack.websocket_api import _client_phone_state
+        readonly = _client_phone_state(runtime.hass, SimpleNamespace(user=hass_read_only_user), "casa")
+        assert readonly["state"] == "in_call" and readonly["can_control"] is False
+        model = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/frontend/voip-stack-card-model.js"
+        subprocess.run(["node", "--input-type=module", "-e",
+            f"import {{phoneCallPresentation}} from {model.as_uri()!r};let input='';for await(const chunk of process.stdin)input+=chunk;"
+            "for(const snapshot of JSON.parse(input))if(phoneCallPresentation(snapshot).state!=='in_call')throw Error('SIP observer lost its call');"],
+            input=json.dumps([snapshot, readonly]), text=True, check=True)
+        (tmp_path / "account-observer-payloads.json").write_text(json.dumps([snapshot, readonly], indent=2))
         ha_legs = [leg for leg in session.legs.values() if leg.role == "ha_softphone"]
         assert len(ha_legs) == 1 and ha_legs[0].phase.value == "closed", evidence
         assert runtime.calls.resource_for(call_id, "softphone_media") is None
@@ -262,6 +275,104 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         await asyncio.to_thread(peer.close)
     from .test_sip_phone_transfers_ha import assert_peer_audio_tones
     assert_peer_audio_tones(tmp_path, (("transfer_a", 550), ("shared-contact-0", 450)))
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
+async def test_different_account_winner_removes_the_losing_account_projection(
+    canonical_browser, registered_phones, hass_ws_client, tmp_path,
+):
+    from custom_components.voip_stack.dialog_info import snapshot
+    from custom_components.voip_stack.phone_state import phone_states
+    from custom_components.voip_stack.store import config_entry
+    from dataclasses import replace
+
+    lab = canonical_browser
+    entry = config_entry(lab.hass)
+    record = lab.browser_subentry
+    lab.hass.config_entries.async_update_subentry(entry, record, data={**record.data, "ring_group": "UxGroup"})
+    registrar = lab.calls.component("registrar")
+    registrar.update_accounts([replace(account, ring_group="UxGroup") if account.username == "transfer_b" else account
+                               for account in registrar.accounts.values()])
+    for identity in ("casa", "transfer_b"):
+        lab.runtime.endpoints.update(identity, ring_group="UxGroup")
+    observer = await open_browser_ws(lab, hass_ws_client)
+    caller, winner, _other = registered_phones
+    try:
+        await asyncio.to_thread(caller.command, "/dial UxGroup")
+        await asyncio.to_thread(winner.wait_for, "Incoming call", 3)
+        async with asyncio.timeout(3):
+            while (initial := await browser_snapshot(observer))["state"] != "ringing":
+                await asyncio.sleep(.01)
+        call_id = initial["call_id"]
+        await asyncio.to_thread(winner.command, "/accept")
+        await asyncio.to_thread(caller.wait_for, "Call established", 3)
+        await asyncio.to_thread(winner.wait_for, "Call established", 3)
+        await wait_for(lambda: lab.calls.get_session(call_id).state == "in_call")
+        session = lab.calls.get_session(call_id)
+        assert "casa" not in session.endpoint_claims
+        assert phone_states(lab.hass)["casa"]["state"] == "idle"
+        assert snapshot(lab.runtime, "casa") == ()
+        current = await browser_snapshot(observer)
+        assert current["state"] == "idle"
+        (tmp_path / "different-account-loser.json").write_text(json.dumps(current, indent=2))
+        assert_no_browser_media_owner(lab)
+    finally:
+        await observer.close()
+        await end_call(lab, caller)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_incoming_account_application_takeover_publishes_no_false_outgoing_state(
+    canonical_browser, registered_phones, hass_ws_client, monkeypatch, tmp_path,
+):
+    from homeassistant.core import ServiceCall
+    from custom_components.voip_stack import automation_call, automation_context, peer_snapshot
+    from custom_components.voip_stack.const import CALL_EVENT
+    from unittest.mock import AsyncMock
+
+    lab = canonical_browser
+    monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    events = []
+    detach_events = lab.hass.bus.async_listen(CALL_EVENT, lambda event: events.append(dict(event.data)))
+    observer = await open_browser_ws(lab, hass_ws_client)
+    caller = registered_phones[0]
+    binding = None
+    try:
+        await asyncio.to_thread(caller.command, "/dial Casa")
+        async with asyncio.timeout(3):
+            while (initial := await browser_snapshot(observer))["state"] != "ringing":
+                await asyncio.sleep(.01)
+        call_id = initial["call_id"]
+        session = lab.calls.get_session(call_id)
+        envelope = next(event for event in reversed(events) if event.get("call_id") == call_id
+                        and event.get("automation_control") in {"ha_anchored", "routable"})
+        execution = automation_context.CallExecution(session.token, envelope,
+            ringing_guard=(session.event_context.sequence, session.callee))
+        binding = automation_context.current_execution.set(execution)
+        call = automation_context.bind_call_action(ServiceCall(lab.hass, "voip_stack", "tts_say", {}))
+        app, call = await automation_call.resolve_application_action(call)
+        app.claim(call)
+        current = await browser_snapshot(observer)
+        assert current["state"] in {"idle", "cancelled"}
+        assert not current["can_answer"]
+        await app.answer()
+        await asyncio.to_thread(caller.wait_for, "Call established", 3)
+        after_answer = await browser_snapshot(observer)
+        assert after_answer["state"] in {"idle", "cancelled"}
+        model = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/frontend/voip-stack-card-model.js"
+        subprocess.run(["node", "--input-type=module", "-e",
+            f"import {{phoneCallPresentation}} from {model.as_uri()!r};let input='';for await(const chunk of process.stdin)input+=chunk;"
+            "for(const snapshot of JSON.parse(input)){const p=phoneCallPresentation(snapshot);"
+            "if(p.outgoing||p.state==='connecting')throw Error('Incoming application view became outgoing');}"],
+            input=json.dumps([initial, current, after_answer]), text=True, check=True)
+        (tmp_path / "incoming-application-payloads.json").write_text(json.dumps([initial, current, after_answer], indent=2))
+    finally:
+        if binding is not None:
+            automation_context.current_execution.reset(binding)
+        detach_events()
+        await observer.close()
+        await end_call(lab, caller)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
