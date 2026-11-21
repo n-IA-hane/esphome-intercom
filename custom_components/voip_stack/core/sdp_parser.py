@@ -47,6 +47,31 @@ def parse_packet_time(value: str) -> int | float:
     return int(number) if number.is_integer() else number
 
 
+def _rtpmap_fields(line: str) -> tuple[int, str] | None:
+    fields = line.removeprefix("a=rtpmap:").split(None, 1)
+    try:
+        payload = int(fields[0])
+    except (IndexError, ValueError):
+        return None
+    if not 0 <= payload <= 127:
+        return None
+    return payload, fields[1] if len(fields) == 2 else ""
+
+
+def _rtpmap_encoding(spec: str) -> tuple[str, int, int]:
+    # RFC 8866 section 6.6: a token, positive clock rate and optional channels.
+    match = re.fullmatch(
+        r"([!#$%&'*+.^_`{|}~0-9A-Za-z-]+)/([0-9]+)(?:/([0-9]+))?", spec
+    )
+    if match is None:
+        raise ValueError("bad RTP mapping")
+    encoding, rate_raw, channels_raw = match.groups()
+    rate, channels = int(rate_raw), int(channels_raw or 1)
+    if rate <= 0 or channels <= 0:
+        raise ValueError("RTP clock rate and channels must be positive")
+    return encoding.upper(), rate, channels
+
+
 def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     document = SdpDocument.parse(sdp)
     session_conn = ""
@@ -54,6 +79,7 @@ def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     media_port = 0
     payload_order: list[int] = []
     rtpmap: dict[int, tuple[str, int, int]] = {}
+    invalid_payloads: set[int] = set()
     fmtp: dict[int, str] = {}
     ptime = 0
     minptime = 0
@@ -111,36 +137,43 @@ def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
             continue
         if not in_selected_audio:
             continue
+        if line.startswith("a=rtpmap:"):
+            fields = _rtpmap_fields(line)
+            if fields is None:
+                continue
+            pt, spec = fields
+            try:
+                rtpmap[pt] = _rtpmap_encoding(spec)
+            except ValueError:
+                # CC-7: discard only this PT, including static mappings whose
+                # default must not resurrect an explicitly invalid mapping.
+                invalid_payloads.add(pt)
+                rtpmap.pop(pt, None)
+            else:
+                invalid_payloads.discard(pt)
+            continue
+        if line.startswith(("a=ptime:", "a=minptime:", "a=maxptime:")):
+            name, raw = line[2:].split(":", 1)
+            try:
+                value = (
+                    0
+                    if capabilities and name == "ptime" and raw.strip() == "0"
+                    else parse_packet_time(raw.strip())
+                )
+            except ValueError:
+                # Optional packet hints cannot erase a preceding valid value.
+                continue
+            if name == "ptime":
+                ptime = value
+            elif name == "minptime":
+                minptime = max(minptime, value)
+            else:
+                maxptime = min(maxptime, value) if maxptime else value
+            continue
         try:
-            if line.startswith("a=rtpmap:"):
-                left, spec = line.removeprefix("a=rtpmap:").split(None, 1)
-                pt = int(left)
-                if not 0 <= pt <= 127:
-                    raise SdpError(f"bad rtpmap payload type: {pt}")
-                bits = spec.split("/")
-                if len(bits) == 2:
-                    encoding, rate = bits
-                    channels = 1
-                elif len(bits) == 3:
-                    encoding, rate, channels_raw = bits
-                    channels = int(channels_raw)
-                else:
-                    raise SdpError(f"bad rtpmap: {line}")
-                rtpmap[pt] = (encoding.upper(), int(rate), channels)
-            elif line.startswith("a=fmtp:"):
+            if line.startswith("a=fmtp:"):
                 left, spec = line.removeprefix("a=fmtp:").split(None, 1)
                 fmtp[int(left)] = spec.strip()
-            elif line.startswith("a=ptime:"):
-                ptime_raw = line.removeprefix("a=ptime:").strip()
-                ptime = (
-                    0
-                    if capabilities and ptime_raw == "0"
-                    else parse_packet_time(ptime_raw)
-                )
-            elif line.startswith("a=minptime:"):
-                minptime = parse_packet_time(line.removeprefix("a=minptime:").strip())
-            elif line.startswith("a=maxptime:"):
-                maxptime = parse_packet_time(line.removeprefix("a=maxptime:").strip())
         except ValueError as err:
             raise SdpError(f"bad SDP audio attribute: {line}") from err
     connection_ip = media_conn or session_conn
@@ -149,7 +182,7 @@ def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
     return {
         "connection_ip": connection_ip,
         "media_port": media_port,
-        "payload_order": payload_order,
+        "payload_order": [pt for pt in payload_order if pt not in invalid_payloads],
         "rtpmap": rtpmap,
         "fmtp": fmtp,
         "ptime": ptime,
@@ -228,11 +261,14 @@ def parse_media_sections(
             continue
         if current is None:
             continue
+        if line.startswith("a=rtpmap:"):
+            fields = _rtpmap_fields(line)
+            if fields is not None:
+                payload, spec = fields
+                current["rtpmap"][payload] = spec
+            continue
         try:
-            if line.startswith("a=rtpmap:"):
-                left, spec = line.removeprefix("a=rtpmap:").split(None, 1)
-                current["rtpmap"][int(left)] = spec.strip()
-            elif line.startswith("a=fmtp:"):
+            if line.startswith("a=fmtp:"):
                 left, spec = line.removeprefix("a=fmtp:").split(None, 1)
                 current["fmtp"][int(left)] = spec.strip()
             elif line.startswith("a=rtcp-fb:"):
@@ -289,19 +325,11 @@ def parse_media_sections(
 def section_rtpmap(section: dict, payload_type: int) -> tuple[str, int, int] | None:
     """Normalize one RTP mapping used by offer/answer validation."""
 
-    explicit = str(section["rtpmap"].get(payload_type) or "").strip()
-    if explicit:
-        parts = explicit.split("/")
-        if len(parts) not in {2, 3}:
-            raise SdpError(f"bad rtpmap for payload type {payload_type}")
+    if payload_type in section["rtpmap"]:
         try:
-            return (
-                parts[0].strip().upper(),
-                int(parts[1]),
-                int(parts[2]) if len(parts) == 3 else 1,
-            )
-        except ValueError as err:
-            raise SdpError(f"bad rtpmap for payload type {payload_type}") from err
+            return _rtpmap_encoding(str(section["rtpmap"][payload_type]).strip())
+        except ValueError:
+            return None
     media = str(section["media"])
     if media == "audio" and payload_type in STATIC_RTPMAP:
         return STATIC_RTPMAP[payload_type]
