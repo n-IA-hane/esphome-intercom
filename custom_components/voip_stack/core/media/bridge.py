@@ -125,4 +125,17 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
         trace.append("B2 preserve the caller PCM receive rate and resample the bridge")
     else:
         trace.append("B2 free caller selected within its declared codecs and local capabilities")
+    def choice(fmt):
+        return (fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels,
+                fmt.frame_ms, sdp.fmtp_parameters(fmt.fmtp))
+
+    accepted = {fmt.payload_type: choice(fmt) for fmt in caller.recv_formats}
+    accepted.setdefault(caller.recv.payload_type, choice(caller.recv))
+    if (choice(send) == choice(caller.send) and choice(selected.recv) == choice(caller.recv)
+            and all(accepted.get(fmt.payload_type) == choice(fmt) for fmt in selected.recv_formats)):
+        # Recomputing backend bounds or spelling the primary as an alias is
+        # not a bridge optimization. Keep the admitted quantum, hard limits
+        # and accepted mappings; a genuinely new alias must reach the owner.
+        trace.append("B2 same wire choices and no new receive mapping; preserve the admitted contract")
+        return result(caller)
     return result(RtpPcmDirection(send, selected.recv, selected.recv_formats, selected.send_formats))

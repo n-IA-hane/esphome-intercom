@@ -78,3 +78,28 @@ def test_admitted_generic_caller_survives_no_feasible_bridge_optimization():
                              send_capabilities=send_preferences,
                              receive_capabilities=receive_preferences)
     assert plan.caller is caller
+
+
+@pytest.mark.parametrize("already_accepted", [True, False])
+def test_primary_no_op_retains_hard_bounds_without_hiding_a_new_cn_mapping(already_accepted):
+    from dataclasses import replace
+
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96 13\r\n"
+            "a=rtpmap:96 L16/8000/1\r\na=ptime:10\r\na=sendrecv\r\n").encode()
+    primary = fmt(8000, ms=10)
+    received = replace(primary, max_frame_ms=10 if already_accepted else 0)
+    cn = sdp.RtpPcmFormat(13, "CN", 8000, 1, 10)
+    caller = sdp.RtpPcmDirection(primary, received,
+        recv_formats=(received, cn) if already_accepted else ())
+    callee = sdp.RtpPcmDirection(primary, primary)
+    capabilities = (AudioFormat(8000, frame_ms=10),)
+
+    plan = plan_caller_audio(body, caller, callee, codec_policy=CodecPolicy(audio=("L16", "CN")),
+                             send_capabilities=capabilities, receive_capabilities=capabilities)
+
+    assert (plan.caller is caller) is already_accepted
+    if already_accepted:
+        assert plan.caller.recv.max_frame_ms == 10
+        assert plan.caller.recv_formats is caller.recv_formats
+    else:
+        assert any(item.payload_type == 13 and item.encoding == "CN" for item in plan.caller.recv_formats)
