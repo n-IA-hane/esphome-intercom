@@ -1500,7 +1500,10 @@ class SipCallClient:
                     allow_dahua_pcm=self.include_dahua_pcm,
                     codec_policy=self.codec_policy,
                     local_capabilities=HA_AUDIO_CAPABILITIES,
-                    established=sdp.RtpPcmDirection(current.send_format, current.recv_format),
+                    # A delayed initial offer has only a signaling seed. RTP
+                    # identity exists after the first remote media endpoint.
+                    established=(sdp.RtpPcmDirection(current.send_format, current.recv_format)
+                                 if current.remote_rtp_port else None),
                 )
             )
             if selected is None:
