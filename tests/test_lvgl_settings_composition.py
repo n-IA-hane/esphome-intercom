@@ -228,7 +228,7 @@ def test_standalone_p4_options_reuse_real_owner_bindings_and_jpeg_quality(scene)
     assert not any(action in text(sync) for action in ("number.set", "call.perform()", "set_runtime_jpeg_quality"))
 
 
-@pytest.mark.parametrize("scene", ["spot240", "box360-afe-independent", "p4-landscape"])
+@pytest.mark.parametrize("scene", ["spot240", "box360-afe-independent", "p4-landscape", "p4-portrait"])
 def test_options_header_has_one_centered_title_and_swipe_exit(scene):
     config = expanded_scene(scene, "full")
     page, controls = page_and_controls(config)
@@ -242,6 +242,10 @@ def test_options_header_has_one_centered_title_and_swipe_exit(scene):
     if scene.startswith("p4"):
         assert any(action_id(action, "lvgl.page.show") == "main_page"
                    for action in exit_actions if "lvgl.page.show" in action)
+        registrations = [str(step["lambda"]) for step in nodes(config["esphome"]["on_boot"])
+                         if "lambda" in step and "id(ui_call_ended).stop()" in str(step["lambda"])]
+        assert len(registrations) == 1
+        assert "LV_EVENT_SCREEN_UNLOADED" in registrations[0]
     else:
         assert any(action_id(action, "script.execute") == "round_navigate"
                    and action["script.execute"]["delta"] == -1

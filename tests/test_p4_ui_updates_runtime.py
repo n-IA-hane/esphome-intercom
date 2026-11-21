@@ -61,6 +61,10 @@ int main(){
 }
 '''.replace("LABEL_WRITER", _helper(actual, "set_label")).replace(
         "QUICK_WRITER", _helper(actual, "set_quick_button"))
+    _run_p4_fixture(code, round_text_binary, tmp_path)
+
+
+def _run_p4_fixture(code, round_text_binary, tmp_path):
     source = tmp_path / "controls.cpp"
     source.write_text(code)
     executable = tmp_path / "controls"
@@ -74,3 +78,74 @@ int main(){
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+def test_idle_settings_exit_dismisses_the_call_result_after_the_screen_switch(round_text_binary, tmp_path):
+    config = yaml_util.load_yaml(ROOT / "packages/features/presentation/p4_settings_sync.yaml")
+    bind = str(config["defaults"]["_p4_contacts_on_settings_exit"][0]["lambda"])
+    code = r'''
+#include "lvgl.h"
+#include <array>
+#include <cassert>
+
+#define id(name) name
+struct Page { lv_obj_t *obj; };
+Page home, options;
+auto *main_page = &home;
+auto *settings_p4_page = &options;
+struct Phone { bool idle = true; bool is_idle() const { return idle; } } phone;
+bool call_ended_active = false;
+struct EndScript { int stops = 0; void stop() { ++stops; } } ui_call_ended;
+struct DrawScript {
+  int draws = 0;
+  void execute() {
+    assert(lv_screen_active() == home.obj);
+    assert(!call_ended_active);
+    ++draws;
+  }
+} draw_display;
+
+void advance(unsigned milliseconds) {
+  for (unsigned tick = 0; tick < milliseconds; ++tick) {
+    lv_tick_inc(1);
+    lv_timer_handler();
+  }
+}
+
+int main() {
+  lv_init();
+  auto *display = lv_display_create(160, 96);
+  lv_display_set_default(display);
+  std::array<unsigned char, 3200> pixels{};
+  lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
+  lv_display_set_buffers(display, pixels.data(), nullptr, pixels.size(), LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_flush_cb(display, [](lv_display_t *d, const lv_area_t *, uint8_t *) { lv_display_flush_ready(d); });
+  home.obj = lv_screen_active();
+  options.obj = lv_obj_create(nullptr);
+  auto *other = lv_obj_create(nullptr);
+  REGISTER_EXIT
+  int visits = 0;
+  for (bool pending : {true, false}) {
+    lv_screen_load(options.obj);
+    call_ended_active = pending;
+    lv_screen_load_anim(home.obj, LV_SCREEN_LOAD_ANIM_MOVE_BOTTOM, 250, 0, false);
+    advance(100);
+    assert(draw_display.draws == visits && ui_call_ended.stops == visits);
+    advance(250);
+    ++visits;
+    assert(draw_display.draws == visits && ui_call_ended.stops == visits && !call_ended_active);
+  }
+  lv_screen_load(options.obj);
+  call_ended_active = true;
+  lv_screen_load(other);
+  assert(ui_call_ended.stops == visits && draw_display.draws == visits && call_ended_active);
+  lv_screen_load(options.obj);
+  phone.idle = false;
+  lv_screen_load(home.obj);
+  assert(ui_call_ended.stops == visits && draw_display.draws == visits && call_ended_active);
+  lv_display_delete(display);
+  lv_deinit();
+}
+'''.replace("REGISTER_EXIT", bind)
+    _run_p4_fixture(code, round_text_binary, tmp_path)

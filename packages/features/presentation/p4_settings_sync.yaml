@@ -1,6 +1,19 @@
 # Compatibility name for the shared read-only settings projection.
 packages:
   settings: !include settings/main.yaml
+defaults:
+  _p4_contacts_on_settings_exit:
+  - lambda: |-
+      lv_obj_add_event_cb(id(settings_p4_page)->obj, [](lv_event_t *) {
+        if (lv_screen_active() != id(main_page)->obj || !id(phone).is_idle()) return;
+        id(ui_call_ended).stop();
+        id(call_ended_active) = false;
+        id(draw_display).execute();
+      }, LV_EVENT_SCREEN_UNLOADED, nullptr);
+esphome:
+  on_boot:
+  - priority: -200
+    then: ${ _p4_contacts_on_settings_exit if _fw_voip else [] }
 script:
 - id: settings_p4_sync_widgets
   then:
