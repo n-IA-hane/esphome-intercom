@@ -789,8 +789,8 @@ def test_card_camera_intent_preserves_unknown_destination_video_contract():
                     "codec": codec, "capabilities": capabilities,
                     "camera_intent": camera_intent, "request": request,
                 }
-                # The selected callee keeps its HA identity independently of its label.
-                assert request["service_data"]["destination"] == "target-device"
+                # Public destinations use the selected phone's readable name.
+                assert request["service_data"]["destination"] == "Registered phone"
                 assert request["service_data"]["device_id"] == "browser-device"
                 assert request["service_data"]["media_client_id"] == await page.evaluate("engine.mediaClientId")
             finally:
