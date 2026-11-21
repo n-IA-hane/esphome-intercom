@@ -97,3 +97,35 @@ def shadow_inbound_offer(call_id: str, remote_sdp, selected, *, dahua: bool = Fa
                      call_id, "; ".join(differences), ", ".join(trace))
     else:
         _LOGGER.debug("media shadow agrees call_id=%s entry=inbound-offer", call_id)
+
+
+def answer_differences(local_offer_sdp, answer_sdp, selected, *, dahua: bool = False) -> tuple[list[str], tuple[str, ...]]:
+    """Fields where the new engine applies a remote answer differently, and its trace."""
+    result = leg.apply_answer(local_offer_sdp, answer_sdp, leg.PHONE_POLICY, dahua=dahua)
+    refused = isinstance(result, leg.Refusal)
+    if selected is None or refused:
+        old, new = ("reject" if selected is None else "accept"), ("reject" if refused else "accept")
+        return ([f"outcome: {old} -> {new}"] if old != new else []), result.trace
+    differences = []
+    for side, old_fmt, new_fmt in (("send", selected.send, result.send), ("recv", selected.recv, result.receive)):
+        for name in ("codec", "ptime", "payload"):
+            old, new = _field(old_fmt, name), _field(new_fmt, name)
+            if old != new:
+                differences.append(f"{side}.{name}: {old} -> {new}")
+    return differences, result.trace
+
+
+def shadow_answer(call_id: str, local_offer_sdp, answer_sdp, selected, *, dahua: bool = False) -> None:
+    """Log what the new engine would have decided for an answer to a local offer. Never raises."""
+    if engine_mode() != "shadow" or not local_offer_sdp:
+        return
+    try:
+        differences, trace = answer_differences(local_offer_sdp, answer_sdp, selected, dahua=dahua)
+    except Exception:  # noqa: BLE001 - the shadow must never affect a call
+        _LOGGER.debug("media shadow failed call_id=%s", call_id, exc_info=True)
+        return
+    if differences:
+        _LOGGER.info("media shadow differs call_id=%s entry=answer %s trace=[%s]",
+                     call_id, "; ".join(differences), ", ".join(trace))
+    else:
+        _LOGGER.debug("media shadow agrees call_id=%s entry=answer", call_id)

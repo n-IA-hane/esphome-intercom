@@ -20,6 +20,7 @@ from .sip_invite_exchange import InviteExchange
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.codec_capabilities import supports_dahua_pcm
+from .core.media.shadow import shadow_answer
 from .core.rtp_payload import (
     RtpPayloadDecoder as RtpPayloadDecoder,
     RtpPayloadEncoder as RtpPayloadEncoder,
@@ -4252,6 +4253,9 @@ class SipCallClient:
                 allow_dahua_pcm=self.include_dahua_pcm,
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )
+            # Reports only: the new engine never changes what is applied here.
+            shadow_answer(self.dialog_ids.call_id, self._local_sdp_body, msg.body, selected,
+                          dahua=self.include_dahua_pcm)
             if selected is not None:
                 recv_payload_history = _validate_receive_payload_update(self.dialog, selected.recv_formats)
         except Exception as err:
