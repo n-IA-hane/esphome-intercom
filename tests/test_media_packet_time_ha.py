@@ -84,3 +84,41 @@ def test_payload_size_needs_whole_samples():
     assert payload_octets(CODECS["L16"], 11025, 1, 20) is None
     assert payload_octets(CODECS["G722"], 8000, 1, 20) == 160
     assert payload_octets(CODECS["OPUS"], 48000, 2, 2.5) == 0
+
+
+def test_a_requested_duration_is_never_rounded_to_make_it_fit():
+    """20.0001 ms is not a whole number of samples at 8 kHz: the request is not honoured."""
+    choice = choose("PCMA", 8000, ptime=20.0001)
+    assert (choice.packet_ms, choice.rule) == (20, "T2")
+    assert payload_octets(CODECS["PCMA"], 8000, 1, 20.0001) is None
+
+
+def test_a_sub_millisecond_request_is_not_sent():
+    assert choose("PCMA", 8000, ptime=0.5).packet_ms == 20
+
+
+def test_an_exact_fractional_duration_is_honoured():
+    """L16 at 65536 Hz, 1.0223388671875 ms is exactly 67 samples and 134 octets."""
+    choice = choose("L16", 65536, ptime=1.0223388671875, maxptime=1.0223388671875)
+    assert (choice.packet_ms, choice.rule) == (1.0223388671875, "T1")
+
+
+def test_the_longest_writable_duration_is_found_between_whole_milliseconds():
+    """L16 at 176400 Hz with at most 3 ms: 2.5 ms is 441 samples and 882 octets."""
+    assert choose("L16", 176400, maxptime=3).packet_ms == 2.5
+
+
+def test_t4_a_feasible_minimum_is_met_before_it_is_declared_unattainable():
+    """L16 48 kHz stereo, minimum 6.25 ms: 6.25 ms is exactly 1200 octets."""
+    choice = choose("L16", 48000, 2, minimum=6.25, maxptime=20)
+    assert (choice.packet_ms, choice.rule, choice.below_minimum) == (6.25, "T4", False)
+
+
+def test_a_feasible_request_does_not_search_the_whole_domain(monkeypatch):
+    from custom_components.voip_stack.core.media import packet_time
+
+    calls = []
+    original = packet_time.payload_octets
+    monkeypatch.setattr(packet_time, "payload_octets", lambda *args: calls.append(args) or original(*args))
+    assert choose("PCMA", 8000, ptime=20).packet_ms == 20
+    assert len(calls) == 1

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
-from .codecs import PREFERRED_PAYLOADS
+from .codecs import PREFERRED_PAYLOADS, STATIC_RTPMAP
 
 # (encoding in upper case, RTP clock rate, channels)
 RtpMapping = tuple[str, int, int]
@@ -30,18 +31,46 @@ class PayloadsExhausted(ValueError):
     """No dynamic payload number is left without evicting a live or retired meaning."""
 
 
+def _frozen(numbers: Mapping[int, RtpMapping]) -> Mapping[int, RtpMapping]:
+    """Copy and freeze: an accepted map cannot change later, nor through a caller's dict."""
+    for number, mapping in numbers.items():
+        if not 0 <= number <= LAST_DYNAMIC:
+            raise PayloadConflict(f"payload number {number} is out of range")
+        static = STATIC_RTPMAP.get(number)
+        if static is not None and static != mapping:
+            raise PayloadConflict(f"static payload {number} is {static} and cannot mean {mapping}")
+    return MappingProxyType(dict(numbers))
+
+
+def _extended(history: Mapping[int, RtpMapping], numbers: Mapping[int, RtpMapping], whose: str) -> dict[int, RtpMapping]:
+    """Add meanings to a history. A used number never changes its meaning (RFC 3264 8.3.2)."""
+    result = dict(history)
+    for number, mapping in numbers.items():
+        if result.get(number, mapping) != mapping:
+            raise PayloadConflict(
+                f"{whose} payload {number} meant {result[number]} and cannot become {mapping}")
+        result[number] = mapping
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class PayloadMap:
     """Send and receive payload numbers of one stream, with their history.
 
     ``receive`` holds the numbers this side declared: packets arrive with them. ``send`` holds
-    the numbers the peer declared: packets leave with them. ``receive_history`` keeps every
-    meaning a receive number ever had in this session, retired ones included.
+    the numbers the peer declared: packets leave with them. Each receiver has its own number
+    space, so each has its own history of every meaning a number ever had in this session,
+    retired ones included, whichever side made the offer.
     """
 
     receive: Mapping[int, RtpMapping] = field(default_factory=dict)
     send: Mapping[int, RtpMapping] = field(default_factory=dict)
     receive_history: Mapping[int, RtpMapping] = field(default_factory=dict)
+    send_history: Mapping[int, RtpMapping] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("receive", "send", "receive_history", "send_history"):
+            object.__setattr__(self, name, _frozen(getattr(self, name)))
 
     @classmethod
     def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None) -> PayloadMap:
@@ -69,24 +98,29 @@ class PayloadMap:
             receive[number] = used[number] = mapping
             by_mapping[mapping] = number
         ordered = {by_mapping[mapping]: mapping for mapping in wanted}
-        return cls(receive=ordered, send=dict(previous.send) if previous else {}, receive_history=used)
+        return cls(receive=ordered, send=previous.send if previous else {}, receive_history=used,
+                   send_history=previous.send_history if previous else {})
 
     def answering(self, offer: Mapping[int, RtpMapping], accepted: Iterable[RtpMapping]) -> PayloadMap:
         """This side answers ``offer`` and accepts ``accepted``: both directions use the numbers
-        of the offer (P1). A number that meant something else before is a conflict (P4)."""
+        of the offer (P1). A number that meant something else before, for either receiver, is a
+        conflict (P4)."""
         chosen = set(accepted)
         numbers = {number: mapping for number, mapping in offer.items() if mapping in chosen}
-        return PayloadMap(receive=numbers, send=numbers,
-                          receive_history=self._history_with(numbers))
+        return PayloadMap(
+            receive=numbers, send=numbers,
+            receive_history=_extended(self.receive_history, numbers, "local receive"),
+            send_history=_extended(self.send_history, numbers, "remote receive"))
 
     def with_answer(self, answer: Mapping[int, RtpMapping]) -> PayloadMap:
         """The peer answered the local offer. It may have renumbered a codec (P3): its number is
         used to send, the number of the offer stays the one to receive on. Mappings that were
-        not offered are ignored."""
+        not offered are ignored. The peer's numbers are checked against its own history."""
         offered = set(self.receive.values())
         send = {number: mapping for number, mapping in answer.items() if mapping in offered}
         receive = {number: mapping for number, mapping in self.receive.items() if mapping in set(send.values())}
-        return PayloadMap(receive=receive, send=send, receive_history=dict(self.receive_history))
+        return PayloadMap(receive=receive, send=send, receive_history=self.receive_history,
+                          send_history=_extended(self.send_history, send, "remote receive"))
 
     def send_payload(self, mapping: RtpMapping) -> int | None:
         return next((number for number, known in self.send.items() if known == mapping), None)
@@ -94,12 +128,3 @@ class PayloadMap:
     def receive_mapping(self, number: int) -> RtpMapping | None:
         """Never guess a codec from a number: only what was negotiated is received."""
         return self.receive.get(number)
-
-    def _history_with(self, numbers: Mapping[int, RtpMapping]) -> dict[int, RtpMapping]:
-        history = dict(self.receive_history)
-        for number, mapping in numbers.items():
-            if history.get(number, mapping) != mapping:
-                raise PayloadConflict(
-                    f"payload {number} meant {history[number]} and cannot become {mapping}")
-            history[number] = mapping
-        return history

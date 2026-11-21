@@ -71,3 +71,42 @@ def test_p4_a_remote_reoffer_cannot_remap_a_used_number():
     with pytest.raises(PayloadConflict):
         first.answering({97: L16_16, 0: PCMU}, [L16_16])
     assert first.answering({97: PCM_DAHUA, 0: PCMU}, [PCMU]).receive == {0: PCMU}
+
+
+def test_p4_the_peers_receive_numbers_keep_their_history_across_three_exchanges():
+    """Peer receives PCM/16000 on 120, retires it for PCMU, then answers 120 as L16/16000."""
+    offer = PayloadMap.for_offer([PCM_DAHUA, PCMU, L16_16])
+    first = offer.with_answer({120: PCM_DAHUA})
+    second = PayloadMap.for_offer([PCM_DAHUA, PCMU, L16_16], previous=first).with_answer({0: PCMU})
+    assert second.send == {0: PCMU} and second.send_history[120] == PCM_DAHUA
+    third = PayloadMap.for_offer([PCM_DAHUA, PCMU, L16_16], previous=second)
+    with pytest.raises(PayloadConflict):
+        third.with_answer({120: L16_16})
+    assert third.with_answer({120: PCM_DAHUA}).send == {120: PCM_DAHUA}, "the old meaning may return"
+
+
+def test_p3_different_numbers_for_the_two_directions_stay_valid():
+    negotiated = PayloadMap.for_offer([L16_16]).with_answer({110: L16_16})
+    assert (negotiated.send_payload(L16_16), list(negotiated.receive)) == (110, [96])
+
+
+def test_an_accepted_map_cannot_change_afterwards():
+    source = {8: PCMA, 102: DTMF_8}
+    answer = PayloadMap().answering(source, [PCMA, DTMF_8])
+    source[8] = PCMU
+    assert answer.receive[8] == PCMA and answer.send[8] == PCMA
+    for view in (answer.receive, answer.send, answer.receive_history, answer.send_history):
+        with pytest.raises(TypeError):
+            view[8] = PCMU
+    negotiated = PayloadMap.for_offer([PCMA]).with_answer({8: PCMA})
+    with pytest.raises(TypeError):
+        negotiated.send[8] = PCMU
+
+
+def test_numbers_out_of_range_or_against_a_static_assignment_are_refused():
+    with pytest.raises(PayloadConflict):
+        PayloadMap().answering({128: PCMA}, [PCMA])
+    with pytest.raises(PayloadConflict):
+        PayloadMap().answering({0: PCMA}, [PCMA])
+    with pytest.raises(PayloadConflict):
+        PayloadMap.for_offer([PCMA]).with_answer({9: PCMA})
