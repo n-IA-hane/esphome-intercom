@@ -1,4 +1,4 @@
-"""Native HA action selectors save the public dial string of a phone."""
+"""HA controls select devices and dial destinations accept public strings."""
 
 from copy import deepcopy
 
@@ -47,19 +47,17 @@ async def test_action_selectors_save_public_strings_and_allow_manual_number(phon
     await register_actions(lab.hass)
     lab.runtime.directory = PhoneDirectory(configured_rows())
     actions = await descriptions(lab)
-    source = actions['call']['fields']['device_id']['selector']['select']
+    source = actions['call']['fields']['device_id']['selector']
     destination = actions['call']['fields']['destination']['selector']['select']
-    assert source['options'] == ['Casa', 'Ws3']
+    assert 'device' in source
     assert destination['options'] == ['Assistenza', 'Casa', 'Citofono', 'Ws3']
-    assert SelectSelector(source)('Ws3') == 'Ws3'
     assert SelectSelector(destination)('Casa') == 'Casa'
     assert SelectSelector(destination)('101') == '101'
     assert SelectSelector(destination)('Reception@Hotel') == 'Reception@Hotel'
-    assert SelectSelector(source)('102') == '102'
     assert '54da57478a40e69420df7586730f6706' not in repr(actions)
-    assert actions['pickup']['fields']['target_device_id']['selector']['select']['options'] == ['Casa', 'Ws3']
+    assert 'device' in actions['pickup']['fields']['target_device_id']['selector']
     advanced = actions['transfer']['fields']['advanced']['fields']
-    assert advanced['device_id']['selector']['select']['options'] == ['Casa', 'Ws3']
+    assert 'device' in advanced['device_id']['selector']
     assert 'device' in actions['provision_phone']['fields']['device_id']['selector']
     assert 'device' in actions['purge_devices']['fields']['device_id']['selector']
 
@@ -76,7 +74,7 @@ async def test_directory_changes_refresh_current_service_choices(phone_lab):
     current = await descriptions(lab)
     assert old['call']['fields']['destination']['selector']['select']['options'] != ['Studio']
     assert current['call']['fields']['destination']['selector']['select']['options'] == ['Studio']
-    assert current['call']['fields']['device_id']['selector']['select']['options'] == ['Studio']
+    assert current['call']['fields']['device_id']['selector'] == old['call']['fields']['device_id']['selector']
     await lab.hass.async_block_till_done()
     assert updates == [{'domain': 'voip_stack', 'service': 'call'}]
     updates.clear()
@@ -96,7 +94,7 @@ async def test_normal_phonebook_refresh_publishes_native_action_choices(managed)
     try:
         await owner.async_start()
         current = (await async_get_all_descriptions(lab.hass))['voip_stack']
-        assert 'Ingresso' in current['call']['fields']['device_id']['selector']['select']['options']
+        assert 'device' in current['call']['fields']['device_id']['selector']
         assert 'Ingresso' in current['call']['fields']['destination']['selector']['select']['options']
     finally:
         await owner.async_close()

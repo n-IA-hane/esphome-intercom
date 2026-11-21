@@ -33,7 +33,7 @@ SAMPLE_RATE = vol.All(vol.Coerce(int), vol.Range(min=8000, max=192000))
 
 
 async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -> None:
-    """Populate native action selectors with public account and dial strings."""
+    """Populate dial destinations while preserving native device control selectors."""
     if not hass.services.has_service(DOMAIN, "call") or directory is None or directory.closed:
         return
     from homeassistant.helpers.service import async_get_all_descriptions, async_set_service_schema
@@ -47,31 +47,20 @@ async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -
     if (runtime is None or runtime.directory is not directory or directory.closed
             or directory.generation != generation):
         return
-    phone_kinds = {"sip_account", "esphome", "ha_softphone", "browser"}
-    phone_names = {row.name for row in rows if row.name and row.metadata.get("endpoint_kind") in phone_kinds}
     destinations = {row.name or row.extension or row.number or row.sip_uri
                     for row in rows if row.enabled and (row.name or row.extension or row.number or row.sip_uri)}
-    phone_options = sorted(phone_names, key=str.casefold)
     destination_options = sorted(destinations, key=str.casefold)
-    physical_actions = {"purge_devices", "provision_phone", "get_phone_provisioning_state",
-                        "rotate_phone_provisioning_token"}
 
     def populate(fields):
         for key, field in fields.items():
             if "fields" in field:
                 populate(field["fields"])
-            if key in {"device_id", "phone", "target_device_id"}:
-                options = phone_options
-            elif key in {"destination", "fallback_destination", "return_destination"}:
-                options = destination_options
-            else:
+            if key not in {"destination", "fallback_destination", "return_destination"}:
                 continue
-            field["selector"] = {"select": {"options": options, "custom_value": True, "mode": "dropdown"}}
+            field["selector"] = {"select": {"options": destination_options, "custom_value": True, "mode": "dropdown"}}
 
     changed = False
     for name, description in descriptions.items():
-        if name in physical_actions:
-            continue
         updated = deepcopy(description)
         populate(updated.get("fields", {}))
         if updated != description:
