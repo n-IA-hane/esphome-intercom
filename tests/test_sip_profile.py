@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from .voip_phase1_support import (
     _load_sip_transport_with_homeassistant_stubs,
     asyncio,
     audio_format,
     codec_capabilities,
     g722_codec,
+    optional_codec_backends,
     patch,
     recorded_tcp_connections,
     rtp,
@@ -91,11 +94,7 @@ class SipProfileTest(unittest.TestCase):
         self.assertNotIn("PCMU/8000", body)
 
     def test_trunk_offer_includes_available_common_codec_fallbacks(self) -> None:
-        with patch.object(
-            codec_capabilities,
-            "common_sip_codecs",
-            return_value=frozenset({"OPUS", "G722"}),
-        ):
+        with optional_codec_backends({"OPUS","G722"}):
             body = sdp.build_offer_directional(
                 "192.168.1.20",
                 "192.168.1.20",
@@ -104,7 +103,16 @@ class SipProfileTest(unittest.TestCase):
                 list(audio_format.HA_TRUNK_AUDIO_FORMATS),
                 include_common_codecs=True,
             )
-        self.assertIn("m=audio 40000 RTP/AVP 98 9 8 0", body)
+        # None preserves the local catalog; the explicit ordered policy below
+        # preserves the original Opus-first trunk preference when requested.
+        self.assertIn("m=audio 40000 RTP/AVP 96 97 98 9 8 0", body)
+        CodecPolicy=import_module(codec_capabilities.__package__+".codec_policy").CodecPolicy
+        with optional_codec_backends({"OPUS","G722"}):
+            ordered=sdp.build_offer_directional("192.168.1.20","192.168.1.20",40000,
+                list(audio_format.HA_TRUNK_AUDIO_FORMATS),list(audio_format.HA_TRUNK_AUDIO_FORMATS),
+                include_common_codecs=True,
+                codec_policy=CodecPolicy(audio=("OPUS","G722","PCMA","PCMU","L16","L24","PCM")))
+        self.assertIn("m=audio 40000 RTP/AVP 98 9 8 0", ordered)
         self.assertIn("a=rtpmap:98 OPUS/48000/2", body)
         self.assertIn(
             "a=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000",
@@ -116,11 +124,8 @@ class SipProfileTest(unittest.TestCase):
         self.assertIn("a=ptime:20", body)
 
     def test_trunk_offer_does_not_advertise_unavailable_optional_codecs(self) -> None:
-        with patch.object(
-            codec_capabilities,
-            "common_sip_codecs",
-            return_value=frozenset(),
-        ):
+        # S1: the real probe sees failing native encoder/decoder adapters.
+        with optional_codec_backends(set()):
             body = sdp.build_offer_directional(
                 "192.168.1.20",
                 "192.168.1.20",

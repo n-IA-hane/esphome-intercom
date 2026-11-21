@@ -258,6 +258,31 @@ def _load_sip_transport_with_homeassistant_stubs():
 
 
 @contextlib.contextmanager
+def optional_codec_backends(available):
+    """Exercise the real directional probe with working or failing adapters."""
+    payload = importlib.import_module(f"{PKG_NAME}.core.rtp_payload")
+    classes = {"OPUS": ("OpusEncoder", "OpusDecoder"),
+               "G722": ("G722Encoder", "G722Decoder")}
+    available = frozenset(available)
+    assert available <= classes.keys()
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("Independent optional codec backend failure")
+    with contextlib.ExitStack() as stack:
+        for name, adapters in classes.items():
+            if name not in available:
+                for adapter in adapters:
+                    stack.enter_context(patch.object(payload, adapter, unavailable))
+        codec_capabilities.codec_available.cache_clear()
+        try:
+            for name in classes:
+                for receive in (False, True):
+                    assert codec_capabilities.codec_available(name, receive=receive) is (name in available)
+            yield
+        finally:
+            codec_capabilities.codec_available.cache_clear()
+
+
+@contextlib.contextmanager
 def recorded_tcp_connections(sent):
     """Record real SIP/TCP writer calls when an INVITE outgrows UDP."""
     writers = []

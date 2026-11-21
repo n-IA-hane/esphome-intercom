@@ -6,6 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from .voip_phase1_support import (
+    _load_intercom_module,
     asyncio,
     audio_format,
     audio_pcm,
@@ -77,8 +78,12 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
 
         self.assertEqual(offer.count(" OPUS/48000/2\r\n"), 1)
-        self.assertIn("a=ptime:20\r\n", offer)
+        # R1/R3: L16's explicit fixed set only contains 10 ms. Keeping 20 ms here
+        # would advertise an impossible shared legacy packet time.
+        self.assertIn("a=ptime:10\r\n", offer)
         self.assertIn(" L16/16000/1\r\n", offer)
+        self.assertEqual([(fmt.payload_type,fmt.encoding) for fmt in sdp.offered_pcm_formats(offer)],
+                         [(98,"OPUS"),(97,"L16")])
 
     def test_video_offer_has_one_mapping_per_payload_type(self) -> None:
         local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
@@ -215,8 +220,11 @@ class SdpPcmProfileTest(unittest.TestCase):
             audio_rtp_formats=(pcma,),
         )
 
-        self.assertIn("m=audio 40000 RTP/AVP 8 96", offer)
+        # P2 uses 101 for the free 8 kHz event mapping; CC-4 keeps PCMA's 8 kHz clock.
+        self.assertIn("m=audio 40000 RTP/AVP 8 101", offer)
         self.assertIn("a=rtpmap:8 PCMA/8000/1", offer)
+        self.assertIn("a=rtpmap:101 telephone-event/8000\r\n", offer)
+        self.assertIn("a=fmtp:101 0-15\r\n", offer)
         self.assertNotIn("L16/8000", offer)
 
     def test_dahua_pcm_rejects_wrong_rate_channels_and_static_payload(self) -> None:
@@ -835,7 +843,13 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertNotIn("a=fmtp:96", offer)
         self.assertIn("telephone-event/8000", offer)
-        self.assertIn("a=fmtp:97 0-15", offer)
+        # CC-4/P2: event mappings have their negotiated clock and do not
+        # overwrite the explicit L16 mapping on 97.
+        self.assertIn("a=rtpmap:101 telephone-event/8000\r\n", offer)
+        self.assertIn("a=fmtp:101 0-15\r\n", offer)
+        self.assertNotIn("a=fmtp:97", offer)
+        self.assertEqual([(event.sample_rate,event.payload_type) for event in sdp.offered_dtmf_formats(offer)],
+                         [(8000,101),(48000,98),(16000,99)])
         self.assertIn("a=maxptime:10", offer)
         selected_direction = sdp.negotiate_directional(
             offer,
@@ -1380,11 +1394,23 @@ class SdpPcmProfileTest(unittest.TestCase):
         offered = sdp.offered_pcm_formats(offer)
         self.assertLessEqual(len(offered), 12)
         self.assertLess(len(offer.encode()), 900)
-        self.assertEqual(offered[0].audio_format, audio_format.AudioFormat(48000, "s16le", 1, 10))
-        self.assertIn(
-            audio_format.AudioFormat(16000, "s16le", 1, 10),
-            [fmt.audio_format for fmt in offered],
-        )
+        # An unconfigured codec policy preserves the input catalog order.
+        # CC-2/R1 describes the receiver's 20 ms preference, not a TX quantum.
+        self.assertEqual(offered[0].audio_format, audio_format.AudioFormat(8000, "s16le", 1, 20))
+        self.assertIn(audio_format.AudioFormat(16000, "s16le", 1, 20),
+                      [fmt.audio_format for fmt in offered])
+        baseline=next(fmt for fmt in offered if (fmt.encoding,fmt.sample_rate,fmt.channels)==("L16",16000,1))
+        peer=("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Independent 10 ms sender\r\n"
+              "c=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+              f"m=audio 41000 RTP/AVP {baseline.payload_type}\r\n"
+              f"a=rtpmap:{baseline.payload_type} L16/16000/1\r\na=ptime:10\r\na=sendrecv\r\n")
+        selected=sdp.negotiate_answer_directional(peer,browser_tx_formats,browser_rx_formats,local_offer_sdp=offer)
+        self.assertIsNotNone(selected)
+        self.assertEqual((selected.send.frame_ms,selected.recv.frame_ms),(10,20))
+        receiver=_load_intercom_module("rtp_audio_receiver").RtpAudioReceiver(selected.recv,selected.recv_formats)
+        try:
+            self.assertEqual(receiver.decode(baseline.payload_type,bytes(320)),[bytes(320)])
+        finally: receiver.close()
 
     def test_ha_sip_profile_rejects_browser_only_sample_rates(self) -> None:
         offer = sdp.build_offer_directional(

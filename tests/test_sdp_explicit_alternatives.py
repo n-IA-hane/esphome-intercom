@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from .voip_phase1_support import audio_format, sdp
+from .voip_phase1_support import audio_format, optional_codec_backends, sdp
 
 
 def test_public_sdp_media_values_reexport_one_owner():
@@ -219,11 +219,13 @@ def test_ordinary_g722_has_one_codec_and_independent_receiver_packet_times(peer_
         [audio_format.AudioFormat(16000, frame_ms=ms) for ms in (receive_ptime, peer_ptime)])
     assert selected is not None
     assert (selected.send.encoding, selected.send.sample_rate, selected.send.frame_ms) == ("G722", 8000, peer_ptime)
-    assert (selected.recv.encoding, selected.recv.sample_rate, selected.recv.frame_ms) == ("G722", 8000, receive_ptime)
+    # CC-2/R1: list order describes capability, while receive policy asks for 20 ms.
+    # The independent UDP oracle is test_media_contract_expectations_ha.py.
+    assert (selected.recv.encoding, selected.recv.sample_rate, selected.recv.frame_ms) == ("G722", 8000, 20)
     answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 40000,
         selected.send, selected.recv, remote_sdp=peer_offer)
     assert answer.count("a=rtpmap:9 G722/8000/1") == 1
-    assert f"a=ptime:{receive_ptime}\r\n" in answer
+    assert "a=ptime:20\r\n" in answer
 
 
 def test_ordinary_g722_answer_keeps_explicit_receive_preference(monkeypatch):
@@ -249,7 +251,11 @@ def test_false_flags_do_not_expand_or_change_explicit_mapping(monkeypatch, share
     for operation in (sdp.build_offer_directional, sdp.audio_offer_formats):
         monkeypatch.setattr(import_module(operation.__module__), "_common_codec_offer_formats", forbidden)
     body = offer(common=False, all_formats=(WIDE, NARROW) if shared_explicit else None)
-    assert wire_maps(body) == {96: "L16/48000/1", 97: "L16/16000/1", 98: "telephone-event/8000"}
+    # CC-4/P5 keeps both directional clocks; P2 reserves the free 8 kHz event PT 101.
+    # No primary codec is added by the false expansion flag.
+    assert wire_maps(body) == {96: "L16/48000/1", 97: "L16/16000/1",
+                              101: "telephone-event/8000", 98: "telephone-event/48000",
+                              99: "telephone-event/16000"}
     assert "a=ptime:10\r\n" in body and "PCMU" not in body and "OPUS" not in body
     assert sdp.negotiate_answer_directional(answer_pcmu(), LOCAL, LOCAL, local_offer_sdp=body) is None
 
@@ -269,10 +275,11 @@ def test_opus98_collision_moves_only_the_new_alternative(monkeypatch):
 
 
 @pytest.mark.parametrize("available", [frozenset(), frozenset({"OPUS", "G722"})])
-def test_unavailable_or_non_bidirectional_codecs_are_not_advertised(monkeypatch, available):
-    monkeypatch.setattr(import_module(sdp.common_sip_codecs.__module__), "common_sip_codecs", lambda: available)
-    # Only16k/10 is common PCM:48k exists only on TX,8k exists nowhere.
-    body = offer(local_send=[WIDE.audio_format, NARROW.audio_format], local_recv=[NARROW.audio_format])
+def test_unavailable_or_non_bidirectional_codecs_are_not_advertised(available):
+    # S1 probes actual encoder/decoder construction, rather than an obsolete
+    # aggregate common_sip_codecs patch. Geometry must still work both ways.
+    with optional_codec_backends(available):
+        body = offer(local_send=[WIDE.audio_format, NARROW.audio_format], local_recv=[NARROW.audio_format])
     maps = wire_maps(body)
     assert "OPUS/48000/2" not in maps.values()
     assert "PCMU/8000/1" not in maps.values() and "PCMA/8000/1" not in maps.values()
@@ -378,3 +385,16 @@ def test_new_options_rejects_invalid_directional_packet_lists(invalid):
     body = body.replace("a=ptime:10", values + "a=ptime:10", 1)
     with pytest.raises(sdp.SdpError):
         sdp.options_capabilities(body)
+
+
+def test_cc2_keeps_a_fixed_g722_receiver_that_only_supports_10_ms():
+    peer=("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Fixed receiver boundary\r\n"
+          "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 41000 RTP/AVP 9\r\n"
+          "a=rtpmap:9 G722/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
+    selected=sdp.negotiate_directional(peer,[audio_format.AudioFormat(16000,frame_ms=t) for t in (20,10)],
+        [audio_format.AudioFormat(16000,frame_ms=10)])
+    assert selected is not None
+    assert (selected.send.frame_ms,selected.recv.frame_ms,selected.recv.max_frame_ms)==(20,10,10)
+    answer=sdp.build_answer_directional("192.0.2.1","192.0.2.1",40000,
+        selected.send,selected.recv,remote_sdp=peer)
+    assert "a=ptime:10\r\n" in answer and "a=maxptime:10\r\n" in answer
