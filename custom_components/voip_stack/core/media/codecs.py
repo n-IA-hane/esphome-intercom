@@ -19,7 +19,7 @@ class CodecSpec:
     name: str
     # Octets one sample of one channel occupies in the payload. None for a
     # codec whose packets have no fixed size per sample (Opus).
-    octets_per_sample: int | None
+    octets_per_sample: int | float | None
     # RFC 3551 static payload number with its clock rate and channel count.
     static_payload: int | None = None
     static_clock_rate: int = 0
@@ -40,6 +40,22 @@ class CodecSpec:
     # Additional static assignments when one codec has more than one geometry.
     # Each tuple is (payload number, RTP clock rate, channel count).
     static_mappings: tuple[tuple[int, int, int], ...] = ()
+    # A packet must contain this many samples per channel in each quantum.
+    sample_quantum: int = 1
+    # Framed codecs contain an integral number of these codec frames.
+    frame_duration_ms: int | None = None
+    # Maximum octets of one variable-size codec frame, including its header.
+    max_frame_octets: int | None = None
+    # Auxiliary payloads accompany a primary audio codec and cannot select it.
+    auxiliary: bool = False
+    pyav_decoder: str | None = None
+    pyav_encoder: str | None = None
+    bit_rate: int = 0
+
+    @property
+    def bits_per_sample(self) -> int | None:
+        """Return the exact codeword width when the wire format has one."""
+        return round(self.octets_per_sample * 8) if self.octets_per_sample is not None else None
 
 
 CODECS: dict[str, CodecSpec] = {
@@ -60,11 +76,29 @@ CODECS: dict[str, CodecSpec] = {
         CodecSpec("OPUS", None, conventional_payload=98, conventional_clock_rate=48000,
                   conventional_channels=2, decoded_rate=48000, decoded_channels=1,
                   assumed_packet_ms=20),
+        # RFC 3551 4.5.4 uses least-significant-codeword-bit first. FFmpeg's
+        # g726le implements this RTP packing; g726 instead uses AAL2 order.
+        CodecSpec("G726-16", .25, assumed_packet_ms=20, sample_quantum=4,
+                  decoded_rate=8000, decoded_channels=1, pyav_decoder="g726le", pyav_encoder="g726le", bit_rate=16000),
+        CodecSpec("G726-24", .375, assumed_packet_ms=20, sample_quantum=8,
+                  decoded_rate=8000, decoded_channels=1, pyav_decoder="g726le", pyav_encoder="g726le", bit_rate=24000),
+        CodecSpec("G726-32", .5, assumed_packet_ms=20, sample_quantum=2,
+                  decoded_rate=8000, decoded_channels=1, pyav_decoder="g726le", pyav_encoder="g726le", bit_rate=32000),
+        CodecSpec("G726-40", .625, assumed_packet_ms=20, sample_quantum=8,
+                  decoded_rate=8000, decoded_channels=1, pyav_decoder="g726le", pyav_encoder="g726le", bit_rate=40000),
+        # G723 is the SDP name for G.723.1, not the older G.726 ADPCM name.
+        # RFC 3551 4.5.3 frames have 24, 20 or 4 octets and last 30 ms.
+        CodecSpec("G723", None, static_payload=4, static_clock_rate=8000,
+                  decoded_rate=8000, decoded_channels=1, assumed_packet_ms=30,
+                  frame_duration_ms=30, max_frame_octets=24,
+                  pyav_decoder="g723_1", pyav_encoder="g723_1", bit_rate=6300),
+        CodecSpec("CN", None, static_payload=13, static_clock_rate=8000,
+                  decoded_channels=1, assumed_packet_ms=20, auxiliary=True),
     )
 }
 
 # Octets per sample and channel for every codec with a fixed sample size.
-OCTETS_PER_SAMPLE: dict[str, int] = {
+OCTETS_PER_SAMPLE: dict[str, int | float] = {
     name: spec.octets_per_sample
     for name, spec in CODECS.items()
     if spec.octets_per_sample is not None
