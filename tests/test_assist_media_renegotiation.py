@@ -120,6 +120,7 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         if not hasattr(invite, "outbound_rtp_format"):
             invite.outbound_rtp_format = invite.send_format
             invite.inbound_rtp_format = invite.recv_format
+            invite.inbound_rtp_formats = invite.recv_formats
         return invite
 
     _module(
@@ -180,6 +181,7 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
         call_id="call",
         send_format="opus-send",
         recv_format="opus-receive",
+        recv_formats=(),
         remote_sdp=b"offer-with-audio-and-video",
         remote_rtp_host="198.51.100.20",
         remote_rtp_port=42000,
@@ -201,6 +203,7 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
     assert "m=video 0" in result.answer_sdp
     assert answer_calls == [
         {
+            "recv_formats": (),
             "dtmf": None,
             "remote_sdp": b"offer-with-audio-and-video",
             "audio_direction": "sendrecv",
@@ -290,8 +293,9 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
         call_id="call",
         send_format="default-send",
         recv_format="default-recv",
+        recv_formats=(),
         audio_peer=types.SimpleNamespace(
-            outbound_rtp_format="established-send", inbound_rtp_format="established-recv"),
+            outbound_rtp_format="established-send", inbound_rtp_format="established-recv", inbound_rtp_formats=()),
         video_peer=object(),
         remote_sdp=b"audio-refresh-with-unchanged-video",
         remote_audio_direction="sendrecv",
@@ -495,6 +499,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
         name="new-audio-left",
         outbound_rtp_format="audio-send",
         inbound_rtp_format="audio-receive",
+        inbound_rtp_formats=(),
     )
     new_audio_right = types.SimpleNamespace(
         name="new-audio-right", can_send=True, can_receive=True
@@ -610,6 +615,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
         remote_video_connection_held=False,
         send_format="audio-send",
         recv_format="audio-receive",
+        recv_formats=(),
         remote_sdp=b"audio-video-sendrecv",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
@@ -746,6 +752,7 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
         answer_video_format=None,
         send_format="audio-send",
         recv_format="audio-receive",
+        recv_formats=(),
         remote_sdp=b"audio-with-rejected-video",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
@@ -820,6 +827,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
         name="new-audio-left",
         outbound_rtp_format="audio-send",
         inbound_rtp_format="audio-receive",
+        inbound_rtp_formats=(),
     )
     new_audio_right = types.SimpleNamespace(
         name="new-audio-right", can_send=True, can_receive=True
@@ -957,6 +965,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
         remote_video_connection_held=False,
         send_format="audio-send",
         recv_format="audio-receive",
+        recv_formats=(),
         remote_sdp=b"audio-video-inactive",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,

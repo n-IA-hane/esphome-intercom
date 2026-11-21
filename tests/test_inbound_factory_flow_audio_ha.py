@@ -110,7 +110,7 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         media = RtpPcmFormat(96, "L16", 16000, 1, 20)
         invite = SimpleNamespace(trunk_id="", call_id="inbound-factory", caller="Caller", target="phone",
             routing_caller="Caller", routing_target="phone", source_host="127.0.0.9", source_port=5090,
-            send_format=media, recv_format=media, video_format=None, recv_video_format=None,
+            send_format=media, recv_format=media, recv_formats=(), video_format=None, recv_video_format=None,
             remote_sdp="", signaling_transport="UDP")
         artifacts = SimpleNamespace(trunk_closed=False, trunk_info_queue=None)
         registry = Mock()

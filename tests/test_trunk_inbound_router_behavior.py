@@ -326,6 +326,8 @@ async def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         source_host="192.0.2.10",
         send_format=rtp_format,
         recv_format=rtp_format,
+        recv_formats=(),
+        recv_dtmf_format=None,
         remote_sdp="v=0\r\n",
         video_format=None,
         answer_video_format=None,

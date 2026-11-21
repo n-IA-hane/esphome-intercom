@@ -157,6 +157,7 @@ async def route_local_assist(
         assist_rtp_port,
         invite.send_format,
         invite.recv_format,
+        recv_formats=invite.recv_formats,
         remote_sdp=invite.remote_sdp,
     )
     return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")

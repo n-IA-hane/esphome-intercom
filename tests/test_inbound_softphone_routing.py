@@ -243,6 +243,7 @@ def _invite():
         caller="ESP",
         send_format=audio,
         recv_format=audio,
+        recv_formats=(),
         remote_sdp=b"offer",
         video_format=None,
         answer_video_format=None,

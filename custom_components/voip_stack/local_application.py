@@ -161,6 +161,7 @@ class LocalCallApplication:
                 reservation.ports[0],
                 self.invite.send_format,
                 self.invite.recv_format,
+                recv_formats=self.invite.recv_formats,
                 dtmf=dtmf,
                 remote_sdp=self.invite.remote_sdp,
             )

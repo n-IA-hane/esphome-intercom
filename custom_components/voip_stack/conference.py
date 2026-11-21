@@ -212,6 +212,7 @@ class ConferenceRoom:
                 local_ports[0],
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
                 remote_sdp=invite.remote_sdp,
             )
             return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")

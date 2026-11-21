@@ -500,7 +500,7 @@ async def route_sip_bridge(
                     require_current()
                     update()
             answer = build_answer_directional(local_ip, local_ip, source_relay_port,
-                invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp,
+                invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, remote_sdp=invite.remote_sdp,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp))
             if not runtime.send_final_response(hass, invite.call_id, 183, "Session Progress", answer_sdp=answer):
                 raise RuntimeError("source no longer accepts provisional media")

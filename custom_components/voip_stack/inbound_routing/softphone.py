@@ -268,6 +268,7 @@ def answer_inbound_ha_softphone(
         local_rtp_port,
         invite.send_format,
         invite.recv_format,
+        recv_formats=invite.recv_formats,
         dtmf=dtmf_format,
         remote_sdp=invite.remote_sdp,
         video_port=local_video_rtp_port,

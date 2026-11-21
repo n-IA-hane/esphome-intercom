@@ -372,6 +372,7 @@ async def async_commit_outbound_bridge(
                 data.source_relay_port,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp,
                 video_port=(

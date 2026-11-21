@@ -169,6 +169,7 @@ def prepare_trunk_preanswer(
         source_relay_port,
         invite.send_format,
         invite.recv_format,
+        recv_formats=invite.recv_formats,
         dtmf=dtmf_format,
         remote_sdp=invite.remote_sdp,
         video_port=source_video_port,

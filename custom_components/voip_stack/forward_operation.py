@@ -539,6 +539,7 @@ class ForwardOperation:
                 self.reservation.ports[0],
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
                 remote_sdp=invite.remote_sdp,
             )
         registry.take_pending_invite(call_id)
