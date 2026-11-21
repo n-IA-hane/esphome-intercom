@@ -114,3 +114,40 @@ def test_directory_alias_uses_the_same_canonical_sip_route_as_its_contact():
 def test_unknown_directory_alias_never_falls_through_to_a_trunk():
     decision = router.resolve_ha_router("contact+" + "0" * 20, [], trunk_ready=True)
     assert decision.action is router.RouteAction.REJECT and decision.status == 404
+
+
+@pytest.mark.parametrize("extension,username,name,expected", [
+    ("201", "ha_browser_long_public_identity", "Casa", "201"),
+    ("", "Casa", "Casa display", "Casa"),
+    ("", "ha_browser_f0fa47b74fb6441eb1ec5a97b88be460", "Casa", "Casa"),
+    ("", "a" * 30, "Casa", "Casa"),
+])
+def test_qualified_fanvil_blf_pickup_uses_the_same_callable_public_route(extension, username, name, expected):
+    from copy import deepcopy
+
+    endpoint = SimpleNamespace(endpoint_id="browser:opaque-stable-id", extension=extension,
+                               sip_uri_user=username, name=name)
+    current = SimpleNamespace(endpoints=SimpleNamespace(resolve=lambda value: endpoint
+        if value == endpoint.endpoint_id else None), directory=None, queues=None)
+    profile = deepcopy(PROFILE)
+    profile.update(id="fanvil/x3u-pro", vendor="fanvil")
+    profile["capabilities"]["separate_pickup_target"] = True
+    physical = {"lines": [{"slot": "1", "endpoint_id": "sip:picker"}], "keys": [
+        {"slot": "1", "line": "1", "function": "blf", "target": endpoint.endpoint_id}]}
+
+    key, = profile_module.resolve_phone_keys(current, physical, profile)
+
+    assert key["dial_target"] == key["subscription_target"] == expected
+    assert key["pickup_target"] == "*8" + expected
+    assert "opaque-stable-id" not in key["pickup_target"]
+    assert key["event_package"] == "dialog"
+
+
+def test_unqualified_fanvil_blf_does_not_gain_a_pickup_mapping():
+    endpoint = SimpleNamespace(endpoint_id="browser:casa", extension="", sip_uri_user="Casa", name="Casa")
+    current = SimpleNamespace(endpoints=SimpleNamespace(resolve=lambda _: endpoint), directory=None, queues=None)
+    physical = {"lines": [{"slot": "1", "endpoint_id": "sip:picker"}], "keys": [
+        {"slot": "1", "line": "1", "function": "blf", "target": endpoint.endpoint_id}]}
+    profile = {**PROFILE, "vendor": "fanvil"}
+    key, = profile_module.resolve_phone_keys(current, physical, profile)
+    assert key["pickup_target"] == ""

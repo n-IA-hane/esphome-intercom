@@ -132,7 +132,10 @@ def resolve_phone_keys(runtime, phone, profile, *, sip_lines=()):
             raise ValueError("phone_key_unsupported")
         candidates = _key_target(runtime, key, lines[key["line"]], authorities.get(key["line"], ""))
         limit = int(cap.get("max_value_bytes", 31))
-        target = next((item for item in candidates if len(item.encode()) <= limit), None)
+        directed_pickup = (key["function"] == "blf" and profile.get("vendor") == "fanvil"
+                           and caps.get("separate_pickup_target") is True)
+        target = next((item for item in candidates
+                       if len(item.encode()) + (2 if directed_pickup else 0) <= limit), None)
         if target is None:
             raise ValueError("phone_key_target_too_long")
         queue = runtime.queues.resolve(key["target"]) if key["function"] in {"queue_login", "queue_pause"} else None
@@ -156,7 +159,7 @@ def resolve_phone_keys(runtime, phone, profile, *, sip_lines=()):
         event = key_event_package(key["function"])
         result.append({**key, "line": int(key["line"]), "label": label, "dial_target": target,
                        "subscription_target": target if event else "", "event_package": event,
-                       "pickup_target": ""})
+                       "pickup_target": "*8" + target if directed_pickup else ""})
     return result
 
 
@@ -284,7 +287,9 @@ def validate_context(profile: dict, context: dict) -> dict:
         dialog_key = bool(key_event_package(key["function"]))
         if key["event_package"] != "dialog" and (dialog_key or key["event_package"] != ""):
             raise ValueError("only the dialog event package is mapped")
-        if key["pickup_target"] and profile["vendor"] != "yealink":
+        if key["pickup_target"] and not (profile["vendor"] == "yealink"
+                or (profile["vendor"] == "fanvil" and caps.get("separate_pickup_target") is True
+                    and key["function"] == "blf")):
             raise ValueError("separate pickup target is not mapped for this subset")
     for kind, feature, allowed, active in (
         ("keys", "clear_keys", set(key_caps), seen),
