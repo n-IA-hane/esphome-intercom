@@ -426,7 +426,7 @@ class PagingCall(LocalCallApplication):
 
     async def close(self, reason):
         if self.job is not None:
-            await self.job.stop(reason)
+            await self.job.close_from_session(reason)
 
 
 def verified_paging_source(hass, invite, *, session=None, local_source=None):

@@ -86,6 +86,26 @@ async def test_verified_static_phone_can_page_without_changing_autoanswer(queue_
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_paging_without_recipients_releases_the_job_and_parent_session(queue_lab):
+    lab = queue_lab
+    owner = await prepare_paging(lab)
+    for phone in lab.phones:
+        phone.final_status = 486
+    client, _audio = await lab.caller()
+    try:
+        result = await client.invite(target="402", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3,
+            audio_direction="sendonly")
+        if result == "ringing":
+            result = await client.wait_for_final(timeout=3)
+        assert result == "paging_ended"
+        await wait_until(lambda: not owner.jobs and not lab.calls.sessions)
+        assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+    finally:
+        await client.terminate()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_ordinary_unknown_call_does_not_claim_known_nominal_phone(queue_lab):
     lab = queue_lab
     claimed = []
