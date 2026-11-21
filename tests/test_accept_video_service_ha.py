@@ -65,12 +65,12 @@ async def test_public_sip_browser_answer_declares_atomic_video_choice_on_udp(lab
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     from custom_components.voip_stack.roster import dump_roster_json
     from custom_components.voip_stack.sip_client import SipCallClient
+    from tests.test_udp_outbound_flow_ha import reserve_udp_tcp_sockets
 
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
-        udp.bind(("127.0.0.1", 0))
+    udp, tcp = reserve_udp_tcp_sockets()
+    with udp, tcp:
         listener_port = udp.getsockname()[1]
-        tcp.bind(("127.0.0.1", listener_port))
     lab.runtime.transport_config.update(sip_port=listener_port,
         **{CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
     monkeypatch.setattr(peer_snapshot, "async_advertise_host", AsyncMock(return_value="127.0.0.1"))

@@ -1,6 +1,8 @@
 """Complete authenticated INVITEs keep the registrar-selected UDP Outbound flow."""
 
 import asyncio
+import errno
+import socket
 
 import pytest
 
@@ -9,10 +11,25 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_auth import verify_digest_authorization
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack import sip_runtime
-from .test_udp_outbound_flow_ha import PASSWORD, wire_lab as wire_lab, register_phone, trunks as trunks, lab as lab
+from .test_udp_outbound_flow_ha import (
+    PASSWORD, wire_lab as wire_lab, register_phone, reserve_udp_tcp_sockets,
+    trunks as trunks, lab as lab,
+)
 from .test_notify_transport_ha import read_record
 
-pytestmark = [pytest.mark.ha, pytest.mark.parametrize("trunks", [True], indirect=True)]
+pytestmark = [pytest.mark.ha, pytest.mark.parametrize("trunks", [True], indirect=True),
+              pytest.mark.parametrize("wire_lab", [True], indirect=True)]
+
+
+async def test_rejected_second_transport_bind_releases_its_tcp_reservation(wire_lab):
+    """A failed UDP bind must leave its successful TCP probe reusable."""
+    wire_lab.tcp_socket.close()
+    with pytest.raises(OSError) as error:
+        reserve_udp_tcp_sockets(host=wire_lab.a.address[0], port=wire_lab.a.address[1])
+    assert error.value.errno == errno.EADDRINUSE
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
+        tcp.bind(wire_lab.a.address)
+    assert not wire_lab.a.transport.is_closing()
 
 
 @pytest.mark.parametrize("mode", ["authenticated", "oversize", "cancel-preparation", "stale-binding"])
@@ -62,7 +79,7 @@ async def test_large_outbound_invite_never_replaces_its_selected_flow_or_another
             writer.close()
             await writer.wait_closed()
 
-    server = await asyncio.start_server(tcp, *wire.a.address)
+    server = await asyncio.start_server(tcp, sock=wire.tcp_socket)
     name = "Independent reception desk " * (3000 if mode == "oversize" else 48)
     client = SipCallClient(local_ip="127.0.0.1", local_name=name, local_uri_user="caller",
         local_sip_port=wire.listener[1], local_rtp_port=40000,

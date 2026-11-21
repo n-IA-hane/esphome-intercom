@@ -1,7 +1,11 @@
 """Authenticated outbound routing and ordinary UDP dialog routing stay distinct."""
 
 import asyncio
+from contextlib import ExitStack
 from dataclasses import replace
+import errno
+import secrets
+import socket
 import struct
 import time
 from types import SimpleNamespace
@@ -24,6 +28,28 @@ from tests.test_trunk_calls_ha import trunks as trunks, sip_test_account
 
 pytestmark = [pytest.mark.ha, pytest.mark.parametrize("trunks", [True], indirect=True)]
 PASSWORD = "fixture-only-password"
+
+
+def reserve_udp_tcp_sockets(*, host="127.0.0.1", port=None):
+    """Reserve one listener address on both transports before advertising it."""
+    first = 31000 + secrets.randbelow(1000) if port is None else port
+    for offset in range(128 if port is None else 1):
+        selected = 31000 + (first - 31000 + offset) % 1000 if port is None else port
+        with ExitStack() as pending:
+            try:
+                tcp = pending.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+                tcp.bind((host, selected))
+                udp = pending.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+                udp.bind((host, selected))
+            except OSError as err:
+                if port is not None or err.errno != errno.EADDRINUSE:
+                    raise
+                continue
+            udp.setblocking(False)
+            tcp.setblocking(False)
+            pending.pop_all()
+            return udp, tcp
+    raise RuntimeError("No free UDP/TCP port in the SIP fixture range")
 
 
 class WirePhone(asyncio.DatagramProtocol):
@@ -83,7 +109,7 @@ class WirePhone(asyncio.DatagramProtocol):
 
 
 @pytest.fixture
-async def wire_lab(trunks):
+async def wire_lab(trunks, request):
     from custom_components.voip_stack.runtime_data import sip_endpoint_manager, sip_registrar
 
     lab = trunks
@@ -94,21 +120,33 @@ async def wire_lab(trunks):
     listener_port = manager.udp_server.transport.get_extra_info("sockname")[1]
     lab.runtime.transport_config["sip_port"] = listener_port
     phones = []
-    for _ in range(2):
-        _transport, phone = await lab.hass.loop.create_datagram_endpoint(WirePhone,
-            local_addr=("127.0.0.1", 0))
+    tcp_socket = None
+    for index in range(2):
+        if index == 0 and getattr(request, "param", False):
+            udp_socket, tcp_socket = reserve_udp_tcp_sockets()
+            try:
+                _transport, phone = await lab.hass.loop.create_datagram_endpoint(WirePhone, sock=udp_socket)
+            except BaseException:
+                udp_socket.close()
+                tcp_socket.close()
+                raise
+        else:
+            _transport, phone = await lab.hass.loop.create_datagram_endpoint(WirePhone,
+                local_addr=("127.0.0.1", 0))
         phones.append(phone)
     phones[0].contact = phones[1]
     phones[1].contact = phones[1]
     try:
         yield SimpleNamespace(lab=lab, registrar=registrar, manager=manager,
-            listener=("127.0.0.1", listener_port), a=phones[0], b=phones[1],
+            listener=("127.0.0.1", listener_port), a=phones[0], b=phones[1], tcp_socket=tcp_socket,
             idle_ports=set(lab.runtime.rtp_port_pool.get("used", ())))
     finally:
         for session in tuple(lab.calls.sessions.values()):
             await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
         for phone in phones:
             phone.transport.close()
+        if tcp_socket is not None:
+            tcp_socket.close()
 
 
 async def register_phone(wire, *, username="outbound-phone", outbound=True, phone=None, discover=True, cseq=1, contact_uri="", expires=120):
