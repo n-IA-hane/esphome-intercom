@@ -1,0 +1,333 @@
+"""Shared-account winners retain independent duplex media and real card ownership."""
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+
+from custom_components.voip_stack.core.codec_capabilities import codec_directions
+from custom_components.voip_stack.endpoint_session import TerminationIntent
+from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.store import config_entry
+from tests.test_canonical_account_calls_ha import (
+    canonical_browser as canonical_browser,
+    logical_browser as logical_browser,
+    registered_phones as registered_phones,
+    trunks as trunks,
+    lab as lab,
+)
+from tests.test_browser_logical_availability_ha import (
+    assert_no_browser_media_owner,
+    public_phone,
+    resources,
+)
+from tests.support.shared_codec_browser import Card
+from tests.support.shared_codec_peer import (
+    CASES,
+    CodecPeer,
+    check_wire,
+    decode_named_rtp,
+    measure_tone,
+    parse_packet,
+    payload_duration_ms,
+)
+
+pytestmark = pytest.mark.ha
+
+
+async def until(predicate, seconds=5):
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+def received_seconds(peer):
+    return (
+        sum(
+            payload_duration_ms(peer.case, parse_packet(raw)["payload"])
+            for raw in peer.received
+        )
+        / 1000
+    )
+
+
+def current_browser_media(stats, call_id):
+    identities = {
+        identity for identity, call in stats["calls"].items() if call == call_id
+    }
+    return [stream for stream in stats["streams"] if stream["request_id"] in identities]
+
+
+def measure_browser(stats, call_id, direction, frequency):
+    streams = [
+        stream
+        for stream in current_browser_media(stats, call_id)
+        if stream["direction"] == direction
+    ]
+    assert len(streams) == 1, stats
+    stream = streams[0]
+    fmt = stats["formats"][stream["request_id"]][0 if direction == "tx" else 1]
+    rate, pcm_format, channels, frame = fmt.split(":")
+    return {
+        **measure_tone(
+            Path(stream["file"]).read_bytes(),
+            int(rate),
+            frequency,
+            pcm_format=pcm_format,
+            channels=int(channels),
+        ),
+        "wire_pcm_format": fmt,
+        "bytes": stream["bytes"],
+    }
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 30}], indirect=True)
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+async def test_shared_account_codec_winner_media_and_reuse(
+    canonical_browser,
+    hass_ws_client,
+    hass_admin_user,
+    tmp_path,
+    socket_enabled,
+    case,
+):
+    """Real REGISTER, fork, card, external codec and RTP in three consecutive calls."""
+    directions = codec_directions(case.name)
+    if not all(directions.values()):
+        pytest.skip(f"{case.name} actual backend directions: {directions}")
+    if case.oracle_gap:
+        pytest.skip(
+            f"{case.name} backend available but independent oracle gap: {case.oracle_gap}"
+        )
+    lab = canonical_browser
+    entry = config_entry(lab.hass)
+    # Each optional codec is explicitly enabled for this isolated test only.
+    lab.hass.config_entries.async_update_entry(
+        entry, data={**entry.data, "audio_codecs": [case.name], "video_codecs": []}
+    )
+    lab.runtime.endpoints.update("casa", name="Home reception")
+    registrar = lab.calls.component("registrar")
+    shared = lab.browser_subentry.data
+    registrar.update_accounts(
+        [
+            *registrar.accounts.values(),
+            SipAccount(
+                shared["username"],
+                shared["name"],
+                shared["password"],
+                extension=str(shared.get("extension") or ""),
+            ),
+        ]
+    )
+    caller = CodecPeer(case, "transfer_a", "isolated-test-only")
+    callee = CodecPeer(case, shared["username"], shared["password"])
+    peers = (caller, callee)
+    card = Card()
+
+    def detach_commit():
+        pass
+
+    evidence = {
+        "codec": case.name,
+        "backend_directions": directions,
+        "isolated_enabled_policy": [case.name],
+        "peer_encoder": "external FFmpeg",
+        "peer_decoder": "external FFmpeg named RTP demuxer",
+        "calls": [],
+    }
+    try:
+        for peer in peers:
+            await lab.hass.loop.create_datagram_endpoint(
+                lambda peer=peer: peer, local_addr=("127.0.0.1", 0)
+            )
+            await peer.register(lab.runtime.transport_config["sip_port"])
+        assert len(registrar.registered_contacts(shared["username"])) == 1
+        await card.start(lab, hass_ws_client, tmp_path / "chromium", hass_admin_user)
+        assert lab.runtime.sip is lab.calls
+        observer = lab.calls.component("phone_state")
+        assert (
+            observer is not None and observer._committed in lab.calls._state_listeners
+        )
+        from custom_components.voip_stack.browser_phone_projection import (
+            _ha_softphone_state,
+        )
+
+        commits = []
+
+        def observe_commit(snapshot):
+            view = _ha_softphone_state(lab.hass, "casa")
+            commits.append(
+                {
+                    "call_id": snapshot.call_id,
+                    "state": snapshot.state,
+                    "revision": snapshot.revision,
+                    "sequence": snapshot.sequence,
+                    "view": {
+                        key: view[key]
+                        for key in ("state", "sequence", "revision", "can_attach_media")
+                    },
+                    "legs": [repr(leg) for leg in snapshot.legs],
+                }
+            )
+
+        detach_commit = lab.calls.subscribe_state(observe_commit)
+        call_ids = set()
+        ssrcs = set()
+        for cycle, winner in enumerate(("ha", "sip", "ha")):
+            directory = tmp_path / f"call-{cycle}-{winner}"
+            directory.mkdir()
+            for peer in peers:
+                peer.ringing.clear()
+                peer.drain_media()
+            await caller.dial(lab.runtime.transport_config["sip_port"])
+            await asyncio.wait_for(callee.ringing.wait(), 5)
+            await card.command("wait-answer")
+            phone = await public_phone(lab)
+            assert phone["state"] == "ringing"
+            call_id = phone["calls"][0]["call_id"]
+            assert call_id not in call_ids
+            call_ids.add(call_id)
+            await card.command("screenshot", path=str(directory / "both-ringing.png"))
+            ringing = await card.command("stats")
+            assert ringing["card"]["state"] == "ringing"
+            assert ringing["card"]["caller"] == "transfer_a"
+            assert ringing["card"]["callee"] == "Home reception"
+            if winner == "ha":
+                await card.command("answer")
+                await caller.established()
+                await asyncio.wait_for(callee.cancelled.wait(), 5)
+                assert not callee.active and callee.current is None
+            else:
+                await callee.accept()
+                await caller.established()
+            await until(lambda: lab.calls.get_session(call_id).state == "in_call")
+            session = lab.calls.get_session(call_id)
+            assert "casa" in session.endpoint_claims
+            assert (await public_phone(lab))["state"] == "in_call"
+            source_frequency = 450 + cycle * 50
+            destination_frequency = 750 + cycle * 50
+            await caller.start_media(source_frequency)
+            if winner == "sip":
+                await callee.start_media(destination_frequency)
+            await until(lambda: received_seconds(caller) >= 0.85)
+            if winner == "sip":
+                await until(lambda: received_seconds(callee) >= 0.85)
+            await caller.stop_media()
+            if winner == "sip":
+                await callee.stop_media()
+            stats = await card.command("stats")
+            (directory / "active-browser.json").write_text(
+                json.dumps(stats, indent=2) + "\n"
+            )
+            (directory / "active-phone.json").write_text(
+                json.dumps(await public_phone(lab), indent=2) + "\n"
+            )
+            await card.command("screenshot", path=str(directory / "active-card.png"))
+            (directory / "observer.json").write_text(
+                json.dumps(
+                    {
+                        "current_registry": lab.runtime.sip is lab.calls,
+                        "subscribed_to_current_registry": observer._committed
+                        in lab.calls._state_listeners,
+                        "state_listeners": len(observer.listeners),
+                        "observer_previous": observer.previous,
+                        "committed_state": repr(session.committed_state),
+                        "sip_clients": {
+                            key: client.snapshot()
+                            for key, client in lab.calls.sip_clients_snapshot().items()
+                        },
+                        "commit_views": commits,
+                    },
+                    indent=2,
+                    default=repr,
+                )
+                + "\n"
+            )
+            assert stats["errors"] == []
+            assert stats["card"]["caller"] == "transfer_a"
+            assert stats["card"]["callee"] == "Home reception"
+            call_evidence = {
+                "winner": winner,
+                "call_id": call_id,
+                "caller_sdp": caller.receive_sdp.decode(),
+                "ha_answer": caller.remote_sdp.decode(),
+                "browser": stats,
+                "wire_to_caller": check_wire(case, caller.received),
+            }
+            received_ssrc = call_evidence["wire_to_caller"]["ssrc"]
+            assert received_ssrc not in ssrcs
+            ssrcs.add(received_ssrc)
+            decoded = await decode_named_rtp(
+                case, caller.received, caller.receive_sdp, directory / "caller-receive"
+            )
+            call_evidence["caller_tone"] = measure_tone(
+                decoded, case.pcm_rate, 650 if winner == "ha" else destination_frequency
+            )
+            if winner == "ha":
+                call_evidence["card_receive_tone"] = measure_browser(
+                    stats, call_id, "rx", source_frequency
+                )
+                call_evidence["card_microphone_tone"] = measure_browser(
+                    stats, call_id, "tx", 650
+                )
+                assert stats["card"]["audioReady"]
+                assert stats["card"]["contextState"] == "running"
+                assert stats["card"]["tracks"] == ["live"]
+                assert callee.drain_media() == 0, (
+                    "Losing SIP Contact must not receive media"
+                )
+            else:
+                assert_no_browser_media_owner(lab)
+                assert current_browser_media(stats, call_id) == []
+                assert not stats["card"]["tracks"]
+                assert not stats["card"]["audioReady"]
+                call_evidence["wire_to_callee"] = check_wire(case, callee.received)
+                call_evidence["callee_sdp"] = callee.receive_sdp.decode()
+                decoded = await decode_named_rtp(
+                    case,
+                    callee.received,
+                    callee.receive_sdp,
+                    directory / "callee-receive",
+                )
+                call_evidence["callee_tone"] = measure_tone(
+                    decoded, case.pcm_rate, source_frequency
+                )
+            evidence["calls"].append(call_evidence)
+            assert stats["card"]["state"] == "in_call"
+            await card.command("hangup")
+            await asyncio.wait_for(caller.ended.wait(), 5)
+            if winner == "sip":
+                await asyncio.wait_for(callee.ended.wait(), 5)
+            await until(lambda: not lab.calls.sessions)
+            # Dialog removal precedes the existing asynchronous media cleanup
+            # barrier. Require that owner to finish, rather than sample its race.
+            await until(lambda: resources(lab)["call_scoped_quiescent"])
+            assert resources(lab)["call_scoped_quiescent"], resources(lab)
+            await asyncio.sleep(0.1)
+            idle = await card.command("stats")
+            assert idle["card"]["state"] == "idle"
+            assert not idle["card"]["tracks"]
+            assert not idle["card"]["audioReady"]
+            assert (await public_phone(lab))["state"] == "idle"
+            assert_no_browser_media_owner(lab)
+            call_evidence["final_resources"] = resources(lab)
+            call_evidence["idle_card"] = idle["card"]
+            (directory / "result.json").write_text(
+                json.dumps(call_evidence, indent=2) + "\n"
+            )
+        assert len(evidence["calls"]) == 3
+    finally:
+        detach_commit()
+        (tmp_path / "result.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        for session in tuple(lab.calls.sessions.values()):
+            barrier = lab.calls.request_termination(
+                session.call_id, TerminationIntent("test_done")
+            )
+            if barrier is not None:
+                await barrier
+        await card.close()
+        for peer in peers:
+            await peer.close()
+        assert resources(lab)["call_scoped_quiescent"]
