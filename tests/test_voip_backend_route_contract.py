@@ -7,6 +7,7 @@ import ast
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import unittest
 
 import pytest
@@ -153,6 +154,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         assert spec is not None and spec.loader is not None
         cls.automation_routing = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.automation_routing
+        cls.addClassCleanup(sys.modules.pop, spec.name, None)
         spec.loader.exec_module(cls.automation_routing)
 
     def test_registrar_expiry_uses_one_owned_deadline(self) -> None:
