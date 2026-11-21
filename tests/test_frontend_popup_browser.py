@@ -881,6 +881,36 @@ def test_call_duration_tick_does_not_render_the_whole_card(popup_page):
     assert page.evaluate("__voipStackPopup.dialog._phone._els.audioCallDuration.textContent") == page.evaluate("__voipStackPopup.dialog._phone._els.hangupDuration.textContent")
 
 
+def test_detached_popup_stops_page_and_connection_listeners(popup_page):
+    page = popup_page
+    enable(page)
+    incoming(page)
+    page.evaluate("push({state:'in_call',call_id:'incoming-A',connected_at:Date.now()/1000-12,media_owner:'other'})")
+    page.get_by_role("button", name="Minimize call").click()
+    page.evaluate("""() => {
+      const popup=__voipStackPopup;
+      window.detachedServices=services.length;
+      window.detachedState=__voipStackEngine.callId;
+      popup.remove();
+      popup.hass=hass;
+    }""")
+    page.wait_for_function("__voipStackPopup._unsubscribe === null && __voipStackPopup._timer === null")
+    assert page.evaluate("__voipStackPopup.isConnected") is False
+    observed = page.evaluate("""() => {
+      const popup=__voipStackPopup;
+      window.originalPopupSync=popup.syncPreference;
+      let reads=0;popup.syncPreference=()=>{reads++;};
+      for(const type of ['location-changed','pageshow','storage'])window.dispatchEvent(new Event(type));
+      hass.connection.dispatchEvent(new Event('ready'));
+      popup.hass=hass;
+      return {reads,services:services.length-detachedServices,callId:__voipStackEngine.callId};
+    }""")
+    assert observed == {"reads": 0, "services": 0, "callId": page.evaluate("detachedState")}
+    page.evaluate("__voipStackPopup.syncPreference=originalPopupSync;root.shadowRoot.append(__voipStackPopup)")
+    page.wait_for_function("__voipStackPopup._unsubscribe !== null && __voipStackPopup._timer !== null")
+    assert page.evaluate("services.length-detachedServices") == 0
+
+
 def test_rx_animation_has_fixed_hitbox_and_rejects_stale_call(popup_page):
     page = popup_page
     enable(page)

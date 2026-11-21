@@ -148,10 +148,28 @@ export class VoipStackPopup extends HTMLElement {
       // newer choice in this tab. No remote event may write the preference back.
       if (event.key === PREFERENCE || event.key === null) this.syncPreference(true);
     };
+    this.binding = this.readPreference();
+  }
+  connectedCallback() {
+    this._detached = false;
     window.addEventListener("location-changed", this._answerLink);
     window.addEventListener("pageshow", this._pageShown);
     window.addEventListener("storage", this._storageChanged);
-    this.binding = this.readPreference();
+    if (this._hass) this.hass = this._hass;
+  }
+  disconnectedCallback() {
+    // Native modal moves disconnect and reconnect this same view in one task.
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      this._detached = true;
+      window.removeEventListener("location-changed", this._answerLink);
+      window.removeEventListener("pageshow", this._pageShown);
+      window.removeEventListener("storage", this._storageChanged);
+      this._connection?.removeEventListener?.("ready", this._ready);
+      this._connection = null;
+      this._bindingServerSynced = null;
+      this.release();
+    });
   }
   get receivingPopups() {
     return this.binding?.enabled === true && !!this.binding.device_id && !!this.binding.endpoint_id;
@@ -185,7 +203,7 @@ export class VoipStackPopup extends HTMLElement {
     this._mini.setAttribute("aria-label", translate(hass, "Minimized call"));
     this._reopen.setAttribute("aria-label", translate(hass, "Reopen call"));
     this._hangup.setAttribute("aria-label", translate(hass, "Hang up call"));
-    if (this.minimized && !this.isConnected) this.positionMini();
+    if (!this.isConnected) return;
     if (this.dialog) this.dialog.hass = hass;
     if (this._connection === hass?.connection) { if (this.receivingPopups) engine.configure(hass); return; }
     this._connection?.removeEventListener?.("ready", this._ready);
@@ -356,7 +374,7 @@ export class VoipStackPopup extends HTMLElement {
   restoreMiniHost() {
     this._modal?.removeEventListener("close", this._modalClosed);
     this._modal = null;
-    if (this.parentNode !== this._root?.shadowRoot) this._root?.shadowRoot?.append(this);
+    if (!this._detached && this.parentNode !== this._root?.shadowRoot) this._root?.shadowRoot?.append(this);
   }
   release() {
     this._unsubscribe?.(); this._unsubscribe = null;
