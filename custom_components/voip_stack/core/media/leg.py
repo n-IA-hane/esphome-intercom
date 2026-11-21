@@ -315,6 +315,8 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         return Refusal("the answer lists no codec of the offer", tuple(trace))
     peer_receives = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
     peer_sends = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
+    if (needs_send and not peer_receives) or (needs_receive and not peer_sends):
+        return Refusal("the answer flow attributes omit a required audio direction", tuple(trace))
     directional = bool(flows) and bool(peer_receives) and bool(peer_sends)
     if directional:
         send_candidates = sorted(peer_receives, key=lambda fmt: (
@@ -352,7 +354,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
             trace=tuple(trace),
             send_accept=tuple(
                 replace(fmt, frame_ms=sent.packet_ms)
-                for fmt in (peer_receives if directional else answered)
+                for fmt in peer_receives
                 if needs_send and (sent := _choose_local_time(fmt, policy,
                     ReceiverBounds(ptime=fmt.frame_ms, maxptime=fmt.max_frame_ms,
                                    minimum=fmt.min_frame_ms))) is not None),
