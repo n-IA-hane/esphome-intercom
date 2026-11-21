@@ -143,7 +143,9 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         assert observed["receive"].sample_rate == expected_receive
         assert caller.dialog.send_format.sample_rate == source_rate
         target_rate = observed["send"].sample_rate
-        expected_return_rate = target_rate if target_rate in source_receive_rates else source_receive_rates[0]
+        # The caller receives its own first offered rate; the destination's
+        # transmit rate never lowers it.
+        expected_return_rate = source_receive_rates[0]
         assert caller.dialog.recv_format.sample_rate == expected_return_rate
         # Static RX capacity may exceed the peer's TX packet budget. Keep the
         # existing fallback ready; actual compatible10ms packets still bypass it.

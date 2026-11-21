@@ -239,7 +239,19 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     module.remote_can_send = lambda *_args: True
     module.remote_can_receive = lambda *_args, **_kwargs: True
     module.constrained_video_direction = lambda *_args, **_kwargs: "recvonly"
-    module.invite_rtp_peer = lambda invite: invite.audio_peer
+    established_peers: list[object] = []
+    answered_formats: list[tuple[object, object]] = []
+
+    def retained_peer(invite, *, established=None):
+        established_peers.append(established)
+        return invite.audio_peer
+
+    def answer(*args, **_kwargs):
+        answered_formats.append((args[3], args[4]))
+        return "m=audio 41000 RTP/AVP 111\r\nm=video 0 RTP/AVP 104\r\n"
+
+    module.invite_rtp_peer = retained_peer
+    module.build_answer_directional = answer
     module.invite_video_rtp_peer = lambda invite: invite.video_peer
 
     class PeerOwner:
@@ -276,9 +288,10 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     )
     updated = types.SimpleNamespace(
         call_id="call",
-        send_format="opus-send",
-        recv_format="opus-recv",
-        audio_peer=object(),
+        send_format="default-send",
+        recv_format="default-recv",
+        audio_peer=types.SimpleNamespace(
+            outbound_rtp_format="established-send", inbound_rtp_format="established-recv"),
         video_peer=object(),
         remote_sdp=b"audio-refresh-with-unchanged-video",
         remote_audio_direction="sendrecv",
@@ -299,6 +312,10 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     assert validation["caller_to_peer_transcoding"] is True
     assert validation["peer_to_caller_transcoding"] is True
     old_audio, old_video = relay.left, video_relay.left
+    # The refresh resolves audio against the leg's current peer and answers with
+    # the retained formats, not with the freshly parsed defaults.
+    assert established_peers == [old_audio]
+    assert answered_formats == [("established-send", "established-recv")]
     if replace_owner:
         registry.relays["call"] = object()
         with pytest.raises(RuntimeError, match="owner changed"):
@@ -575,7 +592,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
     sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
-    module.invite_rtp_peer = lambda _invite: new_audio_left
+    module.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     module.invite_video_rtp_peer = lambda _invite: new_video_left
 
     previous_video = types.SimpleNamespace(direction="recvonly")
@@ -913,7 +930,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     sip_bridge.dialog_video_rtp_peer = lambda _dialog: new_video_right
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
-    module.invite_rtp_peer = lambda _invite: new_audio_left
+    module.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     module.invite_video_rtp_peer = lambda _invite: new_video_left
     module.remote_can_send = lambda fmt: fmt.direction in {"sendonly", "sendrecv"}
     module.remote_can_receive = lambda fmt, **_kwargs: (

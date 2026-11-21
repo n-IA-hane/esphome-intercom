@@ -95,18 +95,24 @@ class AudioFormat:
 
 
 PREFERRED_FRAME_MS = (10, 16, 20, 32)
+# Packet time preference per sample rate, best first: 10 ms at 48 kHz, where
+# 20 ms does not fit one packet, and 20 ms at 16 kHz and below. Local format
+# lists and offer ranking are derived from this one table.
+PACKET_MS_PREFERENCE = {
+    48000: (10,),
+    32000: (16, 10),
+    24000: (20,),
+    16000: (20, 10, 16, 32),
+    8000: (20, 10),
+}
 HA_SIP_PCM_FORMATS = (
     AudioFormat(48000, PcmFormat.S16LE, 2, 20),
     AudioFormat(48000, PcmFormat.S16LE, 1, 20),
-    AudioFormat(48000, PcmFormat.S16LE, 1, 10),
-    AudioFormat(32000, PcmFormat.S16LE, 1, 16),
-    AudioFormat(32000, PcmFormat.S16LE, 1, 10),
-    AudioFormat(16000, PcmFormat.S16LE, 1, 16),
-    AudioFormat(16000, PcmFormat.S16LE, 1, 10),
-    AudioFormat(16000, PcmFormat.S16LE, 1, 20),
-    AudioFormat(16000, PcmFormat.S16LE, 1, 32),
-    AudioFormat(8000, PcmFormat.S16LE, 1, 20),
-    AudioFormat(8000, PcmFormat.S16LE, 1, 10),
+    *(
+        AudioFormat(rate, PcmFormat.S16LE, 1, frame_ms)
+        for rate in (48000, 32000, 16000, 8000)
+        for frame_ms in PACKET_MS_PREFERENCE[rate]
+    ),
 )
 _HA_PREFERRED_PCM_TX_FORMAT = AudioFormat(48000, PcmFormat.S16LE, 1, 10)
 HA_SIP_PCM_TX_FORMATS = (

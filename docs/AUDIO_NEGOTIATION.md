@@ -59,6 +59,10 @@ in force. PCM conversion preserves rational resampler phase across packets.
 A bridge keeps an already selected source receive geometry when a new choice
 would only move a PCM conversion to the other direction. A strict reduction in
 conversions remains usable; packet-time repacketization stays independent.
+The audio sent to the caller follows the destination's codec when that avoids
+coding compressed audio twice. Uncompressed audio is never lowered to the
+destination's transmit rate: the caller keeps the rate it negotiated to receive
+and the bridge resamples.
 
 ## Verification
 

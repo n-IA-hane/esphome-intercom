@@ -102,3 +102,64 @@ def test_receive_geometry_comparison_does_not_construct_a_fractional_frame():
     )
     selected = bridge_source_audio(invite, destination)
     assert selected.recv_format.audio_format == source_receive
+
+
+def parse_offer(body, send_formats, recv_formats):
+    endpoint = SipUdpEndpoint(
+        local_ip="127.0.0.1", local_sip_port=5060, local_rtp_port=40000,
+        supported_formats=list(send_formats), supported_send_formats=list(send_formats),
+        supported_recv_formats=list(recv_formats), on_invite=None,
+    )
+    request = sip.parse_message(sip.build_request("INVITE", "sip:phone@127.0.0.1", [
+        ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bK-bridge-quality"),
+        ("From", "<sip:peer@127.0.0.2>;tag=source"), ("To", "<sip:phone@127.0.0.1>"),
+        ("Call-ID", "bridge-quality"), ("CSeq", "1 INVITE"),
+        ("Contact", "<sip:peer@127.0.0.2:5060>"), ("Content-Type", "application/sdp"),
+    ], body.encode()))
+    return endpoint._parse_invite(request, ("127.0.0.2", 5060))
+
+
+def test_uncompressed_caller_keeps_its_receive_rate_when_the_destination_sends_less():
+    from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
+
+    # A phone that receives 48 kHz and transmits 16 kHz, calling a phone with the same profile.
+    invite = parse_offer(
+        "v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Wideband receiver\r\n"
+        "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 96 97\r\n"
+        "a=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n"
+        "a=x-voip-stack-flow:96 recv\r\na=x-voip-stack-flow:97 sendrecv\r\n"
+        "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=sendrecv\r\n",
+        HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
+    )
+    assert (invite.send_format.sample_rate, invite.send_format.frame_ms) == (48000, 10)
+    assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 20)
+    destination = SimpleNamespace(
+        recv_format=sdp.RtpPcmFormat(97, "L16", 16000, 1, 20),
+        send_format=sdp.RtpPcmFormat(96, "L16", 48000, 1, 10),
+    )
+
+    selected = bridge_source_audio(invite, destination)
+
+    # The destination transmits 16 kHz. The bridge resamples; the caller is not lowered.
+    assert (selected.send_format.encoding, selected.send_format.sample_rate, selected.send_format.frame_ms) == (
+        "L16", 48000, 10)
+    assert (selected.recv_format.sample_rate, selected.recv_format.frame_ms) == (16000, 20)
+
+
+def test_compressed_caller_still_follows_the_destination_codec_to_avoid_coding_twice():
+    from custom_components.voip_stack.core.audio_format import HA_TRUNK_AUDIO_FORMATS
+
+    invite = parse_offer(
+        "v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Ordinary softphone\r\n"
+        "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 9 8 0\r\n"
+        "a=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\n"
+        "a=ptime:20\r\na=sendrecv\r\n",
+        HA_TRUNK_AUDIO_FORMATS, HA_TRUNK_AUDIO_FORMATS,
+    )
+    assert invite.send_format.encoding == invite.recv_format.encoding == "G722"
+    pcma = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+
+    selected = bridge_source_audio(invite, SimpleNamespace(recv_format=pcma, send_format=pcma))
+
+    assert selected.send_format.encoding == selected.recv_format.encoding == "PCMA"
+    assert selected.send_format.payload_type == selected.recv_format.payload_type == 8

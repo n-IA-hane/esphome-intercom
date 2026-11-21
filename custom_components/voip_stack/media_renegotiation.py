@@ -985,12 +985,17 @@ async def async_prepare_media_update(
             ),
         )
         local_video_port = int(getattr(video_relay, f"{side}_port"))
+    # A refresh keeps the audio this leg already uses while it is still offered,
+    # exactly like a video change does. Re-running the defaults here would undo
+    # the format chosen when the call was bridged.
+    previous_audio_peer = getattr(relay, side)
+    next_audio_peer = invite_rtp_peer(updated, established=previous_audio_peer)
     answer = build_answer_directional(
         local_ip,
         local_ip,
         int(getattr(relay, f"{side}_port")),
-        updated.send_format,
-        updated.recv_format,
+        next_audio_peer.outbound_rtp_format,
+        next_audio_peer.inbound_rtp_format,
         dtmf=first_offered_dtmf_format(updated.remote_sdp),
         remote_sdp=updated.remote_sdp,
         audio_direction=audio_direction,
@@ -1000,8 +1005,6 @@ async def async_prepare_media_update(
     )
     commit_video_generation = rollback_video_generation = None
     try:
-        previous_audio_peer = getattr(relay, side)
-        next_audio_peer = invite_rtp_peer(updated)
         commit_audio = relay.prepare_peer_reconfiguration(side, next_audio_peer)
         next_video_peer = invite_video_rtp_peer(updated) if video_relay is not None and updated.video_format is not None else None
         previous_video_peer = getattr(video_relay, side) if video_relay is not None else None

@@ -73,7 +73,20 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
         ))
         if candidate_conversions >= original_conversions:
             return invite
-    return replace(invite, send_format=selected.send, recv_format=selected.recv)
+    send = selected.send
+    if (
+        send.encoding.upper() == invite.send_format.encoding.upper() == "L16"
+        and send.sample_rate < invite.send_format.sample_rate
+    ):
+        # Uncompressed audio converts without loss, so the bridge resamples it.
+        # Never lower the rate the caller negotiated to receive just to match
+        # the destination; that is only worth it for compressed codecs, where
+        # it avoids coding the audio twice.
+        if invite.send_format.payload_type == invite.recv_format.payload_type:
+            # One payload serves both directions: the contract stays whole.
+            return invite
+        send = invite.send_format
+    return replace(invite, send_format=send, recv_format=selected.recv)
 
 
 @dataclass(frozen=True, slots=True)

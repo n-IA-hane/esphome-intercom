@@ -11,7 +11,6 @@ import pytest
 from custom_components.voip_stack.core import rtp, sdp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
-from custom_components.voip_stack.inbound_routing import bridge
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from tests.test_sip_capabilities_ha import wait_until
@@ -26,7 +25,7 @@ pytestmark = pytest.mark.ha
     (16000, 48000, False), (48000, 48000, False), (16000, 16000, False),
     (16000, 48000, True),
 ], ids=["peer16k20", "browser48k10", "independent16k20-rx-16k10-tx", "peer16k20-or10-allows10"])
-async def test_bridge_repacketizes_source_return_without_changing_destination(
+async def test_bridge_keeps_each_legs_own_negotiated_audio(
     trunks, monkeypatch, source_rate, destination_rate, offer_tx10,
 ):
     lab = trunks
@@ -40,16 +39,6 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
     })
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
     observed = {}
-    real_select = bridge.bridge_source_audio
-
-    def select(invite, destination):
-        selected = real_select(invite, destination)
-        observed["source"] = selected
-        observed["original_source"] = invite
-        observed["destination"] = destination
-        return selected
-
-    monkeypatch.setattr(bridge, "bridge_source_audio", select)
 
     def answer():
         request = target.last_request
@@ -140,22 +129,13 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
             assert answer_format["maxptime"] >= source_ms == 20
             assert caller.dialog.send_format.frame_ms == answer_format["ptime"]
             assert caller.dialog.recv_format.frame_ms == 10
-            assert observed["source"].recv_format.frame_ms == 20
-            assert observed["source"].recv_format.max_frame_ms >= 20
-            # An explicitly retained10ms receiver still works. Only the
-            # listener's default preference changed.
-            previous_source = replace(observed["original_source"], recv_format=replace(
-                observed["original_source"].recv_format, frame_ms=10))
-            previous = real_select(previous_source, observed["destination"])
-            assert previous.send_format.frame_ms == 10
-            assert previous.recv_format.frame_ms == 10
-            previous_answer = sdp.build_answer_directional(
-                "127.0.0.1", "127.0.0.1", 40000, previous.send_format,
-                previous.recv_format, remote_sdp=previous.remote_sdp)
-            assert sdp.parse_sdp(previous_answer)["ptime"] == 10
-            assert sdp.parse_sdp(previous_answer)["maxptime"] >= 20
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
+        # Each leg keeps what it negotiated for itself; nothing re-selects the caller.
+        observed["source"] = session.artifacts.caller_invite
+        if destination_rate == 16000:
+            assert observed["source"].recv_format.frame_ms == 20
+            assert observed["source"].recv_format.max_frame_ms >= 20
         samples = source_rate * source_ms // 1000
         # Rate conversion consumes complete negotiated input frames. Supply
         # consecutive short packets until one is complete, retaining the10ms
@@ -192,11 +172,17 @@ async def test_bridge_repacketizes_source_return_without_changing_destination(
             assert b"".join(packet.payload for packet in forwarded) == forward
         if source_rate == destination_rate == 48000:
             assert forwarded[0].payload == forward
-        assert (relay.left.outbound_rtp_format.sample_rate, relay.left.outbound_rtp_format.frame_ms) == (16000, 10)
-        assert [len(packet.payload) for packet in returned] == [320, 320]
-        assert b"".join(packet.payload for packet in returned) == backwards
+        # The caller offered 48 kHz first for its receiver: it gets that, at 10 ms,
+        # whatever the destination transmits. HA converts instead of lowering the leg.
+        assert (relay.left.outbound_rtp_format.sample_rate, relay.left.outbound_rtp_format.frame_ms) == (48000, 10)
+        assert [len(packet.payload) for packet in returned] == [960, 960]
         assert (returned[1].sequence - returned[0].sequence) & 65535 == 1
-        assert (returned[1].timestamp - returned[0].timestamp) & 0xFFFFFFFF == 160
+        assert (returned[1].timestamp - returned[0].timestamp) & 0xFFFFFFFF == 480
+        upsampled = struct.unpack("!960h", b"".join(packet.payload for packet in returned))
+        # The 16 kHz ramp (-100..219) arrives as a 48 kHz ramp over the same range,
+        # after the converter's start-up delay and with its small filter overshoot.
+        assert min(upsampled) >= -130 and max(upsampled) <= 240 and max(upsampled) - min(upsampled) > 200
+        assert sum(later >= earlier for earlier, later in zip(upsampled, upsampled[1:])) > 850
         assert all(len(packet.payload) <= 1200 for packet in [*forwarded, *returned])
         assert relay.left.outbound_rtp_format.frame_ms <= sdp.parse_sdp(observed["source"].remote_sdp)["maxptime"]
         await caller.terminate()

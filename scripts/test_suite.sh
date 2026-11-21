@@ -252,6 +252,7 @@ ha_tests=(
   tests/test_bridge_independent_ptime_ha.py
   tests/test_bridge_repacketize_ha.py
   tests/test_bridge_local_tx_capabilities_ha.py
+  tests/test_audio_negotiation_matrix_ha.py
   tests/test_inbound_factory_flow_audio_ha.py
   tests/test_sip_capabilities_ha.py
   tests/test_sip_negotiation_capabilities_runtime.py

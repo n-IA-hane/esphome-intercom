@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from . import codec_capabilities
-from .audio_format import UDP_SAFE_PAYLOAD_BYTES, AudioFormat, PcmFormat
+from .audio_format import PACKET_MS_PREFERENCE, UDP_SAFE_PAYLOAD_BYTES, AudioFormat, PcmFormat
 from .sdp_document import SdpDocument
 from .sdp_parser import (
     STATIC_RTPMAP as _STATIC_RTPMAP,
@@ -32,15 +32,12 @@ from .sdp_types import (
 )
 
 _PREFERRED_RTP_AUDIO_KEYS = {
-    (48000, PcmFormat.S16LE, 1, 10): 0,
-    (32000, PcmFormat.S16LE, 1, 16): 1,
-    (32000, PcmFormat.S16LE, 1, 10): 2,
-    (24000, PcmFormat.S16LE, 1, 20): 3,
-    (16000, PcmFormat.S16LE, 1, 16): 4,
-    (16000, PcmFormat.S16LE, 1, 10): 5,
-    (16000, PcmFormat.S16LE, 1, 20): 6,
-    (16000, PcmFormat.S16LE, 1, 32): 7,
-    (8000, PcmFormat.S16LE, 1, 20): 8,
+    (rate, PcmFormat.S16LE, 1, frame_ms): rank
+    for rank, (rate, frame_ms) in enumerate(
+        (rate, frame_ms)
+        for rate in (48000, 32000, 24000, 16000, 8000)
+        for frame_ms in PACKET_MS_PREFERENCE[rate]
+    )
 }
 
 
@@ -118,7 +115,8 @@ def _rtp_offer_rank(fmt: AudioFormat) -> tuple[int, int, int]:
         PcmFormat.S24LE_IN_S32: 2,
         PcmFormat.S32LE: 3,
     }[fmt.pcm_format]
-    frame_rank = {16: 0, 10: 1, 20: 2, 32: 3}.get(fmt.frame_ms, 9)
+    generic = PACKET_MS_PREFERENCE[16000]
+    frame_rank = generic.index(fmt.frame_ms) if fmt.frame_ms in generic else 9
     return (1 + pcm_rank, -fmt.sample_rate, frame_rank)
 
 
@@ -217,7 +215,6 @@ def _rtp_compatible_audio(
             local.pcm_format == PcmFormat.S16LE
             and local.sample_rate == 16000
             and local.channels == 1
-            and local.frame_ms == 20
             and offered.sample_rate == 16000
             and offered.channels == 1
         )
@@ -665,7 +662,6 @@ def offered_pcm_formats(
                 or pt < 96
                 or rate != 16000
                 or channels != 1
-                or parsed["ptime"] not in {0, 20}
             ):
                 continue
         elif encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:

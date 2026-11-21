@@ -75,7 +75,7 @@ class AudioCapabilities:
                 if fmt.sample_rate != 8000 or fmt.channels not in (1, 2):
                     return False
             elif fmt.encoding == "PCM":
-                if fmt.sample_rate != 16000 or fmt.channels != 1 or fmt.frame_ms != 20:
+                if fmt.sample_rate != 16000 or fmt.channels != 1:
                     return False
             elif fmt.encoding not in {"L16", "L24"}:
                 return False
