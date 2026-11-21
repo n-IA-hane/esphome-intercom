@@ -1125,31 +1125,33 @@ async def _run_audio_session(
 
             nonlocal sequence, timestamp, ssrc, dtmf_source
             event = telephone_event_code(digit)
-            if (
-                event is None
-                or session.send_dtmf_payload_type is None
-                or event not in session.send_dtmf_events
-            ):
-                fallback = session.send_dtmf_info
-                if fallback is not None:
-                    result = fallback(digit)
-                    if asyncio.iscoroutine(result):
-                        await result
-                return
             async with dtmf_send_lock:
-                event_rate = max(1, int(session.send_dtmf_clock_rate))
                 async with rtp_send_lock:
-                    audio_rate = rtp_encoder.fmt.rtp_clock_rate
-                    if rtp_source.use_clock_rate(audio_rate):
-                        sequence, timestamp, ssrc = rtp_source.sequence, rtp_source.timestamp, rtp_source.ssrc
-                    shared_clock = event_rate == audio_rate
-                    if not shared_clock and dtmf_source is None:
-                        dtmf_source = rtp.AudioRtpSenderState.create()
-                        if dtmf_source.ssrc == ssrc:
-                            dtmf_source.ssrc = (ssrc ^ 0x80000000) or 1
-                    event_timestamp = timestamp if shared_clock else dtmf_source.timestamp
-                    event_ssrc = ssrc if shared_clock else dtmf_source.ssrc
+                    # Capture one negotiated contract together with its media
+                    # generation. A later digit can use a later mapping.
+                    event_payload_type = session.send_dtmf_payload_type
+                    event_set = frozenset(session.send_dtmf_events)
                     event_generation = session.media_generation
+                    rtp_event = event is not None and event_payload_type is not None and event in event_set
+                    if rtp_event:
+                        event_rate = max(1, int(session.send_dtmf_clock_rate))
+                        audio_rate = rtp_encoder.fmt.rtp_clock_rate
+                        if rtp_source.use_clock_rate(audio_rate):
+                            sequence, timestamp, ssrc = rtp_source.sequence, rtp_source.timestamp, rtp_source.ssrc
+                        shared_clock = event_rate == audio_rate
+                        if not shared_clock and dtmf_source is None:
+                            dtmf_source = rtp.AudioRtpSenderState.create()
+                            if dtmf_source.ssrc == ssrc:
+                                dtmf_source.ssrc = (ssrc ^ 0x80000000) or 1
+                        event_timestamp = timestamp if shared_clock else dtmf_source.timestamp
+                        event_ssrc = ssrc if shared_clock else dtmf_source.ssrc
+                if not rtp_event:
+                    fallback = session.send_dtmf_info
+                    if fallback is not None:
+                        result = fallback(digit)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    return
 
                 async def emit(duration: int, marker: bool, end: bool) -> bool:
                     nonlocal sequence
@@ -1158,7 +1160,7 @@ async def _run_audio_session(
                             return False
                         packet = rtp.build_packet(
                             rtp.RtpPacket(
-                                payload_type=int(session.send_dtmf_payload_type),
+                                payload_type=int(event_payload_type),
                                 sequence=sequence if shared_clock else dtmf_source.sequence,
                                 timestamp=event_timestamp,
                                 ssrc=event_ssrc,

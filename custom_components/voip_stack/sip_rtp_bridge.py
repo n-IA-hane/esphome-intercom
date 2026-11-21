@@ -1033,6 +1033,10 @@ class SipRtpRelay:
         async with self._dtmf_locks[destination_side]:
             if self._stop_requested:
                 return
+            event_payload_type = destination.outbound_dtmf_payload_type
+            event_set = frozenset(destination.outbound_dtmf_events)
+            if event_payload_type is None or telephone_event_code(digit) not in event_set:
+                return
             event_rate = max(1, destination.outbound_dtmf_clock_rate)
             encoder = self.right_encoder if destination_side == "right" else self.left_encoder
             wire_format = encoder.fmt if encoder is not None else destination.outbound_rtp_format
@@ -1048,6 +1052,7 @@ class SipRtpRelay:
                 if shared_clock
                 else destination.dtmf_timestamp
             )
+            event_ssrc = destination.ssrc if shared_clock else destination.dtmf_ssrc
             audio_timestamp_at_start = destination.timestamp
 
             def _send(*, elapsed_ms: int, marker: bool, end: bool) -> bool:
@@ -1062,20 +1067,18 @@ class SipRtpRelay:
                 duration = max(1, round(elapsed_ms * event_rate / 1000))
                 if shared_clock:
                     sequence = destination.sequence
-                    ssrc = destination.ssrc
                     destination.sequence = rtp.next_sequence(destination.sequence)
                 else:
                     sequence = destination.dtmf_sequence
-                    ssrc = destination.dtmf_ssrc
                     destination.dtmf_sequence = rtp.next_sequence(
                         destination.dtmf_sequence
                     )
                 packet = rtp.build_packet(
                     rtp.RtpPacket(
-                        payload_type=int(destination.outbound_dtmf_payload_type),
+                        payload_type=int(event_payload_type),
                         sequence=sequence,
                         timestamp=event_timestamp,
-                        ssrc=ssrc,
+                        ssrc=event_ssrc,
                         payload=build_telephone_event_payload(
                             digit,
                             duration=min(duration, 0xFFFF),
@@ -1127,7 +1130,7 @@ class SipRtpRelay:
                 "RTP DTMF relayed destination=%s digit=%s payload=%s rate=%s",
                 destination_side,
                 digit,
-                destination.outbound_dtmf_payload_type,
+                event_payload_type,
                 event_rate,
             )
 

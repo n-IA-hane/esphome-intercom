@@ -40,18 +40,31 @@ the local receive namespace is checked independently. Video removal clears
 the active sets and retains the histories. A renumbered answer uses the peer
 PT for transmit and the original offer PT for receive, without an alias.
 
-A conflicting optional video offer is answered with port0 while audio stays
+A conflicting optional video offer is answered with port 0 while audio stays
 usable. A conflicting answer to an already sent offer is rejected as a
 candidate and remains with the existing SIP transaction/compensation owner.
 The map helper emits no SIP response and never undoes far-end state locally.
 
 The preserved negative witness used PCM on peer receive PT120, retired it for
-PCMU, and then accepted L16 on120 in the old client because only the opposite
+PCMU, and then accepted L16 on PT120 in the old client because only the opposite
 receive history was checked. Production candidate tests now refuse that
 change for either offerer, allow the original meaning to return, and preserve
 the active dialog on failure. H.264/JPEG/VP8 namespace tests, video removal,
 frame-rate changes and the existing atomic bridge recovery fixtures cover
 the corresponding video and lifecycle contracts.
 
-References: [RFC3264 section8.3.2](https://www.rfc-editor.org/rfc/rfc3264.html#section-8.3.2)
-and [RFC6141 section3.2](https://www.rfc-editor.org/rfc/rfc6141.html#section-3.2).
+References: [RFC 3264 section 8.3.2](https://www.rfc-editor.org/rfc/rfc3264.html#section-8.3.2)
+and [RFC 6141 section 3.2](https://www.rfc-editor.org/rfc/rfc6141.html#section-3.2).
+
+The DTMF relay and browser media adapter capture one digit's payload, event
+set, clock, SSRC and timestamp under their existing send locks. Attribute
+updates do not split its initial report or three final reports; the next
+digit reads the newer negotiated mapping. No scheduler or session owner was
+added. Peer replacement, relay stop, browser close and media-generation change
+still interrupt a retired source before it emits another packet.
+
+Independent UDP witnesses first observed mixed PT101/PT110 in the relay and
+PT100/PT110 in the browser during one digit. The corrected paths retain the
+old mapping through the terminal repeats, then send the next digit with the
+new payload and clock. The 40 ms terminal duration is 320 ticks at 8 kHz and 1920
+ticks at 48 kHz, independently decoded from actual packet bytes.

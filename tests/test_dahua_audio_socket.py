@@ -115,7 +115,8 @@ async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(mon
     assert session.handoff_transport is None
 
 
-async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_tx_pt=97, delayed_playback=False):
+async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_tx_pt=97, delayed_playback=False,
+                               dtmf_reconfigure=False, dtmf_interrupt=""):
     """Independent SDP and PCM bytes reproduce the reporter's PT97/0 mismatch."""
     view = _load_audio_ws_runtime_module()
     audio_ws = _load_intercom_module("audio_ws")
@@ -366,18 +367,59 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                 data=json.dumps({"type": "dtmf", "digit": "5", "duration_ms": 40}),
             ))
             events = []
+            initial_dtmf_payload = session.send_dtmf_payload_type
             async with asyncio.timeout(2):
                 while len([item for item in events if item.payload[1] & 128]) < 3:
                     raw, _address = await loop.sock_recvfrom(remote, 2048)
                     packet = rtp.parse_packet(raw)
-                    if packet.payload_type == session.send_dtmf_payload_type:
+                    if packet.payload_type in {initial_dtmf_payload, 110} and len(packet.payload) == 4:
                         events.append(packet)
                         if len(events) == 1:
+                            if dtmf_interrupt:
+                                if dtmf_interrupt == "close":
+                                    await browser.messages.put(None)
+                                    await asyncio.wait_for(runtime, 1)
+                                    # Drain packets already queued before close.
+                                    while True:
+                                        try:
+                                            remote.recv(2048)
+                                        except BlockingIOError:
+                                            break
+                                    with pytest.raises(TimeoutError):
+                                        await asyncio.wait_for(loop.sock_recvfrom(remote, 2048), .05)
+                                else:
+                                    session.media_generation += 1
+                                    session.update_event.set()
+                                    deadline = loop.time() + .1
+                                    while loop.time() < deadline:
+                                        try:
+                                            raw, _address = await asyncio.wait_for(loop.sock_recvfrom(remote, 2048),
+                                                                                 deadline-loop.time())
+                                        except TimeoutError:
+                                            break
+                                        assert rtp.parse_packet(raw).payload_type != initial_dtmf_payload
+                                return tuple(decoded_frames)
+                            if dtmf_reconfigure:
+                                session.send_dtmf_payload_type = 110
+                                session.send_dtmf_clock_rate = 48000
+                                session.send_dtmf_events = frozenset({6})
                             await send(0, 40, 6400, b"\xff" * 160)
+            assert {item.payload_type for item in events} == {initial_dtmf_payload}
             assert len({item.timestamp for item in events}) == 1
             assert len({item.ssrc for item in events}) == 1
             assert events[0].ssrc != outgoing_packets[-1].ssrc
             assert all(struct.unpack("!H", item.payload[2:])[0] == 320 for item in events[-3:])
+            if dtmf_reconfigure:
+                await browser.messages.put(SimpleNamespace(type=WSMsgType.TEXT,
+                    data=json.dumps({"type": "dtmf", "digit": "6", "duration_ms": 40})))
+                following = []
+                async with asyncio.timeout(2):
+                    while len([item for item in following if item.payload[1] & 128]) < 3:
+                        raw, _address = await loop.sock_recvfrom(remote, 2048)
+                        packet = rtp.parse_packet(raw)
+                        if packet.payload_type == 110:
+                            following.append(packet)
+                assert all(struct.unpack("!H", item.payload[2:])[0] == 1920 for item in following[-3:])
             # Once the key press has finished, the next valid PCMU packet may
             # change TX back. RFC 7160 starts a new source for the new clock.
             await send(0, 41, 6560, b"\xff" * 160)
@@ -452,6 +494,17 @@ async def test_registered_and_manual_dahua_transmit_identical_nonzero_pcmu(monke
 async def test_symmetric_dahua_transmits_pcm_using_answer_mapping(monkeypatch, pcm_tx_pt):
     for _ in range(2):
         await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, pcm_tx_pt=pcm_tx_pt)
+
+
+@pytest.mark.asyncio
+async def test_browser_digit_keeps_old_mapping_when_attributes_change_mid_event(monkeypatch):
+    await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, dtmf_reconfigure=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["generation", "close"])
+async def test_browser_digit_stops_on_media_generation_or_socket_close(monkeypatch, interruption):
+    await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, dtmf_interrupt=interruption)
 
 
 async def test_immediate_sip_answer_preserves_audio_until_browser_is_ready(monkeypatch):
