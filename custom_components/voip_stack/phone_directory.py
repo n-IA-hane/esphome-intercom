@@ -164,6 +164,12 @@ class PhoneDirectory:
         entry = self.resolve_entries(rows, target)
         return self._copy(entry) if entry is not None else None
 
+    def resolve_reference(self, target) -> RosterEntry | None:
+        """Adapt saved configuration references with the same ambiguity checks."""
+        entry = self.resolve_entries((row for row in self._entries.values() if row.enabled),
+                                     target, include_internal_ids=True)
+        return self._copy(entry) if entry is not None else None
+
     def caller_display_name(self, user: str) -> str:
         """Return a name only for a unique published caller number or SIP user."""
         key = normalize_roster_key(user)

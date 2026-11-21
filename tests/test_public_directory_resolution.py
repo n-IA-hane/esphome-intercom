@@ -36,9 +36,12 @@ def test_internal_references_are_explicit_and_do_not_shadow_public_aliases():
     directory = PhoneDirectory(rows)
     assert directory.get("a52832282eca4f82a000cfacaca56d0c").id == "desk"
     assert directory.resolve("a52832282eca4f82a000cfacaca56d0c") is None
+    assert directory.resolve_reference("a52832282eca4f82a000cfacaca56d0c").id == "desk"
     assert directory.resolve("ha-device").id == "public"
     with pytest.raises(roster.RosterError, match="Ambiguous"):
         roster.find_entry(rows, "ha-device", include_internal_ids=True)
+    with pytest.raises(roster.RosterError, match="Ambiguous"):
+        directory.resolve_reference("ha-device")
     assert roster.find_entry(rows, "hadevice", include_internal_ids=True).id == "public"
     assert roster.find_entry(rows, "a52832282eca4f82a000cfacaca56d0c", include_internal_ids=True).id == "desk"
 

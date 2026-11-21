@@ -106,7 +106,7 @@ def _key_target(runtime, key, endpoint_id, sip_authority):
         directory = getattr(runtime, "directory", None)
         entry = None
         if directory is not None:
-            entry = directory.key_contact(target) if contact_reference else directory.resolve(target)
+            entry = directory.key_contact(target) if contact_reference else directory.resolve_reference(target)
         if entry is not None and entry.enabled:
             aliases = _sip_user_targets(directory.dial_users(entry), sip_authority)
             if aliases:
@@ -140,7 +140,7 @@ def resolve_phone_keys(runtime, phone, profile, *, sip_lines=()):
         directory = getattr(runtime, "directory", None)
         contact = (directory.key_contact(key.get("target", ""))
                    if directory is not None and str(key.get("target", "")).casefold().startswith("contact:") else None)
-        destination = (directory.resolve(key.get("target", ""))
+        destination = (directory.resolve_reference(key.get("target", ""))
                        if directory is not None and key["function"] == "speed_dial"
                        and contact is None and endpoint is None else None)
         label = (key.get("label") or getattr(queue, "name", "") or getattr(endpoint, "name", "")
