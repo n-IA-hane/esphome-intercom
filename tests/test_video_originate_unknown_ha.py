@@ -1,6 +1,7 @@
 """A compliant independent UDP peer proves unknown-video offer policy publicly."""
 
 import asyncio
+import secrets
 import socket
 import struct
 from dataclasses import replace
@@ -141,10 +142,19 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     from custom_components.voip_stack.sip_client import SipCallClient
 
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
-        udp.bind(("127.0.0.1", 0))
-        listener = udp.getsockname()[1]
-        tcp.bind(("127.0.0.1", listener))
+    # The endpoint owns UDP and TCP at one address. Keep its listener outside
+    # the OS ephemeral range used by earlier outgoing TCP connections.
+    for _ in range(128):
+        listener = 10000 + secrets.randbelow(2000)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
+                udp.bind(("127.0.0.1", listener))
+                tcp.bind(("127.0.0.1", listener))
+        except OSError:
+            continue
+        break
+    else:
+        raise RuntimeError("No free UDP/TCP port in the SIP laboratory range")
     lab.runtime.transport_config.update({
         "sip_port": listener, CONF_SIP_VIDEO: video_enabled,
         CONF_VIDEO_TRANSCODING: transcoding,
