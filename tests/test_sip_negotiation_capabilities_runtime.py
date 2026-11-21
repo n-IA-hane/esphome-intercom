@@ -1,6 +1,7 @@
 """Runtime audio policy negotiates valid peers beyond its preferred tuples."""
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -446,7 +447,10 @@ def test_offer_maxptime_is_safe_for_every_receivable_mapping():
     )
     parsed = sdp.parse_sdp(offer)
     maximum = parsed["maxptime"]
-    assert 0 < parsed["ptime"] <= maximum <= 16
+    assert 0 < maximum <= 16
+    # RFC 8866 ptime is optional. Disjoint fixed preference catalogs must not
+    # invent a common recommendation; every advertised maximum still holds.
+    assert parsed["ptime"] == 0 or 0 < parsed["ptime"] <= maximum
     for fmt in sdp.offered_pcm_formats(offer):
         assert maximum <= HA_AUDIO_CAPABILITIES.max_receive_packet_ms(fmt)
         width = {"L16": 2, "L24": 3, "PCMA": 1, "PCMU": 1, "G722": 1}[fmt.encoding]
@@ -454,7 +458,10 @@ def test_offer_maxptime_is_safe_for_every_receivable_mapping():
         assert wire_bytes <= rtp.MAX_AUDIO_RTP_PAYLOAD_BYTES
         # SDP promises this duration for every payload in the media section.
         # Verify that promise through the actual receiver, not only metadata.
-        assert RtpAudioReceiver(fmt).decode(fmt.payload_type, bytes(wire_bytes))
+        # A description without ptime has no processing quantum until the
+        # answer. Exercise the advertised boundary with that valid quantum.
+        decoder_format = replace(fmt, frame_ms=fmt.frame_ms or maximum)
+        assert RtpAudioReceiver(decoder_format).decode(fmt.payload_type, bytes(wire_bytes))
 
 
 @pytest.mark.parametrize("discovery_known", [False, True], ids=["unknown", "known"])
