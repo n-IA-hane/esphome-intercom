@@ -384,11 +384,15 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
                 document.body.append(host);
                 await import('/voip-stack-card.js');
                 const prototype=customElements.get('voip-stack-card').prototype;
+                window.actionCalls=[];
                 const owner={shadowRoot:host.attachShadow({mode:'open'}),
-                    _attachEventHandlers(){
-                        this._els.keypadBtn.onclick=()=>{
-                            this._els.keypadPanel.hidden=!this._els.keypadPanel.hidden;
-                        };
+                    _attachEventHandlers(){prototype._attachEventHandlers.call(this);},
+                    _hangup(){actionCalls.push('hangup');},
+                    _toggleSettings(){actionCalls.push('settings');},
+                    _parkCall(){actionCalls.push('park');},
+                    _toggleKeypad(){
+                        actionCalls.push('keypad');
+                        this._els.keypadPanel.hidden=!this._els.keypadPanel.hidden;
                     },
                     _measureLayout(){prototype._measureLayout.call(this);},
                     _layoutPhoneActivity(){prototype._layoutPhoneActivity.call(this);},
@@ -431,10 +435,13 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
             assert page.evaluate("elements.voicemailBtn.scrollWidth <= elements.voicemailBtn.clientWidth")
             boxes = page.evaluate("""() => {
                 const e=elements;
-                return Object.fromEntries(['card','hangupBtn','hangupDuration','keypadBtn',
+                const boxes=Object.fromEntries(['card','hangupBtn','hangupDuration','keypadBtn',
                     'settingsBtn','parkBtn','recordBtn','voicemailBtn','transferBtn','microphoneBtn']
                     .filter(key=>!e[key].hidden)
                     .map(key=>[key,e[key].getBoundingClientRect().toJSON()]));
+                boxes.bar=e.hangupBtn.parentElement.getBoundingClientRect().toJSON();
+                boxes.copy=e.hangupPeer.parentElement.getBoundingClientRect().toJSON();
+                return boxes;
             }""")
             if keypad_open and height == 280:
                 panel = page.evaluate("""() => ({
@@ -484,16 +491,21 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
 
             page.screenshot(path=str(tmp_path / "call-controls.png"))
             card = boxes.pop("card")
-            hangup = boxes.pop("hangupBtn")
-            assert abs(hangup["bottom"] - card["bottom"]) <= 1
+            bar = boxes.pop("bar")
+            copy = boxes.pop("copy")
+            hangup = boxes["hangupBtn"]
+            assert abs(hangup["width"] - 48) <= 1
+            assert abs(bar["bottom"] - card["bottom"]) <= 1
+            assert abs(hangup["left"] - bar["left"]) <= 1
             for name, box in boxes.items():
                 assert box["width"] > 0 and box["height"] > 0, name
                 assert (
                     card["left"] <= box["left"] < box["right"] <= card["right"] + 1
                 ), name
-                if name != "hangupDuration":
-                    assert box["top"] >= hangup["top"] - 1, name
-                    assert box["bottom"] <= hangup["bottom"] + 1, name
+                assert box["left"] >= bar["left"] - 1, name
+                assert box["right"] <= bar["right"] + 1, name
+                assert box["top"] >= bar["top"] - 1, name
+                assert box["bottom"] <= bar["bottom"] + 1, name
             items = list(boxes.items())
             for index, (name, box) in enumerate(items):
                 for other_name, other in items[index + 1 :]:
@@ -504,6 +516,20 @@ def test_video_controls_do_not_overlap_timer_or_each_other(
                         box["top"], other["top"]
                     )
                     assert overlap <= 0 or vertical <= 0, (name, other_name)
+
+            page.evaluate("actionCalls.length=0")
+            assert not page.evaluate("elements.hangupBtn.contains(elements.hangupPeer)")
+            for box in (copy, boxes["hangupDuration"]):
+                if box["width"] > 0 and box["height"] > 0:
+                    page.mouse.click(box["left"] + box["width"] / 2, box["top"] + box["height"] / 2)
+            assert page.evaluate("actionCalls") == []
+            actions = [("hangupBtn", "hangup"), ("settingsBtn", "settings"), ("keypadBtn", "keypad")]
+            if park_enabled:
+                actions.append(("parkBtn", "park"))
+            for key, _action in actions:
+                box = boxes[key]
+                page.mouse.click(box["left"] + box["width"] / 2, box["top"] + box["height"] / 2)
+            assert page.evaluate("actionCalls") == [action for _key, action in actions]
         finally:
             browser.close()
 
