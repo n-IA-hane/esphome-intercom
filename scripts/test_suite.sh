@@ -260,6 +260,7 @@ ha_tests=(
   tests/test_media_leg_corpus_ha.py
   tests/test_media_shadow_ha.py
   tests/test_media_offer_plan_ha.py
+  tests/test_media_renegotiation_rules_ha.py
   tests/test_inbound_factory_flow_audio_ha.py
   tests/test_sip_capabilities_ha.py
   tests/test_sip_negotiation_capabilities_runtime.py

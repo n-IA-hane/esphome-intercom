@@ -92,12 +92,17 @@ def _rank(order: tuple[Geometry, ...], fmt: RtpPcmFormat) -> int:
     return order.index(geometry) if geometry in order else len(order)
 
 
-def _packet_ms(fmt: RtpPcmFormat, policy: LegPolicy, receiver: ReceiverBounds):
+def _packet_ms(fmt: RtpPcmFormat, policy: LegPolicy, receiver: ReceiverBounds, default_ms: float = 0):
     spec = CODECS[fmt.encoding]
     return choose_transmit_packet_ms(
         spec, fmt.sample_rate, fmt.channels,
         producible=OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION,
-        default_ms=policy.default_packet_ms, receiver=receiver, budget=policy.budget)
+        default_ms=default_ms or policy.default_packet_ms, receiver=receiver, budget=policy.budget)
+
+
+def _same_payload(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
+    return (left.payload_type, left.encoding, left.sample_rate, left.channels) == (
+        right.payload_type, right.encoding, right.sample_rate, right.channels)
 
 
 def _local_receiver(fmt: RtpPcmFormat, packet_ms: float) -> RtpPcmFormat:
@@ -121,8 +126,16 @@ def _dtmf(remote_sdp, selected: RtpPcmFormat) -> RtpDtmfFormat | None:
     return None
 
 
-def answer_offer(remote_sdp, policy: LegPolicy, *, dahua: bool = False) -> LegContract | Refusal:
-    """Answer a remote audio offer."""
+def answer_offer(
+    remote_sdp, policy: LegPolicy, *, dahua: bool = False, established: LegContract | None = None,
+) -> LegContract | Refusal:
+    """Answer a remote audio offer.
+
+    With ``established`` this is a re-offer inside a dialog (rule N1): the mapping in use is kept
+    for each direction while the new offer still lists it on the same payload number. Its packet
+    time is kept too unless the new offer states another one or no longer allows it, so new
+    limits of the peer always reach the sender.
+    """
     trace: list[str] = []
     offered = [fmt for fmt in offered_pcm_formats(remote_sdp, allow_dahua_pcm=dahua)
                if _usable(fmt, policy, dahua=dahua)]
@@ -132,20 +145,31 @@ def answer_offer(remote_sdp, policy: LegPolicy, *, dahua: bool = False) -> LegCo
     peer_receives = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
     peer_sends = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
     directional = bool(flows) and bool(peer_receives) and bool(peer_sends)
+    def kept(fmt: RtpPcmFormat, side: RtpPcmFormat | None) -> bool:
+        return side is not None and _same_payload(fmt, side)
+
+    in_use_send = established.send if established else None
+    in_use_receive = established.receive if established else None
     send_candidates = sorted(
         peer_receives if directional else offered,
-        key=lambda fmt: (_rank(policy.send_rank, fmt), offered.index(fmt)))
+        key=lambda fmt: (not kept(fmt, in_use_send), _rank(policy.send_rank, fmt), offered.index(fmt)))
     for candidate in send_candidates:
+        retained = kept(candidate, in_use_send)
         transmit = _packet_ms(candidate, policy, ReceiverBounds(
-            ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms))
+            ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
+            default_ms=in_use_send.frame_ms if retained else 0)
         if transmit is None:
             trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
             continue
+        if retained:
+            trace.append("N1 kept the mapping in use to send")
         if directional:
-            receive_from = min(peer_sends, key=lambda fmt: (_rank(policy.receive_rank, fmt), offered.index(fmt)))
+            receive_from = min(peer_sends, key=lambda fmt: (
+                not kept(fmt, in_use_receive), _rank(policy.receive_rank, fmt), offered.index(fmt)))
         else:
             receive_from = candidate
-        asked = _packet_ms(receive_from, policy, ReceiverBounds())
+        asked = _packet_ms(receive_from, policy, ReceiverBounds(),
+                           default_ms=in_use_receive.frame_ms if kept(receive_from, in_use_receive) else 0)
         if asked is None:
             trace.append(f"R1 {receive_from.encoding}/{receive_from.sample_rate}: nothing receivable")
             continue
