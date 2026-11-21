@@ -193,6 +193,12 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     for fmt in explicit_rows:
         if _key(fmt) in ordered:
             preferences.setdefault(_key(fmt), fmt.payload_type)
+    # Existing Dahua firmware sends its private PCM codec on 97. Keep the
+    # target's conventional offer seed without displacing explicit mappings;
+    # PayloadMap still gives every live or retired dialog meaning precedence.
+    dahua_pcm = ("PCM", 16000, 1)
+    if dahua and dahua_pcm in ordered and 97 not in preferences.values():
+        preferences.setdefault(dahua_pcm, 97)
     numbered = PayloadMap.for_offer([*ordered, *auxiliary, *((TELEPHONE_EVENT, clock, 1) for clock in events)],
                                     previous=previous, preferences=preferences)
     numbers = {mapping: number for number, mapping in numbered.receive.items()}
