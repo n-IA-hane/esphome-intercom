@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass
 
-AUDIO_CODECS = ("OPUS", "G722", "PCMA", "PCMU", "L16", "L24", "PCM")
+from .media.codecs import CODECS
+
+DEFAULT_AUDIO_CODECS = ("OPUS", "G722", "PCMA", "PCMU", "L16", "L24", "PCM")
+AUDIO_CODECS = DEFAULT_AUDIO_CODECS + tuple(name for name in CODECS if name not in DEFAULT_AUDIO_CODECS)
 VIDEO_CODECS = ("H264", "VP8", "JPEG", "H263", "H263P", "H265")
 
 
@@ -34,14 +37,15 @@ def normalize_codecs(value, supported, *, allow_empty=False):
     result = tuple(row["codec"] for row in normalize_codec_rows(value, supported) if row["enabled"])
     if (not result and not allow_empty) or any(item not in supported for item in result):
         raise ValueError("Select at least one supported audio codec" if not allow_empty else "Select supported video codecs")
+    if not allow_empty and all(CODECS.get(item) is not None and CODECS[item].auxiliary for item in result):
+        raise ValueError("Select at least one supported primary audio codec")
     return result
 
 
 def available_audio_codecs():
     """Names with the current backend's RTP implementation in both directions."""
-    from .codec_capabilities import common_sip_codecs
-    optional = common_sip_codecs()
-    return tuple(name for name in AUDIO_CODECS if name not in {"OPUS", "G722"} or name in optional)
+    from .codec_capabilities import codec_available
+    return tuple(name for name in AUDIO_CODECS if codec_available(name) and codec_available(name, receive=True))
 
 
 def available_video_codecs():
@@ -59,7 +63,8 @@ class CodecPolicy:
     video_ordered: bool = True
 
     def audio_formats(self, formats):
-        chosen = tuple(item for item in formats if self.audio is None or item.encoding.upper() in self.audio)
+        allowed = self.audio if self.audio is not None else DEFAULT_AUDIO_CODECS
+        chosen = tuple(item for item in formats if item.encoding.upper() in allowed)
         return tuple(sorted(chosen, key=lambda item: self.audio.index(item.encoding.upper()))) if self.audio is not None and self.audio_ordered else chosen
 
     def video_formats(self, formats):
@@ -72,7 +77,7 @@ class CodecPolicy:
         for media, supported in (("audio", AUDIO_CODECS), ("video", VIDEO_CODECS)):
             raw = config.get(prefix + media + "_codecs")
             if raw is None:
-                values[media] = getattr(parent, media) if parent is not None else supported
+                values[media] = getattr(parent, media) if parent is not None else (DEFAULT_AUDIO_CODECS if media == "audio" else supported)
                 values[media + "_ordered"] = getattr(parent, media + "_ordered") if parent is not None else False
             else:
                 values[media] = normalize_codecs(raw, supported, allow_empty=media == "video")

@@ -7,6 +7,10 @@ from .sdp_types import RtpPcmFormat
 from .audio_format import AudioFormat, PcmFormat
 from .g722_codec import G722Decoder, G722Encoder
 from .opus_codec import OpusDecoder, OpusEncoder
+from .g726_codec import G726Decoder, G726Encoder
+from .g723_codec import G723Decoder, G723Encoder
+from .comfort_noise import ComfortNoiseDecoder, ComfortNoiseEncoder
+from .media.codecs import CODECS
 
 _S24_SIGN_EXTENSION = bytes(0xFF if value & 0x80 else 0x00 for value in range(256))
 
@@ -21,6 +25,16 @@ def _audio_format(fmt: AudioFormat | RtpPcmFormat) -> AudioFormat:
 
 def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
+    if encoding.startswith("G726-"):
+        encoder = G726Encoder(encoding, _audio_format(fmt).frame_ms)
+        try:
+            return encoder.encode(data)
+        finally:
+            encoder.close()
+    if encoding == "G723":
+        return G723Encoder(_audio_format(fmt).frame_ms, fmtp=getattr(fmt, "fmtp", "")).encode(data)
+    if encoding == "CN":
+        return ComfortNoiseEncoder(_audio_format(fmt).sample_rate, _audio_format(fmt).frame_ms).encode(data)
     if encoding == "PCM":
         if len(data) % 2:
             raise ValueError("Dahua PCM frame length is not sample-aligned")
@@ -63,6 +77,12 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
 
 def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
+    if encoding.startswith("G726-"):
+        return G726Decoder(encoding, _audio_format(fmt).frame_ms).decode(payload)
+    if encoding == "G723":
+        return G723Decoder(_audio_format(fmt).frame_ms).decode(payload)
+    if encoding == "CN":
+        return ComfortNoiseDecoder(_audio_format(fmt).sample_rate, _audio_format(fmt).frame_ms).decode(payload)
     if encoding == "PCM":
         if len(payload) % 2:
             raise ValueError("Dahua PCM payload length is not sample-aligned")
@@ -113,6 +133,12 @@ class RtpPayloadDecoder:
             if fmt.encoding == "OPUS"
             else G722Decoder(frame_ms=pcm_format.frame_ms)
             if fmt.encoding == "G722"
+            else G726Decoder(fmt.encoding, pcm_format.frame_ms)
+            if fmt.encoding.startswith("G726-")
+            else G723Decoder(pcm_format.frame_ms)
+            if fmt.encoding == "G723"
+            else ComfortNoiseDecoder(pcm_format.sample_rate, pcm_format.frame_ms)
+            if fmt.encoding == "CN"
             else None
         )
 
@@ -120,6 +146,21 @@ class RtpPayloadDecoder:
         if self._codec is not None:
             return self._codec.decode(payload)
         return rtp_payload_to_pcm(payload, self.fmt)
+
+    def close(self):
+        close = getattr(self._codec, "close", None)
+        if close is not None:
+            close()
+
+    def generate_comfort_noise(self, samples=None):
+        """Continue the current SID period without creating another decoder."""
+        if self.fmt.encoding != "CN":
+            raise ValueError("The decoder does not own a comfort-noise mapping")
+        return self._codec.generate(samples)
+
+    def end_comfort_noise(self):
+        if self.fmt.encoding == "CN":
+            self._codec.reset()
 
 
 class RtpPayloadEncoder:
@@ -137,10 +178,20 @@ class RtpPayloadEncoder:
             if fmt.encoding == "OPUS"
             else G722Encoder(frame_ms=pcm_format.frame_ms)
             if fmt.encoding == "G722"
+            else G726Encoder(fmt.encoding, pcm_format.frame_ms)
+            if fmt.encoding.startswith("G726-")
+            else G723Encoder(pcm_format.frame_ms, fmtp=fmt.fmtp)
+            if fmt.encoding == "G723"
+            else ComfortNoiseEncoder(pcm_format.sample_rate, pcm_format.frame_ms)
+            if fmt.encoding == "CN"
             else None
         )
+        previous = getattr(self, "_codec", None)
         self.fmt = fmt
         self._codec = codec
+        close = getattr(previous, "close", None)
+        if close is not None:
+            close()
 
     def follow_received(self, received: RtpPcmFormat) -> bool:
         """Follow a valid received codec only through the negotiated TX mapping.
@@ -150,6 +201,8 @@ class RtpPayloadEncoder:
         Keep the input PCM contract and packet cadence stable for consumers.
         """
         if not self.match_received_codec:
+            return False
+        if (spec := CODECS.get(received.encoding)) is not None and spec.auxiliary:
             return False
         selected = next((fmt for fmt in self.send_formats if (
             fmt.encoding == received.encoding and fmt.sample_rate == received.sample_rate
@@ -174,3 +227,8 @@ class RtpPayloadEncoder:
         if self._codec is not None:
             return self._codec.encode(pcm)
         return pcm_to_rtp_payload(pcm, self.fmt)
+
+    def close(self):
+        close = getattr(self._codec, "close", None)
+        if close is not None:
+            close()

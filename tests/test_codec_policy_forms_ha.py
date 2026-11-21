@@ -37,6 +37,22 @@ async def test_global_codec_form_uses_native_ordered_rows(hass):
         assert field(rows) == rows
 
 
+async def test_new_optional_audio_rows_are_disabled_and_saved_overrides_stay_enabled(hass):
+    from custom_components.voip_stack.core.codec_policy import DEFAULT_AUDIO_CODECS
+
+    flow = VoipStackConfigFlow()
+    flow.hass = hass
+    flow._current_entry_data = lambda: (None, {})
+    form = await flow.async_step_user()
+    rows = form["data_schema"]({})["audio_codecs"]
+    assert all(not row["enabled"] for row in rows if row["codec"] not in DEFAULT_AUDIO_CODECS)
+    assert any(row["codec"] == "CN" and not row["enabled"] for row in rows)
+    saved = [{"codec": "G723", "enabled": True}]
+    flow._current_entry_data = lambda: (None, {"audio_codecs": saved})
+    reopened = await flow.async_step_user()
+    assert reopened["data_schema"]({})["audio_codecs"] == saved
+
+
 @pytest.mark.parametrize("audio", [[], [{"codec": "PCMU", "enabled": False}]])
 async def test_global_form_rejects_audio_without_an_enabled_codec(hass, audio):
     flow = VoipStackConfigFlow()

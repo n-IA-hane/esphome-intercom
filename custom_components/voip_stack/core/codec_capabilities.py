@@ -19,32 +19,62 @@ def supports_dahua_pcm(user_agent: str | None) -> bool:
     return str(user_agent or "").strip().casefold().startswith("dahua uac/")
 
 
-def _pyav_codec_available(decoder: str, encoder: str) -> bool:
-    """Return whether PyAV exposes both halves of one full-duplex codec."""
+@lru_cache(maxsize=64)
+def codec_available(name: str, *, receive: bool = False) -> bool:
+    """Probe the actual adapter in one direction, including two live packets."""
+    from .media.codecs import CODECS
 
+    spec = CODECS.get(name)
+    if spec is None:
+        return False
+    if name in {"L16", "L24", "PCMA", "PCMU", "PCM"}:
+        return True
+    adapter = None
     try:
-        import av
+        from .rtp_payload import RtpPayloadDecoder, RtpPayloadEncoder
+        from .sdp_types import RtpPcmFormat
 
-        av.CodecContext.create(decoder, "r")
-        av.CodecContext.create(encoder, "w")
-    except Exception as err:  # pragma: no cover - runtime build dependent.
+        rate = spec.conventional_clock_rate or spec.static_clock_rate or spec.decoded_rate or 8000
+        channels = spec.conventional_channels if spec.conventional_clock_rate else 1
+        fmt = RtpPcmFormat(96, name, rate, channels, spec.assumed_packet_ms or 20)
+        adapter = RtpPayloadDecoder(fmt) if receive else RtpPayloadEncoder(fmt)
+        if receive:
+            if name == "OPUS":
+                payload = b"\xf8\xff\xfe"  # An independently specified Opus silence packet.
+            elif name == "G723":
+                payload = bytes([2, 0, 0, 0])  # RFC-tagged SID, independent of the encoder.
+            elif name == "CN":
+                payload = bytes([64])
+            else:
+                payload = bytes(round(rate * fmt.frame_ms / 1000 * spec.octets_per_sample))
+            expected = fmt.audio_format.nominal_frame_bytes
+            return all(len(adapter.decode(payload)) == expected for _ in range(2))
+        pcm = bytes(fmt.audio_format.nominal_frame_bytes)
+        return all(bool(adapter.encode(pcm)) for _ in range(2))
+    except Exception as err:
         _LOGGER.debug(
-            "Optional SIP codec unavailable decoder=%s encoder=%s: %s",
-            decoder,
-            encoder,
-            err,
+            "Optional SIP codec unavailable encoding=%s direction=%s (%s)",
+            name, "receive" if receive else "send", type(err).__name__,
         )
         return False
-    return True
+    finally:
+        if adapter is not None:
+            adapter.close()
 
 
-@lru_cache(maxsize=1)
 def common_sip_codecs() -> frozenset[str]:
     """Return optional codecs safe to advertise for both RTP directions."""
+    from .media.codecs import CODECS
 
-    available: set[str] = set()
-    if _pyav_codec_available("opus", "libopus"):
-        available.add("OPUS")
-    if _pyav_codec_available("g722", "g722"):
-        available.add("G722")
-    return frozenset(available)
+    return frozenset(name for name, spec in CODECS.items()
+                     if (spec.pyav_encoder or spec.pyav_decoder or spec.auxiliary)
+                     and codec_available(name) and codec_available(name, receive=True))
+
+
+def codec_directions(name: str) -> dict[str, bool]:
+    """Expose the two independently probed capabilities without another store."""
+    return {"send": codec_available(name), "receive": codec_available(name, receive=True)}
+
+
+# Preserve the existing invalidation hook, clearing the directional probe owner.
+common_sip_codecs.cache_clear = codec_available.cache_clear

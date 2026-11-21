@@ -6,7 +6,7 @@ from homeassistant.data_entry_flow import Optional as visible_optional
 from homeassistant.helpers.selector import BooleanSelector, ObjectSelector, SelectSelector
 
 from .core.codec_policy import (
-    AUDIO_CODECS, VIDEO_CODECS, available_audio_codecs, available_video_codecs,
+    AUDIO_CODECS, DEFAULT_AUDIO_CODECS, VIDEO_CODECS, available_audio_codecs, available_video_codecs,
     normalize_codec_rows, normalize_codecs,
 )
 
@@ -23,6 +23,9 @@ def codec_form_fields(current, *, prefix="", inherit=False, parent=None):
         if raw is None:
             raw = (parent or {}).get(media + "_codecs")
         rows = list(normalize_codec_rows(raw if raw is not None else available, supported))
+        if raw is None and media == "audio":
+            for row in rows:
+                row["enabled"] = row["codec"] in DEFAULT_AUDIO_CODECS
         # Retain a saved supported choice even if its optional implementation
         # is temporarily unavailable on this installation.
         options = list(dict.fromkeys((*available, *(row["codec"] for row in rows))))

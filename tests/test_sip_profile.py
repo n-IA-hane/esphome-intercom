@@ -164,7 +164,7 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(selected.send.wire_token(), "pt=9:G722/8000/1/20ms")
         self.assertEqual(selected.recv.audio_format.sample_rate, 16000)
 
-    def test_optional_codec_capabilities_require_both_encoder_and_decoder(self) -> None:
+    def test_optional_codec_capabilities_require_working_adapters(self) -> None:
         class CodecContext:
             @staticmethod
             def create(name: str, mode: str):
@@ -176,10 +176,13 @@ class SipProfileTest(unittest.TestCase):
         codec_capabilities.common_sip_codecs.cache_clear()
         try:
             with patch.dict(sys.modules, {"av": fake_av}):
-                self.assertEqual(
-                    codec_capabilities.common_sip_codecs(),
-                    frozenset({"G722"}),
-                )
+                available = codec_capabilities.common_sip_codecs()
+                self.assertNotIn("OPUS", available)
+                # Creating a bare context is insufficient: this fake cannot
+                # open or process packets, so it must not advertise G.722.
+                self.assertNotIn("G722", available)
+                self.assertNotIn("G726-32", available)
+                self.assertIn("CN", available)  # The RFC 3389 adapter is pure.
         finally:
             codec_capabilities.common_sip_codecs.cache_clear()
 

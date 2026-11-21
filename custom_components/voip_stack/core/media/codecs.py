@@ -51,6 +51,7 @@ class CodecSpec:
     pyav_decoder: str | None = None
     pyav_encoder: str | None = None
     bit_rate: int = 0
+    frame_octets_by_tag: tuple[int, ...] = ()
 
     @property
     def bits_per_sample(self) -> int | None:
@@ -65,7 +66,7 @@ CODECS: dict[str, CodecSpec] = {
         CodecSpec("PCMA", 1, static_payload=8, static_clock_rate=8000, assumed_packet_ms=20),
         # G.722 carries 16 kHz audio on an 8 kHz RTP clock (RFC 3551 4.5.2).
         CodecSpec("G722", 1, static_payload=9, static_clock_rate=8000, decoded_rate=16000,
-                  assumed_packet_ms=20),
+                  assumed_packet_ms=20, pyav_decoder="g722", pyav_encoder="g722", bit_rate=64000),
         CodecSpec("L16", 2, static_mappings=((10, 44100, 2), (11, 44100, 1))),
         CodecSpec("L24", 3, decodes_to_24_bit=True),
         # Dahua door stations label signed 16 bit little endian samples as
@@ -75,7 +76,7 @@ CODECS: dict[str, CodecSpec] = {
         # Always opus/48000/2 on the wire (RFC 7587 7); decoded here to mono.
         CodecSpec("OPUS", None, conventional_payload=98, conventional_clock_rate=48000,
                   conventional_channels=2, decoded_rate=48000, decoded_channels=1,
-                  assumed_packet_ms=20),
+                  assumed_packet_ms=20, pyav_decoder="opus", pyav_encoder="libopus", bit_rate=64000),
         # RFC 3551 4.5.4 uses least-significant-codeword-bit first. FFmpeg's
         # g726le implements this RTP packing; g726 instead uses AAL2 order.
         CodecSpec("G726-16", .25, assumed_packet_ms=20, sample_quantum=4,
@@ -91,7 +92,8 @@ CODECS: dict[str, CodecSpec] = {
         CodecSpec("G723", None, static_payload=4, static_clock_rate=8000,
                   decoded_rate=8000, decoded_channels=1, assumed_packet_ms=30,
                   frame_duration_ms=30, max_frame_octets=24,
-                  pyav_decoder="g723_1", pyav_encoder="g723_1", bit_rate=6300),
+                  pyav_decoder="g723_1", pyav_encoder="g723_1", bit_rate=6300,
+                  frame_octets_by_tag=(24, 20, 4)),
         CodecSpec("CN", None, static_payload=13, static_clock_rate=8000,
                   decoded_channels=1, assumed_packet_ms=20, auxiliary=True),
     )

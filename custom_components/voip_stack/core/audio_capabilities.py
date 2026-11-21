@@ -11,8 +11,8 @@ import math
 from typing import TYPE_CHECKING
 
 from .audio_format import AudioFormat, PcmFormat, UDP_SAFE_PAYLOAD_BYTES
-from .codec_capabilities import common_sip_codecs
-from .media.codecs import OCTETS_PER_SAMPLE, PREFERRED_PAYLOADS
+from .codec_capabilities import codec_available
+from .media.codecs import CODECS, OCTETS_PER_SAMPLE, PREFERRED_PAYLOADS
 
 if TYPE_CHECKING:
     from .sdp import RtpPcmFormat
@@ -34,6 +34,9 @@ def _wire_bytes(fmt: RtpPcmFormat) -> int:
     width = OCTETS_PER_SAMPLE.get(
         fmt.encoding
     )
+    spec = CODECS.get(fmt.encoding)
+    if spec is not None and spec.frame_duration_ms and spec.max_frame_octets:
+        return math.ceil(fmt.frame_ms / spec.frame_duration_ms) * spec.max_frame_octets * fmt.channels
     return math.ceil(samples * fmt.channels * width) if width is not None else 0
 
 
@@ -51,9 +54,27 @@ class AudioCapabilities:
             if not receive and fmt.frame_ms < 1:
                 return False  # Existing HA sender schedules at millisecond resolution.
             pcm = fmt.audio_format
-            if fmt.encoding == "OPUS":
+            spec = CODECS.get(fmt.encoding)
+            if spec is None:
+                return False
+            if spec.frame_duration_ms and fmt.frame_ms % spec.frame_duration_ms:
+                return False
+            if spec.pyav_decoder == "g726le" or fmt.encoding == "G723":
+                if not codec_available(fmt.encoding, receive=receive) or (fmt.sample_rate, fmt.channels) != (8000, 1):
+                    return False
+                samples = fmt.sample_rate * fmt.frame_ms / 1000
+                if not _whole(samples) or round(samples) % spec.sample_quantum:
+                    return False
+                if fmt.encoding == "G723" and not receive:
+                    for parameter in fmt.fmtp.split(";"):
+                        name, _, value = parameter.strip().partition("=")
+                        if name.casefold() == "bitrate" and value.strip() != str(spec.bit_rate):
+                            return False
+            elif spec.auxiliary:
+                return fmt.encoding == "CN" and fmt.channels == 1 and _whole(pcm.sample_rate * fmt.frame_ms / 1000)
+            elif fmt.encoding == "OPUS":
                 if (
-                    "OPUS" not in common_sip_codecs()
+                    not codec_available("OPUS", receive=receive)
                     or fmt.sample_rate != 48000
                     or fmt.channels != 2
                 ):
@@ -63,9 +84,9 @@ class AudioCapabilities:
                     if receive
                     else fmt.frame_ms in OPUS_ENCODER_FRAME_MS
                 )
-            if fmt.encoding == "G722":
+            elif fmt.encoding == "G722":
                 if (
-                    "G722" not in common_sip_codecs()
+                    not codec_available("G722", receive=receive)
                     or fmt.sample_rate != 8000
                     or fmt.channels != 1
                 ):
@@ -92,6 +113,9 @@ class AudioCapabilities:
     def max_receive_packet_ms(self, fmt: RtpPcmFormat) -> int | float:
         if fmt.encoding == "OPUS":
             return 120
+        spec = CODECS.get(fmt.encoding)
+        if spec is not None and spec.frame_duration_ms and spec.max_frame_octets:
+            return min(1000 // spec.frame_duration_ms, self.receive_payload_bytes // spec.max_frame_octets) * spec.frame_duration_ms
         width = OCTETS_PER_SAMPLE.get(
             fmt.encoding, 0
         )
@@ -147,6 +171,7 @@ class AudioCapabilities:
                 for factor in (2, 5):
                     while quantum % factor == 0:
                         quantum //= factor
+                quantum = math.lcm(quantum, CODECS[remote.encoding].sample_quantum)
                 samples = samples // quantum * quantum
                 minimum = remote.min_frame_ms if not receive else 0
                 if minimum:
@@ -161,6 +186,9 @@ class AudioCapabilities:
                     )
             if remote.encoding == "OPUS":
                 durations.extend(OPUS_ENCODER_FRAME_MS)
+            spec = CODECS.get(remote.encoding)
+            if spec is not None and spec.frame_duration_ms:
+                durations.extend((spec.frame_duration_ms, spec.frame_duration_ms * 2))
             for duration in dict.fromkeys(durations):
                 if not duration or (
                     not receive
@@ -188,7 +216,6 @@ def local_rtp_audio_formats(
     """Build local offers from real capabilities, using hints only for ranking."""
     from .sdp import RtpPcmFormat
 
-    codec_set = common_sip_codecs()
     candidates = []
     for hint in hints:
         candidates.append(hint)
@@ -213,10 +240,16 @@ def local_rtp_audio_formats(
                     RtpPcmFormat(0, name, 8000, 1, pcm.frame_ms)
                     for name in ("PCMA", "PCMU")
                 )
-            if pcm.sample_rate == 16000 and "G722" in codec_set:
+            if pcm.sample_rate == 16000 and codec_available("G722", receive=receive):
                 candidates.append(RtpPcmFormat(9, "G722", 8000, 1, pcm.frame_ms))
-            if pcm.sample_rate == 48000 and "OPUS" in codec_set:
+            if pcm.sample_rate == 48000 and codec_available("OPUS", receive=receive):
                 candidates.append(RtpPcmFormat(98, "OPUS", 48000, 2, pcm.frame_ms))
+            if pcm.sample_rate == 8000:
+                for name, spec in CODECS.items():
+                    if name.startswith("G726-") or name == "G723":
+                        if codec_available(name, receive=receive):
+                            candidates.append(RtpPcmFormat(96, name, 8000, 1,
+                                spec.frame_duration_ms or pcm.frame_ms))
     output = []
     seen = set()
     static = {

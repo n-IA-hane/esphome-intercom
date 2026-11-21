@@ -22,8 +22,9 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack"
 
 def test_static_payloads_match_rfc_3551_table_4():
     assert STATIC_RTPMAP == {
-        0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1),
+        0: ("PCMU", 8000, 1), 4: ("G723", 8000, 1), 8: ("PCMA", 8000, 1), 9: ("G722", 8000, 1),
         10: ("L16", 44100, 2), 11: ("L16", 44100, 1),
+        13: ("CN", 8000, 1),
     }
 
 
@@ -42,7 +43,8 @@ def test_opus_is_two_channels_on_the_wire_and_mono_when_decoded():
 
 
 def test_sample_widths():
-    assert OCTETS_PER_SAMPLE == {"PCMU": 1, "PCMA": 1, "G722": 1, "L16": 2, "L24": 3, "PCM": 2}
+    assert OCTETS_PER_SAMPLE == {"PCMU": 1, "PCMA": 1, "G722": 1, "L16": 2, "L24": 3, "PCM": 2,
+                                "G726-16": .25, "G726-24": .375, "G726-32": .5, "G726-40": .625}
     assert [RtpPcmFormat(96, name, 16000, 1, 20).bits for name in ("L16", "L24", "PCM", "PCMA")] == [16, 24, 16, 8]
 
 

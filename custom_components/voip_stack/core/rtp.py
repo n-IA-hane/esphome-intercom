@@ -9,7 +9,7 @@ import secrets
 import struct
 from typing import Protocol
 
-from .media.codecs import OCTETS_PER_SAMPLE
+from .media.codecs import CODECS, OCTETS_PER_SAMPLE
 
 
 RTP_VERSION = 2
@@ -94,13 +94,23 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         max_frame_ms = float(getattr(fmt, "max_frame_ms", 0) or 0)
     except (AttributeError, TypeError, ValueError) as err:
         raise RtpError("invalid RTP audio format") from err
-    if sample_rate <= 0 or channels <= 0 or frame_ms <= 0:
+    if sample_rate <= 0 or channels <= 0 or (frame_ms <= 0 and encoding != "CN"):
         raise RtpError("invalid RTP audio format")
     # ptime is a preference; an explicit maxptime bounds accepted packet size.
     # Retain the global RTP payload limit and the strict default without it.
     frame_ms = max(frame_ms, max_frame_ms)
 
-    if encoding == "OPUS":
+    spec = CODECS.get(encoding)
+    if encoding == "CN":
+        from .comfort_noise import MAX_CN_PAYLOAD_BYTES
+
+        codec_limit = MAX_CN_PAYLOAD_BYTES
+    elif spec is not None and spec.frame_duration_ms and spec.max_frame_octets:
+        frames = frame_ms / spec.frame_duration_ms
+        if not math.isclose(frames, round(frames), abs_tol=1e-8):
+            raise RtpError("RTP audio ptime does not contain whole codec frames")
+        codec_limit = round(frames) * spec.max_frame_octets * channels
+    elif encoding == "OPUS":
         # RFC 6716 permits multiple same-duration frames in one Opus packet.
         # Bound the maximum frame count from negotiated ptime and include the
         # worst-case two-byte VBR length field per frame.
@@ -114,6 +124,8 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         sample_numerator = sample_rate * frame_ms
         if not math.isclose(sample_numerator / 1000, round(sample_numerator / 1000), abs_tol=1e-8):
             raise RtpError("RTP audio ptime does not produce whole samples")
+        if spec is not None and round(sample_numerator / 1000) % spec.sample_quantum:
+            raise RtpError("RTP audio ptime ends inside a codeword/octet quantum")
         codec_limit = round(sample_numerator / 1000) * channels * bytes_per_sample
     return int(min(codec_limit, MAX_AUDIO_RTP_PAYLOAD_BYTES))
 
@@ -127,6 +139,21 @@ def validate_audio_payload_size(payload: bytes, fmt: _AudioRtpFormat) -> None:
             f"RTP audio payload too large for {fmt.encoding}/{fmt.sample_rate}/"
             f"{fmt.channels}/{fmt.frame_ms}ms: {len(payload)} bytes; max is {limit}"
         )
+    spec = CODECS.get(fmt.encoding)
+    if spec is not None and spec.pyav_decoder == "g726le":
+        quantum_bytes = spec.sample_quantum * spec.bits_per_sample // 8
+        if not payload or len(payload) % quantum_bytes:
+            raise RtpError("RTP audio payload ends inside a codeword/octet quantum")
+    elif fmt.encoding == "G723":
+        from .g723_codec import g723_frames
+
+        try:
+            g723_frames(payload)
+        except ValueError as error:
+            raise RtpError(str(error)) from error
+    elif fmt.encoding == "CN":
+        if not payload or payload[0] & 0x80 or 255 in payload[1:]:
+            raise RtpError("Invalid RFC 3389 comfort-noise payload")
 
 
 def build_packet(packet: RtpPacket) -> bytes:

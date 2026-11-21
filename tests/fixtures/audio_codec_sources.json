@@ -1,0 +1,18 @@
+{
+  "itu_url": "https://www.itu.int/rec/dologin_pub.asp?lang=e&id=T-REC-G.726-199103-I!AppII!SOFT-ZST-E&type=items",
+  "ffmpeg_fate_url": "https://fate-suite.ffmpeg.org/g723_1/",
+  "files": {
+    "itu-g726.zip": "2af43f18c4a95e57ef137721d85988627973e8d5c0ee325cf30f755b70c46688",
+    "ineqd53.tco": "a8369f49e2b7ddaf5560009d64b225c0d487065cc51e47bc38b9ec65430a9bb7",
+    "dtx63b.tco": "7eb79886dc4b86c4cb1a86e156d4cb48b8179c334fb1af1e2e021c1b1fec9818",
+    "itu-g726/DISK1/INPUT/NRM.M": "6c13bfb357905e1f511ffc27e2215780da56b16ca62b814b2ab88898332b7a5c",
+    "itu-g726/DISK1/RESET/16/RN16FM.I": "e5a137bc2e41ad18e529747e0d756a065fb6bf4cbc1cf1470011301364058c01",
+    "itu-g726/DISK1/RESET/16/RN16FM.O": "d6acd56f0a4c6fe919a54268349cf51d8ab21fe3bcbad2abee32acb44cfdce60",
+    "itu-g726/DISK1/RESET/24/RN24FM.I": "b3a4b9827656c9a0c07feabb7fa17ab5edd1242edd70fd232937d013e62821b5",
+    "itu-g726/DISK1/RESET/24/RN24FM.O": "2d3a09a3db9f96f6a7a27772e8c9deca76d4c8bc0322ec1cd5f3e621ac636a57",
+    "itu-g726/DISK1/RESET/32/RN32FM.I": "0b5626c612cae8efa5d1c3df55a0bcc586b1459916359be62c2c9c4ddfd52443",
+    "itu-g726/DISK1/RESET/32/RN32FM.O": "95bbe79a9ffaf476fdf2959ee01b07fb255cb5f51050249b83ec30a41d0f7ae6",
+    "itu-g726/DISK1/RESET/40/RN40FM.I": "fb3a101ac05bd66e3c4d469a7bb647a9a229c0c1e4a761713b52b6d7792fa010",
+    "itu-g726/DISK1/RESET/40/RN40FM.O": "1f81b22c97410ca968c309a3fabb8f50284065cb914faab8cfebb66c516c1ce9"
+  }
+}
