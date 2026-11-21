@@ -90,6 +90,10 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, rec
         return False
     if (send and not codec_available(name)) or (receive and not codec_available(name, receive=True)):
         return False
+    if send and name == "G723":
+        from ..g723_codec import g723_encoder_supports_fmtp
+        if not g723_encoder_supports_fmtp(fmt.fmtp):
+            return False
     if name == "OPUS":
         return (fmt.sample_rate, fmt.channels) == (48000, 2)
     if name == "G722":
@@ -171,6 +175,40 @@ def _dtmf(remote_sdp, selected: RtpPcmFormat) -> RtpDtmfFormat | None:
     return None
 
 
+def receive_auxiliary_formats(remote_sdp, primary: RtpPcmFormat, policy: LegPolicy, *,
+                              own_description=None) -> tuple[RtpPcmFormat, ...]:
+    """Accept CN only from an enabled, compatible offer/answer intersection.
+
+    The receive payload number belongs to this side's description when applying an
+    answer. Merely seeing CN in a peer's SDP never enables the optional adapter.
+    """
+    clock = CODECS["CN"].static_clock_rate
+    if (policy.encodings is None or "CN" not in policy.encodings
+            or (primary.sample_rate, primary.channels) != (clock, 1)
+            or not codec_available("CN", receive=True)
+            or parse_sdp(remote_sdp)["direction"] not in {"sendrecv", "sendonly"}):
+        return ()
+    remote_flows = parse_audio_flow_attributes(remote_sdp)
+    own_flows = parse_audio_flow_attributes(own_description) if own_description else {}
+    own = None
+    if own_description is not None:
+        if parse_sdp(own_description)["direction"] not in {"sendrecv", "recvonly"}:
+            return ()
+        own = {_mapping(fmt): fmt for fmt in offered_pcm_formats(own_description, include_auxiliary=True)
+               if own_flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}}
+    accepted = []
+    for fmt in offered_pcm_formats(remote_sdp, include_auxiliary=True):
+        if (fmt.encoding != "CN" or (fmt.sample_rate, fmt.channels) != (clock, 1)
+                or remote_flows.get(fmt.payload_type, "sendrecv") not in {"send", "sendrecv"}):
+            continue
+        if own is not None:
+            fmt = own.get(_mapping(fmt))
+            if fmt is None:
+                continue
+        accepted.append(replace(fmt, frame_ms=primary.frame_ms, min_frame_ms=0, max_frame_ms=0, fmtp=""))
+    return tuple(dict.fromkeys(accepted))
+
+
 def answer_offer(
     remote_sdp, policy: LegPolicy, *, dahua: bool = False, established: LegContract | None = None,
 ) -> LegContract | Refusal:
@@ -235,9 +273,12 @@ def answer_offer(
         trace.append(f"{transmit.rule} send {transmit.packet_ms} ms"
                      + (" below the stated minimum" if transmit.below_minimum else ""))
         trace.append(f"R1 ask {asked.packet_ms} ms")
+        receiver = _local_receiver(receive_from, asked.packet_ms)
+        auxiliary = receive_auxiliary_formats(remote_sdp, receiver, policy)
         return LegContract(
             send=replace(candidate, frame_ms=transmit.packet_ms),
-            receive=_local_receiver(receive_from, asked.packet_ms),
+            receive=receiver,
+            receive_accept=(receiver, *auxiliary) if auxiliary else (),
             dtmf=_dtmf(remote_sdp, candidate),
             trace=tuple(trace),
         )
@@ -252,11 +293,16 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     """Apply a remote answer to the offer this side sent (S5, S6, P3)."""
     trace: list[str] = []
     local = {_mapping(fmt): fmt for fmt in offered_pcm_formats(local_offer_sdp, allow_dahua_pcm=dahua)}
+    remote_direction = parse_sdp(answer_sdp)["direction"]
+    needs_send = remote_direction != "sendonly"
+    needs_receive = remote_direction != "recvonly"
+    flows = parse_audio_flow_attributes(answer_sdp)
     answered = [fmt for fmt in offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua)
-                if _mapping(fmt) in local and _usable(fmt, policy, dahua=dahua)]
+                if _mapping(fmt) in local and _usable(fmt, policy, dahua=dahua,
+                    send=needs_send and flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"},
+                    receive=needs_receive and flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"})]
     if not answered:
         return Refusal("the answer lists no codec of the offer", tuple(trace))
-    flows = parse_audio_flow_attributes(answer_sdp)
     peer_receives = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
     peer_sends = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
     directional = bool(flows) and bool(peer_receives) and bool(peer_sends)
@@ -268,7 +314,8 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         send_candidates = answered
     for candidate in send_candidates:
         transmit = _choose_local_time(candidate, policy, ReceiverBounds(
-            ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms))
+            ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
+            receive=not needs_send, receive_only=not needs_send)
         if transmit is None:
             trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
             continue
@@ -279,7 +326,8 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
             receive_from = candidate
         own = local[_mapping(receive_from)]
         # R1: what this side asked for in its own offer stands; the answer does not change it.
-        asked = _choose_local_time(own, policy, ReceiverBounds(ptime=own.frame_ms), receive=True)
+        asked = _choose_local_time(own, policy, ReceiverBounds(ptime=own.frame_ms), receive=needs_receive,
+                                   receive_only=not needs_send)
         if asked is None:
             continue
         trace.append(f"S5 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
@@ -295,7 +343,9 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                 replace(local[_mapping(fmt)], frame_ms=received.packet_ms)
                 for fmt in (peer_sends if directional else answered)
                 if (received := _choose_local_time(local[_mapping(fmt)], policy,
-                    ReceiverBounds(ptime=local[_mapping(fmt)].frame_ms), receive=True)) is not None),
+                    ReceiverBounds(ptime=local[_mapping(fmt)].frame_ms), receive=True)) is not None)
+                + receive_auxiliary_formats(answer_sdp, replace(own, frame_ms=asked.packet_ms), policy,
+                                            own_description=local_offer_sdp),
         )
     return Refusal("no answered codec has a feasible packet time", tuple(trace))
 

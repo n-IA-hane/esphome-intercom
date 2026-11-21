@@ -1476,6 +1476,8 @@ class SipCallClient:
     ) -> tuple[SipDialog, str] | None:
         """Build the media replacement for a remote offer or delayed answer."""
 
+        from .core.media.shadow import engine_mode
+
         current = current or self.dialog
         if current is None:
             return None
@@ -1486,6 +1488,7 @@ class SipCallClient:
                     self.supported_send_formats,
                     self.supported_recv_formats,
                     local_offer_sdp=local_offer_sdp,
+                    codec_policy=self.codec_policy,
                     allow_dahua_pcm=self.include_dahua_pcm,
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
@@ -1502,9 +1505,13 @@ class SipCallClient:
             )
             if selected is None:
                 return None
+            receive_formats = (selected.recv_formats if engine_mode() == "active" or local_offer_sdp
+                               else (selected.recv,))
+            send_formats = (selected.send_formats if engine_mode() == "active" or local_offer_sdp
+                            else (selected.send,))
             audio_payloads = _audio_payload_update(current.audio_payloads,
                 send=selected.send_formats or (selected.send,),
-                receive=(selected.recv_formats or (selected.recv,)) if local_offer_sdp else (selected.recv,))
+                receive=receive_formats)
             parsed = sdp.parse_sdp(request.body)
             accepted_video = tuple(
                 dict.fromkeys(
@@ -1582,7 +1589,6 @@ class SipCallClient:
                 if local_offer_sdp
                 else None
             )
-            from .core.media.shadow import engine_mode
             if dtmf_direction is not None:
                 dtmf_recv, dtmf_send = dtmf_direction.recv, dtmf_direction.send
             elif engine_mode() == "active":
@@ -1596,6 +1602,7 @@ class SipCallClient:
                 self.local_rtp_port,
                 selected.send,
                 selected.recv,
+                recv_formats=receive_formats,
                 dtmf=dtmf_formats[0] if dtmf_formats else None,
                 audio_rtcp=not self.match_received_codec,
                 remote_sdp=request.body,
@@ -1624,8 +1631,8 @@ class SipCallClient:
                 remote_rtp_port=int(parsed["media_port"]),
                 send_format=selected.send,
                 recv_format=selected.recv,
-                recv_formats=selected.recv_formats if local_offer_sdp else (selected.recv,),
-                send_formats=selected.send_formats if local_offer_sdp else (selected.send,),
+                recv_formats=receive_formats,
+                send_formats=send_formats,
                 match_received_codec=self.match_received_codec,
                 audio_payloads=audio_payloads,
                 video_payloads=video_payloads,
@@ -2665,6 +2672,7 @@ class SipCallClient:
                                         updated.local_rtp_port,
                                         updated.send_format,
                                         updated.recv_format,
+                                        recv_formats=updated.recv_formats,
                                         audio_rtcp=not self.match_received_codec,
                                         dtmf=(
                                             sdp.offered_dtmf_formats(request.body)[0]
@@ -2696,6 +2704,7 @@ class SipCallClient:
                                     updated.local_rtp_port,
                                     updated.send_format,
                                     updated.recv_format,
+                                    recv_formats=updated.recv_formats,
                                     audio_rtcp=not self.match_received_codec,
                                     dtmf=(
                                         sdp.offered_dtmf_formats(request.body)[0]
@@ -3646,6 +3655,7 @@ class SipCallClient:
                 self.supported_recv_formats,
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
+                codec_policy=self.codec_policy,
                 allow_dahua_pcm=self.include_dahua_pcm,
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )
@@ -4294,6 +4304,7 @@ class SipCallClient:
                 self.supported_recv_formats,
                 local_offer_direction=local_offer_direction,
                 local_offer_sdp=self._local_sdp_body or None,
+                codec_policy=self.codec_policy,
                 allow_dahua_pcm=self.include_dahua_pcm,
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )

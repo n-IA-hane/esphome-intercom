@@ -847,6 +847,7 @@ def build_answer_directional(
     send: RtpPcmFormat,
     recv: RtpPcmFormat,
     *,
+    recv_formats: tuple[RtpPcmFormat, ...] = (),
     dtmf: RtpDtmfFormat | None = None,
     audio_rtcp: bool = True,
     remote_sdp: str | bytes | None = None,
@@ -857,6 +858,7 @@ def build_answer_directional(
 ) -> str:
     from .media.shadow import engine_mode
     from .sdp_audio import dtmf_format_for_clock
+    from .media.codecs import CODECS
 
     event_formats = (dtmf,) if dtmf is not None and dtmf.events else ()
     if event_formats and remote_sdp and engine_mode() == "active":
@@ -905,6 +907,17 @@ def build_answer_directional(
             if _rtp_contract_key(send)[:4] == _rtp_contract_key(recv)[:4]
             else [recv, send]
         )
+    # Auxiliary receive mappings come from the negotiated policy contract, never
+    # from the remote offer alone. Keep the chosen primary first and authoritative.
+    if (format_direction in {"recvonly", "sendrecv"}
+            and (recv.sample_rate, recv.channels) == (CODECS["CN"].static_clock_rate, 1)):
+        offered = {_rtp_contract_key(fmt)[:4] for fmt in offered_pcm_formats(
+            remote_sdp, include_auxiliary=True)} if remote_sdp else None
+        for fmt in recv_formats:
+            if (fmt.encoding == "CN" and (fmt.sample_rate, fmt.channels) == (recv.sample_rate, 1)
+                    and (offered is None or _rtp_contract_key(fmt)[:4] in offered)
+                    and all(fmt.payload_type != item.payload_type for item in selected)):
+                selected.append(fmt)
     payload_values = [str(fmt.payload_type) for fmt in selected]
     for event in event_formats:
         if str(event.payload_type) not in payload_values:

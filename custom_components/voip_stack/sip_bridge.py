@@ -27,14 +27,16 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
     from .core.media.bridge import plan_caller_audio
 
     plan = plan_caller_audio(invite.remote_sdp,
-        sdp.RtpPcmDirection(invite.send_format, invite.recv_format),
+        sdp.RtpPcmDirection(invite.send_format, invite.recv_format, invite.recv_formats),
         sdp.RtpPcmDirection(destination.send_format, destination.recv_format),
         frozen=invite.initial_response_sent, codec_policy=invite.codec_policy,
         send_capabilities=invite.local_send_capabilities,
         receive_capabilities=invite.local_recv_capabilities, dahua=invite.peer_profile == "dahua")
-    if plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format:
+    if (plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format
+            and plan.caller.recv_formats == invite.recv_formats):
         return invite
-    return replace(invite, send_format=plan.caller.send, recv_format=plan.caller.recv)
+    return replace(invite, send_format=plan.caller.send, recv_format=plan.caller.recv,
+                   recv_formats=plan.caller.recv_formats)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,11 +397,18 @@ def invite_rtp_peer(
     outbound = established.outbound_rtp_format
     if not (is_offered(inbound) and is_offered(outbound)):
         return updated
+    # This UAS keeps one established primary. Auxiliary receive mappings must
+    # follow that actual primary, including its clock and output quantum.
+    receives = (inbound, *(replace(fmt, frame_ms=inbound.frame_ms)
+        for fmt in updated.inbound_rtp_formats
+        if fmt.encoding == "CN" and inbound.channels == 1
+        and (fmt.sample_rate, fmt.channels) == (inbound.sample_rate, 1)))
     return replace(
         updated,
         payload_type=inbound.payload_type,
         audio_format=inbound.audio_format,
         rtp_format=inbound,
+        inbound_rtp_formats=receives if updated.inbound_rtp_formats else (),
         send_payload_type=outbound.payload_type,
         send_audio_format=outbound.audio_format,
         send_rtp_format=outbound,

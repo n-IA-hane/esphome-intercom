@@ -626,6 +626,7 @@ def offered_pcm_formats(
     *,
     allow_dahua_pcm: bool = False,
     capabilities: bool = False,
+    include_auxiliary: bool = False,
 ) -> list[RtpPcmFormat]:
     parsed = parse_sdp(sdp, capabilities=capabilities)
     out: list[RtpPcmFormat] = []
@@ -642,7 +643,7 @@ def offered_pcm_formats(
                 or channels != 1
             ):
                 continue
-        elif encoding not in CODECS or CODECS[encoding].auxiliary:
+        elif encoding not in CODECS or (CODECS[encoding].auxiliary and not include_auxiliary):
             continue
         out.append(
             RtpPcmFormat(

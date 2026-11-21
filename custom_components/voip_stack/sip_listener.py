@@ -126,6 +126,7 @@ class SipInvite:
     codec_policy: CodecPolicy = CodecPolicy()
     local_recv_capabilities: tuple[AudioFormat, ...] = ()
     local_send_capabilities: tuple[AudioFormat, ...] = ()
+    recv_formats: tuple[sdp.RtpPcmFormat, ...] = ()
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -1142,10 +1143,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             accepted = sdp.negotiate_answer_directional(
                 pending.answer_sdp, self.supported_recv_formats, self.supported_send_formats,
                 local_offer_sdp=request.body, allow_dahua_pcm=invite.peer_profile == "dahua",
-                local_capabilities=HA_AUDIO_CAPABILITIES,
+                local_capabilities=HA_AUDIO_CAPABILITIES, codec_policy=pending.codec_policy,
             )
             if accepted is not None:
-                invite = replace(invite, send_format=accepted.recv, recv_format=accepted.send)
+                from .core.media.leg import receive_auxiliary_formats
+                from .core.media.negotiator import policy_for_leg
+                auxiliary = receive_auxiliary_formats(request.body, accepted.send,
+                    policy_for_leg(self.supported_send_formats, self.supported_recv_formats,
+                                   codec_policy=pending.codec_policy, capabilities=HA_AUDIO_CAPABILITIES),
+                    own_description=pending.answer_sdp)
+                invite = replace(invite, send_format=accepted.recv, recv_format=accepted.send,
+                                 recv_formats=(accepted.send, *auxiliary))
         initial_invite = (
             self._parse_initial_invite(request, addr) if not request.body else None
         )
@@ -3908,6 +3916,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     self.supported_send_formats,
                     self.supported_recv_formats,
                     local_offer_sdp=local_offer_sdp,
+                    codec_policy=codec_policy,
                     allow_dahua_pcm=peer_profile == "dahua",
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
@@ -4013,6 +4022,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 remote_sdp=request.body,
                 send_format=selected.send,
                 recv_format=selected.recv,
+                recv_formats=selected.recv_formats,
                 local_recv_capabilities=tuple(self.supported_recv_formats),
                 local_send_capabilities=tuple(self.supported_send_formats),
                 remote_rtp_host=remote["connection_ip"],
