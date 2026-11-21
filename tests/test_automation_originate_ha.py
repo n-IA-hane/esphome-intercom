@@ -85,7 +85,10 @@ class Phone(asyncio.DatagramProtocol):
         match = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", request.body)
         assert match, request.body
         self.payload_type = int(match[1])
-        ptime = int(re.search(rb"a=ptime:(\d+)", request.body)[1])
+        # RFC 8866 makes ptime optional, including on a send-only offer.
+        # This independent test phone uses 20 ms when no preference is sent.
+        requested_ptime = re.search(rb"a=ptime:([0-9.]+)\r", request.body)
+        ptime = requested_ptime[1].decode() if requested_ptime else "20"
         body = (
             "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Phone\r\n"
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
