@@ -133,6 +133,13 @@ with sync_playwright() as runner:
                         box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
                     )
                     result = True
+                elif action == "dial":
+                    page.get_by_role("button", name="Keypad", exact=True).click()
+                    page.get_by_role(
+                        "textbox", name="Number, name or SIP URI", exact=True
+                    ).fill(command["destination"])
+                    page.get_by_role("button", name="Call", exact=True).click()
+                    result = True
                 elif action == "screenshot":
                     page.screenshot(path=command["path"])
                     result = True

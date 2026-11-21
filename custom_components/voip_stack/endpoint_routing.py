@@ -211,6 +211,7 @@ def sip_target_rtp_audio_profile(
     peer: Peer | None,
     entry,
     device: dict | None = None,
+    *, codec_policy=None,
 ) -> SipAudioCapabilityProfile | None:
     """Order local backend capabilities using advisory remote preferences."""
 
@@ -227,13 +228,18 @@ def sip_target_rtp_audio_profile(
     )
     # Remote RX preferences rank HA's transmitter; remote TX ranks our receiver.
     shared_payloads: dict[tuple[str, int, int], int] = {}
-    send_rtp = _assign_capability_payloads(local_rtp_audio_formats(
+    send_rtp = local_rtp_audio_formats(
         list(HA_SIP_PCM_TX_FORMATS), hints=_rtp_audio_hints(remote_rx_tokens, legacy_rx),
-    ), shared_payloads)
-    recv_rtp = _assign_capability_payloads(local_rtp_audio_formats(
+    )
+    recv_rtp = local_rtp_audio_formats(
         list(HA_SIP_PCM_RX_FORMATS), hints=_rtp_audio_hints(remote_tx_tokens, legacy_tx),
         receive=True,
-    ), shared_payloads)
+    )
+    from .core.media.offers import expand_configured_linear_formats
+    send_rtp = _assign_capability_payloads(expand_configured_linear_formats(
+        send_rtp, HA_SIP_PCM_TX_FORMATS, codec_policy, receive=False), shared_payloads)
+    recv_rtp = _assign_capability_payloads(expand_configured_linear_formats(
+        recv_rtp, HA_SIP_PCM_RX_FORMATS, codec_policy, receive=True), shared_payloads)
     from .core.media.capability import constrain_formats
     from .core.media.shadow import engine_mode
     evidence = _binding_audio_evidence(peer, entry, device)

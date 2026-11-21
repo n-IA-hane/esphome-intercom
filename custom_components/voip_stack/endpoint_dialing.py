@@ -216,6 +216,7 @@ class EndpointDialer:
             rtp_audio_profile = sip_target_rtp_audio_profile(
                 peer_target,
                 member_entry,
+                codec_policy=codec_policy,
             )
             bridge_to_softphone = bool(
                 member_entry is not None

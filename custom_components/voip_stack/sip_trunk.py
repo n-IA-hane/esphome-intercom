@@ -88,6 +88,11 @@ class SipTrunkConfig:
     media_nat_mode: str = ""
     audio_ordered: bool = True
     video_ordered: bool = True
+    audio_configured: bool | None = None
+
+    def __post_init__(self):
+        if self.audio_configured is None:
+            object.__setattr__(self, "audio_configured", self.audio_codecs is not None)
 
 
 class SipTrunkClient:
@@ -839,7 +844,7 @@ class SipTrunkClient:
             invite_identity_resolver=getattr(manager, "invite_identity_resolver", None),
             invite_authorizer=getattr(manager, "invite_authorizer", None),
             codec_policy_resolver=lambda _initial: CodecPolicy(self.config.audio_codecs, self.config.video_codecs,
-                self.config.audio_ordered, self.config.video_ordered),
+                self.config.audio_ordered, self.config.video_ordered, self.config.audio_configured),
             on_offerless_invite=getattr(manager, "on_offerless_invite", None),
             on_terminated=manager.on_terminated,
             on_register=getattr(manager, "on_register", None),

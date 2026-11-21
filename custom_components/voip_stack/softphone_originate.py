@@ -560,6 +560,7 @@ async def _async_originate_browser_call(
         None,
         route.entry,
         dest_device,
+        codec_policy=codec_policy,
     )
     native_audio_endpoint = bool(
         entry_metadata.get("local_ha")

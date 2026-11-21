@@ -54,6 +54,7 @@ def trunk_client_config(cfg: dict, *, parent=None):
         video_codecs=codecs.video,
         audio_ordered=codecs.audio_ordered,
         video_ordered=codecs.video_ordered,
+        audio_configured=codecs.audio_configured,
     )
 
 

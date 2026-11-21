@@ -61,6 +61,13 @@ class CodecPolicy:
     video: tuple[str, ...] | None = None
     audio_ordered: bool = True
     video_ordered: bool = True
+    # Runtime provenance, never a persisted setting. Legacy constructors with
+    # an audio tuple are overrides even when their order is not authoritative.
+    audio_configured: bool | None = None
+
+    def __post_init__(self):
+        if self.audio_configured is None:
+            object.__setattr__(self, "audio_configured", self.audio is not None)
 
     def audio_formats(self, formats):
         allowed = self.audio if self.audio is not None else DEFAULT_AUDIO_CODECS
@@ -82,4 +89,6 @@ class CodecPolicy:
             else:
                 values[media] = normalize_codecs(raw, supported, allow_empty=media == "video")
                 values[media + "_ordered"] = True
+            if media == "audio":
+                values["audio_configured"] = (parent.audio_configured if parent is not None else False) if raw is None else True
         return cls(**values)

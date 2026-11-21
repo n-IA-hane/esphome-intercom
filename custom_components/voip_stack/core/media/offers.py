@@ -8,6 +8,7 @@ from ..codec_capabilities import codec_available
 from ..codec_policy import DEFAULT_AUDIO_CODECS
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
 from .codecs import CODECS
+from .capability import constrain_formats
 from .leg import OfferPlan
 from .packet_time import PacketTimes, ReceiverBounds, STANDARD_LADDER_MS, choose_transmit_packet_ms
 from .payload_map import PayloadMap, TELEPHONE_EVENT
@@ -17,7 +18,35 @@ def _key(fmt):
     return fmt.encoding, fmt.sample_rate, fmt.channels
 
 
-def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy):
+def expand_configured_linear_formats(values, formats, codec_policy, *, receive,
+                                     capabilities=HA_AUDIO_CAPABILITIES, budget=None, default_ms=20):
+    """Expand an explicit PCM-width override through the same dynamic HA backend."""
+    values = list(values)
+    if codec_policy is None or not codec_policy.audio_configured or capabilities is None:
+        return values
+    known = {_key(fmt) for fmt in values}
+    for name in codec_policy.audio or ():
+        if name not in {"L16", "L24"}:
+            continue
+        for pcm in formats:
+            fmt = RtpPcmFormat(96, name, pcm.sample_rate, pcm.channels, pcm.frame_ms)
+            if _key(fmt) in known or not codec_available(name, receive=receive):
+                continue
+            if not receive:
+                choice = choose_transmit_packet_ms(CODECS[name], fmt.sample_rate, fmt.channels,
+                    producible=PacketTimes(), default_ms=default_ms, receiver=ReceiverBounds(),
+                    budget=capabilities.transmit_payload_bytes if budget is None else budget)
+                if choice is None:
+                    continue
+                fmt = replace(fmt, frame_ms=choice.packet_ms)
+            if capabilities.supports_rtp(fmt, receive=receive):
+                values.append(fmt)
+                known.add(_key(fmt))
+    return values
+
+
+def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy,
+             codec_policy=None, declared=()):
     if explicit is not None:
         values = list(explicit)
     else:
@@ -41,6 +70,22 @@ def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy)
             values = [fmt for fmt in values if fmt.audio_format in formats]
         if dahua and any(pcm.sample_rate == 16000 and pcm.channels == 1 and pcm.pcm_format is PcmFormat.S16LE for pcm in formats):
             values.insert(0, RtpPcmFormat(97, "PCM", 16000, 1, 20))
+        if capabilities is not None:
+            # Presets rank PCM geometry; an explicit standard PCM codec can
+            # use the dynamic HA converter at another supported sample width.
+            # Unconfigured defaults and explicit RTP rows keep their catalogue.
+            values = expand_configured_linear_formats(values, formats, codec_policy,
+                receive=receive, capabilities=capabilities, budget=policy.budget,
+                default_ms=policy.default_packet_ms)
+            known = {_key(fmt) for fmt in values}
+            # Complete peer evidence may describe a valid linear geometry
+            # absent from presets, including a one-way microphone or speaker.
+            allowed = policy.encodings if policy.encodings is not None else DEFAULT_AUDIO_CODECS
+            for item in declared:
+                if item.mapping[0] in {"L16", "L24"} and item.mapping[0] in allowed and item.mapping not in known:
+                    values.extend(RtpPcmFormat(96, *item.mapping, packet_ms)
+                                  for packet_ms in item.times.explicit)
+                    known.add(item.mapping)
     if policy.codec_order:
         values.sort(key=lambda fmt: policy.codec_order.index(fmt.encoding)
                     if fmt.encoding in policy.codec_order else len(policy.codec_order))
@@ -51,18 +96,38 @@ def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy)
             and backend.supports_rtp(fmt, receive=receive)]
 
 
+def _declared_catalog(values, declaration, *, explicit, capabilities, receive):
+    """Constrain one direction without turning dynamic preferences into fixed quanta."""
+    candidates = list(values)
+    if capabilities is not None and not explicit:
+        times = {item.mapping: item.times.explicit for item in declaration}
+        seen = {(_key(fmt), fmt.frame_ms) for fmt in candidates}
+        for fmt in values:
+            for packet_ms in times.get(_key(fmt), ()):
+                candidate = replace(fmt, frame_ms=packet_ms)
+                identity = (_key(candidate), packet_ms)
+                if identity not in seen and capabilities.supports_rtp(candidate, receive=receive):
+                    candidates.append(candidate)
+                    seen.add(identity)
+    return list(constrain_formats(candidates, declaration))
+
+
 def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_formats=None,
                           recv_rtp_formats=None, audio_rtp_formats=None, common=False,
                           dahua=False, directional=False, independent=True, direction="sendrecv",
-                          capabilities=None, previous=None):
+                          capabilities=None, previous=None, codec_policy=None, evidence=None):
     """Plan one full or explicitly constrained offer; never guess missing codecs."""
     if audio_rtp_formats is not None:
         send_rtp_formats = tuple(fmt for fmt in audio_rtp_formats if fmt.audio_format in send_formats)
         recv_rtp_formats = tuple(fmt for fmt in audio_rtp_formats if fmt.audio_format in receive_formats)
+    peer_sends = evidence.sends if evidence is not None and evidence.complete else ()
+    peer_receives = evidence.receives if evidence is not None and evidence.complete else ()
     sends = (_catalog(send_formats, send_rtp_formats, receive=False, common=common, dahua=dahua,
-                      capabilities=capabilities, policy=policy) if direction != "recvonly" else [])
+                      capabilities=capabilities, policy=policy, codec_policy=codec_policy,
+                      declared=peer_receives) if direction != "recvonly" else [])
     receives = (_catalog(receive_formats, recv_rtp_formats, receive=True, common=common, dahua=dahua,
-                         capabilities=capabilities, policy=policy) if direction != "sendonly" else [])
+                         capabilities=capabilities, policy=policy, codec_policy=codec_policy,
+                         declared=peer_sends) if direction != "sendonly" else [])
     explicit = send_rtp_formats is not None or recv_rtp_formats is not None
     explicit_rows = list(audio_rtp_formats if audio_rtp_formats is not None else
                          (*(send_rtp_formats or ()), *(recv_rtp_formats or ())))
@@ -82,6 +147,11 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
                     and fmt.encoding not in {"L16", "L24"})
         sends.extend(fmt for fmt in extra_send if additional(fmt))
         receives.extend(fmt for fmt in extra_receive if additional(fmt))
+    if evidence is not None and evidence.complete:
+        sends = _declared_catalog(sends, peer_receives, explicit=send_rtp_formats is not None,
+                                 capabilities=capabilities, receive=False)
+        receives = _declared_catalog(receives, peer_sends, explicit=recv_rtp_formats is not None,
+                                    capabilities=capabilities, receive=True)
     send_keys, receive_keys = {_key(fmt) for fmt in sends}, {_key(fmt) for fmt in receives}
     if direction == "sendrecv" and (not sends or not receives):
         raise ValueError("No enabled audio codec has the required local directions")
@@ -128,6 +198,10 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     explicit_receive = [fmt for fmt in active_receive if fmt in (recv_rtp_formats or ())]
 
     def supports_time(fmt, packet_ms, *, receive):
+        if evidence is not None and evidence.complete:
+            declaration = peer_sends if receive else peer_receives
+            if not any(item.mapping == _key(fmt) and item.times.contains(packet_ms) for item in declaration):
+                return False
         local = receive_formats if receive else send_formats
         if capabilities is None and packet_ms not in fixed_times(fmt, local):
             return False

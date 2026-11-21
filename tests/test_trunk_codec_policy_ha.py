@@ -58,17 +58,23 @@ async def test_two_trunks_keep_independent_offers_and_real_pcmu_announcement(tru
     assert not runtime.calls.sessions
 
 
-async def test_no_usable_selected_codec_releases_call_and_allows_next_attempt(trunks):
+async def test_no_usable_selected_codec_releases_call_and_allows_next_attempt(trunks, monkeypatch):
     from homeassistant.exceptions import ServiceValidationError
     runtime=trunks
     selected=sip_trunk(runtime.hass,'home')
-    selected.config=replace(selected.config,audio_codecs=('L24',))
+    from custom_components.voip_stack.core.media import offers
+    available = offers.codec_available
+    # Configured L24 is supported. Preserve this regression's unavailable
+    # transmitter contract at the directional backend availability boundary.
+    monkeypatch.setattr(offers, "codec_available", lambda name, *, receive=False:
+        False if name == "L24" and not receive else available(name, receive=receive))
+    selected.config=replace(selected.config,audio_codecs=('L24',),audio_configured=True)
     with pytest.raises(ServiceValidationError):
         await dial(runtime,Context(),destination='External',trunk_id='home')
     assert not runtime.phones[0].invites
     assert not runtime.calls.sessions and not runtime.runtime.rtp_port_pool['used']
     assert selected.ready and not selected._outbound_dialogs
-    selected.config=replace(selected.config,audio_codecs=('L16',))
+    selected.config=replace(selected.config,audio_codecs=('L16',),audio_configured=True)
     context=Context()
     await dial(runtime,context,destination='External',trunk_id='home')
     await runtime.hass.services.async_call('voip_stack','hangup',{},blocking=True,context=context)

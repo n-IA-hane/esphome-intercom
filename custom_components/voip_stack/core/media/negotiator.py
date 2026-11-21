@@ -65,13 +65,16 @@ def create_offer(send_formats, receive_formats, evidence: PeerEvidence | None = 
                  capabilities=None, previous: PayloadMap | None = None, **options) -> OfferPlan:
     """Plan a complete offer, or reduce it from complete binding evidence."""
     policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities)
-    if evidence is not None and evidence.complete:
+    explicit = any(options.get(name) is not None for name in
+                   ("send_rtp_formats", "recv_rtp_formats", "audio_rtp_formats"))
+    if (evidence is not None and evidence.complete and not explicit
+            and options.get("direction", "sendrecv") == "sendrecv"):
         reduced = leg.create_offer_for_declared_peer(policy, evidence, previous=previous)
         if reduced is not None:
             return reduced
     from .offers import create_complete_offer
     return create_complete_offer(policy, send_formats, receive_formats, capabilities=capabilities,
-                                 previous=previous, **options)
+                                 previous=previous, codec_policy=codec_policy, evidence=evidence, **options)
 
 
 def as_direction(result, remote_sdp) -> RtpPcmDirection | None:

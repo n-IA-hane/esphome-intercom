@@ -144,3 +144,109 @@ async def test_public_dialer_offers_explicit_l24_to_unknown_peer_without_options
                 await barrier
         await peer.close()
         assert resources(lab)["call_scoped_quiescent"]
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 30}], indirect=True)
+@pytest.mark.parametrize("policy_source", ["global", "account"])
+@pytest.mark.browser_real
+async def test_unknown_l24_public_card_call_has_independent_duplex_media(
+    canonical_browser,
+    hass_ws_client,
+    hass_admin_user,
+    tmp_path,
+    socket_enabled,
+    policy_source,
+):
+    from tests.support.shared_codec_browser import Card
+    from tests.support.shared_codec_peer import (
+        check_wire,
+        decode_named_rtp,
+        measure_tone,
+    )
+    from tests.test_shared_account_codec_media_ha import (
+        received_seconds,
+        measure_browser,
+    )
+    from tests.test_browser_logical_availability_ha import public_phone
+
+    lab = canonical_browser
+    entry = config_entry(lab.hass)
+    rows = [{"codec": "L24", "enabled": True}]
+    if policy_source == "global":
+        lab.hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "audio_codecs": rows, "video_codecs": []}
+        )
+    else:
+        lab.hass.config_entries.async_update_subentry(
+            entry,
+            lab.browser_subentry,
+            data={
+                **lab.browser_subentry.data,
+                "audio_codecs": rows,
+                "video_codecs": [],
+            },
+        )
+    policy = effective_codec_policy(lab.hass, endpoint_id="casa")
+    assert policy.audio == ("L24",) and policy.audio_configured
+    peer = NoOptionsPeer(next(case for case in CASES if case.name == "L24"))
+    card = Card()
+    evidence = {
+        "policy_source": policy_source,
+        "effective_audio": policy.audio,
+        "audio_configured": policy.audio_configured,
+    }
+    try:
+        await lab.hass.loop.create_datagram_endpoint(
+            lambda: peer, local_addr=("127.0.0.1", 0)
+        )
+        await card.start(lab, hass_ws_client, tmp_path / "chromium", hass_admin_user)
+        destination = (
+            f"sip:uncached@127.0.0.1:{peer.transport.get_extra_info('sockname')[1]}"
+        )
+        await card.command("dial", destination=destination)
+        await asyncio.wait_for(peer.offered.wait(), 5)
+        body = peer.offers[-1]
+        assert re.search(rb"a=rtpmap:\d+ L24/16000/1", body), body.decode()
+        await peer.accept()
+        await until(lambda: next(iter(lab.calls.sessions.values())).state == "in_call")
+        phone = await public_phone(lab)
+        call_id = phone["calls"][0]["call_id"]
+        await peer.start_media(750)
+        await until(lambda: received_seconds(peer) >= 0.85)
+        await peer.stop_media()
+        stats = await card.command("stats")
+        assert stats["errors"] == []
+        assert stats["card"]["state"] == "in_call" and stats["card"]["audioReady"]
+        evidence.update(
+            offer=body.decode(),
+            answer=peer.receive_sdp.decode(),
+            browser=stats,
+            wire_to_peer=check_wire(peer.case, peer.received),
+            card_receive_tone=measure_browser(stats, call_id, "rx", 750),
+            card_microphone_tone=measure_browser(stats, call_id, "tx", 650),
+        )
+        decoded = await decode_named_rtp(
+            peer.case, peer.received, peer.receive_sdp, tmp_path / "peer-receive"
+        )
+        evidence["peer_tone"] = measure_tone(decoded, 16000, 650)
+        assert evidence["wire_to_peer"]["payload_bytes"] == [960]
+        assert evidence["wire_to_peer"]["actual_packet_ms"] == [20]
+        assert not any(raw.startswith(b"OPTIONS ") for raw in peer.signalling)
+        await card.command("hangup")
+        await asyncio.wait_for(peer.ended.wait(), 5)
+        await until(lambda: resources(lab)["call_scoped_quiescent"])
+        evidence["final_resources"] = resources(lab)
+    finally:
+        (tmp_path / "unknown-l24-media.json").write_text(
+            json.dumps(evidence, indent=2, default=repr) + "\n"
+        )
+        for session in tuple(lab.calls.sessions.values()):
+            barrier = lab.calls.request_termination(
+                session.call_id, TerminationIntent("test_done")
+            )
+            if barrier is not None:
+                await barrier
+        await card.close()
+        await peer.close()
+        assert resources(lab)["call_scoped_quiescent"]
