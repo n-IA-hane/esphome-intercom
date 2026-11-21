@@ -164,6 +164,40 @@ async def test_three_browser_accounts_finish_concurrent_conference_hangups_and_c
                 }, blocking=True) for account, call_id in zip(accounts, call_ids, strict=True)))
         assert len(seen_call_ids) == 6
         assert not any(phone.invites for phone in lab.phones)
+
+        # The same host and participant can immediately make an ordinary
+        # point-to-point call, with no conference owner or media left behind.
+        from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_FORMATS
+        from custom_components.voip_stack.local_softphone_runtime import async_setup_local_softphone_bridge
+        bridge = async_setup_local_softphone_bridge(lab.hass)
+        await lab.hass.services.async_call("voip_stack", "call", {
+            "device_id": accounts[0].device_id, "destination": accounts[1].name,
+            "media_client_id": "host-browser-owner",
+        }, blocking=True)
+        ordinary_id = _ha_softphone_state(lab.hass, accounts[0].endpoint_id)["call_id"]
+        assert ordinary_id and not ordinary_id.startswith("conference:")
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": accounts[1].device_id, "call_id": ordinary_id,
+            "media_client_id": accounts[1].username + "-browser-owner",
+        }, blocking=True)
+        leases = [bridge.acquire_media(ordinary_id, account.endpoint_id, owner)
+            for account, owner in zip(accounts[:2],
+                ("host-browser-owner", accounts[1].username + "-browser-owner"), strict=True)]
+        for source, destination, sample in ((0, 1, 4321), (1, 0, -2345)):
+            pcm = struct.pack("<h", sample) * HA_SIP_PCM_FORMATS[0].nominal_frame_samples
+            assert not bridge.send_audio(ordinary_id, accounts[source].endpoint_id, leases[source].token, pcm)
+            async with asyncio.timeout(2):
+                assert await bridge.receive_audio(ordinary_id, accounts[destination].endpoint_id,
+                                                   leases[destination].token) == pcm
+        ordinary_session = lab.calls.get_session(ordinary_id)
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": accounts[0].device_id, "call_id": ordinary_id,
+        }, blocking=True)
+        async with asyncio.timeout(2):
+            await ordinary_session.terminated.wait()
+        assert not manager.rooms and not manager.ha_calls
+        assert_call_resources_released(lab)
+        assert all(_ha_softphone_state(lab.hass, account.endpoint_id)["state"] == "idle" for account in accounts)
     finally:
         unsubscribe()
         for session in tuple(lab.calls.sessions.values()):
