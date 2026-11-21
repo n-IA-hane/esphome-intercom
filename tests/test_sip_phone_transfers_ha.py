@@ -496,7 +496,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("failure", ["busy", "non2xx", "exception", "cancel", "rollback_exception", "rollback_twice", "original_ends", "send_failure", "send_exception", "sdp_exception", "cancel_cleanup", "generation_reuse", "handoff_register", "handoff_claim", "handoff_bind"])
+@pytest.mark.parametrize("failure", ["busy", "non2xx", "exception", "cancel", "rollback_exception", "rollback_twice", "original_ends", "send_failure", "send_exception", "sdp_exception", "cancel_cleanup", "cancel_commit", "generation_reuse", "handoff_register", "handoff_claim", "handoff_bind"])
 async def test_replacement_failure_releases_only_candidate(registered_phones, trunks, monkeypatch, failure):
     from dataclasses import replace
     from custom_components.voip_stack import media_renegotiation
@@ -536,6 +536,12 @@ async def test_replacement_failure_releases_only_candidate(registered_phones, tr
             started.set()
             await asyncio.Future()
         result = await real_prepare(*args)
+        if failure == "cancel_commit":
+            async def waiting_commit():
+                started.set()
+                await release.wait()
+                await result.commit()
+            return replace(result, commit=waiting_commit)
         if failure == "cancel_cleanup":
             async def slow_rollback():
                 rollback_calls.append(True)
@@ -617,6 +623,15 @@ async def test_replacement_failure_releases_only_candidate(registered_phones, tr
                 endpoint.connection_lost(None)
         elif failure == "cancel":
             task = asyncio.create_task(prepare_replacement(lab.hass, invite, "127.0.0.1"))
+            await asyncio.wait_for(started.wait(), 3)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif failure == "cancel_commit":
+            from custom_components.voip_stack.core.sip_dialog import apply_remote_offer_media
+            result = await prepare_replacement(lab.hass, invite, "127.0.0.1")
+            assert result.status == 200
+            task = asyncio.create_task(apply_remote_offer_media(result.commit, result.rollback))
             await asyncio.wait_for(started.wait(), 3)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

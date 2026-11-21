@@ -427,5 +427,8 @@ async def async_transfer_target(
                 return local
         return result
     finally:
-        if grant is not None:
+        # Once Replaces claims this grant, its existing commit/rollback owner
+        # retains authorization through media publication. The REFER result
+        # can arrive before that commit has finished.
+        if grant is not None and not grant.pending_call_id:
             grant.release()
