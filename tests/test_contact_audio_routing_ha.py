@@ -109,6 +109,20 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         if route == "forward":
             runtime.phones[0].auto_answer = False
             runtime.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.AVAILABLE)
+            # The initial ringing account needs a real authenticated Contact;
+            # changing the fixture's availability is not a SIP registration.
+            registrar.update_accounts([*registrar.accounts.values(),
+                SipAccount("bedroom0", "bedroom0", "fixture-only")])
+            initial_audio = audio_socket("127.0.0.1")
+            initial_transport, initial_phone = await runtime.hass.loop.create_datagram_endpoint(
+                lambda: ContactPeer("known", initial_audio), local_addr=("127.0.0.1", 0))
+            transports.append(initial_transport)
+            await register_peer(runtime, initial_phone, username="bedroom0", call_id="registration-initial")
+            await asyncio.wait_for(initial_phone.options.get(), 1)
+            await wait_until(lambda: registrar.registered_contacts("bedroom0")[0].capabilities is not None)
+            initial_entry = next(entry for entry in roster_from_peers(
+                runtime.hass, [], registrar.registered_roster_entries()) if entry.id == "bedroom0")
+            runtime.roster[:] = [initial_entry if entry.id == "bedroom0" else entry for entry in runtime.roster]
             monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
             monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: runtime.roster)
         result = await caller.invite(target="ContactGroup" if route == "group" else "bedroom0",
