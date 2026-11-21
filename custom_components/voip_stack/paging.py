@@ -21,6 +21,7 @@ from .paging_config import MAX_PAGING_TARGETS, paging_group_configs
 from .ring_group import endpoint_preflight_disposition
 from .roster import RosterEntry
 from .runtime_data import require_runtime_data
+from .service_endpoints import resolve_service_phone
 
 MAX_PAGING_JOBS = 4
 _CHUNK_BYTES = 4096
@@ -73,7 +74,7 @@ def resolve_paging_targets(runtime, groups, targets):
                 expand(member)
             visiting.remove(identity)
         else:
-            endpoint = runtime.endpoints.by_device_id(target) or runtime.endpoints.resolve(target)
+            endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True)
             if endpoint is None:
                 raise ServiceValidationError(f"Unknown paging phone: {target}")
             selected[endpoint.endpoint_id] = endpoint

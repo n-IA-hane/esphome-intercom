@@ -59,19 +59,49 @@ async def settings(hass, device="device-kitchen", **values):
     }, blocking=True)
 
 
-@pytest.mark.parametrize("selector", ["Banco@Hotel", "office", "204", "device-kitchen"])
+@pytest.mark.parametrize("selector", ["Banco@Hotel", "Banco%40Hotel", "office", "204", "device-kitchen", "kitchen"])
 async def test_phone_settings_resolves_the_selected_phone(hass, phones, selector):
     phones.registry.update("kitchen", name="Banco@Hotel", username="office", extension="204")
     await settings(hass, device=selector, forward_to="Bedroom")
     assert phones.registry.require("kitchen").policy.always.target == "bedroom"
 
 
-async def test_public_source_name_wins_over_another_phones_device_id(hass, phones):
-    phones.registry.update("kitchen", name="Casa")
-    phones.registry.update("bedroom", device_id="Casa")
-    await settings(hass, device="Casa", forward_to="ESP")
-    assert phones.registry.require("kitchen").policy.always.target == "esphome:stable"
-    assert phones.registry.require("bedroom").policy == PhonePolicy()
+async def test_native_device_selector_wins_over_another_phones_name(hass, phones):
+    device_id = "a52832282eca4f82a000cfacaca56d0c"
+    phones.registry.update("kitchen", name=device_id)
+    phones.registry.update("bedroom", device_id=device_id)
+    await settings(hass, device=device_id, forward_to="ESP")
+    assert phones.registry.require("bedroom").policy.always.target == "esphome:stable"
+    assert phones.registry.require("kitchen").policy == PhonePolicy()
+
+
+async def test_legacy_source_reference_rejects_cross_namespace_ambiguity(hass, phones):
+    phones.registry.update("bedroom", name="Other desk")
+    phones.registry.update("kitchen", name="bedroom")
+    with pytest.raises(ServiceValidationError, match="[Aa]mbiguous"):
+        await settings(hass, device="bedroom", ringing_timeout=20)
+    assert all(phones.registry.require(key).policy == PhonePolicy() for key in ("kitchen", "bedroom"))
+    phones.push.assert_not_awaited()
+
+
+async def test_forward_destination_keeps_public_alias_over_another_device_id(hass, phones):
+    phones.registry.update("bedroom", name="Public destination")
+    phones.registry.update("esphome:stable", device_id="Public destination")
+    await settings(hass, forward_to="Public destination")
+    assert phones.registry.require("kitchen").policy.always.target == "bedroom"
+
+
+async def test_forward_destination_rejects_contact_phone_alias_ambiguity(hass, phones):
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.roster import RosterEntry
+
+    phones.entry.runtime_data.directory = PhoneDirectory([
+        RosterEntry("external", name="External", number="Bedroom"),
+    ])
+    with pytest.raises(ServiceValidationError, match="[Aa]mbiguous"):
+        await settings(hass, forward_to="Bedroom")
+    assert phones.registry.require("kitchen").policy == PhonePolicy()
+    phones.push.assert_not_awaited()
 
 
 async def test_duplicate_source_extension_leaves_both_phones_unchanged(hass, phones):

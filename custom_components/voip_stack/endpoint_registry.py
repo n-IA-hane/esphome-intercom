@@ -264,10 +264,10 @@ class EndpointRegistry:
         self,
         value: object,
         *,
-        namespace: EndpointLookup | str | None = None,
+        namespace: EndpointLookup | str | tuple[EndpointLookup | str, ...] | None = None,
     ) -> PhoneEndpoint | None:
         """Resolve one qualified identifier or an unqualified unique match."""
-        if namespace is not None:
+        if namespace is not None and not isinstance(namespace, tuple):
             try:
                 lookup = EndpointLookup(namespace)
             except ValueError as err:
@@ -283,18 +283,21 @@ class EndpointRegistry:
                 EndpointLookup.USERNAME: self.by_username,
             }[lookup](value)
 
+        namespaces = namespace if namespace is not None else tuple(EndpointLookup)
         matches = {
             endpoint.endpoint_id: endpoint
-            for endpoint in (
-                self.get(value),
-                self.by_device_id(value),
-                self.by_entity_id(value),
-                self.by_name(value),
-                self.by_extension(value),
-                self.by_username(value),
-            )
-            if endpoint is not None
+            for lookup in namespaces
+            if (endpoint := self.resolve(value, namespace=lookup)) is not None
         }
+        if not matches and isinstance(namespace, tuple):
+            # Saved YAML aliases share the public directory's compatibility
+            # spelling. Qualified HA and endpoint IDs remain exact identifiers.
+            fields = {EndpointLookup.NAME: "name", EndpointLookup.USERNAME: "username",
+                      EndpointLookup.EXTENSION: "extension"}
+            key = normalize_roster_key(str(value or ""))
+            matches = {endpoint.endpoint_id: endpoint for endpoint in self.endpoints
+                       if key and any(normalize_roster_key(getattr(endpoint, fields[lookup])) == key
+                                      for lookup in namespaces if lookup in fields)}
         if len(matches) > 1:
             raise EndpointAmbiguousError(
                 str(value or "").strip(), tuple(sorted(matches))

@@ -8,7 +8,7 @@ import re
 from typing import Literal
 
 from .core.sip import SipUri
-from .roster import RosterEntry, duplicate_numeric_extensions, entry_matches_extension, find_entry
+from .roster import RosterEntry, RosterError, duplicate_numeric_extensions, entry_matches_extension, find_entry
 
 
 class RouteAction(StrEnum):
@@ -43,6 +43,7 @@ class RouteReason(StrEnum):
     TARGET_UNREACHABLE = "target_unreachable"
     ROUTE_NOT_FOUND = "route_not_found"
     AMBIGUOUS_EXTENSION = "ambiguous_extension"
+    AMBIGUOUS_DESTINATION = "ambiguous_destination"
     MEDIA_INCOMPATIBLE = "media_incompatible"
     TRUNK_UNAVAILABLE = "trunk_unavailable"
 
@@ -204,8 +205,12 @@ def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> 
     if target_class == TargetClass.NUMERIC:
         return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri_for(target, entries, ha_uri), reason=RouteReason.NUMBER_VIA_HA)
 
-    entry = find_entry(entries, target, include_number=False,
-                       literal_only=target_class in {TargetClass.NAME_AT_HOST, TargetClass.TRUNK_SERVICE_CODE})
+    try:
+        entry = find_entry(entries, target, include_number=False,
+                           literal_only=target_class in {TargetClass.NAME_AT_HOST, TargetClass.TRUNK_SERVICE_CODE})
+    except RosterError:
+        return RouteDecision(RouteAction.REJECT, target=target, status=485,
+                             reason=RouteReason.AMBIGUOUS_DESTINATION, source="phonebook")
     if entry is None and target_class is TargetClass.NAME_AT_HOST:
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
     if entry is None:
@@ -233,9 +238,14 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
     target_class = classify_target(target)
     if target_class is TargetClass.SIP_URI:
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
-    entry = directory_target or find_entry(
-        entries, target, literal_only=target_class in {TargetClass.NAME_AT_HOST, TargetClass.TRUNK_SERVICE_CODE},
-    )
+    try:
+        entry = directory_target or find_entry(
+            entries, target, literal_only=target_class in {TargetClass.NAME_AT_HOST, TargetClass.TRUNK_SERVICE_CODE},
+        )
+    except RosterError:
+        return RouteDecision(RouteAction.REJECT, target=target, status=485,
+                             reason=(RouteReason.AMBIGUOUS_EXTENSION if target.isdigit()
+                                     else RouteReason.AMBIGUOUS_DESTINATION), source="phonebook")
     if entry is None and target_class is TargetClass.NAME_AT_HOST:
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
     if entry is None and target_class is TargetClass.TRUNK_SERVICE_CODE:
@@ -306,8 +316,11 @@ def route_inbound_trunk(ctx: CallContext, entries: list[RosterEntry], *, trunk_r
         return resolve_ha_router(ctx.route_hint, entries, trunk_ready=trunk_ready)
     if ctx.route_hint.strip() in duplicate_numeric_extensions(entries):
         return resolve_ha_router(ctx.route_hint, entries, trunk_ready=trunk_ready)
-    internal_entry = find_entry(entries, ctx.route_hint, include_number=False,
-                                literal_only=target_class is TargetClass.TRUNK_SERVICE_CODE)
+    try:
+        internal_entry = find_entry(entries, ctx.route_hint, include_number=False,
+                                    literal_only=target_class is TargetClass.TRUNK_SERVICE_CODE)
+    except RosterError:
+        return resolve_ha_router(ctx.route_hint, entries, trunk_ready=trunk_ready)
     if internal_entry is None:
         return RouteDecision(RouteAction.REJECT, target=ctx.route_hint, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
     resolved = _route_ha_entry(internal_entry, internal_entry.id, trunk_ready=trunk_ready)

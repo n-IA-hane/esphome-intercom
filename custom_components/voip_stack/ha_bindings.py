@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.helpers.storage import Store
 
-from .endpoint_registry import EndpointRegistryEventType
+from .endpoint_registry import EndpointLookup, EndpointRegistryEventType
 from .lovelace_adapter import async_dashboard_declarations
 
 _BINDING_ID = re.compile(r"[A-Za-z0-9._~-]{16,128}")
@@ -102,15 +102,19 @@ class HaCardBindings:
 
     def _resolve(self, selector):
         registry = self.runtime.endpoints
-        endpoint = registry.by_device_id(selector.get("device_id")) if selector.get("device_id") else None
-        if endpoint is None and selector.get("endpoint_id"):
-            endpoint = registry.get(selector["endpoint_id"])
+        endpoint = registry.resolve(selector["device_id"], namespace=EndpointLookup.DEVICE_ID) if selector.get("device_id") else None
+        if selector.get("endpoint_id"):
+            explicit = registry.resolve(selector["endpoint_id"], namespace=EndpointLookup.ENDPOINT_ID)
+            if selector.get("device_id") and (endpoint is None or explicit != endpoint):
+                return None
+            endpoint = explicit
         if endpoint is None and not selector.get("device_id") and not selector.get("endpoint_id"):
             # Do not call the sole-HA-bound fallback here: that fallback queries
             # this owner, creating a cycle for an implicit card declaration.
             preferred = getattr(self.entry, "data", {}).get("preferred_phone_device_id") or getattr(
                 self.runtime, "preferred_phone_device_id", "")
-            endpoint = registry.by_device_id(preferred) or registry.get("default")
+            endpoint = (registry.resolve(preferred, namespace=EndpointLookup.DEVICE_ID)
+                        or registry.resolve("default", namespace=EndpointLookup.ENDPOINT_ID))
         return endpoint if endpoint is not None and str(endpoint.kind) in {"browser", "sip_account"} else None
 
     def _references(self):

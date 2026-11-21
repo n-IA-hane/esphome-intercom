@@ -10,7 +10,7 @@ from .authorization import (
     async_require_service_entity_control,
 )
 from .const import HA_PEER_FALLBACK_NAME
-from .endpoint_registry import EndpointAmbiguousError, EndpointRegistry
+from .endpoint_registry import EndpointAmbiguousError, EndpointLookup, EndpointRegistry
 from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
@@ -21,23 +21,47 @@ from .service_errors import service_error as _service_error
 
 
 def resolve_service_phone(
-    registry: EndpointRegistry, selector: str, *, allow_internal: bool = False
+    registry: EndpointRegistry, selector: str, *, allow_internal: bool = False,
+    namespace: EndpointLookup = EndpointLookup.DEVICE_ID,
 ) -> PhoneEndpoint | None:
-    """Prefer public aliases, then accept device or endpoint IDs saved by older automations."""
+    """Resolve a native HA Device selector, then adapt saved legacy references.
+
+    A Device selector returns a device ID, even when another phone happens to
+    publish that text as its name. Older YAML actions also accepted names,
+    usernames, extensions and endpoint references; that fallback must be unique
+    across those namespaces rather than depending on their lookup order.
+    """
     try:
-        endpoint = (
-            registry.by_name(selector)
-            or registry.by_username(selector)
-            or registry.by_extension(selector)
-            or registry.by_device_id(selector)
-            or registry.get(selector)
-        )
-        if endpoint is None and allow_internal:
-            # Existing policies and in-call operations can carry endpoint references.
-            return registry.resolve(selector)
-        return endpoint
+        endpoint = registry.resolve(selector, namespace=namespace)
+        if endpoint is not None:
+            return endpoint
+        namespaces = (EndpointLookup.NAME, EndpointLookup.USERNAME,
+                      EndpointLookup.EXTENSION, EndpointLookup.ENDPOINT_ID,
+                      EndpointLookup.DEVICE_ID)
+        if allow_internal:
+            namespaces += (EndpointLookup.ENTITY_ID,)
+        return registry.resolve(selector, namespace=namespaces)
     except EndpointAmbiguousError as error:
         raise ServiceValidationError(f"Ambiguous phone selector: {selector}") from error
+
+
+def resolve_public_phone(registry: EndpointRegistry, selector: str, *, directory=None) -> PhoneEndpoint | None:
+    """Resolve a manually entered public destination without HA/internal IDs."""
+    from .phone_directory import PhoneDirectory
+    from .roster import RosterEntry, RosterError
+
+    rows = [row for row in directory.snapshot()
+            if registry.get(row.metadata.get("endpoint_id", "")) is None] if directory is not None else []
+    rows.extend(RosterEntry(
+        id=endpoint.username, name=endpoint.name, extension=endpoint.extension,
+        metadata={"endpoint_id": endpoint.endpoint_id},
+    ) for endpoint in registry.endpoints)
+    public_directory = PhoneDirectory(rows)
+    try:
+        row = public_directory.resolve(selector)
+    except RosterError as error:
+        raise ServiceValidationError(f"Ambiguous phone destination: {selector}") from error
+    return registry.get(row.metadata.get("endpoint_id", "")) if row is not None else None
 
 
 def service_browser_endpoint(
@@ -130,7 +154,7 @@ async def async_require_phone_service_control(
                 endpoint_id=str(
                     device.get("endpoint_id") or f"esphome:{device_id}"
                 ),
-                name=str(device.get("name") or device_id or "ESP phone"),
+                name=str(device.get("name") or "ESP phone"),
                 kind=EndpointKind.ESPHOME,
                 device_id=device_id,
                 entity_ids=entities,

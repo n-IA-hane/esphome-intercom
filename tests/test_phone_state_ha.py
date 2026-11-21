@@ -96,12 +96,18 @@ async def test_phone_state_service_returns_same_calls_as_conditions(hass, phones
 async def test_state_trigger_keeps_exact_call_context_and_suppresses_duplicate_state(
     hass, phones
 ):
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
+
+    entry = hass.config_entries.async_entries("voip_stack")[0]
+    device = async_ensure_endpoint_device(hass, entry, phones.endpoints.require("kitchen"), phones.endpoints)
+    phones.endpoints.update("office", name=device.id)
+    condition = PhoneStateCondition(hass, ConditionConfig(options={"phone": device.id, "state": "ringing"}))
     seen, tasks = [], []
     subject = PhoneStateTrigger(
         hass,
         TriggerConfig(
             "voip_stack.phone_state_changed",
-            options={"phone": "kitchen-device", "to": "ringing"},
+            options={"phone": device.id, "to": "ringing"},
         ),
     )
 
@@ -134,6 +140,7 @@ async def test_state_trigger_keeps_exact_call_context_and_suppresses_duplicate_s
         await hass.async_block_till_done()
         await asyncio.gather(*tasks)
         assert seen == [(session.token, "ringing")]
+        assert condition._async_check()
         assert current_execution.get() is None
     finally:
         detach()

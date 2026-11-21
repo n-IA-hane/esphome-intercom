@@ -118,15 +118,51 @@ class PhoneDirectory:
         entry = self._entries.get(self._key(identity))
         return self._copy(entry) if entry is not None else None
 
+    @staticmethod
+    def resolve_entries(entries, target, *, include_extension=True, include_number=True,
+                        literal_only=False, include_internal_ids=False):
+        """Resolve exact public aliases first, then the shared legacy spelling.
+
+        Internal references are an explicit adapter for persisted membership,
+        never an implicit public destination namespace. Every selected tier
+        rejects aliases owned by different destinations.
+        """
+        raw = str(target or "").strip().casefold()
+        if not raw:
+            return None
+
+        def aliases(entry, *, internal):
+            values = [entry.id, entry.name]
+            if include_extension:
+                values.append(entry.extension)
+            if include_number:
+                values.append(getattr(entry, "number", ""))
+            if internal and include_internal_ids:
+                metadata = getattr(entry, "metadata", {})
+                values.extend((metadata.get("endpoint_id"), metadata.get("device_id")))
+            return [str(value).strip() for value in values if value]
+
+        rows = tuple(entries)
+        for internal, normalize in ((True, lambda value: value.casefold()), (False, normalize_roster_key)):
+            wanted = normalize(raw)
+            matches = {}
+            for entry in rows:
+                if wanted and any(normalize(value) == wanted for value in aliases(entry, internal=internal)):
+                    identity = str(getattr(entry, "metadata", {}).get("endpoint_id") or entry.id).casefold()
+                    matches[identity] = entry
+            if len(matches) > 1:
+                raise RosterError("Ambiguous directory destination")
+            if matches:
+                return next(iter(matches.values()))
+            if literal_only:
+                break
+        return None
+
     def resolve(self, target) -> RosterEntry | None:
-        direct = self.get(target)
-        if direct is not None:
-            return direct
         key = normalize_roster_key(str(target or ""))
-        matches = [entry for entry in self._matching_rows(key) if entry.enabled] if key else []
-        if len(matches) > 1:
-            raise RosterError("Ambiguous directory destination")
-        return self._copy(matches[0]) if matches else None
+        rows = (entry for entry in self._matching_rows(key) if entry.enabled) if key else ()
+        entry = self.resolve_entries(rows, target)
+        return self._copy(entry) if entry is not None else None
 
     def caller_display_name(self, user: str) -> str:
         """Return a name only for a unique published caller number or SIP user."""

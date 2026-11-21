@@ -41,14 +41,10 @@ def roster_entry_for_target(
     target: str,
     entries: list[RosterEntry],
 ) -> RosterEntry | None:
-    """Resolve a dial target by stable ID, display name or exact extension."""
+    """Resolve a public dial target through the canonical directory rules."""
+    from .roster import find_entry
 
-    for entry in entries:
-        if same_route_name(entry.id, target) or same_route_name(entry.name, target):
-            return entry
-        if entry.extension and str(entry.extension).strip() == str(target).strip():
-            return entry
-    return None
+    return find_entry(entries, target, include_number=False)
 
 
 def browser_endpoint_can_ring(endpoint: object | None) -> bool:

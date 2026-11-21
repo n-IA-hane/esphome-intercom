@@ -7,14 +7,15 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .phone_config import update_phone_policy
 from .phone_policy import DestinationKind, PhoneDestination
-from .runtime_data import endpoint_directory
-from .service_endpoints import async_require_phone_service_control, resolve_service_phone
+from .runtime_data import endpoint_directory, runtime_data
+from .service_endpoints import async_require_phone_service_control, resolve_public_phone, resolve_service_phone
 from .store import config_entry
 
 
 async def async_set_phone_settings(call: ServiceCall) -> None:
     """Change future-call defaults without taking control of an active call."""
     registry = endpoint_directory(call.hass)
+    directory = getattr(runtime_data(call.hass), "directory", None)
     endpoint = resolve_service_phone(registry, call.data["device_id"])
     if endpoint is None:
         raise ServiceValidationError("Select an existing VoIP phone")
@@ -35,7 +36,7 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
         if field not in call.data:
             continue
         target = str(call.data[field]).strip()
-        destination = resolve_service_phone(registry, target, allow_internal=True) if target else None
+        destination = resolve_public_phone(registry, target, directory=directory) if target else None
         if destination is not None:
             if destination.endpoint_id == endpoint.endpoint_id:
                 raise ServiceValidationError("A phone cannot forward to itself")
@@ -52,7 +53,7 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
         elif call.data["no_answer_action"] == "voicemail":
             from .mailbox import mailbox_settings
             target = str(call.data.get("no_answer_to") or "").strip()
-            destination = resolve_service_phone(registry, target, allow_internal=True) if target else endpoint
+            destination = resolve_public_phone(registry, target, directory=directory) if target else endpoint
             if destination is None or not mailbox_settings(call.hass, destination.endpoint_id).get("enabled"):
                 raise ServiceValidationError("Enable voicemail for the destination phone first")
             updates["no_answer"] = PhoneDestination(DestinationKind.VOICEMAIL, destination.endpoint_id)
@@ -60,7 +61,7 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
             target = str(call.data.get("no_answer_to") or "").strip()
             if not target:
                 raise ServiceValidationError("Select a no-answer destination")
-            destination = resolve_service_phone(registry, target, allow_internal=True)
+            destination = resolve_public_phone(registry, target, directory=directory)
             if destination is not None:
                 if destination.endpoint_id == endpoint.endpoint_id:
                     raise ServiceValidationError("A phone cannot forward to itself")
@@ -75,7 +76,9 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
     visited = {endpoint.endpoint_id}
     current = policy.always
     while current is not None and current.kind is DestinationKind.CONTACT:
-        target = registry.resolve(current.target)
+        target = registry.resolve(current.target, namespace="endpoint_id")
+        if target is None:
+            target = resolve_public_phone(registry, current.target, directory=directory)
         if target is None:
             break
         if target.endpoint_id in visited:

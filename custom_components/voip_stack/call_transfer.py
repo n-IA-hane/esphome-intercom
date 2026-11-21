@@ -80,7 +80,8 @@ def _blind_target(
     if entry is not None:
         route = resolve_ha_router(raw, entries, trunk_ready=True)
         if route.action is RouteAction.REJECT:
-            endpoint = runtime.endpoints.resolve(raw) if route.reason is RouteReason.TARGET_UNREACHABLE else None
+            endpoint = (runtime.endpoints.get(entry.metadata.get("endpoint_id", ""))
+                        if route.reason is RouteReason.TARGET_UNREACHABLE else None)
             if not (entry.enabled and endpoint is not None
                     and entry.metadata.get("endpoint_id") == endpoint.endpoint_id
                     and endpoint.availability is not EndpointAvailability.UNAVAILABLE):
@@ -89,7 +90,7 @@ def _blind_target(
             # Its policy belongs to the PBX handling the referred INVITE.
         if route.action is RouteAction.GROUP or route.action.is_local_application:
             return _local_transfer_target(runtime, entry.extension or entry.id, entries)
-    endpoint = runtime.endpoints.resolve(raw)
+    endpoint = runtime.endpoints.get(entry.metadata.get("endpoint_id", "")) if entry is not None else None
     if endpoint is not None:
         # A logical phone belongs to this PBX's dial plan. Its current
         # transport address does not carry routing policy, registration flow

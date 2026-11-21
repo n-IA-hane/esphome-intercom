@@ -276,6 +276,8 @@ class VoicemailReceivedTrigger(Trigger):
         from .mailbox import EVENT_VOICEMAIL_RECEIVED
         from .mailbox_actions import current_message
         from .runtime_data import endpoint_directory
+        from .service_endpoints import resolve_service_phone
+        from homeassistant.exceptions import ServiceValidationError
 
         selector = self._options.get("mailbox")
 
@@ -284,7 +286,10 @@ class VoicemailReceivedTrigger(Trigger):
             data = dict(event.data)
             if selector:
                 endpoints = endpoint_directory(self._hass)
-                endpoint = endpoints.by_device_id(selector) or endpoints.resolve(selector)
+                try:
+                    endpoint = resolve_service_phone(endpoints, selector, allow_internal=True)
+                except ServiceValidationError:
+                    return
                 if endpoint is None or endpoint.endpoint_id != data.get("mailbox_id"):
                     return
             binding = current_message.set((data["mailbox_id"], data["message_id"]))

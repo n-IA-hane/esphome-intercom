@@ -92,6 +92,7 @@ async def test_popup_binding_is_server_persistent_scoped_and_explicit(hass):
         assert tracker.has_binding("closed")
         assert tracker.popup_binding("user-b", "browser-1234567890abcdef") is None
         await tracker.async_close()
+
         tracker, _ = await owner(hass, runtime)
         assert tracker.has_binding("closed")
         await tracker.async_set_popup_binding("user-a", "browser-1234567890abcdef", "closed", False)
@@ -100,6 +101,18 @@ async def test_popup_binding_is_server_persistent_scoped_and_explicit(hass):
         with pytest.raises(ValueError):
             await tracker.async_set_popup_binding("user-a", "browser-1234567890abcdef", "unknown", True)
         assert not tracker.has_binding("closed")
+    finally:
+        await tracker.async_close()
+
+
+async def test_binding_keeps_qualified_device_and_endpoint_namespaces(hass):
+    runtime = runtime_for_bindings()
+    runtime.endpoints.update("closed", name="device-reception")
+    tracker, _ = await owner(hass, runtime)
+    try:
+        assert tracker._resolve({"device_id": "device-reception"}).endpoint_id == "reception"
+        assert tracker._resolve({"endpoint_id": "closed"}).endpoint_id == "closed"
+        assert tracker._resolve({"device_id": "device-reception", "endpoint_id": "closed"}) is None
     finally:
         await tracker.async_close()
 

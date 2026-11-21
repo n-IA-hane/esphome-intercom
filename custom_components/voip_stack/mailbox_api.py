@@ -11,11 +11,14 @@ from .authorization import require_websocket_endpoint_read
 from .core.media_archive import ArchiveError
 from .mailbox import get_archive
 from .runtime_data import require_runtime_data
+from .endpoint_registry import EndpointLookup
+from .service_endpoints import resolve_service_phone
 
 
 def _endpoint(hass, selector):
     registry = require_runtime_data(hass).endpoints
-    endpoint = registry.get(selector) or registry.by_device_id(selector)
+    endpoint = resolve_service_phone(registry, selector, allow_internal=True,
+                                     namespace=EndpointLookup.ENDPOINT_ID)
     if endpoint is None:
         raise ValueError("The selected phone is unavailable")
     return endpoint

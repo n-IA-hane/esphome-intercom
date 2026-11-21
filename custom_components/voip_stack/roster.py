@@ -115,7 +115,7 @@ def dump_roster_json(entries: list[RosterEntry]) -> str:
 
 
 def normalize_roster_key(value: str) -> str:
-    return "".join(ch for ch in unquote(value).strip().lower() if ch.isalnum())
+    return "".join(ch for ch in unquote(value).strip().casefold() if ch.isalnum())
 
 
 def entry_matches_extension(entry: RosterEntry, target: str) -> bool:
@@ -147,37 +147,17 @@ def find_entry(
     include_internal_ids: bool = False,
 ) -> RosterEntry | None:
     """Resolve public dial strings; persisted membership references opt in explicitly."""
-    raw = target.strip()
-    if not raw:
-        return None
-    named = None
-    for entry in entries:
-        if include_internal_ids and raw in (entry.metadata.get("endpoint_id"), entry.metadata.get("device_id")):
-            return entry
-        if named is None and raw in (entry.id, entry.name):
-            named = entry
-    if named is not None or literal_only:
-        return named
-    wanted = normalize_roster_key(target)
-    for entry in entries:
-        keys = {normalize_roster_key(entry.id), normalize_roster_key(entry.name)}
-        if include_extension:
-            keys.add(normalize_roster_key(entry.extension))
-        keys.discard("")
-        if wanted in keys:
-            return entry
-    if include_number:
-        for entry in entries:
-            if wanted and wanted == normalize_roster_key(entry.number):
-                return entry
-    return None
+    from .phone_directory import PhoneDirectory
+
+    return PhoneDirectory.resolve_entries(entries, target,
+        include_extension=include_extension, include_number=include_number,
+        literal_only=literal_only, include_internal_ids=include_internal_ids)
 
 
 def merge_roster_overrides(entries: list[RosterEntry], overrides: list[RosterEntry]) -> list[RosterEntry]:
     """Apply manual phonebook overlays without duplicating discovered endpoints."""
 
-    def norm(value: str) -> str:
-        return "".join(ch for ch in unquote(value).strip().lower() if ch.isalnum())
+    norm = normalize_roster_key
 
     merged = list(entries)
     for override in overrides:

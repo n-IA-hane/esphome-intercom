@@ -15,7 +15,7 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
-from homeassistant.exceptions import Unauthorized
+from homeassistant.exceptions import ServiceValidationError, Unauthorized
 
 from .authorization import (
     media_controller_status,
@@ -482,7 +482,12 @@ async def websocket_resolve_device(
     require_websocket_read(hass, connection)
     device_id = str(msg.get("device_id") or "")
     registry = _endpoint_registry(hass)
-    endpoint = registry.by_device_id(device_id) if registry is not None else None
+    from .service_endpoints import resolve_service_phone
+    try:
+        endpoint = resolve_service_phone(registry, device_id) if registry is not None else None
+    except ServiceValidationError as error:
+        connection.send_error(msg["id"], "invalid_phone", str(error))
+        return
     if endpoint is not None and endpoint.supports_ha_client:
         require_websocket_endpoint_read(hass, connection, endpoint)
         connection.send_result(
@@ -490,8 +495,9 @@ async def websocket_resolve_device(
             {"device": _ha_softphone_device(hass, endpoint.endpoint_id)},
         )
         return
+    selected_device_id = endpoint.device_id if endpoint is not None else device_id
     for device in await _get_voip_devices(hass):
-        if str(device.get("device_id") or "") == device_id:
+        if str(device.get("device_id") or "") == selected_device_id:
             connection.send_result(msg["id"], {"device": device})
             return
     connection.send_result(msg["id"], {"device": None})

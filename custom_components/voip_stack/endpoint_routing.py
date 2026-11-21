@@ -20,7 +20,7 @@ from .core.media.codecs import PREFERRED_PAYLOADS
 from .core import sdp
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
-from .roster import find_entry
+from .roster import RosterEntry, find_entry, normalize_roster_key
 from .router import resolve_ha_router
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, runtime_data
 from .store import manual_roster_entries
@@ -273,10 +273,7 @@ def bridge_audio_profile(
 
 
 def same_route_name(left: str, right: str) -> bool:
-    def norm(value: str) -> str:
-        return "".join(ch for ch in value.lower() if ch.isalnum())
-
-    return bool(left and right and norm(left) == norm(right))
+    return bool(left and right and normalize_roster_key(left) == normalize_roster_key(right))
 
 
 def is_ha_target(hass: HomeAssistant, value: str) -> bool:
@@ -336,20 +333,7 @@ def logical_endpoint_for_member(
     """Resolve a dial-plan member to its transport-independent endpoint."""
 
     endpoint_registry = endpoint_directory(hass)
-    entry = next(
-        (
-            candidate
-            for candidate in entries
-            if same_route_name(member, getattr(candidate, "id", ""))
-            or same_route_name(member, getattr(candidate, "name", ""))
-            or (
-                bool(getattr(candidate, "extension", ""))
-                and str(getattr(candidate, "extension", "")).strip()
-                == str(member).strip()
-            )
-        ),
-        None,
-    )
+    entry = find_entry(entries, member, include_number=False)
     endpoint_id = str(
         ((getattr(entry, "metadata", None) if entry is not None else {}) or {}).get(
             "endpoint_id"
@@ -357,14 +341,7 @@ def logical_endpoint_for_member(
         or ""
     ).strip()
     if not endpoint_id:
-        peer = next(
-            (
-                candidate
-                for candidate in peers
-                if same_route_name(member, candidate.name)
-            ),
-            None,
-        )
+        peer = peer_for_target(member, peers)
         endpoint_id = str(getattr(peer, "endpoint_id", "") or "").strip()
     if not endpoint_id and is_ha_target(hass, member):
         endpoint = preferred_browser_phone(hass)
@@ -412,15 +389,11 @@ class EndpointRouteResolver:
 
 
 def peer_for_target(target: str, peers: list[Peer]) -> Peer | None:
-    for peer in peers:
-        if peer.is_ha:
-            continue
-        if any(
-            same_route_name(target, candidate)
-            for candidate in (peer.name, peer.sip_uri_user, peer.extension)
-        ):
-            return peer
-    return None
+    rows = [RosterEntry(id=peer.sip_uri_user, name=peer.name, extension=peer.extension,
+                        metadata={"endpoint_id": peer.endpoint_id or f"peer:{index}", "peer_index": index})
+            for index, peer in enumerate(peers) if not peer.is_ha]
+    row = find_entry(rows, target, include_number=False)
+    return peers[row.metadata["peer_index"]] if row is not None else None
 
 
 def peer_audio_formats(peer: Peer | None, key: str) -> list[AudioFormat]:
