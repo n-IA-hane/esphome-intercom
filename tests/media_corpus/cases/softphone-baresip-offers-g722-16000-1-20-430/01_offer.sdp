@@ -1,0 +1,15 @@
+v=0
+o=- 4161530620 692978427 IN IP4 192.0.2.10
+s=-
+c=IN IP4 192.0.2.10
+t=0 0
+m=audio 46232 RTP/AVP 9 101
+a=rtpmap:9 G722/8000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-15
+a=sendrecv
+a=rtcp-rsize
+a=ssrc:2495779934 cname:sip:peer@192.0.2.1:5060
+a=mid:0
+a=minptime:20
+a=ptime:20

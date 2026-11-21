@@ -1,0 +1,45 @@
+{
+  "id": "phone-pcma-dtmf-two-clocks",
+  "title": "Narrowband offer that lists telephone events at 48000 Hz before 8000 Hz",
+  "source": {
+    "kind": "synthetic",
+    "origin": "phones that also support Opus list one telephone-event per clock rate",
+    "redaction": "none needed"
+  },
+  "peer": {
+    "kind": "phone",
+    "user_agent": "",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "PCMA/8000/1",
+        "ptime": 20,
+        "payload": 8
+      },
+      "recv": {
+        "codec": "PCMA/8000/1",
+        "ptime": 20,
+        "payload": 8
+      },
+      "dtmf": {
+        "clock": 8000,
+        "payload": 102
+      }
+    }
+  ],
+  "rules": [
+    "S2",
+    "P1",
+    "P5"
+  ]
+}

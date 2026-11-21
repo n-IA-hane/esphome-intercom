@@ -1,0 +1,46 @@
+{
+  "id": "door-station-hikvision-pcmu-issue-165",
+  "title": "Hikvision DS-KV6113 door station: PCMU negotiated at 20 ms, then sent at 40 ms",
+  "source": {
+    "kind": "reconstructed",
+    "origin": "GitHub issue 165, firmware V3.7.2 build 260828; the report gives the negotiated format and the packet sizes, not the full description",
+    "redaction": "addresses replaced with RFC 5737 ranges"
+  },
+  "peer": {
+    "kind": "door_station",
+    "user_agent": "",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "PCMU/8000/1",
+        "ptime": 20,
+        "payload": 0
+      },
+      "recv": {
+        "codec": "PCMU/8000/1",
+        "ptime": 20,
+        "payload": 0
+      },
+      "dtmf": {
+        "clock": 8000,
+        "payload": 101
+      }
+    }
+  ],
+  "rules": [
+    "S2",
+    "T1",
+    "R1",
+    "R2"
+  ]
+}

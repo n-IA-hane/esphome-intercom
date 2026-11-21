@@ -1,0 +1,38 @@
+{
+  "id": "door-station-dahua-vto2211-two-codecs-issue-115",
+  "title": "Dahua VTO2211G answers with PCMU and its 16 kHz PCM, then sends on the PCM payload",
+  "source": {
+    "kind": "reconstructed",
+    "origin": "GitHub issue 115, firmware V4.511.0.0; the answer is rebuilt from the logged payload list, the local offer is what the engine writes for a Dahua contact",
+    "redaction": "addresses replaced with RFC 5737 ranges"
+  },
+  "peer": {
+    "kind": "door_station",
+    "user_agent": "Dahua UAC/3.0",
+    "profile": "dahua_pcm"
+  },
+  "steps": [
+    {
+      "op": "apply_answer",
+      "local_offer": "01_local_offer.sdp",
+      "sdp": "02_answer.sdp",
+      "policy": "trunk"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "recv_accept": [
+        "PCM/16000/1",
+        "PCMU/8000/1"
+      ],
+      "dtmf": {
+        "clock": 8000
+      }
+    }
+  ],
+  "rules": [
+    "S4",
+    "P3"
+  ]
+}

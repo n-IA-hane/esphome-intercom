@@ -1,0 +1,38 @@
+{
+  "id": "softphone-baresip-offers-all-20-101",
+  "title": "cap-all-20-101: m=audio 46298 RTP/AVP 0 8 9 96 10 97 98 99 100 11 101 102 103 104 105 [PCMU/8000, PCMA/8000, G722/8000, L16/48000/2, L16/44100/2, L16/32000/2, L16/16000/2, L16/8000/2, L16/48000, L16/44100, L16/32000, L16/16000, L16/8000, opus/48000/2, telephone-event/8000] minptime:4 ptime:20",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "softphone",
+    "user_agent": "baresip v4.6.0 (x86_64/Linux)",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept"
+    }
+  ],
+  "rules": [
+    "S1",
+    "T1",
+    "T2",
+    "T4",
+    "R1",
+    "P1"
+  ],
+  "captured": {
+    "status": null,
+    "reoffers": 0
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "id": "softphone-baresip-offers-video-start-430",
+  "title": "cap-video-start-430: m=audio 46288 RTP/AVP 8 101 [PCMA/8000, telephone-event/8000, H264/90000, H264/90000] minptime:20 ptime:20 +video",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "softphone",
+    "user_agent": "baresip v4.6.0 (x86_64/Linux)",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "PCMA/8000/1",
+        "ptime": 20,
+        "payload": 8
+      },
+      "recv": {
+        "codec": "PCMA/8000/1",
+        "ptime": 20,
+        "payload": 8
+      },
+      "dtmf": {
+        "clock": 8000
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "T1",
+    "T2",
+    "T4",
+    "R1",
+    "P1",
+    "V2"
+  ],
+  "captured": {
+    "status": null,
+    "reoffers": 0
+  }
+}

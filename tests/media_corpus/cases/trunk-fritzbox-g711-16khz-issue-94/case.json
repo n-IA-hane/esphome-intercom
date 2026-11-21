@@ -1,0 +1,42 @@
+{
+  "id": "trunk-fritzbox-g711-16khz-issue-94",
+  "title": "FRITZ!Box offers G.711 at a 16 kHz clock next to the standard codecs",
+  "source": {
+    "kind": "reconstructed",
+    "origin": "GitHub issue 94; the codec list and payload 120 come from the report, payload 121 and the order beyond the first three entries are assumed",
+    "redaction": "addresses replaced with RFC 5737 ranges"
+  },
+  "peer": {
+    "kind": "trunk",
+    "user_agent": "",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "ptime": 20
+      },
+      "recv": {
+        "ptime": 20
+      },
+      "dtmf": {
+        "clock": 8000,
+        "payload": 101
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "S2",
+    "T2",
+    "R1"
+  ]
+}

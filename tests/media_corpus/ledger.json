@@ -1,0 +1,114 @@
+[
+ {
+  "step": "phone-pcma-dtmf-two-clocks#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 48000,
+  "intended": 8000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "phone-pcma-dtmf-two-clocks#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 101,
+  "intended": 102,
+  "cc": "CC-4"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-32000-1-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "outcome",
+  "prior": "reject",
+  "intended": "accept",
+  "cc": "CC-1"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-44100-1-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "outcome",
+  "prior": "reject",
+  "intended": "accept",
+  "cc": "CC-1"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-48000-2-10-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "send.ptime",
+  "prior": 4,
+  "intended": 5,
+  "cc": "CC-11"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-48000-2-10-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 20,
+  "intended": 5,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-opus-48000-2-20-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-opus-48000-2-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-opus-48000-2-60-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer must not contain 'maxplaybackrate=16000'",
+  "prior": "written",
+  "intended": "absent",
+  "cc": "CC-5"
+ },
+ {
+  "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer must not contain 'sprop-maxcapturerate=16000'",
+  "prior": "written",
+  "intended": "absent",
+  "cc": "CC-5"
+ },
+ {
+  "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer must not contain 'minptime=10'",
+  "prior": "written",
+  "intended": "absent",
+  "cc": "CC-5"
+ },
+ {
+  "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "send.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-11"
+ },
+ {
+  "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ }
+]

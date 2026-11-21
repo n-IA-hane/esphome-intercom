@@ -1,0 +1,44 @@
+{
+  "id": "esp-p4-answers-l16-48000-2-10-430",
+  "title": "cap-L16_48000_2-10-430: m=audio 40216 RTP/AVP 96 97 98 99 9 100 8 0 101 102 [L16/48000/1, L16/16000/1, OPUS/48000/2, L16/32000/1, G722/8000/1, L16/8000/1, PCMA/8000/1, PCMU/8000/1, L16/48000/2, telephone-event/8000] ptime:20 maxptime:32",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "esp",
+    "user_agent": "ESPHome-VoIP-Stack-SIP",
+    "profile": "esp_directional_v1"
+  },
+  "steps": [
+    {
+      "op": "apply_answer",
+      "local_offer": "01_local_offer.sdp",
+      "sdp": "02_answer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "L16/48000/1",
+        "ptime": 10
+      },
+      "recv": {
+        "codec": "L16/16000/1"
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "S4",
+    "P1",
+    "R1"
+  ],
+  "captured": {
+    "status": 200,
+    "reoffers": 0
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "door-station-dahua-vto2111-pcm-issue-161",
+  "title": "Dahua VTO2111D-P-S2 answers with its 16 kHz PCM payload only, then sends 40 ms packets",
+  "source": {
+    "kind": "reconstructed",
+    "origin": "GitHub issue 161, firmware V4.700.0.3; the answer is rebuilt from the logged payload list, the local offer is what the engine writes for a Dahua contact",
+    "redaction": "addresses replaced with RFC 5737 ranges"
+  },
+  "peer": {
+    "kind": "door_station",
+    "user_agent": "Dahua UAC/3.0 VTO2111D-P-S2 V4.700.0.3",
+    "profile": "dahua_pcm"
+  },
+  "steps": [
+    {
+      "op": "apply_answer",
+      "local_offer": "01_local_offer.sdp",
+      "sdp": "02_answer.sdp",
+      "policy": "trunk"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "PCM/16000/1",
+        "ptime": 20
+      },
+      "recv": {
+        "codec": "PCM/16000/1",
+        "ptime": 20
+      },
+      "dtmf": {
+        "clock": 8000
+      }
+    }
+  ],
+  "rules": [
+    "P1",
+    "R2",
+    "T2"
+  ]
+}

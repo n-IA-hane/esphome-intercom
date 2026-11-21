@@ -1,0 +1,51 @@
+{
+  "id": "softphone-baresip-offers-l16-32000-1-20-430",
+  "title": "cap-L16_32000_1-20-430: m=audio 46212 RTP/AVP 96 101 [L16/32000, telephone-event/8000] minptime:20 ptime:20",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "softphone",
+    "user_agent": "baresip v4.6.0 (x86_64/Linux)",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "L16/32000/1",
+        "ptime": 10,
+        "payload": 96
+      },
+      "recv": {
+        "codec": "L16/32000/1",
+        "ptime": 10,
+        "payload": 96
+      },
+      "dtmf": {
+        "clock": 8000
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "T1",
+    "T2",
+    "T4",
+    "R1",
+    "P1"
+  ],
+  "captured": {
+    "status": null,
+    "reoffers": 1
+  }
+}

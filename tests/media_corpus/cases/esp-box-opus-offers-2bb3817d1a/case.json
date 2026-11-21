@@ -1,0 +1,43 @@
+{
+  "id": "esp-box-opus-offers-2bb3817d1a",
+  "title": "2bb3817d1a: m=audio 40000 RTP/AVP 96 120 126 [opus/48000/2, telephone-event/8000, telephone-event/48000] ptime:20 maxptime:20",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "esp",
+    "user_agent": "ESPHome-VoIP-Stack-SIP",
+    "profile": "esp_directional_v1"
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "OPUS/48000/2",
+        "ptime": 20
+      },
+      "recv": {
+        "codec": "OPUS/48000/2"
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "S4",
+    "P1",
+    "R1"
+  ],
+  "captured": {
+    "status": null,
+    "reoffers": 0
+  }
+}

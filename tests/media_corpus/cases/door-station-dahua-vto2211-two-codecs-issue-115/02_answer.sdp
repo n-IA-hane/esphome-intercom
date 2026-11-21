@@ -1,0 +1,11 @@
+v=0
+o=- 0 0 IN IP4 192.0.2.32
+s=Dahua VT 1.5
+c=IN IP4 192.0.2.32
+t=0 0
+m=audio 20000 RTP/AVP 0 97 100
+a=rtpmap:0 PCMU/8000
+a=rtpmap:97 PCM/16000
+a=rtpmap:100 telephone-event/8000
+a=fmtp:100 0-15
+a=sendrecv

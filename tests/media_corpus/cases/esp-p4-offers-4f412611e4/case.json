@@ -1,0 +1,44 @@
+{
+  "id": "esp-p4-offers-4f412611e4",
+  "title": "4f412611e4: m=audio 40000 RTP/AVP 96 97 120 122 126 [L16/48000/1, L16/16000/1, telephone-event/8000, telephone-event/16000, telephone-event/48000, JPEG/90000] ptime:10 maxptime:10 +video",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, firmware 8340a55, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; device and account names replaced"
+  },
+  "peer": {
+    "kind": "esp",
+    "user_agent": "ESPHome-VoIP-Stack-SIP",
+    "profile": "esp_directional_v1"
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "L16/48000/1",
+        "ptime": 10
+      },
+      "recv": {
+        "codec": "L16/16000/1"
+      }
+    }
+  ],
+  "rules": [
+    "S1",
+    "S4",
+    "P1",
+    "R1",
+    "V2"
+  ],
+  "captured": {
+    "status": null,
+    "reoffers": 0
+  }
+}

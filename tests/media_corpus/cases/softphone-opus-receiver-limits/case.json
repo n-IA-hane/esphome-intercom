@@ -1,0 +1,50 @@
+{
+  "id": "softphone-opus-receiver-limits",
+  "title": "Opus offer that states the peer's own playback and capture limits",
+  "source": {
+    "kind": "synthetic",
+    "origin": "modelled on browser and softphone Opus parameters (RFC 7587 section 6.1)",
+    "redaction": "none needed"
+  },
+  "peer": {
+    "kind": "softphone",
+    "user_agent": "",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "answer_offer",
+      "sdp": "01_offer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept",
+      "send": {
+        "codec": "OPUS/48000/2",
+        "ptime": 20
+      },
+      "recv": {
+        "codec": "OPUS/48000/2",
+        "ptime": 20
+      },
+      "dtmf": {
+        "clock": 48000,
+        "payload": 126
+      },
+      "answer_excludes": [
+        "maxplaybackrate=16000",
+        "sprop-maxcapturerate=16000",
+        "minptime=10"
+      ]
+    }
+  ],
+  "rules": [
+    "S1",
+    "T2",
+    "R1",
+    "P5",
+    "P6"
+  ]
+}

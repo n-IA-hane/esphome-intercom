@@ -1,0 +1,1254 @@
+{
+ "door-station-dahua-vto2111-pcm-issue-161#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 100
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCM/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "PCM/16000/1"
+  ],
+  "send": {
+   "codec": "PCM/16000/1",
+   "payload": 97,
+   "ptime": 20
+  }
+ },
+ "door-station-dahua-vto2211-two-codecs-issue-115#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 100
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "PCM/16000/1",
+   "PCMU/8000/1"
+  ],
+  "send": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 20
+  }
+ },
+ "door-station-hikvision-pcmu-issue-165#0": {
+  "answer": [
+   "m=audio RTP/AVP 0 101",
+   "a=rtpmap:0 PCMU/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "esp-box-opus-answers-66dbd3341b#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-answers-a582568311#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-answers-all-20-101#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-answers-l16-48000-1-10-101#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-answers-opus-48000-2-20-101#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-answers-pcma-20-101#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 10
+  },
+  "recv_accept": [
+   "OPUS/48000/2"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "esp-box-opus-offers-0ccc351533#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 120",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000",
+   "a=x-voip-stack-flow:96 sendrecv",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "esp-box-opus-offers-2bb3817d1a#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 120",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000",
+   "a=x-voip-stack-flow:96 sendrecv",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "esp-box-opus-offers-in-from-box#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 120",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000",
+   "a=x-voip-stack-flow:96 sendrecv",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "esp-p4-answers-all-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-c3fbf14748#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-e2760d91a7#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-g722-16000-1-20-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-l16-16000-1-20-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-l16-48000-1-10-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-l16-48000-2-10-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-l16-8000-1-60-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-opus-48000-2-20-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-opus-48000-2-60-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-pcma-20-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-pcma-60-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-pcmu-30-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-video-inactive-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-answers-video-start-430#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 102
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "L16/16000/1"
+  ],
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  }
+ },
+ "esp-p4-offers-151c78c1ef#0": {
+  "answer": [
+   "m=audio RTP/AVP 97 96 120",
+   "a=rtpmap:97 L16/16000/1",
+   "a=x-voip-stack-flow:97 recv",
+   "a=rtpmap:96 L16/48000/1",
+   "a=x-voip-stack-flow:96 send",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:20",
+   "a=maxptime:384",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "esp-p4-offers-4f412611e4#0": {
+  "answer": [
+   "m=audio RTP/AVP 97 96 120",
+   "a=rtpmap:97 L16/16000/1",
+   "a=x-voip-stack-flow:97 recv",
+   "a=rtpmap:96 L16/48000/1",
+   "a=x-voip-stack-flow:96 send",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:20",
+   "a=maxptime:384",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "esp-p4-offers-in-from-p4#0": {
+  "answer": [
+   "m=audio RTP/AVP 97 96 120",
+   "a=rtpmap:97 L16/16000/1",
+   "a=x-voip-stack-flow:97 recv",
+   "a=rtpmap:96 L16/48000/1",
+   "a=x-voip-stack-flow:96 send",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:20",
+   "a=maxptime:384",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "esp-p4-offers-video-in-from-p4#0": {
+  "answer": [
+   "m=audio RTP/AVP 97 96 120",
+   "a=rtpmap:97 L16/16000/1",
+   "a=x-voip-stack-flow:97 recv",
+   "a=rtpmap:96 L16/48000/1",
+   "a=x-voip-stack-flow:96 send",
+   "a=rtpmap:120 telephone-event/8000",
+   "a=fmtp:120 0-15",
+   "a=x-voip-stack-independent-ptime:1",
+   "a=ptime:20",
+   "a=maxptime:384",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 120
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 97,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "phone-pcma-dtmf-two-clocks#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/48000",
+   "a=fmtp:101 0-16",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 48000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-all-20-101#0": {
+  "answer": [
+   "m=audio RTP/AVP 100 105",
+   "a=rtpmap:100 L16/48000/1",
+   "a=rtpmap:105 telephone-event/8000",
+   "a=fmtp:105 0-15",
+   "a=ptime:10",
+   "a=maxptime:128",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 105
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/48000/1",
+   "payload": 100,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 100,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-all-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 100 105",
+   "a=rtpmap:100 L16/48000/1",
+   "a=rtpmap:105 telephone-event/8000",
+   "a=fmtp:105 0-15",
+   "a=ptime:10",
+   "a=maxptime:128",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 105
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/48000/1",
+   "payload": 100,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 100,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-g722-16000-1-20-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 9 101",
+   "a=rtpmap:9 G722/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "G722/8000/1",
+   "payload": 9,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "G722/8000/1",
+   "payload": 9,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-l16-16000-1-20-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 L16/16000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:384",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 96,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/16000/1",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-l16-32000-1-20-430#0": {
+  "outcome": "reject"
+ },
+ "softphone-baresip-offers-l16-44100-1-20-430#0": {
+  "outcome": "reject"
+ },
+ "softphone-baresip-offers-l16-48000-1-10-101#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 L16/48000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:10",
+   "a=maxptime:128",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-l16-48000-1-10-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 L16/48000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:10",
+   "a=maxptime:128",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "L16/48000/1",
+   "payload": 96,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-l16-48000-2-10-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 L16/48000/2",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:64",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/48000/2",
+   "payload": 96,
+   "ptime": 4
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-l16-8000-1-60-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 L16/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:768",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/8000/1",
+   "payload": 96,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/8000/1",
+   "payload": 96,
+   "ptime": 60
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-opus-48000-2-20-101#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=1;sprop-stereo=1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-opus-48000-2-20-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=1;sprop-stereo=1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-opus-48000-2-60-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 96 101",
+   "a=rtpmap:96 OPUS/48000/2",
+   "a=fmtp:96 stereo=1;sprop-stereo=1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 96,
+   "ptime": 60
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-pcma-20-101#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-pcma-20-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-pcma-60-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 60
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-pcmu-30-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 0 101",
+   "a=rtpmap:0 PCMU/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMU/8000/1",
+   "payload": 0,
+   "ptime": 30
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-video-inactive-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-baresip-offers-video-start-430#0": {
+  "answer": [
+   "m=audio RTP/AVP 8 101",
+   "a=rtpmap:8 PCMA/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "PCMA/8000/1",
+   "payload": 8,
+   "ptime": 20
+  },
+  "video": false
+ },
+ "softphone-opus-receiver-limits#0": {
+  "answer": [
+   "m=audio RTP/AVP 111 126",
+   "a=rtpmap:111 OPUS/48000/2",
+   "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxplaybackrate=16000;sprop-maxcapturerate=16000",
+   "a=rtpmap:126 telephone-event/48000",
+   "a=fmtp:126 0-15",
+   "a=ptime:10",
+   "a=maxptime:120",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 48000,
+   "payload": 126
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 111,
+   "ptime": 10
+  },
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 111,
+   "ptime": 10
+  },
+  "video": false
+ },
+ "trunk-fritzbox-g711-16khz-issue-94#0": {
+  "answer": [
+   "m=audio RTP/AVP 9 101",
+   "a=rtpmap:9 G722/8000/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:1000",
+   "a=sendrecv"
+  ],
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "G722/8000/1",
+   "payload": 9,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "G722/8000/1",
+   "payload": 9,
+   "ptime": 20
+  },
+  "video": false
+ }
+}
