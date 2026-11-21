@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import socket
 import struct
 import wave
 
@@ -52,8 +53,21 @@ async def registered_phones(trunks, tmp_path, request):
         for index, name in enumerate(names):
             config = tmp_path / name
             config.mkdir(mode=0o700)
+            # Port zero gives UDP and TCP different listeners. The advertised
+            # Contact must accept the RFC 3261 upgrade for a large request.
+            for _ in range(128):
+                sip_port = 31000 + secrets.randbelow(1000)
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_probe, socket.socket() as tcp_probe:
+                        udp_probe.bind(("127.0.0.1", sip_port))
+                        tcp_probe.bind(("127.0.0.1", sip_port))
+                except OSError:
+                    continue
+                break
+            else:
+                raise RuntimeError("No free UDP/TCP port in the registered phone range")
             (config / "config").write_text(f"""net_interface 127.0.0.1
-sip_listen 127.0.0.1:0
+sip_listen 127.0.0.1:{sip_port}
 call_max_calls 2
 rtp_ports 20000-30000
 audio_player aubridge,nil
@@ -121,6 +135,49 @@ module_app account.so
                 await asyncio.to_thread(peer.close)
         assert not lab.calls.endpoint_claims_snapshot()
         assert not lab.calls.relays_snapshot()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_registered_phone_contact_serves_udp_and_tcp(registered_phones, trunks):
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.sip_tcp_io import read_sip_stream_message
+
+    registrar = trunks.calls.component("registrar")
+    loop = asyncio.get_running_loop()
+    for name in ("transfer_a", "transfer_b", "transfer_c"):
+        contact = registrar.registered_contacts(name)[0]
+        uri = sip.parse_sip_uri(contact.contact_uri)
+        assert uri.host == "127.0.0.1" and 31000 <= uri.port < 32000
+        for transport in ("UDP", "TCP"):
+            call_id = f"contact-{name}-{transport}"
+
+            def request(port):
+                return sip.build_request("OPTIONS", uri, [
+                    ("Via", f"SIP/2.0/{transport} 127.0.0.1:{port};branch=z9hG4bK-{call_id};rport"),
+                    ("From", "<sip:probe@127.0.0.1>;tag=contact-probe"),
+                    ("To", f"<{contact.contact_uri}>"), ("Call-ID", call_id),
+                    ("CSeq", "1 OPTIONS"), ("Max-Forwards", "70"),
+                ])
+
+            async with asyncio.timeout(2):
+                if transport == "UDP":
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                        sock.bind(("127.0.0.1", 0))
+                        sock.setblocking(False)
+                        await loop.sock_sendto(sock, request(sock.getsockname()[1]), (uri.host, uri.port))
+                        raw, _address = await loop.sock_recvfrom(sock, 65535)
+                else:
+                    reader, writer = await asyncio.open_connection(uri.host, uri.port)
+                    try:
+                        writer.write(request(writer.get_extra_info("sockname")[1]))
+                        await writer.drain()
+                        raw = await read_sip_stream_message(reader)
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+            response = sip.parse_message(raw)
+            assert response.status_code == 200
+            assert response.header("Call-ID") == call_id and response.header("CSeq") == "1 OPTIONS"
 
 
 async def establish_consultation(lab, peers):
