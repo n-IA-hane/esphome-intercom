@@ -14,8 +14,10 @@ HA_AUDIO_CAPABILITIES = importlib.import_module(
 @pytest.mark.parametrize("bounds,expected_ms", [
     ("", 40),
     ("a=minptime:20\r\na=maxptime:30\r\n", None),
-    ("a=minptime:41\r\na=maxptime:80\r\n", None),
-    ("a=minptime:41\r\na=maxptime:79\r\n", None),
+    # CC-1: the unregistered minimum is advisory; maximum and wire budget
+    # remain hard. Forty milliseconds is the legal whole-sample duration.
+    ("a=minptime:41\r\na=maxptime:80\r\n", 40),
+    ("a=minptime:41\r\na=maxptime:79\r\n", 40),
 ])
 def test_unknown_11025hz_offer_without_ptime_derives_finite_packetization(bounds, expected_ms):
     preferred = [
