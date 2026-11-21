@@ -423,6 +423,10 @@ class ConferenceRoom:
         leg.transport = None
         if transport is not None:
             transport.close()
+        for resource in (leg.decoder, leg.encoder):
+            close = getattr(resource, "close", None)
+            if close is not None:
+                close()
         reservation = leg.port_reservation
         leg.port_reservation = None
         client = leg.client
@@ -467,6 +471,13 @@ class ConferenceRoom:
         )
         await async_wait_for_cleanup(cleanup)
 
+    def _input_frame(self, leg):
+        """Use the existing mixer tick to continue a negotiated CN period."""
+        if not leg.in_fifo and leg.decoder is not None and leg.decoder.comfort_noise_active:
+            for pcm in leg.decoder.take_comfort_noise():
+                leg.in_fifo.extend(leg.in_converter.convert(pcm))
+        return leg.in_fifo.pop(0) if leg.in_fifo else _silence()
+
     async def _mix_loop(self) -> None:
         next_deadline = time.monotonic()
         try:
@@ -488,7 +499,7 @@ class ConferenceRoom:
                 if not self.legs:
                     break
                 leg_items = list(self.legs.items())
-                input_frames = [leg.in_fifo.pop(0) if leg.in_fifo else _silence() for _call_id, leg in leg_items]
+                input_frames = [self._input_frame(leg) for _call_id, leg in leg_items]
                 for (_call_id, leg), mixed in zip(leg_items, mix_frames(input_frames), strict=True):
                     for out_frame in leg.out_converter.convert(mixed):
                         if leg.local_out is not None:
@@ -551,6 +562,7 @@ class ConferenceRoom:
             leg.local_out is None
             and leg.can_receive
             and not leg.connection_held
+            and not (leg.decoder is not None and leg.decoder.comfort_noise_active)
             and now - leg.last_rx > CONFERENCE_INACTIVITY_S
         )
 

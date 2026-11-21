@@ -8,6 +8,7 @@ import logging
 from .core import rtp, sdp
 from .core.audio_pcm import PcmFrameConverter
 from .core.rtp_payload import RtpPayloadDecoder
+from .core.media.codecs import CODECS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,11 +24,16 @@ class RtpAudioReceiver:
         previous: RtpAudioReceiver | None = None,
     ) -> None:
         self.selected_format = selected_format
+        if CODECS.get(selected_format.encoding) is not None and CODECS[selected_format.encoding].auxiliary:
+            raise ValueError("Comfort noise requires a negotiated primary audio format")
         # Share the observer collection even when it is empty: a recorder may
         # attach after offer preparation but before the new receiver commits.
         self._pcm_observers = previous._pcm_observers if previous is not None else {}
         self._formats = {fmt.payload_type: fmt for fmt in recv_formats}
         self._formats.setdefault(selected_format.payload_type, selected_format)
+        if any(fmt.encoding == "CN" and (fmt.channels != 1 or fmt.sample_rate != selected_format.sample_rate)
+               for fmt in self._formats.values()):
+            raise ValueError("Comfort noise must use the primary audio RTP clock and one channel")
         if any(not 0 <= pt <= 127 for pt in self._formats):
             raise ValueError("RTP audio payload type out of range")
         self._retired: dict[int, sdp.RtpPcmFormat] = {}
@@ -53,6 +59,7 @@ class RtpAudioReceiver:
         self._active_format: sdp.RtpPcmFormat | None = None
         self._converter: PcmFrameConverter | None = None
         self._pending = bytearray()
+        self._comfort_payload_type: int | None = None
 
     @property
     def accepted_formats(self) -> tuple[sdp.RtpPcmFormat, ...]:
@@ -74,6 +81,8 @@ class RtpAudioReceiver:
         fmt = self.format_for(payload_type)
         if fmt is None:
             raise ValueError(f"unnegotiated RTP audio payload type {payload_type}")
+        if fmt.encoding != "CN":
+            self.end_comfort_noise()
         if payload_type in self._new_payload_types:
             # A new mapping proves that the peer applied the new description.
             self._retired.clear()
@@ -105,6 +114,46 @@ class RtpAudioReceiver:
         if decoder is None:
             decoder = self._decoders[payload_type] = RtpPayloadDecoder(fmt)
         pcm = decoder.decode(payload)
+        if fmt.encoding == "CN":
+            self._comfort_payload_type = payload_type
+        return self._accept_decoded(fmt, pcm, normalize_frames=normalize_frames)
+
+    @property
+    def comfort_noise_active(self) -> bool:
+        return self._comfort_payload_type is not None
+
+    @property
+    def comfort_noise_packet_ms(self):
+        fmt = self.format_for(self._comfort_payload_type) if self._comfort_payload_type is not None else None
+        return fmt.audio_format.frame_ms if fmt is not None else 0
+
+    def end_comfort_noise(self):
+        if self._comfort_payload_type is not None:
+            self._decoders[self._comfort_payload_type].end_comfort_noise()
+            self._comfort_payload_type = None
+
+    def take_comfort_noise(self, *, normalize_frames=True) -> list[bytes]:
+        """Supply the next silence-period quantum from this receiver's SID."""
+        payload_type = self._comfort_payload_type
+        if payload_type is None:
+            return []
+        fmt = self.format_for(payload_type)
+        if fmt is None:
+            self.end_comfort_noise()
+            return []
+        pcm = self._decoders[payload_type].generate_comfort_noise()
+        return self._accept_decoded(fmt, pcm, normalize_frames=normalize_frames)
+
+    def close(self):
+        self.end_comfort_noise()
+        for decoder in self._decoders.values():
+            decoder.close()
+        self._decoders.clear()
+        self._pending.clear()
+        self._converter = None
+        self._active_format = None
+
+    def _accept_decoded(self, fmt, pcm, *, normalize_frames):
         source = fmt.audio_format
         stride = source.container_bytes_per_sample * source.channels
         if not pcm or len(pcm) % stride:
@@ -116,7 +165,7 @@ class RtpAudioReceiver:
                 except Exception:
                     self._pcm_observers.pop(observer, None)
                     _LOGGER.debug("Decoded audio observer failed; call audio continues", exc_info=True)
-        self.observe_payload(payload_type)
+        self.observe_payload(fmt.payload_type)
         if fmt != self._active_format:
             self._pending.clear()
             self._converter = (

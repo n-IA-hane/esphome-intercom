@@ -178,6 +178,7 @@ class _FakeHass:
             tasks=set(),
             calls=None,
             endpoints=endpoints,
+            directory=None,
             preferred_phone_device_id="ha-softphone",
             ha_bindings=None,
             sip=None,
@@ -1314,6 +1315,40 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Conference", manager.rooms)
         pool = hass.runtime.rtp_port_pool
         self.assertFalse(pool["used"])
+
+
+    async def test_cn_period_uses_existing_mix_ticks_and_stops_when_primary_returns(self):
+        primary = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
+        cn = sdp.RtpPcmFormat(13, "CN", 8000, 1, 20)
+        receiver = conference.RtpAudioReceiver(primary, (primary, cn))
+        room = conference.ConferenceRoom(_FakeHass(), name="CN room", local_ip="127.0.0.1")
+        source = conference._ConferenceLeg(call_id="source", caller="Desk", role="manual",
+            remote_host="127.0.0.1", remote_port=40000, decoder=receiver,
+            in_converter=conference.PcmFrameConverter(primary.audio_format, conference.CONFERENCE_FORMAT),
+            out_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, primary.audio_format),
+            can_send=False)
+        output = asyncio.Queue()
+        listener = conference._ConferenceLeg(call_id="listener", caller="Listener", role="manual",
+            remote_host="", remote_port=0, local_out=output,
+            in_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT),
+            out_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT))
+        room.legs = {"source": source, "listener": listener}
+        sid = rtp.build_packet(rtp.RtpPacket(13, 1, 0, 55, bytes([40])))
+        room.handle_rtp("source", sid, ("127.0.0.1", 40000))
+        room._task = asyncio.create_task(room._mix_loop())
+        try:
+            frames = [await asyncio.wait_for(output.get(), .5) for _ in range(4)]
+            self.assertTrue(all(len(frame) == conference.CONFERENCE_FRAME_BYTES and any(frame) for frame in frames))
+            self.assertTrue(receiver.comfort_noise_active)
+            self.assertFalse(room._rx_inactivity_expired(source, source.last_rx + 100))
+            voice = rtp.build_packet(rtp.RtpPacket(0, 2, 160, 55, bytes([255]) * 160))
+            room.handle_rtp("source", voice, ("127.0.0.1", 40000))
+            resumed = [await asyncio.wait_for(output.get(), .5) for _ in range(5)]
+            self.assertFalse(receiver.comfort_noise_active)
+            self.assertEqual(resumed[-2:], [bytes(conference.CONFERENCE_FRAME_BYTES)] * 2)
+        finally:
+            await room.close(reason="test_done")
+        self.assertFalse(receiver.comfort_noise_active)
 
 
 if __name__ == "__main__":

@@ -304,6 +304,9 @@ class SipRtpRelay:
         setattr(source, f"{source_side}_transport", None)
         setattr(destination, f"{destination_side}_transport", None)
         source._stop_requested = destination._stop_requested = True
+        for relay in (source, destination):
+            for side in ("left", "right"):
+                relay._cancel_comfort_noise(side)
         return result
 
     def __init__(
@@ -337,6 +340,8 @@ class SipRtpRelay:
         self._start_task: asyncio.Task[None] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_requested = False
+        self._cn_timers: dict[str, asyncio.TimerHandle] = {}
+        self._cn_generations = {"left": 0, "right": 0}
         self._dtmf_tasks: set[asyncio.Task[None]] = set()
         self._dtmf_locks = {"left": asyncio.Lock(), "right": asyncio.Lock()}
         self.video_relay: Any | None = None
@@ -477,7 +482,13 @@ class SipRtpRelay:
         state: dict[str, Any],
     ) -> None:
         """Publish one fully prepared media state."""
-
+        for side in ("left", "right"):
+            self._cancel_comfort_noise(side)
+            for suffix in ("decoder", "encoder"):
+                previous = getattr(self, f"{side}_{suffix}", None)
+                close = getattr(previous, "close", None)
+                if close is not None:
+                    close()
         self.left = left
         self.right = right
         self.left_to_right_passthrough = state["left_to_right_passthrough"]
@@ -778,6 +789,12 @@ class SipRtpRelay:
         for task in dtmf_tasks:
             task.cancel()
         self._close_audio_resources()
+        for side in ("left", "right"):
+            for suffix in ("decoder", "encoder"):
+                resource = getattr(self, f"{side}_{suffix}", None)
+                close = getattr(resource, "close", None)
+                if close is not None:
+                    close()
         self._detach_debug_capture_snapshot()
         # Port ownership is independent from optional diagnostics and video
         # cleanup. Release it before the first await so a slow filesystem or a
@@ -829,7 +846,8 @@ class SipRtpRelay:
 
     def _close_audio_resources(self) -> None:
         """Synchronously revoke both RTP transports."""
-
+        for side in ("left", "right"):
+            self._cancel_comfort_noise(side)
         sockets, self._audio_sockets = self._audio_sockets, None
         for sock in sockets or ():
             with contextlib.suppress(OSError):
@@ -1243,6 +1261,7 @@ class SipRtpRelay:
                 # Resamplers require nominal input quanta from this receiver.
                 pcm_frames = decoder.decode(packet.payload_type, packet.payload,
                     normalize_frames=not converter._same_pcm_contract())
+                self._arm_comfort_noise(side)
                 if not pcm_frames:
                     return
                 if source.rx_ssrc is None:
@@ -1253,33 +1272,7 @@ class SipRtpRelay:
                     # Symmetric RTP: follow a valid same-SSRC NAT tuple rebind.
                     source.host = str(addr[0])
                     source.port = int(addr[1])
-                converted_frames = []
-                for pcm in pcm_frames:
-                    self._capture_pcm(side, pcm)
-                    converted_frames.extend(converter.convert(pcm))
-                encoder = self.right_encoder if side == "left" else self.left_encoder
-                if encoder is None:
-                    raise RuntimeError("RTP encoder missing for transcoding path")
-                outgoing = []
-                sequence = dest.sequence
-                timestamp = dest.timestamp
-                for frame in converted_frames:
-                    outgoing.append(
-                        rtp.build_packet(
-                            rtp.RtpPacket(
-                                payload_type=wire_format.payload_type,
-                                sequence=sequence,
-                                timestamp=timestamp,
-                                ssrc=dest.ssrc,
-                                payload=encoder.encode(frame),
-                            )
-                        )
-                    )
-                    sequence = rtp.next_sequence(sequence)
-                    timestamp = rtp.next_timestamp(
-                        timestamp,
-                        wire_format.rtp_timestamp_step,
-                    )
+                outgoing, sequence, timestamp = self._encode_received_pcm(side, pcm_frames)
         except Exception as err:
             self.dropped += 1
             _LOGGER.debug("RTP relay drop: %s", err)
@@ -1300,6 +1293,78 @@ class SipRtpRelay:
             self._send_audio_packet(destination_side, out)
         dest.sequence = sequence
         dest.timestamp = timestamp
+        self._arm_comfort_noise(side)
+
+    def _encode_received_pcm(self, side, pcm_frames):
+        """Use the same converter, encoder and RTP source for packets and CN."""
+        dest = self.right if side == "left" else self.left
+        converter = self.left_to_right if side == "left" else self.right_to_left
+        encoder = self.right_encoder if side == "left" else self.left_encoder
+        if converter is None or encoder is None:
+            raise RuntimeError("RTP media conversion resources are unavailable")
+        wire_format = encoder.fmt
+        outgoing = []
+        sequence, timestamp = dest.sequence, dest.timestamp
+        for pcm in pcm_frames:
+            self._capture_pcm(side, pcm)
+            for frame in converter.convert(pcm):
+                outgoing.append(rtp.build_packet(rtp.RtpPacket(
+                    payload_type=wire_format.payload_type, sequence=sequence,
+                    timestamp=timestamp, ssrc=dest.ssrc, payload=encoder.encode(frame))))
+                sequence = rtp.next_sequence(sequence)
+                timestamp = rtp.next_timestamp(timestamp, wire_format.rtp_timestamp_step)
+        return outgoing, sequence, timestamp
+
+    def _cancel_comfort_noise(self, side):
+        handle = self._cn_timers.pop(side, None)
+        if handle is not None:
+            handle.cancel()
+        self._cn_generations[side] += 1
+        receiver = getattr(self, f"{side}_decoder", None)
+        end = getattr(receiver, "end_comfort_noise", None)
+        if end is not None:
+            end()
+
+    def _arm_comfort_noise(self, side):
+        receiver = getattr(self, f"{side}_decoder", None)
+        if receiver is None or not receiver.comfort_noise_active or self._stop_requested:
+            if side in self._cn_timers:
+                self._cancel_comfort_noise(side)
+            return
+        if side in self._cn_timers:
+            return
+        generation = self._cn_generations[side]
+        delay = receiver.comfort_noise_packet_ms / 1000
+        self._cn_timers[side] = asyncio.get_running_loop().call_later(
+            delay, self._comfort_noise_tick, side, receiver, generation)
+
+    def _comfort_noise_tick(self, side, receiver, generation):
+        if (generation != self._cn_generations[side]
+                or getattr(self, f"{side}_decoder", None) is not receiver):
+            return
+        self._cn_timers.pop(side, None)
+        source = self.left if side == "left" else self.right
+        dest = self.right if side == "left" else self.left
+        if (self._stop_requested or generation != self._cn_generations[side]
+                or getattr(self, f"{side}_decoder", None) is not receiver
+                or not receiver.comfort_noise_active or not source.can_send
+                or not dest.can_receive or dest.connection_held):
+            return
+        converter = self.left_to_right if side == "left" else self.right_to_left
+        try:
+            frames = receiver.take_comfort_noise(normalize_frames=not converter._same_pcm_contract())
+            packets, sequence, timestamp = self._encode_received_pcm(side, frames)
+            destination_side = "right" if side == "left" else "left"
+            for packet in packets:
+                if not self._send_audio_packet(destination_side, packet):
+                    self._cancel_comfort_noise(side)
+                    return
+            dest.sequence, dest.timestamp = sequence, timestamp
+        except Exception as error:
+            self._cancel_comfort_noise(side)
+            _LOGGER.debug("Comfort-noise RTP period ended (%s)", type(error).__name__)
+            return
+        self._arm_comfort_noise(side)
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = {

@@ -337,3 +337,38 @@ Answered in the second review (kept for the record):
 3. B3: the exact condition for "usable early media path that is intended".
 4. Issue 94 has no original description in the report. The corpus case is a reconstruction and
    claims only that the offer is accepted with standard packet times.
+
+## Optional runtime audio implementations
+
+The default audio policy remains the seven historical codecs. G726-16/24/32/40, G723 and
+CN are optional choices; a new form shows them disabled. Saved choices keep their order and
+enabled state. A policy containing only auxiliary CN is not a usable primary audio policy.
+
+Each direction is probed with the actual adapter processing two packets. G.726 transmission
+uses the public opaque-state API of an optional system SpanDSP library. No system package is
+installed automatically. PyAV's G.726 encoder batches 205 to 512 ms and cannot supply normal
+telephone packet times through its supported API, so its presence does not imply TX support.
+Without SpanDSP, G726-16/24/32 reception can remain available through PyAV while transmission
+is unavailable. G726-40 requires SpanDSP in both directions: the PyAV 17/19 five-bit decoder
+failed comparison against the independent ITU Appendix II output. Full duplex UI choices
+require both directions. `codec_directions` reports the independent results.
+
+The standard G726 RTP names always mean RFC 3551 LSB-first packing, which corresponds to
+FFmpeg `g726le`. FFmpeg `g726` uses the distinct AAL2 packing and is not advertised under a
+standard G726 name. The codeword width and octet alignment quantum come from `CODECS`.
+
+G723 is the SDP name for G.723.1. Its decoder accepts 6.3 and 5.3 kbit/s speech plus SID frames
+using their tagged frame lengths. The encoder supplies the available 6.3 kbit/s mode and rejects
+a receiver restriction to 5.3 kbit/s. Packets contain whole multiples of the 30 ms codec frame.
+
+RFC 3389 CN is auxiliary. Its bounded SID parser accepts optional spectral coefficients and
+uses the permitted zeroth-order noise model. The negotiated receiver owns one noise generator;
+primary audio ends the SID period. Conference playback uses its existing mixer tick. A SIP
+relay schedules a callback only during an active CN period, with no work while CN is off.
+Primary audio, media reconfiguration and teardown cancel that callback; stale generations
+cannot inject audio into a later period or call.
+
+Codec qualification runs the same production adapters with PyAV 17 and 19. The independent
+ITU/FATE files remain outside the repository because redistribution permission is unclear.
+`tests/fixtures/audio_codec_sources.json` records their origins and SHA-256 digests;
+`VOIP_CODEC_REFERENCE_DIR` enables the conformance tests against a separately supplied corpus.
