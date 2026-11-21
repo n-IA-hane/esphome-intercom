@@ -10,6 +10,7 @@ from .call_scope import call_belongs_to_endpoint, has_ringing_destination
 from .call_state import CallPrecondition
 from .runtime_data import require_runtime_data, sip_endpoint_manager
 from .sip_listener import SipInviteResult
+from .service_endpoints import resolve_service_phone
 
 
 @dataclass(slots=True)
@@ -33,7 +34,7 @@ class RetiredForward:
 def ringing_target(hass, target, *, call_id="", generation=None, leg_id=""):
     """Resolve one eligible call, never the phone's latest selected call."""
     runtime = require_runtime_data(hass)
-    endpoint = runtime.endpoints.by_device_id(target) or runtime.endpoints.resolve(target)
+    endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True)
     candidates = []
     if endpoint is not None:
         for session in tuple(runtime.sip.sessions.values()):

@@ -53,16 +53,14 @@ EndpointKind = _ENDPOINT_CONTRACT.EndpointKind
 PhoneEndpoint = _ENDPOINT_CONTRACT.PhoneEndpoint
 
 
-class _Registry:
+EndpointRegistry = importlib.import_module(f"{_ENDPOINT_CONTRACT.__package__}.endpoint_registry").EndpointRegistry
+
+
+class _Registry(EndpointRegistry):
     def __init__(self, *endpoints: PhoneEndpoint) -> None:
-        self.endpoints = {item.endpoint_id: item for item in endpoints}
-        self.devices = {item.device_id: item for item in endpoints if item.device_id}
-
-    def get(self, endpoint_id: str) -> PhoneEndpoint | None:
-        return self.endpoints.get(endpoint_id)
-
-    def by_device_id(self, device_id: str) -> PhoneEndpoint | None:
-        return self.devices.get(device_id)
+        super().__init__()
+        for endpoint in endpoints:
+            self.register(endpoint)
 
 
 class _Call:

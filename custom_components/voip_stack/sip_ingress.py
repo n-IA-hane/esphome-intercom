@@ -134,7 +134,7 @@ class SipIngressPolicy:
                                          listener_port=int(self.config["sip_port"]))
         if source is not None:
             return replace(invite, identified_source_endpoint_id=source.endpoint_id,
-                           caller_route=source.username or source.name, caller=source.name)
+                           caller_route=source.username or source.name)
 
         if classified is not None and classified.received_via_trunk:
             if parse_digest_challenge(request.header("Authorization")).get("realm") != REALM:
@@ -152,10 +152,8 @@ class SipIngressPolicy:
         if (invite.caller_uri is None or invite.caller_uri.user.casefold() != account.username.casefold()
                 or (source is None and not self.registrar.registered_contacts(account.username))):
             return SipRequestResult(403, "Forbidden", to_tag=make_tag())
-        display = source.name if source is not None else account.display_name or account.username
         return replace(invite, identified_source_endpoint_id=source.endpoint_id if source is not None else "",
-                       authenticated_username=account.username, caller_route=account.username,
-                       caller=display, caller_name=display, caller_number=account.username)
+                       authenticated_username=account.username, caller_route=account.username)
 
     def identity_for_invite(self, request: SipMessage, initial: SipInitialInvite) -> SipInitialInvite:
         from .config import trunk_config

@@ -289,7 +289,7 @@ async def test_late_card_can_publicly_answer_and_cancel_noanswer(
         assert state["available"] and state["connected_cards"] == 1
         assert_no_browser_media_owner(lab)
         await lab.hass.services.async_call(
-            "voip_stack", "answer", {"device_id": "browser-casa", "call_id": call_id},
+            "voip_stack", "answer", {"device_id": dial_target, "call_id": call_id},
             blocking=True,
         )
         await asyncio.to_thread(caller.wait_for, "Call established", 3)

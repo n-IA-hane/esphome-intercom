@@ -17,7 +17,7 @@ from .esphome_actions import (
     has_action,
 )
 from .phone_endpoint import EndpointKind, PhoneEndpoint, ha_client_endpoint
-from .service_endpoints import async_require_phone_service_control
+from .service_endpoints import async_require_phone_service_control, resolve_service_phone
 from .softphone_originate import async_originate_browser_call
 from .softphone_answer import async_answer_browser_call
 from .softphone_commands import (
@@ -450,7 +450,7 @@ class PhoneAdapterRegistry:
                 translation_domain=DOMAIN,
                 translation_key="phone_selection_required",
             )
-        endpoint = self._endpoints.resolve(selector)
+        endpoint = resolve_service_phone(self._endpoints, selector)
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 from .runtime_data import runtime_data
@@ -465,6 +465,7 @@ class PhoneAdapterRegistry:
             if endpoint.kind.is_softphone:
                 capabilities = ALL_PHONE_OPERATIONS
                 return self._endpoint_handle(endpoint, capabilities)
+            selector = endpoint.device_id or selector
 
         for entry in self._hass.config_entries.async_entries(DOMAIN):
             runtime = getattr(entry, "runtime_data", None)

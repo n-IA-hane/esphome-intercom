@@ -3770,16 +3770,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             profile = str(peer_profile or "").strip().casefold()
             if not profile and supports_dahua_pcm(request.header("User-Agent")):
                 profile = "dahua"
-            caller = sip.name_addr_display_name(request.header("From"))
+            caller_name = sip.name_addr_display_name(request.header("From"))
+            caller = caller_name or (from_uri.user if from_uri is not None else "")
             target = sip.name_addr_display_name(request.header("To"))
-            if not caller:
-                caller = _identity_header(
-                    request.header("X-Voip-Stack-Caller-Name")
-                )
             if not target:
                 target = _identity_header(request.header("X-Voip-Stack-Dest-Name"))
-            if not caller:
-                caller = from_uri.user if from_uri is not None else ""
             if not target:
                 target = request_uri.user
             caller_route = (
@@ -3801,7 +3796,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 target=target,
                 caller=caller,
                 caller_number=from_uri.user if from_uri is not None else caller_route,
-                caller_name=sip.name_addr_display_name(request.header("From")),
+                caller_name=caller_name,
                 call_id=request.header("Call-ID"),
                 cseq=request.header("CSeq"),
                 signaling_transport=self.signaling_transport,

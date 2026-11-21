@@ -14,7 +14,7 @@ from .core.media_archive import ArchiveError, MediaArchive
 from .phone_config import phone_subentry_by_endpoint_id, update_phone_subentry
 from .phone_endpoint import EndpointKind
 from .runtime_data import require_runtime_data
-from .service_endpoints import async_require_phone_service_control
+from .service_endpoints import async_require_phone_service_control, resolve_service_phone
 from .store import config_entry
 
 CONF_ESPHOME_MAILBOXES = "esphome_mailboxes"
@@ -93,7 +93,7 @@ def message_audio_reference(hass, archive, message):
 
 async def selected_mailbox(call: ServiceCall, selector: str):
     runtime = require_runtime_data(call.hass)
-    endpoint = runtime.endpoints.by_device_id(selector) or runtime.endpoints.resolve(selector)
+    endpoint = resolve_service_phone(runtime.endpoints, selector, allow_internal=True)
     if endpoint is None:
         raise ServiceValidationError("Select an existing phone mailbox")
     await async_require_phone_service_control(call.hass, call, endpoint=endpoint)

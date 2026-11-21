@@ -74,7 +74,7 @@ def project_session_termination(
         peer_name = str(
             details.pop("peer_name", "")
             or (
-                session.callee
+                (metadata.get("connected_party") or session.callee)
                 if endpoint_id == metadata.get("source_endpoint_id")
                 else session.caller
                 if endpoint_id == metadata.get("dest_endpoint_id")

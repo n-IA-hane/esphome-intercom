@@ -59,6 +59,30 @@ async def settings(hass, device="device-kitchen", **values):
     }, blocking=True)
 
 
+@pytest.mark.parametrize("selector", ["Banco@Hotel", "office", "204", "device-kitchen"])
+async def test_phone_settings_resolves_the_selected_phone(hass, phones, selector):
+    phones.registry.update("kitchen", name="Banco@Hotel", username="office", extension="204")
+    await settings(hass, device=selector, forward_to="Bedroom")
+    assert phones.registry.require("kitchen").policy.always.target == "bedroom"
+
+
+async def test_public_source_name_wins_over_another_phones_device_id(hass, phones):
+    phones.registry.update("kitchen", name="Casa")
+    phones.registry.update("bedroom", device_id="Casa")
+    await settings(hass, device="Casa", forward_to="ESP")
+    assert phones.registry.require("kitchen").policy.always.target == "esphome:stable"
+    assert phones.registry.require("bedroom").policy == PhonePolicy()
+
+
+async def test_duplicate_source_extension_leaves_both_phones_unchanged(hass, phones):
+    for endpoint_id in ("kitchen", "bedroom"):
+        phones.registry.update(endpoint_id, extension="204")
+    with pytest.raises(ServiceValidationError, match="[Aa]mbiguous"):
+        await settings(hass, device="204", ringing_timeout=20)
+    assert all(phones.registry.require(key).policy == PhonePolicy() for key in ("kitchen", "bedroom"))
+    phones.push.assert_not_awaited()
+
+
 async def test_native_action_persists_defaults_and_keeps_active_call(hass, phones):
     phones.registry.claim_call("kitchen", "already-active")
     await settings(hass, forward_to="Bedroom")
@@ -165,13 +189,14 @@ async def test_legacy_offline_forward_is_visible_and_can_be_cleared(hass, phones
     assert not reloaded.offline_forward_target
 
 
-async def test_read_only_user_cannot_change_phone_routing(hass, phones, hass_read_only_user):
+@pytest.mark.parametrize("selector", ["Kitchen", "device-kitchen"])
+async def test_read_only_user_cannot_change_phone_routing(hass, phones, hass_read_only_user, selector):
     from homeassistant.core import Context
     from homeassistant.exceptions import Unauthorized
 
     with pytest.raises(Unauthorized):
         await hass.services.async_call("voip_stack", "set_phone_settings", {
-            "device_id": "device-kitchen", "forward_to": "Bedroom",
+            "device_id": selector, "forward_to": "Bedroom",
         }, blocking=True, context=Context(user_id=hass_read_only_user.id))
     assert phones.registry.require("kitchen").policy == PhonePolicy()
     phones.push.assert_not_awaited()

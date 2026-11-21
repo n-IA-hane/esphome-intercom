@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import (
     async_require_service_endpoint_control,
     async_require_service_entity_control,
 )
 from .const import HA_PEER_FALLBACK_NAME
+from .endpoint_registry import EndpointAmbiguousError, EndpointRegistry
 from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
@@ -16,6 +18,25 @@ from .phone_endpoint import (
 )
 from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
+
+
+def resolve_service_phone(
+    registry: EndpointRegistry, selector: str, *, allow_internal: bool = False
+) -> PhoneEndpoint | None:
+    """Resolve a public phone alias or a device ID saved by an older automation."""
+    try:
+        endpoint = (
+            registry.by_name(selector)
+            or registry.by_username(selector)
+            or registry.by_extension(selector)
+            or registry.by_device_id(selector)
+        )
+        if endpoint is None and allow_internal:
+            # Existing policies and in-call operations can carry endpoint references.
+            return registry.resolve(selector)
+        return endpoint
+    except EndpointAmbiguousError as error:
+        raise ServiceValidationError(f"Ambiguous phone selector: {selector}") from error
 
 
 def service_browser_endpoint(
@@ -27,7 +48,7 @@ def service_browser_endpoint(
     """Resolve the logical HA/browser phone originating a service action."""
     registry = endpoint_directory(hass)
     device_id = str(call.data.get("device_id") or "").strip()
-    endpoint = registry.by_device_id(device_id) if device_id else preferred_browser_phone(hass)
+    endpoint = resolve_service_phone(registry, device_id) if device_id else preferred_browser_phone(hass)
     if endpoint is None:
         if device_id:
             raise _service_error(
@@ -54,7 +75,7 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
     registry = endpoint_directory(hass)
 
     device_id = str(call.data.get("device_id") or "").strip()
-    endpoint = registry.by_device_id(device_id) if device_id else preferred_browser_phone(hass)
+    endpoint = resolve_service_phone(registry, device_id) if device_id else preferred_browser_phone(hass)
     if endpoint is None:
         raise _service_error(
             (

@@ -297,7 +297,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
 
         self.assertIn('call.data.get("device_id")', body)
-        self.assertIn("registry.by_device_id(device_id)", body)
+        self.assertIn("resolve_service_phone(registry, device_id)", body)
         function = ast.parse(body).body[0]
         adapter = next(
             node for node in function.body if isinstance(node, ast.Assign)

@@ -772,7 +772,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("EndpointKind.BROWSER", configured)
         self.assertIn("EndpointKind.SIP_ACCOUNT", configured)
         self.assertIn('device_id = str(call.data.get("device_id")', configured)
-        self.assertIn("registry.by_device_id(device_id)", configured)
+        self.assertIn("resolve_service_phone(registry, device_id)", configured)
         self.assertNotIn('call.data.get("endpoint_id")', configured)
         self.assertNotIn('call.data.get("entity_id")', configured)
 

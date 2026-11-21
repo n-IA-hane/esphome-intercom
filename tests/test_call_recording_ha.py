@@ -123,6 +123,7 @@ async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_
     import struct
     from custom_components.voip_stack.local_softphone_runtime import start_local_softphone_call
     runtime = browser_lab
+    runtime.runtime.endpoints.update("browser", name="Reception", extension="204")
     directory = tmp_path / 'media'
     directory.mkdir()
     runtime.hass.config.media_dirs = {'local': str(directory)}
@@ -131,7 +132,7 @@ async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_
     first = runtime.bridge.acquire_media(call.call_id, 'browser', 'first')
     second = runtime.bridge.acquire_media(call.call_id, 'kitchen', 'second')
     response = await runtime.hass.services.async_call('voip_stack', 'start_recording',
-        {'device_id': 'device-browser'}, blocking=True, return_response=True)
+        {'device_id': 'Reception'}, blocking=True, return_response=True)
     recording = runtime.calls.resource_for(call.call_id, 'recording')
     if ending == 'capture_error':
         def fail_capture(*_args, **_kwargs):
@@ -155,7 +156,7 @@ async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_
             await asyncio.wait_for(recording.task, 2)
         else:
             stopped = await runtime.hass.services.async_call('voip_stack', 'stop_recording',
-                {'device_id': 'device-browser'}, blocking=True, return_response=True)
+                {'device_id': '204'}, blocking=True, return_response=True)
             assert stopped['recording_id'] == response['recording_id']
             assert runtime.bridge.get_call(call.call_id) is not None
         result = await runtime.hass.services.async_call('voip_stack', 'get_recording',

@@ -99,6 +99,10 @@ def observe_outbound_call_result(registry, call_id: str, *, state: str, **metada
             generation=session.generation,
         )
         return session
+    if state == CallState.IN_CALL.value:
+        client = registry.sip_client_for(call_id)
+        if client is not None and client.connected_party:
+            metadata["connected_party"] = client.connected_party
     return registry.upsert(call_id, state=state, owner="ha_softphone", **metadata)
 
 

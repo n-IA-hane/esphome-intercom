@@ -41,9 +41,9 @@ async def test_directed_sip_pickup_has_duplex_audio_and_one_caller(
     )
     original = next(iter(runtime.calls.sessions.values()))
     if target == "service":
-        runtime.runtime.endpoints.update("transfer_c", device_id="pickup-device")
+        runtime.runtime.endpoints.update("transfer_c", device_id="pickup-device", name="Reception@Hotel")
         result = await runtime.hass.services.async_call("voip_stack", "pickup", {
-            "device_id": "pickup-device", "target_device_id": "transfer_b", "answer_timeout": 3,
+            "device_id": "Reception@Hotel", "target_device_id": "101", "answer_timeout": 3,
         }, blocking=True, return_response=True)
         assert result["call_id"] == original.call_id
     else:

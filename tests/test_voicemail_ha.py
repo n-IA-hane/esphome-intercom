@@ -741,7 +741,7 @@ async def test_enabled_mailbox_reserves_contact_aliases_and_can_be_reconfigured(
 
     lab = mailbox_lab
     await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
-        "device_id": "mailbox-device", "max_seconds": 60,
+        "device_id": "Kitchen", "max_seconds": 60,
     }, blocking=True)
     assert mailbox_settings(lab.hass, "kitchen")["max_seconds"] == 60
     with pytest.raises(ValueError, match="conflicts"):

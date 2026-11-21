@@ -138,7 +138,9 @@ async def test_initial_invite_challenges_before_session_or_media(trunks, transpo
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(trunks):
+@pytest.mark.parametrize("from_display", ["Mario Rossi", ""])
+async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(trunks, from_display):
+    from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.sip_client import SipCallClient
     from .test_inbound_did_identity import wire_invite
@@ -154,9 +156,10 @@ async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(t
         assert ambiguous.status_code == 403 and not lab.calls.sessions
     finally:
         connection.close()
+    lab.runtime.endpoints.update("sip:bedroom1", username="204", name="Telefono ufficio")
     account = sip_test_account(lab, "sip:bedroom1")
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
-    origin = SipCallClient(local_ip=address[0], local_name=account.display_name, local_uri_user=account.username,
+    origin = SipCallClient(local_ip=address[0], local_name=from_display, local_uri_user=account.username,
         local_sip_port=0, local_rtp_port=36022, supported_formats=[AudioFormat(16000, frame_ms=20)],
         username=account.username, password=account.password)
     try:
@@ -166,6 +169,10 @@ async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(t
         assert state == "in_call"
         session = lab.calls.get_session(origin.dialog_ids.call_id)
         assert session is not None and session.metadata["source_endpoint_id"] == "sip:bedroom1"
+        assert session.caller == (from_display or account.username)
+        incoming = _ha_softphone_state(lab.hass, "sip:bedroom0")
+        assert incoming["direction"] == "incoming"
+        assert incoming["peer_name"] == (from_display or "204")
         assert not session.metadata.get("inbound_trunk_id")
         assert origin.bye()
         await wait_until(lambda: not lab.calls.sessions)

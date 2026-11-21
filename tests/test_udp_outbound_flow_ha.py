@@ -276,6 +276,82 @@ async def test_immediate_browser_call_and_unregister_use_current_binding_owner(w
 
 
 
+@pytest.mark.parametrize(("source_selector", "name", "dialed", "update_name"), [
+    ("Banco@Hotel", "Casa", "Casa", None),
+    ("browser-account-user", "Reception@Hotel", "Reception@Hotel", "Mario Rossi"),
+    ("205", "Telefono ufficio", "204", ""),
+    ("5b8d0533e81d442e9c46e40b043406ad", "Casa", "Casa", None),
+])
+async def test_browser_call_displays_the_party_on_the_sip_dialog(
+    wire_lab, monkeypatch, source_selector, name, dialed, update_name
+):
+    from custom_components.voip_stack import softphone_originate
+    from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
+    from custom_components.voip_stack.endpoint_routing import roster_from_peers
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from .test_sip_capabilities_ha import wait_until
+
+    wire, lab = wire_lab, wire_lab.lab
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
+    monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
+    monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
+    phone = PhoneEndpoint(endpoint_id="Banco@Hotel", device_id="cb3c03b0289b4348aa939d83c9324dfd",
+        kind=EndpointKind.SIP_ACCOUNT, username="outbound-phone", name=name, extension="204")
+    source = PhoneEndpoint(endpoint_id="browser-account", device_id="5b8d0533e81d442e9c46e40b043406ad",
+        kind=EndpointKind.SIP_ACCOUNT, username="browser-account-user", name="Banco@Hotel",
+        extension="205", availability="available")
+    lab.runtime.endpoints.register(phone)
+    lab.runtime.endpoints.register(source)
+    await register_phone(wire, outbound=False, discover=False)
+    respond = wire.a.respond
+    pending = asyncio.Queue()
+
+    def ring(request, address, *, body=b"", headers=()):
+        if request.method != "INVITE":
+            return respond(request, address, body=body, headers=headers)
+        pending.put_nowait((request, address, body, headers))
+        provisional = sip.build_uas_response(request, 180, "Ringing", to_tag="wire-phone")
+        wire.a.transport.sendto(provisional, address)
+        return provisional
+
+    def snapshot():
+        return _ha_softphone_state(lab.hass, source.endpoint_id)
+
+    monkeypatch.setattr(wire.a, "respond", ring)
+    await lab.hass.services.async_call("voip_stack", "call",
+        {"device_id": source_selector, "destination": dialed, "media_client_id": "card-test"}, blocking=True)
+    invite, address, body, headers = await asyncio.wait_for(pending.get(), 2)
+    identity = invite.header("Call-ID")
+    assert sip.name_addr_display_name(invite.header("To")) == dialed
+    assert lab.calls.get_session(identity).callee == dialed
+    assert snapshot()["peer_name"] == dialed
+    target_uri = sip.name_addr_uri(invite.header("To"))
+    response_headers = tuple((key, f'"Reception" <{target_uri}>' if key == "To" else value)
+        for key, value in invite.headers)
+    respond(replace(invite, headers=response_headers), address, body=body,
+        headers=(*headers, ("Supported", "from-change")))
+    ack, listener = await wire.b.receive("ACK")
+    await wait_until(lambda: snapshot()["peer_name"] == "Reception")
+    expected = "Reception"
+    if update_name is not None:
+        from_tag = sip.extract_tag(ack.header("To"))
+        from_value = f'{update_name} <sip:207@127.0.0.1>;tag={from_tag}'
+        update = sip.build_request("UPDATE", sip.name_addr_uri(invite.header("Contact")), [
+            ("Via", f"SIP/2.0/UDP 127.0.0.1:{wire.b.address[1]};branch=z9hG4bK-identity"),
+            ("From", from_value), ("To", invite.header("From")), ("Call-ID", identity), ("CSeq", "5 UPDATE"),
+        ])
+        wire.b.transport.sendto(update, listener)
+        response, _ = await wire.b.receive(status=200)
+        assert response.header("CSeq") == "5 UPDATE"
+        expected = update_name or "207"
+        assert snapshot()["peer_name"] == expected
+    await lab.hass.services.async_call("voip_stack", "hangup",
+        {"device_id": source_selector, "call_id": identity}, blocking=True)
+    await wire.b.receive("BYE")
+    terminal = snapshot()
+    assert (terminal["state"], terminal["peer_name"]) == ("idle", expected)
+
+
 @pytest.mark.parametrize("outbound", [False, True], ids=["ordinary-contact-moves", "authenticated-outbound-flow"])
 async def test_public_call_service_keeps_selected_outbound_flow_but_ordinary_contact_moves(wire_lab, outbound):
     wire = wire_lab

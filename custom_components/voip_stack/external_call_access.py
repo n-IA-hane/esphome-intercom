@@ -5,6 +5,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import async_require_service_admin
 from .runtime_data import require_runtime_data
+from .service_endpoints import resolve_service_phone
 from .store import config_entry
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 
@@ -12,7 +13,7 @@ from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 async def async_set_external_call_access(call: ServiceCall) -> dict:
     await async_require_service_admin(call.hass, call)
     runtime = require_runtime_data(call.hass)
-    endpoint = runtime.endpoints.by_device_id(str(call.data["device_id"]))
+    endpoint = resolve_service_phone(runtime.endpoints, call.data["device_id"])
     if endpoint is None:
         raise ServiceValidationError("Select a VoIP Stack phone, SIP account or discovered ESPHome phone")
     entry = config_entry(call.hass)

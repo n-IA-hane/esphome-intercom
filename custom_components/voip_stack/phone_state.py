@@ -11,6 +11,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .dialog_info import snapshot_all
 from .endpoint_registry import EndpointRegistryEvent, EndpointRegistryEventType
 from .runtime_data import require_runtime_data
+from .service_endpoints import resolve_service_phone
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def phone_state_dto(phone, *, peer_readable):
 
 def resolve_phone(hass, selector):
     directory = require_runtime_data(hass).endpoints
-    endpoint = directory.by_device_id(selector) or directory.resolve(selector)
+    endpoint = resolve_service_phone(directory, selector, allow_internal=True)
     if endpoint is None:
         raise ServiceValidationError("Select an existing phone")
     return endpoint

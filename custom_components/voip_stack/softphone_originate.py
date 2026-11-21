@@ -233,6 +233,7 @@ async def async_originate_browser_call(
         int(cfg.get("sip_port") or 5060), source_endpoint_id=endpoint_id,
         trunk_id=trunk_selection.identity).route
     route = resolve_route(target, contacts)
+    dialed_target = target
     from .inbound_routing.targets import resolve_phone_target
 
     resolved = resolve_phone_target(
@@ -327,7 +328,6 @@ async def async_originate_browser_call(
         # roster contacts, registered endpoints and trunk numbers are still
         # available to normal controllers.
         await async_require_service_admin(hass, call)
-    display_target = route.entry.display_name if route.entry is not None else target
     if route.action is RouteAction.PARKING and route.entry.metadata.get("parking_mode") == "directed_pickup":
         from .call_pickup import pickup_browser
         await _async_prepare_ha_outbound_call(hass, endpoint_id)
@@ -702,7 +702,7 @@ async def async_originate_browser_call(
         state=CallState.CALLING.value,
         owner="ha_softphone",
         caller=local_name,
-        callee=display_target,
+        callee=dialed_target,
         route_kind="direct",
         direction="outgoing",
         endpoint_id=endpoint_id,
@@ -731,7 +731,7 @@ async def async_originate_browser_call(
         client,
         call_id=client.dialog_ids.call_id,
         caller=local_name,
-        callee=display_target,
+        callee=dialed_target,
     )
     attach_outbound_connected_identity_state(
         hass,
@@ -763,13 +763,13 @@ async def async_originate_browser_call(
         raise _service_error(
             str(err),
             "phone_busy",
-            phone=str(getattr(target_endpoint, "name", "") or display_target),
+            phone=str(getattr(target_endpoint, "name", "") or dialed_target),
         ) from err
     _bind_service_call_controller(registry, client.dialog_ids.call_id, call)
     publish_phone_projection(
         hass,
         session,
-        endpoint_id, peer_name=display_target, direction="outgoing",
+        endpoint_id, peer_name=dialed_target, direction="outgoing",
             target_device_id=target_device_id,
             sip_transport=_sip_uri_transport(uri).lower(), last_sip_event="INVITE",
             sip_uri=route_uri, video_requested=video_enabled,
@@ -790,7 +790,7 @@ async def async_originate_browser_call(
         client.audio_rtp_socket = bind_sip_rtp_socket(local_rtp_port)
         result = await client.invite(
             target=uri.user,
-            target_display_name=display_target,
+            target_display_name=dialed_target,
             remote_host=uri.host,
             remote_sip_port=sip_default_port(uri),
             request_uri=str(uri),
@@ -803,9 +803,9 @@ async def async_originate_browser_call(
             TerminationInitiator.RUNTIME,
         )
         raise _service_error(
-            f"could not start SIP call to {display_target}",
+            f"could not start SIP call to {dialed_target}",
             "sip_call_start_failed",
-            destination=display_target,
+            destination=dialed_target,
         ) from err
     if registry.sip_client_for(client.dialog_ids.call_id) is not client:
         await EndpointTerminationHandler(hass).terminate_reason(
@@ -826,7 +826,7 @@ async def async_originate_browser_call(
             registry, client.dialog_ids.call_id,
             state=public_result,
             caller=local_name,
-            callee=display_target,
+            callee=dialed_target,
             route_kind="direct",
         )
     # Publish the first result before starting the detached final-response
@@ -839,13 +839,13 @@ async def async_originate_browser_call(
         publish_phone_projection(
             hass,
             session,
-            endpoint_id, peer_name=display_target, direction="outgoing",
+            endpoint_id, peer_name=dialed_target, direction="outgoing",
                 target_device_id=target_device_id, sip_status_code=180,
                 last_sip_event="SIP_RESPONSE", sip_uri=route_uri,
                 sip_transport=client.signaling_transport.lower(),
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
-        connected_party = str(client.connected_party or display_target).strip()
+        connected_party = str(client.connected_party or dialed_target).strip()
         video_active = bool(
             client.dialog.video_format is not None
             and client.dialog.local_video_direction != "inactive"
@@ -904,7 +904,7 @@ async def async_originate_browser_call(
         hass,
         client=client,
         result=result,
-        target=target,
+        target=dialed_target,
         sip_uri=route_uri,
         endpoint_id=endpoint_id,
         local_name=local_name,

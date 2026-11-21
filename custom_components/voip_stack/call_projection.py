@@ -117,7 +117,7 @@ class CallStatePublisher:
                 self.hass, session, endpoint_id,
                 leg_id=leg_id if leg is not None else "",
                 direction="outgoing" if source else "incoming",
-                peer_name=session.callee if source else session.caller,
+                peer_name=(session.metadata.get("connected_party") or session.callee) if source else session.caller,
                 event_type="state_changed",
             )
         presentation = session.metadata.get(_BRIDGE_PRESENTATION)
