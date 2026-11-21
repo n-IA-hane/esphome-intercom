@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..audio_capabilities import HA_AUDIO_CAPABILITIES
+from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
 from ..audio_format import AudioFormat, MAX_SAMPLE_RATE, PcmFormat
 from ..codec_capabilities import codec_available
 from ..sdp_audio import offered_dtmf_formats, offered_pcm_formats
@@ -43,6 +43,7 @@ class LegPolicy:
     # None is a dynamic backend; a tuple is an explicit fixed local capability.
     send_capabilities: tuple[AudioFormat, ...] | None = None
     receive_capabilities: tuple[AudioFormat, ...] | None = None
+    capabilities: AudioCapabilities | None = HA_AUDIO_CAPABILITIES
 
 
 PHONE_POLICY = LegPolicy(
@@ -128,12 +129,16 @@ def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBou
     if fixed is not None and not fixed.explicit:
         return None
     spec = CODECS[fmt.encoding]
-    return choose_transmit_packet_ms(
+    choice = choose_transmit_packet_ms(
         spec, fmt.sample_rate, fmt.channels,
         producible=fixed if fixed is not None else (OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION),
         default_ms=default_ms or spec.assumed_packet_ms or policy.default_packet_ms, receiver=bounds,
         budget=HA_AUDIO_CAPABILITIES.receive_payload_bytes if receive_only else policy.budget,
     )
+    if choice is not None and policy.capabilities is not None:
+        if not policy.capabilities.supports_rtp(replace(fmt, frame_ms=choice.packet_ms), receive=receive):
+            return None
+    return choice
 
 
 def _codec_rank(policy: LegPolicy, fmt: RtpPcmFormat) -> int:
@@ -206,7 +211,7 @@ def answer_offer(
             default_ms=in_use_send.frame_ms if retained else 0, receive=not needs_send,
             receive_only=not needs_send)
         if transmit is None:
-            trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
+            trace.append(f"S1/T3 {candidate.encoding}/{candidate.sample_rate}: no producible format within the receiver bounds")
             continue
         if retained:
             trace.append("N1 kept the mapping in use to send")

@@ -8,7 +8,7 @@ from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.local_call_media import source_dtmf_formats
 from custom_components.voip_stack.sip_bridge import invite_rtp_peer
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint
-from tests.media_corpus_support import load_steps, mismatches, run_legacy
+from tests.media_corpus_support import load_steps, mismatches, run_production
 
 pytestmark = pytest.mark.ha
 
@@ -25,7 +25,7 @@ def active_engine():
 
 @pytest.mark.parametrize("step", load_steps(), ids=lambda step: step.name)
 def test_production_entry_points_apply_the_captured_audio_contract(step):
-    actual = run_legacy(step)
+    actual = run_production(step)
     expected = {key: value for key, value in step.expect.items()
                 if key in {"outcome", "send", "recv", "recv_accept", "dtmf", "answer_contains", "answer_excludes"}}
     assert not mismatches(expected, actual), mismatches(expected, actual)

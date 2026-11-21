@@ -18,9 +18,10 @@ OFFERS = [step for step in load_steps() if step.op == "answer_offer"]
 
 @pytest.fixture(autouse=True)
 def shadow_mode():
+    previous = shadow.engine_mode()
     shadow.set_engine_mode("shadow")
     yield
-    shadow.set_engine_mode("legacy")
+    shadow.set_engine_mode(previous)
 
 
 def test_the_default_mode_runs_nothing(caplog):
