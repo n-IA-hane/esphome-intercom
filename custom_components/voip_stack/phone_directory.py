@@ -128,6 +128,16 @@ class PhoneDirectory:
             raise RosterError("Ambiguous directory destination")
         return self._copy(matches[0]) if matches else None
 
+    def caller_display_name(self, user: str) -> str:
+        """Return a name only for a unique published caller number or SIP user."""
+        key = normalize_roster_key(user)
+        matches = [
+            row for row in self._matching_rows(key)
+            if row.enabled and not row.metadata.get("virtual_endpoint") and not row.metadata.get("group_type")
+            and any(normalize_roster_key(value) == key for value in (row.id, row.extension, row.number) if value)
+        ]
+        return matches[0].name if len(matches) == 1 else ""
+
     def begin_refresh(self):
         self._refresh_generation += 1
         return self._refresh_generation

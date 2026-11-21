@@ -158,16 +158,37 @@ class SipIngressPolicy:
     def identity_for_invite(self, request: SipMessage, initial: SipInitialInvite) -> SipInitialInvite:
         from .config import trunk_config
         from .inbound_identity import apply_inbound_identity
+        from .roster import normalize_roster_key
+        from .runtime_data import runtime_data
 
         try:
             classified = self.classify(initial)
         except ValueError:
             return initial  # The routing boundary rejects ambiguous sources.
-        if not classified.received_via_trunk:
+        if classified.received_via_trunk:
+            config = (trunk_config(self.hass, trunk_id=classified.trunk_id)
+                      if classified.trunk_id else trunk_config(self.hass))
+            classified = apply_inbound_identity(classified, config, request)
+        elif not (classified.identified_source_endpoint_id or classified.authenticated_username):
             return classified
-        config = (trunk_config(self.hass, trunk_id=classified.trunk_id)
-                  if classified.trunk_id else trunk_config(self.hass))
-        return apply_inbound_identity(classified, config, request)
+
+        user = classified.caller_number
+        display = classified.caller_name
+        number_key = normalize_roster_key(user)
+        if not number_key or (display and not (number_key.isdecimal() and normalize_roster_key(display) == number_key)):
+            return classified
+        if (user.casefold() in {"anonymous", "restricted", "unavailable", "unknown", "withheld", "private"}
+                or (classified.caller_uri and classified.caller_uri.host.casefold() == "anonymous.invalid")
+                or any(value.strip().casefold() not in {"", "none"} for value in request.header_values("Privacy"))):
+            return classified
+        runtime = runtime_data(self.hass)
+        if runtime is None:
+            return classified
+        source = runtime.endpoints.get(classified.identified_source_endpoint_id)
+        name = source.name if source is not None else ""
+        if not name and runtime.directory is not None and not runtime.directory.closed:
+            name = runtime.directory.caller_display_name(user)
+        return replace(classified, caller=name) if name else classified
 
     def codec_policy_for_invite(self, initial: SipInitialInvite) -> CodecPolicy:
         from .config import trunk_config

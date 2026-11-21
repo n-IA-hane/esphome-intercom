@@ -3817,7 +3817,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 delayed = getattr(previous, "delayed_offer", None)
                 original = delayed.initial_invite if delayed is not None else None
             if original is not None:
-                initial = replace(initial, **identity_fields(original),
+                initial = replace(initial, **identity_fields(original), caller=original.caller,
                                   received_via_trunk=original.received_via_trunk,
                                   trunk_id=original.trunk_id,
                                   outbound_trunk_id=original.outbound_trunk_id,

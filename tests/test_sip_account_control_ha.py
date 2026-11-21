@@ -169,15 +169,47 @@ async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(t
         assert state == "in_call"
         session = lab.calls.get_session(origin.dialog_ids.call_id)
         assert session is not None and session.metadata["source_endpoint_id"] == "sip:bedroom1"
-        assert session.caller == (from_display or account.username)
+        assert session.caller == (from_display or "Telefono ufficio")
         incoming = _ha_softphone_state(lab.hass, "sip:bedroom0")
         assert incoming["direction"] == "incoming"
-        assert incoming["peer_name"] == (from_display or "204")
+        assert incoming["peer_name"] == (from_display or "Telefono ufficio")
         assert not session.metadata.get("inbound_trunk_id")
         assert origin.bye()
         await wait_until(lambda: not lab.calls.sessions)
     finally:
         await origin.close()
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize(("number", "display", "privacy", "expected"), [
+    ("+393331234567", "", "", "Cliente"),
+    ("+393331234567", "+393331234567", "", "Cliente"),
+    ("+393331234567", "Mario Rossi", "", "Mario Rossi"),
+    ("+393339876543", "", "", "+393339876543"),
+    ("+393331234567", "Anonymous", "id", "Anonymous"),
+    ("anonymous", "", "id", "anonymous"),
+])
+async def test_trunk_incoming_display_uses_the_published_directory(trunks, number, display, privacy, expected):
+    from dataclasses import replace
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.runtime_data import sip_trunks
+    from .test_inbound_did_identity import wire_invite
+
+    lab = trunks
+    lab.runtime.directory.replace([RosterEntry("mobile", name="Cliente", number="+393331234567"),
+                                   RosterEntry("anonymous", name="Private contact", number="anonymous")])
+    work = sip_trunks(lab.hass)["work"]
+    request = sip.parse_message(wire_invite(body=False))
+    from_value = f'"{display}" <sip:{number}@provider.example>;tag=external'
+    headers = tuple((key, from_value if key == "From" else value) for key, value in request.headers)
+    if privacy:
+        headers += (("Privacy", privacy),)
+    request = replace(request, uri=request.uri + ";line=" + work.contact_line, headers=headers)
+    listener = lab.calls.component("udp_listener").udp_server.endpoint
+    invite = listener._parse_initial_invite(request, ("127.0.0.1", 5060), authorize=True)
+    assert invite.received_via_trunk and not invite.identified_source_endpoint_id
+    assert (invite.caller, invite.caller_number, invite.caller_name) == (expected, number, display)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
