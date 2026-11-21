@@ -50,6 +50,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 0 101\r\na=rtpmap:0 PCMU/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -200,6 +201,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 120\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=x-voip-stack-flow:96 sendrecv\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -230,6 +232,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 120\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=x-voip-stack-flow:96 sendrecv\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -260,6 +263,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 120\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=x-voip-stack-flow:96 sendrecv\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -591,6 +595,7 @@
    "a=maxptime:384",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 97 96 120\r\na=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\na=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 send\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:20\r\na=maxptime:384\r\na=sendrecv\r\nm=video 0 RTP/AVP 26\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -622,6 +627,7 @@
    "a=maxptime:384",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 97 96 120\r\na=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\na=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 send\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:20\r\na=maxptime:384\r\na=sendrecv\r\nm=video 0 RTP/AVP 26\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -653,6 +659,7 @@
    "a=maxptime:384",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 97 96 120\r\na=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\na=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 send\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:20\r\na=maxptime:384\r\na=sendrecv\r\nm=video 0 RTP/AVP 26\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -684,6 +691,7 @@
    "a=maxptime:384",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 97 96 120\r\na=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\na=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 send\r\na=rtpmap:120 telephone-event/8000\r\na=fmtp:120 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:20\r\na=maxptime:384\r\na=sendrecv\r\nm=video 0 RTP/AVP 26\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 120
@@ -701,6 +709,10 @@
   },
   "video": false
  },
+ "offer:dahua": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 97 98 9 8 0 96 99 100\r\na=rtpmap:97 PCM/16000/1\r\na=rtpmap:98 OPUS/48000/2\r\na=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:0 PCMU/8000/1\r\na=rtpmap:96 L16/16000/1\r\na=rtpmap:99 L16/8000/1\r\na=rtpmap:100 telephone-event/8000\r\na=fmtp:100 0-15\r\na=ptime:20\r\na=maxptime:120\r\na=sendrecv\r\n",
+ "offer:phone": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 98 9 8 0 96 97 99 100 101\r\na=rtpmap:98 OPUS/48000/2\r\na=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:0 PCMU/8000/1\r\na=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/32000/1\r\na=rtpmap:99 L16/16000/1\r\na=rtpmap:100 L16/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
+ "offer:phone-directional": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 97 98 99 100 9 8 0 101\r\na=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 sendrecv\r\na=rtpmap:97 L16/32000/1\r\na=x-voip-stack-flow:97 sendrecv\r\na=rtpmap:98 L16/16000/1\r\na=x-voip-stack-flow:98 sendrecv\r\na=rtpmap:99 L16/8000/1\r\na=x-voip-stack-flow:99 sendrecv\r\na=rtpmap:100 OPUS/48000/2\r\na=fmtp:100 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=x-voip-stack-flow:100 sendrecv\r\na=rtpmap:9 G722/8000/1\r\na=x-voip-stack-flow:9 sendrecv\r\na=rtpmap:8 PCMA/8000/1\r\na=x-voip-stack-flow:8 sendrecv\r\na=rtpmap:0 PCMU/8000/1\r\na=x-voip-stack-flow:0 sendrecv\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=x-voip-stack-independent-ptime:1\r\na=ptime:20\r\na=maxptime:32\r\na=sendrecv\r\n",
+ "offer:trunk": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 98 9 8 0 96 97 99\r\na=rtpmap:98 OPUS/48000/2\r\na=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:0 PCMU/8000/1\r\na=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/8000/1\r\na=rtpmap:99 telephone-event/8000\r\na=fmtp:99 0-15\r\na=ptime:20\r\na=maxptime:120\r\na=sendrecv\r\n",
  "phone-pcma-dtmf-two-clocks#0": {
   "answer": [
    "m=audio RTP/AVP 8 101",
@@ -711,6 +723,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/48000\r\na=fmtp:101 0-16\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 48000,
    "payload": 101
@@ -728,6 +741,99 @@
   },
   "video": false
  },
+ "softphone-baresip-answers-call-from-esp-box-opus#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 105
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "G722/8000/1",
+   "L16/16000/1",
+   "L16/16000/2",
+   "L16/32000/1",
+   "L16/32000/2",
+   "L16/48000/1",
+   "L16/48000/2",
+   "L16/8000/1",
+   "L16/8000/2",
+   "OPUS/48000/2",
+   "PCMA/8000/1",
+   "PCMU/8000/1"
+  ],
+  "send": {
+   "codec": "OPUS/48000/2",
+   "payload": 98,
+   "ptime": 20
+  }
+ },
+ "softphone-baresip-answers-call-from-esp-p4#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 105
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 103,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "G722/8000/1",
+   "L16/16000/1",
+   "L16/16000/2",
+   "L16/32000/1",
+   "L16/32000/2",
+   "L16/48000/1",
+   "L16/48000/2",
+   "L16/8000/1",
+   "L16/8000/2",
+   "OPUS/48000/2",
+   "PCMA/8000/1",
+   "PCMU/8000/1"
+  ],
+  "send": {
+   "codec": "L16/16000/1",
+   "payload": 103,
+   "ptime": 20
+  }
+ },
+ "softphone-baresip-answers-video-call-from-esp-p4#0": {
+  "dtmf": {
+   "clock": 8000,
+   "payload": 105
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/16000/1",
+   "payload": 103,
+   "ptime": 20
+  },
+  "recv_accept": [
+   "G722/8000/1",
+   "L16/16000/1",
+   "L16/16000/2",
+   "L16/32000/1",
+   "L16/32000/2",
+   "L16/48000/1",
+   "L16/48000/2",
+   "L16/8000/1",
+   "L16/8000/2",
+   "OPUS/48000/2",
+   "PCMA/8000/1",
+   "PCMU/8000/1"
+  ],
+  "send": {
+   "codec": "L16/16000/1",
+   "payload": 103,
+   "ptime": 20
+  }
+ },
  "softphone-baresip-offers-all-20-101#0": {
   "answer": [
    "m=audio RTP/AVP 100 105",
@@ -738,6 +844,7 @@
    "a=maxptime:128",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 100 105\r\na=rtpmap:100 L16/48000/1\r\na=rtpmap:105 telephone-event/8000\r\na=fmtp:105 0-15\r\na=ptime:10\r\na=maxptime:128\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 105
@@ -765,6 +872,7 @@
    "a=maxptime:128",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 100 105\r\na=rtpmap:100 L16/48000/1\r\na=rtpmap:105 telephone-event/8000\r\na=fmtp:105 0-15\r\na=ptime:10\r\na=maxptime:128\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 105
@@ -792,6 +900,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 9 101\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -819,6 +928,7 @@
    "a=maxptime:384",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 L16/16000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:384\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -852,6 +962,7 @@
    "a=maxptime:128",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 L16/48000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:128\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -879,6 +990,7 @@
    "a=maxptime:128",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 L16/48000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:128\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -906,6 +1018,7 @@
    "a=maxptime:64",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 L16/48000/2\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:64\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -933,6 +1046,7 @@
    "a=maxptime:768",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 L16/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:768\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -961,6 +1075,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=1;sprop-stereo=1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -989,6 +1104,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=1;sprop-stereo=1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1017,6 +1133,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 96 101\r\na=rtpmap:96 OPUS/48000/2\r\na=fmtp:96 stereo=1;sprop-stereo=1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1044,6 +1161,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1071,6 +1189,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1098,6 +1217,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1125,6 +1245,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 0 101\r\na=rtpmap:0 PCMU/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1152,6 +1273,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1179,6 +1301,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 8 101\r\na=rtpmap:8 PCMA/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\nm=video 0 RTP/AVP 96 97\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101
@@ -1207,6 +1330,7 @@
    "a=maxptime:120",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 111 126\r\na=rtpmap:111 OPUS/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxplaybackrate=16000;sprop-maxcapturerate=16000\r\na=rtpmap:126 telephone-event/48000\r\na=fmtp:126 0-15\r\na=ptime:10\r\na=maxptime:120\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 48000,
    "payload": 126
@@ -1234,6 +1358,7 @@
    "a=maxptime:1000",
    "a=sendrecv"
   ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 9 101\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:1000\r\na=sendrecv\r\n",
   "dtmf": {
    "clock": 8000,
    "payload": 101

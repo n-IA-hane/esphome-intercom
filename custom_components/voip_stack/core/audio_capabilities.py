@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from .audio_format import AudioFormat, PcmFormat, UDP_SAFE_PAYLOAD_BYTES
 from .codec_capabilities import common_sip_codecs
+from .media.codecs import OCTETS_PER_SAMPLE, PREFERRED_PAYLOADS
 
 if TYPE_CHECKING:
     from .sdp import RtpPcmFormat
@@ -30,7 +31,7 @@ def _whole(value: float) -> bool:
 
 def _wire_bytes(fmt: RtpPcmFormat) -> int:
     samples = fmt.sample_rate * fmt.frame_ms / 1000
-    width = {"L16": 2, "L24": 3, "PCM": 2, "PCMA": 1, "PCMU": 1, "G722": 1}.get(
+    width = OCTETS_PER_SAMPLE.get(
         fmt.encoding
     )
     return math.ceil(samples * fmt.channels * width) if width is not None else 0
@@ -91,7 +92,7 @@ class AudioCapabilities:
     def max_receive_packet_ms(self, fmt: RtpPcmFormat) -> int | float:
         if fmt.encoding == "OPUS":
             return 120
-        width = {"L16": 2, "L24": 3, "PCM": 2, "PCMA": 1, "PCMU": 1, "G722": 1}.get(
+        width = OCTETS_PER_SAMPLE.get(
             fmt.encoding, 0
         )
         if not width or not fmt.sample_rate or not fmt.channels:
@@ -122,7 +123,7 @@ class AudioCapabilities:
             durations = [remote.frame_ms] if remote.frame_ms else []
             durations.extend((fmt.frame_ms for fmt in preferred))
             durations.extend((remote.min_frame_ms, remote.max_frame_ms))
-            width = {"L16": 2, "L24": 3, "PCM": 2, "PCMA": 1, "PCMU": 1, "G722": 1}.get(
+            width = OCTETS_PER_SAMPLE.get(
                 remote.encoding
             )
             if width and remote.sample_rate > 0 and remote.channels > 0:
@@ -219,10 +220,7 @@ def local_rtp_audio_formats(
     output = []
     seen = set()
     static = {
-        ("PCMU", 8000, 1): 0,
-        ("PCMA", 8000, 1): 8,
-        ("G722", 8000, 1): 9,
-        ("OPUS", 48000, 2): 98,
+        **PREFERRED_PAYLOADS,
     }
     used = set(static.values())
     mappings = {}

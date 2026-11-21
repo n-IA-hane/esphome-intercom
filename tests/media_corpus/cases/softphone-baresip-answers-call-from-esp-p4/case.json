@@ -1,0 +1,33 @@
+{
+  "id": "softphone-baresip-answers-call-from-esp-p4",
+  "title": "Softphone answers an offer bridged from an ESP phone with every codec it supports; video refused with port 0",
+  "source": {
+    "kind": "capture",
+    "origin": "home installation, integration a246f847, baresip 4.6.0 log, 2026-11-21",
+    "redaction": "addresses mapped to RFC 5737 ranges; account name replaced"
+  },
+  "peer": {
+    "kind": "softphone",
+    "user_agent": "baresip v4.6.0 (x86_64/Linux)",
+    "profile": ""
+  },
+  "steps": [
+    {
+      "op": "apply_answer",
+      "local_offer": "01_local_offer.sdp",
+      "sdp": "02_answer.sdp",
+      "policy": "phone"
+    }
+  ],
+  "expect": [
+    {
+      "outcome": "accept"
+    }
+  ],
+  "rules": [
+    "S5",
+    "S6",
+    "P3",
+    "V3"
+  ]
+}

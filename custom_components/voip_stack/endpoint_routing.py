@@ -16,6 +16,7 @@ from .core.audio_format import (
     parse_audio_format_list,
 )
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_formats
+from .core.media.codecs import PREFERRED_PAYLOADS
 from .core import sdp
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
@@ -119,10 +120,7 @@ def _assign_capability_payloads(
     out: list[sdp.RtpPcmFormat] = []
     seen: set[tuple[str, int, int, int]] = set()
     preferred_payloads = {
-        ("PCMU", 8000, 1): 0,
-        ("PCMA", 8000, 1): 8,
-        ("G722", 8000, 1): 9,
-        ("OPUS", 48000, 2): 98,
+        **PREFERRED_PAYLOADS,
     }
     for fmt in formats:
         key = (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)

@@ -3,7 +3,7 @@
   "title": "FRITZ!Box offers G.711 at a 16 kHz clock next to the standard codecs",
   "source": {
     "kind": "reconstructed",
-    "origin": "GitHub issue 94; the codec list and payload 120 come from the report, payload 121 and the order beyond the first three entries are assumed",
+    "origin": "GitHub issue 94. The public log lists the six mappings in the order 9, 8, 0, 120, 121, 101. The original bytes, the media line, packet time attributes and session fields are unknown. This case checks acceptance with standard packet times under the phone policy; it does not prove the reported payload 120 audio path, which test_fritzbox_pcma_packets_are_reframed_to_assist_duration covers.",
     "redaction": "addresses replaced with RFC 5737 ranges"
   },
   "peer": {

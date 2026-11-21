@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from .audio_format import AudioFormat, PcmFormat
 from .imageattr import ImageAttributes
+from .media.codecs import CODECS
 
 
 class SdpError(ValueError):
@@ -25,30 +26,23 @@ class RtpPcmFormat:
 
     @property
     def bits(self) -> int:
-        if self.encoding in {"L16", "PCM"}:
-            return 16
-        if self.encoding == "L24":
-            return 24
-        if self.encoding in {"PCMA", "PCMU", "G722"}:
-            return 8
-        if self.encoding == "OPUS":
-            return 0
-        raise SdpError(f"unsupported RTP PCM encoding {self.encoding}")
+        spec = CODECS.get(self.encoding)
+        if spec is None:
+            raise SdpError(f"unsupported RTP PCM encoding {self.encoding}")
+        return 8 * (spec.octets_per_sample or 0)
 
     @property
     def audio_format(self) -> AudioFormat:
-        if self.encoding in {"PCMA", "PCMU"}:
-            return AudioFormat(
-                self.sample_rate, PcmFormat.S16LE, self.channels, self.frame_ms or 20
-            )
-        if self.encoding == "G722":
-            return AudioFormat(
-                16000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
-            )
-        if self.encoding == "OPUS":
-            return AudioFormat(48000, PcmFormat.S16LE, 1, self.frame_ms or 20)
-        pcm = PcmFormat.S16LE if self.encoding in {"L16", "PCM"} else PcmFormat.S24LE
-        return AudioFormat(self.sample_rate, pcm, self.channels, self.frame_ms)
+        spec = CODECS.get(self.encoding)
+        if spec is None:
+            # Kept as it was: an encoding outside the registry is read as 24 bit PCM.
+            return AudioFormat(self.sample_rate, PcmFormat.S24LE, self.channels, self.frame_ms)
+        return AudioFormat(
+            spec.decoded_rate or self.sample_rate,
+            PcmFormat.S24LE if spec.decodes_to_24_bit else PcmFormat.S16LE,
+            spec.decoded_channels or self.channels,
+            (self.frame_ms or spec.assumed_packet_ms) if spec.assumed_packet_ms else self.frame_ms,
+        )
 
     @property
     def rtp_clock_rate(self) -> int:

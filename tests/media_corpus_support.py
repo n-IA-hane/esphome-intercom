@@ -114,10 +114,12 @@ def legacy_answer_offer(step: Step) -> dict:
     if invite is None:
         return {"outcome": "reject"}
     dtmf = sdp.first_offered_dtmf_format(invite.remote_sdp)
+    video = invite.video_answer_format or invite.local_video_format
     try:
         answer = sdp.build_answer_directional(
             "192.0.2.1", "192.0.2.1", 40000, invite.send_format, invite.recv_format,
-            dtmf=dtmf, remote_sdp=invite.remote_sdp)
+            dtmf=dtmf, remote_sdp=invite.remote_sdp,
+            video_port=40002 if video is not None else 0, video_format=video)
     except Exception as error:  # noqa: BLE001
         return {"outcome": "error", "error": f"answer {type(error).__name__}"}
     return {
@@ -127,6 +129,9 @@ def legacy_answer_offer(step: Step) -> dict:
         "dtmf": {"clock": dtmf.sample_rate, "payload": dtmf.payload_type} if dtmf else None,
         "video": invite.video_format is not None,
         "answer": _audio_lines(answer),
+        # The complete description as written, byte for byte: transport, line endings,
+        # media order and every attribute.
+        "answer_bytes": answer,
     }
 
 
@@ -183,3 +188,102 @@ def mismatches(expect: dict, actual: dict, path: str = "") -> list[str]:
         elif got != wanted:
             found.append(f"{where}: expected {wanted!r}, got {got!r}")
     return found
+
+
+# Fixed inputs for the offer writer: (send list, receive list, Dahua payload, directional).
+OFFER_PRESETS = {
+    "phone": (HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, False, False),
+    "phone-directional": (HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, False, True),
+    "trunk": (HA_TRUNK_AUDIO_FORMATS, HA_TRUNK_AUDIO_FORMATS, False, False),
+    "dahua": (HA_TRUNK_AUDIO_FORMATS, HA_TRUNK_AUDIO_FORMATS, True, False),
+}
+
+
+def legacy_offers() -> dict[str, str]:
+    """Write the local offer for every preset, complete and byte exact."""
+    return {
+        f"offer:{name}": sdp.build_offer_directional(
+            "192.0.2.1", "192.0.2.1", 40000, list(send), list(receive),
+            include_common_codecs=True, include_dahua_pcm=dahua,
+            allow_directional_payloads=directional, independent_audio_ptime=directional,
+            local_capabilities=HA_AUDIO_CAPABILITIES)
+        for name, (send, receive, dahua, directional) in OFFER_PRESETS.items()
+    }
+
+
+def legacy_snapshot() -> dict:
+    return {**{step.name: run_legacy(step) for step in load_steps()}, **legacy_offers()}
+
+
+ENTRY_POINTS = {"answer_offer": "inbound initial offer", "apply_answer": "answer to a local offer"}
+# The only fields each declared contract change may alter.
+CC_FIELDS = {
+    "CC-1": ("outcome",),
+    "CC-2": ("recv.ptime",),
+    "CC-4": ("dtmf.clock", "dtmf.payload"),
+    "CC-5": ("answer must not contain",),
+    "CC-11": ("send.ptime",),
+    "CC-12": ("outcome",),
+}
+
+
+def _value(data, field: str):
+    for key in field.split("."):
+        data = data.get(key) if isinstance(data, dict) else None
+    return data
+
+
+def ledger_problems(ledger: list[dict], steps: list[Step], observed: dict[str, dict]) -> list[str]:
+    """Check every ledger row against the engine and the case, and find what it leaves out.
+
+    A row authorizes one field of one step to differ. Its ``prior`` must be what the engine
+    answers, its ``intended`` what the case requires, its entry point the operation of the step,
+    and its declared change one that may alter that field.
+    """
+    problems: list[str] = []
+    by_name = {step.name: step for step in steps}
+    rows: dict[tuple[str, str], dict] = {}
+    for row in ledger:
+        key = (row.get("step"), row.get("field"))
+        if key in rows:
+            problems.append(f"duplicate row {key}")
+        rows[key] = row
+        step = by_name.get(row.get("step"))
+        if step is None:
+            problems.append(f"row for unknown step {row.get('step')}")
+            continue
+        field, text = row["field"], row["field"].startswith("answer ")
+        if row.get("entry_point") != ENTRY_POINTS[step.op]:
+            problems.append(f"{key}: entry point is {ENTRY_POINTS[step.op]!r}")
+        allowed = CC_FIELDS.get(row.get("cc"), ())
+        if not any(field == name or (text and field.startswith(name)) for name in allowed):
+            problems.append(f"{key}: {row.get('cc')} does not cover this field")
+        prior = "written" if text else _value(observed[step.name], field)
+        intended = "absent" if text else _value(step.expect, field)
+        if row.get("prior") != prior:
+            problems.append(f"{key}: prior is {prior!r}, the row says {row.get('prior')!r}")
+        if row.get("intended") != intended:
+            problems.append(f"{key}: intended is {intended!r}, the row says {row.get('intended')!r}")
+        if field == "outcome" and (row.get("prior"), row.get("intended")) != ("reject", "accept"):
+            problems.append(f"{key}: only a refusal that becomes an acceptance may be declared")
+    for step in steps:
+        for item in mismatches(step.expect, observed[step.name]):
+            field = item.split(":", 1)[0]
+            if (step.name, field) not in rows:
+                problems.append(f"not in the ledger: {step.name} {item}")
+    for (name, field), row in rows.items():
+        step = by_name.get(name)
+        if step is not None and field not in {item.split(":", 1)[0] for item in mismatches(step.expect, observed[name])}:
+            problems.append(f"stale row: {name} {field}")
+    return problems
+
+
+if __name__ == "__main__":
+    # Writing the reference is a deliberate, separate act: the test only compares.
+    import sys
+
+    if sys.argv[1:] != ["--write-golden"]:
+        raise SystemExit("usage: python -m tests.media_corpus_support --write-golden")
+    GOLDEN.parent.mkdir(parents=True, exist_ok=True)
+    GOLDEN.write_text(json.dumps(legacy_snapshot(), indent=1, sort_keys=True) + "\n")
+    print(f"wrote {GOLDEN}")

@@ -29,7 +29,7 @@
   "field": "outcome",
   "prior": "reject",
   "intended": "accept",
-  "cc": "CC-1"
+  "cc": "CC-12"
  },
  {
   "step": "softphone-baresip-offers-l16-48000-2-10-430#0",

@@ -1,0 +1,24 @@
+v=0
+o=- 176552959298679667 0 IN IP4 192.0.2.1
+s=VoIP Stack
+c=IN IP4 192.0.2.1
+t=0 0
+m=audio 40244 RTP/AVP 98 0 8 9 96 97 99 100 101 102 103 104 105
+a=rtpmap:98 OPUS/48000/2
+a=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000
+a=rtpmap:0 PCMU/8000/1
+a=rtpmap:8 PCMA/8000/1
+a=rtpmap:9 G722/8000/1
+a=rtpmap:96 L16/48000/2
+a=rtpmap:97 L16/32000/2
+a=rtpmap:99 L16/16000/2
+a=rtpmap:100 L16/8000/2
+a=rtpmap:101 L16/48000/1
+a=rtpmap:102 L16/32000/1
+a=rtpmap:103 L16/16000/1
+a=rtpmap:104 L16/8000/1
+a=rtpmap:105 telephone-event/8000
+a=fmtp:105 0-15
+a=ptime:20
+a=maxptime:32
+a=sendrecv

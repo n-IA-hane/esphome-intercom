@@ -136,7 +136,10 @@ def write_cases(args: argparse.Namespace) -> int:
         role = "to" if local_offers else "from"
         case_id = re.sub(r"[^a-z0-9]+", "-", f"{label}-{role}-{addresses.get(peer_address, peer_address)}".lower()).strip("-")
         directory = out / case_id
-        directory.mkdir(parents=True, exist_ok=True)
+        if directory.exists():
+            # Two dialogs of one window with the same role and peer must not overwrite each other.
+            raise SystemExit(f"duplicate case id {case_id}: add a window or a discriminator")
+        directory.mkdir(parents=True)
         steps = []
         if local_offers:
             (directory / "01_local_offer.sdp").write_bytes(redact(offer.body, addresses, names))

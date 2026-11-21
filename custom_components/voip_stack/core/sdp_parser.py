@@ -7,6 +7,7 @@ import math
 import re
 
 from .imageattr import merge_image_attributes, parse_imageattr
+from .media.codecs import STATIC_RTPMAP as STATIC_RTPMAP
 from .sdp_document import SdpDocument
 from .sdp_types import SdpError
 
@@ -25,11 +26,6 @@ def parse_connection_line(line: str) -> str:
     return address
 
 
-STATIC_RTPMAP = {
-    0: ("PCMU", 8000, 1),
-    8: ("PCMA", 8000, 1),
-    9: ("G722", 8000, 1),
-}
 
 
 SDP_DIRECTIONS = frozenset({"sendrecv", "sendonly", "recvonly", "inactive"})

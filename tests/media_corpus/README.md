@@ -39,3 +39,10 @@ of what a peer sends. Do not reformat them.
 2. Replace addresses with documentation addresses and remove names. Record it in `redaction`.
 3. Write the expected contract from the rules, not from what the code answers today.
 4. Run `tests/test_media_corpus_ha.py`. If the legacy engine disagrees, name the contract change.
+
+## What the corpus covers today
+
+Inbound initial offers and answers to local offers, in Home Assistant. Not yet: re-offers inside
+a dialog, forked dialogs, the bridge, RTP, the ESP engine. Each of those gets its cases before its
+first functional change. The importer pairs the first offer of a Call-ID with its first answer;
+it does not yet keep dialog tags or tell a provisional answer from a final one.

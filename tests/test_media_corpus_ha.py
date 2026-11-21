@@ -11,13 +11,20 @@ A golden snapshot records what the current engine answers for every case, so a r
 that claims to change nothing can prove it.
 """
 
+import copy
 import json
-import os
 import re
 
 import pytest
 
-from tests.media_corpus_support import CORPUS, GOLDEN, load_steps, mismatches, run_legacy
+from tests.media_corpus_support import (
+    CORPUS,
+    GOLDEN,
+    ledger_problems,
+    legacy_snapshot,
+    load_steps,
+    run_legacy,
+)
 
 pytestmark = pytest.mark.ha
 
@@ -26,11 +33,7 @@ PRIVATE_ADDRESS = re.compile(rb"\b(?:10\.\d+|192\.168|172\.(?:1[6-9]|2\d|3[01]))
 
 
 LEDGER = json.loads((CORPUS / "ledger.json").read_text())
-DECLARED = {"CC-1", "CC-2", "CC-4", "CC-5", "CC-11"}
-
-
-def _field(mismatch: str) -> str:
-    return mismatch.split(":", 1)[0]
+OBSERVED = {step.name: run_legacy(step) for step in STEPS}
 
 
 def test_corpus_is_not_empty():
@@ -57,31 +60,40 @@ def test_case_is_well_formed(path):
         assert not PRIVATE_ADDRESS.search(extra.read_bytes()), f"{extra.name} carries a private address"
 
 
-@pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)
-def test_case_differs_from_the_contract_only_as_the_ledger_declares(step):
-    assert step.expect, "the case states no expectation for this step"
-    actual = run_legacy(step)
-    found = {_field(item): item for item in mismatches(step.expect, actual)}
-    declared = {entry["field"]: entry for entry in LEDGER if entry["step"] == step.name}
-    undeclared = sorted(set(found) - set(declared))
-    assert not undeclared, "not in the ledger: " + "; ".join(found[field] for field in undeclared)
-    stale = sorted(set(declared) - set(found))
-    assert not stale, "ledger entries no longer needed: " + ", ".join(stale)
+def test_engine_differs_from_the_contract_only_as_the_ledger_declares():
+    problems = ledger_problems(LEDGER, STEPS, OBSERVED)
+    assert not problems, "\n".join(problems)
 
 
-def test_ledger_entries_name_a_declared_contract_change():
-    names = {step.name for step in STEPS}
-    for entry in LEDGER:
-        assert entry["step"] in names, entry
-        assert entry["cc"] in DECLARED, entry
-        assert {"entry_point", "field", "prior", "intended"} <= entry.keys(), entry
+def _altered(index: int, **changes) -> list[dict]:
+    rows = copy.deepcopy(LEDGER)
+    rows[index].update(changes)
+    return rows
+
+
+@pytest.mark.parametrize("ledger,expected", [
+    (lambda: _altered(0, prior=123), "prior is"),
+    (lambda: _altered(0, intended=456), "intended is"),
+    (lambda: _altered(0, entry_point="answer to a local offer"), "entry point is"),
+    (lambda: _altered(0, cc="CC-2"), "does not cover this field"),
+    (lambda: [*LEDGER, copy.deepcopy(LEDGER[0])], "duplicate row"),
+    (lambda: LEDGER[1:], "not in the ledger"),
+], ids=["wrong prior", "wrong intended", "wrong entry point", "wrong change", "duplicate", "missing row"])
+def test_ledger_check_rejects_a_falsified_ledger(ledger, expected):
+    """Negative controls: each kind of wrong row must be noticed."""
+    assert any(expected in problem for problem in ledger_problems(ledger(), STEPS, OBSERVED))
+
+
+def test_an_error_is_not_accepted_where_a_refusal_was_declared():
+    row = next(row for row in LEDGER if row["field"] == "outcome")
+    observed = {**OBSERVED, row["step"]: {"outcome": "error", "error": "ValueError"}}
+    assert any("prior is 'error'" in problem for problem in ledger_problems(LEDGER, STEPS, observed))
 
 
 def test_current_engine_matches_its_golden_snapshot():
-    actual = {step.name: run_legacy(step) for step in STEPS}
-    if os.environ.get("MEDIA_CORPUS_WRITE_GOLDEN") == "1":
-        GOLDEN.parent.mkdir(parents=True, exist_ok=True)
-        GOLDEN.write_text(json.dumps(actual, indent=1, sort_keys=True) + "\n")
+    """Complete written descriptions included. Regenerate only with
+    ``python -m tests.media_corpus_support --write-golden`` and review the diff."""
+    actual = legacy_snapshot()
     golden = json.loads(GOLDEN.read_text())
     changed = sorted(name for name in actual.keys() | golden.keys() if actual.get(name) != golden.get(name))
     assert not changed, "engine output differs from the golden snapshot for: " + ", ".join(changed)

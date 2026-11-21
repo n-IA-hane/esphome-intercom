@@ -1,6 +1,6 @@
 # Media negotiation contract
 
-Status: second draft, revised after the first adversarial review (section 9). No engine code
+Status: third draft, revised after two adversarial reviews (section 9). No engine code
 implements this document yet. Once the migration is complete it replaces `AUDIO_NEGOTIATION.md`.
 
 This is the single written contract for how VoIP Stack negotiates audio codecs, sample rates,
@@ -104,11 +104,12 @@ local sender can produce for that codec and geometry, and the budget.
   codec is unusable on that leg and selection moves to the next candidate. When no candidate is
   left the offer is refused.
 - T4. A minimum is a wish with this precedence: (a) keep the duration chosen by T1 or T2 when it
-  already meets the minimum; (b) otherwise try the other feasible durations that meet it, then
-  the other policy allowed codecs that can meet it; (c) only then send below it. The trace
-  records which preference lost. A minimum inside the Opus format parameters of one payload is
-  tried harder than a bare media attribute: (b) is exhausted for Opus before any other codec is
-  considered.
+  already meets the minimum; (b) otherwise use another feasible duration of the same mapping
+  that meets it; (c) otherwise send below it and record in the trace which preference lost. A
+  bare media minimum never demotes the codec that policy and B2 chose: with L16 at 32 kHz and
+  PCMA offered and a minimum of 20 ms, L16 at 10 ms is sent. A minimum inside the Opus format
+  parameters is scoped to that Opus payload. Only a hard constraint (`maxptime`, a fixed set,
+  administrator policy) can eliminate a mapping.
 - T5. Frame based codecs use whole multiples of their frame.
 
 ### 4.3 Receive packet time
@@ -116,8 +117,10 @@ local sender can produce for that codec and geometry, and the budget.
 - R1. The packet time this side advertises comes from the policy of the leg, never from the
   peer's own `ptime`. A media section has one advertised `ptime` and one `maxptime` that span all
   its payloads, so both must hold for every listed payload.
-- R2. The advertised `maxptime` is the hard receive envelope for the listed payloads, and the
-  receiver enforces exactly that. A packet longer than the advertised preference and within the
+- R2. The advertised `maxptime` is the hard receive envelope for the receivable primary audio
+  mappings of the section, and the receiver enforces exactly that, by duration and by size. A
+  fixed set keeps its holes below the maximum. A redundant `maxptime` stays omitted where it is
+  omitted today (`esp_directional_v1` without independent packet times). A packet longer than the advertised preference and within the
   envelope is accepted and reframed (issues 161 and 165). A packet above the envelope is dropped.
 - R3. Toward a fixed set peer the advertised value is chosen from the durations that peer can
   send. For `esp_directional_v1` without independent packet times the existing common duration
@@ -141,7 +144,7 @@ local sender can produce for that codec and geometry, and the budget.
   SSRC and timestamp base are frozen across one digit and its terminal repeats. If no method can
   carry a digit the result is reported, not silently dropped.
 - P6. Format parameters written in an answer describe this side's receiver and are generated
-  from the local capability. The peer's receiver parameters are applied to the local encoder.
+  from the local capability. Parameters that a codec defines as symmetric keep their rule. The peer's receiver parameters are applied to the local encoder.
   The peer's sender parameters are hints. Nothing is copied from the offer.
 
 ### 4.5 Bridged calls
@@ -155,8 +158,12 @@ local sender can produce for that codec and geometry, and the budget.
 - B3. The description sent to the caller is frozen for its dialog and its offer and answer
   exchange once it was actually sent upstream. A response without a description leaves the
   caller free. A free caller is answered after the callee answered, by the rule of B2.
-  An early description is sent upstream only for a usable early media path that is intended
-  (trunk digit collection, provider announcements), not for an inactive one. A provisional
+  An early description is sent upstream only for an intended service with a feasible direction:
+  an announcement needs a branch that can send and a caller that can receive, with ports,
+  destination and conversion ready (one way audio is enough); digit collection needs a route
+  that asks for it, a caller that can send the negotiated events and a collector that is ready.
+  An inactive stream serves neither. The first RTP packet is not awaited. A description queued
+  behind a reliable response that awaits its PRACK is not yet sent and can still be withdrawn. A provisional
   description of a fork branch freezes the caller only if it was relayed upstream. The winning
   branch is bridged to the contract the caller already has.
 - B4. The caller is not renegotiated only to save a conversion.
@@ -180,15 +187,20 @@ local sender can produce for that codec and geometry, and the budget.
   applied to the sender. Local receive parameters are derived independently.
 - N2. A retransmission replays the original response. The same description in a new transaction
   may get a new answer when local state changed. Identity is dialog, origin and version, and
-  body. Changed content under a reused version is treated as changed content.
+  body. Changed content under a reused version, in a new offer of a new transaction, is treated
+  as changed content.
 - N3. A re-INVITE without a description is answered with an offer that lists the codec in use
   first and preserves the hold state.
-- N4. Hold and resume change the direction only. An inactive stream, a zero address hold and a
+- N4. A hold or resume started by this side changes the direction only; the peer may change its
+  ports in the same exchange. An inactive stream, a zero address hold and a
   removed stream (port 0) are three different states.
-- N5. A renegotiation is prepared beside the active contract. Its commit point is defined per
-  exchange (final 2xx and ACK for INVITE, 2xx for UPDATE). A failure before commit discards the
-  prepared state; ports and local hold state survive. A change already applied on the far leg is
-  recovered by the protocol, not undone locally.
+- N5. A renegotiation is prepared beside the active contract. Three things are tracked
+  separately: completion of the offer and answer exchange, the state of the SIP transaction, and
+  the media already applied on each leg. The exchange can complete before the final response
+  (an answer in a reliable provisional response; for an INVITE without a description, the answer
+  in the PRACK or in the ACK). A failure before completion discards the prepared state; ports
+  and local hold state survive. A change already applied on the far leg is recovered by the
+  protocol, not undone locally.
 - N6. Glare (491) is handled by the transaction layer.
 
 ### 4.7 Transport and message size
@@ -199,10 +211,14 @@ local sender can produce for that codec and geometry, and the budget.
 - X2. The size rule applies to the complete serialized request, after authentication and Route
   headers. Before changing transport, the offer is reduced within the contract: no video unless
   requested, only enabled codecs.
-- X3. A request that is still too large for UDP uses TCP as RFC 3261 says, with the retry over
-  UDP limited to failures while opening the connection. Nothing is replayed after uncertain
-  delivery. A request that must stay on a UDP only Outbound binding and is still too large is an
-  explicit qualified exception: it is sent on that flow and the trace records it.
+- X3. A request that is still too large for UDP uses TCP as RFC 3261 says (above 1300 bytes
+  when the path MTU is unknown, within 200 bytes of it when known). The retry over UDP after
+  that automatic change is limited to the failures RFC 3261 names while opening the connection;
+  a timeout or uncertain delivery is not one of them and nothing is replayed on the other
+  transport. Ordinary SIP retransmissions are unaffected. Exception: for a selected, live,
+  authenticated SIP Outbound binding whose UDP flow is the only permitted path, the reduced
+  request is sent on that flow within the real datagram limit, and a delivery failure is
+  reported. Ordinary Contact and route set behaviour and a trunk's use of TCP stay as they are.
 - X4. Discovery results (OPTIONS, the last successful contract, firmware declarations) rank
   formats. They narrow the candidates only when the evidence is complete, current and specific
   to that binding. After a 488 to a genuinely reduced offer, one retry with the larger permitted
@@ -235,7 +251,9 @@ and preconditions it names. Old and new expectations are both pinned.
 | CC-7 | Malformed input is handled per attribute | An unknown optional hint is ignored. A malformed known limit is ignored unless a valid one for the same attribute exists, which stays. Conflicting limits: the stricter. An invalid codec mapping removes that payload only | T3 | parser tests |
 | CC-8 | An answer to a local offer passes through the policy of that offer | | S6 | none known |
 | CC-9 | A renumbered video answer is accepted for sending when unambiguous | No receive alias | P3 | Keep: H264/120 control, static mappings, packetization mode, profile and level |
-| CC-11 | Default transmit packet time when no peer request or local policy chooses another legal value: 32 kHz mono 10 ms, 48 kHz stereo 5 ms, a trunk leg at 48 kHz 10 ms | 16 ms and 6.25 ms stay available as capabilities | T2 | `test_bridge_local_tx_capabilities_ha.py`, matrix |
+| CC-11 | Default transmit packet time when no feasible peer request or local policy chooses another legal value: L16 32 kHz mono 10 ms, L16 48 kHz stereo 5 ms (also when the peer asks for 10 ms, which needs 1920 bytes), a trunk leg at 48 kHz 10 ms, Opus 20 ms | An explicit feasible `a=ptime` still wins (Opus with `a=ptime:10` sends 10 ms and asks for 20 ms). 16 ms and 6.25 ms stay available as capabilities. The 11025 Hz arithmetic and the stereo budget tests stay | T2 | `test_bridge_local_tx_capabilities_ha.py`, matrix |
+| CC-12 | Static payload numbers 10 and 11 (L16 at 44.1 kHz, RFC 3551 section 6) are recognized, bare and with an explicit rtpmap | Later phase, with its own vectors. The 44.1 kHz capture is refused today because of this, not because of its minimum | S1 | `core/sdp_audio.py` static mapping filter |
+| CC-13 | The receiver checks the real duration of an Opus packet against the hard maximum, not only its size | Receiver and relay phase. Longer than preferred and within the envelope stays accepted | R2 | receiver tests |
 
 Withdrawn after review: CC-3 (accepting above the advertised maximum) and CC-10 (tolerating a
 remote payload remap). The existing bounds and refusals stay.
@@ -290,7 +308,26 @@ First review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121.md`, against draft one.
 | Registry | Keep the working domain; probes per direction; later additions declared | Section 7 |
 | Gate | Differential ledger; shadow owns no side effects; switch at a dialog boundary | `tests/media_corpus/ledger.json`; shadow rules in the plan |
 
-Open for the second review:
+Second review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121_R2.md`, against draft two.
+
+| Point | Reviewer's decision | Resolution |
+|---|---|---|
+| Ledger | Rows must be verified against the engine and the case, with negative controls | `ledger_problems` and its tests in `tests/test_media_corpus_ha.py` |
+| Golden | Byte level oracle for complete descriptions and for the offer writer; writing separate from asserting | `answer_bytes` and `offer:*` entries; `python -m tests.media_corpus_support --write-golden` |
+| 44.1 kHz capture | Refused because of static payload 11, not the minimum | CC-12; CC-1 is witnessed by the 32 kHz capture |
+| Opus duration | Enforcing the maximum by duration is a real receiver change | CC-13 |
+| Defaults | Opus default and the infeasible stereo request need preconditions | CC-11 |
+| Question 1 | A bare minimum never demotes the chosen codec | T4 |
+| Question 2 | Accept the exception for a live authenticated Outbound binding | X3 |
+| Question 3 | Intended service plus feasible direction | B3 |
+| Question 4 | Keep issue 94 as a reconstruction; it does not prove the payload 120 path | case note; `test_fritzbox_pcma_packets_are_reframed_to_assist_duration` stays |
+| N2, N4, N5, P6 | Distinct commit points; symmetric parameters | N2, N4, N5, P6 |
+
+Coverage of the corpus today: 33 inbound initial offers and 26 answers to local offers, in Home
+Assistant only. No step applies a re-offer, drives the bridge, carries RTP or runs the ESP
+engine. Each of those witnesses is added before its first functional change.
+
+Answered in the second review (kept for the record):
 
 1. T4 (b): is trying another codec before sending below a bare media minimum right, or should a
    bare media minimum never change the codec?

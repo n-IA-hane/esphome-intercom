@@ -9,6 +9,8 @@ import secrets
 import struct
 from typing import Protocol
 
+from .media.codecs import OCTETS_PER_SAMPLE
+
 
 RTP_VERSION = 2
 RTP_HEADER_SIZE = 12
@@ -106,17 +108,7 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         frame_count = max(1, (frame_us + _MIN_OPUS_FRAME_US - 1) // _MIN_OPUS_FRAME_US)
         codec_limit = frame_count * (_MAX_OPUS_FRAME_BYTES + 2)
     else:
-        bytes_per_sample = {
-            "PCMA": 1,
-            "PCMU": 1,
-            "G722": 1,
-            "L16": 2,
-            # Dahua UAC endpoints label their vendor S16LE payload as
-            # PCM/16000.  It is profile-gated during SDP negotiation, but once
-            # selected it has the same two-octet sample envelope as L16.
-            "PCM": 2,
-            "L24": 3,
-        }.get(encoding)
+        bytes_per_sample = OCTETS_PER_SAMPLE.get(encoding)
         if bytes_per_sample is None:
             raise RtpError(f"unsupported RTP audio encoding {encoding or '<empty>'}")
         sample_numerator = sample_rate * frame_ms
