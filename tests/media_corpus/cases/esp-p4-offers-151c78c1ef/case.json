@@ -27,6 +27,10 @@
       },
       "recv": {
         "codec": "L16/16000/1"
+      },
+      "dtmf": {
+        "clock": 48000,
+        "payload": 126
       }
     }
   ],
@@ -35,7 +39,8 @@
     "S4",
     "P1",
     "R1",
-    "V2"
+    "V2",
+    "P5"
   ],
   "captured": {
     "status": null,

@@ -27,7 +27,8 @@
         "ptime": 20
       },
       "recv": {
-        "codec": "OPUS/48000/2"
+        "codec": "OPUS/48000/2",
+        "ptime": 20
       }
     }
   ],

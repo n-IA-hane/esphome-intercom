@@ -1,5 +1,189 @@
 [
  {
+  "step": "esp-box-opus-answers-66dbd3341b#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-answers-a582568311#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-answers-all-20-101#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-answers-l16-48000-1-10-101#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-answers-opus-48000-2-20-101#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-answers-pcma-20-101#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-offers-0ccc351533#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-offers-0ccc351533#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-box-opus-offers-0ccc351533#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-box-opus-offers-2bb3817d1a#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-offers-2bb3817d1a#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-box-opus-offers-2bb3817d1a#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-box-opus-offers-in-from-box#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "esp-box-opus-offers-in-from-box#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-box-opus-offers-in-from-box#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-151c78c1ef#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-151c78c1ef#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-4f412611e4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-4f412611e4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-in-from-p4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-in-from-p4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-video-in-from-p4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.clock",
+  "prior": 8000,
+  "intended": 48000,
+  "cc": "CC-4"
+ },
+ {
+  "step": "esp-p4-offers-video-in-from-p4#0",
+  "entry_point": "inbound initial offer",
+  "field": "dtmf.payload",
+  "prior": 120,
+  "intended": 126,
+  "cc": "CC-4"
+ },
+ {
   "step": "phone-pcma-dtmf-two-clocks#0",
   "entry_point": "inbound initial offer",
   "field": "dtmf.clock",

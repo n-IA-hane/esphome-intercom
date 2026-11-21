@@ -65,19 +65,24 @@ def test_engine_differs_from_the_contract_only_as_the_ledger_declares():
     assert not problems, "\n".join(problems)
 
 
-def _altered(index: int, **changes) -> list[dict]:
+# One well known row for the negative controls: an inbound offer whose DTMF clock changes (CC-4).
+CONTROL = next(index for index, row in enumerate(LEDGER)
+               if (row["step"], row["field"]) == ("phone-pcma-dtmf-two-clocks#0", "dtmf.clock"))
+
+
+def _altered(**changes) -> list[dict]:
     rows = copy.deepcopy(LEDGER)
-    rows[index].update(changes)
+    rows[CONTROL].update(changes)
     return rows
 
 
 @pytest.mark.parametrize("ledger,expected", [
-    (lambda: _altered(0, prior=123), "prior is"),
-    (lambda: _altered(0, intended=456), "intended is"),
-    (lambda: _altered(0, entry_point="answer to a local offer"), "entry point is"),
-    (lambda: _altered(0, cc="CC-2"), "does not cover this field"),
-    (lambda: [*LEDGER, copy.deepcopy(LEDGER[0])], "duplicate row"),
-    (lambda: LEDGER[1:], "not in the ledger"),
+    (lambda: _altered(prior=123), "prior is"),
+    (lambda: _altered(intended=456), "intended is"),
+    (lambda: _altered(entry_point="answer to a local offer"), "entry point is"),
+    (lambda: _altered(cc="CC-2"), "does not cover this field"),
+    (lambda: [*LEDGER, copy.deepcopy(LEDGER[CONTROL])], "duplicate row"),
+    (lambda: [row for index, row in enumerate(LEDGER) if index != CONTROL], "not in the ledger"),
 ], ids=["wrong prior", "wrong intended", "wrong entry point", "wrong change", "duplicate", "missing row"])
 def test_ledger_check_rejects_a_falsified_ledger(ledger, expected):
     """Negative controls: each kind of wrong row must be noticed."""
