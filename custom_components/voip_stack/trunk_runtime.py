@@ -27,9 +27,12 @@ from .runtime_data import sip_endpoint_manager, sip_endpoint_runtime, sip_trunks
 _LOGGER = logging.getLogger(__name__)
 
 
-def trunk_client_config(cfg: dict):
+def trunk_client_config(cfg: dict, *, parent=None):
     """Normalize the signaling settings which require a new client."""
     from .sip_trunk import SipTrunkConfig
+    from .core.codec_policy import CodecPolicy
+
+    codecs = CodecPolicy.from_config(cfg, parent=parent)
 
     return SipTrunkConfig(
         enabled=True,
@@ -47,21 +50,27 @@ def trunk_client_config(cfg: dict):
         registration_id=int(cfg.get("trunk_registration_id", 1)),
         outbound_media_address=str(cfg.get("trunk_outbound_media_address") or ""),
         media_nat_mode=str(cfg.get("trunk_media_nat") or ""),
-        audio_codecs=tuple(cfg["trunk_audio_codecs"]) if "trunk_audio_codecs" in cfg else None,
-        video_codecs=tuple(cfg["trunk_video_codecs"]) if "trunk_video_codecs" in cfg else None,
+        audio_codecs=codecs.audio,
+        video_codecs=codecs.video,
+        audio_ordered=codecs.audio_ordered,
+        video_ordered=codecs.video_ordered,
     )
 
 
 def create_trunk_client(hass: HomeAssistant, cfg: dict, *, local_ip: str, trunk_id: str = ""):
     """Construct one client for startup or validation; the caller owns adoption."""
     from .sip_trunk import SipTrunkClient
+    from .core.codec_policy import CodecPolicy
+    from .store import config_entry
 
     from homeassistant.helpers.dispatcher import async_dispatcher_send
     from .runtime_data import sip_trunk
     from .trunk_config import TRUNK_UPDATE_SIGNAL
 
+    entry = config_entry(hass)
+    parent = CodecPolicy.from_config(entry.data, prefix="") if entry is not None else None
     client = SipTrunkClient(
-        config=trunk_client_config(cfg), local_ip=local_ip,
+        config=trunk_client_config(cfg, parent=parent), local_ip=local_ip,
         local_sip_port=int(transport_config(hass)["sip_port"]), trunk_id=trunk_id,
     )
 
@@ -153,6 +162,7 @@ async def async_reconcile_trunks(hass: HomeAssistant, entry) -> None:
     """Adopt validated replacements without reloading other phones or trunks."""
     from .peer_snapshot import async_advertise_host
     from .trunk_config import entry_trunk_configs, entry_default_trunk, sync_trunk_devices, clear_removed_trunk_default
+    from .core.codec_policy import CodecPolicy
 
     runtime = runtime_data(hass)
     if runtime is None or runtime.sip is None:
@@ -164,7 +174,13 @@ async def async_reconcile_trunks(hass: HomeAssistant, entry) -> None:
         from .repairs import async_sync_trunk_default_issue
         async_sync_trunk_default_issue(hass, configs, default)
         sync_trunk_devices(hass, entry)
-        if configs == runtime.trunk_configs and default == runtime.default_trunk_id:
+        parent = CodecPolicy.from_config(entry.data, prefix="")
+        current_clients = sip_trunks(hass)
+        if configs == runtime.trunk_configs and default == runtime.default_trunk_id and all(
+            not trunk_enabled(cfg) or ((client := current_clients.get(identity)) is not None
+                                      and client.config == trunk_client_config(cfg, parent=parent))
+            for identity, cfg in configs.items()
+        ):
             return
         local_ip = await async_advertise_host(hass)
         owner = runtime.sip
@@ -174,11 +190,11 @@ async def async_reconcile_trunks(hass: HomeAssistant, entry) -> None:
         try:
             for identity, cfg in configs.items():
                 old = clients.pop(identity, None)
-                if old is not None and trunk_enabled(cfg) and old.config == trunk_client_config(cfg):
+                if old is not None and trunk_enabled(cfg) and old.config == trunk_client_config(cfg, parent=parent):
                     continue
                 pending_name = f"pending_trunk:{identity}"
                 candidate = owner.component(pending_name)
-                if candidate is not None and (not trunk_enabled(cfg) or candidate.config != trunk_client_config(cfg)):
+                if candidate is not None and (not trunk_enabled(cfg) or candidate.config != trunk_client_config(cfg, parent=parent)):
                     await candidate.stop()
                     owner.release_component(pending_name, candidate)
                     candidate = None

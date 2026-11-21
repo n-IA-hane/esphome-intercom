@@ -15,7 +15,8 @@ def reuse_registered_trunk_flow(
     """Borrow a registered flow; closing the call releases only its dialog."""
     if trunk is not None and getattr(trunk, "config", None) is not None:
         from .core.codec_policy import CodecPolicy
-        client.set_codec_policy(CodecPolicy(trunk.config.audio_codecs, trunk.config.video_codecs))
+        client.set_codec_policy(CodecPolicy(trunk.config.audio_codecs, trunk.config.video_codecs,
+            getattr(trunk.config, "audio_ordered", True), getattr(trunk.config, "video_ordered", True)))
         client.media_ip = trunk.config.outbound_media_address or client.local_ip
         from .trunk_media import discover_pending_media, prepare_trunk_media
         client.prepare_media = lambda host: prepare_trunk_media(

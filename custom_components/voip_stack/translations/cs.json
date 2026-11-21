@@ -14,7 +14,9 @@
           "media_capture": "Zaznamenávat zvuk soukromých hovorů pro diagnostiku",
           "experimental_sip_video": "Povolit SIP video pro Home Assistant softphone",
           "sip_registrar_enabled": "Povolit lokální účty SIP",
-          "trunk_enabled": "Povolit volitelný SIP trunk"
+          "trunk_enabled": "Povolit volitelný SIP trunk",
+          "audio_codecs": "Audio codec preference",
+          "video_codecs": "Video codec preference"
         },
         "data_description": {
           "sip_port": "Naslouchací port pro SIP koncový bod HA. HA na tomto portu ambientně přijímá SIP signalizaci přes UDP i TCP.",
@@ -26,7 +28,9 @@
           "media_capture": "Explicitně zaznamenává zvuk soukromých hovorů: až 15 sekund pro každý směr HA-softphonu a 8 sekund pro každou větev přenosu. Data se ukládají jako WAV/JSON do ~/.cache/voip_stack_debug (režim 0700) a promazávají se na limit 24 souborů / 64 MiB. Ponechte zakázané, pokud zrovna neshromažďujete diagnostický vzorek.",
           "experimental_sip_video": "Povolí volitelné video pro kompatibilní zařízení a trasy. H.264, VP8 a JPEG v prohlížeči vyžadují zabezpečený kontext a kompatibilní prohlížeč. U ESP závisí podpora na nastaveném zařízení a profilu kodeku: podporované profily S3 s displejem přijímají JPEG; profily P4 mohou používat JPEG nebo H.264. Profily pouze pro zvuk a pouze pro kameru si zachovávají svá omezení.",
           "sip_registrar_enabled": "Přijímat REGISTER z lokálních SIP koncových bodů, jako jsou VoIP telefony, Zoiper, Linphone nebo baresip, pomocí účtů spravovaných službami VoIP Stack.",
-          "trunk_enabled": "Zobrazit nastavení trunku poskytovatele/ústředny. Pokud je tato možnost zakázána, nespustí se registrace trunku, externí trasa ani kolektor DTMF."
+          "trunk_enabled": "Zobrazit nastavení trunku poskytovatele/ústředny. Pokud je tato možnost zakázána, nespustí se registrace trunku, externí trasa ani kolektor DTMF.",
+          "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+          "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path."
         }
       },
       "video": {
@@ -74,15 +78,17 @@
           "trunk_dtmf_timeout_ms": "Časový limit DTMF (sekundy)",
           "trunk_dtmf_terminator": "Terminátor DTMF",
           "trunk_allowed_ips": "Povolené příchozí IP adresy",
-          "trunk_audio_codecs": "Povolené zvukové kodeky",
-          "trunk_video_codecs": "Povolené video kodeky",
+          "trunk_audio_codecs": "Audio codec preference",
+          "trunk_video_codecs": "Video codec preference",
           "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
           "trunk_media_nat": "Media NAT traversal",
           "trunk_did_source": "Called number source",
           "trunk_did_header": "Custom called-number header",
           "trunk_did_fixed": "Fixed called number",
           "trunk_did_fallbacks": "Alternative sources in priority order",
-          "trunk_did_prefix_rules": "Ordered prefix replacements"
+          "trunk_did_prefix_rules": "Ordered prefix replacements",
+          "trunk_audio_codecs_inherit": "Use integration audio codecs",
+          "trunk_video_codecs_inherit": "Use integration video codecs"
         },
         "data_description": {
           "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -100,10 +106,12 @@
           "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
           "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
           "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
-          "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
-          "trunk_video_codecs": "Video kodeky povolené na tomto trunku. Pro hovory pouze se zvukem seznam vyprázdněte. Výběr kodeku nezapíná video ani transkódování: musí je podporovat telefon i mediální cesta. Profily H.264 se vyjednávají automaticky. Pokud si nejste jisti, ponechte výchozí nastavení.",
+          "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+          "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
-          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
+          "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
         }
       },
       "trunk_mode": {
@@ -351,7 +359,8 @@
       "phone_ldap_mode_unsupported": "Tento profil telefonu nepodporuje nastavený režim připojení LDAP.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
       "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
-      "phone_provisioning_disabled": "Zřizování je vypnuté. Zapněte je v nastavení integrace VoIP Stack a poté se vraťte sem."
+      "phone_provisioning_disabled": "Zřizování je vypnuté. Zapněte je v nastavení integrace VoIP Stack a poté se vraťte sem.",
+      "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -397,14 +406,22 @@
             "video_enabled": "Povolit video",
             "auto_answer": "Automatický příjem",
             "send_video": "Odesílat video",
-            "voicemail_enabled": "Zapnout hlasovou schránku"
+            "voicemail_enabled": "Zapnout hlasovou schránku",
+            "audio_codecs": "Audio codec preference",
+            "audio_codecs_inherit": "Use integration audio codecs",
+            "video_codecs": "Video codec preference",
+            "video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "name": "Vyžadované jméno telefonu používané kartou, telefonním seznamem a směrováním hovorů.",
             "extension": "Volitelná unikátní volitelná klapka. Logický telefon zůstává dostupný pro vyzvánění, i když není připojená žádná karta v prohlížeči.",
             "auto_answer": "Automaticky přijmout hovor, pokud má připojený prohlížeč oprávnění k mikrofonu.",
             "send_video": "Ve výchozím nastavení odesílat obraz z kamery připojeného prohlížeče, pokud je vyjednáno video a je k dispozici oprávnění.",
-            "voicemail_enabled": "Vypnutím trvale odstraníte zprávy, soubory, PIN a nastavení schránky. Opětovné zapnutí vytvoří prázdnou schránku."
+            "voicemail_enabled": "Vypnutím trvale odstraníte zprávy, soubory, PIN a nastavení schránky. Opětovné zapnutí vytvoří prázdnou schránku.",
+            "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
+            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         },
         "sip_account": {
@@ -426,12 +443,20 @@
             "voicemail_enabled": "Zapnout hlasovou schránku",
             "physical_bindings": "Přiřazené fyzické telefony",
             "auto_answer": "Automaticky přijmout v prohlížeči",
-            "send_video": "Odesílat video z prohlížeče"
+            "send_video": "Odesílat video z prohlížeče",
+            "audio_codecs": "Audio codec preference",
+            "audio_codecs_inherit": "Use integration audio codecs",
+            "video_codecs": "Video codec preference",
+            "video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "voicemail_enabled": "Vypnutím trvale odstraníte zprávy, soubory, PIN a nastavení schránky. Opětovné zapnutí vytvoří prázdnou schránku.",
             "auto_answer": "Automaticky přijmout hovor, pokud má připojený prohlížeč oprávnění k mikrofonu.",
-            "send_video": "Ve výchozím nastavení odesílat obraz z kamery připojeného prohlížeče, pokud je vyjednáno video a je k dispozici oprávnění."
+            "send_video": "Ve výchozím nastavení odesílat obraz z kamery připojeného prohlížeče, pokud je vyjednáno video a je k dispozici oprávnění.",
+            "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
+            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         },
         "reconfigure": {
@@ -448,7 +473,8 @@
         "phone_not_found": "Fyzický telefon již neexistuje.",
         "phone_line_occupied": "Tato fyzická linka je již přiřazena jinému účtu.",
         "phone_line_has_keys": "Před odebráním přiřazení změňte nebo odstraňte tlačítka používající tuto linku.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
       },
       "abort": {
         "reconfigure_successful": "Telefon byl úspěšně překonfigurován.",
@@ -539,15 +565,17 @@
             "trunk_dtmf_timeout_ms": "Časový limit DTMF (sekundy)",
             "trunk_dtmf_terminator": "Terminátor DTMF",
             "trunk_allowed_ips": "Povolené příchozí IP adresy",
-            "trunk_audio_codecs": "Povolené zvukové kodeky",
-            "trunk_video_codecs": "Povolené video kodeky",
+            "trunk_audio_codecs": "Audio codec preference",
+            "trunk_video_codecs": "Video codec preference",
             "trunk_outbound_media_address": "IPv4 adresa médií pro odchozí hovory",
             "trunk_media_nat": "Media NAT traversal",
             "trunk_did_source": "Called number source",
             "trunk_did_header": "Custom called-number header",
             "trunk_did_fixed": "Fixed called number",
             "trunk_did_fallbacks": "Alternative sources in priority order",
-            "trunk_did_prefix_rules": "Ordered prefix replacements"
+            "trunk_did_prefix_rules": "Ordered prefix replacements",
+            "trunk_audio_codecs_inherit": "Use integration audio codecs",
+            "trunk_video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -565,10 +593,12 @@
             "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
             "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
             "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
-            "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
-            "trunk_video_codecs": "Video kodeky povolené na tomto trunku. Pro hovory pouze se zvukem seznam vyprázdněte. Výběr kodeku nezapíná video ani transkódování: musí je podporovat telefon i mediální cesta. Profily H.264 se vyjednávají automaticky. Pokud si nejste jisti, ponechte výchozí nastavení.",
+            "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
             "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
-            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
+            "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         }
       },
@@ -1030,6 +1060,12 @@
         "device": {
           "name": "Telefon"
         }
+      }
+    },
+    "codec_order": {
+      "fields": {
+        "codec": "Codec",
+        "enabled": "Enabled"
       }
     }
   },

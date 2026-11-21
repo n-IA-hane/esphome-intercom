@@ -433,6 +433,27 @@ async def test_native_flow_live_listener_adopts_new_trunk_and_creates_sensor(has
     assert not peer.contacts
 
 
+async def test_global_codec_change_reconciles_inherited_clients(hass, catalog):
+    from custom_components.voip_stack.trunk_runtime import async_reconcile_trunks
+
+    assert await async_start_sip_trunk(hass, local_ip="127.0.0.1")
+    previous = sip_trunks(hass)
+    try:
+        assert all(not client.config.audio_ordered for client in previous.values())
+        hass.config_entries.async_update_entry(catalog, data={**catalog.data,
+            "audio_codecs": [{"codec": "PCMU", "enabled": True}, {"codec": "PCMA", "enabled": False}],
+            "video_codecs": []})
+        await async_reconcile_trunks(hass, catalog)
+        current = sip_trunks(hass)
+        assert current.keys() == previous.keys()
+        assert all(client.config.audio_codecs == ("PCMU",) and client.config.video_codecs == ()
+                   and client.config.audio_ordered and client.config.video_ordered for client in current.values())
+        assert all(not client.ready for client in previous.values())
+        assert all("trunk_audio_codecs" not in item.data for item in catalog.subentries.values())
+    finally:
+        await async_stop_sip_trunk(hass)
+
+
 async def test_sensor_exists_while_saved_trunk_waits_for_runtime_adoption(hass, catalog):
     from custom_components.voip_stack.binary_sensor import async_setup_entry
     from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -567,6 +588,8 @@ async def test_trunk_flow_persists_codec_choices_and_preserves_them_when_disable
     assert result['type']=='create_entry'
     identity=result['data']['trunk_id']
     try:
+        assert result['data']['trunk_audio_codecs']==[{'codec':'PCMU','enabled':True}]
+        assert result['data']['trunk_video_codecs']==[]
         await hass.async_block_till_done()
         assert sip_trunk(hass,identity).config.audio_codecs==('PCMU',)
         assert sip_trunk(hass,identity).config.video_codecs==()
@@ -577,7 +600,7 @@ async def test_trunk_flow_persists_codec_choices_and_preserves_them_when_disable
             'name':'Limited codecs','trunk_enabled':False,'trunk_register':True,'make_default':False})
         assert result['type']=='abort'
         await hass.async_block_till_done()
-        assert catalog.subentries[record.subentry_id].data['trunk_audio_codecs']==['PCMU']
+        assert catalog.subentries[record.subentry_id].data['trunk_audio_codecs']==[{'codec':'PCMU','enabled':True}]
         assert catalog.subentries[record.subentry_id].data['trunk_video_codecs']==[]
         assert catalog.subentries[record.subentry_id].data['trunk_outbound_media_address']=='198.51.100.22'
     finally:

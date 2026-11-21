@@ -86,6 +86,8 @@ class SipTrunkConfig:
     video_codecs: tuple[str, ...] | None = None
     outbound_media_address: str = ""
     media_nat_mode: str = ""
+    audio_ordered: bool = True
+    video_ordered: bool = True
 
 
 class SipTrunkClient:
@@ -836,7 +838,8 @@ class SipTrunkClient:
             on_invite=manager.on_invite,
             invite_identity_resolver=getattr(manager, "invite_identity_resolver", None),
             invite_authorizer=getattr(manager, "invite_authorizer", None),
-            codec_policy_resolver=lambda _initial: CodecPolicy(self.config.audio_codecs, self.config.video_codecs),
+            codec_policy_resolver=lambda _initial: CodecPolicy(self.config.audio_codecs, self.config.video_codecs,
+                self.config.audio_ordered, self.config.video_ordered),
             on_offerless_invite=getattr(manager, "on_offerless_invite", None),
             on_terminated=manager.on_terminated,
             on_register=getattr(manager, "on_register", None),

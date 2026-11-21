@@ -14,7 +14,9 @@
           "media_capture": "Gravar áudio privado das chamadas para diagnóstico",
           "experimental_sip_video": "Ativar vídeo SIP para o softphone do Home Assistant",
           "sip_registrar_enabled": "Ativar contas SIP locais",
-          "trunk_enabled": "Ativar tronco SIP opcional"
+          "trunk_enabled": "Ativar tronco SIP opcional",
+          "audio_codecs": "Audio codec preference",
+          "video_codecs": "Video codec preference"
         },
         "data_description": {
           "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
@@ -26,7 +28,9 @@
           "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
           "experimental_sip_video": "Permite vídeo opcional para dispositivos e rotas compatíveis. H.264, VP8 e JPEG no navegador exigem um contexto seguro e um navegador compatível. No ESP, o suporte depende do dispositivo e do perfil de codec configurados: perfis S3 com tela compatíveis recebem JPEG; perfis P4 podem usar JPEG ou H.264. Perfis somente de áudio ou somente de câmera mantêm seus respectivos limites.",
           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
-          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
+          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF.",
+          "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+          "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path."
         }
       },
       "video": {
@@ -74,15 +78,17 @@
           "trunk_dtmf_timeout_ms": "Tempo limite do DTMF (segundos)",
           "trunk_dtmf_terminator": "Finalizador DTMF",
           "trunk_allowed_ips": "Endereços IP de entrada permitidos",
-          "trunk_audio_codecs": "Codecs de áudio permitidos",
-          "trunk_video_codecs": "Codecs de vídeo permitidos",
+          "trunk_audio_codecs": "Audio codec preference",
+          "trunk_video_codecs": "Video codec preference",
           "trunk_outbound_media_address": "Endereço IPv4 de mídia para chamadas de saída",
           "trunk_media_nat": "Media NAT traversal",
           "trunk_did_source": "Called number source",
           "trunk_did_header": "Custom called-number header",
           "trunk_did_fixed": "Fixed called number",
           "trunk_did_fallbacks": "Alternative sources in priority order",
-          "trunk_did_prefix_rules": "Ordered prefix replacements"
+          "trunk_did_prefix_rules": "Ordered prefix replacements",
+          "trunk_audio_codecs_inherit": "Use integration audio codecs",
+          "trunk_video_codecs_inherit": "Use integration video codecs"
         },
         "data_description": {
           "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -100,10 +106,12 @@
           "trunk_dtmf_timeout_ms": "Tempo entre dígitos usado no modo DTMF. O primeiro dígito pode levar até 10 segundos. O padrão é 3 segundos e o máximo é 10 segundos.",
           "trunk_dtmf_terminator": "Dígito finalizador opcional, como #. Vazio significa que o tempo limite ou uma correspondência exata de extensão na agenda decide.",
           "trunk_allowed_ips": "Insira cada IP de origem ou rede CIDR permitida separadamente. Podem ser diferentes do servidor de saída. Obrigatórios sem registro.",
-          "trunk_audio_codecs": "Codecs permitidos em chamadas recebidas e efetuadas por este tronco. Mantenha os padrões, a menos que o provedor especifique outra lista. Selecione pelo menos um codec de áudio. As partes precisam de um codec em comum; DTMF é negociado separadamente. Outros troncos e telefones locais não são alterados.",
-          "trunk_video_codecs": "Esvazie a lista para chamadas somente de áudio. A seleção não ativa vídeo nem transcodificação: o telefone e o caminho de mídia precisam suportar o codec. Os perfis H.264 são negociados automaticamente. Em caso de dúvida, mantenha os padrões.",
+          "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+          "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
-          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
+          "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
+          "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
         }
       },
       "trunk_mode": {
@@ -351,7 +359,8 @@
       "phone_ldap_mode_unsupported": "Este perfil de telefone não oferece suporte ao modo de conexão LDAP configurado.",
       "invalid_phone_key_order": "Choose each existing key exactly once.",
       "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
-      "phone_provisioning_disabled": "O provisionamento está desativado. Ative-o em VoIP Stack > Reconfigurar > Descoberta e provisionamento de telefones e volte aqui."
+      "phone_provisioning_disabled": "O provisionamento está desativado. Ative-o em VoIP Stack > Reconfigurar > Descoberta e provisionamento de telefones e volte aqui.",
+      "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -397,14 +406,22 @@
             "video_enabled": "Permitir vídeo",
             "auto_answer": "Atendimento automático",
             "send_video": "Enviar vídeo",
-            "voicemail_enabled": "Ativar caixa postal"
+            "voicemail_enabled": "Ativar caixa postal",
+            "audio_codecs": "Audio codec preference",
+            "audio_codecs_inherit": "Use integration audio codecs",
+            "video_codecs": "Video codec preference",
+            "video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "name": "Nome obrigatório do telefone usado pelo card, pela agenda telefônica e pelo roteamento de chamadas.",
             "extension": "Extensão discável exclusiva opcional. O telefone lógico continua podendo receber chamadas mesmo sem um card de navegador conectado.",
             "auto_answer": "Atende automaticamente quando um navegador conectado tiver permissão para usar o microfone.",
             "send_video": "Envia por padrão a câmera do navegador conectado quando o vídeo for negociado e houver permissão.",
-            "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia."
+            "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia.",
+            "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
+            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         },
         "sip_account": {
@@ -426,12 +443,20 @@
             "voicemail_enabled": "Ativar caixa postal",
             "physical_bindings": "Telefones físicos associados",
             "auto_answer": "Atender automaticamente no navegador",
-            "send_video": "Enviar vídeo do navegador"
+            "send_video": "Enviar vídeo do navegador",
+            "audio_codecs": "Audio codec preference",
+            "audio_codecs_inherit": "Use integration audio codecs",
+            "video_codecs": "Video codec preference",
+            "video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia.",
             "auto_answer": "Atende automaticamente quando um navegador conectado tiver permissão para usar o microfone.",
-            "send_video": "Envia por padrão a câmera do navegador conectado quando o vídeo for negociado e houver permissão."
+            "send_video": "Envia por padrão a câmera do navegador conectado quando o vídeo for negociado e houver permissão.",
+            "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
+            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         },
         "reconfigure": {
@@ -448,7 +473,8 @@
         "phone_not_found": "O telefone físico não existe mais.",
         "phone_line_occupied": "Esta linha física já está atribuída a outra conta.",
         "phone_line_has_keys": "Reatribua ou remova as teclas que usam esta linha antes de remover a associação.",
-        "invalid_phone_configuration": "Check the phone configuration and selected references."
+        "invalid_phone_configuration": "Check the phone configuration and selected references.",
+        "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
       },
       "abort": {
         "reconfigure_successful": "Telefone reconfigurado com sucesso.",
@@ -539,15 +565,17 @@
             "trunk_dtmf_timeout_ms": "Tempo limite do DTMF (segundos)",
             "trunk_dtmf_terminator": "Finalizador DTMF",
             "trunk_allowed_ips": "Endereços IP de entrada permitidos",
-            "trunk_audio_codecs": "Codecs de áudio permitidos",
-            "trunk_video_codecs": "Codecs de vídeo permitidos",
+            "trunk_audio_codecs": "Audio codec preference",
+            "trunk_video_codecs": "Video codec preference",
             "trunk_outbound_media_address": "Endereço IPv4 de mídia para chamadas de saída",
             "trunk_media_nat": "Media NAT traversal",
             "trunk_did_source": "Called number source",
             "trunk_did_header": "Custom called-number header",
             "trunk_did_fixed": "Fixed called number",
             "trunk_did_fallbacks": "Alternative sources in priority order",
-            "trunk_did_prefix_rules": "Ordered prefix replacements"
+            "trunk_did_prefix_rules": "Ordered prefix replacements",
+            "trunk_audio_codecs_inherit": "Use integration audio codecs",
+            "trunk_video_codecs_inherit": "Use integration video codecs"
           },
           "data_description": {
             "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -565,10 +593,12 @@
             "trunk_dtmf_timeout_ms": "Tempo entre dígitos usado no modo DTMF. O primeiro dígito pode levar até 10 segundos. O padrão é 3 segundos e o máximo é 10 segundos.",
             "trunk_dtmf_terminator": "Dígito finalizador opcional, como #. Vazio significa que o tempo limite ou uma correspondência exata de extensão na agenda decide.",
             "trunk_allowed_ips": "Insira cada IP de origem ou rede CIDR permitida separadamente. Podem ser diferentes do servidor de saída. Obrigatórios sem registro.",
-            "trunk_audio_codecs": "Codecs permitidos em chamadas recebidas e efetuadas por este tronco. Mantenha os padrões, a menos que o provedor especifique outra lista. Selecione pelo menos um codec de áudio. As partes precisam de um codec em comum; DTMF é negociado separadamente. Outros troncos e telefones locais não são alterados.",
-            "trunk_video_codecs": "Esvazie a lista para chamadas somente de áudio. A seleção não ativa vídeo nem transcodificação: o telefone e o caminho de mídia precisam suportar o codec. Os perfis H.264 são negociados automaticamente. Em caso de dúvida, mantenha os padrões.",
+            "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
+            "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
             "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
-            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override."
+            "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
+            "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
+            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
           }
         }
       },
@@ -1030,6 +1060,12 @@
         "device": {
           "name": "Telefone"
         }
+      }
+    },
+    "codec_order": {
+      "fields": {
+        "codec": "Codec",
+        "enabled": "Enabled"
       }
     }
   },

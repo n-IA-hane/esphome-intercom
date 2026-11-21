@@ -77,9 +77,12 @@ def entry_trunk_config(entry: ConfigEntry | None = None) -> dict:
 
 def normalized_trunk_config(data) -> dict:
     """Normalize one persisted trunk independently of its HA storage record."""
-    from .core.codec_policy import CodecPolicy
+    from .core.codec_policy import AUDIO_CODECS, VIDEO_CODECS, CodecPolicy, normalize_codec_rows
     from .inbound_identity import normalized_did_config
-    codecs = CodecPolicy.from_config(data)
+    CodecPolicy.from_config(data)
+    codecs = {key: list(normalize_codec_rows(data[key], supported))
+              for key, supported in (("trunk_audio_codecs", AUDIO_CODECS), ("trunk_video_codecs", VIDEO_CODECS))
+              if data.get(key) is not None}
     raw_dtmf_value = data.get(CONF_TRUNK_DTMF_TIMEOUT_MS)
     raw_dtmf_timeout = 3000 if raw_dtmf_value in (None, "") else int(raw_dtmf_value)
     dtmf_timeout_ms = (
@@ -95,8 +98,7 @@ def normalized_trunk_config(data) -> dict:
     return {
         **normalized_did_config(data),
         CONF_TRUNK_ENABLED: bool(data.get(CONF_TRUNK_ENABLED, False)),
-        "trunk_audio_codecs": list(codecs.audio),
-        "trunk_video_codecs": list(codecs.video),
+        **codecs,
         "trunk_registration_id": int(data.get("trunk_registration_id") or 1),
         "trunk_outbound_media_address": str(data.get("trunk_outbound_media_address") or "").strip(),
         "trunk_media_nat": str(data.get("trunk_media_nat") or (

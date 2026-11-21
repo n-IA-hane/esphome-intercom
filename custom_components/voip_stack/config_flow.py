@@ -31,6 +31,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .config_validation import entry_route_mappings as _entry_route_mappings
+from .codec_policy_form import codec_form_fields, normalize_codec_form
 from homeassistant.data_entry_flow import Optional as visible_optional, Required as visible_required
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts, mailbox_route_aliases, mailbox_namespace_conflicts
@@ -151,16 +152,12 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
         value = existing.get(key)
         return default if value in (None, "") else value
 
-    from .core.codec_policy import CodecPolicy
-    codecs = CodecPolicy.from_config(existing)
     data.update(
         {
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
             "trunk_media_nat": existing.get("trunk_media_nat") or (
                 "manual" if existing.get("trunk_outbound_media_address") else "auto"
             ),
-            "trunk_audio_codecs": list(codecs.audio),
-            "trunk_video_codecs": list(codecs.video),
             CONF_TRUNK_ENABLED: False,
             CONF_TRUNK_REGISTER: legacy_value(CONF_TRUNK_REGISTER, True),
             CONF_TRUNK_ALLOWED_IPS: legacy_value(CONF_TRUNK_ALLOWED_IPS, []),
@@ -191,6 +188,9 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
             CONF_PHONEBOOK_CONTACTS: legacy_value(CONF_PHONEBOOK_CONTACTS, []),
         }
     )
+    codec_errors, _inherited = normalize_codec_form(data, {}, existing, prefix="trunk_", inherit=True)
+    if codec_errors:
+        raise ValueError("trunk_codecs_invalid")
     return data
 
 
@@ -222,7 +222,6 @@ class TrunkFormMixin:
         register = getattr(
             self, "_trunk_register", existing.get(CONF_TRUNK_REGISTER, True)
         )
-        from .core.codec_policy import AUDIO_CODECS, VIDEO_CODECS, normalize_codecs
         legacy_timeout = _dtmf_timeout_seconds(
             existing.get(CONF_TRUNK_DTMF_TIMEOUT_MS, 3000)
         )
@@ -261,12 +260,8 @@ class TrunkFormMixin:
                     "trunk_outbound_media_address",
                     default=existing.get("trunk_outbound_media_address", ""),
                 ): TextSelector(),
-                vol.Required("trunk_audio_codecs", default=existing.get("trunk_audio_codecs", list(AUDIO_CODECS))):
-                    SelectSelector(SelectSelectorConfig(options=list(AUDIO_CODECS), multiple=True,
-                                                        translation_key="trunk_audio_codecs")),
-                vol.Required("trunk_video_codecs", default=existing.get("trunk_video_codecs", list(VIDEO_CODECS))):
-                    SelectSelector(SelectSelectorConfig(options=list(VIDEO_CODECS), multiple=True,
-                                                        translation_key="trunk_video_codecs")),
+                **codec_form_fields(existing, prefix="trunk_", inherit=True,
+                                    parent=_current_entry.data if _current_entry is not None else {}),
                 vol.Required(
                     CONF_TRUNK_TRANSPORT, default=defaults[CONF_TRUNK_TRANSPORT]
                 ): SelectSelector(
@@ -418,12 +413,10 @@ class TrunkFormMixin:
             elif media_mode == "manual" and not media_address:
                 errors["trunk_outbound_media_address"] = "trunk_media_address_invalid"
             user_input["trunk_media_nat"] = media_mode
-            for key, allowed, empty in (("trunk_audio_codecs", AUDIO_CODECS, False),
-                                        ("trunk_video_codecs", VIDEO_CODECS, True)):
-                try:
-                    user_input[key] = list(normalize_codecs(user_input.get(key, existing.get(key, allowed)), allowed, allow_empty=empty))
-                except ValueError:
-                    errors[key] = "trunk_codecs_invalid"
+            codec_errors, inherited = normalize_codec_form(user_input, user_input, existing,
+                prefix="trunk_", inherit=True, error_key="trunk_codecs_invalid")
+            errors.update(codec_errors)
+            self._codec_inherited_keys = inherited
             if not errors:
                 data = dict(self._base_input or {})
                 data[CONF_TRUNK_ENABLED] = True
@@ -485,6 +478,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         current_entry, _existing = self._current_entry_data()
         if current_entry is not None:
             data = {**current_entry.data, **data}
+        for key in getattr(self, "_codec_inherited_keys", ()):
+            data.pop(key, None)
         for feature in ("parking", "voicemail"):
             if feature in data:
                 settings = dict(data[feature])
@@ -696,11 +691,14 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     CONF_REGISTRAR_ENABLED, default=defaults[CONF_REGISTRAR_ENABLED]
                 ): BooleanSelector(),
+                **codec_form_fields(existing),
             }
         )
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            codec_errors, _inherited = normalize_codec_form(user_input, user_input, existing)
+            errors.update(codec_errors)
             # Number selectors hand floats; coerce to int once on the boundary.
             for k in ("sip_port", "rtp_port"):
                 user_input[k] = int(user_input[k])
@@ -1115,6 +1113,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             visible_required(CONF_PHONE_SEND_VIDEO, default=bool(current.get(CONF_PHONE_SEND_VIDEO, False)),
                 visible={"field": CONF_PHONE_VIDEO_ENABLED, "value": True}): BooleanSelector(),
         })
+        fields.update(codec_form_fields(current, inherit=True, parent=self._get_entry().data))
         if sip_account:
             from .physical_phone import (
                 account_physical_bindings, account_physical_bindings_form_rows,
@@ -1254,6 +1253,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         data.update({CONF_PHONE_AUTO_ANSWER: bool(values.get(CONF_PHONE_AUTO_ANSWER, False)),
                      CONF_PHONE_SEND_VIDEO: bool(values.get(CONF_PHONE_SEND_VIDEO, False))})
         data[CONF_PHONE_POLICY] = policy_data
+        codec_errors, _inherited = normalize_codec_form(data, user_input, current, inherit=True)
+        errors.update(codec_errors)
         if not self._reconfigure:
             self._account_draft = draft_phone_subentry(data, previous=self._account_draft, title=name)
         return data, errors

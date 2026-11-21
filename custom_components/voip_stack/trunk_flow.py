@@ -8,6 +8,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.selector import BooleanSelector, TextSelector
 
 from .config import normalized_trunk_config
+from .core.codec_policy import CodecPolicy
 from .config_flow import TrunkFormMixin, _disabled_trunk_data
 from .peer_snapshot import async_advertise_host
 from .runtime_data import runtime_data, sip_trunk
@@ -93,7 +94,8 @@ class TrunkSubentryFlowHandler(TrunkFormMixin, ConfigSubentryFlow):
             configs[self._identity] = cfg
             validate_static_trunk_sources(configs)
             old = sip_trunk(self.hass, self._identity)
-            if old is not None and old.config == trunk_client_config(cfg) and old.ready:
+            parent = CodecPolicy.from_config(self._get_entry().data, prefix="")
+            if old is not None and old.config == trunk_client_config(cfg, parent=parent) and old.ready:
                 return self._store_entry(data)
             if old is not None and trunk_has_calls(self.hass, self._identity, old):
                 raise ValueError("trunk_in_use")
@@ -134,8 +136,9 @@ class TrunkSubentryFlowHandler(TrunkFormMixin, ConfigSubentryFlow):
             entry = self.hass.config_entries.async_get_entry(self.handler[0])
             configs = entry_trunk_configs(entry) if entry is not None else {}
             runtime = runtime_data(self.hass)
+            parent = CodecPolicy.from_config(entry.data, prefix="") if entry is not None else None
             if (self._saved and runtime is not None and runtime.sip is not None
-                    and self._identity in configs and trunk_client_config(configs[self._identity]) == candidate.config):
+                    and self._identity in configs and trunk_client_config(configs[self._identity], parent=parent) == candidate.config):
                 name = f"pending_trunk:{self._identity}"
                 previous = runtime.sip.component(name)
                 if previous is candidate or runtime.sip.component(f"trunk:{self._identity}") is candidate:
