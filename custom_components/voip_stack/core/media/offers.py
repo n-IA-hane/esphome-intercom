@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from ..audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_formats
+from ..audio_capabilities import local_rtp_audio_formats
 from ..audio_format import PcmFormat
 from ..codec_capabilities import codec_available
 from ..codec_policy import DEFAULT_AUDIO_CODECS
