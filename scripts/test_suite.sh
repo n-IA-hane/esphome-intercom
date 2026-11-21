@@ -132,6 +132,7 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_complete_offer_contracts_ha.py
   tests/test_fanvil_blf_pickup_wire_ha.py
   tests/test_trunk_voicemail_ha.py
   tests/test_assist_core_boundary_ha.py
