@@ -117,7 +117,7 @@ async def test_final_sip_answer_wins_noanswer_timer_before_media_commit(
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
-@pytest.mark.parametrize("destination_kind", ["sip_account", "browser", "browser_with_esp_events"])
+@pytest.mark.parametrize("destination_kind", ["sip_account", "browser", "browser_with_esp_events", "sip_unavailable"])
 async def test_native_sip_noanswer_reaches_own_mailbox(
     trunks, registered_phones, tmp_path, monkeypatch, destination_kind
 ):
@@ -134,19 +134,23 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
 
     runtime = trunks
     destination_id = "transfer_b"
-    if destination_kind.startswith("browser"):
+    if destination_kind.startswith("browser") or destination_kind == "sip_unavailable":
         from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
         from custom_components.voip_stack.roster import RosterEntry
 
         destination_id = "casa"
         runtime.runtime.endpoints.register(PhoneEndpoint(
             endpoint_id=destination_id, name=destination_id,
-            device_id="browser-casa", kind=EndpointKind.BROWSER,
-            availability="available",
+            device_id="browser-casa" if destination_kind.startswith("browser") else "",
+            username=destination_id if destination_kind == "sip_unavailable" else "",
+            kind=EndpointKind.BROWSER if destination_kind.startswith("browser") else EndpointKind.SIP_ACCOUNT,
+            availability="available" if destination_kind.startswith("browser") else "offline",
         ))
         runtime.roster.append(RosterEntry(
             destination_id, metadata={"local_ha": True, "endpoint_id": destination_id},
         ))
+        if destination_kind == "sip_unavailable":
+            assert not runtime.calls.component("registrar").registered_contacts(destination_id)
     runtime.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
@@ -179,8 +183,10 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
         destination_id,
         policy=PhonePolicy.from_data(
             {
-                "ringing_timeout": 1,
-                "no_answer": {"kind": "voicemail", "target": destination_id},
+                **({"ringing_timeout": 1} if destination_kind != "sip_unavailable" else {}),
+                "unavailable" if destination_kind == "sip_unavailable" else "no_answer": {
+                    "kind": "voicemail", "target": destination_id,
+                },
             }
         ),
     )
