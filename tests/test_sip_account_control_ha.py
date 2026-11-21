@@ -447,6 +447,154 @@ async def test_sip_caller_control_ends_every_owned_offer(ringing_group, operatio
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"manual": ("transfer_b", "transfer_c")}], indirect=True)
+@pytest.mark.parametrize("ringing_group", ["group"], indirect=True)
+@pytest.mark.parametrize("operation", ["hangup", "decline", "cancel"])
+async def test_sip_group_terminal_barrier_waits_for_fork_cleanup(
+    ringing_group, operation, monkeypatch,
+):
+    """Public terminal state cannot outrun a real fork's signaling cleanup."""
+    from custom_components.voip_stack import ring_group_fork
+
+    env = ringing_group
+    session = env.session
+    attempts = tuple(env.lab.calls.resource_for(session.call_id, "fork_answer").attempts)
+    closing, release = asyncio.Event(), asyncio.Event()
+    original = ring_group_fork.async_close_outbound_leg
+
+    async def close(attempt, **kwargs):
+        closing.set()
+        await release.wait()
+        await original(attempt, **kwargs)
+
+    monkeypatch.setattr(ring_group_fork, "async_close_outbound_leg", close)
+    command = asyncio.create_task(
+        asyncio.to_thread(env.caller.hangup) if operation == "cancel" else
+        env.lab.hass.services.async_call("voip_stack", operation, {
+            "device_id": "transfer_a", "call_id": session.call_id,
+        }, blocking=True)
+    )
+    try:
+        await asyncio.wait_for(closing.wait(), 3)
+        assert session.termination_started.is_set()
+        assert not session.terminated.is_set()
+        assert env.lab.calls.get_session(session.call_id) is session
+        assert env.lab.runtime.rtp_port_pool["used"]
+    finally:
+        release.set()
+        await asyncio.wait_for(command, 3)
+        await asyncio.wait_for(session.terminated.wait(), 3)
+    assert not env.lab.calls.sessions and not session.tasks
+    assert not env.lab.runtime.rtp_port_pool["used"]
+    assert all(attempt.client._close_task.done() for attempt in attempts)
+    assert all(attempt.client.audio_rtp_socket is None for attempt in attempts)
+    await asyncio.to_thread(env.caller.command, "/dial Controlled")
+    await wait_until(lambda: bool(env.lab.calls.sessions))
+    next_session = next(iter(env.lab.calls.sessions.values()))
+    await wait_until(lambda: all(any(leg.endpoint_id == identity and leg.state == "remote_ringing"
+        for leg in next_session.legs.values()) for identity in ("transfer_b", "transfer_c")))
+    # An old terminal command cannot close the reused endpoints' new call.
+    await env.lab.hass.services.async_call("voip_stack", "hangup", {
+        "device_id": "transfer_a", "call_id": session.call_id,
+    }, blocking=True)
+    assert next_session.live and next_session.generation > session.generation
+    await asyncio.to_thread(env.caller.hangup)
+    await asyncio.wait_for(next_session.terminated.wait(), 3)
+    assert not env.lab.calls.sessions and not env.lab.runtime.rtp_port_pool["used"]
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": ("transfer_b", "transfer_c")}], indirect=True)
+@pytest.mark.parametrize("origin", ["sip", "browser"])
+@pytest.mark.parametrize("ending", ["busy", "timeout", "unavailable", "preparation_error", "prepared_error"])
+async def test_ring_group_worker_terminal_outcomes_allow_next_call(
+    trunks, registered_phones, origin, ending, monkeypatch,
+):
+    """A worker can terminate its own call and release the next generation."""
+    from custom_components.voip_stack import ring_group_orchestrator
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+
+    lab = trunks
+    caller, first, second = registered_phones
+    group = RosterEntry("TerminalGroup", ha_bridge=True, metadata={
+        "group_type": "ring", "members": ["transfer_b", "transfer_c"],
+        "overall_timeout": .3 if ending == "timeout" else 1,
+        "step_timeout": .3 if ending == "timeout" else 1,
+    })
+    if ending == "unavailable":
+        group.metadata["members"] = ["missing-member"]
+    lab.roster.append(group)
+    lab.runtime.directory.replace(lab.roster)
+    if origin == "browser":
+        lab.runtime.endpoints.register(PhoneEndpoint(
+            endpoint_id="terminal-browser", name="Terminal browser",
+            device_id="terminal-browser-device", kind=EndpointKind.BROWSER,
+            availability="available",
+        ))
+
+    async def start():
+        if origin == "sip":
+            created = asyncio.get_running_loop().create_future()
+
+            def observe(snapshot):
+                current = lab.calls.get_session(snapshot.call_id)
+                if current is not None and not created.done():
+                    created.set_result(current)
+
+            unsubscribe = lab.calls.subscribe_state(observe)
+            try:
+                await asyncio.to_thread(caller.command, "/dial TerminalGroup")
+                return await asyncio.wait_for(created, 3)
+            finally:
+                unsubscribe()
+        call_id = await lab.calls.start_ring_group_from_ha(group, endpoint_id="terminal-browser")
+        return lab.calls.get_session(call_id)
+
+    prepare = ring_group_orchestrator.async_prepare_group_candidates
+
+    async def fail_preparation(*args, **kwargs):
+        if ending == "prepared_error":
+            await prepare(*args, **kwargs)
+        raise RuntimeError("injected group preparation failure")
+
+    def members_ringing(session):
+        return all(any(leg.endpoint_id == identity and leg.state == "remote_ringing"
+            for leg in session.legs.values()) for identity in ("transfer_b", "transfer_c"))
+
+    with monkeypatch.context() as patch:
+        if ending in {"preparation_error", "prepared_error"}:
+            patch.setattr(ring_group_orchestrator, "async_prepare_group_candidates", fail_preparation)
+        session = await start()
+        if ending == "busy":
+            await wait_until(lambda: members_ringing(session))
+            for phone in (first, second):
+                await asyncio.to_thread(phone.hangup)
+        await asyncio.wait_for(session.terminated.wait(), 3)
+    assert session.terminal_reason == {
+        "busy": "busy", "timeout": "timeout", "unavailable": "transport_unreachable",
+        "preparation_error": "protocol_error", "prepared_error": "protocol_error",
+    }[ending]
+    assert not lab.calls.sessions and not session.tasks
+    assert not lab.calls.endpoint_claims_snapshot() and not lab.calls.relays_snapshot()
+    assert not lab.runtime.rtp_port_pool.get("used")
+
+    # Reuse both member claims and the same RTP pool after self-termination.
+    group.metadata.update(members=["transfer_b", "transfer_c"], overall_timeout=5, step_timeout=5)
+    next_session = await start()
+    await wait_until(lambda: members_ringing(next_session))
+    if origin == "sip":
+        await asyncio.to_thread(caller.hangup)
+    else:
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "device_id": "terminal-browser-device", "call_id": next_session.call_id,
+        }, blocking=True)
+    await asyncio.wait_for(next_session.terminated.wait(), 3)
+    assert next_session.generation > session.generation
+    assert not lab.calls.sessions and not next_session.tasks
+    assert not lab.runtime.rtp_port_pool["used"]
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"manual": ("transfer_b", "transfer_c")}], indirect=True)
 @pytest.mark.parametrize("ringing_group", ["group", "queue"], indirect=True)
 @pytest.mark.parametrize("operation", ["hangup", "decline"])
 async def test_sip_recipient_control_retires_only_its_fork_offer(ringing_group, operation):

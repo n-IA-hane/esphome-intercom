@@ -258,7 +258,7 @@ async def route_local_group(
             )
         return result
     if group_type == GROUP_TYPE_RING and decision.entry is not None:
-        registry.upsert(
+        session = registry.upsert(
             invite.call_id,
             state=CallState.RINGING.value,
             owner="router",
@@ -273,7 +273,7 @@ async def route_local_group(
             role="caller",
             state=CallState.RINGING.value,
         )
-        create_runtime_task(
+        task = create_runtime_task(
             runtime.hass,
             runtime.run_ring_group_call(
                 invite,
@@ -282,6 +282,7 @@ async def route_local_group(
                 roster_entries,
             ),
         )
+        session.own_task(task, name="ring_group")
         return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
     await EndpointTerminationHandler(runtime.hass).terminate_reason(
         invite.call_id,

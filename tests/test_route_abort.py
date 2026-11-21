@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -157,6 +158,44 @@ async def test_terminal_abort_consumes_source_once(
     assert intent.sip_disposition.value == disposition
     assert intent.response_status == status
     cleanup.assert_awaited_once()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_terminal_abort_drains_attempts_before_publishing_even_when_cancelled(
+    abort_env, cancelled,
+):
+    from custom_components.voip_stack.session_cleanup import async_wait_for_cleanup
+
+    route_abort, _, terminate, cleanup, _, _, _ = abort_env
+    started, release, drained = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def close_attempts(*args):
+        started.set()
+        try:
+            await async_wait_for_cleanup(asyncio.create_task(release.wait()))
+        finally:
+            drained.set()
+
+    async def publish(*args):
+        assert drained.is_set()
+        return True
+
+    cleanup.side_effect = close_attempts
+    terminate.side_effect = publish
+    task = asyncio.create_task(route_abort.async_abort_route(
+        route_abort.RouteAbortContext(SimpleNamespace(), _Registry(), "call-1"),
+        route_abort.RouteAbortIntent("failed"),
+    ))
+    await asyncio.wait_for(started.wait(), 1)
+    try:
+        terminate.assert_not_awaited()
+        if cancelled:
+            task.cancel()
+    finally:
+        release.set()
+    result, = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 1)
+    assert isinstance(result, asyncio.CancelledError) if cancelled else result is False
+    terminate.assert_awaited_once()
 
 
 @pytest.mark.asyncio

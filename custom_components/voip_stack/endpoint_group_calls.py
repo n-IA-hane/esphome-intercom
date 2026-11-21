@@ -157,7 +157,9 @@ class EndpointGroupCalls:
                 TerminationInitiator.RUNTIME,
             )
             raise
-        create_runtime_task(
+        if not session.live:
+            return call_id
+        task = create_runtime_task(
             self.hass,
             self.run_ring_group(
                 invite,
@@ -170,6 +172,7 @@ class EndpointGroupCalls:
                 enable_caller_video_send=bool(enable_caller_video_send),
             ),
         )
+        session.own_task(task, name="ring_group")
         return call_id
 
 

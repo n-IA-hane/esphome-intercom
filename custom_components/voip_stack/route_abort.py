@@ -51,6 +51,7 @@ async def async_abort_route(
     attempts = [
         attempt for attempt in context.attempts if attempt.client is not bridge_client
     ]
+    terminal = None
     try:
         take_pending_route(hass, call_id)
         if context.settle is not None:
@@ -115,7 +116,12 @@ async def async_abort_route(
                 if intent.sip_status
                 else TerminationIntent(intent.reason)
             )
-        await EndpointTerminationHandler(hass).terminate(call_id, terminal)
-        return False
     finally:
-        await async_cleanup_outbound_attempts([], attempts)
+        try:
+            await async_cleanup_outbound_attempts([], attempts)
+        finally:
+            # A terminating route worker cannot join itself. Drain its attempts
+            # before publishing terminal state, including caller cancellation.
+            if terminal is not None:
+                await EndpointTerminationHandler(hass).terminate(call_id, terminal)
+    return False
