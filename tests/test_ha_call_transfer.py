@@ -22,6 +22,16 @@ from .test_automation_originate_ha import lab as lab, dial, assert_call_resource
 pytestmark = pytest.mark.ha
 
 
+def _unrelated_phone_registry():
+    """Provide the complete endpoint contract without matching directory contacts."""
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+
+    phones = EndpointRegistry()
+    phones.register(PhoneEndpoint("fixture-phone", "Fixture phone", "sip_account", username="fixture-phone"))
+    return phones
+
+
 @pytest.mark.parametrize("destination,policy_kind", [
     ("Offline target", None), ("Offline target", "contact"), ("Offline target", "voicemail"),
     ("700", None), ("park.701", None), ("810", None), ("park.811", None),
@@ -266,7 +276,7 @@ async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None
     calls = _dialog_registry(source, consultation)
     runtime = SimpleNamespace(
         sip=calls,
-        endpoints=SimpleNamespace(resolve=lambda _value: None),
+        endpoints=_unrelated_phone_registry(),
     )
 
     result = await call_transfer.async_transfer_call(
@@ -294,7 +304,7 @@ async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None
 
 def test_blind_transfer_preserves_secure_sip_uri() -> None:
     source = _established("source", "source-remote", "source")
-    runtime = SimpleNamespace(endpoints=SimpleNamespace(resolve=lambda _value: None))
+    runtime = SimpleNamespace(endpoints=_unrelated_phone_registry())
 
     assert call_transfer._blind_target(
         runtime,
@@ -346,7 +356,7 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
     calls = _dialog_registry(source)
     runtime = SimpleNamespace(
         sip=calls,
-        endpoints=SimpleNamespace(resolve=lambda _: None),
+        endpoints=_unrelated_phone_registry(),
         directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "HA", "address": "192.0.2.1", "port": 5070,
              "metadata": {"local_ha": True, "sip_transport": "tcp"}},
@@ -398,7 +408,7 @@ def test_automation_transfer_without_reachable_ha_address_fails_explicitly():
 def test_transfer_uses_address_contact_route_not_current_peer(destination):
     import json
     runtime = SimpleNamespace(
-        endpoints=SimpleNamespace(resolve=lambda _: None),
+        endpoints=_unrelated_phone_registry(),
         directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "room-speaker", "name": "Room speaker", "address": "192.0.2.30",
              "port": 5070, "extension": "321", "metadata": {"sip_transport": "udp"}},
