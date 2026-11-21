@@ -115,7 +115,8 @@ def account_call_details(data, endpoint_id="", row=None):
     if direction == "outgoing":
         peer = counterpart_display(_party(data, "connected_party", "answered_by"),
                                   fallback=_party(data, "callee", "dialed_target", "called_number"),
-                                  name=_party(row, "peer_name", "peer_user"), updated=bool(data.get("connected_uri")))
+                                  name=_party(row, "peer_name", "peer_user"), updated=bool(data.get("connected_uri")),
+                                  display_name=data.get("connected_display_name", ""))
         peer = peer or _party(row, "peer_name", "peer_user")
         peer = peer or _party(data, "callee", "dialed_target", "called_number", "peer_name")
     elif direction == "incoming":

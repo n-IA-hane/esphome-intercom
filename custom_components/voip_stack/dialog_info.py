@@ -100,6 +100,7 @@ def snapshot_all(runtime):
                 endpoint=peer,
                 directory=runtime.directory,
                 updated=bool(source and session.metadata.get("connected_uri")),
+                display_name=session.metadata.get("connected_display_name" if source else "caller_name", ""),
             )
             for leg in matching or (None,):
                 wire_id = (

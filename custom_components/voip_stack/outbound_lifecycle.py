@@ -11,7 +11,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .call_projection import publish_phone_projection
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
-from .counterpart_display import counterpart_display
+from .counterpart_display import connected_display_name, counterpart_display
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import (
     SipTerminationDisposition,
@@ -73,7 +73,9 @@ def attach_outbound_connected_identity_state(
                 route_kind=session.route_kind,
                 connected_party=connected_party,
                 connected_uri=connected_uri,
+                connected_display_name=connected_display_name(client),
             )
+            session.update_metadata(connected_display_name=connected_display_name(client))
             publish_phone_projection(
                 hass, session, endpoint_id, peer_name=connected_party,
                     connected_party=connected_party,
@@ -104,6 +106,7 @@ def observe_outbound_call_result(registry, call_id: str, *, state: str, **metada
         client = registry.sip_client_for(call_id)
         if client is not None and client.connected_party:
             metadata["connected_party"] = client.connected_party
+            metadata["connected_display_name"] = connected_display_name(client)
     return registry.upsert(call_id, state=state, owner="ha_softphone", **metadata)
 
 
@@ -191,6 +194,7 @@ async def async_track_outbound_sip_client(
         public_final = sip_public_state(final)
         connected_party = counterpart_display(
             getattr(client, "connected_party", ""), fallback=target, endpoint=target_endpoint,
+            display_name=connected_display_name(client),
         )
         if registry.sip_client_for(client.dialog_ids.call_id) is not client:
             # Hangup/replacement already revoked this watcher. A queued final

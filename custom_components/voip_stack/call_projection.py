@@ -125,6 +125,7 @@ class CallStatePublisher:
                         "dest_endpoint_id" if source else "source_endpoint_id") or session.metadata.get("target_endpoint_id") or "")),
                     directory=runtime.directory,
                     updated=bool(source and session.metadata.get("connected_uri")),
+                    display_name=session.metadata.get("connected_display_name" if source else "caller_name", ""),
                 ),
                 event_type="state_changed",
             )
@@ -312,6 +313,9 @@ def publish_call_projection(
         details.setdefault("dialed_target", metadata["dialed_target"])
     if metadata.get("connected_uri"):
         details.setdefault("connected_uri", metadata["connected_uri"])
+    for key in ("connected_display_name", "caller_name"):
+        if key in metadata:
+            details.setdefault(key, metadata[key])
     if event.scope == "phone":
         from .browser_phone_runtime import _set_ha_softphone_call_state
 

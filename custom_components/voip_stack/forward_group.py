@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .call_projection import publish_bridge_projection
-from .counterpart_display import counterpart_display
+from .counterpart_display import connected_display_name, counterpart_display
 from .const import (
     CONF_VIDEO_TRANSCODING,
     DOMAIN,
@@ -511,6 +511,7 @@ class ForwardGroup:
         connected_party = counterpart_display(
             winner.client.connected_party, fallback=winner.member,
             endpoint=endpoint_directory(self.operation.runtime.hass).get(winner.endpoint_id),
+            display_name=connected_display_name(winner.client),
         )
 
         if application is not None:
@@ -577,7 +578,8 @@ class ForwardGroup:
         )
         if committed is None:
             raise RuntimeError(TerminalReason.CANCELLED.value)
-        session.update_metadata(connected_party=connected_party)
+        session.update_metadata(connected_party=connected_party,
+                                connected_display_name=connected_display_name(winner.client))
         await self.operation.retire_application()
         if local_source is not None:
             local_source.connected(connected_party, self.route_kind)

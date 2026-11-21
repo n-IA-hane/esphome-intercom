@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .account_dialing import account_call_plan
-from .counterpart_display import counterpart_display
+from .counterpart_display import connected_display_name, counterpart_display
 from .call_projection import (
     observe_phone_leg_projection,
     publish_bridge_projection,
@@ -647,6 +647,7 @@ async def run_ring_group_call(
         connected_party = counterpart_display(
             winner.client.connected_party, fallback=winner.member or invite.target,
             endpoint=endpoint_directory(hass).get(winner.endpoint_id),
+            display_name=connected_display_name(winner.client),
         )
         committed = await async_commit_outbound_bridge(
             hass,
@@ -685,7 +686,8 @@ async def run_ring_group_call(
         if committed is None:
             await _close_outbound_leg(winner, bye_or_cancel=True)
             return
-        session.update_metadata(connected_party=connected_party)
+        session.update_metadata(connected_party=connected_party,
+                                connected_display_name=connected_display_name(winner.client))
         publish_bridge_projection(
             hass,
             session,

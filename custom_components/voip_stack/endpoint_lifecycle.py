@@ -68,7 +68,7 @@ def project_session_termination(
         "origin": "remote" if remote else "self",
         "last_sip_event": event,
     }
-    for key in ("connected_party", "connected_uri", "target_device_id", "sip_uri"):
+    for key in ("connected_party", "connected_uri", "connected_display_name", "caller_name", "target_device_id", "sip_uri"):
         if value := str(metadata.get(key) or ""):
             common[key] = value
     if intent.response_status:
@@ -92,6 +92,7 @@ def project_session_termination(
             fallback=session.callee if endpoint_id == metadata.get("source_endpoint_id") else session.caller,
             directory=directory,
             updated=bool(metadata.get("connected_uri") and endpoint_id == metadata.get("source_endpoint_id")),
+            display_name=metadata.get("connected_display_name" if endpoint_id == metadata.get("source_endpoint_id") else "caller_name", ""),
         )
         direction = str(
             details.pop("direction", "") or metadata.get("direction") or ""
@@ -113,7 +114,8 @@ def project_session_termination(
             session,
             intent=intent,
             peer_name=counterpart_display(metadata.get("connected_party"), fallback=session.callee,
-                                          directory=directory, updated=bool(metadata.get("connected_uri"))),
+                                          directory=directory, updated=bool(metadata.get("connected_uri")),
+                                          display_name=metadata.get("connected_display_name", "")),
             target=session.callee,
             terminal_reason=intent.reason,
             route_kind=session.route_kind,

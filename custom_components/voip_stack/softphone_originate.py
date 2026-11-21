@@ -12,7 +12,7 @@ from .directory_runtime import routing_snapshot
 from .trunk_policy import external_call_denied, is_any_trunk_uri, trunk_available
 from .peer_media_profile import resolve_peer_media_profile
 from .call_projection import publish_phone_projection
-from .counterpart_display import counterpart_display
+from .counterpart_display import connected_display_name, counterpart_display
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
 from .config import (
@@ -848,7 +848,8 @@ async def async_originate_browser_call(
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
         connected_party = counterpart_display(client.connected_party, fallback=dialed_target,
-                                              endpoint=target_endpoint, entry=route.entry)
+                                              endpoint=target_endpoint, entry=route.entry,
+                                              display_name=connected_display_name(client))
         video_active = bool(
             client.dialog.video_format is not None
             and client.dialog.local_video_direction != "inactive"

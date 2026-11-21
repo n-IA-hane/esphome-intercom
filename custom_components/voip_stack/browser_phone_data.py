@@ -65,6 +65,8 @@ _CALL_SCOPED_SOFTPHONE_FIELDS = (
     "dialed_target",
     "connected_party",
     "connected_uri",
+    "connected_display_name",
+    "caller_name",
     "answered_by",
     "direction",
     "role",

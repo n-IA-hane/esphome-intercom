@@ -323,13 +323,13 @@ def _set_ha_softphone_call_state(
     previous_call_id = str(store.get("call_id") or "")
     call_id = call_id or previous_call_id
     if previous_call_id and call_id != previous_call_id:
-        for key in ("caller", "callee", "direction", "peer_name", "connected_party", "connected_uri", "answered_by", "dialed_target"):
+        for key in ("caller", "callee", "direction", "peer_name", "connected_party", "connected_uri", "connected_display_name", "caller_name", "answered_by", "dialed_target"):
             store.pop(key, None)
 
     peer_name = peer_name or extra.get("connected_party") or extra.get("answered_by")
     if peer_name:
         # A new explicit identity supersedes older display aliases for this call.
-        for key in ("connected_party", "answered_by"):
+        for key in ("connected_party", "answered_by", "connected_display_name", "caller_name"):
             if not extra.get(key) and store.get(key) != peer_name:
                 store.pop(key, None)
     elif call_id and call_id == previous_call_id:
@@ -342,12 +342,17 @@ def _set_ha_softphone_call_state(
     session = runtime.sip.get_session(call_id) if runtime.sip is not None else None
     metadata = session.metadata if session is not None else {}
     peer_id = metadata.get("dest_endpoint_id") or metadata.get("target_endpoint_id") if selected_direction == "outgoing" else metadata.get("source_endpoint_id")
+    name_key = "connected_display_name" if selected_direction == "outgoing" else "caller_name"
+    display_name = extra.get(name_key) or metadata.get(name_key) or store.get(name_key) or ""
+    if peer_name and display_name != peer_name:
+        display_name = ""
     peer_name = counterpart_display(
         peer_name,
         fallback=(callee or store.get("callee")) if selected_direction == "outgoing" else (caller or store.get("caller")),
         endpoint=runtime.endpoints.get(str(peer_id or "")),
         directory=runtime.directory,
         updated=bool(extra.get("connected_uri") or metadata.get("connected_uri") or store.get("connected_uri")),
+        display_name=display_name,
     )
     canonical = _canonical_session_fields(
         state=state,
@@ -430,7 +435,7 @@ def _set_ha_softphone_call_state(
         store["sip_state"] = state
         store["terminal_reason"] = ""
         for key, value in extra.items():
-            if key in {"video_failure_reason", "target_device_id", "target_endpoint_id"}:
+            if key in {"video_failure_reason", "target_device_id", "target_endpoint_id", "connected_display_name", "caller_name"}:
                 store[key] = str(value or "")
             elif value not in (None, ""):
                 store[key] = value

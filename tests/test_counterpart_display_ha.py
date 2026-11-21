@@ -8,7 +8,7 @@ import pytest
 
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
-from custom_components.voip_stack.roster import dump_roster_json
+from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 
 from .test_automation_originate_ha import lab as lab
 
@@ -34,7 +34,7 @@ async def test_outgoing_number_displays_identity_without_rewriting_request_uri(
     lab.runtime.endpoints.update("sip:bedroom0", name=name or "204", extension="204", availability="available")
     entry = replace(lab.roster[1], id="204", name=name, extension="204")
     lab.roster[1] = entry
-    lab.runtime.directory.replace(lab.roster)
+    lab.runtime.directory.replace([*lab.roster, RosterEntry("Remote reception", name="Unrelated directory contact")])
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -108,3 +108,17 @@ async def test_party_change_without_a_name_does_not_restore_previous_name(lab):
     assert _ha_softphone_state(lab.hass, phone.endpoint_id)["peer_name"] == "205"
     _set_ha_softphone_call_state(lab.hass, "idle", **scope)
     assert _ha_softphone_state(lab.hass, phone.endpoint_id)["peer_name"] == "205"
+
+
+def test_explicit_sip_display_name_precedes_a_directory_alias():
+    from custom_components.voip_stack.counterpart_display import counterpart_display
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+
+    directory = PhoneDirectory([RosterEntry("Remote reception", name="Unrelated directory contact")])
+    assert counterpart_display("Remote reception", display_name="Remote reception", directory=directory) == "Remote reception"
+
+
+def test_sip_user_display_uses_the_existing_uri_parser():
+    from custom_components.voip_stack.counterpart_display import counterpart_display
+
+    assert counterpart_display("sips:remote%20desk@example.test;transport=tls") == "remote desk"
