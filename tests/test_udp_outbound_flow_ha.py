@@ -281,6 +281,7 @@ async def test_immediate_browser_call_and_unregister_use_current_binding_owner(w
     ("browser-account-user", "Reception@Hotel", "Reception@Hotel", "Mario Rossi"),
     ("205", "Telefono ufficio", "204", ""),
     ("5b8d0533e81d442e9c46e40b043406ad", "Casa", "Casa", None),
+    ("browser-account", "Casa", "Casa", None),
 ])
 async def test_browser_call_displays_the_party_on_the_sip_dialog(
     wire_lab, monkeypatch, source_selector, name, dialed, update_name

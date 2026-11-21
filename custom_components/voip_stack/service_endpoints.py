@@ -23,13 +23,14 @@ from .service_errors import service_error as _service_error
 def resolve_service_phone(
     registry: EndpointRegistry, selector: str, *, allow_internal: bool = False
 ) -> PhoneEndpoint | None:
-    """Resolve a public phone alias or a device ID saved by an older automation."""
+    """Prefer public aliases, then accept device or endpoint IDs saved by older automations."""
     try:
         endpoint = (
             registry.by_name(selector)
             or registry.by_username(selector)
             or registry.by_extension(selector)
             or registry.by_device_id(selector)
+            or registry.get(selector)
         )
         if endpoint is None and allow_internal:
             # Existing policies and in-call operations can carry endpoint references.
