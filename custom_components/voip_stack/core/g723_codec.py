@@ -8,6 +8,17 @@ from .audio_format import AudioFormat, PcmFormat
 from .media.codecs import CODECS
 
 
+def g723_encoder_supports_fmtp(fmtp: str) -> bool:
+    """Honor RFC 4856 rates in kb/s; CC7 ignores malformed or unknown hints."""
+    for parameter in fmtp.split(";"):
+        name, _, value = parameter.strip().partition("=")
+        if name.strip().casefold() == "bitrate":
+            bit_rate = {"5.3": 5300, "6.3": 6300}.get(value.strip())
+            if bit_rate is not None and bit_rate != CODECS["G723"].bit_rate:
+                return False
+    return True
+
+
 def g723_frames(payload: bytes):
     """Validate and split 6.3/5.3 kbit/s speech and SID frames before decoding."""
     offset = 0
@@ -36,10 +47,8 @@ class G723Encoder:
         spec = CODECS["G723"]
         if frame_ms <= 0 or frame_ms % spec.frame_duration_ms:
             raise ValueError("G.723.1 packet duration must be a multiple of 30 ms")
-        for parameter in fmtp.split(";"):
-            name, _, value = parameter.strip().partition("=")
-            if name.casefold() == "bitrate" and value.strip() != str(spec.bit_rate):
-                raise ValueError("The installed G.723.1 encoder supports bitrate=6300")
+        if not g723_encoder_supports_fmtp(fmtp):
+            raise ValueError("The installed G.723.1 encoder supports bitrate=6.3")
         self.audio_format = AudioFormat(spec.decoded_rate, PcmFormat.S16LE, spec.decoded_channels, frame_ms)
         self._av = av
         self._ctx = av.CodecContext.create(spec.pyav_encoder, "w")

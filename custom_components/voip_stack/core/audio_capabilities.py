@@ -66,10 +66,10 @@ class AudioCapabilities:
                 if not _whole(samples) or round(samples) % spec.sample_quantum:
                     return False
                 if fmt.encoding == "G723" and not receive:
-                    for parameter in fmt.fmtp.split(";"):
-                        name, _, value = parameter.strip().partition("=")
-                        if name.casefold() == "bitrate" and value.strip() != str(spec.bit_rate):
-                            return False
+                    from .g723_codec import g723_encoder_supports_fmtp
+
+                    if not g723_encoder_supports_fmtp(fmt.fmtp):
+                        return False
             elif spec.auxiliary:
                 return fmt.encoding == "CN" and fmt.channels == 1 and _whole(pcm.sample_rate * fmt.frame_ms / 1000)
             elif fmt.encoding == "OPUS":

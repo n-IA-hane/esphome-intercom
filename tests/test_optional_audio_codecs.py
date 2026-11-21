@@ -126,8 +126,9 @@ def test_g723_real_encoder_uses_whole_30_ms_frames_and_decoder_accepts_sid():
         assert [len(frame) for frame in g723.g723_frames(encoded)] == [24, 24]
         assert len(decoder.decode(encoded)) == 960
     assert len(decoder.decode(bytes([2, 0, 0, 0]))) == 480
-    with pytest.raises(ValueError, match="6300"):
-        g723.G723Encoder(fmtp="bitrate=5300")
+    # RFC 4856 expresses the bitrate restriction in kb/s.
+    with pytest.raises(ValueError, match=r"bitrate=6\.3"):
+        g723.G723Encoder(fmtp="bitrate=5.3")
     with pytest.raises(ValueError, match="30 ms"):
         g723.G723Encoder(20)
 
