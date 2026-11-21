@@ -851,6 +851,7 @@ def negotiate_directional(
     from .media import negotiator
     from .media.shadow import engine_mode
 
+    remote_sdp = SdpDocument.parse(remote_sdp)
     if engine_mode() == "active":
         previous = (negotiator.LegContract(established.send, established.recv, None)
                     if established is not None else None)
@@ -858,7 +859,6 @@ def negotiate_directional(
             capabilities=local_capabilities, codec_policy=codec_policy,
             dahua=allow_dahua_pcm, established=previous)
         return negotiator.as_direction(contract, remote_sdp)
-    remote_sdp = SdpDocument.parse(remote_sdp)
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
         parsed["direction"],
@@ -936,13 +936,15 @@ def negotiate_answer_directional(
     from .media import negotiator
     from .media.shadow import engine_mode
 
+    remote_sdp = SdpDocument.parse(remote_sdp)
+    if local_offer_sdp is not None:
+        local_offer_sdp = SdpDocument.parse(local_offer_sdp)
     if engine_mode() == "active" and local_offer_sdp is not None:
         contract = negotiator.apply_answer(local_offer_sdp, remote_sdp,
             local_send_preferred, local_recv_preferred, capabilities=local_capabilities,
             codec_policy=codec_policy, dahua=allow_dahua_pcm)
         return negotiator.as_direction(contract, remote_sdp)
 
-    remote_sdp = SdpDocument.parse(remote_sdp)
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
         parsed["direction"],
