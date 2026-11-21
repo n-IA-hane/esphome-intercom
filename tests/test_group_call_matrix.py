@@ -161,6 +161,7 @@ route_decisions = _load_module("route_decisions")
 runtime_data_module = _load_module("runtime_data")
 endpoint_registry_module = _load_module("endpoint_registry")
 endpoint_lifecycle_module = _load_module("endpoint_lifecycle")
+phone_directory_module = _load_module("phone_directory")
 
 
 class _FakeConfig:
@@ -189,6 +190,7 @@ class _FakeHass:
             tasks=set(),
             calls=None,
             endpoints=endpoint_registry_module.EndpointRegistry(),
+            directory=phone_directory_module.PhoneDirectory(),
             sip=None,
             rtp_port_pool={},
             next_rtp_port=0,
