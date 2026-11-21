@@ -93,7 +93,9 @@ def measure_browser(stats, call_id, direction, frequency):
         pytest.param(
             case,
             id=case.name,
-            marks=() if case.name in REQUIRED_CODECS else pytest.mark.diagnostic_reference,
+            marks=()
+            if case.name in REQUIRED_CODECS
+            else pytest.mark.diagnostic_reference,
         )
         for case in CASES
     ],
@@ -111,10 +113,16 @@ async def test_shared_account_codec_winner_media_and_reuse(
     directions = codec_directions(case.name)
     if not all(directions.values()):
         pytest.skip(f"{case.name} actual backend directions: {directions}")
+    independent_reference = None
     if case.oracle_gap:
-        pytest.skip(
-            f"{case.name} backend available but independent oracle gap: {case.oracle_gap}"
-        )
+        if case.name == "G726-40":
+            from tests.support.g726_itu_reference import qualified_reference
+
+            independent_reference = qualified_reference()
+        if independent_reference is None:
+            pytest.skip(
+                f"{case.name} backend available but independent oracle gap: {case.oracle_gap}"
+            )
     lab = canonical_browser
     entry = config_entry(lab.hass)
     # Each optional codec is explicitly enabled for this isolated test only.
@@ -175,6 +183,12 @@ async def test_shared_account_codec_winner_media_and_reuse(
         "peer_decoder": "external FFmpeg named RTP demuxer",
         "calls": [],
     }
+    if independent_reference is not None:
+        evidence.update(
+            peer_encoder="external official ITU G.191 reference",
+            peer_decoder="external official ITU G.191 reference with RFC3551 RTP unpacking",
+            independent_reference=independent_reference.provenance,
+        )
     try:
         for peer in peers:
             await lab.hass.loop.create_datagram_endpoint(

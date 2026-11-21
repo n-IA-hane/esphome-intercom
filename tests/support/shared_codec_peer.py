@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import json
 import math
 import re
 import secrets
@@ -15,6 +16,7 @@ import subprocess
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from tests.test_ha_generic_negotiation_ha import GenericRegisteredPeer
+from .g726_itu_reference import qualified_reference
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ CASES = (
             "g726le",
             "g726le",
             rate // 8,
-            "FFmpeg9 five-bit decoder fails the verified ITU oracle; no independent arbitrary-stream decoder"
+            "Requires a private corpus-validated official ITU G.191 encoder and decoder"
             if rate == 40
             else "",
         )
@@ -99,6 +101,16 @@ def opus_packets(ogg):
 
 
 def encoded_tone(case, frequency):
+    if case.name == "G726-40":
+        reference = qualified_reference()
+        if reference is None:
+            raise RuntimeError(
+                "G72640 peer encoding requires the validated external ITU reference"
+            )
+        payload = reference.encode_pcm(tone_pcm(case.pcm_rate, frequency))
+        size = case.clock * case.peer_tx_ms * case.bits // 8000
+        assert len(payload) % size == 0
+        return [payload[index : index + size] for index in range(0, len(payload), size)]
     args = [
         "ffmpeg",
         "-nostdin",
@@ -608,6 +620,28 @@ def _rtp_receiver_port():
 async def decode_named_rtp(case, packets, receive_sdp, directory):
     """Decode the actual negotiated SDP name in an external FFmpeg process."""
     directory.mkdir(parents=True, exist_ok=True)
+    if case.name == "G726-40":
+        reference = qualified_reference()
+        if reference is None:
+            raise RuntimeError(
+                "G72640 peer decoding requires the validated external ITU reference"
+            )
+        payload_type, _target = audio_target(receive_sdp, case)
+        rows = [parse_packet(raw) for raw in packets]
+        assert all(row["pt"] == payload_type for row in rows)
+        payload = b"".join(row["payload"] for row in rows)
+        decoded = await asyncio.to_thread(reference.decode_payload, payload)
+        (directory / "actual-name.sdp").write_bytes(
+            receive_sdp if isinstance(receive_sdp, bytes) else receive_sdp.encode()
+        )
+        (directory / "packets.hex").write_text(
+            "\n".join(raw.hex() for raw in packets) + "\n"
+        )
+        (directory / "decoded.pcm").write_bytes(decoded)
+        (directory / "itu-reference.json").write_text(
+            json.dumps(reference.provenance, indent=2) + "\n"
+        )
+        return decoded
     # PCM is a documented Dahua profile, not a standard FFmpeg RTP name.
     # Its explicit little-endian payload is independently decoded as raw PCM.
     if case.name == "PCM":
