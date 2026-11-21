@@ -355,7 +355,11 @@ def websocket_subscribe_ha_softphone_state(
         terminal = access.terminal_reason(update)
         if terminal:
             close(terminal)
-        elif readable() and (update.access_event is not None or requested_endpoint in update.call_endpoints):
+        elif readable() and (update.access_event is not None or (
+            requested_endpoint in update.call_endpoints
+            and requested_endpoint not in update.phones
+            and requested_endpoint not in update.removed
+        )):
             emit()
 
     @callback

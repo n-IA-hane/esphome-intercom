@@ -124,3 +124,67 @@ async def test_closing_losing_browser_updates_stream_without_republishing_sip_di
     finally:
         connection.subscriptions[1]()
         detach_dialog()
+
+
+async def test_terminal_commit_replay_preserves_native_idle_scope_and_successor(
+    hass, phones, hass_admin_user
+):
+    from homeassistant.helpers import entity_registry as er
+
+    er.async_get(hass).async_get_or_create(
+        "event", "voip_stack", "voip_stack_call_event"
+    )
+    entity = er.async_get(hass).async_get_or_create(
+        "sensor", "voip_stack", "native_kitchen_access"
+    )
+    phones.endpoints.update(
+        "kitchen", kind=EndpointKind.SIP_ACCOUNT, username="kitchen",
+        entity_ids={entity.entity_id},
+    )
+    connection = Connection(hass_admin_user)
+    websocket_api.websocket_subscribe_ha_softphone_state(
+        hass, connection, {"id": 2, "endpoint_id": "kitchen"}
+    )
+    try:
+        calls = phones.calls
+        with calls.state_operation():
+            session = calls.upsert(
+                "native-terminal-A", state="in_call", owner="bridge",
+                caller="Kitchen", callee="Office", source_endpoint_id="kitchen",
+                dest_endpoint_id="office",
+            )
+            calls.claim_endpoint(session.call_id, "kitchen", role="source")
+            calls.observe_leg(session.call_id, "caller-A", role="caller",
+                state="in_call", endpoint_id="kitchen")
+        await calls.terminate_call_wait(session.call_id, reason="remote_hangup")
+        await hass.async_block_till_done()
+        terminal = session.committed_state
+        assert terminal.phase == "terminated"
+        assert connection.events[-1]["state"] == "idle"
+        assert connection.events[-1]["call_id"] == session.call_id
+        assert connection.events[-1]["generation"] == session.generation
+        ended_events = deepcopy(connection.events)
+        observer = phone_state_observer(hass)
+        observer._committed(terminal)
+        await hass.async_block_till_done()
+        assert connection.events == ended_events
+        assert not calls.sessions and not calls.endpoint_claims_snapshot()
+
+        with calls.state_operation():
+            successor = calls.upsert(
+                "native-current-B", state="in_call", owner="bridge",
+                caller="Kitchen", callee="Office", source_endpoint_id="kitchen",
+                dest_endpoint_id="office",
+            )
+            calls.claim_endpoint(successor.call_id, "kitchen", role="source")
+            calls.observe_leg(successor.call_id, "caller-B", role="caller",
+                state="in_call", endpoint_id="kitchen")
+        await hass.async_block_till_done()
+        successor_events = deepcopy(connection.events)
+        observer._committed(terminal)
+        await hass.async_block_till_done()
+        assert connection.events == successor_events
+        assert connection.events[-1]["state"] == "in_call"
+        assert connection.events[-1]["call_id"] == successor.call_id
+    finally:
+        connection.subscriptions[2]()

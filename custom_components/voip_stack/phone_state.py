@@ -10,6 +10,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .dialog_info import snapshot_all
 from .endpoint_registry import EndpointRegistryEvent, EndpointRegistryEventType
+from .endpoint_session import SessionPhase
 from .runtime_data import require_runtime_data
 from .service_endpoints import resolve_service_phone
 
@@ -195,11 +196,13 @@ class PhoneStateObserver:
     @callback
     def _committed(self, snapshot):
         runtime = require_runtime_data(self.hass)
+        # Terminal DTOs carry their ending occurrence through the state path;
+        # only live ownership changes need an unchanged-phone supplement.
         self.refresh(SimpleNamespace(
             event_type="call_commit",
             data=self._call_fields(runtime.sip, snapshot),
             context=runtime.sip.ha_context(snapshot.call_id),
-        ), call_endpoints=tuple(sorted(set(snapshot.participants) | {
+        ), call_endpoints=() if snapshot.phase == SessionPhase.TERMINATED else tuple(sorted(set(snapshot.participants) | {
             leg.endpoint_id for leg in snapshot.legs if leg.endpoint_id
         })))
 
