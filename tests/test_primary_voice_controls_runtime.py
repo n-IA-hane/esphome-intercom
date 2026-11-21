@@ -1,5 +1,6 @@
 """Execute shipped button routing with the actual Runtime Controller reducer."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 
@@ -8,7 +9,7 @@ import pytest
 from tests.native_profile import by_id, nodes, profile
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME = ROOT.parent / "esphome-runtime-controller"
+RUNTIME = Path(os.environ.get("RUNTIME_CONTROLLER_REPO", ROOT.parent / "esphome-runtime-controller"))
 
 
 def _condition(value):
