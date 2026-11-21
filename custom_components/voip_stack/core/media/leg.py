@@ -131,7 +131,7 @@ def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBou
     spec = CODECS[fmt.encoding]
     choice = choose_transmit_packet_ms(
         spec, fmt.sample_rate, fmt.channels,
-        producible=fixed if fixed is not None else (OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION),
+        producible=fixed if fixed is not None else (OPUS_FRAMES if fmt.encoding == "OPUS" else ANY_DURATION),
         default_ms=default_ms or spec.assumed_packet_ms or policy.default_packet_ms, receiver=bounds,
         budget=HA_AUDIO_CAPABILITIES.receive_payload_bytes if receive_only else policy.budget,
     )

@@ -837,10 +837,6 @@ def options_capabilities(body: str | bytes) -> dict:
         video = None
     if video is not None:
         result["sip_video_codec"] = video.encoding.lower()
-    elif result.get("sip_audio_capabilities_complete"):
-        # This versioned firmware catalog is complete, including media types.
-        # Missing native API metadata alone never establishes audio-only.
-        result["sip_video_codec"] = ""
     return result
 
 

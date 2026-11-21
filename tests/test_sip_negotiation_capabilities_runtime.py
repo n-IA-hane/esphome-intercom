@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.voip_stack.core import codec_capabilities, rtp, sdp, sip
+from custom_components.voip_stack.core.codec_policy import CodecPolicy
+from custom_components.voip_stack.core.media.codecs import CODECS
 from custom_components.voip_stack.core.audio_capabilities import (
     HA_AUDIO_CAPABILITIES,
     local_rtp_audio_formats,
@@ -231,6 +233,7 @@ def _declared_wire_shapes():
     shapes = {
         (fmt.encoding, fmt.sample_rate, fmt.channels)
         for fmt in local_rtp_audio_formats(preferred)
+        if not CODECS[fmt.encoding].auxiliary
     }
     return tuple(sorted(shapes))
 
@@ -262,9 +265,14 @@ def _shape_id(shape):
 def _wire_duration_fits(encoding, rate, channels, frame_ms):
     if encoding == "OPUS":
         return frame_ms in {2.5, 5, 10, 20, 40, 60}
+    if encoding == "G723":
+        return frame_ms % 30 == 0 and frame_ms / 30 * 24 <= UDP_SAFE_PAYLOAD_BYTES
     numerator = rate * frame_ms
     if numerator % 1000:
         return False
+    if encoding.startswith("G726-"):
+        bits = numerator / 1000 * (int(encoding.split("-")[1]) // 8)
+        return bits % 8 == 0 and bits / 8 <= UDP_SAFE_PAYLOAD_BYTES
     width = {"L16": 2, "L24": 3, "PCMA": 1, "PCMU": 1, "G722": 1}[encoding]
     return numerator * channels * width / 1000 <= UDP_SAFE_PAYLOAD_BYTES
 
@@ -273,12 +281,15 @@ def _wire_duration_fits(encoding, rate, channels, frame_ms):
 @pytest.mark.parametrize("frame_ms", [30, 32, 40])
 def test_capability_domain_negotiates_nondefault_packet_times(shape, frame_ms):
     encoding, rate, channels = shape
-    expected = _wire_duration_fits(encoding, rate, channels, frame_ms)
+    requested_fits = _wire_duration_fits(encoding, rate, channels, frame_ms)
+    # CC-1/T4: the nonstandard minimum is advisory; maxptime remains hard.
+    expected = any(_wire_duration_fits(encoding, rate, channels, duration)
+                   for duration in (2.5, *range(1, int(frame_ms) + 1)) if duration <= frame_ms)
     offer = _peer_sdp(encoding, rate, channels, frame_ms)
-    selected = _negotiate(offer)
+    selected = _negotiate(offer, codec_policy=CodecPolicy(audio=(encoding,)))
     if not expected:
         assert selected is None, (
-            "a pinned peer range must not escape codec or wire limits"
+            "the hard maximum must not escape codec or wire limits"
         )
         return
 
@@ -289,8 +300,12 @@ def test_capability_domain_negotiates_nondefault_packet_times(shape, frame_ms):
         selected.send.encoding,
         selected.send.sample_rate,
         selected.send.channels,
-        selected.send.frame_ms,
-    ) == (*shape, frame_ms)
+    ) == shape
+    if requested_fits:
+        assert selected.send.frame_ms == frame_ms
+    else:
+        assert 0 < selected.send.frame_ms <= frame_ms
+        assert _wire_duration_fits(encoding, rate, channels, selected.send.frame_ms)
     assert HA_AUDIO_CAPABILITIES.supports_rtp(selected.send)
     assert (
         selected.recv.encoding,
@@ -380,8 +395,8 @@ def test_final_answer_can_select_8000_32ms_from_the_real_local_offer(discovery_k
 
 
 @pytest.mark.parametrize("encoding, rate", [("L24", 32000), ("L16", 48000)])
-@pytest.mark.parametrize("minimum", [0, 10], ids=["soft-preference", "hard-minimum"])
-def test_pcm_packet_budget_can_choose_below_10ms_only_without_a_hard_minimum(
+@pytest.mark.parametrize("minimum", [0, 10], ids=["no-minimum", "advisory-minimum"])
+def test_pcm_packet_budget_can_choose_below_an_advisory_minimum(
     encoding,
     rate,
     minimum,
@@ -396,11 +411,7 @@ def test_pcm_packet_budget_can_choose_below_10ms_only_without_a_hard_minimum(
             max_frame_ms=20,
         )
     )
-    if minimum:
-        assert selected is None, (
-            "the smallest allowed packet exceeds the local TX budget"
-        )
-        return
+    # CC-1/T4: a bare SDP minptime does not override the real packet budget.
     assert selected is not None, (
         "ptime is advisory, so a shorter packet can satisfy the wire budget"
     )
