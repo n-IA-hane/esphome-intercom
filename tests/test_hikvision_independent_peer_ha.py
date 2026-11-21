@@ -19,7 +19,7 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 from custom_components.voip_stack.roster import dump_roster_json
 from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_community_independent_peer_ha import (
-    BrowserSink, captured_peer_tone, feed_browser_tone, media_pcap, registration_scenario,
+    BrowserSink, captured_peer_tone, feed_browser_tone, media_pcap, registration_scenario, start_capture,
 )
 from tests.test_sip_capabilities_ha import wait_until
 from tests.test_trunk_calls_ha import lab as lab, trunks as trunks
@@ -105,9 +105,7 @@ async def test_hikvision_reported_registered_incoming_40ms_after_20ms_sdp(trunks
         "source": "https://github.com/n-IA-hane/esphome-intercom/issues/165",
         "scope": "registered UDP station to native HA browser audio owner; no physical station or Android browser",
         "hardware_tested": False, "passed": False}
-    capture = subprocess.Popen(["sudo", "-n", "tcpdump", "-i", "lo", "-U", "--immediate-mode",
-        "-w", str(evidence / "wire.pcap"), "udp or tcp"], stdout=subprocess.DEVNULL,
-        stderr=(evidence / "tcpdump.log").open("w"))
+    capture = start_capture(evidence)
     result["capture_pid"] = capture.pid
     peer = None
     media_task = None

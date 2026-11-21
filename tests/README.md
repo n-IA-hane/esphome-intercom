@@ -137,8 +137,8 @@ SIPp playback and capture. It fails preflight when those privileges or tools
 are unavailable. It enables only loopback inside that namespace, returns
 pytest to the invoking user, and grants no capabilities globally. Evidence
 and persistent scratch must be outside the source checkout; pytest and its
-files retain the invoking user's ownership. Root-owned packet captures stay
-inside the private evidence directory. Existing result files are not reused.
+files retain the invoking user's ownership. tcpdump drops to that user after
+opening its capture socket and before creating private capture files. Existing result files are not reused.
 
 A completed lane requires all twelve test cases, no skips, decoded tones in
 both directions, FFmpeg-decoded video frames and zero call resources after

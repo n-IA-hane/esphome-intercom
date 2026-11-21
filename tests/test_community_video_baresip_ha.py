@@ -11,6 +11,7 @@ import subprocess
 import pytest
 
 from custom_components.voip_stack.sip_video_relay import SipVideoRtpRelay
+from tests.test_community_independent_peer_ha import start_capture
 from tests.test_sip_phone_transfers_ha import (
     assert_h264_color_bars, assert_peer_audio_tones, registered_phones as registered_phones,
 )
@@ -37,9 +38,7 @@ async def test_real_h264_peers_keep_audio_during_receive_only_panel_direction_ch
     caller, panel, _unused = registered_phones
     evidence = Path(os.environ.get("VOIP_COMMUNITY_EVIDENCE_DIR", str(tmp_path / "evidence"))) / "H264-panel-directions"
     evidence.mkdir(parents=True, exist_ok=True)
-    capture = subprocess.Popen(["sudo", "-n", "tcpdump", "-i", "lo", "-U", "--immediate-mode",
-        "-w", str(evidence / "wire.pcap"), "udp or tcp"], stdout=subprocess.DEVNULL,
-        stderr=(evidence / "tcpdump.log").open("w"))
+    capture = start_capture(evidence)
     result = {"candidate": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "scope": "two independent registered baresip H264 peers; panel receives video only",
         "hardware_tested": False, "source": "https://github.com/n-IA-hane/esphome-intercom/issues/131",

@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import pwd
 from pathlib import Path
 import socket
 import shlex
@@ -51,6 +52,15 @@ class BrowserSink:
         if value is None:
             raise StopAsyncIteration
         return value
+
+
+def start_capture(evidence):
+    """Open the capture socket with privilege, then write as the test user."""
+    user = pwd.getpwuid(os.getuid()).pw_name
+    return subprocess.Popen([*shlex.split(os.environ.get("VOIP_TEST_CAPTURE_COMMAND", "sudo -n tcpdump")),
+        "-i", "lo", "-U", "--immediate-mode", "-Z", user,
+        "-w", str(evidence / "wire.pcap"), "udp or tcp"],
+        stdout=subprocess.DEVNULL, stderr=(evidence / "tcpdump.log").open("w"))
 
 
 async def feed_browser_tone(browser, audio_format):
@@ -272,9 +282,7 @@ async def test_sipp_40ms_station_audio_reaches_native_browser_owner(trunks, tmp_
     expected = await asyncio.to_thread(media_pcap, evidence / "source.pcap", encoding)
     scenario = evidence / "station.xml"
     uas_scenario(scenario, encoding, evidence / "source.pcap", ua)
-    capture = subprocess.Popen([*shlex.split(os.environ.get("VOIP_TEST_CAPTURE_COMMAND", "sudo -n tcpdump")),
-        "-i", "lo", "-U", "--immediate-mode", "-w", str(evidence / "wire.pcap"), "udp or tcp"],
-        stdout=subprocess.DEVNULL, stderr=(evidence / "tcpdump.log").open("w"))
+    capture = start_capture(evidence)
     result_capture_pid = capture.pid
     process = subprocess.Popen([*shlex.split(os.environ.get("VOIP_TEST_SIPP_COMMAND", "sipp")), "-sf", str(scenario), "-i", "127.0.0.1", "-p", str(peer_port),
         "-mi", "127.0.0.1", "-mp", "25000", "-m", "2" if route == "registered" else "1", "-timeout", "12s", "-nostdin",
