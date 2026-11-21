@@ -96,6 +96,7 @@ INBOUND_AUTOMATION = (
 INBOUND_TARGETS = (
     ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "targets.py"
 )
+ROUTING_AUTOMATION = ROOT / "custom_components" / "voip_stack" / "routing_automation.py"
 
 
 def _owner_source(path: Path, name: str) -> str:
@@ -147,6 +148,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.inbound_trunk = INBOUND_TRUNK.read_text()
         cls.inbound_automation = INBOUND_AUTOMATION.read_text()
         cls.inbound_targets = INBOUND_TARGETS.read_text()
+        cls.routing_window = _owner_source(ROUTING_AUTOMATION, "request_route_window")
         cls.assist_endpoint = ASSIST_ENDPOINT.read_text()
         cls.endpoint_termination = ENDPOINT_TERMINATION.read_text()
         spec = importlib.util.spec_from_file_location(
@@ -518,20 +520,21 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "session = registry.upsert(",
             route_requested_branch,
         )
-        self.assertIn("publish_bridge_projection(", route_requested_branch)
+        self.assertIn("await request_route_window(", route_requested_branch)
         self.assertNotIn("CallProjectionEvent.bridge(", route_requested_branch)
         self.assertLess(
             route_requested_branch.index("session = registry.upsert("),
-            route_requested_branch.index("publish_bridge_projection("),
+            route_requested_branch.index("await request_route_window("),
         )
-        self.assertIn("route_request=True", route_requested_branch)
+        self.assertIn("publish_bridge_projection(", self.routing_window)
+        self.assertIn("route_request=True", self.routing_window)
         self.assertIn(
-            "payload = await asyncio.wait_for(",
-            route_requested_branch,
+            "payload = await asyncio.wait_for(asyncio.shield(future), max(0, deadline - time.time()))",
+            self.routing_window,
         )
         self.assertIn(
             "timeout=SIP_ROUTE_DECISION_TIMEOUT",
-            route_requested_branch,
+            self.routing_window,
         )
 
     def test_initial_destination_has_a_dedicated_service(self) -> None:
@@ -554,22 +557,21 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_route_requested_exposes_fallback_and_deadline(self) -> None:
-        routing_sources = (
-            self.source
-            + self.invite_router
-            + self.inbound_automation
-            + self.trunk_routing
-        )
-        self.assertGreaterEqual(routing_sources.count("fallback_destination="), 2)
-        self.assertGreaterEqual(routing_sources.count("decision_deadline="), 2)
+        # Native routing witnesses verify the published values. Only the
+        # shared window owns the deadline and publishes the route request.
         for source in (self.inbound_automation, self.trunk_routing):
-            requests = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
-                        and any(keyword.arg == "route_request" and isinstance(keyword.value, ast.Constant)
-                                and keyword.value.value is True for keyword in node.keywords)]
-            self.assertTrue(requests)
-            for request in requests:
-                self.assertLessEqual({"fallback_destination", "decision_deadline"},
-                                     {keyword.arg for keyword in request.keywords})
+            self.assertIn("await request_route_window(", source)
+            self.assertIn("fallback_destination=", source)
+            self.assertNotIn("route_request=True", source)
+        requests = [node for node in ast.walk(ast.parse(self.routing_window)) if isinstance(node, ast.Call)
+                    and any(keyword.arg == "route_request" and isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is True for keyword in node.keywords)]
+        self.assertEqual(len(requests), 1)
+        self.assertIn('"fallback_destination": presentation.get("fallback_destination", session.callee)',
+                      self.routing_window)
+        self.assertIn("decision_deadline=deadline", self.routing_window)
+        self.assertIn("expires_at=deadline", self.routing_window)
+        self.assertIn("**presentation", self.routing_window)
 
     def test_inbound_config_describes_one_priority_order(self) -> None:
         strings = json.loads(STRINGS_JSON.read_text())
@@ -725,7 +727,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_group_identity_capacity_and_local_ws_errors_are_isolated(self) -> None:
-        self.assertIn('call_id = f"ha-{secrets.token_hex(16)}"', self.endpoint_group_calls)
+        self.assertIn('call_id = call_id or f"ha-{secrets.token_hex(16)}"', self.endpoint_group_calls)
         self.assertNotIn('call_id = f"ha-{int(time.time() * 1000):x}"', self.endpoint_group_calls)
         self.assertIn(
             "len(browser_endpoint_ids) + len(attempts) < available_legs",
@@ -1340,10 +1342,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn(
             "dialed_target = entry.display_name or invite.target", external_winner
         )
-        self.assertIn(
-            'connected_party = str(winner.member or "").strip() or invite.target',
-            external_winner,
-        )
+        # The approved display contract keeps the remote name or account
+        # label; the raw winning member remains only the routing fallback.
+        self.assertIn("connected_party = counterpart_display(", external_winner)
+        self.assertIn("winner.client.connected_party, fallback=winner.member or invite.target", external_winner)
+        self.assertIn("endpoint=endpoint_directory(hass).get(winner.endpoint_id)", external_winner)
+        self.assertIn("display_name=connected_display_name(winner.client)", external_winner)
+        self.assertNotIn('connected_party = str(winner.member or "").strip()', external_winner)
         self.assertIn("publish_bridge_projection(", external_winner)
         self.assertIn("peer_name=connected_party", external_winner)
         self.assertIn("dialed_target=dialed_target", external_winner)
@@ -1497,15 +1502,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_route_requests_expose_pbx_ingress_provenance(self) -> None:
-        on_invite = self.inbound_automation
+        snapshot = _owner_source(AUTOMATION_ROUTING, "route_window_snapshot")
         self.assertIn(
-            'ingress="trunk" if trunk_invite else "extension"',
-            on_invite,
+            '"ingress": "trunk" if trunk_invite else "extension"',
+            snapshot,
         )
         self.assertIn(
-            'origin="trunk" if trunk_invite else "extension"',
-            on_invite,
+            "presentation = route_window_snapshot(invite, decision, trunk_invite=trunk_invite)",
+            self.inbound_automation,
         )
+        self.assertIn('origin=presentation["ingress"]', self.inbound_automation)
 
     def test_trunk_dtmf_route_request_preserves_trunk_provenance(self) -> None:
         route_request = self.trunk_routing
@@ -1569,9 +1575,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_dtmf_can_route_to_an_additional_ha_softphone(self) -> None:
         runner = self.trunk_inbound_router
-        browser_route = runner[
-            runner.index("decision = runtime.route_resolver.route(") :
-        ]
+        condition = ast.parse("decision.action is RouteAction.ANSWER_HA", mode="eval").body
+        branches = [node for node in ast.walk(ast.parse(runner)) if isinstance(node, ast.If)
+                    and ast.dump(node.test) == ast.dump(condition)]
+        self.assertEqual(len(branches), 1)
+        browser_route = ast.get_source_segment(runner, branches[0])
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", browser_route)
         self.assertIn("runtime.defer_invite_to_softphone(", browser_route)
         self.assertNotIn("await runtime.forward_existing_call(", browser_route)
@@ -1653,7 +1661,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertLess(collector, override)
         self.assertNotIn("route_future", runner[:override])
         self.assertIn("async_request_inbound_destination(", runner[override:])
-        self.assertIn("await asyncio.wait_for(", self.trunk_routing)
+        self.assertIn('stage="dtmf_fallback"', self.trunk_routing)
+        self.assertIn("await request_route_window(", self.trunk_routing)
+        self.assertIn("await asyncio.wait_for(", self.routing_window)
 
     def test_preanswered_forward_failure_resumes_ha_ringing(self) -> None:
         forward = self.call_forwarder
@@ -1683,10 +1693,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "registry = call_registry(hass)", route_branch
         )
         self.assertIn("session = registry.upsert(", route_branch)
-        self.assertIn("publish_bridge_projection(", route_branch)
+        self.assertIn("await request_route_window(", route_branch)
+        self.assertIn("publish_bridge_projection(", self.routing_window)
         self.assertNotIn("CallProjectionEvent.bridge(", route_branch)
-        self.assertIn("route_request=True", route_branch)
-        self.assertIn('phase="route_decision"', route_branch)
+        self.assertIn("route_request=True", self.routing_window)
+        self.assertIn('phase="route_decision"', self.routing_window)
         self.assertNotIn('"route_requested",\n                caller=', route_branch)
 
     def test_connecting_route_request_maps_to_native_event_type(self) -> None:
@@ -1755,7 +1766,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self,
     ) -> None:
         invite = self.inbound_trunk[
-            self.inbound_trunk.index("dtmf_formats = sip_sdp.offered_dtmf_formats(") :
+            self.inbound_trunk.index("dtmf_format = invite.recv_dtmf_format") :
         ]
         self.assertIn("confirm_for_sip_info = dtmf_format is None", invite)
         self.assertIn(
