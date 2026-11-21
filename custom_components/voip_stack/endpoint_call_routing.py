@@ -14,6 +14,7 @@ from .call_forwarder import ForwardRuntime, async_forward_existing_call
 from .conference_ringing import ConferenceRingRuntime, async_ring_conference_members
 from .config import trunk_config, trunk_enabled
 from .core import sdp as sip_sdp
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.audio_format import HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
 from .endpoint_group_calls import EndpointGroupCalls, end_timed_out_conference_call
 from .endpoint_lifecycle import call_registry
@@ -156,6 +157,7 @@ class EndpointCallRouting:
                 list(HA_SIP_PCM_RX_FORMATS),
                 include_common_codecs=True,
                 codec_policy=initial.codec_policy,
+                local_capabilities=HA_AUDIO_CAPABILITIES,
             )
         except sip_sdp.SdpError:
             await EndpointTerminationHandler(hass).terminate_reason(

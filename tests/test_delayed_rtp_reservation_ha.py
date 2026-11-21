@@ -13,6 +13,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from tests.test_trunk_calls_ha import lab as lab, sip_test_account, trunks as trunks
 from tests.test_automation_call import application as application
+from tests.support.rtp_samples import receive_l16_samples
 
 pytestmark = pytest.mark.ha
 
@@ -373,6 +374,7 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
             port = int(re.search(rb"m=audio (\d+)", message.body)[1])
             pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", message.body)[1])
             observed["source_offer_ptime"] = float(re.search(rb"a=ptime:([\d.]+)", message.body)[1])
+            observed["source_offer_maxptime"] = sdp.parse_sdp(message.body)["maxptime"]
             reservation = lab.calls.artifacts_for(caller.dialog_ids.call_id).delayed_offer_ports
             observed["source_port"], observed["source_fd"] = port, reservation.audio_socket(port).fileno()
             observed["source_raw"] = rtp.build_packet(rtp.RtpPacket(pt, 718, 1600, 901, source_pcm))
@@ -409,10 +411,20 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
         # preference remains 20 ms; offer/answer need not be symmetric.
         assert caller.dialog.send_format.frame_ms == observed["source_offer_ptime"]
         assert caller.dialog.recv_format.frame_ms == 20
+        assert observed["source_offer_maxptime"] >= 20
+        await asyncio.wait_for(phone.invited.wait(), 3)
+
+        async def receive_destination():
+            return (await phone.audio.get())[0]
+
+        async def receive_source():
+            return await lab.hass.loop.sock_recv(media, 4096)
+
+        destination_pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", phone.last_request.body)[1])
         async with asyncio.timeout(3):
-            to_destination = rtp.parse_packet((await phone.audio.get())[0])
-            to_source = rtp.parse_packet(await lab.hass.loop.sock_recv(media, 4096))
-        assert to_destination.payload == source_pcm and to_source.payload == destination_pcm
+            to_destination = await receive_l16_samples(receive_destination, len(source_pcm), destination_pt)
+            to_source = await receive_l16_samples(receive_source, len(destination_pcm), caller.dialog.recv_format.payload_type)
+        assert to_destination == source_pcm and to_source == destination_pcm
         relay = lab.calls.resource_for(caller.dialog_ids.call_id, "relay")
         assert relay.left_port == observed["source_port"]
         assert relay.left_transport.get_extra_info("socket").fileno() == observed["source_fd"]

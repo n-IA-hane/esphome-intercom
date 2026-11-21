@@ -8,7 +8,7 @@ import struct
 import pytest
 from homeassistant.core import Context
 
-from custom_components.voip_stack.core import rtp, sip
+from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.endpoint_session import TerminationIntent
@@ -16,6 +16,7 @@ from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from .test_automation_originate_ha import lab as lab, dial
 from .test_trunk_calls_ha import trunks as trunks, sip_test_account
+from .support.rtp_samples import receive_l16_samples
 
 pytestmark = pytest.mark.ha
 
@@ -106,7 +107,11 @@ async def test_public_automation_reads_first_peer_packet_once_on_reserved_fd(lab
         if request.method == "INVITE":
             port = int(re.search(rb"m=audio (\d+)", request.body)[1])
             pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", request.body)[1])
-            assert b"a=ptime:20" in request.body
+            offered = sdp.parse_sdp(request.body)
+            # CC-2: the requested receive quantum can differ from this
+            # independent peer's 20 ms packet, within the hard envelope.
+            assert offered["ptime"] > 0 and offered["maxptime"] >= 20
+            captured["receive_bytes"] = int(offered["ptime"] * 16 * 2)
             captured.update(port=port, socket=sockets[port], fd=sockets[port].fileno())
             captured["raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4001, 320, 0x314159, payload))
             if arrival == "invite":
@@ -122,7 +127,9 @@ async def test_public_automation_reads_first_peer_packet_once_on_reserved_fd(lab
         media = lab.calls.resource_for(result["call_id"], "relay")
         await wait_for(lambda: media.counters["rtp_rx"] == 1)
         assert media.transport.get_extra_info("socket").fileno() == captured["fd"]
-        assert consumed == [captured["raw"]] and decoded == [expected]
+        assert consumed == [captured["raw"]]
+        assert b"".join(decoded) == expected
+        assert all(len(frame) == captured["receive_bytes"] for frame in decoded)
         await lab.calls.terminate_call_wait(result["call_id"], reason="test_done")
         assert captured["socket"].fileno() < 0
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
@@ -152,7 +159,8 @@ async def test_public_conference_auto_invite_reads_queued_first_rtp_after_leg_ex
         if request.method == "INVITE":
             port = int(re.search(rb"m=audio (\d+)", request.body)[1])
             pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", request.body)[1])
-            assert b"a=ptime:20" in request.body
+            offered = sdp.parse_sdp(request.body)
+            assert offered["ptime"] > 0 and offered["maxptime"] >= 20
             captured.update(port=port, socket=sockets[port], fd=sockets[port].fileno(), call_id=request.header("Call-ID"))
             captured["raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4002, 320, 0x271828, payload))
             phone.rtp_socket.sendto(captured["raw"], ("127.0.0.1", port))
@@ -271,32 +279,41 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
         entries = roster_from_peers(lab.hass, [], registrar.registered_roster_entries())
         lab.roster.extend(entry for entry in entries if entry.id == "reservation-picker")
         assert reuse_registered_trunk_flow(registration, picker)
-        original_picker = registration.protocol.datagram_received
+        original_picker = picker._handle_invite_success
 
-        def picker_signal(raw, address):
-            response = sip.parse_message(raw)
+        async def picker_signal(exchange, response):
             if response.status_code == 200 and response.header("Call-ID") == picker.dialog_ids.call_id and "INVITE" in response.header("CSeq") and response.body:
                 port = int(re.search(rb"m=audio (\d+)", response.body)[1])
                 pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", response.body)[1])
                 captured["picker_raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4004, 320, 0x141421, picker_pcm))
                 picker_media.sendto(captured["picker_raw"], ("127.0.0.1", port))
                 assert captured["picker_socket"].recv(4096, socket.MSG_PEEK) == captured["picker_raw"]
-            original_picker(raw, address)
+            return await original_picker(exchange, response)
 
-        monkeypatch.setattr(registration.protocol, "datagram_received", picker_signal)
+        # Observe the real response before ACK on either registered UDP or
+        # an RFC size-selected TCP flow. The RTP arrival window is unchanged.
+        monkeypatch.setattr(picker, "_handle_invite_success", picker_signal)
         result = await caller.invite(target="bedroom0", remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], delayed_offer=True, timeout=3)
         assert result == "in_call"
         await asyncio.wait_for(lab.phones[0].invited.wait(), 3)
         assert captured["source_socket"].recv(4096, socket.MSG_PEEK) == captured["source_raw"]
         source_id = caller.dialog_ids.call_id
         assert await picker.invite(target="pickup.bedroom0", remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3) == "in_call"
+        assert "picker_raw" in captured
         await wait_for(lambda: lab.calls.resource_for(source_id, "relay") is not None)
         adopted_relay = lab.calls.resource_for(source_id, "relay")
         assert adopted_relay.left_transport.get_extra_info("socket").fileno() == captured["source_fd"], "Pickup must keep the originally published source fd"
+
+        async def receive_source():
+            return await lab.hass.loop.sock_recv(source_media, 4096)
+
+        async def receive_picker():
+            return await lab.hass.loop.sock_recv(picker_media, 4096)
+
         async with asyncio.timeout(3):
-            to_source = rtp.parse_packet(await lab.hass.loop.sock_recv(source_media, 4096))
-            to_picker = rtp.parse_packet(await lab.hass.loop.sock_recv(picker_media, 4096))
-        assert to_source.payload == picker_pcm and to_picker.payload == source_pcm
+            to_source = await receive_l16_samples(receive_source, len(picker_pcm), caller.dialog.recv_format.payload_type)
+            to_picker = await receive_l16_samples(receive_picker, len(source_pcm), picker.dialog.recv_format.payload_type)
+        assert to_source == picker_pcm and to_picker == source_pcm
         relay = lab.calls.resource_for(source_id, "relay")
         assert relay.left_port == captured["source_port"]
         assert relay.left_transport.get_extra_info("socket").fileno() == captured["source_fd"]
