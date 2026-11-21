@@ -266,8 +266,10 @@ def recorded_tcp_connections(sent):
         def __init__(self, address):
             self.address = address
             self.closed = False
+            self.writes = []
 
         def write(self, data):
+            self.writes.append(data)
             sent.append((data, self.address))
 
         async def drain(self):

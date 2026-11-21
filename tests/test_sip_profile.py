@@ -617,7 +617,7 @@ class SipProfileTest(unittest.TestCase):
         )
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
-        self.enterContext(recorded_tcp_connections(transport.sent))
+        writers = self.enterContext(recorded_tcp_connections(transport.sent))
         asyncio.run(
             client.invite(
                 target="cucina_phone",
@@ -630,6 +630,9 @@ class SipProfileTest(unittest.TestCase):
 
         raw, _ = transport.sent[0]
         parsed = sip.parse_message(raw)
+        self.assertGreater(len(raw), 1300)
+        self.assertIn("SIP/2.0/TCP ", parsed.header("Via"))
+        self.assertTrue(any(raw in writer.writes for writer in writers))
         self.assertEqual(
             parsed.header("X-Voip-Stack-Caller-Name"),
             "Waveshare P4 Touch",
@@ -645,7 +648,7 @@ class SipProfileTest(unittest.TestCase):
         )
         self.assertEqual(
             parsed.header("From").split(";tag=", 1)[0],
-            '"Waveshare P4 Touch" <sip:waveshare-p4-touch@192.168.1.10:5060;transport=udp>',
+            '"Waveshare P4 Touch" <sip:waveshare-p4-touch@192.168.1.10:5060;transport=tcp>',
         )
         self.assertEqual(
             parsed.header("To"),
