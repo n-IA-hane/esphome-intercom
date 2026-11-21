@@ -32,6 +32,7 @@ from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
 from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
 from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox, bind_flow_usage
+from .core.media.shadow import shadow_inbound_offer
 from .core.sip_dialog import (
     PreparedDialogIdentity,
     SubscriptionDialog,
@@ -3876,6 +3877,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
             )
+            if not local_offer_sdp:
+                # Reports only: the new engine never changes what is answered here.
+                shadow_inbound_offer(
+                    request.header("Call-ID"), request.body, selected,
+                    dahua=peer_profile == "dahua", codec_policy=codec_policy)
             if selected is None:
                 call_id = request.header("Call-ID")
                 if call_id not in self._logged_incompatible_invites:
