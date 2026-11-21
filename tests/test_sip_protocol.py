@@ -5745,6 +5745,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         resolutions = []
         transports = []
         provider_wire = []
+        provider_invites = []
+        provider_responses = []
 
         class Resolver:
             async def resolve(self, uri, *, transport=""):
@@ -5764,6 +5766,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.sent = provider_wire
                 self.closed = False
+                self.protocol = sip_client.SipDatagramQueueProtocol(client.queue)
+                self.protocol.connection_made(self)
                 transports.append(self)
 
             def close(self) -> None:
@@ -5772,6 +5776,37 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
                 self_outer.assertFalse(self.closed)
                 self.sent.append((data, addr))
+                request = sip.parse_message(data)
+                if request.method == "INVITE":
+                    provider_invites.append(request)
+                    if request.header("Authorization"):
+                        self.respond(request, 180, "Ringing")
+                    else:
+                        self.respond(request, 401, "Unauthorized")
+                elif request.method == "CANCEL":
+                    # CANCEL and the pending INVITE have separate responses.
+                    # Keep the production UDP ingress and response reader as
+                    # the sole owner of both client transactions.
+                    self.respond(request, 200, "OK")
+                    self.respond(provider_invites[-1], 487, "Request Terminated")
+
+            def respond(self, request, status, reason):
+                headers = [
+                    ("Via", request.header("Via")),
+                    ("From", request.header("From")),
+                    ("To", request.header("To") + ";tag=provider"),
+                    ("Call-ID", request.header("Call-ID")),
+                    ("CSeq", request.header("CSeq")),
+                ]
+                if status == 401:
+                    headers.append((
+                        "WWW-Authenticate",
+                        'Digest realm="voip.example", nonce="nonce", '
+                        'algorithm=SHA-256, qop="auth"',
+                    ))
+                raw = sip.build_response(status, reason, headers)
+                provider_responses.append(sip.parse_message(raw))
+                self.protocol.datagram_received(raw, ("192.0.2.10", 5060))
 
         self_outer = self
         client = sip_client.SipCallClient(
@@ -5790,6 +5825,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         client.include_route_metadata = False  # External trunk uses standard identities.
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
+        client.protocol = transport.protocol
         # This provider fixture supports UDP. Model a real TCP refusal when
         # request growth crosses RFC 3261's threshold, then acquire a fresh
         # datagram transport. Large successful TCP calls have wire coverage in
@@ -5800,36 +5836,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 raise ConnectionRefusedError(errno.ECONNREFUSED, "UDP-only provider fixture")
             if client.transport is None:
                 client.transport = FakeTransport()
+                client.protocol = client.transport.protocol
             client._resolved_signaling_target = (host, port)
         client._select_initial_signaling_target = select
-        responses = 0
-
-        async def read_response(_timeout: float):
-            nonlocal responses
-            responses += 1
-            invite = sip.parse_message(transport.sent[-1][0])
-            status, reason = (401, "Unauthorized") if responses == 1 else (180, "Ringing")
-            headers = [
-                ("Via", invite.header("Via")),
-                ("From", invite.header("From")),
-                ("To", '<sip:0800000000@voip.example>;tag=provider'),
-                ("Call-ID", invite.header("Call-ID")),
-                ("CSeq", invite.header("CSeq")),
-            ]
-            if status == 401:
-                headers.append(
-                    (
-                        "WWW-Authenticate",
-                        'Digest realm="voip.example", nonce="nonce", '
-                        'algorithm=SHA-256, qop="auth"',
-                    )
-                )
-            return sip.parse_message(sip.build_response(status, reason, headers)), (
-                "192.0.2.10",
-                5060,
-            )
-
-        client._read_response = read_response  # type: ignore[method-assign]
         result = await client.invite(
             target="0800000000",
             remote_host="voip.example",
@@ -5862,7 +5871,29 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(transports[0].closed)
         self.assertFalse(transports[1].closed)
         await client.close()
+        messages = [sip.parse_message(raw) for raw, _addr in provider_wire]
+        self.assertEqual([message.method for message in messages], ["INVITE", "ACK", "INVITE", "CANCEL", "ACK"])
+        cancel, final_ack = messages[-2:]
+        for message in (cancel, final_ack):
+            self.assertEqual(message.uri, authenticated.uri)
+            for header in ("Call-ID", "Via", "From", "Route"):
+                self.assertEqual(message.header(header), authenticated.header(header))
+            self.assertEqual(sip.parse_cseq(message.header("CSeq")).number,
+                             sip.parse_cseq(authenticated.header("CSeq")).number)
+        self.assertEqual([address for _raw, address in provider_wire[-2:]], [("192.0.2.10", 5060)] * 2)
+        self.assertEqual([(message.status_code, sip.parse_cseq(message.header("CSeq")).method)
+                          for message in provider_responses],
+                         [(401, "INVITE"), (180, "INVITE"), (200, "CANCEL"), (487, "INVITE")])
+        self.assertEqual(final_ack.header("To"), provider_responses[-1].header("To"))
         self.assertTrue(all(item.closed for item in transports))
+        self.assertTrue(client._closed)
+        self.assertIsNone(client.transport)
+        self.assertIsNone(client.dialog)
+        self.assertFalse(client._invite_transaction_active)
+        self.assertTrue(client._invite_task.done())
+        self.assertEqual(client._invite_task.result(), "cancelled")
+        self.assertTrue(client._close_task.done())
+        self.assertTrue(client.queue.empty())
 
     async def test_pending_cancel_waits_for_provisional_then_terminates_invite(self) -> None:
         class FakeTransport:
