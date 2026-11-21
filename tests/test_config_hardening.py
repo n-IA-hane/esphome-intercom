@@ -111,7 +111,20 @@ def test_registered_service_ui_text_has_native_translations(path: Path) -> None:
 def _load_disabled_trunk_data():
     """Load the pure config helper without importing Home Assistant."""
 
-    from .voip_phase1_support import PKG_NAME
+    import sys
+    from types import ModuleType
+    from unittest.mock import patch
+
+    from .voip_phase1_support import PKG_NAME, _load_intercom_module
+
+    # Import the complete production normalizer. Its UI selector imports are
+    # irrelevant to this pure configuration witness and are never exercised.
+    flow = ModuleType("homeassistant.data_entry_flow")
+    flow.Optional = vol.Optional
+    selectors = ModuleType("homeassistant.helpers.selector")
+    selectors.BooleanSelector = selectors.ObjectSelector = selectors.SelectSelector = object
+    with patch.dict(sys.modules, {flow.__name__: flow, selectors.__name__: selectors}):
+        normalize_codec_form = _load_intercom_module("codec_policy_form").normalize_codec_form
 
     config_tree = ast.parse(CONFIG_FLOW.read_text())
     helper = next(
@@ -126,6 +139,7 @@ def _load_disabled_trunk_data():
         "__package__": PKG_NAME,
         "Mapping": dict,
         "Any": object,
+        "normalize_codec_form": normalize_codec_form,
         **const_namespace,
     }
     exec(
