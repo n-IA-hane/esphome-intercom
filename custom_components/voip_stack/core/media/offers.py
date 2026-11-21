@@ -2,14 +2,14 @@
 
 from dataclasses import replace
 
-from ..audio_capabilities import local_rtp_audio_formats
+from ..audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_formats
 from ..audio_format import PcmFormat
 from ..codec_capabilities import codec_available
 from ..codec_policy import DEFAULT_AUDIO_CODECS
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
 from .codecs import CODECS
 from .leg import OfferPlan
-from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
+from .packet_time import PacketTimes, ReceiverBounds, STANDARD_LADDER_MS, choose_transmit_packet_ms
 from .payload_map import PayloadMap, TELEPHONE_EVENT
 
 
@@ -73,20 +73,38 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     if not ordered:
         raise ValueError("No enabled audio codec has the required local directions")
     active_receive = [fmt for fmt in receives if _key(fmt) in ordered] if direction != "sendonly" else []
-    times = [{fmt.frame_ms for fmt in active_receive if _key(fmt) == mapping} for mapping in ordered if mapping in receive_keys]
-    common_times = set.intersection(*times) if times else set()
-    packet_ms = policy.default_packet_ms if policy.default_packet_ms in common_times else min(common_times, default=0)
-    if directional and not independent:
-        send_times = {fmt.frame_ms for fmt in sends}
-        common_times &= send_times
-        if not common_times:
-            raise ValueError("Legacy directional audio requires a common packet time")
-        packet_ms = policy.default_packet_ms if policy.default_packet_ms in common_times else min(common_times)
     maximum = min((fmt.max_frame_ms or (capabilities.max_receive_packet_ms(fmt) if capabilities is not None
                    else max(item.frame_ms for item in active_receive if _key(item) == _key(fmt)))
                    for fmt in active_receive), default=0)
-    if maximum and packet_ms > maximum:
-        packet_ms = 0
+    receiver = capabilities or HA_AUDIO_CAPABILITIES
+    preferred = active_receive[0].frame_ms if active_receive else 0
+    sender_times = ({fmt.frame_ms for fmt in sends if _key(fmt) == _key(sends[0])}
+                    if sends and directional and not independent else None)
+    def compatible(packet_ms):
+        if not packet_ms or not active_receive or (maximum and packet_ms > maximum):
+            return False
+        if sender_times is not None and packet_ms not in sender_times:
+            return False
+        for fmt in active_receive:
+            if capabilities is None and not fmt.max_frame_ms:
+                if not any(_key(item) == _key(fmt) and item.frame_ms == packet_ms for item in active_receive):
+                    return False
+            if not receiver.supports_rtp(replace(fmt, frame_ms=packet_ms), receive=True):
+                return False
+        return True
+    declared = [{fmt.frame_ms for fmt in active_receive if _key(fmt) == mapping}
+                for mapping in ordered if mapping in receive_keys]
+    common_times = set.intersection(*declared) if declared else set()
+    # Preserve a duration declared for every mapping before considering a
+    # dynamic fallback. Explicit directional catalogs can have no common
+    # preset even though every receiver implements the primary duration.
+    common_order = (policy.default_packet_ms, *sorted(common_times))
+    common_candidates = [value for value in common_order if value in common_times]
+    candidates = dict.fromkeys((*common_candidates, preferred, policy.default_packet_ms,
+        *(fmt.frame_ms for fmt in active_receive), *(sender_times or ()), *STANDARD_LADDER_MS))
+    packet_ms = next((value for value in candidates if compatible(value)), 0)
+    if directional and not independent and not packet_ms:
+        raise ValueError("Legacy directional audio requires a common packet time")
     events = list(dict.fromkeys([8000, *(clock for _encoding, clock, _channels in ordered)]))
     auxiliary = []
     if policy.encodings and "CN" in policy.encodings and any(clock == 8000 for _name, clock, _channels in ordered):
