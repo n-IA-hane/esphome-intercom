@@ -25,7 +25,7 @@ const VOIP_STACK_CARD_VERSION = VOIP_STACK_MODULE_VERSION.replace(/-\d+$/, "") |
 // required modules, including the phonebook custom element, are ready.
 const [
   { VoipEntityIds },
-  { voipStackTranslate },
+  { voipStackLanguage, voipStackTranslate },
   { voipStackEngine },
   {
     audioModeLabel,
@@ -2031,7 +2031,7 @@ class VoipStackCard extends HTMLElement {
     els.audioCallDuration.textContent = callDuration;
     if (els.hangupPeer) {
       const normalizedState = espState.toLowerCase();
-      els.hangupState.textContent = this._stopping
+      els.hangupState.textContent = this._t(this._stopping
         ? "Ending"
         : (this._starting || ["calling", "connecting"].includes(normalizedState))
           ? "Calling"
@@ -2041,7 +2041,7 @@ class VoipStackCard extends HTMLElement {
               ? "Answering"
               : normalizedState === "terminating"
                 ? "Ending"
-            : "In call";
+            : "In call");
       els.hangupPeer.textContent = activePeer;
       els.hangupDuration.textContent = callDuration;
     }
@@ -3314,20 +3314,20 @@ class VoipStackCard extends HTMLElement {
         const select = view.rows[kind].select;
         const available = devices[kind] || [];
         const wanted = String(selected[kind] || "");
-        const key = JSON.stringify([available, wanted, active[kind] || ""]);
+        const key = JSON.stringify([available, wanted, active[kind] || "", voipStackLanguage(this._hass)]);
         if (select.dataset.options !== key) {
           const defaultOption = document.createElement("option");
           defaultOption.value = "";
-          defaultOption.textContent = kind === "audiooutput"
+          defaultOption.textContent = this._t(kind === "audiooutput"
             ? "System default"
-            : "Browser default";
-          if (!active[kind]) defaultOption.textContent += " - active";
+            : "Browser default");
+          if (!active[kind]) defaultOption.textContent += " - " + this._t("active");
           const options = [defaultOption];
           for (const device of available) {
             const option = document.createElement("option");
             option.value = device.deviceId;
             option.textContent = device.label +
-              (device.deviceId === active[kind] ? " - active" : "");
+              (device.deviceId === active[kind] ? " - " + this._t("active") : "");
             options.push(option);
           }
           if (wanted && !available.some((device) => device.deviceId === wanted)) {

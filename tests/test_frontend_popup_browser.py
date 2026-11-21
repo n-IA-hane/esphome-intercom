@@ -1078,6 +1078,23 @@ def test_video_hangup_bounds_follow_visible_runtime_controls(popup_page, hidden_
     assert max(rect["right"] for rect in restored["duration"]) <= restored["controls"]["left"]
 
 
+@pytest.mark.parametrize(("language", "in_call"), [
+    ("en", "In call"), ("it-IT", "In chiamata"), ("de-DE", "Im Gespräch"),
+    ("pt-BR", "Em chamada"), ("cs-CZ", "Probíhá hovor"),
+])
+def test_active_call_labels_use_the_selected_locale_and_keep_peer_data(popup_page, language, in_call):
+    page = popup_page
+    enable(page)
+    page.evaluate("""language => {
+      hass={...hass,language};
+      for(const element of root.consumers)element.hass=hass;
+    }""", language)
+    incoming(page)
+    page.evaluate("push({state:'in_call',call_id:'incoming-A',caller:'Answer',peer_name:'Answer',media_owner:'other'})")
+    assert page.evaluate("__voipStackPopup.dialog._phone._els.hangupState.textContent") == in_call
+    assert page.evaluate("__voipStackPopup.dialog._phone._els.hangupPeer.textContent") == "Answer"
+
+
 def test_popup_labels_follow_existing_italian_catalogue(popup_page):
     page = popup_page
     enable(page)
