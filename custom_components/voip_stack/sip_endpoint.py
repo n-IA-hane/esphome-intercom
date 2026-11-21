@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from .core import sdp
 from .core.audio_format import AudioFormat
 from .session_cleanup import async_wait_for_cleanup
+from .sip_tcp_server import SipTcpServer
 from .sip_listener import (
     InfoHandler,
     ApplicationRequestRouter,
@@ -21,7 +22,7 @@ from .sip_listener import (
     RequestHandler,
     ReferHandler,
     RegisterHandler,
-    SipTcpServer,
+    SipUdpEndpoint,
     SipInvite,
     SipUdpServer,
     TerminateHandler,
@@ -252,6 +253,7 @@ class SipEndpointManager:
 
             if self.tcp_enabled:
                 tcp = SipTcpServer(
+                    endpoint_factory=SipUdpEndpoint,
                     host=self.host,
                     port=self.port,
                     local_ip=self.local_ip,

@@ -482,7 +482,7 @@ async def test_endpoint_startup_publishes_one_owner_and_releases_partial_listene
     from custom_components.voip_stack import endpoint_runtime
     from custom_components.voip_stack.pbx_runtime import RuntimePhase
     from custom_components.voip_stack.runtime_data import sip_endpoint_manager
-    from custom_components.voip_stack.sip_listener import SipTcpServer
+    from custom_components.voip_stack.sip_tcp_server import SipTcpServer
 
     # The media lab starts with a synthetic active call registry. This
     # endpoint startup starts with the same unloaded state as config setup.

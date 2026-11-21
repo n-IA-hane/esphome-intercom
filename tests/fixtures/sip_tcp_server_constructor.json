@@ -1,0 +1,110 @@
+[
+  {
+    "name": "host",
+    "default": null
+  },
+  {
+    "name": "port",
+    "default": null
+  },
+  {
+    "name": "local_ip",
+    "default": null
+  },
+  {
+    "name": "local_rtp_port",
+    "default": null
+  },
+  {
+    "name": "supported_formats",
+    "default": null
+  },
+  {
+    "name": "supported_send_formats",
+    "default": "None"
+  },
+  {
+    "name": "supported_recv_formats",
+    "default": "None"
+  },
+  {
+    "name": "on_invite",
+    "default": null
+  },
+  {
+    "name": "on_offerless_invite",
+    "default": "None"
+  },
+  {
+    "name": "codec_policy_resolver",
+    "default": "None"
+  },
+  {
+    "name": "invite_identity_resolver",
+    "default": "None"
+  },
+  {
+    "name": "invite_authorizer",
+    "default": "None"
+  },
+  {
+    "name": "on_terminated",
+    "default": "None"
+  },
+  {
+    "name": "on_register",
+    "default": "None"
+  },
+  {
+    "name": "on_info",
+    "default": "None"
+  },
+  {
+    "name": "on_media_update",
+    "default": "None"
+  },
+  {
+    "name": "on_refer",
+    "default": "None"
+  },
+  {
+    "name": "on_request",
+    "default": "None"
+  },
+  {
+    "name": "request_router",
+    "default": "None"
+  },
+  {
+    "name": "on_flow_closed",
+    "default": "None"
+  },
+  {
+    "name": "enable_video",
+    "default": "False"
+  },
+  {
+    "name": "enable_video_transcoding",
+    "default": "False"
+  },
+  {
+    "name": "prefer_browser_video_send",
+    "default": "False"
+  },
+  {
+    "name": "max_connections",
+    "default": "128"
+  },
+  {
+    "name": "max_connections_per_host",
+    "default": "16"
+  },
+  {
+    "name": "initial_message_timeout",
+    "default": "15.0"
+  },
+  {
+    "name": "frame_timeout",
+    "default": "10.0"
+  }
+]
