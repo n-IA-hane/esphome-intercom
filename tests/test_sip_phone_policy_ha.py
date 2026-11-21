@@ -7,6 +7,7 @@ import pytest
 from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
 from custom_components.voip_stack.store import config_entry
+from .support.sip_observer import sip_messages as sip_messages
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 
@@ -345,7 +346,7 @@ async def test_native_automation_can_speak_to_unanswered_sip_caller(
 @pytest.mark.parametrize("registered_phones", [{"manual": "transfer_b"}], indirect=True)
 @pytest.mark.parametrize("selection", ["phone", "native_trigger"])
 async def test_public_forward_controls_only_its_native_phone_call(
-    trunks, registered_phones, selection
+    trunks, registered_phones, selection, sip_messages
 ):
     from homeassistant.exceptions import ServiceValidationError
     from custom_components.voip_stack.automation_context import (
@@ -364,6 +365,7 @@ async def test_public_forward_controls_only_its_native_phone_call(
         ):
             await asyncio.sleep(0.01)
     session = next(iter(runtime.calls.sessions.values()))
+    original_destination_id = runtime.calls.bridge_link_for(session.call_id)
     with pytest.raises(ServiceValidationError, match="does not own"):
         await runtime.hass.services.async_call(
             "voip_stack",
@@ -404,6 +406,27 @@ async def test_public_forward_controls_only_its_native_phone_call(
         ):
             await asyncio.sleep(0.01)
     assert runtime.runtime.endpoints.get("transfer_c").active_call_id == session.call_id
+    # The established replacement does not wait for the retired transaction.
+    # Its old phone becomes reusable only after the session's cleanup barrier.
+    cleanup = session.named_tasks.get(f"retired-sip-destination-{original_destination_id}")
+    if cleanup is not None:
+        await asyncio.wait_for(asyncio.shield(cleanup), 3)
+    from custom_components.voip_stack.core import sip
+
+    original_messages = [(message, outgoing) for message, _remote, _tcp, outgoing in sip_messages
+                         if message.header("Call-ID") == original_destination_id]
+    cancelled = next(index for index, (message, outgoing) in enumerate(original_messages)
+                     if outgoing and message.method == "CANCEL")
+    final = next(index for index, (message, outgoing) in enumerate(original_messages)
+                 if not outgoing and message.status_code == 487
+                 and sip.parse_cseq(message.header("CSeq")).method == "INVITE")
+    acknowledged = next(index for index, (message, outgoing) in enumerate(original_messages)
+                        if outgoing and message.method == "ACK" and index > final)
+    assert cancelled < final < acknowledged
+    assert original_destination_id not in session.legs
+    assert "transfer_b" not in session.endpoint_claims
+    assert not any(resource.name == f"retired_destination:{original_destination_id}"
+                   for resource in session.resources)
     assert not runtime.runtime.endpoints.get("transfer_b").active_call_id
     await asyncio.to_thread(caller.hangup)
     async with asyncio.timeout(3):
