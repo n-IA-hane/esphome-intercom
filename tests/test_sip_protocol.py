@@ -2593,25 +2593,13 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_confirmed_dialog_rejects_reinvite_but_keeps_call_alive(self) -> None:
-        class FakeTransport:
-            def __init__(self) -> None:
-                self.sent: list[tuple[bytes, tuple[str, int]]] = []
-
-            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
-                self.sent.append((data, addr))
-
-        client = sip_client.SipCallClient(
-            local_ip="127.0.0.1", local_name="HA", local_sip_port=5060, local_rtp_port=41000
-        )
-        transport = FakeTransport()
-        client.transport = transport  # type: ignore[assignment]
-        client.dialog = types.SimpleNamespace(
-            session_timer=sip.SipSessionTimer(),
-            remote_host="127.0.0.2",
-            remote_sip_port=5060,
+        client, current, sent, _negotiated = self._confirmed_audio_client()
+        client.dialog = replace(
+            current,
+            target="ESP",
+            remote_uri="sip:ESP@127.0.0.2",
             remote_target_uri="sip:ESP@127.0.0.2:5060",
-        )  # type: ignore[assignment]
-        client.dialog_ids.remote_tag = "remote"
+        )
 
         def request(method: str, cseq: int, *, remote_tag: str = "remote") -> bytes:
             return sip.build_request(
@@ -2634,7 +2622,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         client.queue.put_nowait((request("BYE", 4), ("127.0.0.2", 5060)))
 
         self.assertEqual(await client.wait_for_dialog_termination(timeout=0.1), "remote_hangup")
-        responses = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        responses = [sip.parse_message(raw) for raw, _addr in sent]
         self.assertEqual([response.status_code for response in responses], [481, 488, 200])
         self.assertIn("Session renegotiation is not supported", responses[1].header("Warning"))
 
