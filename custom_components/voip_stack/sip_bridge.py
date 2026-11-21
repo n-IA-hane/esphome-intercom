@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 import logging
 from typing import Any
 
-from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp
 from .core.sdp import remote_can_receive, remote_can_send
 from .sip_client import SipCallClient, SipDialog
@@ -24,69 +23,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
-    """Resolve the still-unanswered caller against the accepted destination."""
-    if invite.initial_response_sent:
-        return invite
-    preferred = destination.recv_format.audio_format
-    send_formats = [preferred, invite.send_format.audio_format]
-    if invite.local_send_capabilities:
-        # Repacketize a common PCM geometry before changing its sample rate.
-        # Durations must come from this listener's actual transmit policy.
-        shape = (preferred.sample_rate, preferred.pcm_format, preferred.channels)
-        send_formats = [fmt for fmt in dict.fromkeys((preferred, *invite.local_send_capabilities))
-            if fmt in invite.local_send_capabilities
-            and (fmt.sample_rate, fmt.pcm_format, fmt.channels) == shape]
-        if invite.send_format.audio_format in invite.local_send_capabilities:
-            send_formats.append(invite.send_format.audio_format)
-    recv_formats = (destination.send_format.audio_format, invite.recv_format.audio_format)
-    # Preserve our receive preference when only outgoing packet time differs.
-    if (recv_formats[0].sample_rate, recv_formats[0].pcm_format, recv_formats[0].channels) == (
-        recv_formats[1].sample_rate, recv_formats[1].pcm_format, recv_formats[1].channels,
-    ):
-        recv_formats = recv_formats[::-1]
-    selected = sdp.negotiate_directional(
-        invite.remote_sdp,
-        list(dict.fromkeys(send_formats)),
-        list(dict.fromkeys(recv_formats)),
-        allow_dahua_pcm=invite.peer_profile == "dahua",
-        codec_policy=invite.codec_policy,
-        local_recv_capabilities=invite.local_recv_capabilities or None,
-        local_capabilities=HA_AUDIO_CAPABILITIES,
-    )
-    if selected is None:
-        return invite
+    """Adapt SIP values to the pure bridge plan; signaling still owns commit."""
+    from .core.media.bridge import plan_caller_audio
 
-    def pcm_shape(fmt):
-        pcm = fmt.audio_format
-        return pcm.sample_rate, pcm.pcm_format, pcm.channels
-
-    # Keep the caller's receive geometry when a preference merely moves a
-    # conversion to the opposite direction. Packet-time changes remain valid.
-    if pcm_shape(selected.recv) != pcm_shape(invite.recv_format):
-        original_conversions = sum((
-            pcm_shape(invite.recv_format) != pcm_shape(destination.send_format),
-            pcm_shape(destination.recv_format) != pcm_shape(invite.send_format),
-        ))
-        candidate_conversions = sum((
-            pcm_shape(selected.recv) != pcm_shape(destination.send_format),
-            pcm_shape(destination.recv_format) != pcm_shape(selected.send),
-        ))
-        if candidate_conversions >= original_conversions:
-            return invite
-    send = selected.send
-    if (
-        send.encoding.upper() == invite.send_format.encoding.upper() == "L16"
-        and send.sample_rate < invite.send_format.sample_rate
-    ):
-        # Uncompressed audio converts without loss, so the bridge resamples it.
-        # Never lower the rate the caller negotiated to receive just to match
-        # the destination; that is only worth it for compressed codecs, where
-        # it avoids coding the audio twice.
-        if invite.send_format.payload_type == invite.recv_format.payload_type:
-            # One payload serves both directions: the contract stays whole.
-            return invite
-        send = invite.send_format
-    return replace(invite, send_format=send, recv_format=selected.recv)
+    plan = plan_caller_audio(invite.remote_sdp,
+        sdp.RtpPcmDirection(invite.send_format, invite.recv_format),
+        sdp.RtpPcmDirection(destination.send_format, destination.recv_format),
+        frozen=invite.initial_response_sent, codec_policy=invite.codec_policy,
+        send_capabilities=invite.local_send_capabilities,
+        receive_capabilities=invite.local_recv_capabilities, dahua=invite.peer_profile == "dahua")
+    if plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format:
+        return invite
+    return replace(invite, send_format=plan.caller.send, recv_format=plan.caller.recv)
 
 
 @dataclass(frozen=True, slots=True)
