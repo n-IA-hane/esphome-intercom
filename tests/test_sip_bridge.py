@@ -685,21 +685,11 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(result, "in_call")
             assert dest_client.dialog is not None
-            relay = sip_rtp_bridge.SipRtpRelay(
-                left=sip_rtp_bridge.RtpPeer(
-                    invite.remote_rtp_host,
-                    invite.remote_rtp_port,
-                    invite.selected_format.payload_type,
-                    invite.selected_format.audio_format,
-                ),
-                right=sip_rtp_bridge.RtpPeer(
-                    dest_client.dialog.remote_rtp_host,
-                    dest_client.dialog.remote_rtp_port,
-                    dest_client.dialog.selected_format.payload_type,
-                    dest_client.dialog.selected_format.audio_format,
-                ),
-                left_port=ha_rtp_left,
-                right_port=ha_rtp_right,
+            relay = sip_bridge.build_invite_client_relay(
+                invite=invite,
+                client=dest_client,
+                source_relay_port=ha_rtp_left,
+                dest_relay_port=ha_rtp_right,
             )
             await relay.start()
             return sip_listener.SipInviteResult(
