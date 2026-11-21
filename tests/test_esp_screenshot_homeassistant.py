@@ -26,7 +26,8 @@ def test_template_image_updates_from_capture_ids_and_caches_demand_fetches(tmp_p
     if not interpreter or shutil.which(interpreter) is None:
         pytest.skip("Set HA_PYTHON to an interpreter with Home Assistant installed")
 
-    source = Path(os.environ.get("ESP_SCREENSHOT_SOURCE", ROOT.parent / "esphome-screenshot"))
+    source = Path(os.environ.get("ESP_SCREENSHOT_REPO",
+                  os.environ.get("ESP_SCREENSHOT_SOURCE", ROOT.parent / "esphome-screenshot")))
     documented = (source / "README.md").read_text().split(
         "For YAML-managed helpers", 1
     )[1].split("```yaml\n", 1)[1].split("```", 1)[0]
