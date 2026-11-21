@@ -13,6 +13,7 @@ from .voip_phase1_support import (
     contextlib,
     dtmf,
     patch,
+    recorded_tcp_connections,
     sdp,
     sip,
     sip_auth,
@@ -5120,6 +5121,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
                 self.sent.append((data, addr))
 
+            def close(self) -> None:
+                return None
+
         client = sip_client.SipCallClient(
             local_ip="192.168.1.10",
             local_name="17770000000",
@@ -5132,6 +5136,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
+        self.enterContext(recorded_tcp_connections(transport.sent))
         response_count = 0
 
         async def read_response(_timeout: float):
@@ -5219,6 +5224,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
+        self.enterContext(recorded_tcp_connections(transport.sent))
         response_count = 0
 
         async def read_response(_timeout: float):

@@ -258,6 +258,47 @@ def _load_sip_transport_with_homeassistant_stubs():
 
 
 @contextlib.contextmanager
+def recorded_tcp_connections(sent):
+    """Record real SIP/TCP writer calls when an INVITE outgrows UDP."""
+    writers = []
+
+    class Writer:
+        def __init__(self, address):
+            self.address = address
+            self.closed = False
+
+        def write(self, data):
+            sent.append((data, self.address))
+
+        async def drain(self):
+            return None
+
+        def is_closing(self):
+            return self.closed
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            return None
+
+        def get_extra_info(self, name, default=None):
+            return self.address if name == "peername" else default
+
+    async def connect(host, port, **_kwargs):
+        writer = Writer((host, port))
+        writers.append(writer)
+        return asyncio.StreamReader(), writer
+
+    with patch.object(asyncio, "open_connection", side_effect=connect):
+        try:
+            yield writers
+        finally:
+            for writer in writers:
+                writer.close()
+
+
+@contextlib.contextmanager
 def _reserved_udp_ports(count: int):
     sockets = []
     try:
@@ -281,6 +322,7 @@ __all__ = [
     "_load_sip_transport_with_homeassistant_stubs",
     "_load_video_ws_runtime_module",
     "_reserved_udp_ports",
+    "recorded_tcp_connections",
     "asyncio",
     "audio_format",
     "audio_pcm",

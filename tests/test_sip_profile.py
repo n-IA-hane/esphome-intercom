@@ -10,6 +10,7 @@ from .voip_phase1_support import (
     codec_capabilities,
     g722_codec,
     patch,
+    recorded_tcp_connections,
     rtp,
     sdp,
     sip,
@@ -604,6 +605,9 @@ class SipProfileTest(unittest.TestCase):
             def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
                 self.sent.append((data, addr))
 
+            def close(self) -> None:
+                return None
+
         client = sip_client.SipCallClient(
             local_ip="192.168.1.10",
             local_name="Waveshare P4 Touch",
@@ -611,7 +615,9 @@ class SipProfileTest(unittest.TestCase):
             local_sip_port=5060,
             local_rtp_port=41000,
         )
-        client.transport = FakeTransport()  # type: ignore[assignment]
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        self.enterContext(recorded_tcp_connections(transport.sent))
         asyncio.run(
             client.invite(
                 target="cucina_phone",
@@ -622,7 +628,7 @@ class SipProfileTest(unittest.TestCase):
             )
         )
 
-        raw, _ = client.transport.sent[0]  # type: ignore[union-attr]
+        raw, _ = transport.sent[0]
         parsed = sip.parse_message(raw)
         self.assertEqual(
             parsed.header("X-Voip-Stack-Caller-Name"),
