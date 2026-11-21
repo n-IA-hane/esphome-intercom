@@ -334,7 +334,7 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
     if pickup_method == "service":
         import socket
         from custom_components.voip_stack import media_ports
-        from custom_components.voip_stack import sip_client, sip_listener
+        from custom_components.voip_stack import sip_listener
         from custom_components.voip_stack.core import sip, sdp
         from custom_components.voip_stack.local_media_bridge import LocalMediaBridge
         from custom_components.voip_stack.sip_client import SipCallClient
@@ -343,16 +343,26 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
         resume_invites = {}
         application = runtime.calls.resource_for(source_id, "parking")
         source_wire_id = (application.source_client.dialog.call_id if application.source_client is not None else source_id)
-        native_send = sip_client.send_sip_datagram
+        native_send = sip_listener.send_sip_datagram
+        native_client_send = SipCallClient._send_dialog_request
 
-        def observe_wire(transport, raw, address):
-            result = native_send(transport, raw, address)
+        def observe_offer(raw):
             message = sip.parse_message(raw)
             if message.method == "INVITE" and message.header("Call-ID") == source_wire_id:
                 resume_invites[message.header("CSeq")] = sdp.offered_video_formats(message.body)[0].direction
+
+        def observe_wire(transport, raw, address):
+            result = native_send(transport, raw, address)
+            observe_offer(raw)
             return result
 
-        monkeypatch.setattr(sip_client, "send_sip_datagram", observe_wire)
+        def observe_client_wire(client, raw, host, port):
+            result = native_client_send(client, raw, host, port)
+            if result:
+                observe_offer(raw)
+            return result
+
+        monkeypatch.setattr(SipCallClient, "_send_dialog_request", observe_client_wire)
         monkeypatch.setattr(sip_listener, "send_sip_datagram", observe_wire)
         native_bind, native_invite = media_ports.bind_sip_audio_socket, SipCallClient.invite
         native_prepare, native_receive = LocalMediaBridge.prepare, SipRtpRelay.handle_packet
