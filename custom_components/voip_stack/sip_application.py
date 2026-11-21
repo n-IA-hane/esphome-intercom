@@ -20,7 +20,7 @@ from .core import sip, sip_transfer
 from .core.sip_dialog import SubscriptionDialog
 from .core.sip_auth import SipDigestCredentials
 from .sip_listener import SipFollowUpRequest, SipRequestResult
-from .sip_registrar import SipRegistrar
+from .sip_registrar import AuthenticatedOutboundFlow, SipRegistrar
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -545,6 +545,7 @@ class SipApplicationMethods:
             sender=follow_up_sender,
             transport=transport.upper(),
             authentication_generation=self.registrar.authentication_generation(subscriber),
+            outbound_flow=self._subscription_outbound_flow(request, subscriber, addr, transport),
             notify_lock=current.notify_lock if current is not None else asyncio.Lock(),
         )
         if current is not None:
@@ -553,6 +554,7 @@ class SipApplicationMethods:
             current.expires_at = subscription.expires_at
             current.sender = follow_up_sender
             current.transport = transport.upper()
+            current.outbound_flow = subscription.outbound_flow
             subscription = current
         if expires:
             subscriptions[key] = subscription
@@ -953,6 +955,11 @@ class SipApplicationMethods:
                         self._end_subscription(subscription, notify=False)
                         subscription.pending_notification = None
                         subscription.notify_terminated = True
+            except (ConnectionError, OSError, TimeoutError) as error:
+                self._end_subscription(subscription, notify=False)
+                subscription.pending_notification = None
+                subscription.notify_terminated = True
+                _LOGGER.warning("SIP subscription ended after transport failure (%s)", type(error).__name__)
             except Exception:
                 self._end_subscription(subscription, notify=False)
                 subscription.pending_notification = None
@@ -964,6 +971,37 @@ class SipApplicationMethods:
                 self._release_dialog_observers_if_unused()
 
         subscription.notify_task = self._track(send(), f"voip-sip-notify-{subscription.key}")
+
+    def _subscription_outbound_flow(self, request, subscriber, addr, transport):
+        """Retain only the authenticated RFC 5626 binding selected by this usage."""
+        if request.header_values("Record-Route"):
+            return None
+        contact = sip.contact_target_uri(request)
+        for binding in self.registrar.registered_contacts(subscriber):
+            if (binding.outbound and binding.transport.upper() == transport.upper()
+                    and (binding.source_host, binding.source_port) == addr
+                    and contact in {binding.contact_uri, binding.advertised_contact_uri}):
+                return AuthenticatedOutboundFlow(self.registrar, binding.username, binding.contact_uri,
+                    binding.capability_generation, binding.flow_key)
+        return None
+
+    def application_follow_up_flow(self, request, dialog):
+        """Resolve a retained binding through the registrar without an IP heuristic."""
+        owned = next((item for item in (*self.subscriptions.values(), *self.notifiers.values())
+                      if item.dialog is dialog and item.request is request), None)
+        if owned is None or owned.outbound_flow is None or dialog.route_set:
+            return None
+        selected = owned.outbound_flow
+        account = self.registrar.accounts.get(selected.username.casefold())
+        if (account is None or not account.enabled or
+                self.registrar.authentication_generation(selected.username) != owned.authentication_generation):
+            raise ConnectionError("SIP subscription outbound credentials are unavailable")
+        binding = next((item for item in self.registrar.registered_contacts(selected.username)
+                        if item.outbound and item.capability_generation == selected.generation
+                        and item.flow_key == selected.flow_key), None)
+        if binding is None:
+            raise ConnectionError("SIP subscription outbound binding is unavailable")
+        return binding.transport.upper(), (binding.source_host, binding.source_port)
 
     def resolve_local_target(self, uri: sip.SipUri) -> sip.SipUri:
         """Use the authoritative registration binding for a locally issued GRUU."""
@@ -1250,6 +1288,7 @@ class SipEventSubscription:
     notify_lock: asyncio.Lock
     transport: str = ""
     authentication_generation: str | None = None
+    outbound_flow: AuthenticatedOutboundFlow | None = None
     event: str = "presence"
     mailbox_id: str = ""
     dialog_endpoint_id: str = ""

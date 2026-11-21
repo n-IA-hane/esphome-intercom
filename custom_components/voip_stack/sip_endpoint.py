@@ -285,6 +285,8 @@ class SipEndpointManager:
             self.tcp_server = tcp
             if udp is not None and udp.endpoint is not None and tcp is not None:
                 udp.endpoint.application_tcp_endpoint = tcp.endpoint
+                if tcp.endpoint is not None:
+                    tcp.endpoint.application_udp_endpoint = udp.endpoint
             published = True
             transports = "+".join(
                 name

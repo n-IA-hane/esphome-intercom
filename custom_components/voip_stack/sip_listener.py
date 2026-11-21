@@ -71,6 +71,10 @@ _MAX_COMPLETED_TRANSACTIONS = 256
 _MAX_REUSED_UDP_USAGES = 256
 
 
+class _SipRequestNotSent(ConnectionError):
+    """The transport rejected a request before accepting any bytes."""
+
+
 @dataclass(frozen=True, slots=True)
 class SipInvite:
     source_host: str
@@ -610,6 +614,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.transaction_flow = transaction_flow
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.application_tcp_endpoint: SipUdpEndpoint | None = None
+        self.application_udp_endpoint: SipUdpEndpoint | None = None
         self.flow_trunk_id = flow_trunk_id
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
@@ -1410,7 +1415,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         def send():
             sent = self._send(raw, addr)
             if sent is False and self.signaling_transport == "TCP":
-                raise ConnectionError("SIP TCP flow is unavailable before send")
+                raise _SipRequestNotSent("SIP TCP flow is unavailable before send")
             return sent
 
         def sent():
@@ -1513,31 +1518,57 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
         target = self._next_hop_target(routing.next_hop_uri)
         next_hop = (target.host, sip.sip_default_port(target))
-        if self.request_route is not None:
-            next_hop = await self.request_route(target, addr)
         deadline = asyncio.get_running_loop().time() + _INVITE_2XX_TIMEOUT
         authentication = DigestChallengeTracker()
         credentials = result.follow_up_credentials
         target_revision = (state.remote_cseq, state.remote_target_uri) if state is not None else None
-        transaction_endpoint = self
+        flow_selector = getattr(self.request_router, "application_follow_up_flow", None)
+        pinned_flow = flow_selector(request, state) if flow_selector is not None else None
+        requested_transport = next((str(value or "").upper() for key, value in target.params
+                                    if key.casefold() == "transport"), "UDP")
+        selected_transport = pinned_flow[0] if pinned_flow is not None else requested_transport
+        if selected_transport not in {"UDP", "TCP"}:
+            raise ConnectionError("SIP application next hop requires unsupported transport")
+        transaction_endpoint = (self if self.signaling_transport == selected_transport else
+                                self.application_tcp_endpoint if selected_transport == "TCP" else
+                                self.application_udp_endpoint)
+        if transaction_endpoint is None:
+            raise ConnectionError("SIP application next-hop transport is unavailable")
+
+        def use_transport(endpoint):
+            nonlocal headers, raw, contact_uri
+            contact_uri = endpoint._contact_for_request(request, transport=endpoint.signaling_transport)
+            transport_headers = sip.dialog_headers(request_uri=routing.request_uri,
+                local_uri=local_uri, remote_uri=remote_uri, dialog=ids,
+                method=follow_up.method, contact_uri=contact_uri, transport=endpoint.signaling_transport)
+            headers = [(key, value) for key, value in headers if key.casefold() not in {"via", "contact"}]
+            headers.extend((key, value) for key, value in transport_headers if key.casefold() in {"via", "contact"})
+            raw = sip.build_request(follow_up.method, routing.request_uri, headers, follow_up.body)
+
+        if transaction_endpoint is not self:
+            use_transport(transaction_endpoint)
+        if pinned_flow is not None:
+            next_hop = pinned_flow[1]
+        elif transaction_endpoint.request_route is not None:
+            async with asyncio.timeout(max(0, deadline - asyncio.get_running_loop().time())):
+                next_hop = await transaction_endpoint.request_route(target, addr)
         udp_fallback_used = False
         tcp_reconnected = False
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
-            requested_transport = next((str(value or "").upper() for key, value in target.params
-                                        if key.casefold() == "transport"), "")
             if (transaction_endpoint.signaling_transport == "UDP"
                     and (requested_transport == "TCP" or len(raw) > SIP_UDP_SAFE_REQUEST_BYTES)
-                    and not udp_fallback_used):
+                    and not udp_fallback_used and pinned_flow is None):
                 tcp = self.application_tcp_endpoint
                 if tcp is None or tcp.request_route is None:
                     _LOGGER.warning("SIP application request needs unavailable TCP transport method=%s bytes=%s",
                                     follow_up.method, len(raw))
                     return None
                 try:
-                    tcp_hop = await tcp.request_route(target, addr)
+                    async with asyncio.timeout(remaining):
+                        tcp_hop = await tcp.request_route(target, addr)
                 except OSError as err:
                     # Only setup failure before any request bytes were sent may
                     # retry UDP (RFC3261 section18.1.1), never a response timeout.
@@ -1548,15 +1579,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 else:
                     transaction_endpoint = tcp
                     next_hop = tcp_hop
-                    contact_uri = tcp._contact_for_request(request, transport="TCP")
-                    upgraded = sip.dialog_headers(request_uri=routing.request_uri,
-                        local_uri=local_uri, remote_uri=remote_uri, dialog=ids,
-                        method=follow_up.method, contact_uri=contact_uri, transport="TCP")
-                    headers = [(key, value) for key, value in headers
-                               if key.casefold() not in {"via", "contact"}]
-                    headers.extend((key, value) for key, value in upgraded
-                                   if key.casefold() in {"via", "contact"})
-                    raw = sip.build_request(follow_up.method, routing.request_uri, headers, follow_up.body)
+                    use_transport(tcp)
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
@@ -1566,13 +1589,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     transport=transaction_endpoint.signaling_transport, creating_dialog=not ids.remote_tag,
                     timeout=remaining,
                 )
-            except ConnectionError:
+            except _SipRequestNotSent:
                 if (follow_up.method != "NOTIFY" or transaction_endpoint.signaling_transport != "TCP"
-                        or tcp_reconnected or transaction_endpoint.request_route is None):
+                        or tcp_reconnected or pinned_flow is not None or transaction_endpoint.request_route is None):
                     raise
-                # Q recovery contract: one confirmed flow failure may reopen
-                # the same resolved peer, retaining raw/branch/CSeq/deadline.
-                # Timer F returns None and never enters this branch.
+                # One pre-send rejection may reopen the same resolved peer.
+                # Once queued/written, EOF or timeout has uncertain delivery
+                # and must never replay a NOTIFY on another connection.
                 tcp_reconnected = True
                 pinned_target = replace(target, host=next_hop[0], port=next_hop[1])
                 remaining = deadline - asyncio.get_running_loop().time()
@@ -4271,10 +4294,9 @@ class SipTcpServer:
                 for host, port, transport in candidate.endpoints():
                     if transport != "TCP":
                         continue
-                    if (host, port) == source and source in self._tcp_writers:
-                        return source
                     address = (host, port)
-                    if address in self._tcp_writers:
+                    tx = self._tcp_writers.get(address)
+                    if tx is not None and not tx.writer.is_closing() and not tx.task.done():
                         return address
                     if len(self._client_tasks) >= self.max_connections:
                         raise ConnectionError("SIP TCP connection budget exhausted")

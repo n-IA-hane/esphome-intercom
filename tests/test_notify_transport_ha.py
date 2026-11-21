@@ -26,11 +26,12 @@ async def read_record(reader):
     return head + await reader.readexactly(length)
 
 
-@pytest.mark.parametrize("challenge,close_before_200", [
-    pytest.param(401, False, id="401"), pytest.param(407, False, id="407"),
-    pytest.param(401, True, id="401-close-before-200"),
+@pytest.mark.parametrize("challenge,close_before_200,outbound", [
+    pytest.param(401, False, False, id="401"), pytest.param(407, False, False, id="407"),
+    pytest.param(401, True, False, id="401-close-before-200"),
+    pytest.param(0, False, True, id="authenticated-outbound-udp"),
 ])
-async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_target(lab, challenge, close_before_200):
+async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_target(lab, challenge, close_before_200, outbound):
     import pytest_socket
     pytest_socket.socket_allow_hosts(["127.0.0.1", "127.0.0.3"])
     loop = asyncio.get_running_loop()
@@ -92,7 +93,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
             if message.is_response:
                 responses.put_nowait(message)
             else:
-                self.transport.sendto(response(message, "UDP"), address)
+                self.transport.sendto(response(message, "UDP", contact=outbound), address)
                 observed.put_nowait((message, "UDP", raw))
 
     udp, peer = await loop.create_datagram_endpoint(Datagram, local_addr=("127.0.0.3", port))
@@ -100,7 +101,8 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
                              local_ip="127.0.0.1", local_sip_port=5060)
     registrar.registrations[watcher] = SipRegistration(username=watcher,
         contact_uri=f"sip:{watcher}@127.0.0.3:{port};transport=udp", source_host="127.0.0.3",
-        source_port=port, transport="UDP", expires_at=time.time() + 300)
+        source_port=port, transport="UDP", expires_at=time.time() + 300, outbound=outbound,
+        instance_id="urn:uuid:10000000-0000-4000-8000-000000000001" if outbound else "", reg_id=1 if outbound else 0)
     methods = SipApplicationMethods(lab.hass, registrar)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
     lab.runtime.endpoints.update("sip:bedroom0", extension="101")
@@ -128,6 +130,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         assert not ElementTree.fromstring(initial.body).findall("d:dialog", NS)
         # Standard peer identity data keeps the document large even with compact dialog ids.
         peer_display = ("Independent reception desk " * 16).strip()
+        lab.runtime.endpoints.update("sip:bedroom1", name=peer_display)
         session = lab.calls.upsert("caller-" + "x" * 180 + "@independent.test", state="connecting",
             owner="router", route_kind="sip", source_endpoint_id="sip:bedroom0",
             dest_endpoint_id="sip:bedroom1", callee=peer_display)
@@ -139,15 +142,69 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         assert len(trying_dialog.attrib["id"]) == 64
         assert trying_dialog.find("d:remote/d:identity", NS).attrib["display"] == peer_display
         assert len(trying_raw) > 1300
-        assert trying_transport == "TCP"
+        assert trying_transport == ("UDP" if outbound else "TCP")
+        if outbound:
+            assert not writers
+            pinned = next(iter(methods.subscriptions.values())).outbound_flow
+            assert pinned is not None and pinned.outbound
+            # The peer changed Contact to TCP in its first response. Only this
+            # authenticated binding permits the oversized request on UDP.
+            assert "transport=tcp" in trying.uri
+            lab.calls.transition(session.call_id, state="in_call")
+            publish_bridge_projection(lab.hass, session)
+            active, protocol, _ = await next_notify()
+            assert protocol == "UDP" and b"confirmed" in active.body
+            registrar.registrations[watcher].capability_generation = "replacement-binding"
+            lab.calls.transition(session.call_id, state="held")
+            publish_bridge_projection(lab.hass, session)
+            async with asyncio.timeout(2):
+                while methods.notifiers:
+                    await asyncio.sleep(.001)
+            assert not methods.subscriptions and not methods.subscription_timers
+            assert observed.empty() and not writers
+            headers = [(key, "outbound-recovered" if key == "Call-ID" else value) for key, value in headers]
+            udp.sendto(sip.build_request("SUBSCRIBE", "sip:101@127.0.0.1", headers), target)
+            accepted = await asyncio.wait_for(responses.get(), 2)
+            full, protocol, _ = await next_notify()
+            document = ElementTree.fromstring(full.body)
+            assert protocol == "UDP" and document.attrib["state"] == "full" and document.attrib["version"] == "0"
+            assert document.find("d:dialog/d:state", NS).text == "confirmed"
+            await lab.calls.terminate_call_wait(session.call_id, reason="remote_hangup")
+            publish_bridge_projection(lab.hass, session, intent=session.termination_intent)
+            idle, protocol, _ = await next_notify()
+            assert protocol == "UDP" and not ElementTree.fromstring(idle.body).findall("d:dialog", NS)
+            stop = [(key, value) for key, value in headers if key not in {"Via", "To", "CSeq", "Expires"}]
+            stop += [("Via", f"SIP/2.0/UDP 127.0.0.3:{port};branch=z9hG4bK-stop"),
+                     ("To", accepted.header("To")), ("CSeq", "2 SUBSCRIBE"), ("Expires", "0")]
+            udp.sendto(sip.build_request("SUBSCRIBE", "sip:101@127.0.0.1", stop), target)
+            assert (await asyncio.wait_for(responses.get(), 2)).status_code == 200
+            terminal, protocol, _ = await next_notify()
+            assert protocol == "UDP" and terminal.header("Subscription-State").startswith("terminated")
+            return
         lab.calls.transition(session.call_id, state="in_call")
         publish_bridge_projection(lab.hass, session)
         challenged_request, challenged_transport, _ = await next_notify()
         confirmed, confirmed_transport, _ = await next_notify()
         if close_before_200:
             assert confirmed_transport == "TCP_CLOSED_BEFORE_200"
-            confirmed, confirmed_transport, retried_raw = await next_notify()
-            assert retried_raw == dropped[0]
+            async with asyncio.timeout(2):
+                while methods.notifiers:
+                    await asyncio.sleep(.001)
+            assert not methods.subscriptions and not methods.subscription_timers
+            assert not methods.task_failures and observed.empty()
+            # Delivery already happened. Recovery is a fresh SUBSCRIBE with
+            # a complete snapshot, never a replay of the uncertain NOTIFY.
+            challenged = False
+            headers = [(key, "notify-transport-recovered" if key == "Call-ID" else value)
+                       for key, value in headers]
+            udp.sendto(sip.build_request("SUBSCRIBE", "sip:101@127.0.0.1", headers), target)
+            recovered = await asyncio.wait_for(responses.get(), 2)
+            assert recovered.status_code == 200 and recovered.header("To") != accepted.header("To")
+            accepted = recovered
+            challenged_request, challenged_transport, _ = await next_notify()
+            confirmed, confirmed_transport, _ = await next_notify()
+            assert ElementTree.fromstring(confirmed.body).attrib["state"] == "full"
+            assert int(ElementTree.fromstring(confirmed.body).attrib["version"]) == 0
             assert len(writers) == 2
         assert challenged_transport == confirmed_transport == "TCP"
         assert ElementTree.fromstring(confirmed.body).find("d:dialog/d:state", NS).text == "confirmed"
@@ -164,7 +221,8 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         assert idle_transport == "TCP"
         assert not ElementTree.fromstring(idle.body).findall("d:dialog", NS)
         assert [int(ElementTree.fromstring(message.body).attrib["version"])
-                for message in (initial, trying, challenged_request, confirmed, idle)] == [0, 1, 2, 2, 3]
+                for message in (initial, trying, challenged_request, confirmed, idle)] == (
+                    [0, 1, 0, 0, 1] if close_before_200 else [0, 1, 2, 2, 3])
         assert len(methods.subscriptions) == 1
         await asyncio.wait_for(asyncio.gather(*(s.notify_task for s in methods.notifiers.values())), 1)
         assert not methods.notifiers
@@ -177,7 +235,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
             assert refreshed.status_code == 200 and refreshed.header("To") == accepted.header("To")
             notification, _, _ = await next_notify()
             assert notification.header("Subscription-State").startswith("active" if expires else "terminated")
-            assert int(ElementTree.fromstring(notification.body).attrib["version"]) == cseq + 2
+            assert int(ElementTree.fromstring(notification.body).attrib["version"]) == cseq + (0 if close_before_200 else 2)
             await asyncio.wait_for(asyncio.gather(*(s.notify_task for s in methods.notifiers.values())), 1)
             assert len(methods.subscriptions) == bool(expires)
         assert not methods.notifiers
@@ -190,6 +248,6 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         await asyncio.gather(*handlers, return_exceptions=True)
         server.close()
         await server.wait_closed()
-    assert not methods.tasks and not methods.subscriptions and not methods.notifiers
-    assert not manager.servers
-    assert not owned_tcp._client_tasks and not owned_tcp._writers and not owned_tcp._tcp_writers
+        assert not methods.tasks and not methods.subscriptions and not methods.notifiers
+        assert not manager.servers
+        assert not owned_tcp._client_tasks and not owned_tcp._writers and not owned_tcp._tcp_writers

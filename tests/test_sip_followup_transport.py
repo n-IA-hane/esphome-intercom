@@ -81,6 +81,21 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
                         writer.close()
                         await writer.wait_closed()
 
+    async def test_tcp_ingress_does_not_override_an_ordinary_udp_contact(self):
+        manager, udp, queue, port, request, _, result = await self.setup_peer()
+        task = asyncio.create_task(manager.tcp_server.endpoint._send_application_follow_up(
+            request, ("127.0.0.1", port + 1), result))
+        try:
+            notification, address, raw = await asyncio.wait_for(queue.get(), 1)
+            self.assertIn("SIP/2.0/UDP", notification.header("Via"))
+            self.assertLessEqual(len(raw), 1300)
+            self.assertEqual(notification.uri, f"sip:watcher@127.0.0.1:{port};transport=udp")
+            udp.sendto(self.answer(notification), address)
+            self.assertEqual((await task).status_code, 200)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_authorization_crossing_threshold_keeps_ids_and_uses_tcp(self):
         for status in (401, 407):
             with self.subTest(status=status):
@@ -207,7 +222,7 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             server.close()
             await server.wait_closed()
 
-    async def test_notify_reopens_only_once_after_real_tcp_eof(self):
+    async def test_delivered_notify_eof_never_replays_its_transaction(self):
         manager, _, queue, port, request, _, result = await self.setup_peer(body=b"large" * 300)
         attempts, handlers = [], set()
 
@@ -225,8 +240,9 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ConnectionError):
                 await asyncio.wait_for(manager.udp_server.endpoint._send_application_follow_up(
                     request, ("127.0.0.1", port), result), 2)
-            self.assertEqual(len(attempts), 2)
-            self.assertEqual(attempts[0], attempts[1])
+            # The peer read the complete request before closing. Delivery is
+            # uncertain; RFC 3261 18.1.1 does not permit transport-level replay.
+            self.assertEqual(len(attempts), 1)
             self.assertTrue(queue.empty())
         finally:
             await manager.stop()
@@ -261,6 +277,55 @@ class FollowUpTransportTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.stop()
             for writer in writers:
+                writer.close()
+            await asyncio.gather(*handlers, return_exceptions=True)
+            server.close()
+            await server.wait_closed()
+
+    async def test_pre_send_closed_tcp_flow_reopens_same_target_without_duplicate_delivery(self):
+        manager, _, udp_queue, port, request, _, result = await self.setup_peer(uri_transport="tcp")
+        handlers, received = set(), []
+        connections = []
+
+        async def target(reader, writer):
+            handlers.add(asyncio.current_task())
+            connections.append(writer)
+            try:
+                raw = await sip_listener._read_sip_stream_message(reader)
+                if raw is not None:
+                    received.append(raw)
+                    writer.write(self.answer(sip.parse_message(raw)))
+                    await writer.drain()
+                    await reader.read()
+            finally:
+                handlers.discard(asyncio.current_task())
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(target, "127.0.0.1", port)
+        endpoint = manager.tcp_server.endpoint
+        original = endpoint.request_route
+        route_calls = []
+
+        async def close_first_flow(uri, source):
+            address = await original(uri, source)
+            route_calls.append(address)
+            if len(route_calls) == 1:
+                manager.tcp_server._writers[address].close()
+            return address
+
+        try:
+            with patch.object(endpoint, "request_route", close_first_flow):
+                answer = await manager.udp_server.endpoint._send_application_follow_up(
+                    request, ("127.0.0.1", port), result)
+            self.assertEqual(answer.status_code, 200)
+            self.assertEqual(route_calls, [("127.0.0.1", port)] * 2)
+            self.assertEqual(len(received), 1)
+            self.assertEqual(len(connections), 2)
+            self.assertTrue(udp_queue.empty())
+        finally:
+            await manager.stop()
+            for writer in connections:
                 writer.close()
             await asyncio.gather(*handlers, return_exceptions=True)
             server.close()
