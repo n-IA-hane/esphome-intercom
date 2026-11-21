@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.core.media import leg
 from tests.media_corpus_support import CORPUS, GOLDEN, _describe, _value, load_steps, mismatches
 
@@ -18,10 +19,7 @@ STEPS = load_steps()
 LEDGER = json.loads((CORPUS / "ledger.json").read_text())
 LEGACY = json.loads(GOLDEN.read_text())
 # Declared changes this engine does not implement yet. Their cases keep failing on purpose.
-NOT_YET = {
-    "CC-12": "static payload numbers 10 and 11",
-    "CC-5": "the engine does not write descriptions yet",
-}
+NOT_YET = {"CC-12": "static payload numbers 10 and 11"}
 COMPARED = ("outcome", "send.codec", "send.ptime", "send.payload", "recv.codec", "recv.ptime",
             "recv.payload", "dtmf.clock", "dtmf.payload")
 
@@ -33,8 +31,16 @@ def negotiate(step) -> dict:
               else leg.apply_answer(step.local_offer, step.sdp, policy, dahua=dahua))
     if isinstance(result, leg.Refusal):
         return {"outcome": "reject", "reason": result.reason}
+    written = ""
+    if step.op == "answer_offer":
+        # The existing writer serializes the contract: only the negotiation is new.
+        written = sdp.build_answer_directional(
+            "192.0.2.1", "192.0.2.1", 40000, result.send, result.receive,
+            dtmf=result.dtmf, remote_sdp=step.sdp)
     return {
         "outcome": "accept",
+        "answer": [line for line in written.split("\r\n") if line.startswith("a=")],
+        "answer_bytes": written,
         "send": _describe(result.send),
         "recv": _describe(result.receive),
         "dtmf": {"clock": result.dtmf.sample_rate, "payload": result.dtmf.payload_type} if result.dtmf else None,
@@ -73,3 +79,11 @@ def test_every_decision_is_explained():
             assert any(line.startswith(("S2", "S5")) for line in result.trace), step.name
         else:
             assert result.reason, step.name
+
+
+@pytest.mark.parametrize("step", [step for step in STEPS if step.op == "answer_offer"], ids=lambda step: step.name)
+def test_written_answer_is_byte_identical_where_nothing_was_declared(step):
+    """Audio only offers with no ledger row must produce the same bytes as production."""
+    if any(row["step"] == step.name for row in LEDGER) or b"m=video" in step.sdp:
+        return
+    assert negotiate(step)["answer_bytes"] == LEGACY[step.name]["answer_bytes"]

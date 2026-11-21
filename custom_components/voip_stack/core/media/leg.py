@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from ..audio_capabilities import HA_AUDIO_CAPABILITIES
 from ..codec_capabilities import common_sip_codecs
 from ..sdp_audio import offered_dtmf_formats, offered_pcm_formats
 from ..sdp_parser import parse_audio_flow_attributes
@@ -97,6 +98,17 @@ def _packet_ms(fmt: RtpPcmFormat, policy: LegPolicy, receiver: ReceiverBounds):
         default_ms=policy.default_packet_ms, receiver=receiver, budget=policy.budget)
 
 
+def _local_receiver(fmt: RtpPcmFormat, packet_ms: float) -> RtpPcmFormat:
+    """Describe this side's receiver for one mapping (R1, R2, P6).
+
+    The packet time is the one this side asks for. The maximum is what the receiver really
+    holds. Format parameters are this side's own: the peer's are never carried over, because in
+    an answer they would tell the peer its own limits as if they were ours.
+    """
+    asked = replace(fmt, frame_ms=packet_ms, min_frame_ms=0, max_frame_ms=0, fmtp="")
+    return replace(asked, max_frame_ms=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(asked))
+
+
 def _dtmf(remote_sdp, selected: RtpPcmFormat) -> RtpDtmfFormat | None:
     """P5: the telephone event clock of the selected codec, else 8000 Hz."""
     offered = offered_dtmf_formats(remote_sdp)
@@ -141,7 +153,7 @@ def answer_offer(remote_sdp, policy: LegPolicy, *, dahua: bool = False) -> LegCo
         trace.append(f"R1 ask {asked.packet_ms} ms")
         return LegContract(
             send=replace(candidate, frame_ms=transmit.packet_ms),
-            receive=replace(receive_from, frame_ms=asked.packet_ms, min_frame_ms=0, max_frame_ms=0),
+            receive=_local_receiver(receive_from, asked.packet_ms),
             dtmf=_dtmf(remote_sdp, candidate),
             trace=tuple(trace),
         )
@@ -189,7 +201,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         return LegContract(
             send=replace(candidate, frame_ms=transmit.packet_ms),
             # P3: packets arrive on the number of the offer, whatever number the answer used.
-            receive=replace(own, frame_ms=asked.packet_ms, min_frame_ms=0, max_frame_ms=0),
+            receive=_local_receiver(own, asked.packet_ms),
             dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
             trace=tuple(trace),
             receive_accept=tuple(
